@@ -4,9 +4,9 @@ kind: task
 title: Read Anurag's IPDPS 2014 paper
 parent: p-5e7b1c
 status: todo
-owner: null            # REQUIRED from schema_version 1; not in source
+owner: jcanton
 reviewers: []          # REQUIRED from schema_version 1; not in source
-effort_weeks: null
+effort_weeks: 0.1
 assignees: []
 assigned_on: null
 cycle: 36
@@ -14,6 +14,7 @@ priority: 2
 depends_on: []
 tags: [icon4py, reading, reductions, bitwise-reproducibility]
 prs: []
+review_waived: true
 ---
 
 From the Progress list of *[ICON4Py] Distributed driver*

@@ -1,12 +1,11 @@
 ---
-id: p-0e4b7a
-kind: pitch
+id: t-0e4b7a
+kind: task
 title: Add unit tests for geo2cart
 parent: null
 status: todo
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
-appetite_weeks: null
 assignees: []
 assigned_on: null
 cycle: null
@@ -17,6 +16,7 @@ tags:
   - icon4py
   - unit-tests
 prs: []
+effort_weeks: 1
 ---
 
 > **Shaping doc not located during migration.** This body is a stub written from the task-table

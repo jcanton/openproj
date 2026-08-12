@@ -4,9 +4,9 @@ kind: pitch
 title: MPI on CI verify with serial
 parent: null
 status: todo
-owner: null            # REQUIRED from schema_version 1; not in source
-reviewers: []          # REQUIRED from schema_version 1; not in source
-appetite_weeks: null
+owner: msimberg
+reviewers: [jcanton]
+appetite_weeks: 1
 assignees: []
 assigned_on: null
 cycle: null
@@ -17,7 +17,6 @@ tags:
   - mpi
   - ci
 prs: []
-
 ---
 
 # MPI on CI verify with serial

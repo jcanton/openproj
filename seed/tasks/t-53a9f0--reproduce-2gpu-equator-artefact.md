@@ -4,11 +4,11 @@ kind: task
 title: Reproduce the 2-GPU equator artefact
 parent: p-5e7b1c
 status: wip
-owner: null            # REQUIRED from schema_version 1; not in source
-reviewers: []          # REQUIRED from schema_version 1; not in source
-effort_weeks: null
+owner: msimberg
+reviewers: [jcanton]
+effort_weeks: 2
 assignees: []
-assigned_on: null
+assigned_on: 2026-08-13
 cycle: 36
 priority: 2
 depends_on: []

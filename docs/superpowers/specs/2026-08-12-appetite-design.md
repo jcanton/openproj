@@ -117,6 +117,7 @@ class Entity(BaseModel):
     owner: str | None = None         # single GitHub username, accountable
     assignees: list[str] = []        # additional people doing the work
     reviewers: list[str] = []        # GitHub usernames expected to review
+    review_waived: bool = False      # deliberately no reviewer, recorded by a human
 
     assigned_on: date | None = None  # the ONLY date a human types
     priority: int = 2                # 0 must, 1 should, 2 could, 3 someday
@@ -168,17 +169,29 @@ visible.
 Requiredness is **status-gated**: permissive when an idea is first captured, strict by the time work
 starts, strictest when it is claimed done.
 
-| Status | Additionally required |
-|---|---|
-| `todo` | `owner`, `reviewers` (≥1), and `appetite_weeks` (pitch) or `effort_weeks` (task) |
-| `wip` | `assigned_on`, and **at least one reviewer who is not the owner** |
-| `done` | at least one entry in `prs` |
-| any | `parent` set for every task; `title` non-empty |
-| `shelved` | nothing — shelving is always allowed, so a stuck record is never trapped by validation |
+| Status | Additionally required | Severity |
+|---|---|---|
+| `todo` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `appetite_weeks` (pitch) or `effort_weeks` (task) | blocker |
+| `wip` | `assigned_on`, and **at least one reviewer who is not the owner** unless review is waived | blocker |
+| `done` | at least one entry in `prs` | blocker |
+| any | `title` non-empty; `id` matches `^(prj\|p\|t)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
+| any | `parent` set for every task | **warning** |
+| `shelved` | nothing — shelving is always allowed, so a stuck record is never trapped by validation | — |
 
 `reviewers` is required from the moment an item exists rather than when a PR appears. Review
 assignment is a routing problem, and routing it at bet time is the point: a bet nobody will review is
 a bet that should not be made.
+
+**`review_waived` exists because some work has nothing to review** — reading a paper, a spike, an
+investigation. It is a deliberate act recorded by a human, and it is distinct from `reviewers: []`,
+which means nobody has decided yet. The table surfaces waived items as their own facet and counts
+them, so a team that waives everything can see itself doing it. Without the distinction, the honest
+answer for a reading task is to name a fake reviewer, and the field becomes noise.
+
+**An unparented task is a warning, not a blocker.** The first real chore we tried to record — adding
+missing unit tests — belongs to no pitch, and inventing a parent to satisfy a rule would be
+falsifying the plan to please the validator. Orphans group under "unparented" in the table, which
+makes them visible without making them illegal.
 
 ### 5.2 The principle — parse permissively, validate strictly
 

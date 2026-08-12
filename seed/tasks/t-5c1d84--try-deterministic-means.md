@@ -6,7 +6,7 @@ parent: p-5e7b1c
 status: todo
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
-effort_weeks: null
+effort_weeks: 4
 assignees: []
 assigned_on: null
 cycle: 36
