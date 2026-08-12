@@ -1,0 +1,3 @@
+schema_version: 1
+nominal_availability: 1.0   # single global figure (D4); per-person overrides not used
+DEFAULT_TASK_EFFORT: 0.5
