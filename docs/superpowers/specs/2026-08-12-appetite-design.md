@@ -128,6 +128,7 @@ class Entity(BaseModel):
 
 class Pitch(Entity):
     appetite_weeks: float | None = None   # elapsed weeks at nominal availability
+    shaped_by: str | None = None          # who shaped it; required from schema_version 2
 
 class Task(Entity):
     effort_weeks: float | None = None
@@ -172,6 +173,7 @@ starts, strictest when it is claimed done.
 | Status | Additionally required | Severity |
 |---|---|---|
 | `todo` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `appetite_weeks` (pitch) or `effort_weeks` (task) | blocker |
+| `todo` | on a **pitch**, `shaped_by` set — *rule_version 2* | blocker |
 | `wip` | `assigned_on`, and **at least one reviewer who is not the owner** unless review is waived | blocker |
 | `done` | at least one entry in `prs` | blocker |
 | any | `title` non-empty; `id` matches `^(proj\|pitch\|task)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
@@ -234,6 +236,16 @@ rule are reported as warnings, not blockers.
 
 Without this, adding one required field invalidates the entire repository at once, and the rule gets
 reverted rather than adopted.
+
+**`shaped_by` is the first live exercise of this.** It is a `rule_version 2` rule, and every entity
+in the seed corpus carries `created_schema_version: 1`, so the existing pitches report it as a
+*warning* while any pitch created from now on is *blocked* without it. That is the mechanism working
+on real data rather than in a unit test, and it is why the repository's `schema_version` is 2 while
+its contents are still version 1.
+
+A pitch records who shaped it because shaping is the scarce activity in Shape Up — a bet with no
+named shaper is a bet nobody thought hard about. It is deliberately separate from `owner`: the person
+who shapes a pitch is frequently not the person who builds it.
 
 ### 5.5 Making the gaps visible
 

@@ -7,6 +7,7 @@ status: wip
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 appetite_weeks: 2.0
+shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees:
   - nfarabullini
   - OngChia
