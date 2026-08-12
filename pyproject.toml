@@ -1,0 +1,36 @@
+[project]
+name = "openproj"
+version = "0.1.0"
+description = "Git-backed appetite planning for the icon4py team"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "ruamel.yaml>=0.18",
+    "python-frontmatter>=1.1",
+    "networkx>=3.3",
+    "jinja2>=3.1",
+]
+
+[project.scripts]
+openproj = "openproj.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.2", "hypothesis>=6.100", "ruff>=0.5"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openproj"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
