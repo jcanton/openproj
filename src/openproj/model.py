@@ -8,10 +8,13 @@ lives in `validate_all`, never in the parse types — see spec section 5.2.
 from __future__ import annotations
 
 import io
+import re
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 from typing import Literal
 
+import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
 from pydantic import BaseModel
 from ruamel.yaml import YAML
@@ -255,3 +258,128 @@ def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
         if stated is not None:
             return float(stated), False
     return config.default_task_effort, True
+
+
+# --------------------------------------------------------------------------- #
+# Validation
+#
+# Rules are data, not branches: each carries the schema_version that introduced
+# it, which is what makes grandfathering possible. A rule newer than the entity
+# it is judging may only warn. Adding a required field must never invalidate a
+# corpus written before the field existed — otherwise the rule gets reverted
+# rather than adopted.
+# --------------------------------------------------------------------------- #
+
+_ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
+_PREFIX_FOR_KIND = {"project": "proj", "pitch": "pitch", "task": "task"}
+_SIZE_FIELD = {"pitch": "appetite_weeks", "task": "effort_weeks"}
+
+
+def _cyclic_members(edges: dict[str, list[str]]) -> set[str]:
+    """Every node on a cycle, including self-loops."""
+    graph = nx.DiGraph()
+    graph.add_nodes_from(edges)
+    for source, targets in edges.items():
+        graph.add_edges_from((source, target) for target in targets if target in edges)
+    caught = {
+        node
+        for component in nx.strongly_connected_components(graph)
+        if len(component) > 1
+        for node in component
+    }
+    return caught | {node for node in edges if graph.has_edge(node, node)}
+
+
+def _dependency_problems(
+    entity: Entity, by_id: dict[str, Entity], parent_cycles: set[str], dep_cycles: set[str]
+) -> Iterator[tuple[str, str | None, str, int]]:
+    if entity.id in dep_cycles:
+        yield "blocker", "depends_on", "part of a depends_on cycle", 1
+        return
+    # A parent cycle makes "ancestor" undefined, so the relational checks are
+    # skipped rather than reporting a second, derived problem for one broken chain.
+    own_ancestors = set() if entity.id in parent_cycles else set(ancestors(entity.id, by_id))
+    for target in entity.depends_on:
+        if target not in by_id:
+            yield "blocker", "depends_on", f"depends_on target {target} does not exist", 1
+        elif target in own_ancestors:
+            yield "blocker", "depends_on", f"cannot depend on {target}: it is an ancestor", 1
+        elif entity.id in ancestors(target, by_id):
+            yield "blocker", "depends_on", f"cannot depend on {target}: it is a descendant", 1
+        elif by_id[target].status == "shelved":
+            yield "warning", "depends_on", f"depends_on target {target} is shelved", 1
+
+
+def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
+    if entity.status == "todo":
+        if entity.owner is None:
+            yield "blocker", "owner", "a todo entity needs an owner", 1
+        if not (entity.review_waived or entity.reviewers):
+            yield "blocker", "reviewers", "a todo entity needs a reviewer, or review_waived", 1
+        field = _SIZE_FIELD.get(entity.kind)
+        if field is not None and getattr(entity, field) is None:
+            yield "blocker", field, f"a todo {entity.kind} needs {field}", 1
+        if entity.kind == "pitch" and entity.shaped_by is None:
+            yield "blocker", "shaped_by", "a todo pitch needs shaped_by", 2
+    elif entity.status == "wip":
+        if entity.assigned_on is None:
+            yield "blocker", "assigned_on", "a wip entity needs assigned_on", 1
+        if not entity.review_waived and not (set(entity.reviewers) - {entity.owner}):
+            yield (
+                "blocker",
+                "reviewers",
+                "a wip entity needs a reviewer other than its owner, or review_waived",
+                1,
+            )
+    elif entity.status == "done" and not entity.prs:
+        yield "blocker", "prs", "a done entity needs at least one PR", 1
+
+
+def _problems_for(
+    entity: Entity, by_id: dict[str, Entity], parent_cycles: set[str], dep_cycles: set[str]
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """Yield (severity_before_grandfathering, field, message, rule_version)."""
+    if not entity.title.strip():
+        yield "blocker", "title", "title must not be empty", 1
+    if not _ID_PATTERN.match(entity.id):
+        yield "blocker", "id", "id must match ^(proj|pitch|task)-[0-9a-f]{6}$", 1
+    elif not entity.id.startswith(_PREFIX_FOR_KIND[entity.kind] + "-"):
+        yield "blocker", "id", f"id prefix must match kind {entity.kind}", 1
+
+    if entity.id in parent_cycles:
+        yield "blocker", "parent", "part of a parent cycle", 1
+    elif entity.kind == "task" and entity.parent is None:
+        yield "warning", "parent", "a task should have a parent", 1
+
+    yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
+    yield from _status_problems(entity)
+
+
+def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
+    """Check every entity against every rule it is old enough to be held to.
+
+    Shelved entities are exempt from all of them: parked work is not broken work,
+    and a validator that nags about it teaches people to ignore the validator.
+    """
+    by_id = {entity.id: entity for entity in entities}
+    parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in entities})
+    dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in entities})
+
+    problems: list[Problem] = []
+    for entity in entities:
+        if entity.status == "shelved":
+            continue
+        for severity, field, message, rule_version in _problems_for(
+            entity, by_id, parent_cycles, dep_cycles
+        ):
+            grandfathered = rule_version > entity.created_schema_version
+            problems.append(
+                Problem(
+                    severity="warning" if grandfathered else severity,
+                    entity_id=entity.id,
+                    field=field,
+                    message=message,
+                    rule_version=rule_version,
+                )
+            )
+    return problems
