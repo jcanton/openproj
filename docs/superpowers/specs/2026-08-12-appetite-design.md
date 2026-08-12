@@ -176,7 +176,18 @@ starts, strictest when it is claimed done.
 | `done` | at least one entry in `prs` | blocker |
 | any | `title` non-empty; `id` matches `^(proj\|pitch\|task)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
 | any | `parent` set for every task | **warning** |
+| any | every `depends_on` target exists | blocker |
+| any | **no entity depends on its own ancestor or descendant** | blocker |
+| any | no cycle in `depends_on`; no cycle in the `parent` chain | blocker |
+| any | a reference to a `shelved` entity | warning |
 | `shelved` | nothing — shelving is always allowed, so a stuck record is never trapped by validation | — |
+
+**Depending on an ancestor is circular by construction**, and the reason is worth stating because it
+is not obvious: containment requires a child to be scheduled *before* its parent (the parent's span
+is the rollup of its children), while a dependency requires the blocker to be scheduled *before* the
+dependent. An entity that depends on its own parent therefore demands to be both before and after it,
+and the ordering pass in §7.1 step 5 raises. This was found by inventing a plausible-looking edge in
+the seed corpus, which is exactly what a fixture is for.
 
 `reviewers` is required from the moment an item exists rather than when a PR appears. Review
 assignment is a routing problem, and routing it at bet time is the point: a bet nobody will review is

@@ -11,7 +11,7 @@ assignees: []
 assigned_on: null
 cycle: 34
 priority: 2
-depends_on: [pitch-2a7f3e]   # synthetic, see seed/README.md
+depends_on: [task-31f6c4]   # synthetic, see seed/README.md
 tags:
   - greenline
   - warm-bubble

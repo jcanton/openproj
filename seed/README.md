@@ -29,8 +29,10 @@ path, where an entity created before a rule existed produces a warning rather th
 
 The invented edges form a **diamond** in the distributed-driver group —
 `task-5a4e39` → {`task-5c1d84`, `task-5f062b`} → `task-58d7c6` — which the validator flagged as the
-structure the real data lacked. `task-2b6c94` depends on `pitch-2a7f3e`, which is `done`, so the
-corpus also covers a live item blocked by completed work.
+structure the real data lacked. `task-2b6c94` depends on `task-31f6c4`, which is `done`, so the
+corpus also covers a live item blocked by completed work. That edge originally pointed at
+`pitch-2a7f3e` — `task-2b6c94`'s own parent — which is circular by construction and is now a
+validation rule in its own right (spec §5.1).
 
 ## Before this becomes real data
 
