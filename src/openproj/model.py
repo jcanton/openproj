@@ -60,3 +60,47 @@ def load_config(root: Path) -> Config:
         if isinstance(loaded, dict):
             data.update({k: v for k, v in loaded.items() if k in Config.model_fields})
     return Config.model_validate(data)
+
+
+class Entity(BaseModel):
+    """A project, pitch or task.
+
+    Every field but `id`, `kind` and `title` is optional. That is deliberate:
+    requiredness is a validation rule, not a parse constraint, so a file missing
+    a mandatory field still parses and reports a Problem instead of taking the
+    index down.
+    """
+
+    id: str
+    kind: Literal["project", "pitch", "task"]
+    title: str
+    parent: str | None = None
+    status: Literal["todo", "wip", "done", "shelved"] = "todo"
+
+    owner: str | None = None
+    assignees: list[str] = []
+    reviewers: list[str] = []
+    review_waived: bool = False
+
+    assigned_on: date | None = None
+    priority: int = 2
+    depends_on: list[str] = []
+    cycle: int | None = None
+    tags: list[str] = []
+    prs: list[str] = []
+
+    body: str = ""
+    created_schema_version: int = 1
+
+
+class Project(Entity):
+    pass
+
+
+class Pitch(Entity):
+    appetite_weeks: float | None = None
+    shaped_by: str | None = None
+
+
+class Task(Entity):
+    effort_weeks: float | None = None
