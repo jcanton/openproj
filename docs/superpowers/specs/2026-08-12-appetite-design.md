@@ -108,7 +108,7 @@ ID through the index, never by path, so renaming a title never breaks a referenc
 
 ```python
 class Entity(BaseModel):
-    id: str                          # <prefix>-<6 hex>, prefix in {prj, p, t}
+    id: str                          # <prefix>-<6 hex>, prefix in {proj, pitch, task}
     kind: Literal["project", "pitch", "task"]
     title: str
     parent: str | None = None        # project for a pitch, pitch for a task
