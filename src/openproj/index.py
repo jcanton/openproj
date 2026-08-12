@@ -42,6 +42,11 @@ class Index(BaseModel):
     problems: list[Problem]
     facets: dict[str, list[str]]
     search_blob: dict[str, str]
+    # Carried so a renderer needs nothing but the index: the timeline cannot draw
+    # cycle boundaries or a today line without them, and it is handed no Config.
+    cycles: dict[int, tuple[date, date]]
+    today: date
+    default_task_effort: float
 
 
 def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
@@ -108,6 +113,9 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
         facets={field: sorted(values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,
+        cycles=config.cycles,
+        today=today,
+        default_task_effort=config.default_task_effort,
     )
 
 
