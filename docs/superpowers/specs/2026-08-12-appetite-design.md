@@ -386,7 +386,7 @@ on paper against real records before trusting the code.
 
 **Every span carries an explanation naming its binding constraint**, shown on hover:
 
-> starts 2026-09-14 because p-77d1a0 ends 2026-09-11 and jcanton is busy until 2026-09-13
+> starts 2026-09-14 because pitch-77d1a0 ends 2026-09-11 and jcanton is busy until 2026-09-13
 
 Do not ship the timeline without this. The first unexplained surprising date is when people stop
 trusting it, and an untrusted tracker is dead.
@@ -422,7 +422,7 @@ flaky.
      time, and three actions: keep mine, keep theirs, edit merged. **No conflict markers ever reach
      the editor.**
 5. Commit: new blob, `TreeBuilder` from HEAD's tree, `author = <the signed-in user>`,
-   `committer = openproj-bot`, message `p-a3f81c: status todo → wip`. The author/committer split
+   `committer = openproj-bot`, message `pitch-a3f81c: status todo → wip`. The author/committer split
    makes `git log --format='%an'` a free per-person audit trail, while any future push credential
    stays a bot.
 6. When a remote exists: push inside the lock, 5 s timeout. **Invariant: local `main` is only ever
