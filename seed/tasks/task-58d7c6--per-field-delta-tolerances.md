@@ -1,17 +1,17 @@
 ---
-id: t-58d7c6
+id: task-58d7c6
 kind: task
 title: Per-field deltas instead of a blanket 1e-13 tolerance
-parent: p-5e7b1c
+parent: pitch-5e7b1c
 status: todo
-owner: null            # REQUIRED from schema_version 1; not in source
-reviewers: []          # REQUIRED from schema_version 1; not in source
+owner: halungge
+reviewers: [iomaganaris]
 effort_weeks: 1
 assignees: []
 assigned_on: null
 cycle: 36
 priority: 2
-depends_on: []
+depends_on: [task-5c1d84, task-5f062b]   # synthetic, see seed/README.md
 tags: [icon4py, standalone-driver, distributed, validation]
 prs: []
 ---

@@ -1,8 +1,8 @@
 ---
-id: t-5a4e39
+id: task-5a4e39
 kind: task
 title: Read Anurag's IPDPS 2014 paper
-parent: p-5e7b1c
+parent: pitch-5e7b1c
 status: todo
 owner: jcanton
 reviewers: []          # REQUIRED from schema_version 1; not in source

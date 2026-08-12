@@ -1,5 +1,5 @@
 ---
-id: p-3c9a41
+id: pitch-3c9a41
 kind: pitch
 title: Turbulence 1D CPU single node
 parent: null

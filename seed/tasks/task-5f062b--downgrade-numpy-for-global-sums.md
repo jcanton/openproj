@@ -1,17 +1,17 @@
 ---
-id: t-5f062b
+id: task-5f062b
 kind: task
 title: Downgrade numpy for stable global sums
-parent: p-5e7b1c
+parent: pitch-5e7b1c
 status: todo
-owner: null            # REQUIRED from schema_version 1; not in source
-reviewers: []          # REQUIRED from schema_version 1; not in source
+owner: egparedes
+reviewers: [abishekg7]
 effort_weeks: 1
 assignees: []
 assigned_on: null
 cycle: 36
 priority: 2
-depends_on: []
+depends_on: [task-5a4e39]   # synthetic, see seed/README.md
 tags: [icon4py, distributed, numpy, reductions, bitwise-reproducibility]
 prs: []
 ---

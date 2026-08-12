@@ -85,9 +85,9 @@ burndown charts, per-project permissions.
 ### 4.1 Layout
 
 ```
-projects/prj-4f21--dycore-port.md
-pitches/p-a3f81c--fold-gtir-lowering.md
-tasks/t-91c2b7--fix-domain-inference.md
+projects/proj-4f21ab--dycore-port.md
+pitches/pitch-a3f81c--fold-gtir-lowering.md
+tasks/task-91c2b7--fix-domain-inference.md
 config/defaults.yaml       # nominal_availability, schema_version
 config/cycles.yaml         # cycle number -> start/end dates
 config/holidays.yaml
@@ -138,7 +138,7 @@ not laxity, it is what keeps a hand-edited file from taking the index down.
 
 The markdown body is the shaping document. No length or structure constraint is enforced.
 
-**IDs are random, not sequential** (`<prefix>-<6 hex>`), so two people creating entities in different
+**IDs are random, not sequential** (`<prefix>-<6 hex>`, e.g. `pitch-a3f81c`), so two people creating entities in different
 tabs or on different branches never collide.
 
 ### 4.3 The dependency invariant
@@ -174,7 +174,7 @@ starts, strictest when it is claimed done.
 | `todo` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `appetite_weeks` (pitch) or `effort_weeks` (task) | blocker |
 | `wip` | `assigned_on`, and **at least one reviewer who is not the owner** unless review is waived | blocker |
 | `done` | at least one entry in `prs` | blocker |
-| any | `title` non-empty; `id` matches `^(prj\|p\|t)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
+| any | `title` non-empty; `id` matches `^(proj\|pitch\|task)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
 | any | `parent` set for every task | **warning** |
 | `shelved` | nothing — shelving is always allowed, so a stuck record is never trapped by validation | — |
 

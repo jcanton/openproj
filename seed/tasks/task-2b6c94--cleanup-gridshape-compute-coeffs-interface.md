@@ -1,17 +1,17 @@
 ---
-id: t-2b6c94
+id: task-2b6c94
 kind: task
 title: Cleanup gridShape lat/lon + cart_x/y interface to compute_coeffs
-parent: p-2a7f3e
+parent: pitch-2a7f3e
 status: todo
-owner: null            # REQUIRED from schema_version 1; not in source
-reviewers: []          # REQUIRED from schema_version 1; not in source
+owner: OngChia
+reviewers: [edopao]
 effort_weeks: 0.5
 assignees: []
 assigned_on: null
 cycle: 34
 priority: 2
-depends_on: []
+depends_on: [pitch-2a7f3e]   # synthetic, see seed/README.md
 tags:
   - greenline
   - warm-bubble

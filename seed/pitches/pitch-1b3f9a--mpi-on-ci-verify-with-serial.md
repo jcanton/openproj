@@ -1,5 +1,5 @@
 ---
-id: p-1b3f9a
+id: pitch-1b3f9a
 kind: pitch
 title: MPI on CI verify with serial
 parent: null

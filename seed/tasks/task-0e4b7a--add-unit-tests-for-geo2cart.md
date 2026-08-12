@@ -1,11 +1,11 @@
 ---
-id: t-0e4b7a
+id: task-0e4b7a
 kind: task
 title: Add unit tests for geo2cart
-parent: null
+parent: proj-7e57a0          # placeholder while testing
 status: todo
-owner: null            # REQUIRED from schema_version 1; not in source
-reviewers: []          # REQUIRED from schema_version 1; not in source
+owner: nfarabullini
+reviewers: [havogt]
 assignees: []
 assigned_on: null
 cycle: null

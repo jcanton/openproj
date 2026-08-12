@@ -1,5 +1,5 @@
 ---
-id: p-5e7b1c
+id: pitch-5e7b1c
 kind: pitch
 title: CI for standalone driver v1.5
 parent: null
@@ -100,8 +100,8 @@ Both sections were left as empty template comments in the source.
 
 ### Progress (as of the note's last edit, 2026-06-03)
 
-The five open items below were extracted into task entities `t-53a9f0`, `t-5c1d84`, `t-5f062b`,
-`t-5a4e39`, `t-58d7c6`. They are the note's own coarse-grained task list, not an invention of this
+The five open items below were extracted into task entities `task-53a9f0`, `task-5c1d84`, `task-5f062b`,
+`task-5a4e39`, `task-58d7c6`. They are the note's own coarse-grained task list, not an invention of this
 migration.
 
 ---

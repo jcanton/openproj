@@ -1,5 +1,5 @@
 ---
-id: p-2a7f3e
+id: pitch-2a7f3e
 kind: pitch
 title: Tracer adv port LS coeffs
 parent: null
@@ -87,7 +87,7 @@ Higher-order least squares interpolation is not required for the warm bubble exp
 - [x] store the inverted matrix as `lsq_pseudoinv_x` and `lsq_pseudoinv_y` / make `lsq_pseudoinv_1` and `lsq_pseudoinv_2` factories
 - [x] merge functionality of `math/projection.py::plane_torus_closest_coordinates` with `math/helpers.py::diff_on_edges_torus`
 - [x] merge `math/projection.py::gnomonic_proj` and `gnomonic_proj_single_val`
-- [ ] cleanup gridShape lat/lon + cart_x/y interface to compute_coeffs → carried over as task `t-2b6c94`
+- [ ] cleanup gridShape lat/lon + cart_x/y interface to compute_coeffs → carried over as task `task-2b6c94`
 
 ---
 
@@ -113,4 +113,4 @@ The table's `[LS coeff. shape-up]` link definition resolves to <https://hackmd.i
 
 **Priority.** The table uses four levels (High+, High, Medium, Low), mapped order-preserving onto 0/1/2/3; this row's "High" → 1.
 
-**Status.** The table says Done and the implementation PR is merged, so status is `done` — but the Progress checklist still has one unchecked item, migrated as task `t-2b6c94` rather than dropped.
+**Status.** The table says Done and the implementation PR is merged, so status is `done` — but the Progress checklist still has one unchecked item, migrated as task `task-2b6c94` rather than dropped.

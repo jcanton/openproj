@@ -1,8 +1,8 @@
 ---
-id: t-53a9f0
+id: task-53a9f0
 kind: task
 title: Reproduce the 2-GPU equator artefact
-parent: p-5e7b1c
+parent: pitch-5e7b1c
 status: wip
 owner: msimberg
 reviewers: [jcanton]

@@ -1,8 +1,8 @@
 ---
-id: t-3e07b2
+id: task-3e07b2
 kind: task
 title: Generate Python bindings with f2py for turbdiff_setup_config and turbdiff_run
-parent: p-3c9a41
+parent: pitch-3c9a41
 status: done
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
