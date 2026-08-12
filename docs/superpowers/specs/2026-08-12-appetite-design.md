@@ -73,7 +73,7 @@ burndown charts, per-project permissions.
 |---|---|---|
 | D1 | `appetite_weeks` means **elapsed weeks at nominal availability**, not person-weeks | Matches how the team already speaks about a "three-week bet" |
 | D2 | Shape Up cycles are **soft walls** — the scheduler ignores them, the timeline flags overruns | The circuit breaker is a human decision; silently reflowing a bet misrepresents the process |
-| D3 | Project and repository name: **`openproj`**. Local-only for now; no remote | Nothing is shared yet, so nothing needs to be pushed. The design keeps the remote path intact for Phase 2 |
+| D3 | Project and repository name: **`openproj`**. Local-only while it is just jcanton and Claude; **pushed to the C2SM GitHub organisation at the same moment it goes to Cloud Run** | Nothing is shared yet, so nothing needs to be pushed. Going online and gaining an org-owned remote are the same event, which is also when backups start existing (§12) |
 | D4 | The plan data lives in **its own repository**, separate from `openproj`'s source | A plan commit must not trigger CI on tool code, and the write credential must be structurally incapable of touching source repos. While local, this is a second directory |
 | D5 | Effort is **appetite** for pitches, **`effort_weeks`** for tasks, both mandatory | The team fills appetite on 145 of 153 pitches. Making task effort mandatory is a deliberate change of habit, and §5.4 is how it is made to stick |
 | D6 | **No `hackmd` field.** Content moves in; nothing links back | A link to the old system is how two sources of truth survive. The shaping doc becomes the entity body |
