@@ -376,16 +376,33 @@ Written first, before any server, with property tests. **This is the product.**
    `networkx.lexicographical_topological_sort` keyed by `(priority, id)` for determinism. The cycle
    check in step 2 runs on `depends_on` alone — a containment loop is a separate, and simpler,
    validation error.
+
+   **The union graph can be cyclic when `depends_on` alone is not**, and step 2 cannot see it: an
+   entity that depends on its own parent contributes an acyclic dependency edge and a containment
+   edge that closes the loop. `validate_all` rejects that record (§5.1), but the scheduler must not
+   assume validation ran. When adding a containment edge would close a cycle, **drop that edge and
+   mark both entities `unscheduled`** rather than letting `lexicographical_topological_sort` raise.
+   One bad record costs you that record, never the whole page.
 6. For each **leaf** node in that order:
 
    ```
    workers(n) = [n.owner] + n.assignees
-   ready(n)   = max(n.assigned_on or today,
-                    max(end(b) for b in blockers(n)),
-                    default=today)
+   ready(n)   = max(today,
+                    n.assigned_on or today,
+                    *(next_working_day(end(b)) for b in blockers(n)))
    start(n)   = next_free_slot(workers(n), ready(n), duration(n))
-   end(n)     = start(n) + duration(n)        # working days, per holidays.yaml
+   end(n)     = working_days_after(start(n), duration(n), config)
    ```
+
+   Two details that decide most off-by-one arguments, so they are written down
+   rather than rediscovered:
+
+   - **`today` is a floor.** An earlier draft said `max(assigned_on or today, …)`,
+     which schedules an item assigned last week *into* last week. An assignment
+     date in the past means work started, not that the calendar rewinds.
+   - **A `Span` is inclusive**, so `end` is the last working day the item occupies.
+     A dependent therefore starts on the working day *after* its blocker's `end`,
+     never on the same day.
 
    `next_free_slot` walks each worker's already-placed intervals and returns the first gap of at
    least `duration` at or after `ready`. Because blockers are always placed first, resource-driven

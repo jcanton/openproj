@@ -557,3 +557,19 @@ def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index
     assert apply_filters(seed_index, {"owner": ["msimberg"], "kind": ["task"]}, "equator") == [
         "task-53a9f0"
     ]
+
+
+def test_a_predicate_never_touches_an_entity_that_has_no_span(seed_index: Index):
+    """Six seed entities are done or shelved and get no span at all. A predicate
+    that indexes index.spans directly turns the whole page into a KeyError."""
+    result = apply_filters(seed_index, {"predicate": ["overruns_cycle"]}, "")
+    assert set(result).isdisjoint({"pitch-2a7f3e", "pitch-3c9a41", "task-3d84e9"})
+
+
+def test_a_dangling_dependency_does_not_count_as_a_blocker():
+    """blocked_by already drops a target that does not exist; the predicate must
+    agree with it, or an entity blocked by a typo looks blocked forever."""
+    entities = [a_task("task-c00001", depends_on=["task-ffffff"])]
+    index = build_index(entities, CONFIG, TODAY)
+    assert apply_filters(index, {"predicate": ["blocked"]}, "") == []
+    assert apply_filters(index, {"predicate": ["unblocked"]}, "") == ["task-c00001"]

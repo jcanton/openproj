@@ -35,6 +35,10 @@ CONFIG = Config(
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14)), 37: (date(2026, 8, 17), date(2026, 10, 9))},
 )
 
+# Availability != 1.0, so that the "never divide by availability" guard below can
+# actually fail. Every other test uses CONFIG; this exists for that one guard.
+HALF_TIME = CONFIG.model_copy(update={"nominal_availability": 0.6})
+
 
 def task(suffix: str, *, owner: str | None = "ann", size: float | None = 1.0, **fields) -> Task:
     return Task(
@@ -146,6 +150,24 @@ def test_step5_ordering_is_by_priority_then_id():
     assert spans["task-aaa002"].start == date(2026, 8, 31)
 
 
+def test_step5_a_cycle_closed_by_a_containment_edge_does_not_raise():
+    """depends_on alone is acyclic, so step 2 flags nothing — but the ordering
+    graph adds child -> parent edges and closes the loop. A naive
+    lexicographical_topological_sort raises NetworkXUnfeasible here and takes the
+    whole page down over one bad record."""
+    entities = [pitch("bbb001", owner="bo"), task("aaa001", parent="pitch-bbb001",
+                                                  depends_on=["pitch-bbb001"])]
+    spans, _ = run(entities)
+    assert {"pitch-bbb001", "task-aaa001"} <= set(spans)
+
+
+def test_step6_a_past_assignment_date_does_not_pull_work_into_the_past():
+    """ready is max(today, assigned_on, blockers) — not `assigned_on or today`,
+    which would schedule an item that was assigned last week into last week."""
+    spans, _ = run([task("aaa001", assigned_on=date(2026, 8, 13), size=2.0)])
+    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 28))
+
+
 def test_step6_a_leaf_waits_for_today_its_assignment_date_and_its_blockers():
     entities = [
         task("aaa001"),
@@ -211,11 +233,27 @@ def test_regression_children_are_ordered_before_their_parent():
     assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
 
 
+def test_step9_a_cycle_with_no_configured_dates_is_not_an_overrun():
+    """A pitch may name a cycle nobody has dated yet. Indexing config.cycles
+    directly turns that into a KeyError for the whole schedule."""
+    spans, _ = run([task("aaa001", cycle=99)])
+    assert spans["task-aaa001"].overruns_cycle_weeks is None
+
+
 def test_regression_a_three_week_appetite_is_three_working_weeks_not_five():
-    """Dividing by availability unconditionally turns 3.0 into 5.0 and ends this
-    on 2026-09-18 instead."""
-    spans, _ = run([pitch("bbb001", size=3.0)])
-    assert spans["pitch-bbb001"].end == date(2026, 9, 4)
+    """Appetite is ELAPSED weeks at nominal availability, so it is never divided.
+
+    This must be run at an availability other than 1.0 to mean anything. At 1.0
+    the buggy `size / availability` and the correct `size * (nominal / availability)`
+    agree, and an earlier version of this test asserted only the 1.0 case — it
+    passed with the bug present, which is worse than having no test at all.
+    """
+    spans, _ = run([pitch("bbb001", size=3.0)], config=HALF_TIME)
+    assert spans["pitch-bbb001"].end == date(2026, 9, 4)  # three working weeks
+    assert spans["pitch-bbb001"].end != date(2026, 9, 18)  # five: the bug
+
+    at_nominal, _ = run([pitch("bbb001", size=3.0)])
+    assert at_nominal["pitch-bbb001"].end == spans["pitch-bbb001"].end
 
 
 def test_regression_a_task_and_a_pitch_of_the_same_size_take_the_same_time():
