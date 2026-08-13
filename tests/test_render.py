@@ -188,6 +188,17 @@ def test_a_detail_page_exists_for_every_entity(rendered: Path, seed_index: Index
         assert f'id="{entity_id}"' in body, entity_id
 
 
+def test_the_detail_page_opens_as_an_index_not_a_wall_of_text(rendered: Path, seed_index: Index):
+    """With no hash the page lists what exists; with a hash it shows exactly one
+    document. Showing all seventeen bodies at once is not a detail view."""
+    body = read(rendered, "detail.html")
+    assert 'class="toc"' in body
+    for entity_id in seed_index.entities:
+        assert f'href="#{entity_id}"' in body, entity_id
+    # The script must hide every article unless one is selected.
+    assert "article.style.display = match ? '' : 'none'" in body
+
+
 def test_the_detail_page_renders_the_shaping_doc_as_markdown(rendered: Path):
     body = read(rendered, "detail.html")
     assert "<h2>" in body, "markdown headings should render as headings"

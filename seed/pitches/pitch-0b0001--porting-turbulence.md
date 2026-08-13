@@ -26,8 +26,8 @@ shaped_by: jcanton
 The AES TMX turbulence scheme (Smagorinsky, Fortran entry `interface_aes_tmx`) is the last large
 physics block the warm-bubble configuration cannot run natively. Today we reach it through `f2py`
 bindings around `turbdiff_setup_config` / `turbdiff_run`: they hand NumPy arrays to a Fortran
-object that keeps its own state, they cannot pass GPU pointers, and the DSL toolchain sees an
-opaque call. Fusion with the dycore's TDMA, a single halo-exchange strategy, DaCe — all stop at
+object that keeps its own state, cannot pass GPU pointers, and leave the DSL toolchain staring at
+an opaque call. Fusion with the dycore's TDMA, a single halo-exchange strategy, DaCe — all stop at
 that boundary.
 
 ## Appetite
@@ -42,7 +42,7 @@ exchanges through `ExchangeRuntime` from the start, `wpfloat` throughout. It spl
 along a physical seam — surface-level exchange coefficients never enter the tridiagonal matrices,
 so an atmosphere-only granule taking prescribed `shfl`, `evapotrans`, `ustress` and `vstress`
 reproduces Fortran exactly. Ground truth is serialbox savepoints from an APE AES R02B04 run with
-`use_tmx=T`, and every milestone is green before the next one starts.
+`use_tmx=T`.
 
 ## Rabbit holes
 

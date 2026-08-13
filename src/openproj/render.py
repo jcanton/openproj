@@ -442,9 +442,15 @@ rect.late { stroke: #9a3327; stroke-width: 1.5; }
 
 
 _DETAIL = """
-<p class="hint">Pick anything from the table, the graph or the timeline. Every view links here.</p>
+<ul class="toc">
+  {% for e in entities %}
+  <li><a href="#{{ e.id }}">{{ e.title }}</a>
+      <span class="tocmeta">{{ e.kind }} · {{ e.status }} · {{ e.owner or "unowned" }}</span></li>
+  {% endfor %}
+</ul>
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
+  <p class="back"><a href="#">← all</a></p>
   <h1>{{ e.title }}</h1>
   <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
      {% if e.parent %}· in <a href="#{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
@@ -472,15 +478,18 @@ _DETAIL = """
 {% endfor %}
 <script>
 // One page, hash-routed: a stable shareable link per entity without a file each.
+// With no hash you get an index; with a hash you get exactly one document. Never
+// every document at once — that is a wall of text, not a detail view.
 function show() {
   const wanted = location.hash.slice(1);
-  let seen = false;
+  let found = false;
   for (const article of document.querySelectorAll('article.entity')) {
     const match = article.id === wanted;
-    article.style.display = match || !wanted ? '' : 'none';
-    seen = seen || match;
+    article.style.display = match ? '' : 'none';
+    found = found || match;
   }
-  document.querySelector('.hint').style.display = wanted && seen ? 'none' : '';
+  document.querySelector('.toc').style.display = found ? 'none' : '';
+  if (found) scrollTo(0, 0);
 }
 addEventListener('hashchange', show);
 show();
@@ -488,7 +497,11 @@ show();
 """
 
 _DETAIL_STYLE = """
-.hint { color: var(--muted); }
+.toc { list-style: none; padding: 0; max-width: 46rem; }
+.toc li { padding: .35rem 0; border-bottom: 1px solid var(--line); display: flex;
+          justify-content: space-between; gap: 1rem; }
+.tocmeta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.back { margin: 0 0 .5rem; font-size: 12px; }
 article.entity { max-width: 46rem; margin-bottom: 3rem; }
 article.entity h1 { font-size: 1.4rem; margin-bottom: .2rem; }
 .meta { color: var(--muted); margin-top: 0; }

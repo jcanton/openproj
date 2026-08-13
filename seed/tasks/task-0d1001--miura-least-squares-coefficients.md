@@ -22,29 +22,27 @@ effort_weeks: 3.0
 
 ## Problem
 
-Second-order MIURA reconstructs the tracer field on a local patch before it integrates the
-upwind flux across an edge. The patch is the polygon of cell centres reached through `C2E2C`,
-and the reconstruction is a 2D polynomial fit `q = B a`, with `B` a matrix of the distances from
-each neighbour to the patch origin. `B` depends only on geometry, so ICON inverts it once at
-init and stores it as `lsq_pseudoinv`. icon4py had the flux stencils but not the coefficients,
-so the granule had nothing to reconstruct with.
+Second-order MIURA reconstructs the tracer on a local patch before integrating the upwind flux
+across an edge. The patch is the polygon of cell centres reached through `C2E2C`; the
+fit is `q = B a`, with `B` holding the distances from each neighbour to the patch origin. `B` is pure geometry, so ICON inverts it once at init and stores
+it as `lsq_pseudoinv`. icon4py had the flux stencils but not the coefficients.
 
 ## Appetite
 
-Three weeks. Init-time numpy, not a hot loop, so the cost is matching ICON's conventions.
+Three weeks. Init-time numpy, so the cost is matching ICON's conventions, not performance.
 
 ## Solution
 
 Port `lsq_compute_coeff_cell` from `mo_intp_coeffs_lsq_bln.f90`, merging the sphere and torus
-routines into one that dispatches on grid geometry (`match` on ICO / TORUS). Reuse the existing
-`C2E2C` neighbour table instead of porting `create_stencil_c3`, build `B` from
+routines and dispatching on grid geometry (`match` on ICO / TORUS). Reuse the existing `C2E2C`
+neighbour table instead of porting `create_stencil_c3`, build `B` from
 `minimum_image_separation` offsets so seam cells get the wrapped separation, invert with numpy's
-pseudo-inverse (`llsq_svd` is `True` in every EXCLAIM run script), and expose the result as
-`lsq_pseudoinv_1` and `lsq_pseudoinv_2` factories. Linear polynomial only — `llsq_lin_consv` is
-`False` everywhere, so the conservative-constraint path is skipped.
+pseudo-inverse (`llsq_svd` is `True` in every EXCLAIM run script), and expose
+`lsq_pseudoinv_1` / `lsq_pseudoinv_2` as interpolation-factory fields. Linear polynomial only:
+`llsq_lin_consv` is `False` everywhere.
 
-## Rabbit holes
+## Rabbit hole
 
 - **Intermediate state.** `lsq_dim_stencil`, `lsq_idx_c`, `lsq_qtmat_c`, `lsq_moments_hat` and
-  the rest are Fortran scratch and do not become icon4py interpolation fields. Porting them
-  because they exist in the Fortran is the kind of fidelity that costs a week.
+  the rest are Fortran scratch, not icon4py interpolation fields. Porting them because the
+  Fortran has them is the kind of fidelity that costs a week.

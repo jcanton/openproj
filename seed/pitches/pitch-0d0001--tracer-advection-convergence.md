@@ -24,28 +24,26 @@ shaped_by: nfarabullini
 ## Problem
 
 The horizontal advection granule runs second-order MIURA with a linear reconstruction over the
-`C2E2C` patch, and nothing we have demonstrates it is actually second order. A datatest against
-serialized ICON output only says "same numbers as Fortran at one resolution" — it passes just as
-happily if both codes are first order because of a mis-sized least-squares stencil or a halo one
-row too thin. Three unfinished pieces are entangled: the `lsq_pseudoinv_1` / `lsq_pseudoinv_2`
+`C2E2C` patch, and nothing demonstrates it is actually second order. A datatest against
+serialized ICON output only says "same numbers as Fortran at one resolution", and passes just as
+happily if both codes are first order from a mis-sized least-squares stencil or a halo one row
+too thin. Three unfinished pieces are entangled: the `lsq_pseudoinv_1` / `lsq_pseudoinv_2`
 coefficients, halo exchanges in the granule (`p_tracer_new` is the one field above 2e-5 under
-MPI, everything else at roundoff), and a convergence study on a doubly-periodic torus.
+MPI), and a torus convergence study.
 
 ## Appetite
 
-Six weeks. Started in cycle 36; the convergence study slipping into 37 is accepted, not a surprise.
+Six weeks from cycle 36; the study slipping into 37 is accepted, not a surprise.
 
 ## Solution
 
-Land the coefficients first, then the exchange, then the study. The study runs the
-`linear_2nd_order` MIURA flux on a torus at refinement factors 1/2/4/8 and fits a slope to the
-L1 and L-infinity errors against an analytic reference, with a tolerance band of 0.4 around the
-nominal order.
+Coefficients first, then the exchange, then the study: `linear_2nd_order` MIURA on a
+doubly-periodic torus at refinement factors 1/2/4/8, fitting a slope to the L1 and L-infinity
+errors against an analytic reference, tolerance band 0.4.
 
-## Rabbit holes
+## Rabbit hole
 
 - **Grid provenance.** Grids come from `icon-grid-generator`, not the downloaded
-  `TORUS_1000X1000_*` files: `domain_height` is 1039.23 for 100M/50M and 995.93 for 25M/12M,
-  because `fit_resolution()` adjusts the height when it converts a domain size into row and
-  column counts. Refining across that family compares two different continuous problems and the
-  fitted slope is meaningless.
+  `TORUS_1000X1000_*` files: `fit_resolution()` adjusts the height when it converts a domain
+  size into row and column counts, so `domain_height` is 1039.23 for 100M/50M and 995.93 for
+  25M/12M. Refining across that family compares two different continuous problems.
