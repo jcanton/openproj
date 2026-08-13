@@ -13,6 +13,12 @@ external URL.
 Checksums in `SHA256SUMS`. To update: download, re-run `shasum -a 256 *.js > SHA256SUMS`,
 and check the graph page still lays out the seed corpus left to right.
 
+**No editor library.** CodeMirror 5 was vendored and then removed: the spec's cut line already said
+CodeMirror saves nothing and costs two days, and vim keys are a preference, not a requirement. A
+plain `<textarea>` with a preview needs no dependency at all, and the 690 KB — a third of it the vim
+keymap — buys nothing for editing a handful of fields and one markdown body. Revisit when somebody
+is actually slowed down by the textarea, not before.
+
 **No Gantt library.** The timeline is hand-rolled SVG in `render.py`. Hatching for
 estimated and unowned spans, cycle boundary rules and per-bar explanations are all
 custom, the scheduler emits exact spans, and a library would be fought rather than

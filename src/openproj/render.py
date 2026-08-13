@@ -208,7 +208,7 @@ class Links(BaseModel):
 STATIC = Links()
 ROUTES = Links(table="/", detail="/detail", graph="/graph", timeline="/timeline", entity="/detail/")
 
-_MD = MarkdownIt("commonmark").enable("table")
+_MD = MarkdownIt("commonmark", {"html": False}).enable("table")
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
 
@@ -494,8 +494,156 @@ _DETAIL = """
   {% if e.problems %}<ul class="problems">
     {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc">{{ e.body|safe }}</div>
+  {% if editable %}
+  <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
+    <p class="editbar">
+      <button type="button" id="toggle">Edit</button>
+      <button type="button" id="preview" hidden>Preview</button>
+      <button type="button" id="save" hidden>Save</button>
+      <span id="state"></span>
+    </p>
+    <input type="hidden" name="base_commit" value="{{ base_commit }}">
+    <div id="fields" hidden>
+      {% for f in e.fields %}
+      <label>{{ f.name }}
+        {% if f.type == "status" %}
+        <select name="{{ f.name }}" data-type="text">
+          {% for s in statuses %}
+          <option {% if s == f.value %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+        {% elif f.type == "bool" %}
+        <input type="checkbox" name="{{ f.name }}" data-type="bool"
+               {% if f.value %}checked{% endif %}>
+        {% else %}
+        <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}"
+               {% if f.type == "date" %}placeholder="YYYY-MM-DD"{% endif %}>
+        {% endif %}
+      </label>
+      {% endfor %}
+      <label class="wide">body
+        <textarea name="body" rows="18">{{ e.raw_body }}</textarea>
+      </label>
+    </div>
+    <div id="conflict" hidden></div>
+  </form>
+  {% endif %}
 </article>
 {% endfor %}
+{% if editable %}<script>
+// Only what changed travels. Serialising the whole form would send back every
+// field as this tab last saw it, overwriting whatever somebody else changed while
+// it sat open — which is exactly what scoped compare-and-swap exists to prevent.
+const FORM = document.getElementById('edit');
+const ORIGINAL = {};
+const CONTROLS = [...FORM.querySelectorAll('[data-type]')];
+const BODY = FORM.querySelector('[name=body]');
+const STATE = document.getElementById('state');
+const DRAFT = `openproj:${FORM.dataset.id}`;
+
+function read(control) {
+  const type = control.dataset.type;
+  if (type === 'bool') return control.checked;
+  const raw = control.value.trim();
+  if (type === 'list') return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (type === 'number') {
+    if (raw === '') return null;
+    const n = Number(raw);
+    // A form returns strings, and `priority: soon` is valid YAML that breaks the
+    // scheduler on the next read. Refuse it here rather than commit it.
+    if (Number.isNaN(n)) throw new Error(`${control.name} must be a number, not "${raw}"`);
+    return n;
+  }
+  return raw === '' ? null : raw;
+}
+
+for (const control of CONTROLS) ORIGINAL[control.name] = JSON.stringify(read(control));
+const ORIGINAL_BODY = BODY.value;
+
+function changed() {
+  const fields = {};
+  for (const control of CONTROLS) {
+    const now = read(control);
+    if (JSON.stringify(now) !== ORIGINAL[control.name]) fields[control.name] = now;
+  }
+  return fields;
+}
+
+function show(editing) {
+  document.getElementById('fields').hidden = !editing;
+  document.querySelector('.doc').hidden = editing;
+  for (const id of ['preview', 'save']) document.getElementById(id).hidden = !editing;
+  document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
+}
+
+document.getElementById('toggle').onclick = () => {
+  const editing = document.getElementById('fields').hidden;
+  show(editing);
+  if (!editing) localStorage.removeItem(DRAFT);
+};
+
+document.getElementById('preview').onclick = async () => {
+  // A round trip, not a second markdown implementation: two renderers disagree
+  // eventually, and the one people trust would not be the one that gets committed.
+  const response = await fetch('/api/preview', {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({body: BODY.value}),
+  });
+  document.querySelector('.doc').innerHTML = (await response.json()).html;
+  show(false);
+};
+
+async function save() {
+  let fields;
+  try {
+    fields = changed();
+  } catch (error) {
+    STATE.textContent = error.message;
+    return;
+  }
+  const body = BODY.value === ORIGINAL_BODY ? null : BODY.value;
+  if (!Object.keys(fields).length && body === null) {
+    STATE.textContent = 'nothing changed';
+    return;
+  }
+
+  STATE.textContent = 'saving…';
+  const response = await fetch(`/api/entity/${FORM.dataset.id}`, {
+    method: 'PATCH', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      base_commit: FORM.querySelector('[name=base_commit]').value, fields, body,
+    }),
+  });
+  const answer = await response.json();
+  const box = document.getElementById('conflict');
+  if (response.status === 409) {
+    // Into its own box, never into the textarea: text pasted into the editing
+    // surface is text somebody saves back.
+    box.hidden = false;
+    box.textContent = answer.conflict;
+    STATE.textContent = 'not saved';
+    return;
+  }
+  if (!response.ok) { STATE.textContent = answer.detail || 'refused'; return; }
+  localStorage.removeItem(DRAFT);
+  location.reload();
+}
+
+document.getElementById('save').onclick = save;
+addEventListener('keydown', event => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); save(); }
+});
+
+// One Save is one commit, so an unsaved draft is the only thing git cannot get
+// back. It survives a closed tab and is dropped the moment it is committed.
+BODY.addEventListener('input', () => localStorage.setItem(DRAFT, BODY.value));
+const draft = localStorage.getItem(DRAFT);
+if (draft !== null && draft !== BODY.value) {
+  STATE.textContent = 'unsaved draft restored';
+  BODY.value = draft;
+  show(true);
+}
+</script>{% endif %}
 {% if not single %}<script>
 // One page, hash-routed: a stable shareable link per entity without a file each.
 // With no hash you get an index; with a hash you get exactly one document. Never
@@ -535,6 +683,47 @@ dt.derived, dd.derived { font-style: italic; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2, rgba(127,127,127,.12)); padding: 0 .25em; }
 """
+
+
+# What a person owns, in the order they think about it. Everything not named here
+# is either derived (start, end, blocks, any rollup) or authoritative (id), and
+# neither belongs in a form: a derived value typed by hand is a lie the next
+# reschedule contradicts, and an edited id orphans the file from every reference.
+EDITABLE: dict[str, str] = {
+    "title": "text",
+    "status": "status",
+    "owner": "text",
+    "assignees": "list",
+    "reviewers": "list",
+    "review_waived": "bool",
+    "assigned_on": "date",
+    "priority": "number",
+    "cycle": "number",
+    "parent": "text",
+    "depends_on": "list",
+    "tags": "list",
+    "prs": "list",
+    "appetite_weeks": "number",
+    "shaped_by": "text",
+    "effort_weeks": "number",
+}
+STATUSES = ("todo", "wip", "done", "shelved")
+
+
+def _editable_for(entity: Entity) -> list[dict]:
+    """The fields this kind actually has, with the type a form must coerce back to."""
+    return [
+        {
+            "name": name,
+            "type": kind,
+            "value": getattr(entity, name),
+            "text": ", ".join(str(v) for v in getattr(entity, name))
+            if kind == "list"
+            else ("" if getattr(entity, name) is None else getattr(entity, name)),
+        }
+        for name, kind in EDITABLE.items()
+        if name in type(entity).model_fields
+    ]
 
 
 def _links(ids: list[str], index: Index, links: Links = STATIC) -> str:
@@ -583,7 +772,12 @@ def _detail_rows(index: Index) -> list[dict]:
     return rows
 
 
-def render_detail(index: Index, links: Links = STATIC, only: str | None = None) -> str:
+def render_detail(
+    index: Index,
+    links: Links = STATIC,
+    only: str | None = None,
+    base_commit: str | None = None,
+) -> str:
     """Every entity, or exactly one.
 
     The server serves one per route; the static build serves them all in a page
@@ -592,7 +786,17 @@ def render_detail(index: Index, links: Links = STATIC, only: str | None = None) 
     rows = _detail_rows(index)
     if only is not None:
         rows = [row for row in rows if row["id"] == only]
-    body = _ENV.from_string(_DETAIL).render(entities=rows, single=only is not None, links=links)
+        for row in rows:
+            row["fields"] = _editable_for(index.entities[row["id"]])
+            row["raw_body"] = index.entities[row["id"]].body
+    body = _ENV.from_string(_DETAIL).render(
+        entities=rows,
+        single=only is not None,
+        links=links,
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        statuses=STATUSES,
+    )
     return _page("openproj — detail", body, _DETAIL_STYLE, links)
 
 
@@ -603,6 +807,16 @@ def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> s
     return _ENV.from_string(_SHELL).render(
         title=title, content=Markup(content), style=Markup(style), links=links
     )
+
+
+def preview_html(body: str) -> str:
+    """Markdown rendered for the preview pane, with HTML disabled.
+
+    markdown-it-py leaves raw HTML alone by default. The body is written by
+    signed-in members and rendered back to every reader, so a script tag in a
+    shaping doc would run in everybody's browser.
+    """
+    return MarkdownIt("commonmark", {"html": False}).render(body)
 
 
 def render_table(index: Index, links: Links = STATIC) -> str:

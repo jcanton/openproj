@@ -83,6 +83,26 @@ def _entities_at(store: Store, commit: str) -> list[Entity]:
     ]
 
 
+# A form returns strings, and `priority: soon` is valid YAML that parses fine and
+# then breaks the scheduler on the next read. The client coerces; this is the
+# server refusing to take its word for it.
+_NUMERIC = ("priority", "cycle", "appetite_weeks", "effort_weeks")
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on")
+
+
+def _reject_bad_types(fields: dict) -> None:
+    for name in _NUMERIC:
+        value = fields.get(name)
+        if value is not None and not isinstance(value, int | float) or isinstance(value, bool):
+            if name in fields and fields[name] is not None:
+                raise HTTPException(422, f"{name} must be a number, not {fields[name]!r}")
+    for name in _LISTS:
+        if name in fields and not isinstance(fields[name], list):
+            raise HTTPException(422, f"{name} must be a list, not {fields[name]!r}")
+    if "review_waived" in fields and not isinstance(fields["review_waived"], bool):
+        raise HTTPException(422, "review_waived must be true or false")
+
+
 def _directory_for(entity_id: str) -> str:
     """The directory an id belongs in, or a refusal. The one place an id becomes
     part of a path — everything else must come through here."""
@@ -196,10 +216,26 @@ def create_app(
 
     @app.get("/detail/{entity_id}", response_class=HTMLResponse)
     def detail(entity_id: str) -> HTMLResponse:
-        index = index_now()[1]
+        commit, index = index_now()
         if entity_id not in index.entities:
             raise HTTPException(404, f"no entity {entity_id!r}")
-        return page(render.render_detail(index, render.ROUTES, only=entity_id))
+        # The page carries the commit it was rendered at, so a save is compared
+        # against what the person actually saw rather than against whatever HEAD
+        # has become while the tab sat open.
+        return page(
+            render.render_detail(index, render.ROUTES, only=entity_id, base_commit=commit)
+        )
+
+    @app.post("/api/preview")
+    async def preview(request: Request) -> JSONResponse:
+        """Render markdown the same way the page will, on the server.
+
+        A second markdown implementation in JavaScript would eventually disagree
+        with this one, and the renderer people trust would not be the one whose
+        output gets committed.
+        """
+        payload = await request.json()
+        return JSONResponse({"html": render.preview_html(payload.get("body") or "")})
 
     @app.get("/healthz")
     def healthz() -> dict:
@@ -246,6 +282,7 @@ def create_app(
         original = store.read(base, path)
 
         fields = {k: v for k, v in (payload.get("fields") or {}).items() if k != "id"}
+        _reject_bad_types(fields)
         content = patch_text(original, fields, body)
         written = store.write(
             path=path,
