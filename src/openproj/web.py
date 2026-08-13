@@ -32,6 +32,7 @@ import asyncio
 import json
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -154,6 +155,17 @@ def create_app(
     store = Store(Path(repo))
     app = FastAPI(title="openproj")
     watchers: set[asyncio.Queue] = set()
+    # An event stream is a request that never ends, and uvicorn waits for in-flight
+    # requests before it exits — so one open page kept Ctrl-C from ever finishing
+    # and the process had to be killed. The stream watches this and stops itself.
+    closing = asyncio.Event()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        closing.set()
+
+    app.router.lifespan_context = lifespan
 
     def index_now():
         commit = store.head()
@@ -368,8 +380,14 @@ def create_app(
                 # A comment, not an event: it flushes the headers so a client knows
                 # the stream is live, without looking like something happened.
                 yield b": connected\n\n"
-                while True:
-                    event = await queue.get()
+                while not closing.is_set():
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15)
+                    except TimeoutError:
+                        # A keepalive doubles as the check that lets this loop
+                        # notice a shutdown and a dropped client at all.
+                        yield b": keepalive\n\n"
+                        continue
                     yield f"data: {json.dumps(event)}\n\n".encode()
             finally:
                 watchers.discard(queue)

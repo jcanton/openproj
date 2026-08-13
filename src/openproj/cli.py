@@ -94,7 +94,15 @@ def _serve(args) -> int:
     # proxy_headers matters behind Cloud Run: TLS is terminated upstream, and
     # without it the app believes it is serving plain HTTP and stops marking the
     # session cookie Secure.
-    uvicorn.run(app, host=args.host, port=args.port, proxy_headers=True)
+    # A bounded graceful shutdown as the backstop: a client that ignores the
+    # stream ending must not keep Ctrl-C waiting forever.
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        proxy_headers=True,
+        timeout_graceful_shutdown=5,
+    )
     return 0
 
 

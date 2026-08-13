@@ -256,3 +256,23 @@ def test_the_detail_page_links_dependencies_both_ways(demo_rendered: tuple[Path,
     assert "Blocked by" in body
     assert "Blocks" in body
     assert 'href="detail.html#task-0d1001"' in body
+
+
+def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
+    """A login has no comma in it.
+
+    An early version of the table wrote a whole comma-separated string into a list
+    field, and the picker then offered `jcanton, halungge` as though it were one
+    person — so garbage already in the corpus became garbage suggested to whoever
+    edited next. The write path is fixed; this stops the spread either way.
+    """
+    from openproj.model import Task
+    from openproj.render import _suggestions
+
+    polluted = dict(seed_index.entities)
+    polluted["task-ffffff"] = Task(
+        id="task-ffffff", kind="task", title="Bad", reviewers=["jcanton, halungge"]
+    )
+    suggestions = _suggestions(seed_index.model_copy(update={"entities": polluted}))
+
+    assert all("," not in person["value"] for person in suggestions["people"])

@@ -396,8 +396,10 @@ function draw() {
   const keys = ['id','title','status','owner','reviewers','priority','cycle','size',
                 'start','end','blocked_by','prs','tags'];
   const sort = params.get('sort') || 'id';
+  const descending = params.get('desc') === '1';
   const rows = Object.values(DATA.rows).filter(matches)
     .sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? '')));
+  if (descending) rows.reverse();
   tbody.innerHTML = rows.map(row =>
     `<tr data-id="${row.id}" title="${(row.problems || []).join(' · ')}">` +
     keys.map(k => cell(row, k)).join('') + '</tr>').join('');
@@ -426,7 +428,10 @@ const LABELS = DATA.labels;
 function coerce(type, raw) {
   raw = raw.trim();
   if (type === 'bool') return raw === 'true';
-  if (type === 'list') return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  // Deduplicated: picking a name already in the list is a slip, not an intent to
+  // have it twice, and a duplicate reviewer reads as two people.
+  if (type === 'list')
+    return raw ? [...new Set(raw.split(',').map(s => s.trim()).filter(Boolean))] : [];
   if (type === 'number') {
     if (raw === '') return null;
     const n = Number(raw);
@@ -493,9 +498,12 @@ if (EDITABLE) {
     // appear in one of the two places are suggestions nobody relies on.
     if (suggest) attachSuggest(input);
     input.focus();
-    // Select the whole value: a double-click leaves the caret where it landed, so
-    // typing interleaves into the existing text and matches nothing.
-    if (input.select) input.select();
+    // A single-value cell selects everything, because a double-click leaves the
+    // caret where it landed and typing would interleave. A list must NOT: typing
+    // over a selected "jcanton, halungge" deletes both reviewers to write one.
+    if (EDITABLE[field] !== 'list' && input.select) input.select();
+    else if (input.setSelectionRange)
+      input.setSelectionRange(input.value.length, input.value.length);
 
     let abandoned = false;
     input.onblur = () => {
@@ -518,7 +526,13 @@ document.getElementById('q').addEventListener('input', e => update('q', e.target
 for (const select of document.querySelectorAll('select[data-field]'))
   select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
 for (const th of document.querySelectorAll('th[data-sort]'))
-  th.addEventListener('click', () => update('sort', th.dataset.sort));
+  th.addEventListener('click', () => {
+    // Clicking the column you are already sorted by reverses it, which is what
+    // every table anybody has used does.
+    const already = (params.get('sort') || 'id') === th.dataset.sort;
+    params.set('sort', th.dataset.sort);
+    update('desc', already && params.get('desc') !== '1' ? '1' : '');
+  });
 draw();
 </script>
 """
@@ -973,7 +987,10 @@ function read(control) {
   const type = control.dataset.type;
   if (type === 'bool') return control.checked;
   const raw = control.value.trim();
-  if (type === 'list') return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  // Deduplicated: picking a name already in the list is a slip, not an intent to
+  // have it twice, and a duplicate reviewer reads as two people.
+  if (type === 'list')
+    return raw ? [...new Set(raw.split(',').map(s => s.trim()).filter(Boolean))] : [];
   if (type === 'number') {
     if (raw === '') return null;
     const n = Number(raw);
@@ -1105,9 +1122,9 @@ article.entity {
 }
 #grip::before {
   content: ""; position: absolute; inset: 0 4px; background: var(--line);
-  opacity: 0; transition: opacity .15s;
+  transition: background .15s;
 }
-#grip:hover::before, #grip.dragging::before { opacity: 1; }
+#grip:hover::before, #grip.dragging::before { background: var(--accent); }
 article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
 .meta { color: var(--muted); margin-top: 0; }
 .back { margin: 0 0 .5rem; font-size: 12px; }
@@ -1375,6 +1392,12 @@ def _suggestions(index: Index) -> dict:
             value = getattr(entity, name, None)
             people.update(value if isinstance(value, list) else [value] if value else [])
         tags.update(entity.tags)
+    # A login has no comma and no space in it. An early version of the table wrote
+    # a whole comma-separated string into a list field, and the picker then offered
+    # "jcanton, halungge" as if it were one person — garbage in the corpus became
+    # garbage suggested to the next person, which is how it spreads.
+    people = {p for p in people if p and "," not in p and " " not in p}
+    tags = {g for g in tags if g and "," not in g}
     # {value, label}: the value is what gets written to the file, the label is the
     # human hint beside it. An id typed from memory is a dangling reference the
     # validator rejects after the save; offered, it cannot be mistyped at all.
