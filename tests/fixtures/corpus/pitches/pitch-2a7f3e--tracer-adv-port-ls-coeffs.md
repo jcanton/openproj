@@ -13,7 +13,7 @@ assignees:
   - DropD
 assigned_on: null
 cycle: 34
-priority: 1
+priority: high
 depends_on: []
 tags:
   - greenline

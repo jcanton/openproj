@@ -3,12 +3,12 @@ id: proj-7e57a0
 kind: project
 title: Testing
 parent: null
-status: wip
+status: in_progress
 owner: jcanton
 reviewers: [msimberg]
 assigned_on: null
 cycle: null
-priority: 2
+priority: medium
 depends_on: []
 tags: [synthetic]
 prs: []

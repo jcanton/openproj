@@ -3,14 +3,14 @@ id: task-0b1002
 kind: task
 title: Port turbulence surface
 parent: pitch-0b0001
-status: wip
+status: in_progress
 owner: yiluchen1066
 assignees: [yiluchen1066, jcanton]
 reviewers: [jcanton, halungge]
 review_waived: false
 assigned_on: 2026-07-13
 cycle: 36
-priority: 1
+priority: high
 depends_on: [task-0b1001]
 tags: [tmx, turbulence, surface, sea-ice, gt4py, verification]
 prs: ["C2SM/icon4py#1280"]

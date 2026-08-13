@@ -3,14 +3,14 @@ id: pitch-0e0001
 kind: pitch
 title: Radiation port
 parent: proj-000001
-status: todo
+status: ready
 owner: halungge
 assignees: [halungge, kotsaloscv]
 reviewers: [jcanton, tehrengruber]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 1
+priority: high
 depends_on: [pitch-0a0001]
 tags: [radiation, rte-rrtmgp, aes-physics, gt4py, port]
 prs: []

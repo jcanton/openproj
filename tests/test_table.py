@@ -316,11 +316,11 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     only a copy is the point of `test_the_server_refusal_is_shown_and_not_swallowed`.
     """
     for field, gate in (
-        ("owner", "todo"),
-        ("reviewers", "todo"),
-        ("appetite_weeks", "todo"),
-        ("shaped_by", "todo"),
-        ("assigned_on", "wip"),
+        ("owner", "ready"),
+        ("reviewers", "ready"),
+        ("appetite_weeks", "ready"),
+        ("shaped_by", "ready"),
+        ("assigned_on", "in_progress"),
         ("prs", "done"),
     ):
         assert f'data-required-from="{gate}"' in control(new_page, field), field
@@ -510,14 +510,14 @@ def test_one_cell_edit_is_one_commit_of_one_line(client: TestClient, repo_path: 
     base = head(client)
     before = file_at(repo_path, base, PATH)
 
-    commit = save(client, TASK, {"priority": 1}, base=base).json()["commit"]
+    commit = save(client, TASK, {"priority": "high"}, base=base).json()["commit"]
     after = file_at(repo_path, commit, PATH)
 
     assert [
         (was, now)
         for was, now in zip(before.splitlines(), after.splitlines(), strict=True)
         if was != now
-    ] == [("priority: 2", "priority: 1")]
+    ] == [("priority: medium", "priority: high")]
     assert commit_at(repo_path, commit).author.name == "ann"
 
 
@@ -526,14 +526,14 @@ def test_editing_another_row_from_the_same_page_is_invisible(client: TestClient)
     page: two people change two entities and neither is told anything. If this were
     a conflict, a table would be unusable with more than one person in it."""
     stale = head(client)
-    save(client, OTHER, {"priority": 1})
+    save(client, OTHER, {"priority": "high"})
 
-    response = save(client, TASK, {"priority": 1}, base=stale)
+    response = save(client, TASK, {"priority": "high"}, base=stale)
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "retried"
     assert response.json()["conflict"] is None
-    assert index_of(client)["entities"][OTHER]["priority"] == 1  # not clobbered
+    assert index_of(client)["entities"][OTHER]["priority"] == "high"  # not clobbered
 
 
 def test_two_tabs_editing_one_cell_is_a_409_that_writes_nothing(
@@ -564,16 +564,16 @@ def test_a_page_that_never_advances_its_base_collides_with_itself(client: TestCl
     conclude the tool cannot be trusted.
     """
     stale = head(client)
-    assert save(client, TASK, {"priority": 1}, base=stale).status_code == 200
+    assert save(client, TASK, {"priority": "high"}, base=stale).status_code == 200
 
-    assert save(client, TASK, {"priority": 3}, base=stale).status_code == 409
+    assert save(client, TASK, {"priority": "low"}, base=stale).status_code == 409
 
 
 NEW_TASK = {
     "kind": "task",
     "title": "Per-field delta tolerances",
     "parent": PITCH,
-    "status": "todo",
+    "status": "ready",
     "owner": "ann",
     "reviewers": ["bo"],
     "effort_weeks": 1.0,
@@ -618,7 +618,7 @@ def test_a_create_missing_its_gated_fields_comes_back_as_problems(
     travel: a warning listed beside the reasons is indistinguishable from one, and
     a person who fixes it and is refused again learns the messages are noise."""
     base = git_head(repo_path)
-    response = create(client, {"kind": "task", "title": "A half-formed idea", "status": "todo"})
+    response = create(client, {"kind": "task", "title": "A half-formed idea", "status": "ready"})
 
     assert response.status_code == 422
     assert {p["field"] for p in response.json()["problems"]} >= {
@@ -640,7 +640,7 @@ def test_a_create_that_waives_review_is_accepted(client: TestClient):
             "kind": "task",
             "title": "Read the IPDPS 2014 paper",
             "parent": PITCH,
-            "status": "todo",
+            "status": "ready",
             "owner": "cy",
             "review_waived": True,
             "effort_weeks": 0.5,
@@ -655,10 +655,10 @@ def test_a_create_racing_another_write_is_still_one_commit(client: TestClient):
     at a path nobody else can have touched, so a stale base is retried rather than
     refused — but it is still compared, not assumed."""
     stale = head(client)
-    save(client, TASK, {"priority": 1})
+    save(client, TASK, {"priority": "high"})
 
     response = create(client, NEW_TASK, base=stale)
 
     assert response.status_code == 201
     assert response.json()["outcome"] in ("committed", "retried")
-    assert index_of(client)["entities"][TASK]["priority"] == 1  # not rolled back
+    assert index_of(client)["entities"][TASK]["priority"] == "high"  # not rolled back

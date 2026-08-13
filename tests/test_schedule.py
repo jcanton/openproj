@@ -143,7 +143,7 @@ def test_step4_a_missing_size_falls_back_to_the_default_and_is_marked_estimated(
 
 def test_step5_ordering_is_by_priority_then_id():
     """Order is only observable through capacity: all three want the same worker."""
-    entities = [task("aaa001"), task("aaa002"), task("aaa003", priority=1)]
+    entities = [task("aaa001"), task("aaa002"), task("aaa003", priority="high")]
     spans, _ = run(entities)
     assert spans["task-aaa003"].start == MONDAY
     assert spans["task-aaa001"].start == date(2026, 8, 24)
@@ -225,9 +225,9 @@ def test_regression_children_are_ordered_before_their_parent():
     containment edges can keep it from being visited first — and a parent
     visited first has no child spans to build its own span from."""
     entities = [
-        pitch("bbb001", owner=None, priority=1),
-        task("aaa001", priority=3, parent="pitch-bbb001"),
-        task("aaa002", owner="bo", priority=3, parent="pitch-bbb001", size=2.0),
+        pitch("bbb001", owner=None, priority="high"),
+        task("aaa001", priority="low", parent="pitch-bbb001"),
+        task("aaa002", owner="bo", priority="low", parent="pitch-bbb001", size=2.0),
     ]
     spans, _ = run(entities)
     assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
@@ -341,14 +341,14 @@ def dags(draw: st.DrawFn) -> list[Entity]:
                 owner=draw(st.sampled_from([*WORKERS, None])),
                 assignees=draw(st.lists(st.sampled_from(WORKERS), max_size=1, unique=True)),
                 effort_weeks=draw(st.sampled_from([None, 0.1, 0.5, 1.0, 2.0])),
-                priority=draw(st.integers(1, 3)),
+                priority=draw(st.sampled_from(["high", "medium", "low"])),
                 parent=PARENT_ID if draw(st.booleans()) else None,
                 assigned_on=draw(st.sampled_from([None, MONDAY, MONDAY + timedelta(days=10)])),
                 depends_on=[f"task-{d:06x}" for d in deps],
             )
         )
     if any(t.parent for t in tasks):
-        tasks.append(Pitch(id=PARENT_ID, kind="pitch", title="generated parent", priority=2))
+        tasks.append(Pitch(id=PARENT_ID, kind="pitch", title="generated parent", priority="medium"))
     return tasks
 
 

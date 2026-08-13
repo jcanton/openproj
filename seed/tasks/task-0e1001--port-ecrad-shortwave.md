@@ -3,14 +3,14 @@ id: task-0e1001
 kind: task
 title: Port ecRad shortwave
 parent: pitch-0e0001
-status: todo
+status: ready
 owner: kotsaloscv
 assignees: [kotsaloscv]
 reviewers: [halungge, tehrengruber]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 1
+priority: high
 depends_on: []
 tags: [radiation, shortwave, two-stream, gt4py]
 prs: []

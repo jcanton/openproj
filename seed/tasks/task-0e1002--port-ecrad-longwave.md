@@ -3,14 +3,14 @@ id: task-0e1002
 kind: task
 title: Port ecRad longwave
 parent: pitch-0e0001
-status: todo
+status: ready
 owner: yiluchen1066
 assignees: [yiluchen1066]
 reviewers: [kotsaloscv, halungge]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 2
+priority: medium
 depends_on: [task-0e1001]
 tags: [radiation, longwave, no-scatter-solver, planck-source, gt4py]
 prs: []

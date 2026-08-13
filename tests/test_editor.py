@@ -141,13 +141,13 @@ def test_a_save_changes_one_line_and_leaves_the_file_alone(
 ):
     response = client.patch(
         f"/api/entity/{TASK}",
-        json={"base_commit": base_of(page), "fields": {"priority": 1}, "body": None},
+        json={"base_commit": base_of(page), "fields": {"priority": "high"}, "body": None},
     )
     assert response.status_code == 200
 
     stored = pygit2.Repository(str(repo_path))[response.json()["commit"]].tree[PATH]
     text = stored.data.decode("utf-8")
-    assert "priority: 1" in text
+    assert "priority: high" in text
     assert "owner: ann" in text  # untouched
     assert text.count("---") >= 2
 
@@ -155,13 +155,13 @@ def test_a_save_changes_one_line_and_leaves_the_file_alone(
 def test_a_number_typed_as_a_word_is_refused_rather_than_committed(
     client: TestClient, repo_path: Path, page: str
 ):
-    """A form returns strings. `priority: soon` parses as YAML perfectly well and
-    then breaks the scheduler on the next read, so the coercion has to fail here
-    rather than in the file."""
+    """A form returns strings. `cycle: soon` parses as YAML perfectly well and then
+    breaks the timeline on the next read, so the coercion has to fail here rather
+    than in the file. Priority is a closed set now, so it cannot be typed wrong."""
     before = str(pygit2.Repository(str(repo_path)).references["refs/heads/main"].target)
     response = client.patch(
         f"/api/entity/{TASK}",
-        json={"base_commit": base_of(page), "fields": {"priority": "soon"}, "body": None},
+        json={"base_commit": base_of(page), "fields": {"cycle": "soon"}, "body": None},
     )
     assert response.status_code == 422
     assert str(pygit2.Repository(str(repo_path)).references["refs/heads/main"].target) == before

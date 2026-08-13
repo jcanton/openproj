@@ -3,7 +3,7 @@ id: pitch-1b3f9a
 kind: pitch
 title: MPI on CI verify with serial
 parent: null
-status: todo
+status: ready
 owner: msimberg
 reviewers: [jcanton]
 appetite_weeks: 1
@@ -11,7 +11,7 @@ shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees: []
 assigned_on: null
 cycle: null
-priority: 3
+priority: low
 depends_on: []
 tags:
   - greenline
@@ -32,7 +32,7 @@ The only source is row `9b` of the `[Greenline] Open projects TABLE`
 > | 9b | MPI on CI verify with serial | Low | | | | | | Get the tests to verify with mpitask1 instead of mpitask2/4 |
 
 Every other cell of the row is empty: no Status, no Who, no Depends-on, no PR, no Shape doc.
-The blank Status cell reads as not started, hence `status: todo`. Priority cell reads `Low`.
+The blank Status cell reads as not started, hence `status: ready`. Priority cell reads `Low`.
 
 ## Scope, as far as the source defines it
 

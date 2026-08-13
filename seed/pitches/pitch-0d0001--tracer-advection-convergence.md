@@ -3,14 +3,14 @@ id: pitch-0d0001
 kind: pitch
 title: Tracer advection convergence
 parent: proj-000001
-status: wip
+status: in_progress
 owner: OngChia
 assignees: [OngChia, nfarabullini, jcanton]
 reviewers: [jcanton, halungge]
 review_waived: false
 assigned_on: 2026-06-22
 cycle: 36
-priority: 1
+priority: high
 depends_on: []
 tags: [greenline, warm-bubble, tracer-advection, miura, torus, convergence]
 prs: ["C2SM/icon4py#1399"]

@@ -47,7 +47,8 @@ def a_family() -> list[Entity]:
     """One project, one pitch under it, two tasks under the pitch, one dependency."""
     return [
         a_project("proj-a00001", "Greenline", owner="alice", reviewers=["bob"]),
-        a_pitch("pitch-b00001", "Halo exchange", parent="proj-a00001", appetite_weeks=2.0),
+        a_pitch("pitch-b00001", "Halo exchange", parent="proj-a00001", appetite_weeks=2.0,
+                status="ready"),
         a_task("task-c00001", "First", parent="pitch-b00001", owner="alice", effort_weeks=1.0),
         a_task(
             "task-c00002",
@@ -188,14 +189,14 @@ def test_the_predicate_facet_is_the_one_predicate_list(family_index: Index):
 
 def test_facets_are_sorted_distinct_values_as_strings():
     entities = [
-        a_task("task-c00001", owner="bob", priority=3, cycle=36, tags=["ci", "gpu"]),
-        a_task("task-c00002", owner="alice", priority=1, cycle=36, tags=["gpu"]),
-        a_task("task-c00003", owner="alice", priority=1, cycle=None, tags=[]),
+        a_task("task-c00001", owner="bob", priority="low", cycle=36, tags=["ci", "gpu"]),
+        a_task("task-c00002", owner="alice", priority="high", cycle=36, tags=["gpu"]),
+        a_task("task-c00003", owner="alice", priority="high", cycle=None, tags=[]),
     ]
     facets = build_index(entities, CONFIG, TODAY).facets
 
     assert facets["owner"] == ["alice", "bob"]
-    assert facets["priority"] == ["1", "3"]
+    assert facets["priority"] == ["high", "low"]
     assert facets["cycle"] == ["36"]
     assert facets["tags"] == ["ci", "gpu"]
     assert facets["kind"] == ["task"]
@@ -286,13 +287,14 @@ def test_values_within_one_field_are_ored():
 
 def test_fields_are_anded_across():
     entities = [
-        a_task("task-c00001", owner="alice", status="todo"),
-        a_task("task-c00002", owner="alice", status="wip"),
-        a_task("task-c00003", owner="bob", status="wip"),
+        a_task("task-c00001", owner="alice", status="ready"),
+        a_task("task-c00002", owner="alice", status="in_progress"),
+        a_task("task-c00003", owner="bob", status="in_progress"),
     ]
     index = build_index(entities, CONFIG, TODAY)
 
-    assert apply_filters(index, {"owner": ["alice"], "status": ["wip"]}, "") == ["task-c00002"]
+    filters = {"owner": ["alice"], "status": ["in_progress"]}
+    assert apply_filters(index, filters, "") == ["task-c00002"]
 
 
 def test_a_list_valued_field_matches_if_any_element_matches():
@@ -317,7 +319,7 @@ def test_the_blocked_predicate_needs_a_blocker_that_is_neither_done_nor_shelved(
     entities = [
         a_task("task-c00001", status="done"),
         a_task("task-c00002", status="shelved"),
-        a_task("task-c00003", status="todo"),
+        a_task("task-c00003", status="ready"),
         a_task("task-c00004", depends_on=["task-c00001", "task-c00002"]),
         a_task("task-c00005", depends_on=["task-c00003"]),
     ]
@@ -328,7 +330,7 @@ def test_the_blocked_predicate_needs_a_blocker_that_is_neither_done_nor_shelved(
 
 def test_the_unblocked_predicate_is_the_complement_of_blocked():
     entities = [
-        a_task("task-c00001", status="todo"),
+        a_task("task-c00001", status="ready"),
         a_task("task-c00002", depends_on=["task-c00001"]),
         a_task("task-c00003"),
     ]
@@ -356,16 +358,17 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     """Severity-agnostic on purpose: a grandfathered rule reports a warning, and a
     field the team has decided it wants is still missing whichever way it reports."""
     entities = [
-        a_project("proj-a00001", owner="alice", reviewers=["bob"], status="wip", assigned_on=TODAY),
+        a_project("proj-a00001", owner="alice", reviewers=["bob"], status="in_progress",
+            assigned_on=TODAY),
         a_task(
             "task-c00001",
             parent="proj-a00001",
-            status="todo",
+            status="ready",
             owner="alice",
             reviewers=["bob"],
             effort_weeks=1.0,
         ),
-        a_task("task-c00002", parent="proj-a00001", status="todo"),
+        a_task("task-c00002", parent="proj-a00001", status="ready"),
     ]
     index = build_index(entities, CONFIG, TODAY)
 
@@ -392,7 +395,7 @@ def test_every_computed_predicate_is_filterable(family_index: Index):
 
 def test_predicates_are_ored_within_the_field():
     entities = [
-        a_task("task-c00001", status="todo"),
+        a_task("task-c00001", status="ready"),
         a_task("task-c00002", depends_on=["task-c00001"]),
         a_task("task-c00003", review_waived=True),
     ]
@@ -455,7 +458,7 @@ def test_the_seed_diamond_reverses_into_blocks(seed_index: Index):
 def test_task_2b6c94_is_unblocked_because_its_only_blocker_is_done(seed_index: Index):
     """The corpus's live-item-behind-finished-work case. Reading `depends_on`
     non-empty as "blocked" would park this task behind work that is already over."""
-    assert seed_index.entities["task-2b6c94"].status == "todo"
+    assert seed_index.entities["task-2b6c94"].status == "ready"
     assert seed_index.blocked_by["task-2b6c94"] == ["task-31f6c4"]
     assert seed_index.entities["task-31f6c4"].status == "done"
 
@@ -473,8 +476,8 @@ def test_the_seed_blocked_set_is_exactly_the_live_diamond(seed_index: Index):
 
 def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
     assert seed_index.facets["kind"] == ["pitch", "project", "task"]
-    assert seed_index.facets["status"] == ["done", "shelved", "todo", "wip"]
-    assert seed_index.facets["priority"] == ["1", "2", "3"]
+    assert seed_index.facets["status"] == ["done", "in_progress", "ready", "shelved"]
+    assert seed_index.facets["priority"] == ["high", "low", "medium"]
     assert seed_index.facets["cycle"] == ["28", "34", "35", "36"]
     assert seed_index.facets["project"] == ["proj-7e57a0"]
     assert seed_index.facets["owner"] == [

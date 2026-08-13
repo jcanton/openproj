@@ -50,9 +50,9 @@ def entity(
     *,
     id: str = "task-c00001",
     title: str = "Reproduce the equator artefact",
-    status: str = "todo",
+    status: str = "ready",
     owner: str = "ann",
-    priority: int = 2,
+    priority: str = "medium",
     body: str = BODY,
 ) -> str:
     return (
@@ -155,7 +155,7 @@ def test_the_repository_stays_bare_and_no_index_file_is_ever_created(store: Stor
     """
     store.write(
         path=PATH,
-        content=entity(status="wip"),
+        content=entity(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -230,7 +230,7 @@ def test_a_write_against_the_current_head_is_committed_directly(store: Store, re
     base = store.head()
     result = store.write(
         path=PATH,
-        content=entity(status="wip"),
+        content=entity(status="in_progress"),
         base_commit=base,
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -250,7 +250,7 @@ def test_a_stale_base_whose_path_nobody_touched_is_retried_silently(store: Store
     stale = store.head()
     theirs = store.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="wip"),
+        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -258,7 +258,7 @@ def test_a_stale_base_whose_path_nobody_touched_is_retried_silently(store: Store
 
     mine = store.write(
         path=PATH,
-        content=entity(priority=1),
+        content=entity(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -267,8 +267,9 @@ def test_a_stale_base_whose_path_nobody_touched_is_retried_silently(store: Store
     assert mine.outcome == "retried"
     assert mine.conflict is None
     assert str(history(repo_path)[0].parents[0].id) == theirs.commit
-    assert parse_text(store.read(mine.commit, PATH), PATH).priority == 1
-    assert parse_text(store.read(mine.commit, OTHER), OTHER).status == "wip"  # not clobbered
+    assert parse_text(store.read(mine.commit, PATH), PATH).priority == "high"
+    # not clobbered
+    assert parse_text(store.read(mine.commit, OTHER), OTHER).status == "in_progress"
 
 
 def test_two_edits_to_different_frontmatter_keys_of_one_file_are_merged(store: Store):
@@ -278,7 +279,7 @@ def test_two_edits_to_different_frontmatter_keys_of_one_file_are_merged(store: S
     stale = store.head()
     store.write(
         path=PATH,
-        content=entity(status="wip"),
+        content=entity(status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00001: status todo -> wip",
@@ -286,7 +287,7 @@ def test_two_edits_to_different_frontmatter_keys_of_one_file_are_merged(store: S
 
     mine = store.write(
         path=PATH,
-        content=entity(priority=1),
+        content=entity(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -295,7 +296,7 @@ def test_two_edits_to_different_frontmatter_keys_of_one_file_are_merged(store: S
     assert mine.outcome == "merged"
     assert mine.conflict is None
     merged = parse_text(store.read(mine.commit, PATH), PATH)
-    assert (merged.status, merged.priority) == ("wip", 1)
+    assert (merged.status, merged.priority) == ("in_progress", "high")
     assert merged.owner == "ann"  # untouched by both, so it survives unchanged
 
 
@@ -410,7 +411,7 @@ def test_the_author_is_the_person_and_the_committer_is_the_bot(store: Store, rep
     free, while any future push credential stays a bot that no human shares."""
     result = store.write(
         path=PATH,
-        content=entity(status="wip"),
+        content=entity(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -425,7 +426,7 @@ def test_the_author_is_the_person_and_the_committer_is_the_bot(store: Store, rep
 def test_git_log_reads_back_as_the_audit_trail(store: Store, repo_path: Path):
     """Asserted through git itself, because the claim being made is about what a
     person gets from a terminal, not about what pygit2 returns."""
-    for author, status in (("ann", "wip"), ("bo", "done"), ("cy", "shelved")):
+    for author, status in (("ann", "in_progress"), ("bo", "done"), ("cy", "shelved")):
         store.write(
             path=PATH,
             content=entity(status=status),
@@ -450,14 +451,14 @@ def test_a_retried_write_still_records_the_person_who_asked_for_it(store: Store,
     stale = store.head()
     store.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="wip"),
+        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00002: status todo -> wip",
     )
     mine = store.write(
         path=PATH,
-        content=entity(priority=1),
+        content=entity(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -495,7 +496,7 @@ def test_the_next_write_lands_on_top_of_an_external_commit_not_over_it(
 
     mine = store.write(
         path=PATH,
-        content=entity(status="wip"),
+        content=entity(status="in_progress"),
         base_commit=stale,
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -504,7 +505,7 @@ def test_the_next_write_lands_on_top_of_an_external_commit_not_over_it(
     assert mine.outcome == "retried"
     assert str(history(repo_path)[0].parents[0].id) == outside
     assert store.read(mine.commit, "tasks/task-c00003.md") is not None
-    assert parse_text(store.read(mine.commit, PATH), PATH).status == "wip"
+    assert parse_text(store.read(mine.commit, PATH), PATH).status == "in_progress"
 
 
 def test_a_human_editing_the_same_entity_is_merged_or_refused_like_anybody_else(
@@ -647,10 +648,10 @@ def test_concurrent_writers_to_one_path_neither_lose_nor_interleave(
         barrier.wait()
         return store.write(
             path=PATH,
-            content=entity(priority=n % 3 + 1),
+            content=entity(priority=["high", "medium", "low"][n % 3]),
             base_commit=store.head(),
             author=f"user{n}",
-            message=f"task-c00001: priority -> {n % 3 + 1}",
+            message=f'task-c00001: priority -> {["high", "medium", "low"][n % 3]}',
         )
 
     with ThreadPoolExecutor(max_workers=WRITERS) as pool:
@@ -660,7 +661,11 @@ def test_concurrent_writers_to_one_path_neither_lose_nor_interleave(
     assert landed, "somebody has to win"
     assert len(set(landed)) == len(landed)
     assert len(history(repo_path)) == len(landed) + 1
-    assert parse_text(store.read(store.head(), PATH), PATH).priority in (1, 2, 3)
+    assert parse_text(store.read(store.head(), PATH), PATH).priority in (
+        "high",
+        "medium",
+        "low",
+    )
 
 
 # --------------------------------------------------------------------------- #

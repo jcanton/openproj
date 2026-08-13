@@ -3,14 +3,14 @@ id: pitch-0c0001
 kind: pitch
 title: Porting land
 parent: proj-000001
-status: todo
+status: ready
 owner: muellch
 assignees: [muellch, jcanton]
 reviewers: [jcanton, halungge]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 1
+priority: high
 depends_on: [pitch-0b0001]
 tags: [jsbach, icon-land, land-surface, gt4py, tmx-coupling, icon4py]
 prs: []

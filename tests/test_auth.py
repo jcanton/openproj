@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+
 from openproj.auth import (
     User,
     exchange_code,

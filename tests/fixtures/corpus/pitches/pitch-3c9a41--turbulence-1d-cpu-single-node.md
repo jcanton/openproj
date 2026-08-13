@@ -12,7 +12,7 @@ assignees:
   - yiluchen1066
 assigned_on: null      # was fabricated during migration; unknown
 cycle: 28
-priority: 1
+priority: high
 depends_on: []
 tags:
   - greenline
@@ -79,4 +79,4 @@ The *Appetite*, *Rabbit holes* and *No-gos* sections of the note are present but
 - **PRs.** The row's PR column is empty and neither the shaping doc nor the cycle-28 overview cites a PR, so `prs` is empty. (The cycle-34 successor pitch cites `C2SM/icon-exclaim#437`, but that belongs to the later integration work, not this row.)
 - **Dependencies.** The row's *Depends on* cell is empty — `depends_on: []`. Inbound references from rows 23 and 99 are recorded on those rows, per the depends_on-only invariant.
 - **Parent.** No project entity: the row's group (rows 21–24, turbulence) is a blank-row group with **no heading in the source** — the grouping label was inferred by an earlier pass, so nothing in the table names a project.
-- **Priority mapping used:** table `High+` → 0, `High` → 1, `Medium` → 2, `Low` → 3. Row 22 is `High` → `priority: 1`.
+- **Priority mapping used:** table `High+` → 0, `High` → 1, `Medium` → 2, `Low` → 3. Row 22 is `High` → `priority: high`.

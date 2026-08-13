@@ -3,7 +3,7 @@ id: pitch-48ea9e
 kind: pitch
 title: Tracer adv needs exchange
 parent: null
-status: wip
+status: in_progress
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 appetite_weeks: 2.0
@@ -13,7 +13,7 @@ assignees:
   - OngChia
 assigned_on: null
 cycle: 35
-priority: 2
+priority: medium
 depends_on: []
 tags:
   - greenline

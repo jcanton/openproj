@@ -3,14 +3,14 @@ id: task-0a1001
 kind: task
 title: CI for the standalone driver v1.5
 parent: pitch-0a0001
-status: wip
+status: in_progress
 owner: jcanton
 assignees: [jcanton, nfarabullini]
 reviewers: [msimberg, iomaganaris]
 review_waived: false
 assigned_on: 2026-06-29
 cycle: 37
-priority: 1
+priority: high
 depends_on: []
 tags: [icon4py, standalone-driver, distributed, ci, gpu]
 prs: ["C2SM/icon4py#1223"]

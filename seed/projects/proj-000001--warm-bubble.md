@@ -3,14 +3,14 @@ id: proj-000001
 kind: project
 title: warm_bubble
 parent: null
-status: wip
+status: in_progress
 owner: jcanton
 assignees: [jcanton, havogt, halungge]
 reviewers: [halungge, havogt]
 review_waived: false
 assigned_on: 2026-06-22
 cycle: 36
-priority: 0
+priority: high
 depends_on: []
 tags: [warm-bubble, torus, coupled-validation, aes-physics, milestone]
 prs: ["C2SM/icon4py#1354"]

@@ -3,14 +3,14 @@ id: task-53a9f0
 kind: task
 title: Reproduce the 2-GPU equator artefact
 parent: pitch-5e7b1c
-status: wip
+status: in_progress
 owner: msimberg
 reviewers: [jcanton]
 effort_weeks: 2
 assignees: []
 assigned_on: 2026-08-13
 cycle: 36
-priority: 2
+priority: medium
 depends_on: []
 tags: [icon4py, standalone-driver, distributed, gpu]
 prs: []
@@ -30,9 +30,9 @@ Context: @ChiaRuiOng reported an artefact at the equator when running with 2 GPU
 
 Migration notes:
 
-- `status: wip` because the parent bullet is unchecked while its first sub-item is checked.
+- `status: in_progress` because the parent bullet is unchecked while its first sub-item is checked.
 - `assignees: []` — the note attributes the completed sub-item to Mikael (`msimberg`) but never
   assigns the task itself; not promoted to the field.
 - `effort_weeks: null` — no per-task effort is stated anywhere in the source (the task table fills
   effort on 0 of 38 rows).
-- `priority: 2` is the schema default; the source states no per-task priority.
+- `priority: medium` is the schema default; the source states no per-task priority.

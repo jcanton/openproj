@@ -63,8 +63,9 @@ _LABEL_CHARS = 40
 def _clip(text: str) -> str:
     return text if len(text) <= _LABEL_CHARS else text[: _LABEL_CHARS - 1] + "\u2026"
 _STATUS_COLOUR = {
-    "todo": "#8a93a5",
-    "wip": "#1f6f8b",
+    "shaping": "#b9a6c9",
+    "ready": "#8a93a5",
+    "in_progress": "#1f6f8b",
     "done": "#3f7d58",
     "shelved": "#b0b4bd",
 }
@@ -502,7 +503,8 @@ _GRAPH = """
 <script>@@cytoscape-dagre.js@@</script>
 <script>
 cytoscape.use(cytoscapeDagre);
-const COLOUR = {todo:'#8a93a5', wip:'#1f6f8b', done:'#3f7d58', shelved:'#b0b4bd'};
+const COLOUR = {shaping:'#b9a6c9', ready:'#8a93a5', in_progress:'#1f6f8b',
+                done:'#3f7d58', shelved:'#b0b4bd'};
 cytoscape({
   container: document.getElementById('cy'),
   elements: JSON.parse(document.getElementById('elements').textContent),
@@ -598,26 +600,39 @@ rect.late { stroke: #9a3327; stroke-width: 1.5; }
 
 
 _CONTROL = """
-{% if f.type == "status" %}
+{% if f.type in ("status", "priority") %}
 <select name="{{ f.name }}" data-type="text" class="field"
         {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
-  {% for s in statuses %}<option {% if s == f.value %}selected{% endif %}>{{ s }}</option>
+  {% for s in (statuses if f.type == "status" else priorities) %}
+  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ labels.get(s, s) }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
 <input type="checkbox" name="{{ f.name }}" data-type="bool" class="field"
        {% if f.value %}checked{% endif %}>
+{% elif f.type == "date" %}
+<input type="date" name="{{ f.name }}" data-type="date" value="{{ f.text }}" class="field"
+       {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+{% elif f.type == "list" and f.list %}
+<span class="field tokens">
+  <input name="{{ f.name }}" data-type="list" value="{{ f.text }}" list="{{ f.list }}"
+         {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+  <select class="adder" data-for="{{ f.name }}" data-source="{{ f.list }}">
+    <option value="">add…</option>
+  </select>
+</span>
 {% else %}
 <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}" class="field"
-       {% if f.people %}list="people"{% endif %}
-       {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}
-       {% if f.type == "date" %}placeholder="YYYY-MM-DD"{% endif %}>
+       {% if f.list %}list="{{ f.list }}"{% endif %}
+       {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
 {% endif %}
 """
 
 
 def _control_html(field: dict) -> str:
-    return _ENV.from_string(_CONTROL).render(f=field, statuses=STATUSES)
+    return _ENV.from_string(_CONTROL).render(
+        f=field, statuses=STATUSES, priorities=PRIORITIES, labels=STATUS_LABEL
+    )
 
 
 _FIELDS = """
@@ -651,7 +666,8 @@ def _fields_html(fields: list[dict], body: str, rows: int = 18) -> str:
     up as a field you can set on creation and never change afterwards.
     """
     return _ENV.from_string(_FIELDS).render(
-        fields=fields, body=body, rows=rows, statuses=STATUSES
+        fields=fields, body=body, rows=rows, statuses=STATUSES,
+        priorities=PRIORITIES, labels=STATUS_LABEL,
     )
 
 
@@ -672,6 +688,13 @@ _NEW = """
     <div id="fields">{{ fields_html|safe }}</div>
     <div id="problems" hidden></div>
   </form>
+  <datalist id="entities">
+    {% for item in suggest.entities %}<option value="{{ item.id }}">{{ item.title }}</option>
+    {% endfor %}
+  </datalist>
+  <datalist id="tags">
+    {% for tag in suggest.tags %}<option value="{{ tag }}">{% endfor %}
+  </datalist>
   <div class="doc" hidden></div>
 </article>
 <script>
@@ -703,6 +726,24 @@ document.getElementById('preview').onclick = async () => {
   doc.hidden = false;
   doc.innerHTML = (await response.json()).html;
 };
+
+
+// The "add" pickers, filled from the same datalists the free-text fields use. A
+// datalist only completes a whole value, so on a comma-separated field it stops
+// helping after the first name — which is exactly where help is wanted.
+for (const adder of document.querySelectorAll('select.adder')) {
+  const source = document.getElementById(adder.dataset.source);
+  for (const option of source.querySelectorAll('option'))
+    adder.append(new Option(option.textContent || option.value, option.value));
+  adder.onchange = () => {
+    if (!adder.value) return;
+    const field = document.querySelector(`[name=${adder.dataset.for}]`);
+    const held = field.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (!held.includes(adder.value)) held.push(adder.value);
+    field.value = held.join(', ');
+    adder.value = '';
+  };
+}
 
 document.getElementById('save').onclick = async () => {
   const fields = {kind: FORM.dataset.kind};
@@ -790,12 +831,21 @@ _DETAIL = """
     <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
     <div id="conflict" hidden></div>
   </form>
-  <datalist id="people">
-    {% for person in people %}<option value="{{ person }}">{% endfor %}
-  </datalist>
   {% endif %}
 </article>
 {% endfor %}
+{% if editable %}
+  <datalist id="people">
+    {% for person in suggest.people %}<option value="{{ person }}">{% endfor %}
+  </datalist>
+  <datalist id="entities">
+    {% for item in suggest.entities %}<option value="{{ item.id }}">{{ item.title }}</option>
+    {% endfor %}
+  </datalist>
+  <datalist id="tags">
+    {% for tag in suggest.tags %}<option value="{{ tag }}">{% endfor %}
+  </datalist>
+{% endif %}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
 // field as this tab last saw it, overwriting whatever somebody else changed while
@@ -896,6 +946,24 @@ async function save() {
   location.reload();
 }
 
+
+// The "add" pickers, filled from the same datalists the free-text fields use. A
+// datalist only completes a whole value, so on a comma-separated field it stops
+// helping after the first name — which is exactly where help is wanted.
+for (const adder of document.querySelectorAll('select.adder')) {
+  const source = document.getElementById(adder.dataset.source);
+  for (const option of source.querySelectorAll('option'))
+    adder.append(new Option(option.textContent || option.value, option.value));
+  adder.onchange = () => {
+    if (!adder.value) return;
+    const field = document.querySelector(`[name=${adder.dataset.for}]`);
+    const held = field.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (!held.includes(adder.value)) held.push(adder.value);
+    field.value = held.join(', ');
+    adder.value = '';
+  };
+}
+
 document.getElementById('save').onclick = save;
 addEventListener('keydown', event => {
   if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); save(); }
@@ -983,7 +1051,7 @@ EDITABLE: dict[str, str] = {
     "reviewers": "list",
     "review_waived": "bool",
     "assigned_on": "date",
-    "priority": "number",
+    "priority": "priority",
     "cycle": "number",
     "parent": "text",
     "depends_on": "list",
@@ -993,7 +1061,11 @@ EDITABLE: dict[str, str] = {
     "shaped_by": "text",
     "effort_weeks": "number",
 }
-STATUSES = ("todo", "wip", "done", "shelved")
+STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
+PRIORITIES = ("high", "medium", "low")
+# What each status is called on screen. The stored value stays a plain identifier
+# so it can be filtered and sorted; the label is for the person reading it.
+STATUS_LABEL = {"in_progress": "in progress"}
 
 # Which status first demands each field. Cumulative, per spec 5.1: permissive when
 # an idea is captured, strict once work starts, strictest when it is claimed done.
@@ -1001,12 +1073,12 @@ STATUSES = ("todo", "wip", "done", "shelved")
 # depends on the status chosen in the same form a moment ago. This is a copy of
 # validate_all and is only ever a courtesy — the server's answer is the truth.
 REQUIRED_FROM = {
-    "owner": "todo",
-    "reviewers": "todo",
-    "effort_weeks": "todo",
-    "appetite_weeks": "todo",
-    "shaped_by": "todo",
-    "assigned_on": "wip",
+    "owner": "ready",
+    "reviewers": "ready",
+    "effort_weeks": "ready",
+    "appetite_weeks": "ready",
+    "shaped_by": "ready",
+    "assigned_on": "in_progress",
     "prs": "done",
 }
 # Fields only one kind has, so the create form can hide the rest.
@@ -1023,6 +1095,13 @@ LABELS = {
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
 PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
+# Which suggestion list each field draws from. A datalist only completes a whole
+# value, so the comma-separated ones also get an "add" picker that appends a token
+# — otherwise the suggestions are useless the moment there is more than one name.
+SUGGESTS = {
+    "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
+    "parent": "entities", "depends_on": "entities", "tags": "tags",
+}
 
 
 def _editable_for(entity: Entity) -> list[dict]:
@@ -1033,7 +1112,7 @@ def _editable_for(entity: Entity) -> list[dict]:
             "type": kind,
             "value": getattr(entity, name),
             "gate": REQUIRED_FROM.get(name),
-            "people": name in PEOPLE_FIELDS,
+            "list": SUGGESTS.get(name),
             "text": ", ".join(str(v) for v in getattr(entity, name))
             if kind == "list"
             else ("" if getattr(entity, name) is None else getattr(entity, name)),
@@ -1147,7 +1226,9 @@ def _detail_rows(index: Index) -> list[dict]:
     return rows
 
 
-def render_new(kind: str, base_commit: str, links: Links = ROUTES) -> str:
+def render_new(
+    kind: str, base_commit: str, links: Links = ROUTES, index: Index | None = None
+) -> str:
     """The create page, laid out exactly like a detail page in edit mode.
 
     A second, differently-shaped form for creating was the thing that made the
@@ -1155,7 +1236,12 @@ def render_new(kind: str, base_commit: str, links: Links = ROUTES) -> str:
     hidden by script, so the page shows what this kind actually is.
     """
     blank = {"project": Project, "pitch": Pitch, "task": Task}[kind](
-        id=f"{PREFIX[kind]}-000000", kind=kind, title=""
+        id=f"{PREFIX[kind]}-000000",
+        kind=kind,
+        title="",
+        # Today, because a date field that starts empty is a date field somebody
+        # leaves empty. An existing value is never overwritten — this is a blank.
+        assigned_on=date.today(),
     )
     body = _ENV.from_string(_NEW).render(
         kind=kind,
@@ -1163,17 +1249,32 @@ def render_new(kind: str, base_commit: str, links: Links = ROUTES) -> str:
         base_commit=base_commit,
         links=links,
         fields_html=_fields_html(_editable_for(blank), "", rows=14),
+        suggest=_suggestions(index) if index else {"people": [], "entities": [], "tags": []},
     )
     return _page(f"openproj — new {kind}", body, _DETAIL_STYLE, links)
 
 
-def _people(index: Index) -> list[str]:
-    found: set[str] = set()
+def _suggestions(index: Index) -> dict:
+    """What already exists, offered rather than remembered.
+
+    A reviewer who is not in this list is a typo far more often than a new
+    colleague, and an id typed from memory is a dangling reference the validator
+    will reject after the save rather than before it.
+    """
+    people: set[str] = set()
+    tags: set[str] = set()
     for entity in index.entities.values():
         for name in PEOPLE_FIELDS:
             value = getattr(entity, name, None)
-            found.update(value if isinstance(value, list) else [value] if value else [])
-    return sorted(found)
+            people.update(value if isinstance(value, list) else [value] if value else [])
+        tags.update(entity.tags)
+    return {
+        "people": sorted(people),
+        "entities": [
+            {"id": i, "title": e.title} for i, e in sorted(index.entities.items())
+        ],
+        "tags": sorted(tags),
+    }
 
 
 def render_detail(
@@ -1203,7 +1304,7 @@ def render_detail(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         statuses=STATUSES,
-        people=_people(index),
+        suggest=_suggestions(index),
     )
     return _page("openproj — detail", body, _DETAIL_STYLE, links)
 

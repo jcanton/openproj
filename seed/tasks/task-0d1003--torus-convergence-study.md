@@ -3,14 +3,14 @@ id: task-0d1003
 kind: task
 title: Convergence study on the torus grid
 parent: pitch-0d0001
-status: todo
+status: ready
 owner: jcanton
 assignees: [jcanton, OngChia]
 reviewers: [OngChia, ajocksch]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 1
+priority: high
 depends_on: [task-0d1002]
 tags: [greenline, tracer-advection, convergence, torus, testing]
 prs: []

@@ -3,14 +3,14 @@ id: task-58d7c6
 kind: task
 title: Per-field deltas instead of a blanket 1e-13 tolerance
 parent: pitch-5e7b1c
-status: todo
+status: ready
 owner: halungge
 reviewers: [iomaganaris]
 effort_weeks: 1
 assignees: []
 assigned_on: null
 cycle: 36
-priority: 2
+priority: medium
 depends_on: [task-5c1d84, task-5f062b]   # synthetic, see seed/README.md
 tags: [icon4py, standalone-driver, distributed, validation]
 prs: []
@@ -27,4 +27,4 @@ diverge is the fallback result if full bit-identity is not reachable. The cycle-
 
 Migration notes:
 
-- `effort_weeks: null`, `priority: 2` (default): neither is stated in the source.
+- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source.

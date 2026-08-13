@@ -3,14 +3,14 @@ id: task-0c1001
 kind: task
 title: Port JSBACH
 parent: pitch-0c0001
-status: todo
+status: ready
 owner: jcanton
 assignees: [jcanton]
 reviewers: [muellch, halungge]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 1
+priority: high
 depends_on: []
 tags: [jsbach, soil-snow-energy, scan-operator, savepoints, gt4py, icon4py]
 prs: []

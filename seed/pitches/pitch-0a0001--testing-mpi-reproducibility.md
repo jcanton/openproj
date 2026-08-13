@@ -3,14 +3,14 @@ id: pitch-0a0001
 kind: pitch
 title: Testing MPI reproducibility
 parent: proj-000001
-status: wip
+status: in_progress
 owner: msimberg
 assignees: [msimberg, jcanton]
 reviewers: [jcanton, halungge]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 1
+priority: high
 depends_on: []
 tags: [icon4py, standalone-driver, distributed, bitwise-reproducibility, ci]
 prs: ["C2SM/icon4py#1368"]

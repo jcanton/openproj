@@ -92,7 +92,7 @@ HAND_FORMATTED = """---
 # Two GPUs, and only on the equator. The note at the bottom belongs with the file.
 title: Reproduce the 2-GPU equator artefact
 kind: task
-status: wip
+status: in_progress
 effort_weeks: 1.5          # measured on daint, not guessed
 
 id: task-c00001
@@ -100,7 +100,7 @@ parent: pitch-b20000
 owner: ann                 # ann has the DWD contacts
 reviewers: [bo, cy]
 assigned_on: 2026-07-06
-priority: 2
+priority: medium
 tags: [gpu, verification]
 prs: []
 ---
@@ -118,11 +118,11 @@ SEED = {
         "id: proj-a10000\n"
         "kind: project\n"
         "title: Distributed driver\n"
-        "status: wip\n"
+        "status: in_progress\n"
         "owner: ann\n"
         "reviewers: [bo]\n"
         "assigned_on: 2026-07-01\n"
-        "priority: 1\n"
+        "priority: high\n"
         "---\n"
         "\nThe standalone driver, on more than one rank.\n"
     ),
@@ -132,11 +132,11 @@ SEED = {
         "kind: pitch\n"
         "title: Verify the tracer advection port\n"
         "parent: proj-a10000\n"
-        "status: todo\n"
+        "status: ready\n"
         "owner: ann\n"
         "reviewers: [bo]\n"
         "appetite_weeks: 3\n"
-        "priority: 1\n"
+        "priority: high\n"
         "---\n"
         "\nPort the least-squares coefficients and check them against serialbox.\n"
     ),
@@ -147,11 +147,11 @@ SEED = {
         "kind: task\n"
         "title: Downgrade numpy for global sums\n"
         "parent: pitch-b20000\n"
-        "status: todo\n"
+        "status: ready\n"
         "owner: bo\n"
         "reviewers: [ann]\n"
         "effort_weeks: 0.5\n"
-        "priority: 3\n"
+        "priority: low\n"
         "---\n"
         "\nGlobal sums stopped being reproducible at numpy 2.1.\n"
     ),
@@ -307,7 +307,12 @@ def test_a_detail_route_serves_one_entity_and_not_the_whole_corpus(client: TestC
 
     assert "Reproduce the 2-GPU equator artefact" in body
     assert "the serialbox reference data" in body  # the shaping doc, rendered
-    assert "Downgrade numpy for global sums" not in body
+    # Scoped to the article: other entities legitimately appear elsewhere on the
+    # page now, in the autocomplete list for parent and depends_on. What must not
+    # happen is a second entity being *served*.
+    article = body.split("<article", 1)[1].split("</article>")[0]
+    assert "Downgrade numpy for global sums" not in article
+    assert body.count("<article") == 1
 
 
 def test_an_entity_that_does_not_exist_is_a_404_and_not_an_empty_page(client: TestClient):
@@ -336,7 +341,7 @@ def test_healthz_reports_the_commit_being_served(client: TestClient, repo_path: 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "head": git_head(repo_path)}
 
-    save(client, TASK, {"priority": 1})
+    save(client, TASK, {"priority": "high"})
     assert head(client) == git_head(repo_path)
 
 
@@ -351,7 +356,7 @@ def test_the_index_json_carries_the_entities_the_spans_and_the_problems(client: 
 
     assert set(payload["entities"]) == {PROJECT, PITCH, TASK, OTHER, DONE}
     assert payload["entities"][TASK]["title"] == "Reproduce the 2-GPU equator artefact"
-    assert payload["entities"][TASK]["status"] == "wip"
+    assert payload["entities"][TASK]["status"] == "in_progress"
 
     span = payload["spans"][TASK]
     assert span["start"] <= span["end"]
@@ -393,7 +398,7 @@ def test_a_rule_newer_than_the_entity_reaches_the_client_as_a_warning(client: Te
 
 def test_a_save_against_the_current_head_is_committed(client: TestClient, repo_path: Path):
     base = head(client)
-    response = save(client, TASK, {"priority": 1}, base=base)
+    response = save(client, TASK, {"priority": "high"}, base=base)
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "committed"
@@ -402,14 +407,14 @@ def test_a_save_against_the_current_head_is_committed(client: TestClient, repo_p
     commit = response.json()["commit"]
     assert git_head(repo_path) == commit
     assert str(commit_at(repo_path, commit).parents[0].id) == base
-    assert index_of(client)["entities"][TASK]["priority"] == 1
+    assert index_of(client)["entities"][TASK]["priority"] == "high"
 
 
 def test_the_commit_author_is_the_signed_in_user(client: TestClient, repo_path: Path):
     """`git log --format='%an'` is the audit trail, and the author/committer split
     is what keeps a future push credential a bot no human's departure invalidates.
     The message names the entity so the log reads as a plan, not as a diff."""
-    commit = save(client, TASK, {"priority": 1}).json()["commit"]
+    commit = save(client, TASK, {"priority": "high"}).json()["commit"]
 
     written = commit_at(repo_path, commit)
     assert written.author.name == "ann"
@@ -423,7 +428,7 @@ def test_the_author_can_never_be_supplied_by_the_client(client: TestClient, repo
     at all — the session is the only source of the name."""
     response = client.patch(
         f"/api/entity/{TASK}?author=mallory",
-        json={"base_commit": head(client), "fields": {"priority": 1}, "body": None},
+        json={"base_commit": head(client), "fields": {"priority": "high"}, "body": None},
         headers={"X-Author": "mallory"},
     )
 
@@ -437,7 +442,7 @@ def test_a_saved_body_replaces_the_body_and_nothing_else(client: TestClient, rep
     assert response.json()["outcome"] == "committed"
     stored = file_at(repo_path, response.json()["commit"], PATH)
     assert stored.endswith("Reproduced on daint with two ranks.\n")
-    assert "priority: 2" in stored  # the frontmatter is untouched by a body edit
+    assert "priority: medium" in stored  # the frontmatter is untouched by a body edit
 
 
 def test_a_stale_base_whose_file_nobody_touched_is_retried_silently(
@@ -447,16 +452,16 @@ def test_a_stale_base_whose_file_nobody_touched_is_retried_silently(
     the case that has to be invisible. A person who held a tab open while somebody
     else saved a different task must not be shown anything at all."""
     stale = head(client)
-    theirs = save(client, OTHER, {"priority": 1}).json()["commit"]
+    theirs = save(client, OTHER, {"priority": "high"}).json()["commit"]
 
-    response = save(client, TASK, {"priority": 1}, base=stale)
+    response = save(client, TASK, {"priority": "high"}, base=stale)
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "retried"
     assert response.json()["conflict"] is None
     assert str(commit_at(repo_path, response.json()["commit"]).parents[0].id) == theirs
-    assert index_of(client)["entities"][OTHER]["priority"] == 1  # not clobbered
-    assert index_of(client)["entities"][TASK]["priority"] == 1
+    assert index_of(client)["entities"][OTHER]["priority"] == "high"  # not clobbered
+    assert index_of(client)["entities"][TASK]["priority"] == "high"
 
 
 def test_two_people_changing_different_fields_of_one_entity_are_merged(client: TestClient):
@@ -465,12 +470,12 @@ def test_two_people_changing_different_fields_of_one_entity_are_merged(client: T
     stale = head(client)
     save(client, TASK, {"owner": "bo"})
 
-    response = save(client, TASK, {"priority": 1}, base=stale)
+    response = save(client, TASK, {"priority": "high"}, base=stale)
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "merged"
     entity = index_of(client)["entities"][TASK]
-    assert (entity["owner"], entity["priority"]) == ("bo", 1)
+    assert (entity["owner"], entity["priority"]) == ("bo", "high")
 
 
 def test_a_genuine_collision_is_a_409_that_writes_nothing(client: TestClient, repo_path: Path):
@@ -514,7 +519,7 @@ def test_saving_an_entity_that_does_not_exist_is_a_404(client: TestClient, repo_
     """A well-formed id for a file that is not there. `PATCH` edits; it does not
     quietly create, or a typo in a URL becomes an entity nobody meant to make."""
     base = git_head(repo_path)
-    response = save(client, "task-ffffff", {"priority": 1}, base=base)
+    response = save(client, "task-ffffff", {"priority": "high"}, base=base)
 
     assert response.status_code == 404
     assert git_head(repo_path) == base
@@ -544,7 +549,7 @@ def test_a_partial_save_changes_only_the_lines_it_was_asked_to(
     before = file_at(repo_path, base, PATH)
     assert before == HAND_FORMATTED  # the seed is what a person wrote
 
-    commit = save(client, TASK, {"priority": 1}, base=base).json()["commit"]
+    commit = save(client, TASK, {"priority": "high"}, base=base).json()["commit"]
     after = file_at(repo_path, commit, PATH)
 
     assert len(after.splitlines()) == len(before.splitlines())
@@ -552,7 +557,7 @@ def test_a_partial_save_changes_only_the_lines_it_was_asked_to(
         (was, now)
         for was, now in zip(before.splitlines(), after.splitlines(), strict=True)
         if was != now
-    ] == [("priority: 2", "priority: 1")]
+    ] == [("priority: medium", "priority: high")]
 
 
 def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, repo_path: Path):
@@ -581,7 +586,7 @@ VALID_TASK = {
     "kind": "task",
     "title": "Per-field delta tolerances",
     "parent": PITCH,
-    "status": "todo",
+    "status": "ready",
     "owner": "ann",
     "reviewers": ["bo"],
     "effort_weeks": 1.0,
@@ -625,7 +630,7 @@ def test_a_create_missing_its_status_gated_fields_is_refused(
     — the person fixes it, resubmits, and learns the messages are noise.
     """
     base = head(client)
-    response = create(client, {"kind": "task", "title": "A half-formed idea", "status": "todo"})
+    response = create(client, {"kind": "task", "title": "A half-formed idea", "status": "ready"})
 
     assert response.status_code == 422
     assert {p["field"] for p in response.json()["problems"]} >= {
@@ -661,7 +666,7 @@ def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path
         {
             "kind": "pitch",
             "title": "Turbulence on one node",
-            "status": "todo",
+            "status": "ready",
             "owner": "ann",
             "reviewers": ["bo"],
             "appetite_weeks": 6,
@@ -699,7 +704,7 @@ def test_the_content_stays_public_when_nobody_is_signed_in(secure_client: TestCl
 def test_an_anonymous_visitor_cannot_write(secure_client: TestClient, repo_path: Path):
     base = git_head(repo_path)
 
-    assert save(secure_client, TASK, {"priority": 1}).status_code == 401
+    assert save(secure_client, TASK, {"priority": "high"}).status_code == 401
     assert create(secure_client, VALID_TASK).status_code == 401
     assert git_head(repo_path) == base
 
@@ -719,7 +724,7 @@ def test_a_signed_in_non_member_is_refused_at_the_write(
     secure_client.cookies.set(SESSION_COOKIE, sign_session(MALLORY, SECRET))
     base = git_head(repo_path)
 
-    assert save(secure_client, TASK, {"priority": 1}).status_code == 403
+    assert save(secure_client, TASK, {"priority": "high"}).status_code == 403
     assert create(secure_client, VALID_TASK).status_code == 403
     assert git_head(repo_path) == base
     assert secure_client.get("/").status_code == 200  # still a reader
@@ -730,7 +735,7 @@ def test_a_member_writes_as_themselves(secure_client: TestClient, repo_path: Pat
     from a check that is broken, and this is what tells the two apart."""
     secure_client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
 
-    response = save(secure_client, TASK, {"priority": 1})
+    response = save(secure_client, TASK, {"priority": "high"})
 
     assert response.status_code == 200
     assert commit_at(repo_path, response.json()["commit"]).author.name == "ann"
@@ -742,7 +747,7 @@ def test_a_cookie_this_server_did_not_sign_is_nobody(secure_client: TestClient):
     forged = sign_session(User(login="mallory", member=True), "some-other-secret")
     secure_client.cookies.set(SESSION_COOKIE, forged)
 
-    assert save(secure_client, TASK, {"priority": 1}).status_code == 401
+    assert save(secure_client, TASK, {"priority": "high"}).status_code == 401
     assert secure_client.get("/").status_code == 200
 
 
@@ -758,7 +763,7 @@ def test_logging_out_ends_the_ability_to_write(secure_client: TestClient):
     browser joins them up.
     """
     secure_client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
-    assert save(secure_client, TASK, {"priority": 1}).status_code == 200
+    assert save(secure_client, TASK, {"priority": "high"}).status_code == 200
 
     response = secure_client.post("/logout", follow_redirects=False)
     assert response.status_code in (200, 204, 303)
@@ -768,7 +773,7 @@ def test_logging_out_ends_the_ability_to_write(secure_client: TestClient):
     assert "Path=/" in cleared
 
     secure_client.cookies.clear()
-    assert save(secure_client, TASK, {"priority": 1}).status_code == 401
+    assert save(secure_client, TASK, {"priority": "high"}).status_code == 401
 
 
 @pytest.mark.parametrize(
@@ -844,7 +849,7 @@ def test_a_callback_whose_state_does_not_match_is_abandoned(secure_client: TestC
 
     assert response.status_code == 400
     assert SESSION_COOKIE not in response.headers.get("set-cookie", "")
-    assert save(secure_client, TASK, {"priority": 1}).status_code == 401
+    assert save(secure_client, TASK, {"priority": "high"}).status_code == 401
 
 
 # --------------------------------------------------------------------------- #
@@ -984,7 +989,7 @@ def test_a_write_is_broadcast_to_everybody_watching(live_server: str):
         listener.start()
         assert seen.get(timeout=15).startswith("text/event-stream")
 
-        commit = save(writer, TASK, {"priority": 1}).json()["commit"]
+        commit = save(writer, TASK, {"priority": "high"}).json()["commit"]
 
         event = json.loads(seen.get(timeout=15).partition(":")[2])
         listener.join(timeout=15)
@@ -1008,8 +1013,8 @@ def test_an_entity_whose_filename_carries_a_slug_is_still_found(
         "add an entity filed under its slug",
     )
 
-    response = save(client, "task-d40000", {"priority": 1})
+    response = save(client, "task-d40000", {"priority": "high"})
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "committed"
-    assert "priority: 1" in file_at(repo_path, response.json()["commit"], slugged)
+    assert "priority: high" in file_at(repo_path, response.json()["commit"], slugged)

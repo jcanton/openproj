@@ -3,14 +3,14 @@ id: pitch-0b0001
 kind: pitch
 title: Porting turbulence
 parent: proj-000001
-status: wip
+status: in_progress
 owner: jcanton
 assignees: [jcanton, yiluchen1066]
 reviewers: [halungge, muellch]
 review_waived: false
 assigned_on: 2026-06-22
 cycle: 36
-priority: 1
+priority: high
 depends_on: []
 tags: [tmx, turbulence, aes, gt4py, port, serialbox]
 prs: ["C2SM/icon4py#1364"]

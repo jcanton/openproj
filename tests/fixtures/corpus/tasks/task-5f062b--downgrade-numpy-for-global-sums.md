@@ -3,14 +3,14 @@ id: task-5f062b
 kind: task
 title: Downgrade numpy for stable global sums
 parent: pitch-5e7b1c
-status: todo
+status: ready
 owner: egparedes
 reviewers: [abishekg7]
 effort_weeks: 1
 assignees: []
 assigned_on: null
 cycle: 36
-priority: 2
+priority: medium
 depends_on: [task-5a4e39]   # synthetic, see seed/README.md
 tags: [icon4py, distributed, numpy, reductions, bitwise-reproducibility]
 prs: []
@@ -27,4 +27,4 @@ Migration notes:
 
 - The sub-item was kept inside this task rather than split out; the source marks it "just for fun"
   and it has no independent deliverable.
-- `effort_weeks: null`, `priority: 2` (default): neither is stated in the source.
+- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source.

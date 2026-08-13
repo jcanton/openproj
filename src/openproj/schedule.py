@@ -27,7 +27,7 @@ from datetime import date, timedelta
 import networkx as nx
 from pydantic import BaseModel
 
-from .model import Config, Entity, size_weeks
+from .model import PRIORITY_RANK, Config, Entity, size_weeks
 
 _WORKING_DAYS_PER_WEEK = 5
 
@@ -132,7 +132,7 @@ def _ordering(
 
     graph.remove_nodes_from(contradictory)
     order = nx.lexicographical_topological_sort(
-        graph, key=lambda node: (active[node].priority, node)
+        graph, key=lambda node: (PRIORITY_RANK[active[node].priority], node)
     )
     return list(order), contradictory
 

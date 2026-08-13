@@ -3,13 +3,13 @@ id: task-0e4b7a
 kind: task
 title: Add unit tests for geo2cart
 parent: proj-7e57a0          # placeholder while testing
-status: todo
+status: ready
 owner: nfarabullini
 reviewers: [havogt]
 assignees: []
 assigned_on: null
 cycle: null
-priority: 3
+priority: low
 depends_on: []
 tags:
   - greenline
@@ -42,7 +42,7 @@ The row verbatim:
 | Notes | `math/helpers.py geo2cart_onX don't have unit tests` |
 
 Every cell except Nr, Name, Priority and Notes is empty. There is no owner, no dependency, no PR,
-no shaping doc and no recorded status — hence `status: todo`, empty `assignees`, empty `depends_on`,
+no shaping doc and no recorded status — hence `status: ready`, empty `assignees`, empty `depends_on`,
 empty `prs`, and `assigned_on: null`.
 
 ## Why there is no shaping document

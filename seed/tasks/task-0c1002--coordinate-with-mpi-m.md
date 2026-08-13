@@ -3,14 +3,14 @@ id: task-0c1002
 kind: task
 title: Coordinate with MPI-M
 parent: pitch-0c0001
-status: todo
+status: ready
 owner: muellch
 assignees: [muellch]
 reviewers: []
 review_waived: true
 assigned_on: 2026-08-17
 cycle: 37
-priority: 2
+priority: medium
 depends_on: []
 tags: [jsbach, icon-land, coordination, upstream, mpi-m]
 prs: []

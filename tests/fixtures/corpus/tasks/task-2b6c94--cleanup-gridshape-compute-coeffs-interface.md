@@ -3,14 +3,14 @@ id: task-2b6c94
 kind: task
 title: Cleanup gridShape lat/lon + cart_x/y interface to compute_coeffs
 parent: pitch-2a7f3e
-status: todo
+status: ready
 owner: OngChia
 reviewers: [edopao]
 effort_weeks: 0.5
 assignees: []
 assigned_on: null
 cycle: 34
-priority: 2
+priority: medium
 depends_on: [task-31f6c4]   # synthetic, see seed/README.md
 tags:
   - greenline
@@ -31,5 +31,5 @@ The seven other Progress items are checked off, and table row 16 is marked **Don
 
 - `effort_weeks` is null: the source states no effort for this item (effort is filled on 0 of the 38 table rows).
 - `assignees` is empty: the checklist item names nobody. The parent pitch's Who string is "N+Rico" (`nfarabullini`, `DropD`); attributing this specific item to either would be a guess.
-- `priority: 2` is the schema default, not a sourced value — the "High" in the table applies to row 16 as a whole, which is already recorded on the parent pitch.
+- `priority: medium` is the schema default, not a sourced value — the "High" in the table applies to row 16 as a whole, which is already recorded on the parent pitch.
 - `cycle: 34` is inherited from the source note's tag (`cycle 34 02/26`); the item itself carries no cycle of its own and may well have slipped past cycle 34.

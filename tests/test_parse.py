@@ -75,7 +75,7 @@ def test_parse_tolerates_explicit_nulls_where_a_default_belongs():
     )
     assert entity.title == ""
     assert entity.reviewers == []
-    assert entity.status == "todo"
+    assert entity.status == "shaping"
     assert entity.assigned_on is None
 
 

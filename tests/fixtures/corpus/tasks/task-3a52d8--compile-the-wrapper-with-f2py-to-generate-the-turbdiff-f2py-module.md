@@ -11,7 +11,7 @@ assignees:
   - yiluchen1066
 assigned_on: null
 cycle: 28
-priority: 1
+priority: high
 depends_on:
   - task-3e07b2
 tags:

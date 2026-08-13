@@ -86,7 +86,7 @@ def _entities_at(store: Store, commit: str) -> list[Entity]:
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
 # then breaks the scheduler on the next read. The client coerces; this is the
 # server refusing to take its word for it.
-_NUMERIC = ("priority", "cycle", "appetite_weeks", "effort_weeks")
+_NUMERIC = ("cycle", "appetite_weeks", "effort_weeks")
 _LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on")
 
 
@@ -215,7 +215,8 @@ def create_app(
     def new(kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
-        return page(render.render_new(kind, store.head(), render.ROUTES))
+        commit, index = index_now()
+        return page(render.render_new(kind, commit, render.ROUTES, index))
 
     @app.get("/detail", response_class=HTMLResponse)
     def detail_index() -> HTMLResponse:

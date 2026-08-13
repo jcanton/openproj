@@ -82,7 +82,7 @@ class Entity(BaseModel):
     kind: Literal["project", "pitch", "task"]
     title: str
     parent: str | None = None
-    status: Literal["todo", "wip", "done", "shelved"] = "todo"
+    status: Literal["shaping", "ready", "in_progress", "done", "shelved"] = "shaping"
 
     owner: str | None = None
     assignees: list[str] = []
@@ -90,7 +90,9 @@ class Entity(BaseModel):
     review_waived: bool = False
 
     assigned_on: date | None = None
-    priority: int = 2
+    # Named rather than numbered: "priority 2" means nothing to a reader, and a
+    # number invites arithmetic on something that is only an ordering.
+    priority: Literal["high", "medium", "low"] = "medium"
     depends_on: list[str] = []
     cycle: int | None = None
     tags: list[str] = []
@@ -274,6 +276,12 @@ _ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
 _PREFIX_FOR_KIND = {"project": "proj", "pitch": "pitch", "task": "task"}
 _SIZE_FIELD = {"pitch": "appetite_weeks", "task": "effort_weeks"}
 
+# Statuses in the order work moves through them. `shaping` is an idea nobody has
+# committed to yet, so it demands nothing — the same reason `shelved` does not.
+# The gates are cumulative from `ready` onwards.
+STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
+PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
+
 
 def _cyclic_members(edges: dict[str, list[str]]) -> set[str]:
     """Every node on a cycle, including self-loops."""
@@ -311,24 +319,34 @@ def _dependency_problems(
 
 
 def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
-    if entity.status == "todo":
+    """One gate per status, not a cumulative stack.
+
+    `shaping` is exempt because an idea nobody has bet on yet has no owner and no
+    size by definition, and demanding them is how a tracker stops being somewhere
+    people put half-formed things. `done` is exempt from the earlier gates for a
+    duller reason: migrated history often cannot say who owned something in 2025,
+    and a validator that blocks on unknowable facts gets switched off.
+    """
+    if entity.status in ("shaping", "shelved"):
+        return
+    if entity.status == "ready":
         if entity.owner is None:
-            yield "blocker", "owner", "a todo entity needs an owner", 1
+            yield "blocker", "owner", "a ready entity needs an owner", 1
         if not (entity.review_waived or entity.reviewers):
-            yield "blocker", "reviewers", "a todo entity needs a reviewer, or review_waived", 1
+            yield "blocker", "reviewers", "a ready entity needs a reviewer, or review_waived", 1
         field = _SIZE_FIELD.get(entity.kind)
         if field is not None and getattr(entity, field) is None:
-            yield "blocker", field, f"a todo {entity.kind} needs {field}", 1
+            yield "blocker", field, f"a ready {entity.kind} needs {field}", 1
         if entity.kind == "pitch" and entity.shaped_by is None:
-            yield "blocker", "shaped_by", "a todo pitch needs shaped_by", 2
-    elif entity.status == "wip":
+            yield "blocker", "shaped_by", "a ready pitch needs shaped_by", 2
+    elif entity.status == "in_progress":
         if entity.assigned_on is None:
-            yield "blocker", "assigned_on", "a wip entity needs assigned_on", 1
+            yield "blocker", "assigned_on", "work in progress needs assigned_on", 1
         if not entity.review_waived and not (set(entity.reviewers) - {entity.owner}):
             yield (
                 "blocker",
                 "reviewers",
-                "a wip entity needs a reviewer other than its owner, or review_waived",
+                "work in progress needs a reviewer other than its owner, or review_waived",
                 1,
             )
     elif entity.status == "done" and not entity.prs:

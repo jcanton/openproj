@@ -5,7 +5,7 @@
 # is a lie after the first web edit.
 title: Überprüfung der Randbedingungen — αβγ
 kind: task
-status: wip
+status: in_progress
 effort_weeks: 1.5      # jcanton's guess; nobody measured it
 
 # Key order below is the human's business, not the tool's.
@@ -16,7 +16,7 @@ reviewers: [nfarabullini, DropD]
 assignees: []
 assigned_on: 2026-08-13
 cycle: 36
-priority: 1
+priority: high
 depends_on:
   - task-5a4e39        # a comment on a sequence item
 tags:

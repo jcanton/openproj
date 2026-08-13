@@ -22,13 +22,15 @@ PROJECT_ID = "proj-ccc333"
 
 NEEDS_TITLE = "title must not be empty"
 BAD_ID_PATTERN = "id must match ^(proj|pitch|task)-[0-9a-f]{6}$"
-NEEDS_OWNER = "a todo entity needs an owner"
-NEEDS_REVIEWER = "a todo entity needs a reviewer, or review_waived"
-NEEDS_EFFORT = "a todo task needs effort_weeks"
-NEEDS_APPETITE = "a todo pitch needs appetite_weeks"
-NEEDS_SHAPED_BY = "a todo pitch needs shaped_by"
-NEEDS_ASSIGNED_ON = "a wip entity needs assigned_on"
-NEEDS_INDEPENDENT_REVIEWER = "a wip entity needs a reviewer other than its owner, or review_waived"
+NEEDS_OWNER = "a ready entity needs an owner"
+NEEDS_REVIEWER = "a ready entity needs a reviewer, or review_waived"
+NEEDS_EFFORT = "a ready task needs effort_weeks"
+NEEDS_APPETITE = "a ready pitch needs appetite_weeks"
+NEEDS_SHAPED_BY = "a ready pitch needs shaped_by"
+NEEDS_ASSIGNED_ON = "work in progress needs assigned_on"
+NEEDS_INDEPENDENT_REVIEWER = (
+    "work in progress needs a reviewer other than its owner, or review_waived"
+)
 NEEDS_PR = "a done entity needs at least one PR"
 SHOULD_HAVE_PARENT = "a task should have a parent"
 DEPENDS_ON_CYCLE = "part of a depends_on cycle"
@@ -66,7 +68,7 @@ def task(**overrides: object) -> Task:
         "kind": "task",
         "title": "A task",
         "parent": PITCH_ID,
-        "status": "todo",
+        "status": "ready",
         "owner": "jcanton",
         "reviewers": ["msimberg"],
         "effort_weeks": 1.0,
@@ -81,7 +83,7 @@ def pitch(**overrides: object) -> Pitch:
         "kind": "pitch",
         "title": "A pitch",
         "parent": None,
-        "status": "todo",
+        "status": "ready",
         "owner": "jcanton",
         "reviewers": ["msimberg"],
         "appetite_weeks": 2.0,
@@ -97,7 +99,7 @@ def project(**overrides: object) -> Project:
         "kind": "project",
         "title": "A project",
         "parent": None,
-        "status": "wip",
+        "status": "in_progress",
         "owner": "jcanton",
         "reviewers": ["msimberg"],
         "assigned_on": date(2026, 8, 3),
@@ -217,7 +219,7 @@ def test_a_todo_pitch_needs_shaped_by():
 
 
 def test_a_wip_entity_needs_assigned_on():
-    for entity in (task(status="wip", assigned_on=None), project(assigned_on=None)):
+    for entity in (task(status="in_progress", assigned_on=None), project(assigned_on=None)):
         problem = only(check(entity), entity.id)
         assert summary(problem) == ("blocker", "assigned_on", NEEDS_ASSIGNED_ON, 1)
 
@@ -225,7 +227,12 @@ def test_a_wip_entity_needs_assigned_on():
 def test_a_wip_entity_needs_a_reviewer_who_is_not_its_owner():
     """Self-review is the same as no review, so the reviewer list must contain
     somebody else before work may be in progress."""
-    wip = task(status="wip", assigned_on=date(2026, 8, 3), owner="jcanton", reviewers=["jcanton"])
+    wip = task(
+        status="in_progress",
+        assigned_on=date(2026, 8, 3),
+        owner="jcanton",
+        reviewers=["jcanton"],
+    )
     problem = only(check(wip), TASK_ID)
     assert summary(problem) == ("blocker", "reviewers", NEEDS_INDEPENDENT_REVIEWER, 1)
 
@@ -245,7 +252,7 @@ def test_a_shelved_entity_has_no_requirements_at_all():
 def test_review_waived_satisfies_both_the_todo_and_the_wip_reviewer_gates():
     todo = task(reviewers=[], review_waived=True)
     wip = task(
-        status="wip",
+        status="in_progress",
         assigned_on=date(2026, 8, 3),
         owner="jcanton",
         reviewers=["jcanton"],

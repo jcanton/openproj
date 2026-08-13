@@ -10,13 +10,13 @@ def test_an_entity_needs_only_id_kind_and_title():
     """Parse permissively: everything else must be optional, or one hand-edited
     file with a missing field would make the whole repository unloadable."""
     entity = Entity(id="task-abc123", kind="task", title="Something")
-    assert entity.status == "todo"
+    assert entity.status == "shaping"
     assert entity.owner is None
     assert entity.assignees == []
     assert entity.reviewers == []
     assert entity.review_waived is False
     assert entity.depends_on == []
-    assert entity.priority == 2
+    assert entity.priority == "medium"
     assert entity.created_schema_version == 1
 
 

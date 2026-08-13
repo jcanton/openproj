@@ -3,14 +3,14 @@ id: task-5a4e39
 kind: task
 title: Read Anurag's IPDPS 2014 paper
 parent: pitch-5e7b1c
-status: todo
+status: ready
 owner: jcanton
 reviewers: []          # REQUIRED from schema_version 1; not in source
 effort_weeks: 0.1
 assignees: []
 assigned_on: null
 cycle: 36
-priority: 2
+priority: medium
 depends_on: []
 tags: [icon4py, reading, reductions, bitwise-reproducibility]
 prs: []
@@ -26,5 +26,5 @@ Migration notes:
 
 - The source gives only the DOI link and the first name "Anurag"; the paper's title was not stated
   in the note and has not been filled in here.
-- `effort_weeks: null`, `priority: 2` (default): neither is stated in the source. This is a
+- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source. This is a
   background-reading item and a human may well want to lower its priority.

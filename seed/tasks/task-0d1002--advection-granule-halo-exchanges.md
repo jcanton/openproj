@@ -3,14 +3,14 @@ id: task-0d1002
 kind: task
 title: Halo exchanges in the advection granule
 parent: pitch-0d0001
-status: wip
+status: in_progress
 owner: OngChia
 assignees: [OngChia, nfarabullini]
 reviewers: [nfarabullini, halungge]
 review_waived: false
 assigned_on: 2026-06-29
 cycle: 36
-priority: 0
+priority: high
 depends_on: [task-0d1001]
 tags: [greenline, tracer-advection, halo-exchange, mpi, icon4py]
 prs: ["C2SM/icon4py#1050"]

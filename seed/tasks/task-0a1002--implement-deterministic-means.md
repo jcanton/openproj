@@ -3,14 +3,14 @@ id: task-0a1002
 kind: task
 title: Implement deterministic means
 parent: pitch-0a0001
-status: todo
+status: ready
 owner: samkellerhals
 assignees: [samkellerhals]
 reviewers: [msimberg, egparedes]
 review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
-priority: 2
+priority: medium
 depends_on: []
 tags: [icon4py, distributed, reductions, numpy, bitwise-reproducibility]
 prs: []
