@@ -217,7 +217,8 @@ def create_app(
 
     @app.get("/graph", response_class=HTMLResponse)
     def graph() -> HTMLResponse:
-        return page(render.render_graph(index_now()[1], render.ROUTES))
+        commit, index = index_now()
+        return page(render.render_graph(index, render.ROUTES, base_commit=commit))
 
     @app.get("/timeline", response_class=HTMLResponse)
     def timeline() -> HTMLResponse:

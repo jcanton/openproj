@@ -135,6 +135,9 @@ def _elements(index: Index) -> list[dict]:
             "status": entity.status,
             "priority": entity.priority,
             "kind": entity.kind,
+            # Carried so a new edge is added to what is there rather than replacing
+            # it: a PATCH sends the whole field, and depends_on is a list.
+            "depends_on": index.blocked_by[entity_id],
         }
         if entity.parent in index.entities:
             data["parent"] = entity.parent
@@ -379,11 +382,14 @@ function cell(row, key) {
   const derived = (key === 'start' || key === 'end') && row.derived;
   const text = Array.isArray(value) ? value.join(', ') : (value ?? '');
   // The title is the way into the shaping doc; the id is the way to cite it.
-  if (key === 'title') return `<td data-entity="${row.id}" data-field="title"` +
-    `><a href="ENTITY_HREF${row.id}">${text}</a></td>`;
+  // A cell can be a link and still be editable. Making everything editable first
+  // is what silently turned the PR column into plain text.
+  const shown = key === 'title'
+    ? `<a href="ENTITY_HREF${row.id}">${text}</a>`
+    : key === 'prs' ? (value || []).map(prLink).join(', ') : text;
   if (EDITABLE && key in EDITABLE)
-    return `<td data-entity="${row.id}" data-field="${key}" class="edit">${text}</td>`;
-  if (key === 'prs') return `<td>${(value || []).map(prLink).join(', ')}</td>`;
+    return `<td data-entity="${row.id}" data-field="${key}" class="edit">${shown}</td>`;
+  if (key === 'title' || key === 'prs') return `<td>${shown}</td>`;
   return `<td class="${derived ? 'derived' : ''}">${text}</td>`;
 }
 
@@ -547,6 +553,13 @@ th[data-sort] { cursor: pointer; user-select: none; color: var(--muted); font-we
 """
 
 _GRAPH = """
+{% if editable %}
+<p class="editbar">
+  <button type="button" id="connect">Connect nodes</button>
+  <span id="state"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</p>
+{% endif %}
 <div id="cy"></div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
@@ -556,7 +569,7 @@ _GRAPH = """
 cytoscape.use(cytoscapeDagre);
 const COLOUR = {shaping:'#b9a6c9', ready:'#8a93a5', in_progress:'#1f6f8b',
                 done:'#3f7d58', shelved:'#b0b4bd'};
-cytoscape({
+const cy = cytoscape({
   container: document.getElementById('cy'),
   elements: JSON.parse(document.getElementById('elements').textContent),
   layout: {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70},
@@ -567,16 +580,72 @@ cytoscape({
         // overflows the box it is supposed to sit inside.
         'text-wrap': 'wrap', 'text-max-width': 136,
         'background-color': e => COLOUR[e.data('status')],
-        'border-width': e => 4 - e.data('priority'), 'border-color': '#0f5c6b',
+        // A rank, not arithmetic on the value: priority became a word, and
+        // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
+        'border-width': e => ({high: 4, medium: 2, low: 1})[e.data('priority')] ?? 2,
+        'border-color': '#0f5c6b',
         'color': '#fff', 'text-valign': 'center', 'width': 150, 'height': 44 } },
+    { selector: '.picked', style: {
+        'border-color': '#9a3327', 'border-width': 5 } },
     { selector: ':parent', style: {
         'background-opacity': .08, 'text-valign': 'top', 'color': '#6a7a80' } },
     { selector: 'edge', style: {
         'width': 1.5, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
         'line-color': '#8a93a5', 'target-arrow-color': '#8a93a5' } },
   ],
-}).on('tap', 'node', evt => {
-  location.href = 'ENTITY_HREF' + evt.target.id();
+});
+
+const CONNECT = document.getElementById('connect');
+let connecting = false;
+let source = null;
+
+function say(message) {
+  const state = document.getElementById('state');
+  if (state) state.textContent = message;
+}
+
+if (CONNECT) {
+  CONNECT.onclick = () => {
+    connecting = !connecting;
+    source = null;
+    cy.nodes().removeClass('picked');
+    CONNECT.textContent = connecting ? 'Stop connecting' : 'Connect nodes';
+    say(connecting ? 'click what must finish first, then what waits for it' : '');
+  };
+}
+
+cy.on('tap', 'node', async evt => {
+  const node = evt.target;
+  if (!connecting) {
+    location.href = 'ENTITY_HREF' + node.id();
+    return;
+  }
+  if (!source) {
+    source = node;
+    node.addClass('picked');
+    say(`${node.id()} must finish first — now click what waits for it`);
+    return;
+  }
+  if (source.id() === node.id()) { say('an entity cannot wait for itself'); return; }
+
+  // depends_on is stored on the DEPENDENT, so the second click owns the edge.
+  const blocked = node.data('depends_on') || [];
+  const fields = {depends_on: [...new Set([...blocked, source.id()])]};
+  const response = await fetch(`/api/entity/${node.id()}`, {
+    method: 'PATCH', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      base_commit: document.getElementById('base').value, fields, body: null,
+    }),
+  });
+  const answer = await response.json();
+  if (!response.ok) {
+    // The validator refuses an edge onto an ancestor, and a cycle. Say which.
+    say(answer.detail || (answer.problems || []).map(p => p.message).join('; ') || 'refused');
+    source.removeClass('picked');
+    source = null;
+    return;
+  }
+  location.reload();
 });
 </script>
 """
@@ -904,7 +973,6 @@ _DETAIL = """
   {% if editable %}
   <p class="editbar">
     <button type="button" id="toggle">Edit</button>
-    <button type="button" id="preview" hidden>Preview</button>
     <button type="button" id="save" hidden>Save</button>
     <span id="state"></span>
   </p>
@@ -931,7 +999,12 @@ _DETAIL = """
     {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc read">{{ e.body|safe }}</div>
   {% if editable %}
+    <p class="field bodybar">
+      <button type="button" id="preview">Preview the body</button>
+      <span class="hint">the fields above are shown as you set them</span>
+    </p>
     <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
+    <div id="body-preview" class="field doc" hidden></div>
     <div id="conflict" hidden></div>
   </form>
   {% endif %}
@@ -1018,7 +1091,7 @@ function show(editing) {
   // One class on the article. Each fact is a single row whose value swaps for its
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
-  for (const id of ['preview', 'save']) document.getElementById(id).hidden = !editing;
+  document.getElementById('save').hidden = !editing;
   document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
 }
 
@@ -1029,14 +1102,27 @@ document.getElementById('toggle').onclick = () => {
 };
 
 document.getElementById('preview').onclick = async () => {
+  // Only the body, and without leaving edit mode. It used to swap the whole page
+  // back to the read view, which showed the *stored* fields — so adding a reviewer
+  // and pressing Preview appeared to lose the change.
+  const pane = document.getElementById('body-preview');
+  const button = document.getElementById('preview');
+  if (!pane.hidden) {
+    pane.hidden = true;
+    BODY.hidden = false;
+    button.textContent = 'Preview the body';
+    return;
+  }
   // A round trip, not a second markdown implementation: two renderers disagree
   // eventually, and the one people trust would not be the one that gets committed.
   const response = await fetch('/api/preview', {
     method: 'POST', headers: {'content-type': 'application/json'},
     body: JSON.stringify({body: BODY.value}),
   });
-  document.querySelector('.doc').innerHTML = (await response.json()).html;
-  show(false);
+  pane.innerHTML = (await response.json()).html;
+  pane.hidden = false;
+  BODY.hidden = true;
+  button.textContent = 'Back to the source';
 };
 
 async function save() {
@@ -1142,6 +1228,8 @@ dt.derived, dd.derived { font-style: italic; }
    editing, and the values they replace are hidden once it is. */
 .field { display: none; }
 .entity.editing .field { display: block; }
+.entity.editing .field[hidden] { display: none; }
+.bodybar { display: flex; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
 .entity.editing .read { display: none; }
 .entity.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
@@ -1488,7 +1576,7 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
     return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links)
 
 
-def render_graph(index: Index, links: Links = STATIC) -> str:
+def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
     """Inline the libraries in one pass, keyed by filename.
 
     Sequential `str.replace` calls were wrong here and silently so: `DAGRE_JS` is a
@@ -1497,7 +1585,10 @@ def render_graph(index: Index, links: Links = STATIC) -> str:
     and the page rendered blank with a stray identifier. One regex pass over
     delimited markers cannot collide however the names are chosen.
     """
-    body = _GRAPH.replace("ELEMENTS_JSON", json.dumps(_elements(index)))
+    body = _ENV.from_string(_GRAPH).render(
+        editable=base_commit is not None, base_commit=base_commit or ""
+    )
+    body = body.replace("ELEMENTS_JSON", json.dumps(_elements(index)))
     wanted = {"cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"}
     body = re.sub(
         r"@@([\w.-]+)@@",
