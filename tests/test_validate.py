@@ -308,3 +308,36 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # grandfathered: the corpus is created_schema_version 1, the rule is 2
         ("warning", "pitch-1b3f9a", "shaped_by", NEEDS_SHAPED_BY, 2),
     }
+
+
+# --- the roster -------------------------------------------------------------
+
+
+def test_a_name_nobody_recognises_is_a_warning_not_a_refusal():
+    """The roster is a hand-maintained file, so it is always slightly behind
+    reality. Blocking on it would make a new colleague unassignable on their first
+    day; warning catches the case that actually happens, which is a typo quietly
+    creating a task nobody reviews."""
+    roster = Config(known_people=["jcanton", "msimberg"])
+
+    problem = only(check(task(owner="jcnaton"), config=roster), TASK_ID)
+    assert summary(problem) == ("warning", "owner", "jcnaton is not in config/people.yaml", 1)
+
+
+def test_a_roster_that_does_not_exist_checks_nothing():
+    """An empty roster means the check is off. A tracker that refuses a name
+    because nobody has written the roster yet is a tracker nobody finishes setting
+    up."""
+    assert check(task(owner="anybody-at-all"), config=Config()) == []
+
+
+def test_every_person_field_is_checked_against_the_roster():
+    roster = Config(known_people=["jcanton"])
+    problems = check(
+        task(owner="jcanton", reviewers=["ghost"], assignees=["phantom"]), config=roster
+    )
+
+    assert {(p.field, p.message.split()[0]) for p in problems} == {
+        ("reviewers", "ghost"),
+        ("assignees", "phantom"),
+    }

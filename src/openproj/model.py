@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 
-_CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml")
+_CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 
 
@@ -50,6 +50,10 @@ class Config(BaseModel):
     default_task_effort: float = 0.5
     holidays: list[date] = []
     cycles: dict[int, tuple[date, date]] = {}
+    # The roster, from config/people.yaml. Empty means the check is off, which is
+    # the right default: a tracker that refuses a name because nobody has written
+    # a roster yet is a tracker nobody finishes setting up.
+    known_people: list[str] = []
 
 
 def load_config(root: Path) -> Config:
@@ -353,8 +357,29 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
         yield "blocker", "prs", "a done entity needs at least one PR", 1
 
 
+def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str | None, str, int]]:
+    """Names that are nobody, reported as a warning.
+
+    A warning rather than a blocker on purpose: the roster is a file somebody
+    maintains by hand, so it is always slightly behind reality, and a new
+    colleague must not be unassignable on their first day. It catches the case
+    that actually happens — a typo that quietly makes a task nobody reviews.
+    """
+    if not config.known_people:
+        return
+    for field in ("owner", "shaped_by", "assignees", "reviewers"):
+        value = getattr(entity, field, None)
+        for login in value if isinstance(value, list) else [value] if value else []:
+            if login not in config.known_people:
+                yield "warning", field, f"{login} is not in config/people.yaml", 1
+
+
 def _problems_for(
-    entity: Entity, by_id: dict[str, Entity], parent_cycles: set[str], dep_cycles: set[str]
+    entity: Entity,
+    config: Config,
+    by_id: dict[str, Entity],
+    parent_cycles: set[str],
+    dep_cycles: set[str],
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """Yield (severity_before_grandfathering, field, message, rule_version)."""
     if not entity.title.strip():
@@ -371,6 +396,7 @@ def _problems_for(
 
     yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
     yield from _status_problems(entity)
+    yield from _people_problems(entity, config)
 
 
 def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
@@ -388,7 +414,7 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
         if entity.status == "shelved":
             continue
         for severity, field, message, rule_version in _problems_for(
-            entity, by_id, parent_cycles, dep_cycles
+            entity, config, by_id, parent_cycles, dep_cycles
         ):
             grandfathered = rule_version > entity.created_schema_version
             problems.append(
