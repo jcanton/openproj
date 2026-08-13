@@ -82,11 +82,20 @@ def _row(index: Index, entity_id: str) -> dict:
     }
 
 
+# Columns the table shows that are computed rather than owned. `size` is the least
+# obvious: it shows effort_weeks *or an assumed default*, so a control on it would
+# let somebody commit the assumption without meaning to.
+_TABLE_DERIVED = ("size", "start", "end", "blocked_by")
+
+
 def _payload(index: Index) -> dict:
     return {
         "rows": {i: _row(index, i) for i in index.entities},
         "facets": index.facets,
         "predicates": list(index.facets["predicate"]),
+        # One list of what a person may change, shared with the detail page. Two
+        # lists drift the first time a field is added, and silently.
+        "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
     }
 
 
@@ -303,6 +312,39 @@ _TABLE = """
   <th data-sort="start">start</th><th data-sort="end">end</th>
   <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
 </tr></thead><tbody></tbody></table>
+{% if editable %}
+<input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
+<p class="editbar"><button type="button" id="new">New entity</button>
+   <span id="state"></span></p>
+<form id="create" hidden onsubmit="return false">
+  <label>kind
+    <select name="kind">
+      {% for k in kinds %}<option>{{ k }}</option>{% endfor %}
+    </select></label>
+  <label>title <input name="title" data-type="text"></label>
+  {% for f in creatable %}
+  <label {% if f.kind %}class="only-{{ f.kind }}"{% endif %}>{{ f.name }}
+    {% if f.type == "status" %}
+    <select name="{{ f.name }}" data-type="text"
+            {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+      {% for s in statuses %}<option>{{ s }}</option>{% endfor %}
+    </select>
+    {% elif f.type == "bool" %}
+    <input type="checkbox" name="{{ f.name }}" data-type="bool"
+           {% if f.kind %}data-kind="{{ f.kind }}"{% endif %}>
+    {% else %}
+    <input name="{{ f.name }}" data-type="{{ f.type }}"
+           {% if f.kind %}data-kind="{{ f.kind }}"{% endif %}
+           {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+    {% endif %}
+  </label>
+  {% endfor %}
+  <label class="wide">body <textarea name="body" rows="6"></textarea></label>
+  <p><button type="button" id="save-new">Create</button></p>
+  <div id="problems" hidden></div>
+</form>
+<div id="row-conflict" hidden></div>
+{% endif %}
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
 <script>
 const DATA = JSON.parse(document.getElementById('payload').textContent);
@@ -330,7 +372,10 @@ function cell(row, key) {
   const derived = (key === 'start' || key === 'end') && row.derived;
   const text = Array.isArray(value) ? value.join(', ') : (value ?? '');
   // The title is the way into the shaping doc; the id is the way to cite it.
-  if (key === 'title') return `<td><a href="ENTITY_HREF${row.id}">${text}</a></td>`;
+  if (key === 'title') return `<td data-entity="${row.id}" data-field="title"` +
+    `><a href="ENTITY_HREF${row.id}">${text}</a></td>`;
+  if (EDITABLE && key in EDITABLE)
+    return `<td data-entity="${row.id}" data-field="${key}" class="edit">${text}</td>`;
   if (key === 'prs') return `<td>${(value || []).map(prLink).join(', ')}</td>`;
   return `<td class="${derived ? 'derived' : ''}">${text}</td>`;
 }
@@ -347,7 +392,7 @@ function draw() {
   const rows = Object.values(DATA.rows).filter(matches)
     .sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? '')));
   tbody.innerHTML = rows.map(row =>
-    `<tr title="${(row.problems || []).join(' · ')}">` +
+    `<tr data-id="${row.id}" title="${(row.problems || []).join(' · ')}">` +
     keys.map(k => cell(row, k)).join('') + '</tr>').join('');
   document.getElementById('shown').textContent = rows.length;
   for (const select of document.querySelectorAll('select[data-field]'))
@@ -361,6 +406,132 @@ function update(field, value) {
   draw();
 }
 
+{% if not editable %}
+// A rendered file has no server to save to, so the table is a table.
+const EDITABLE = null;
+{% else %}
+const BASE = document.getElementById('base');
+const EDITABLE = DATA.editable;
+
+function coerce(type, raw) {
+  raw = raw.trim();
+  if (type === 'bool') return raw === 'true';
+  if (type === 'list') return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (type === 'number') {
+    if (raw === '') return null;
+    const n = Number(raw);
+    if (Number.isNaN(n)) throw new Error(`must be a number, not "${raw}"`);
+    return n;
+  }
+  return raw === '' ? null : raw;
+}
+
+async function saveCell(cell, value) {
+  const field = cell.dataset.field;
+  let coerced;
+  try {
+    coerced = coerce(EDITABLE[field], value);
+  } catch (error) {
+    document.getElementById('state').textContent = `${field} ${error.message}`;
+    return;
+  }
+  // One key, taken from the cell. Sending the row would overwrite whatever
+  // somebody else changed while this tab was open, and would turn two people
+  // editing two different columns into a conflict field-level merge exists to
+  // make invisible. No body: an empty string is a replacement, not an omission,
+  // and would blank the shaping doc attached to the row.
+  const response = await fetch(`/api/entity/${cell.dataset.entity}`, {
+    method: 'PATCH', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
+  });
+  const answer = await response.json();
+  const box = document.getElementById('row-conflict');
+  if (response.status === 409) {
+    box.hidden = false;
+    box.textContent = answer.conflict;
+    return;
+  }
+  if (!response.ok) {
+    document.getElementById('state').textContent = answer.detail || 'refused';
+    return;
+  }
+  // The page moves forward with the repository, or its next save collides with
+  // the commit it just made.
+  BASE.value = answer.commit;
+  DATA.rows[cell.dataset.entity][field] = coerced;
+  draw();
+}
+
+if (EDITABLE) {
+  tbody.addEventListener('dblclick', event => {
+    const cell = event.target.closest('td.edit');
+    if (!cell || cell.querySelector('input')) return;
+    const was = cell.textContent;
+    cell.innerHTML = `<input value="${was.replace(/"/g, '&quot;')}">`;
+    const input = cell.querySelector('input');
+    input.focus();
+    input.onblur = () => { if (input.value === was) draw(); else saveCell(cell, input.value); };
+    input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') draw(); };
+  });
+
+  const form = document.getElementById('create');
+  document.getElementById('new').onclick = () => { form.hidden = !form.hidden; };
+  form.querySelector('[name=kind]').onchange = event => {
+    for (const label of form.querySelectorAll('[class^=only-]'))
+      label.hidden = !label.classList.contains(`only-${event.target.value}`);
+  };
+  form.querySelector('[name=kind]').dispatchEvent(new Event('change'));
+
+  document.getElementById('save-new').onclick = async () => {
+    const fields = {kind: form.querySelector('[name=kind]').value};
+    const status = form.querySelector('[name=status]')?.value || 'todo';
+    const order = ['todo', 'wip', 'done'];
+    const missing = [];
+    for (const control of form.querySelectorAll('[data-type]')) {
+      if (control.dataset.kind && control.dataset.kind !== fields.kind) continue;
+      let value;
+      try { value = coerce(control.dataset.type, control.value); } catch { value = null; }
+      if (control.type === 'checkbox') value = control.checked;
+      const gate = control.dataset.requiredFrom;
+      // review_waived is the escape hatch from the reviewers rule, not a rule of
+      // its own. A check that ignores it makes naming a fake reviewer the only way
+      // to file work that genuinely has nothing to review.
+      const waived = control.name === 'reviewers' &&
+        form.querySelector('[name=review_waived]')?.checked;
+      // Cumulative: a field demanded from `todo` is demanded at every status after
+      // it, which is why this compares positions rather than equality.
+      const empty = value === null || (Array.isArray(value) && !value.length);
+      if (gate && empty && !waived && order.indexOf(status) >= order.indexOf(gate))
+        missing.push(control.name);
+      if (!empty) fields[control.name] = value;
+    }
+    const problems = document.getElementById('problems');
+    if (missing.length) {
+      problems.hidden = false;
+      problems.textContent = `still needed at status ${status}: ${missing.join(', ')}`;
+      return;
+    }
+    const response = await fetch('/api/entity', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        base_commit: BASE.value, fields,
+        body: form.querySelector('[name=body]').value || '',
+      }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      // The client check is a courtesy; this is the truth, and swallowing it
+      // would leave somebody staring at a form that looks fine.
+      problems.hidden = false;
+      problems.textContent = (answer.problems || [])
+        .map(p => `${p.field}: ${p.message}`).join('\n') || answer.detail || 'refused';
+      return;
+    }
+    location.reload();
+  };
+}
+
+{% endif %}
 document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
 for (const select of document.querySelectorAll('select[data-field]'))
   select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
@@ -731,6 +902,23 @@ EDITABLE: dict[str, str] = {
 }
 STATUSES = ("todo", "wip", "done", "shelved")
 
+# Which status first demands each field. Cumulative, per spec 5.1: permissive when
+# an idea is captured, strict once work starts, strictest when it is claimed done.
+# An HTML `required` attribute cannot express this, because what is required
+# depends on the status chosen in the same form a moment ago. This is a copy of
+# validate_all and is only ever a courtesy — the server's answer is the truth.
+REQUIRED_FROM = {
+    "owner": "todo",
+    "reviewers": "todo",
+    "effort_weeks": "todo",
+    "appetite_weeks": "todo",
+    "shaped_by": "todo",
+    "assigned_on": "wip",
+    "prs": "done",
+}
+# Fields only one kind has, so the create form can hide the rest.
+KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
+
 
 def _editable_for(entity: Entity) -> list[dict]:
     """The fields this kind actually has, with the type a form must coerce back to."""
@@ -847,10 +1035,28 @@ def preview_html(body: str) -> str:
     return MarkdownIt("commonmark", {"html": False}).render(body)
 
 
-def render_table(index: Index, links: Links = STATIC) -> str:
+def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
     payload = _payload(index)
     blockers = sum(1 for p in index.problems if p.severity == "blocker")
-    body = _ENV.from_string(_TABLE).render(payload=payload, blockers=blockers)
+    creatable = [
+        {
+            "name": name,
+            "type": kind,
+            "gate": REQUIRED_FROM.get(name),
+            "kind": KIND_ONLY.get(name),
+        }
+        for name, kind in EDITABLE.items()
+        if name not in ("title",)
+    ]
+    body = _ENV.from_string(_TABLE).render(
+        payload=payload,
+        blockers=blockers,
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        creatable=creatable,
+        kinds=("project", "pitch", "task"),
+        statuses=STATUSES,
+    )
     body = body.replace("PAYLOAD_JSON", json.dumps(payload)).replace("ENTITY_HREF", links.entity)
     return _page("openproj — table", body, _TABLE_STYLE, links)
 

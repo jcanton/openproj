@@ -200,7 +200,8 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def table() -> HTMLResponse:
-        return page(render.render_table(index_now()[1], render.ROUTES))
+        commit, index = index_now()
+        return page(render.render_table(index, render.ROUTES, base_commit=commit))
 
     @app.get("/graph", response_class=HTMLResponse)
     def graph() -> HTMLResponse:

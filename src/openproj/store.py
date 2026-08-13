@@ -299,8 +299,18 @@ class Store:
             return self._finish(self._commit(path, merged, author, message), "merged")
 
     def _absorb_remote(self) -> None:
-        """Fast-forward onto anything the remote gained since the last write."""
-        self.fetch()
+        """Fast-forward onto anything the remote gained since the last write.
+
+        An unreachable remote is not a reason to refuse the write: the commit is
+        still made locally and reported as unpushed. Refusing would mean the
+        tracker stops working whenever GitHub does.
+        """
+        try:
+            self.fetch()
+        except StoreDiverged:
+            raise
+        except Exception:
+            return
         local, remote_head = self.head(), self._remote_head()
         if remote_head is None or remote_head == local:
             return
