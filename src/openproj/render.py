@@ -20,10 +20,11 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from jinja2 import Environment
+from markdown_it import MarkdownIt
 from markupsafe import Markup
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate
-from .model import Config, size_weeks
+from .model import Config, Entity, size_weeks
 
 _STATIC = Path(__file__).resolve().parents[2] / "static"
 
@@ -188,6 +189,33 @@ def _month_ticks(origin: date, last: date, x) -> list[dict]:
     return ticks
 
 
+_MD = MarkdownIt("commonmark").enable("table")
+_PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
+
+
+def _pr_link(ref: str) -> str:
+    """A dead PR reference teaches people the field is decorative."""
+    repo, _, number = ref.partition("#")
+    return f'<a href="https://github.com/{repo}/pull/{number}">{ref}</a>'
+
+
+_REMOTE_IMG = re.compile(r'<img\s+src="(https?://[^"]+)"(?:[^>]*?alt="([^"]*)")?[^>]*>')
+
+
+def _body_html(entity: Entity) -> str:
+    """The shaping document, rendered, with PR references made clickable.
+
+    A remote image in a shaping doc would make the page fetch from the network,
+    which is exactly what inlining every library was for. Remote images become
+    links instead: the reference survives, the dependency does not.
+    """
+    html = _MD.render(entity.body)
+    html = _REMOTE_IMG.sub(
+        lambda m: f'<a href="{m.group(1)}">{m.group(2) or "image"} (external image)</a>', html
+    )
+    return _PR.sub(lambda m: _pr_link(m.group(0)), html)
+
+
 _ENV = Environment(autoescape=True)
 
 _SHELL = """<!doctype html>
@@ -206,7 +234,7 @@ nav a { color: var(--accent); }
 {{ style }}
 </style></head><body>
 <nav><a href="index.html">Table</a><a href="graph.html">Graph</a>
-<a href="timeline.html">Timeline</a></nav>
+<a href="timeline.html">Timeline</a><a href="detail.html">Detail</a></nav>
 {{ content }}
 </body></html>
 """
@@ -260,7 +288,15 @@ function cell(row, key) {
   const value = row[key];
   const derived = (key === 'start' || key === 'end') && row.derived;
   const text = Array.isArray(value) ? value.join(', ') : (value ?? '');
+  // The title is the way into the shaping doc; the id is the way to cite it.
+  if (key === 'title') return `<td><a href="detail.html#${row.id}">${text}</a></td>`;
+  if (key === 'prs') return `<td>${(value || []).map(prLink).join(', ')}</td>`;
   return `<td class="${derived ? 'derived' : ''}">${text}</td>`;
+}
+
+function prLink(ref) {
+  const [repo, number] = ref.split('#');
+  return `<a href="https://github.com/${repo}/pull/${number}">${ref}</a>`;
 }
 
 function draw() {
@@ -330,6 +366,8 @@ cytoscape({
         'width': 1.5, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
         'line-color': '#8a93a5', 'target-arrow-color': '#8a93a5' } },
   ],
+}).on('tap', 'node', evt => {
+  location.href = 'detail.html#' + evt.target.id();
 });
 </script>
 """
@@ -339,7 +377,8 @@ _TIMELINE = """
 <div class="labels">
   <div class="spacer" style="height: {{ t.header }}px"></div>
   {% for bar in t.bars %}
-  <div class="row" title="{{ bar.full }}">{{ bar.label }}</div>
+  <div class="row">
+    <a href="detail.html#{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a></div>
   {% endfor %}
 </div>
 <div class="scroll">
@@ -361,9 +400,10 @@ _TIMELINE = """
   {% endfor %}
   <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
   {% for bar in t.bars %}
-  <rect data-id="{{ bar.id }}" class="{{ bar.classes }}" x="{{ bar.x }}" y="{{ bar.y }}"
+  <a href="detail.html#{{ bar.id }}"
+     ><rect data-id="{{ bar.id }}" class="{{ bar.classes }}" x="{{ bar.x }}" y="{{ bar.y }}"
         width="{{ bar.width }}" height="14" fill="{{ bar.colour }}"
-        ><title>{{ bar.tip }}</title></rect>
+        ><title>{{ bar.tip }} — click to open</title></rect></a>
   {% endfor %}
   {% for month in t.months %}
   <line class="month-rule" x1="{{ month.x }}" y1="{{ t.header }}" x2="{{ month.x }}"
@@ -399,6 +439,118 @@ rect.bar { rx: 3; }
 rect.estimated { stroke: #8f5c07; stroke-width: 1; }
 rect.late { stroke: #9a3327; stroke-width: 1.5; }
 """
+
+
+_DETAIL = """
+<p class="hint">Pick anything from the table, the graph or the timeline. Every view links here.</p>
+{% for e in entities %}
+<article id="{{ e.id }}" class="entity">
+  <h1>{{ e.title }}</h1>
+  <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
+     {% if e.parent %}· in <a href="#{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
+  <dl>
+    <dt>Owner</dt><dd>{{ e.owner or "nobody" }}</dd>
+    <dt>Reviewers</dt>
+    <dd>{% if e.review_waived %}<i>waived</i>
+        {% else %}{{ e.reviewers|join(", ") or "none yet" }}{% endif %}</dd>
+    <dt>{{ e.size_label }}</dt><dd>{{ e.size }}</dd>
+    <dt>Assigned on</dt><dd>{{ e.assigned_on or "—" }}</dd>
+    <dt>Cycle</dt><dd>{{ e.cycle or "—" }}</dd>
+    <dt class="derived">Scheduled</dt>
+    <dd class="derived">{{ e.span }}
+        {% if e.overrun %} · <b class="late">{{ e.overrun }}</b>{% endif %}</dd>
+    {% if e.why %}<dt class="derived">Why then</dt><dd class="derived">{{ e.why }}</dd>{% endif %}
+    <dt>Blocked by</dt><dd>{{ e.blocked_by|safe or "nothing" }}</dd>
+    <dt class="derived">Blocks</dt><dd class="derived">{{ e.blocks|safe or "nothing" }}</dd>
+    <dt>PRs</dt><dd>{{ e.prs|safe or "none" }}</dd>
+    <dt>Tags</dt><dd>{{ e.tags|join(", ") or "—" }}</dd>
+  </dl>
+  {% if e.problems %}<ul class="problems">
+    {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+  <div class="doc">{{ e.body|safe }}</div>
+</article>
+{% endfor %}
+<script>
+// One page, hash-routed: a stable shareable link per entity without a file each.
+function show() {
+  const wanted = location.hash.slice(1);
+  let seen = false;
+  for (const article of document.querySelectorAll('article.entity')) {
+    const match = article.id === wanted;
+    article.style.display = match || !wanted ? '' : 'none';
+    seen = seen || match;
+  }
+  document.querySelector('.hint').style.display = wanted && seen ? 'none' : '';
+}
+addEventListener('hashchange', show);
+show();
+</script>
+"""
+
+_DETAIL_STYLE = """
+.hint { color: var(--muted); }
+article.entity { max-width: 46rem; margin-bottom: 3rem; }
+article.entity h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+.meta { color: var(--muted); margin-top: 0; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; margin: 1rem 0; }
+dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+dd { margin: 0; }
+dt.derived, dd.derived { font-style: italic; }
+.late { color: #9a3327; }
+.problems { color: #8f5c07; padding-left: 1.1rem; }
+.doc { border-top: 1px solid var(--line); padding-top: 1rem; }
+.doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
+.doc code { background: var(--surface-2, rgba(127,127,127,.12)); padding: 0 .25em; }
+"""
+
+
+def _links(ids: list[str], index: Index) -> str:
+    return ", ".join(
+        f'<a href="#{i}">{index.entities[i].title if i in index.entities else i}</a>' for i in ids
+    )
+
+
+def _detail_rows(index: Index) -> list[dict]:
+    rows = []
+    for entity_id, entity in sorted(index.entities.items()):
+        span = index.spans.get(entity_id)
+        why = index.explanations.get(entity_id)
+        size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
+        rows.append(
+            {
+                "id": entity_id,
+                "title": entity.title,
+                "kind": entity.kind,
+                "status": entity.status,
+                "parent": entity.parent,
+                "owner": entity.owner,
+                "reviewers": entity.reviewers,
+                "review_waived": entity.review_waived,
+                "size_label": "Appetite" if entity.kind == "pitch" else "Effort",
+                "size": f"{size:g} weeks" + (" (assumed)" if defaulted else ""),
+                "assigned_on": entity.assigned_on,
+                "cycle": entity.cycle,
+                "span": f"{span.start} → {span.end}" if span else "not scheduled",
+                "overrun": (
+                    f"overruns cycle {entity.cycle} by {span.overruns_cycle_weeks:.1f} weeks"
+                    if span and span.overruns_cycle_weeks
+                    else ""
+                ),
+                "why": why.text if why else "",
+                "blocked_by": _links(index.blocked_by[entity_id], index),
+                "blocks": _links(index.blocks[entity_id], index),
+                "prs": ", ".join(_pr_link(ref) for ref in entity.prs),
+                "tags": entity.tags,
+                "problems": [p.message for p in index.problems if p.entity_id == entity_id],
+                "body": _body_html(entity),
+            }
+        )
+    return rows
+
+
+def render_detail(index: Index) -> str:
+    body = _ENV.from_string(_DETAIL).render(entities=_detail_rows(index))
+    return _page("openproj — detail", body, _DETAIL_STYLE)
 
 
 def _page(title: str, content: str, style: str = "") -> str:
@@ -448,6 +600,7 @@ def render_static(index: Index, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, html in (
         ("index.html", render_table(index)),
+        ("detail.html", render_detail(index)),
         ("graph.html", render_graph(index)),
         ("timeline.html", render_timeline(index)),
     ):

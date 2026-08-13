@@ -16,7 +16,7 @@ from openproj.index import Index, build_index
 from openproj.model import load_repo
 from openproj.render import render_static
 
-PAGES = ("index.html", "graph.html", "timeline.html")
+PAGES = ("index.html", "detail.html", "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -48,7 +48,11 @@ def test_no_page_reaches_the_network(rendered: Path):
     page that breaks on a train, and this is the only test that would notice."""
     for name in PAGES:
         body = read(rendered, name)
-        assert not re.search(r'(src|href)\s*=\s*["\']https?://', body), name
+        # Anchors to github.com are fine and wanted — a PR link that resolves is
+        # the point. What must never appear is a page FETCHING from the network.
+        assert not re.search(r'<script[^>]+src\s*=', body), name
+        assert not re.search(r'<link[^>]+href\s*=\s*["\']https?://', body), name
+        assert not re.search(r'<img[^>]+src\s*=\s*["\']https?://', body), name
         assert "cdn." not in body, name
 
 
@@ -171,3 +175,71 @@ def test_a_span_less_entity_is_listed_but_not_drawn(rendered: Path, seed_index: 
     )
     assert payload["rows"]["task-3d84e9"]["start"] is None
     assert 'data-id="task-3d84e9" class="bar' not in read(rendered, "timeline.html")
+
+
+# --- the detail page -------------------------------------------------------
+
+
+def test_a_detail_page_exists_for_every_entity(rendered: Path, seed_index: Index):
+    """The whole premise is that the shaping doc IS the record. A viewer that
+    never shows the body is a viewer of the frontmatter only."""
+    body = read(rendered, "detail.html")
+    for entity_id in seed_index.entities:
+        assert f'id="{entity_id}"' in body, entity_id
+
+
+def test_the_detail_page_renders_the_shaping_doc_as_markdown(rendered: Path):
+    body = read(rendered, "detail.html")
+    assert "<h2>" in body, "markdown headings should render as headings"
+    # Line-initial only: `## Appetite` inside a code span is correctly rendered
+    # markdown, not leaked source.
+    assert not re.search(r"^## ", body.split("<script")[0], re.M), "raw markdown leaked"
+
+
+def test_the_detail_page_shows_the_derived_dates_and_the_explanation(
+    rendered: Path, seed_index: Index
+):
+    body = read(rendered, "detail.html")
+    entity_id, explanation = next(iter(seed_index.explanations.items()))
+    assert explanation.text in body
+    assert seed_index.spans[entity_id].start.isoformat() in body
+
+
+@pytest.fixture
+def demo_rendered(demo_root: Path, tmp_path: Path) -> tuple[Path, Index]:
+    """The shipped demo, which unlike the frozen golden corpus carries real PR
+    references and the dependency diamond these tests are about."""
+    from datetime import date
+
+    entities, config = load_repo(demo_root)
+    index = build_index(entities, config, date(2026, 8, 17))
+    out = tmp_path / "demo"
+    render_static(index, out)
+    return out, index
+
+
+def test_pr_references_become_links_that_resolve(demo_rendered: tuple[Path, Index]):
+    """A dead PR reference teaches people the field is decorative."""
+    out, index = demo_rendered
+    refs = {ref for e in index.entities.values() for ref in e.prs}
+    assert refs, "the demo corpus should carry PR references"
+    detail = read(out, "detail.html")
+    for ref in refs:
+        repo, number = ref.split("#")
+        assert f'href="https://github.com/{repo}/pull/{number}"' in detail, ref
+
+
+def test_every_view_links_to_the_detail_page(rendered: Path):
+    assert 'detail.html#' in read(rendered, "index.html")
+    for name in ("graph.html", "timeline.html"):
+        assert "detail.html#" in read(rendered, name), name
+
+
+def test_the_detail_page_links_dependencies_both_ways(demo_rendered: tuple[Path, Index]):
+    """Blocked-by and blocks are the two questions a reader actually has, and
+    `blocks` exists nowhere in the files — it is only ever derived."""
+    out, _ = demo_rendered
+    body = read(out, "detail.html")
+    assert "Blocked by" in body
+    assert "Blocks" in body
+    assert 'href="#task-0d1001"' in body
