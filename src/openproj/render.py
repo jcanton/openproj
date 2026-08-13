@@ -120,6 +120,7 @@ def _payload(index: Index) -> dict:
         # One list of what a person may change, shared with the detail page. Two
         # lists drift the first time a field is added, and silently.
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
+        "suggests": SUGGESTS,
     }
 
 
@@ -318,6 +319,9 @@ source.onmessage = event => {
 """
 
 _TABLE = """
+<p class="editbar"><a class="button" href="{{ links.new }}">New entity</a>
+   <span class="hint">double-click a cell to edit it</span>
+   <span id="state"></span></p>
 <div id="summary">
   <strong id="blocker-count">{{ blockers }}</strong> blocking problems ·
   <span id="shown">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
@@ -342,12 +346,10 @@ _TABLE = """
 </tr></thead><tbody></tbody></table>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
-<p class="editbar"><a class="button" href="{{ links.new }}">New entity</a>
-   <span class="hint">double-click a cell to edit it</span>
-   <span id="state"></span></p>
 <div id="row-conflict" hidden></div>
 {% endif %}
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
+{% if editable %}{{ combobox|safe }}{% endif %}
 <script>
 const DATA = JSON.parse(document.getElementById('payload').textContent);
 const params = new URLSearchParams(location.search);
@@ -414,6 +416,7 @@ const EDITABLE = null;
 {% else %}
 const BASE = document.getElementById('base');
 const EDITABLE = DATA.editable;
+const SUGGESTS = DATA.suggests;
 
 function coerce(type, raw) {
   raw = raw.trim();
@@ -469,8 +472,14 @@ if (EDITABLE) {
     const cell = event.target.closest('td.edit');
     if (!cell || cell.querySelector('input')) return;
     const was = cell.textContent;
-    cell.innerHTML = `<input value="${was.replace(/"/g, '&quot;')}">`;
+    const suggest = SUGGESTS[cell.dataset.field];
+    cell.innerHTML = `<input value="${was.replace(/"/g, '&quot;')}"` +
+      ` data-type="${EDITABLE[cell.dataset.field]}"` +
+      `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
     const input = cell.querySelector('input');
+    // The table gets the autocomplete the detail page has. Suggestions that only
+    // appear in one of the two places are suggestions nobody relies on.
+    if (suggest) attachSuggest(input);
     input.focus();
     input.onblur = () => { if (input.value === was) draw(); else saveCell(cell, input.value); };
     input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') draw(); };
@@ -599,6 +608,93 @@ rect.late { stroke: #9a3327; stroke-width: 1.5; }
 """
 
 
+_COMBOBOX = """
+<script id="suggest" type="application/json">SUGGEST_JSON</script>
+<script>
+// Type-to-filter, not a picker beside the field. A datalist only completes a whole
+// value, so on a comma-separated field it stops helping after the first name — and
+// a separate "add" control is a second place to look for one job.
+const SUGGEST = JSON.parse(document.getElementById('suggest').textContent);
+
+function attachSuggest(input) {
+  const source = SUGGEST[input.dataset.suggest] || [];
+  const multi = input.dataset.type === 'list';
+  const list = document.createElement('ul');
+  list.className = 'suggest';
+  list.hidden = true;
+  input.insertAdjacentElement('afterend', list);
+  let active = -1;
+
+  const tokens = () => input.value.split(',').map(s => s.trim());
+  const typed = () => (multi ? tokens()[tokens().length - 1] : input.value).trim().toLowerCase();
+
+  function choose(value) {
+    if (multi) {
+      const held = tokens();
+      held[held.length - 1] = value;
+      input.value = held.filter(Boolean).join(', ') + ', ';
+    } else {
+      input.value = value;
+    }
+    close();
+    input.focus();
+  }
+
+  function close() { list.hidden = true; list.innerHTML = ''; active = -1; }
+
+  function open() {
+    const needle = typed();
+    const matches = source
+      .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
+      .filter(item => !multi || !tokens().slice(0, -1).includes(item.value))
+      .slice(0, 8);
+    list.innerHTML = matches
+      .map((m, i) => `<li data-value="${m.value}" class="${i === 0 ? 'on' : ''}">` +
+        `${m.value}${m.label ? ` <span class="dim">${m.label}</span>` : ''}</li>`).join('');
+    active = matches.length ? 0 : -1;
+    list.hidden = !matches.length;
+  }
+
+  input.addEventListener('input', open);
+  input.addEventListener('focus', open);
+  input.addEventListener('blur', () => setTimeout(close, 150));
+  list.addEventListener('mousedown', event => {
+    const item = event.target.closest('li');
+    if (item) { event.preventDefault(); choose(item.dataset.value); }
+  });
+  input.addEventListener('keydown', event => {
+    if (list.hidden) return;
+    const items = [...list.children];
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      items[active]?.classList.remove('on');
+      active = (active + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+      items[active].classList.add('on');
+    } else if (event.key === 'Enter' && active >= 0) {
+      event.preventDefault();
+      choose(items[active].dataset.value);
+    } else if (event.key === 'Escape') {
+      close();
+    }
+  });
+}
+
+for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(input);
+</script>
+"""
+
+_SUGGEST_STYLE = """
+.suggest { position: absolute; z-index: 20; margin: 0; padding: 0; list-style: none;
+           background: var(--surface, #fff); border: 1px solid var(--line-strong, #b7c5c9);
+           border-radius: 3px; min-width: 14rem; max-height: 16rem; overflow-y: auto;
+           box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px; }
+.suggest li { padding: .25rem .5rem; cursor: pointer; }
+.suggest li.on { background: var(--accent, #0f5c6b); color: #fff; }
+.suggest .dim { opacity: .6; }
+.suggest li.on .dim { opacity: .85; }
+dd, td.edit { position: relative; }
+"""
+
 _CONTROL = """
 {% if f.type in ("status", "priority") %}
 <select name="{{ f.name }}" data-type="text" class="field"
@@ -613,17 +709,10 @@ _CONTROL = """
 {% elif f.type == "date" %}
 <input type="date" name="{{ f.name }}" data-type="date" value="{{ f.text }}" class="field"
        {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
-{% elif f.type == "list" and f.list %}
-<span class="field tokens">
-  <input name="{{ f.name }}" data-type="list" value="{{ f.text }}" list="{{ f.list }}"
-         {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
-  <select class="adder" data-for="{{ f.name }}" data-source="{{ f.list }}">
-    <option value="">add…</option>
-  </select>
-</span>
 {% else %}
 <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}" class="field"
-       {% if f.list %}list="{{ f.list }}"{% endif %}
+       autocomplete="off"
+       {% if f.list %}data-suggest="{{ f.list }}"{% endif %}
        {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
 {% endif %}
 """
@@ -637,21 +726,7 @@ def _control_html(field: dict) -> str:
 
 _FIELDS = """
 {% for f in fields %}
-<label>{{ f.name }}
-  {% if f.type == "status" %}
-  <select name="{{ f.name }}" data-type="text"
-          {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
-    {% for s in statuses %}<option {% if s == f.value %}selected{% endif %}>{{ s }}</option>
-    {% endfor %}
-  </select>
-  {% elif f.type == "bool" %}
-  <input type="checkbox" name="{{ f.name }}" data-type="bool" {% if f.value %}checked{% endif %}>
-  {% else %}
-  <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}"
-         {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}
-         {% if f.type == "date" %}placeholder="YYYY-MM-DD"{% endif %}>
-  {% endif %}
-</label>
+<label>{{ f.name }}{{ f.control|safe }}</label>
 {% endfor %}
 <label class="wide">body
   <textarea name="body" rows="{{ rows }}">{{ body }}</textarea>
@@ -662,12 +737,12 @@ _FIELDS = """
 def _fields_html(fields: list[dict], body: str, rows: int = 18) -> str:
     """The same controls whether an entity exists yet or not.
 
-    Two field blocks would drift the first time one is added, and the drift shows
-    up as a field you can set on creation and never change afterwards.
+    Rendered through `_control_html` rather than a second copy of the markup: two
+    copies drift the first time one gains an attribute, and the drift shows up as
+    a field that autocompletes when you edit it and not when you create it.
     """
     return _ENV.from_string(_FIELDS).render(
-        fields=fields, body=body, rows=rows, statuses=STATUSES,
-        priorities=PRIORITIES, labels=STATUS_LABEL,
+        fields=[{**f, "control": _control_html(f)} for f in fields], body=body, rows=rows
     )
 
 
@@ -688,15 +763,9 @@ _NEW = """
     <div id="fields">{{ fields_html|safe }}</div>
     <div id="problems" hidden></div>
   </form>
-  <datalist id="entities">
-    {% for item in suggest.entities %}<option value="{{ item.id }}">{{ item.title }}</option>
-    {% endfor %}
-  </datalist>
-  <datalist id="tags">
-    {% for tag in suggest.tags %}<option value="{{ tag }}">{% endfor %}
-  </datalist>
   <div class="doc" hidden></div>
 </article>
+{{ combobox|safe }}
 <script>
 const FORM = document.getElementById('edit');
 const STATE = document.getElementById('state');
@@ -728,22 +797,6 @@ document.getElementById('preview').onclick = async () => {
 };
 
 
-// The "add" pickers, filled from the same datalists the free-text fields use. A
-// datalist only completes a whole value, so on a comma-separated field it stops
-// helping after the first name — which is exactly where help is wanted.
-for (const adder of document.querySelectorAll('select.adder')) {
-  const source = document.getElementById(adder.dataset.source);
-  for (const option of source.querySelectorAll('option'))
-    adder.append(new Option(option.textContent || option.value, option.value));
-  adder.onchange = () => {
-    if (!adder.value) return;
-    const field = document.querySelector(`[name=${adder.dataset.for}]`);
-    const held = field.value.split(',').map(s => s.trim()).filter(Boolean);
-    if (!held.includes(adder.value)) held.push(adder.value);
-    field.value = held.join(', ');
-    adder.value = '';
-  };
-}
 
 document.getElementById('save').onclick = async () => {
   const fields = {kind: FORM.dataset.kind};
@@ -834,18 +887,7 @@ _DETAIL = """
   {% endif %}
 </article>
 {% endfor %}
-{% if editable %}
-  <datalist id="people">
-    {% for person in suggest.people %}<option value="{{ person }}">{% endfor %}
-  </datalist>
-  <datalist id="entities">
-    {% for item in suggest.entities %}<option value="{{ item.id }}">{{ item.title }}</option>
-    {% endfor %}
-  </datalist>
-  <datalist id="tags">
-    {% for tag in suggest.tags %}<option value="{{ tag }}">{% endfor %}
-  </datalist>
-{% endif %}
+{% if editable %}{{ combobox|safe }}{% endif %}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
 // field as this tab last saw it, overwriting whatever somebody else changed while
@@ -947,22 +989,6 @@ async function save() {
 }
 
 
-// The "add" pickers, filled from the same datalists the free-text fields use. A
-// datalist only completes a whole value, so on a comma-separated field it stops
-// helping after the first name — which is exactly where help is wanted.
-for (const adder of document.querySelectorAll('select.adder')) {
-  const source = document.getElementById(adder.dataset.source);
-  for (const option of source.querySelectorAll('option'))
-    adder.append(new Option(option.textContent || option.value, option.value));
-  adder.onchange = () => {
-    if (!adder.value) return;
-    const field = document.querySelector(`[name=${adder.dataset.for}]`);
-    const held = field.value.split(',').map(s => s.trim()).filter(Boolean);
-    if (!held.includes(adder.value)) held.push(adder.value);
-    field.value = held.join(', ');
-    adder.value = '';
-  };
-}
 
 document.getElementById('save').onclick = save;
 addEventListener('keydown', event => {
@@ -1021,6 +1047,7 @@ dt.derived, dd.derived { font-style: italic; }
 .entity.editing .field { display: block; }
 .entity.editing .read { display: none; }
 .entity.editing dd .field[type=checkbox] { display: inline-block; }
+label { display: block; }
 input.field, select.field, textarea.field {
   width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
   border: 1px solid var(--line-strong, #b7c5c9); border-radius: 3px;
@@ -1249,9 +1276,9 @@ def render_new(
         base_commit=base_commit,
         links=links,
         fields_html=_fields_html(_editable_for(blank), "", rows=14),
-        suggest=_suggestions(index) if index else {"people": [], "entities": [], "tags": []},
+        combobox=_combobox_html(index),
     )
-    return _page(f"openproj — new {kind}", body, _DETAIL_STYLE, links)
+    return _page(f"openproj — new {kind}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 
 def _suggestions(index: Index) -> dict:
@@ -1268,12 +1295,15 @@ def _suggestions(index: Index) -> dict:
             value = getattr(entity, name, None)
             people.update(value if isinstance(value, list) else [value] if value else [])
         tags.update(entity.tags)
+    # {value, label}: the value is what gets written to the file, the label is the
+    # human hint beside it. An id typed from memory is a dangling reference the
+    # validator rejects after the save; offered, it cannot be mistyped at all.
     return {
-        "people": sorted(people),
+        "people": [{"value": p, "label": ""} for p in sorted(people)],
         "entities": [
-            {"id": i, "title": e.title} for i, e in sorted(index.entities.items())
+            {"value": i, "label": e.title} for i, e in sorted(index.entities.items())
         ],
-        "tags": sorted(tags),
+        "tags": [{"value": t, "label": ""} for t in sorted(tags)],
     }
 
 
@@ -1304,9 +1334,15 @@ def render_detail(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         statuses=STATUSES,
-        suggest=_suggestions(index),
+        combobox=_combobox_html(index),
     )
-    return _page("openproj — detail", body, _DETAIL_STYLE, links)
+    return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
+
+
+def _combobox_html(index: Index | None) -> str:
+    """The suggestion data and the widget that filters it, for any page with inputs."""
+    data = _suggestions(index) if index else {"people": [], "entities": [], "tags": []}
+    return _COMBOBOX.replace("SUGGEST_JSON", json.dumps(data))
 
 
 def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> str:
@@ -1343,9 +1379,10 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         editable=base_commit is not None,
         base_commit=base_commit or "",
         links=links,
+        combobox=_combobox_html(index),
     )
     body = body.replace("PAYLOAD_JSON", json.dumps(payload)).replace("ENTITY_HREF", links.entity)
-    return _page("openproj — table", body, _TABLE_STYLE, links)
+    return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links)
 
 
 def render_graph(index: Index, links: Links = STATIC) -> str:
