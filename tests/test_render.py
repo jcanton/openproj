@@ -194,7 +194,9 @@ def test_the_detail_page_opens_as_an_index_not_a_wall_of_text(rendered: Path, se
     body = read(rendered, "detail.html")
     assert 'class="toc"' in body
     for entity_id in seed_index.entities:
-        assert f'href="#{entity_id}"' in body, entity_id
+        # `detail.html#id` in a rendered file, `/detail/id` on the server: the link
+        # comes from Links either way, so the index cannot drift from the routes.
+        assert f'href="detail.html#{entity_id}"' in body, entity_id
     # The script must hide every article unless one is selected.
     assert "article.style.display = match ? '' : 'none'" in body
 
@@ -253,4 +255,4 @@ def test_the_detail_page_links_dependencies_both_ways(demo_rendered: tuple[Path,
     body = read(out, "detail.html")
     assert "Blocked by" in body
     assert "Blocks" in body
-    assert 'href="#task-0d1001"' in body
+    assert 'href="detail.html#task-0d1001"' in body

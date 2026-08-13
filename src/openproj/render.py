@@ -121,6 +121,8 @@ def _payload(index: Index) -> dict:
         # lists drift the first time a field is added, and silently.
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
+        "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
+        "labels": STATUS_LABEL,
     }
 
 
@@ -340,7 +342,8 @@ _TABLE = """
 <table id="rows"><thead><tr>
   <th data-sort="id">id</th><th data-sort="title">title</th><th data-sort="status">status</th>
   <th data-sort="owner">owner</th><th data-sort="reviewers">reviewers</th>
-  <th data-sort="priority">pri</th><th data-sort="cycle">cycle</th><th data-sort="size">size</th>
+  <th data-sort="priority">priority</th><th data-sort="cycle">cycle</th>
+  <th data-sort="size">weeks</th>
   <th data-sort="start">start</th><th data-sort="end">end</th>
   <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
 </tr></thead><tbody></tbody></table>
@@ -417,6 +420,8 @@ const EDITABLE = null;
 const BASE = document.getElementById('base');
 const EDITABLE = DATA.editable;
 const SUGGESTS = DATA.suggests;
+const CHOICES = DATA.choices;
+const LABELS = DATA.labels;
 
 function coerce(type, raw) {
   raw = raw.trim();
@@ -472,17 +477,40 @@ if (EDITABLE) {
     const cell = event.target.closest('td.edit');
     if (!cell || cell.querySelector('input')) return;
     const was = cell.textContent;
-    const suggest = SUGGESTS[cell.dataset.field];
-    cell.innerHTML = `<input value="${was.replace(/"/g, '&quot;')}"` +
-      ` data-type="${EDITABLE[cell.dataset.field]}"` +
-      `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
-    const input = cell.querySelector('input');
+    const field = cell.dataset.field;
+    const suggest = SUGGESTS[field];
+    const closed = CHOICES[EDITABLE[field]];
+    // A closed set is chosen, never typed. Free text over three options is a way
+    // to write `in progres` into the corpus.
+    cell.innerHTML = closed
+      ? `<select data-type="text">${closed.map(o =>
+          `<option value="${o}" ${o === was ? 'selected' : ''}>${LABELS[o] || o}</option>`
+        ).join('')}</select>`
+      : `<input value="${was.replace(/"/g, '&quot;')}" data-type="${EDITABLE[field]}"` +
+        `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
+    const input = cell.querySelector('select, input');
     // The table gets the autocomplete the detail page has. Suggestions that only
     // appear in one of the two places are suggestions nobody relies on.
     if (suggest) attachSuggest(input);
     input.focus();
-    input.onblur = () => { if (input.value === was) draw(); else saveCell(cell, input.value); };
-    input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') draw(); };
+    // Select the whole value: a double-click leaves the caret where it landed, so
+    // typing interleaves into the existing text and matches nothing.
+    if (input.select) input.select();
+
+    let abandoned = false;
+    input.onblur = () => {
+      if (abandoned || input.value === was) draw();
+      else saveCell(cell, input.value);
+    };
+    input.onkeydown = e => {
+      if (e.key === 'Enter') input.blur();
+      if (e.key === 'Escape') {
+        // Escape means discard. Redrawing first would fire blur with the partial
+        // value still in the box, and the edit somebody just abandoned gets saved.
+        abandoned = true;
+        draw();
+      }
+    };
   });
 }
 {% endif %}
@@ -656,7 +684,15 @@ function attachSuggest(input) {
   }
 
   input.addEventListener('input', open);
-  input.addEventListener('focus', open);
+  input.addEventListener('focus', () => {
+    // A list that already holds a name needs a separator before the next one, or
+    // the first thing typed lands inside the previous value and matches nothing.
+    if (multi && input.value.trim() && !input.value.trim().endsWith(',')) {
+      input.value = input.value.trim() + ', ';
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+    open();
+  });
   input.addEventListener('blur', () => setTimeout(close, 150));
   list.addEventListener('mousedown', event => {
     const item = event.target.closest('li');
@@ -844,7 +880,7 @@ document.getElementById('save').onclick = async () => {
 _DETAIL = """
 {% if not single %}<ul class="toc">
   {% for e in entities %}
-  <li><a href="#{{ e.id }}">{{ e.title }}</a>
+  <li><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a>
       <span class="tocmeta">{{ e.kind }} · {{ e.status }} · {{ e.owner or "unowned" }}</span></li>
   {% endfor %}
 </ul>{% endif %}
@@ -887,6 +923,40 @@ _DETAIL = """
   {% endif %}
 </article>
 {% endfor %}
+<div id="grip" title="drag to set the width"></div>
+<script>
+// The reader decides how wide prose should be. Remembered per browser rather than
+// per entity: it is a property of the screen it is being read on, not of the plan.
+const grip = document.getElementById('grip');
+const root = document.documentElement;
+const saved = localStorage.getItem('openproj:measure');
+if (saved) root.style.setProperty('--measure', saved);
+
+function place() {
+  const article = document.querySelector('article.entity');
+  if (article) grip.style.left = article.getBoundingClientRect().right + 'px';
+}
+place();
+addEventListener('resize', place);
+
+grip.onpointerdown = event => {
+  grip.setPointerCapture(event.pointerId);
+  grip.classList.add('dragging');
+  const move = e => {
+    const width = Math.max(320, e.clientX - 20);
+    root.style.setProperty('--measure', width + 'px');
+    place();
+  };
+  const stop = () => {
+    grip.classList.remove('dragging');
+    localStorage.setItem('openproj:measure', root.style.getPropertyValue('--measure'));
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', stop);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', stop);
+};
+</script>
 {% if editable %}{{ combobox|safe }}{% endif %}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
@@ -1027,7 +1097,17 @@ show();
 
 _DETAIL_STYLE = """
 .hint { color: var(--muted); font-size: 12px; }
-article.entity { max-width: 52rem; margin-bottom: 3rem; }
+article.entity {
+  width: var(--measure, 52rem); max-width: 100%; margin-bottom: 3rem; position: relative;
+}
+#grip {
+  position: fixed; top: 0; bottom: 0; width: 10px; cursor: col-resize; z-index: 30;
+}
+#grip::before {
+  content: ""; position: absolute; inset: 0 4px; background: var(--line);
+  opacity: 0; transition: opacity .15s;
+}
+#grip:hover::before, #grip.dragging::before { opacity: 1; }
 article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
 .meta { color: var(--muted); margin-top: 0; }
 .back { margin: 0 0 .5rem; font-size: 12px; }
