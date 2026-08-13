@@ -474,64 +474,7 @@ if (EDITABLE) {
     input.onblur = () => { if (input.value === was) draw(); else saveCell(cell, input.value); };
     input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') draw(); };
   });
-
-  const form = document.getElementById('create');
-  document.getElementById('new').onclick = () => { form.hidden = !form.hidden; };
-  form.querySelector('[name=kind]').onchange = event => {
-    for (const label of form.querySelectorAll('[class^=only-]'))
-      label.hidden = !label.classList.contains(`only-${event.target.value}`);
-  };
-  form.querySelector('[name=kind]').dispatchEvent(new Event('change'));
-
-  document.getElementById('save-new').onclick = async () => {
-    const fields = {kind: form.querySelector('[name=kind]').value};
-    const status = form.querySelector('[name=status]')?.value || 'todo';
-    const order = ['todo', 'wip', 'done'];
-    const missing = [];
-    for (const control of form.querySelectorAll('[data-type]')) {
-      if (control.dataset.kind && control.dataset.kind !== fields.kind) continue;
-      let value;
-      try { value = coerce(control.dataset.type, control.value); } catch { value = null; }
-      if (control.type === 'checkbox') value = control.checked;
-      const gate = control.dataset.requiredFrom;
-      // review_waived is the escape hatch from the reviewers rule, not a rule of
-      // its own. A check that ignores it makes naming a fake reviewer the only way
-      // to file work that genuinely has nothing to review.
-      const waived = control.name === 'reviewers' &&
-        form.querySelector('[name=review_waived]')?.checked;
-      // Cumulative: a field demanded from `todo` is demanded at every status after
-      // it, which is why this compares positions rather than equality.
-      const empty = value === null || (Array.isArray(value) && !value.length);
-      if (gate && empty && !waived && order.indexOf(status) >= order.indexOf(gate))
-        missing.push(control.name);
-      if (!empty) fields[control.name] = value;
-    }
-    const problems = document.getElementById('problems');
-    if (missing.length) {
-      problems.hidden = false;
-      problems.textContent = `still needed at status ${status}: ${missing.join(', ')}`;
-      return;
-    }
-    const response = await fetch('/api/entity', {
-      method: 'POST', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({
-        base_commit: BASE.value, fields,
-        body: form.querySelector('[name=body]').value || '',
-      }),
-    });
-    const answer = await response.json();
-    if (!response.ok) {
-      // The client check is a courtesy; this is the truth, and swallowing it
-      // would leave somebody staring at a form that looks fine.
-      problems.hidden = false;
-      problems.textContent = (answer.problems || [])
-        .map(p => `${p.field}: ${p.message}`).join('; ') || answer.detail || 'refused';
-      return;
-    }
-    location.reload();
-  };
 }
-
 {% endif %}
 document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
 for (const select of document.querySelectorAll('select[data-field]'))
@@ -652,6 +595,29 @@ rect.bar { rx: 3; }
 rect.estimated { stroke: #8f5c07; stroke-width: 1; }
 rect.late { stroke: #9a3327; stroke-width: 1.5; }
 """
+
+
+_CONTROL = """
+{% if f.type == "status" %}
+<select name="{{ f.name }}" data-type="text" class="field"
+        {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+  {% for s in statuses %}<option {% if s == f.value %}selected{% endif %}>{{ s }}</option>
+  {% endfor %}
+</select>
+{% elif f.type == "bool" %}
+<input type="checkbox" name="{{ f.name }}" data-type="bool" class="field"
+       {% if f.value %}checked{% endif %}>
+{% else %}
+<input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}" class="field"
+       {% if f.people %}list="people"{% endif %}
+       {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}
+       {% if f.type == "date" %}placeholder="YYYY-MM-DD"{% endif %}>
+{% endif %}
+"""
+
+
+def _control_html(field: dict) -> str:
+    return _ENV.from_string(_CONTROL).render(f=field, statuses=STATUSES)
 
 
 _FIELDS = """
@@ -799,36 +765,34 @@ _DETAIL = """
     <span id="state"></span>
   </p>
   {% endif %}
-  <h1>{{ e.title }}</h1>
+  <h1><span class="read">{{ e.title }}</span></h1>
   <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
      {% if e.parent %}· in
      <a href="{{ links.entity }}{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
-  <dl id="facts">
-    <dt>Owner</dt><dd>{{ e.owner or "nobody" }}</dd>
-    <dt>Reviewers</dt>
-    <dd>{% if e.review_waived %}<i>waived</i>
-        {% else %}{{ e.reviewers|join(", ") or "none yet" }}{% endif %}</dd>
-    <dt>{{ e.size_label }}</dt><dd>{{ e.size }}</dd>
-    <dt>Assigned on</dt><dd>{{ e.assigned_on or "—" }}</dd>
-    <dt>Cycle</dt><dd>{{ e.cycle or "—" }}</dd>
-    <dt class="derived">Scheduled</dt>
-    <dd class="derived">{{ e.span }}
-        {% if e.overrun %} · <b class="late">{{ e.overrun }}</b>{% endif %}</dd>
-    {% if e.why %}<dt class="derived">Why then</dt><dd class="derived">{{ e.why }}</dd>{% endif %}
-    <dt>Blocked by</dt><dd>{{ e.blocked_by|safe or "nothing" }}</dd>
-    <dt class="derived">Blocks</dt><dd class="derived">{{ e.blocks|safe or "nothing" }}</dd>
-    <dt>PRs</dt><dd>{{ e.prs|safe or "none" }}</dd>
-    <dt>Tags</dt><dd>{{ e.tags|join(", ") or "—" }}</dd>
-  </dl>
-  {% if e.problems %}<ul class="problems">
-    {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
-  <div class="doc">{{ e.body|safe }}</div>
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <div id="fields" hidden>{{ e.fields_html|safe }}</div>
+    <input name="title" data-type="text" value="{{ e.title }}" class="field title-field">
+  {% endif %}
+  <dl id="facts">
+    {% for row in e.rows %}
+    <dt class="{% if row.derived %}derived{% endif %}">{{ row.label }}</dt>
+    <dd class="{% if row.derived %}derived{% endif %}">
+      <span class="read">{{ row.display|safe }}</span>
+      {% if editable and row.control %}{{ row.control|safe }}{% endif %}
+    </dd>
+    {% endfor %}
+  </dl>
+  {% if e.problems %}<ul class="problems">
+    {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+  <div class="doc read">{{ e.body|safe }}</div>
+  {% if editable %}
+    <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
     <div id="conflict" hidden></div>
   </form>
+  <datalist id="people">
+    {% for person in people %}<option value="{{ person }}">{% endfor %}
+  </datalist>
   {% endif %}
 </article>
 {% endfor %}
@@ -872,17 +836,15 @@ function changed() {
 }
 
 function show(editing) {
-  document.getElementById('fields').hidden = !editing;
-  // The facts list and the rendered doc are the read view of the same thing the
-  // form edits; leaving them up beside the inputs shows every value twice.
-  document.getElementById('facts').hidden = editing;
-  document.querySelector('.doc').hidden = editing;
+  // One class on the article. Each fact is a single row whose value swaps for its
+  // control, so nothing is shown twice and the page does not jump when you start.
+  document.querySelector('article.entity').classList.toggle('editing', editing);
   for (const id of ['preview', 'save']) document.getElementById(id).hidden = !editing;
   document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
 }
 
 document.getElementById('toggle').onclick = () => {
-  const editing = document.getElementById('fields').hidden;
+  const editing = !document.querySelector('article.entity').classList.contains('editing');
   show(editing);
   if (!editing) localStorage.removeItem(DRAFT);
 };
@@ -970,23 +932,42 @@ show();
 """
 
 _DETAIL_STYLE = """
-.toc { list-style: none; padding: 0; max-width: 46rem; }
-.toc li { padding: .35rem 0; border-bottom: 1px solid var(--line); display: flex;
-          justify-content: space-between; gap: 1rem; }
-.tocmeta { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.back { margin: 0 0 .5rem; font-size: 12px; }
-article.entity { max-width: 46rem; margin-bottom: 3rem; }
-article.entity h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+.hint { color: var(--muted); font-size: 12px; }
+article.entity { max-width: 52rem; margin-bottom: 3rem; }
+article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
 .meta { color: var(--muted); margin-top: 0; }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; margin: 1rem 0; }
-dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.back { margin: 0 0 .5rem; font-size: 12px; }
+.editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
+#state { color: var(--muted); font-size: 12px; }
+
+dl { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .45rem 1rem; margin: 1rem 0; }
+dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+     padding-top: .35rem; }
 dd { margin: 0; }
 dt.derived, dd.derived { font-style: italic; }
-.late { color: #9a3327; }
 .problems { color: #8f5c07; padding-left: 1.1rem; }
+
+/* The two modes of the same rows. Controls are hidden until the article is
+   editing, and the values they replace are hidden once it is. */
+.field { display: none; }
+.entity.editing .field { display: block; }
+.entity.editing .read { display: none; }
+.entity.editing dd .field[type=checkbox] { display: inline-block; }
+input.field, select.field, textarea.field {
+  width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
+  border: 1px solid var(--line-strong, #b7c5c9); border-radius: 3px;
+  background: var(--surface, #fff); color: inherit;
+}
+input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
+textarea.body-field {
+  min-height: 60vh; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; line-height: 1.55; resize: vertical;
+}
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2, rgba(127,127,127,.12)); padding: 0 .25em; }
+#conflict { border-left: 3px solid #9a3327; padding: .5rem .8rem; margin-top: 1rem;
+            white-space: pre-wrap; font-size: 13px; }
 """
 
 
@@ -1032,6 +1013,17 @@ REQUIRED_FROM = {
 KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 
+LABELS = {
+    "title": "Title", "status": "Status", "owner": "Owner", "assignees": "Assignees",
+    "reviewers": "Reviewers", "review_waived": "Review waived", "assigned_on": "Assigned on",
+    "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
+    "tags": "Tags", "prs": "PRs", "appetite_weeks": "Appetite (weeks)",
+    "shaped_by": "Shaped by", "effort_weeks": "Effort (weeks)",
+}
+# Fields that name a person. They get a datalist of everyone already in the corpus,
+# so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
+PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
+
 
 def _editable_for(entity: Entity) -> list[dict]:
     """The fields this kind actually has, with the type a form must coerce back to."""
@@ -1041,6 +1033,7 @@ def _editable_for(entity: Entity) -> list[dict]:
             "type": kind,
             "value": getattr(entity, name),
             "gate": REQUIRED_FROM.get(name),
+            "people": name in PEOPLE_FIELDS,
             "text": ", ".join(str(v) for v in getattr(entity, name))
             if kind == "list"
             else ("" if getattr(entity, name) is None else getattr(entity, name)),
@@ -1056,6 +1049,64 @@ def _links(ids: list[str], index: Index, links: Links = STATIC) -> str:
         f"{index.entities[i].title if i in index.entities else i}</a>"
         for i in ids
     )
+
+
+def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
+    """The rows of the facts list, each carrying both how it reads and how it edits.
+
+    One row per fact, not two lists: the edit view is the read view with the values
+    swapped for controls, so nothing is ever shown twice and the layout does not
+    move when you press Edit.
+    """
+    span = index.spans.get(entity.id)
+    why = index.explanations.get(entity.id)
+    rows = []
+    for field in _editable_for(entity):
+        name = field["name"]
+        if name == "title":
+            continue
+        if name == "depends_on":
+            display = _links(index.blocked_by[entity.id], index, links) or "nothing"
+        elif name == "prs":
+            display = ", ".join(_pr_link(ref) for ref in entity.prs) or "none"
+        elif name == "review_waived":
+            display = "waived" if entity.review_waived else "no"
+        elif field["type"] == "list":
+            display = field["text"] or "—"
+        else:
+            display = str(field["text"]) if field["text"] not in ("", None) else "—"
+        rows.append(
+            {
+                "label": LABELS.get(name, name),
+                "display": display,
+                "control": _control_html(field),
+                "derived": False,
+            }
+        )
+    overrun = (
+        f" · overruns cycle {entity.cycle} by {span.overruns_cycle_weeks:.1f} weeks"
+        if span and span.overruns_cycle_weeks
+        else ""
+    )
+    rows.append(
+        {
+            "label": "Scheduled",
+            "display": (f"{span.start} → {span.end}{overrun}" if span else "not scheduled"),
+            "control": "",
+            "derived": True,
+        }
+    )
+    if why:
+        rows.append({"label": "Why then", "display": why.text, "control": "", "derived": True})
+    rows.append(
+        {
+            "label": "Blocks",
+            "display": _links(index.blocks[entity.id], index, links) or "nothing",
+            "control": "",
+            "derived": True,
+        }
+    )
+    return rows
 
 
 def _detail_rows(index: Index) -> list[dict]:
@@ -1116,6 +1167,15 @@ def render_new(kind: str, base_commit: str, links: Links = ROUTES) -> str:
     return _page(f"openproj — new {kind}", body, _DETAIL_STYLE, links)
 
 
+def _people(index: Index) -> list[str]:
+    found: set[str] = set()
+    for entity in index.entities.values():
+        for name in PEOPLE_FIELDS:
+            value = getattr(entity, name, None)
+            found.update(value if isinstance(value, list) else [value] if value else [])
+    return sorted(found)
+
+
 def render_detail(
     index: Index,
     links: Links = STATIC,
@@ -1130,9 +1190,12 @@ def render_detail(
     rows = _detail_rows(index)
     if only is not None:
         rows = [row for row in rows if row["id"] == only]
-        for row in rows:
-            entity = index.entities[row["id"]]
-            row["fields_html"] = _fields_html(_editable_for(entity), entity.body)
+    # Every entity gets its facts, not only the one being served on its own route:
+    # the static export renders them all, and it is the same page.
+    for row in rows:
+        entity = index.entities[row["id"]]
+        row["rows"] = _fact_rows(index, entity, links)
+        row["raw_body"] = entity.body
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
         single=only is not None,
@@ -1140,6 +1203,7 @@ def render_detail(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         statuses=STATUSES,
+        people=_people(index),
     )
     return _page("openproj — detail", body, _DETAIL_STYLE, links)
 

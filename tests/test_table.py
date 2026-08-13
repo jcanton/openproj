@@ -447,11 +447,11 @@ def test_a_committed_save_advances_the_page_base_commit(page: str):
     )
 
 
-def test_the_create_checks_the_status_gate_before_it_posts(page: str):
+def test_the_create_checks_the_status_gate_before_it_posts(new_page: str):
     """A round trip to be told the owner is missing is a round trip that teaches
     people to pick `shelved`. The check reads the gate off the controls, so the
     rules are declared once in the markup rather than re-typed per field."""
-    body = script(page)
+    body = script(new_page)
 
     assert re.search(r"required-?[Ff]rom", body), "the form must consult its own gate"
     assert "review_waived" in body, (
