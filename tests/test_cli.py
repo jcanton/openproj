@@ -94,3 +94,13 @@ def test_schedule_accepts_an_explicit_today(seed_root: Path, capsys):
 
 def test_an_unknown_subcommand_fails_rather_than_doing_something(capsys):
     assert main(["frobnicate"]) == 2
+
+
+def test_the_shipped_demo_corpus_validates_clean(demo_root: Path):
+    """The demo is the first thing anyone runs. A demo that fails its own check
+    teaches people the check is noise.
+
+    Distinct from the golden corpus in tests/fixtures/, which deliberately carries
+    nine blockers because migrated data is messy and the validator has to say so.
+    """
+    assert main(["check", str(demo_root)]) == 0

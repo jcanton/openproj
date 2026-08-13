@@ -29,7 +29,14 @@ _STATIC = Path(__file__).resolve().parents[2] / "static"
 
 _DAY_PX = 6
 _ROW_PX = 22
-_LEFT_PX = 260
+_LEFT_PX = 250
+_PLOT_PX = 1100
+_HEADER_PX = 26
+_LABEL_CHARS = 40
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= _LABEL_CHARS else text[: _LABEL_CHARS - 1] + "\u2026"
 _STATUS_COLOUR = {
     "todo": "#8a93a5",
     "wip": "#1f6f8b",
@@ -116,8 +123,17 @@ def _timeline(index: Index) -> dict:
     ends = [s.end for s in drawn.values()] + [w[1] for w in index.cycles.values()]
     origin, last = min(*starts, index.today), max(*ends, index.today)
 
-    def x(day: date) -> int:
-        return _LEFT_PX + (day - origin).days * _DAY_PX
+    # A corpus can span ten months. At a fixed day width that is 1800px of
+    # coordinate space, and an SVG with no viewBox CLIPS rather than scales, so
+    # everything past the fold silently vanished. Scale the day instead, floored
+    # so a short plan does not turn into a hairline.
+    days = max((last - origin).days, 1)
+    day_px = max(1.6, min(_DAY_PX, _PLOT_PX / days))
+
+    def x(day: date) -> float:
+        # Plot coordinates only. The label column is HTML beside the SVG, not
+        # inside it, so that it can stay put while the plot scrolls.
+        return round((day - origin).days * day_px, 1)
 
     order = sorted(drawn, key=lambda i: (drawn[i].start, i))
     bars = []
@@ -135,10 +151,11 @@ def _timeline(index: Index) -> dict:
         bars.append(
             {
                 "id": entity_id,
-                "label": f"{entity.title} ({entity_id})",
+                "label": _clip(entity.title),
+                "full": f"{entity.title} ({entity_id})",
                 "classes": " ".join(classes),
                 "x": x(span.start),
-                "y": row * _ROW_PX + 4,
+                "y": row * _ROW_PX + _HEADER_PX,
                 "width": max(_DAY_PX, x(span.end + timedelta(days=1)) - x(span.start)),
                 "colour": _STATUS_COLOUR[entity.status],
                 "owner": entity.owner or "unowned",
@@ -153,10 +170,22 @@ def _timeline(index: Index) -> dict:
     return {
         "bars": bars,
         "rules": rules,
+        "months": _month_ticks(origin, last, x),
         "today_x": x(index.today),
-        "width": x(last) + 40,
-        "height": len(bars) * _ROW_PX + 40,
+        "header": _HEADER_PX,
+        "width": x(last) + 24,
+        "height": len(bars) * _ROW_PX + _HEADER_PX + 20,
     }
+
+
+def _month_ticks(origin: date, last: date, x) -> list[dict]:
+    """A bar chart with no dates on it is a picture, not a plan."""
+    ticks, cursor = [], date(origin.year, origin.month, 1)
+    while cursor <= last:
+        if cursor >= origin:
+            ticks.append({"x": x(cursor), "label": cursor.strftime("%b %Y")})
+        cursor = date(cursor.year + cursor.month // 12, cursor.month % 12 + 1, 1)
+    return ticks
 
 
 _ENV = Environment(autoescape=True)
@@ -306,7 +335,16 @@ cytoscape({
 """
 
 _TIMELINE = """
-<svg width="{{ t.width }}" height="{{ t.height }}" role="img">
+<div class="tl">
+<div class="labels">
+  <div class="spacer" style="height: {{ t.header }}px"></div>
+  {% for bar in t.bars %}
+  <div class="row" title="{{ bar.full }}">{{ bar.label }}</div>
+  {% endfor %}
+</div>
+<div class="scroll">
+<svg width="{{ t.width }}" height="{{ t.height }}"
+     viewBox="0 0 {{ t.width }} {{ t.height }}" role="img">
   <defs>
     <pattern id="hatch-estimated" width="6" height="6" patternTransform="rotate(45)"
              patternUnits="userSpaceOnUse">
@@ -319,23 +357,43 @@ _TIMELINE = """
   </defs>
   {% for rule in t.rules %}
   <line class="cycle-rule" x1="{{ rule.x }}" y1="0" x2="{{ rule.x }}" y2="{{ t.height }}"/>
-  <text class="cycle-label" x="{{ rule.x + 3 }}" y="12">{{ rule.label }}</text>
+  <text class="cycle-label" x="{{ rule.x + 3 }}" y="10">{{ rule.label }}</text>
   {% endfor %}
   <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
   {% for bar in t.bars %}
-  <text class="row-label" x="0" y="{{ bar.y + 12 }}">{{ bar.label }}</text>
   <rect data-id="{{ bar.id }}" class="{{ bar.classes }}" x="{{ bar.x }}" y="{{ bar.y }}"
         width="{{ bar.width }}" height="14" fill="{{ bar.colour }}"
         ><title>{{ bar.tip }}</title></rect>
   {% endfor %}
+  {% for month in t.months %}
+  <line class="month-rule" x1="{{ month.x }}" y1="{{ t.header }}" x2="{{ month.x }}"
+        y2="{{ t.height }}"/>
+  <text class="month-label" x="{{ month.x + 3 }}" y="{{ t.header - 8 }}">{{ month.label }}</text>
+  {% endfor %}
 </svg>
+</div>
+</div>
+<script>
+// Open on today rather than on the oldest finished work. The plan is scrollable
+// so history stays reachable, but "now" is what the page is for.
+const scroller = document.querySelector('.scroll');
+scroller.scrollLeft = Math.max(0, {{ t.today_x }} - 320);
+</script>
 """
 
 _TIMELINE_STYLE = """
-svg { max-width: 100%; }
-.row-label { font-size: 10px; fill: var(--muted); }
+.tl { display: flex; border: 1px solid var(--line); align-items: stretch; }
+.labels { flex: 0 0 250px; border-right: 1px solid var(--line); }
+.labels .row {
+  height: 22px; line-height: 22px; font-size: 11px; color: var(--muted);
+  padding: 0 .5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.scroll { overflow-x: auto; flex: 1 1 auto; min-width: 0; }
+svg { display: block; }
+.month-rule { stroke: var(--line); }
+.month-label { font-size: 9px; fill: var(--muted); }
 .cycle-rule { stroke: var(--line); stroke-dasharray: 3 3; }
-.cycle-label { font-size: 9px; fill: var(--muted); }
+.cycle-label { font-size: 9px; fill: var(--accent); font-weight: 600; }
 .today { stroke: #9a3327; stroke-width: 1.5; }
 rect.bar { rx: 3; }
 rect.estimated { stroke: #8f5c07; stroke-width: 1; }

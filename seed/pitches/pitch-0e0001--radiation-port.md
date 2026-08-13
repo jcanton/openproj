@@ -11,7 +11,7 @@ review_waived: false
 assigned_on: 2026-08-17
 cycle: 37
 priority: 1
-depends_on: []
+depends_on: [pitch-0a0001]
 tags: [radiation, rte-rrtmgp, aes-physics, gt4py, port]
 prs: []
 created_schema_version: 2
@@ -44,7 +44,10 @@ the driver asserts bitwise MPI equality (today only at `LEVELS=validation`, with
 rtol=1e-14`), a heating-rate mismatch is diagnostic. Where it does not, the same mismatch is
 ambiguous: real bug, or summation noise reshuffled by a codegen change. Plan the validation
 around that. Single-rank g-point reduction on the host is the reference; multi-rank
-comparisons are read as advisory until the reproducibility work makes them exact, and we
+comparisons are read as advisory until the reproducibility work makes them exact. That is why
+this pitch depends on pitch-0a0001: without deterministic reductions a heating-rate diff cannot
+distinguish a porting bug from reduction-order noise, so validating the port before that work
+lands would produce numbers nobody could act on. We
 budget for re-fitting tolerances rather than assuming they hold.
 
 ## Appetite
