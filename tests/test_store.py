@@ -25,6 +25,7 @@ will happen in week one.
 """
 
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -577,7 +578,26 @@ def test_paths_lists_every_file_in_the_tree_at_that_commit(store: Store):
 # --------------------------------------------------------------------------- #
 
 
-def test_eight_concurrent_writers_all_land_their_commits(store: Store, repo_path: Path):
+@pytest.fixture
+def preempted():
+    """Make the interpreter switch threads *inside* a write.
+
+    Measured: at the default 5 ms switch interval a whole write runs to completion
+    before any other thread is scheduled, so a store with no serialisation at all
+    passes both tests below — 20 trials, zero interleavings. At 1e-6 the same
+    unserialised store fails on the first trial, 20 times out of 20. Without this
+    fixture these are not concurrency tests, they are eight sequential writes with
+    extra machinery.
+    """
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    yield
+    sys.setswitchinterval(previous)
+
+
+def test_eight_concurrent_writers_all_land_their_commits(
+    store: Store, repo_path: Path, preempted: None
+):
     """The measurement this design exists to answer: eight writers sharing one
     worktree lost 87.5% of their commits to index.lock. Here all eight must land.
 
@@ -615,7 +635,9 @@ def test_eight_concurrent_writers_all_land_their_commits(store: Store, repo_path
         assert parse_text(store.read(head, path), path).title == f"Concurrent {n}"
 
 
-def test_concurrent_writers_to_one_path_neither_lose_nor_interleave(store: Store, repo_path: Path):
+def test_concurrent_writers_to_one_path_neither_lose_nor_interleave(
+    store: Store, repo_path: Path, preempted: None
+):
     """Same file, eight writers, each rebasing on the head it is given. Whatever
     the store decides about each one, the survivors form a single chain and the
     losers changed nothing — a lost update here would be silent data loss."""
