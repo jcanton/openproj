@@ -160,6 +160,14 @@ def control(html: str, name: str) -> str:
     return match.group(0)
 
 
+@pytest.fixture
+def new_page(client: TestClient) -> str:
+    """The create page. It used to be a form at the bottom of the table, which made
+    creating an entity a different-shaped act from editing one; it is now the same
+    layout as a detail page in edit mode."""
+    return client.get("/new?kind=pitch").text
+
+
 def create_form(html: str) -> str:
     match = re.search(r'<form[^>]*id="create".*?</form>', html, re.S)
     assert match, "the table must carry a form for creating an entity"
@@ -222,7 +230,7 @@ def test_the_id_is_shown_and_is_never_a_control(page: str):
     assert "id" not in controls(page)
 
 
-def test_the_status_control_offers_every_status_and_not_only_the_ones_in_use(page: str):
+def test_the_status_control_offers_every_status_and_not_only_the_ones_in_use(new_page: str):
     """The facet dropdown lists the statuses present in the corpus, which is right
     for filtering and wrong for editing: nothing in this corpus is `shelved`, and a
     status control built from the facet could therefore never shelve anything.
@@ -230,10 +238,9 @@ def test_the_status_control_offers_every_status_and_not_only_the_ones_in_use(pag
     Deletion is `status: shelved` (spec §4.5), so that is not a missing option, it
     is the only way to retire an entity.
     """
-    assert "shelved" not in {row["status"] for row in payload(page)["rows"].values()}
-    assert "shelved" in page
+    assert "shelved" in new_page
     for status in STATUSES:
-        assert status in page, status
+        assert status in new_page, status
 
 
 def test_the_page_carries_the_commit_it_was_rendered_at(page: str):
@@ -245,35 +252,36 @@ def test_the_page_carries_the_commit_it_was_rendered_at(page: str):
     )
 
 
-def test_the_table_offers_a_way_to_create_an_entity(page: str):
+def test_the_table_offers_a_way_to_create_an_entity(page: str, client: TestClient):
     """Entities are overwhelmingly born in the UI, so the UI has to be able to bear
     them. Without this the only supported way to add a task is to write a file by
     hand, which is the workflow this tool exists to replace."""
-    assert re.search(r'<button[^>]*id="new"', page), "the table needs a new-entity control"
-    # No `action`: a form that navigates on submit leaves the table, which throws
-    # away the filter the person had set and the commit the page was rendered at.
-    assert not re.search(r"<form[^>]*id=\"create\"[^>]*\baction=", page)
+    assert re.search(r'href="/new"', page), "the table needs a way to reach the create page"
+    assert client.get("/new").status_code == 200
 
 
-def test_the_create_form_writes_only_fields_a_person_owns(page: str):
+def test_the_create_form_writes_only_fields_a_person_owns(new_page: str):
     """`kind` picks the directory and `body` is the shaping document; everything
     else on this form has to be a field `EDITABLE` names. A create that can set a
     field the detail page refuses to show is a back door into the schema."""
-    named = controls(create_form(page)) - {"base_commit"}
+    named = controls(new_page) - {"base_commit"}
 
-    assert named - {"kind", "body"} <= set(EDITABLE)
+    assert named - {"body"} <= set(EDITABLE)
     for field in ("title", "status", "owner", "reviewers", "review_waived", "parent"):
         assert field in named, field
-    for field in ("effort_weeks", "appetite_weeks", "shaped_by"):
+    # The kind is chosen by the route rather than by a control, so a pitch page
+    # offers exactly the fields a pitch has and never the ones it does not.
+    for field in ("appetite_weeks", "shaped_by"):
         assert field in named, f"{field} is status-gated at creation and must be fillable"
+    assert "effort_weeks" not in named, "a pitch has no effort_weeks"
 
 
-def test_the_create_form_names_neither_the_id_nor_the_path(page: str):
+def test_the_create_form_names_neither_the_id_nor_the_path(new_page: str):
     """The server mints both. An id supplied by a browser becomes a path supplied
     by a browser as soon as it is `tasks/<id>.md`, and the writable surface stops
     being closed by construction — which matters more than usual because branch
     protection means a bad write cannot be force-pushed away afterwards."""
-    named = controls(create_form(page))
+    named = controls(new_page)
 
     assert "id" not in named
     assert "path" not in named
@@ -281,16 +289,19 @@ def test_the_create_form_names_neither_the_id_nor_the_path(page: str):
         assert field not in named, f"{field} is derived and must not be typed at creation"
 
 
-def test_the_create_form_offers_the_three_kinds_and_nothing_else(page: str):
+def test_the_create_form_offers_the_three_kinds_and_nothing_else(client: TestClient):
     """`kind` is a closed set of three and it is the only thing that chooses a
-    directory. A free-text field here is `../config` in a `<input>`."""
-    kind = re.search(r'<select[^>]*name="kind".*?</select>', create_form(page), re.S)
+    directory. It is now the route rather than a control, which closes the set at
+    the door: an unknown kind is refused before a page is built, so `../config`
+    never reaches a path."""
+    for kind in ("project", "pitch", "task"):
+        assert client.get(f"/new?kind={kind}").status_code == 200
 
-    assert kind, "kind must be a choice, never typed"
-    assert options(kind.group(0)) == {"project", "pitch", "task"}
+    assert client.get("/new?kind=../config").status_code == 422
+    assert client.get("/new?kind=milestone").status_code == 422
 
 
-def test_the_status_gate_is_written_on_the_controls_themselves(page: str):
+def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     """The requiredness rules, carried by the form so it can check before posting.
 
     Requiredness is status-gated and cumulative (spec §5.1): permissive when an
@@ -304,39 +315,42 @@ def test_the_status_gate_is_written_on_the_controls_themselves(page: str):
     the form believes and compare it with `model.validate_all`. That the copy is
     only a copy is the point of `test_the_server_refusal_is_shown_and_not_swallowed`.
     """
-    form = create_form(page)
     for field, gate in (
         ("owner", "todo"),
         ("reviewers", "todo"),
-        ("effort_weeks", "todo"),
         ("appetite_weeks", "todo"),
         ("shaped_by", "todo"),
         ("assigned_on", "wip"),
         ("prs", "done"),
     ):
-        assert f'data-required-from="{gate}"' in control(form, field), field
+        assert f'data-required-from="{gate}"' in control(new_page, field), field
 
-    assert "data-required-from" not in control(form, "review_waived"), (
+    assert "data-required-from" not in control(new_page, "review_waived"), (
         "review_waived is the escape hatch from a rule, not a rule"
     )
 
 
-def test_a_field_only_one_kind_has_says_which_kind(page: str):
+def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient):
     """A pitch has an appetite and a task has an effort, and asking for both makes
-    the form look like a schema dump rather than a question. `shaped_by` is a pitch
-    rule too, so a task blocked on a missing `shaped_by` would be nonsense."""
-    form = create_form(page)
+    the form a schema dump rather than a question. `shaped_by` is a pitch rule too,
+    so a task blocked on a missing `shaped_by` would be nonsense.
 
-    assert 'data-kind="pitch"' in control(form, "appetite_weeks")
-    assert 'data-kind="pitch"' in control(form, "shaped_by")
-    assert 'data-kind="task"' in control(form, "effort_weeks")
+    Absent rather than hidden: the page is rendered per kind, so the control that
+    does not belong is not there to be un-hidden by a stray line of script."""
+    pitch = controls(client.get("/new?kind=pitch").text)
+    task = controls(client.get("/new?kind=task").text)
+
+    assert {"appetite_weeks", "shaped_by"} <= pitch
+    assert "effort_weeks" not in pitch
+    assert "effort_weeks" in task
+    assert not {"appetite_weeks", "shaped_by"} & task
 
 
-def test_the_create_form_has_somewhere_to_put_the_server_refusal(page: str):
+def test_the_create_form_has_somewhere_to_put_the_server_refusal(new_page: str):
     """A refusal with nowhere to land is a refusal that gets swallowed, and a
     person who presses Create twice and sees nothing concludes the tool is broken
     rather than that the plan said no."""
-    assert re.search(r'id="problems"', page)
+    assert re.search(r'id="problems"', new_page)
 
 
 def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: Path):

@@ -26,7 +26,7 @@ from markupsafe import Markup
 from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate
-from .model import Config, Entity, size_weeks
+from .model import Config, Entity, Pitch, Project, Task, size_weeks
 
 
 def _static_dir() -> Path:
@@ -235,10 +235,14 @@ class Links(BaseModel):
     graph: str = "graph.html"
     timeline: str = "timeline.html"
     entity: str = "detail.html#"  # prefix, then the entity id
+    new: str = ""  # only the server can create; a rendered file has nowhere to post
 
 
 STATIC = Links()
-ROUTES = Links(table="/", detail="/detail", graph="/graph", timeline="/timeline", entity="/detail/")
+ROUTES = Links(
+    table="/", detail="/detail", graph="/graph", timeline="/timeline",
+    entity="/detail/", new="/new",
+)
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
@@ -337,35 +341,9 @@ _TABLE = """
 </tr></thead><tbody></tbody></table>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
-<p class="editbar"><button type="button" id="new">New entity</button>
+<p class="editbar"><a class="button" href="{{ links.new }}">New entity</a>
+   <span class="hint">double-click a cell to edit it</span>
    <span id="state"></span></p>
-<form id="create" hidden onsubmit="return false">
-  <label>kind
-    <select name="kind">
-      {% for k in kinds %}<option>{{ k }}</option>{% endfor %}
-    </select></label>
-  <label>title <input name="title" data-type="text"></label>
-  {% for f in creatable %}
-  <label {% if f.kind %}class="only-{{ f.kind }}"{% endif %}>{{ f.name }}
-    {% if f.type == "status" %}
-    <select name="{{ f.name }}" data-type="text"
-            {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
-      {% for s in statuses %}<option>{{ s }}</option>{% endfor %}
-    </select>
-    {% elif f.type == "bool" %}
-    <input type="checkbox" name="{{ f.name }}" data-type="bool"
-           {% if f.kind %}data-kind="{{ f.kind }}"{% endif %}>
-    {% else %}
-    <input name="{{ f.name }}" data-type="{{ f.type }}"
-           {% if f.kind %}data-kind="{{ f.kind }}"{% endif %}
-           {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
-    {% endif %}
-  </label>
-  {% endfor %}
-  <label class="wide">body <textarea name="body" rows="6"></textarea></label>
-  <p><button type="button" id="save-new">Create</button></p>
-  <div id="problems" hidden></div>
-</form>
 <div id="row-conflict" hidden></div>
 {% endif %}
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
@@ -676,6 +654,133 @@ rect.late { stroke: #9a3327; stroke-width: 1.5; }
 """
 
 
+_FIELDS = """
+{% for f in fields %}
+<label>{{ f.name }}
+  {% if f.type == "status" %}
+  <select name="{{ f.name }}" data-type="text"
+          {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+    {% for s in statuses %}<option {% if s == f.value %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  {% elif f.type == "bool" %}
+  <input type="checkbox" name="{{ f.name }}" data-type="bool" {% if f.value %}checked{% endif %}>
+  {% else %}
+  <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}"
+         {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}
+         {% if f.type == "date" %}placeholder="YYYY-MM-DD"{% endif %}>
+  {% endif %}
+</label>
+{% endfor %}
+<label class="wide">body
+  <textarea name="body" rows="{{ rows }}">{{ body }}</textarea>
+</label>
+"""
+
+
+def _fields_html(fields: list[dict], body: str, rows: int = 18) -> str:
+    """The same controls whether an entity exists yet or not.
+
+    Two field blocks would drift the first time one is added, and the drift shows
+    up as a field you can set on creation and never change afterwards.
+    """
+    return _ENV.from_string(_FIELDS).render(
+        fields=fields, body=body, rows=rows, statuses=STATUSES
+    )
+
+
+_NEW = """
+<article class="entity">
+  <p class="back"><a href="{{ links.table }}">← table</a></p>
+  <p class="editbar">
+    <button type="button" id="save">Create</button>
+    <button type="button" id="preview">Preview</button>
+    <span id="state"></span>
+  </p>
+  <h1>New {{ kind }}</h1>
+  <p class="meta">The id and the file are the server's to choose.
+    {% for k in kinds %}{% if k != kind %}
+    <a href="{{ links.new }}?kind={{ k }}">make a {{ k }} instead</a>{% endif %}{% endfor %}</p>
+  <form id="edit" data-kind="{{ kind }}" onsubmit="return false">
+    <input type="hidden" name="base_commit" value="{{ base_commit }}">
+    <div id="fields">{{ fields_html|safe }}</div>
+    <div id="problems" hidden></div>
+  </form>
+  <div class="doc" hidden></div>
+</article>
+<script>
+const FORM = document.getElementById('edit');
+const STATE = document.getElementById('state');
+const PROBLEMS = document.getElementById('problems');
+const ORDER = ['todo', 'wip', 'done'];
+
+function read(control) {
+  if (control.dataset.type === 'bool') return control.checked;
+  const raw = control.value.trim();
+  if (control.dataset.type === 'list')
+    return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (control.dataset.type === 'number') {
+    if (raw === '') return null;
+    const n = Number(raw);
+    if (Number.isNaN(n)) throw new Error(`${control.name} must be a number, not "${raw}"`);
+    return n;
+  }
+  return raw === '' ? null : raw;
+}
+
+document.getElementById('preview').onclick = async () => {
+  const response = await fetch('/api/preview', {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({body: FORM.querySelector('[name=body]').value}),
+  });
+  const doc = document.querySelector('.doc');
+  doc.hidden = false;
+  doc.innerHTML = (await response.json()).html;
+};
+
+document.getElementById('save').onclick = async () => {
+  const fields = {kind: FORM.dataset.kind};
+  const status = FORM.querySelector('[name=status]')?.value || 'todo';
+  const missing = [];
+  for (const control of FORM.querySelectorAll('[data-type]')) {
+    let value;
+    try { value = read(control); } catch (error) { STATE.textContent = error.message; return; }
+    const empty = value === null || (Array.isArray(value) && !value.length);
+    const waived = control.name === 'reviewers' &&
+      FORM.querySelector('[name=review_waived]')?.checked;
+    const gate = control.dataset.requiredFrom;
+    // Cumulative: a field demanded from `todo` is demanded at every status after
+    // it, which is why this compares positions rather than equality.
+    if (gate && empty && !waived && ORDER.indexOf(status) >= ORDER.indexOf(gate))
+      missing.push(control.name);
+    if (!empty) fields[control.name] = value;
+  }
+  if (missing.length) {
+    PROBLEMS.hidden = false;
+    PROBLEMS.textContent = `still needed at status ${status}: ${missing.join(', ')}`;
+    return;
+  }
+  const response = await fetch('/api/entity', {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      base_commit: FORM.querySelector('[name=base_commit]').value, fields,
+      body: FORM.querySelector('[name=body]').value || '',
+    }),
+  });
+  const answer = await response.json();
+  if (!response.ok) {
+    // The client check is a courtesy; this is the truth, and swallowing it leaves
+    // somebody staring at a form that looks fine.
+    PROBLEMS.hidden = false;
+    PROBLEMS.textContent = (answer.problems || [])
+      .map(p => `${p.field}: ${p.message}`).join('; ') || answer.detail || 'refused';
+    return;
+  }
+  location.href = '/detail/' + answer.id;
+};
+</script>
+"""
+
 _DETAIL = """
 {% if not single %}<ul class="toc">
   {% for e in entities %}
@@ -686,11 +791,19 @@ _DETAIL = """
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
   <p class="back"><a href="{{ links.detail }}">← all</a></p>
+  {% if editable %}
+  <p class="editbar">
+    <button type="button" id="toggle">Edit</button>
+    <button type="button" id="preview" hidden>Preview</button>
+    <button type="button" id="save" hidden>Save</button>
+    <span id="state"></span>
+  </p>
+  {% endif %}
   <h1>{{ e.title }}</h1>
   <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
      {% if e.parent %}· in
      <a href="{{ links.entity }}{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
-  <dl>
+  <dl id="facts">
     <dt>Owner</dt><dd>{{ e.owner or "nobody" }}</dd>
     <dt>Reviewers</dt>
     <dd>{% if e.review_waived %}<i>waived</i>
@@ -712,35 +825,8 @@ _DETAIL = """
   <div class="doc">{{ e.body|safe }}</div>
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
-    <p class="editbar">
-      <button type="button" id="toggle">Edit</button>
-      <button type="button" id="preview" hidden>Preview</button>
-      <button type="button" id="save" hidden>Save</button>
-      <span id="state"></span>
-    </p>
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <div id="fields" hidden>
-      {% for f in e.fields %}
-      <label>{{ f.name }}
-        {% if f.type == "status" %}
-        <select name="{{ f.name }}" data-type="text">
-          {% for s in statuses %}
-          <option {% if s == f.value %}selected{% endif %}>{{ s }}</option>
-          {% endfor %}
-        </select>
-        {% elif f.type == "bool" %}
-        <input type="checkbox" name="{{ f.name }}" data-type="bool"
-               {% if f.value %}checked{% endif %}>
-        {% else %}
-        <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}"
-               {% if f.type == "date" %}placeholder="YYYY-MM-DD"{% endif %}>
-        {% endif %}
-      </label>
-      {% endfor %}
-      <label class="wide">body
-        <textarea name="body" rows="18">{{ e.raw_body }}</textarea>
-      </label>
-    </div>
+    <div id="fields" hidden>{{ e.fields_html|safe }}</div>
     <div id="conflict" hidden></div>
   </form>
   {% endif %}
@@ -787,6 +873,9 @@ function changed() {
 
 function show(editing) {
   document.getElementById('fields').hidden = !editing;
+  // The facts list and the rendered doc are the read view of the same thing the
+  // form edits; leaving them up beside the inputs shows every value twice.
+  document.getElementById('facts').hidden = editing;
   document.querySelector('.doc').hidden = editing;
   for (const id of ['preview', 'save']) document.getElementById(id).hidden = !editing;
   document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
@@ -941,6 +1030,7 @@ REQUIRED_FROM = {
 }
 # Fields only one kind has, so the create form can hide the rest.
 KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
+PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 
 
 def _editable_for(entity: Entity) -> list[dict]:
@@ -950,6 +1040,7 @@ def _editable_for(entity: Entity) -> list[dict]:
             "name": name,
             "type": kind,
             "value": getattr(entity, name),
+            "gate": REQUIRED_FROM.get(name),
             "text": ", ".join(str(v) for v in getattr(entity, name))
             if kind == "list"
             else ("" if getattr(entity, name) is None else getattr(entity, name)),
@@ -1005,6 +1096,26 @@ def _detail_rows(index: Index) -> list[dict]:
     return rows
 
 
+def render_new(kind: str, base_commit: str, links: Links = ROUTES) -> str:
+    """The create page, laid out exactly like a detail page in edit mode.
+
+    A second, differently-shaped form for creating was the thing that made the
+    tool feel like two tools. The fields a kind has are decided here rather than
+    hidden by script, so the page shows what this kind actually is.
+    """
+    blank = {"project": Project, "pitch": Pitch, "task": Task}[kind](
+        id=f"{PREFIX[kind]}-000000", kind=kind, title=""
+    )
+    body = _ENV.from_string(_NEW).render(
+        kind=kind,
+        kinds=("project", "pitch", "task"),
+        base_commit=base_commit,
+        links=links,
+        fields_html=_fields_html(_editable_for(blank), "", rows=14),
+    )
+    return _page(f"openproj — new {kind}", body, _DETAIL_STYLE, links)
+
+
 def render_detail(
     index: Index,
     links: Links = STATIC,
@@ -1020,8 +1131,8 @@ def render_detail(
     if only is not None:
         rows = [row for row in rows if row["id"] == only]
         for row in rows:
-            row["fields"] = _editable_for(index.entities[row["id"]])
-            row["raw_body"] = index.entities[row["id"]].body
+            entity = index.entities[row["id"]]
+            row["fields_html"] = _fields_html(_editable_for(entity), entity.body)
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
         single=only is not None,
@@ -1061,24 +1172,12 @@ def preview_html(body: str) -> str:
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
     payload = _payload(index)
     blockers = sum(1 for p in index.problems if p.severity == "blocker")
-    creatable = [
-        {
-            "name": name,
-            "type": kind,
-            "gate": REQUIRED_FROM.get(name),
-            "kind": KIND_ONLY.get(name),
-        }
-        for name, kind in EDITABLE.items()
-        if name not in ("title",)
-    ]
     body = _ENV.from_string(_TABLE).render(
         payload=payload,
         blockers=blockers,
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        creatable=creatable,
-        kinds=("project", "pitch", "task"),
-        statuses=STATUSES,
+        links=links,
     )
     body = body.replace("PAYLOAD_JSON", json.dumps(payload)).replace("ENTITY_HREF", links.entity)
     return _page("openproj — table", body, _TABLE_STYLE, links)
