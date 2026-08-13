@@ -547,7 +547,7 @@ if (EDITABLE) {
       // would leave somebody staring at a form that looks fine.
       problems.hidden = false;
       problems.textContent = (answer.problems || [])
-        .map(p => `${p.field}: ${p.message}`).join('\n') || answer.detail || 'refused';
+        .map(p => `${p.field}: ${p.message}`).join('; ') || answer.detail || 'refused';
       return;
     }
     location.reload();
