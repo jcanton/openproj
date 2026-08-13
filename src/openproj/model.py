@@ -16,7 +16,7 @@ from typing import Literal
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 
@@ -86,7 +86,11 @@ class Entity(BaseModel):
     kind: Literal["project", "pitch", "task"]
     title: str
     parent: str | None = None
-    status: Literal["shaping", "ready", "in_progress", "done", "shelved"] = "shaping"
+    # A plain string, not a Literal. An unknown status has to survive parsing and
+    # be reported, because the alternative is what actually happened: one file
+    # written before a vocabulary change took every page down with a 500 instead
+    # of showing a problem next to the record that caused it.
+    status: str = "shaping"
 
     owner: str | None = None
     assignees: list[str] = []
@@ -95,8 +99,9 @@ class Entity(BaseModel):
 
     assigned_on: date | None = None
     # Named rather than numbered: "priority 2" means nothing to a reader, and a
-    # number invites arithmetic on something that is only an ordering.
-    priority: Literal["high", "medium", "low"] = "medium"
+    # number invites arithmetic on something that is only an ordering. A plain
+    # string for the same reason as `status` — see above.
+    priority: str = "medium"
     depends_on: list[str] = []
     cycle: int | None = None
     tags: list[str] = []
@@ -104,6 +109,17 @@ class Entity(BaseModel):
 
     body: str = ""
     created_schema_version: int = 1
+
+    @field_validator("status", "priority", mode="before")
+    @classmethod
+    def _as_written(cls, value: object) -> object:
+        """Take whatever is in the file, verbatim, and let validate_all judge it.
+
+        A file written before a vocabulary change holds `priority: 1`, which YAML
+        gives us as an int. Refusing it here means the whole index fails to load
+        over one stale record; accepting it means one problem next to one entity.
+        """
+        return value if value is None else str(value)
 
 
 class Project(Entity):
@@ -357,6 +373,24 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
         yield "blocker", "prs", "a done entity needs at least one PR", 1
 
 
+def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
+    """A word nobody defined, named where it is rather than as a stack trace."""
+    if entity.status not in STATUS_ORDER:
+        yield (
+            "blocker",
+            "status",
+            f"{entity.status!r} is not a status: expected one of {', '.join(STATUS_ORDER)}",
+            1,
+        )
+    if entity.priority not in PRIORITY_RANK:
+        yield (
+            "blocker",
+            "priority",
+            f"{entity.priority!r} is not a priority: expected high, medium or low",
+            1,
+        )
+
+
 def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str | None, str, int]]:
     """Names that are nobody, reported as a warning.
 
@@ -395,6 +429,7 @@ def _problems_for(
         yield "warning", "parent", "a task should have a parent", 1
 
     yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
+    yield from _vocabulary_problems(entity)
     yield from _status_problems(entity)
     yield from _people_problems(entity, config)
 

@@ -711,7 +711,9 @@ def test_the_refusal_names_the_process_holding_the_lock(store: Store, repo_path:
 
     The first version stated the invariant and left you to find the process
     yourself — and `pkill openproj` does not match the installed entrypoint, so the
-    honest answer to "which process" was a hunt through ps.
+    honest answer to "which process" was a hunt through ps. The suggested command
+    is kill -9 rather than kill, because SIGTERM does not reliably end a uvicorn
+    started through `uv run` and the lock outlives the attempt.
     """
     import os
 

@@ -132,7 +132,9 @@ def _ordering(
 
     graph.remove_nodes_from(contradictory)
     order = nx.lexicographical_topological_sort(
-        graph, key=lambda node: (PRIORITY_RANK[active[node].priority], node)
+        graph, # An unknown priority sorts as medium rather than raising: validate_all
+        # has already said so, and the timeline should still draw.
+        key=lambda node: (PRIORITY_RANK.get(active[node].priority, 1), node)
     )
     return list(order), contradictory
 

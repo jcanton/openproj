@@ -196,8 +196,9 @@ class Store:
             self._lock.close()
             raise StoreLocked(
                 f"another openproj writer already holds {self._path} (pid {holder}). "
-                "Single-writer is a correctness invariant, not a preference — stop that "
-                f"process, or run `kill {holder}` if it is a leftover."
+                "Single-writer is a correctness invariant, not a preference. "
+                f"If it is a leftover, `kill -9 {holder}` — plain kill sends SIGTERM, "
+                "which a uvicorn under `uv run` does not always act on."
             ) from exc
         # Whoever holds it says so, so the next person does not have to go hunting
         # through ps for a process whose name is not what they typed.

@@ -12,7 +12,17 @@ introduced after an entity was written may only warn about it, never block it.
 from datetime import date
 from pathlib import Path
 
-from openproj.model import Config, Entity, Pitch, Problem, Project, Task, load_repo, validate_all
+from openproj.model import (
+    Config,
+    Entity,
+    Pitch,
+    Problem,
+    Project,
+    Task,
+    load_repo,
+    parse_text,
+    validate_all,
+)
 
 TASK_ID = "task-aaa111"
 OTHER_TASK_ID = "task-ddd444"
@@ -341,3 +351,40 @@ def test_every_person_field_is_checked_against_the_roster():
         ("reviewers", "ghost"),
         ("assignees", "phantom"),
     }
+
+
+def test_a_word_nobody_defined_is_a_problem_and_not_a_crash():
+    """The invariant this restores: parse permissively, validate strictly.
+
+    A pitch written before a vocabulary change holds `status: wip`, and YAML hands
+    back `priority: 1` as an int. Refusing either at parse time took every page
+    down with a 500 over one stale record — which is precisely the failure the
+    permissive-parse rule exists to prevent. One bad file is one problem beside one
+    entity.
+    """
+    stale = parse_text(
+        "---\nid: pitch-bbb222\nkind: pitch\ntitle: T\nstatus: wip\npriority: 1\n---\n\nB.\n",
+        "pitches/pitch-bbb222.md",
+    )
+
+    assert (stale.status, stale.priority) == ("wip", "1")
+    fields = {(p.field, p.severity) for p in check(stale)}
+    assert ("status", "blocker") in fields
+    assert ("priority", "blocker") in fields
+
+
+def test_a_stale_vocabulary_still_schedules_and_renders():
+    """The page has to survive the record. A tracker that shows nothing because one
+    file is old is worse than one that shows the file and says what is wrong."""
+    from datetime import date
+
+    from openproj.index import build_index
+
+    stale = parse_text(
+        "---\nid: task-aaa111\nkind: task\ntitle: T\nstatus: wip\npriority: 1\n---\n\nB.\n",
+        "tasks/task-aaa111.md",
+    )
+    index = build_index([stale], Config(), date(2026, 8, 17))
+
+    assert "task-aaa111" in index.spans
+    assert any(p.field == "status" for p in index.problems)

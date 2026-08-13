@@ -52,7 +52,9 @@ def test_optional_fields_still_accept_real_values():
 def test_status_and_kind_are_still_constrained():
     """Permissive about absence, not about nonsense: an unknown status is a typo,
     not a missing value, and silently accepting it would corrupt the scheduler."""
-    with pytest.raises(ValidationError):
-        Entity(id="task-abc123", kind="task", title="T", status="in-progress")
+    # Status is deliberately NOT constrained here: a stale or mistyped one has to
+    # parse and be reported, or one old file takes every page down. See
+    # test_validate.test_a_word_nobody_defined_is_a_problem_and_not_a_crash.
+    assert Entity(id="task-abc123", kind="task", title="T", status="in-progress").status
     with pytest.raises(ValidationError):
         Entity(id="task-abc123", kind="banana", title="T")

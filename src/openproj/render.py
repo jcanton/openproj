@@ -192,7 +192,7 @@ def _timeline(index: Index) -> dict:
                 "x": x(span.start),
                 "y": row * _ROW_PX + _HEADER_PX,
                 "width": max(_DAY_PX, x(span.end + timedelta(days=1)) - x(span.start)),
-                "colour": _STATUS_COLOUR[entity.status],
+                "colour": _STATUS_COLOUR.get(entity.status, "#8a93a5"),
                 "owner": entity.owner or "unowned",
                 "tip": explanation.text if explanation else "Starts as soon as it can.",
             }
