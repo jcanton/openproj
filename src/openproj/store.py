@@ -197,8 +197,8 @@ class Store:
             raise StoreLocked(
                 f"another openproj writer already holds {self._path} (pid {holder}). "
                 "Single-writer is a correctness invariant, not a preference. "
-                f"If it is a leftover, `kill -9 {holder}` — plain kill sends SIGTERM, "
-                "which a uvicorn under `uv run` does not always act on."
+                f"If it is a leftover, stop it with `kill {holder}` and give it a "
+                "second; use `kill -9` only if that does not take."
             ) from exc
         # Whoever holds it says so, so the next person does not have to go hunting
         # through ps for a process whose name is not what they typed.

@@ -1018,3 +1018,29 @@ def test_an_entity_whose_filename_carries_a_slug_is_still_found(
     assert response.status_code == 200
     assert response.json()["outcome"] == "committed"
     assert "priority: high" in file_at(repo_path, response.json()["commit"], slugged)
+
+
+def test_the_app_exposes_the_flag_that_ends_its_event_streams(repo_path: Path):
+    """The runner sets this from uvicorn's own exit hook.
+
+    uvicorn waits for in-flight requests and only then runs lifespan shutdown, so
+    an event stream — a request that never ends by design — held Ctrl-C until the
+    graceful timeout expired and the process died to a forced cancel. A signal
+    handler installed by the app does not help either: uvicorn installs its own
+    afterwards and replaces it. This flag is the seam, and a rename here without a
+    matching one in `cli._serve` would quietly bring the hang back.
+    """
+    app = create_app(repo_path, auth="dev", secret=SECRET)
+
+    assert hasattr(app.state, "closing")
+    assert not app.state.closing.is_set()
+
+
+def test_the_runner_sets_that_flag_when_it_is_told_to_exit(repo_path: Path):
+    from openproj import cli
+
+    app = create_app(repo_path, auth="dev", secret=SECRET)
+    server = cli._exit_aware_server(app, host="127.0.0.1", port=0)
+    server.handle_exit(15, None)
+
+    assert app.state.closing.is_set()

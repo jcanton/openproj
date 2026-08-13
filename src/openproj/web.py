@@ -32,7 +32,7 @@ import asyncio
 import json
 import re
 import secrets
-from contextlib import asynccontextmanager
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -156,16 +156,13 @@ def create_app(
     app = FastAPI(title="openproj")
     watchers: set[asyncio.Queue] = set()
     # An event stream is a request that never ends, and uvicorn waits for in-flight
-    # requests before it exits — so one open page kept Ctrl-C from ever finishing
-    # and the process had to be killed. The stream watches this and stops itself.
-    closing = asyncio.Event()
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI):
-        yield
-        closing.set()
-
-    app.router.lifespan_context = lifespan
+    # requests BEFORE it runs lifespan shutdown — so a flag set there arrives after
+    # the wait it was meant to shorten. Installing a signal handler here does not
+    # work either: uvicorn installs its own afterwards and replaces it. The runner
+    # sets this from uvicorn's own exit hook, which is the only thing that fires
+    # early enough. See cli._serve.
+    closing = threading.Event()
+    app.state.closing = closing
 
     def index_now():
         commit = store.head()
@@ -381,13 +378,18 @@ def create_app(
                 # A comment, not an event: it flushes the headers so a client knows
                 # the stream is live, without looking like something happened.
                 yield b": connected\n\n"
+                waited = 0.0
                 while not closing.is_set():
                     try:
-                        event = await asyncio.wait_for(queue.get(), timeout=15)
+                        event = await asyncio.wait_for(queue.get(), timeout=1)
                     except TimeoutError:
-                        # A keepalive doubles as the check that lets this loop
-                        # notice a shutdown and a dropped client at all.
-                        yield b": keepalive\n\n"
+                        # A short wait so a shutdown is noticed in about a second,
+                        # but a keepalive only every fifteen: the wakeup is for us,
+                        # the bytes are for the client.
+                        waited += 1
+                        if waited >= 15:
+                            waited = 0
+                            yield b": keepalive\n\n"
                         continue
                     yield f"data: {json.dumps(event)}\n\n".encode()
             finally:

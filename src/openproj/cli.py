@@ -79,7 +79,6 @@ def _serve(args) -> int:
     visible in `ps` to every other process on the machine, and shell history keeps
     it long after the process is gone.
     """
-    import uvicorn
 
     from .web import create_app
 
@@ -94,16 +93,31 @@ def _serve(args) -> int:
     # proxy_headers matters behind Cloud Run: TLS is terminated upstream, and
     # without it the app believes it is serving plain HTTP and stops marking the
     # session cookie Secure.
-    # A bounded graceful shutdown as the backstop: a client that ignores the
-    # stream ending must not keep Ctrl-C waiting forever.
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        proxy_headers=True,
-        timeout_graceful_shutdown=5,
+    return _exit_aware_server(app, args.host, args.port).run() or 0
+
+
+def _exit_aware_server(app, host: str, port: int):
+    """A uvicorn server that tells the app a shutdown has begun.
+
+    uvicorn waits for in-flight requests and only then runs lifespan shutdown, so
+    an event stream — a request that never ends by design — held Ctrl-C until the
+    graceful timeout expired and then died to a forced cancel. Installing a signal
+    handler from the app does not work either: uvicorn installs its own afterwards
+    and replaces it. This hook fires the moment the signal arrives, so the streams
+    close themselves while uvicorn is still politely waiting for them.
+    """
+    import uvicorn
+
+    class Server(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: object) -> None:
+            app.state.closing.set()
+            super().handle_exit(sig, frame)
+
+    return Server(
+        uvicorn.Config(
+            app, host=host, port=port, proxy_headers=True, timeout_graceful_shutdown=10
+        )
     )
-    return 0
 
 
 def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
