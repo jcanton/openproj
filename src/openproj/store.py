@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import fcntl
 import io
+import os
 import threading
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -184,15 +185,26 @@ class Store:
         self._writing = threading.Lock()
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
-        self._lock = open(self._path / _LOCK, "w")
+        # "a+" rather than "w": opening for write truncates, and truncating would
+        # erase the holder's pid before we even find out somebody else has the lock.
+        self._lock = open(self._path / _LOCK, "a+")
         try:
             fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
+            self._lock.seek(0)
+            holder = self._lock.read().strip() or "unknown"
             self._lock.close()
             raise StoreLocked(
-                f"another openproj writer already holds {self._path}. "
-                "Single-writer is a correctness invariant, not a preference."
+                f"another openproj writer already holds {self._path} (pid {holder}). "
+                "Single-writer is a correctness invariant, not a preference — stop that "
+                f"process, or run `kill {holder}` if it is a leftover."
             ) from exc
+        # Whoever holds it says so, so the next person does not have to go hunting
+        # through ps for a process whose name is not what they typed.
+        self._lock.seek(0)
+        self._lock.truncate()
+        self._lock.write(str(os.getpid()))
+        self._lock.flush()
 
     # -- reading, always at an explicit commit ------------------------------
 

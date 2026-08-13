@@ -32,9 +32,9 @@ from pathlib import Path
 
 import pygit2
 import pytest
-from openproj.store import Store, WriteResult
 
 from openproj.model import parse_text
+from openproj.store import Store, StoreLocked, WriteResult
 
 PATH = "tasks/task-c00001.md"
 OTHER = "tasks/task-c00002.md"
@@ -699,3 +699,29 @@ def test_a_file_with_no_trailing_newline_keeps_not_having_one(store: Store):
     )
 
     assert store.read(result.commit, PATH) == content
+
+
+def test_the_refusal_names_the_process_holding_the_lock(store: Store, repo_path: Path):
+    """A second writer must fail loudly, and the message has to be actionable.
+
+    The first version stated the invariant and left you to find the process
+    yourself — and `pkill openproj` does not match the installed entrypoint, so the
+    honest answer to "which process" was a hunt through ps.
+    """
+    import os
+
+    with pytest.raises(StoreLocked) as caught:
+        Store(repo_path)
+
+    assert str(os.getpid()) in str(caught.value)
+
+
+def test_a_second_writer_does_not_erase_the_holders_pid(store: Store, repo_path: Path):
+    """Opening the lock file for writing truncates it. A refused second writer
+    would therefore wipe the very pid the refusal is supposed to report."""
+    import os
+
+    with pytest.raises(StoreLocked):
+        Store(repo_path)
+
+    assert (repo_path / "openproj.lock").read_text().strip() == str(os.getpid())
