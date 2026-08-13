@@ -991,3 +991,25 @@ def test_a_write_is_broadcast_to_everybody_watching(live_server: str):
 
     assert event["commit"] == commit
     assert event["changed"] == [TASK]
+
+
+def test_an_entity_whose_filename_carries_a_slug_is_still_found(
+    client: TestClient, repo_path: Path
+):
+    """Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
+    the path has to be looked up rather than reconstructed. Guessing `<id>.md`
+    passes against a corpus nobody has ever renamed and fails against every real
+    one — which is exactly how this shipped and then broke on first contact.
+    """
+    slugged = "tasks/task-d40000--a-title-someone-wrote.md"
+    commit_directly(
+        repo_path,
+        {**SEED, slugged: SEED[PATH].replace(TASK, "task-d40000")},
+        "add an entity filed under its slug",
+    )
+
+    response = save(client, "task-d40000", {"priority": 1})
+
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "committed"
+    assert "priority: 1" in file_at(repo_path, response.json()["commit"], slugged)

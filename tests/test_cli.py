@@ -104,3 +104,13 @@ def test_the_shipped_demo_corpus_validates_clean(demo_root: Path):
     nine blockers because migrated data is messy and the validator has to say so.
     """
     assert main(["check", str(demo_root)]) == 0
+
+
+def test_serve_is_reachable_from_the_command_line():
+    """The README promises `openproj serve`; a parser that has never heard of it
+    turns that promise into a stack trace at the worst moment."""
+    from openproj.cli import _parser
+
+    args = _parser().parse_args(["serve", "--repo", "seed", "--auth", "dev"])
+    assert args.command == "serve"
+    assert args.auth == "dev"

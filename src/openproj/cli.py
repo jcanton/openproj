@@ -33,6 +33,13 @@ def _parser() -> argparse.ArgumentParser:
     render.add_argument("out_dir", type=Path)
     render.add_argument("--today", type=date.fromisoformat, default=None)
 
+    serve = commands.add_parser("serve", help="run the editable server")
+    serve.add_argument("--repo", type=Path, required=True, help="a bare clone of the plan repo")
+    serve.add_argument("--auth", choices=("dev", "github"), default="dev")
+    serve.add_argument("--org", default="C2SM")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+
     schedule = commands.add_parser("schedule", help="print the computed schedule")
     schedule.add_argument("repo", type=Path)
     schedule.add_argument("--json", action="store_true")
@@ -58,6 +65,34 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     entities, config = load_repo(repo)
     render_static(build_index(entities, config, today or date.today()), out_dir)
     print(f"wrote index.html, graph.html and timeline.html to {out_dir}")
+    return 0
+
+
+def _serve(args) -> int:
+    """Run the server against a plan repository.
+
+    Secrets come from the environment, never from the command line: an argument is
+    visible in `ps` to every other process on the machine, and shell history keeps
+    it long after the process is gone.
+    """
+    import os
+
+    import uvicorn
+
+    from .web import create_app
+
+    app = create_app(
+        args.repo,
+        auth=args.auth,
+        org=args.org,
+        secret=os.environ.get("OPENPROJ_SECRET", "dev-secret"),
+        client_id=os.environ.get("OPENPROJ_CLIENT_ID", ""),
+        client_secret=os.environ.get("OPENPROJ_CLIENT_SECRET", ""),
+    )
+    # proxy_headers matters behind Cloud Run: TLS is terminated upstream, and
+    # without it the app believes it is serving plain HTTP and stops marking the
+    # session cookie Secure.
+    uvicorn.run(app, host=args.host, port=args.port, proxy_headers=True)
     return 0
 
 
@@ -96,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         return _check(args.repo)
     if args.command == "render":
         return _render(args.repo, args.out_dir, args.today)
+    if args.command == "serve":
+        return _serve(args)
     return _schedule(args.repo, args.json, args.today)
 
 

@@ -83,13 +83,31 @@ def _entities_at(store: Store, commit: str) -> list[Entity]:
     ]
 
 
-def _path_for(entity_id: str) -> str:
-    """The one place an id becomes a path. Everything else must come through here."""
+def _directory_for(entity_id: str) -> str:
+    """The directory an id belongs in, or a refusal. The one place an id becomes
+    part of a path — everything else must come through here."""
     if not ID_PATTERN.match(entity_id):
         raise HTTPException(400, f"{entity_id!r} is not an entity id")
     prefix = entity_id.split("-")[0]
     kind = next(k for k, p in PREFIX.items() if p == prefix)
-    return f"{DIRECTORY[kind]}/{entity_id}.md"
+    return DIRECTORY[kind]
+
+
+def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
+    """Where this entity's file actually is, at this commit.
+
+    Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
+    the path cannot be reconstructed from the id — it has to be found. Guessing
+    `<id>.md` works on a corpus nobody has renamed and fails on every real one.
+    """
+    directory = _directory_for(entity_id)
+    for path in store.paths(commit):
+        if not path.startswith(f"{directory}/") or not path.endswith(".md"):
+            continue
+        stem = path[len(directory) + 1 : -len(".md")]
+        if stem == entity_id or stem.startswith(f"{entity_id}--"):
+            return path
+    return None
 
 
 def create_app(
@@ -221,11 +239,11 @@ def create_app(
         if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
             raise HTTPException(413, "that body is too large to commit")
 
-        path = _path_for(entity_id)
         base = payload["base_commit"]
-        original = store.read(base, path)
-        if original is None:
+        path = _path_for(store, base, entity_id)
+        if path is None:
             raise HTTPException(404, f"no entity {entity_id!r}")
+        original = store.read(base, path)
 
         fields = {k: v for k, v in (payload.get("fields") or {}).items() if k != "id"}
         content = patch_text(original, fields, body)
