@@ -57,6 +57,43 @@ down. Requiredness lives in `validate_all`, never in the parse types.
 adding one required field invalidates the whole repository at once and the rule gets reverted rather
 than adopted. `shaped_by` is the live example: a version 2 rule warning against a version 1 corpus.
 
+## Two repositories
+
+The tool and the plan are separate repositories, and stay separate in production.
+
+```
+C2SM/openproj        this repo — code, tests, and fixtures. No real plan data.
+C2SM/<name>-plan     the data — markdown entities and config. No code.
+```
+
+`seed/` and `tests/fixtures/corpus/` live here only because they are a demo and a
+test fixture. Neither is anybody's plan.
+
+Three reasons the split is load-bearing:
+
+- **A plan commit must not run the tool's CI.** Someone changing a status should not
+  queue a test suite, and a red suite should not block someone changing a status.
+- **The write credential must be structurally incapable of touching source.** The
+  server commits to the plan repo continuously. Scoped to one repository with
+  `contents: write`, a leaked token costs you a revertable plan; scoped wider it is a
+  supply-chain foothold in a scientific codebase.
+- **Their histories have nothing to say to each other.** `git log` on the plan is a
+  record of decisions; on the tool it is a record of code. Interleaving them makes
+  both harder to read, and `git blame` on an appetite field stops being useful.
+
+The seam is the `--repo` argument. The server holds a bare clone of the plan repo and
+knows nothing else about it, so pointing a deployment at a different plan is a flag,
+not a fork.
+
+```bash
+uv run openproj serve --repo /srv/plan.git          # a bare clone of the data repo
+uv run openproj serve --repo seed --auth dev        # the demo, locally
+```
+
+On Cloud Run the container clones the plan repo on boot and pushes on write, which is
+also why the running service is close to stateless — the durable data is the git remote,
+not the disk.
+
 ## Layout
 
 ```
@@ -64,8 +101,10 @@ src/openproj/model.py      schemas, parse, round-trip serialise, validate_all
 src/openproj/schedule.py   the scheduler — a pure function, the product
 src/openproj/index.py      the snapshot every view renders from
 src/openproj/render.py     the three pages
-src/openproj/cli.py        check / render / schedule
-seed/                      the corpus, converted from the HackMD task table
+src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
+src/openproj/cli.py        check / render / schedule / serve
+seed/                      the demo corpus
+tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md
 docs/superpowers/          the spec and the plan
 ```
@@ -85,9 +124,12 @@ if it starts patching frontmatter, bot and humans fight over the same files fore
 
 ## Status
 
-Phase 1: a static read-only viewer. No server, no auth, no writes — those are Phase 2, and only if
-Gate 1 passes. Gate 1 is one question, asked at a planning meeting: **does anyone argue with a
-date?** If nobody does, the timeline is not being read, and the right move is to stop.
+Phase 1 is done: the static viewer renders, and Gate 1 was shown at a planning meeting.
+
+Phase 2 is in progress. `store.py` — the git write layer — is complete: a bare repository with no
+index to contend for, one writer behind an `flock`, and compare-and-swap scoped to the path being
+written, so an edit to a different file retries invisibly and only a genuine overlap is refused.
+The server and GitHub OAuth are next.
 
 Spec: `docs/superpowers/specs/2026-08-12-appetite-design.md`.
 Plan and gates: `docs/superpowers/plans/2026-08-12-phase1.md`.
