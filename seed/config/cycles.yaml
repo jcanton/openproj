@@ -1,9 +1,13 @@
 # Cycle boundaries, inclusive: <cycle number>: [first day, last day].
-# Six-week build plus two weeks cool-down, per Shape Up. Cycle 28 predates the
-# 2026 numbering and is recorded only so the four turbulence entities that
-# reference it can be placed on the timeline.
+# Eight weeks each: six weeks build plus two weeks cool-down, per Shape Up.
+#
+# 34 -> 35 and 36 -> 37 run back to back. The month between 2026-05-22 and
+# 2026-06-22 is deliberate and unnumbered: it is the summer conference and
+# release window, and no entity may be scheduled into it.
+#
+# "Today" for this demo corpus is 2026-08-17, the first working day of cycle 37.
 cycles:
-  28: [2024-12-09, 2025-01-31]
   34: [2026-02-02, 2026-03-27]
   35: [2026-03-30, 2026-05-22]
   36: [2026-06-22, 2026-08-14]
+  37: [2026-08-17, 2026-10-09]

@@ -58,6 +58,20 @@ def test_the_libraries_are_inlined_rather_than_linked(rendered: Path):
     assert 'src="' not in graph
 
 
+def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: Path):
+    """The graph page once rendered blank because `DAGRE_JS` is a substring of
+    `CYTOSCAPE_DAGRE_JS`: replacing markers in sequence inlined dagre twice and
+    cytoscape-dagre never. Nothing in the page said so — it just drew nothing."""
+    static = Path(__file__).resolve().parents[1] / "static"
+    graph = read(rendered, "graph.html")
+
+    # Not a bare "@@" check: minified cytoscape genuinely contains `e["@@iterator"]`.
+    assert not re.search(r"@@[\w.-]+\.js@@", graph), "an inlining marker survived"
+    for name in ("cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"):
+        signature = (static / name).read_text(encoding="utf-8")[:120]
+        assert graph.count(signature) == 1, name
+
+
 def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, seed_index: Index):
     payload = json.loads(
         re.search(

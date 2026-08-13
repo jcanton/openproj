@@ -1,10 +1,16 @@
 # Global planning defaults.
 #
-# schema_version is the version NEW entities are created at. Every validation
-# rule records the version that introduced it, and an entity is only blocked by
-# rules whose version <= its own created_schema_version (spec 5.4). The corpus
-# below is all created_schema_version 1, so the version-2 shaped_by rule reports
-# as a warning against it and as a blocker against anything created from now on.
+# schema_version is the version NEW entities are created at. It is not a claim
+# about the corpus: every validation rule records the version that introduced
+# it, and an entity is only blocked by rules whose version is <= its own
+# created_schema_version (spec 5.4). A rule newer than the entity it judges may
+# only warn. That is what lets a required field be added without invalidating
+# work written before the field existed.
+#
+# Every entity in this corpus is created_schema_version 2, so every rule
+# currently defined — including the version-2 rule that a todo pitch must name
+# a shaped_by — applies to all of them as a blocker. There is no grandfathered
+# entity here to exercise the warning path.
 schema_version: 2
 nominal_availability: 1.0   # single global figure (D4); per-person overrides not used
 default_task_effort: 0.5    # weeks assumed when an entity states no size

@@ -1,4 +1,9 @@
 # Non-working days: Zurich cantonal holidays plus the ETH year-end closure.
+#
+# Weekends are already excluded by the scheduler, so days that fall on a
+# Saturday or Sunday in 2026 are listed for completeness only and change
+# nothing. Half-days (Knabenschiessen, 2026-09-14) are not representable and
+# are therefore not listed — the model has no fractional working day.
 holidays:
   - 2026-01-01   # Neujahr
   - 2026-01-02   # Berchtoldstag
@@ -7,8 +12,11 @@ holidays:
   - 2026-05-01   # Tag der Arbeit
   - 2026-05-14   # Auffahrt
   - 2026-05-25   # Pfingstmontag
-  - 2026-08-01   # Bundesfeier
-  - 2026-12-24   # ETH closure
+  - 2026-08-01   # Bundesfeier (Saturday in 2026)
+  - 2026-12-24   # ETH year-end closure begins
   - 2026-12-25   # Weihnachten
-  - 2026-12-26   # Stephanstag
-  - 2026-12-31   # ETH closure
+  - 2026-12-26   # Stephanstag (Saturday in 2026)
+  - 2026-12-28   # ETH year-end closure
+  - 2026-12-29   # ETH year-end closure
+  - 2026-12-30   # ETH year-end closure
+  - 2026-12-31   # ETH year-end closure

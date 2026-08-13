@@ -15,6 +15,7 @@ that looks like a commitment is how a timeline stops being believed.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -275,9 +276,9 @@ th[data-sort] { cursor: pointer; user-select: none; color: var(--muted); font-we
 _GRAPH = """
 <div id="cy"></div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
-<script>CYTOSCAPE_JS</script>
-<script>DAGRE_JS</script>
-<script>CYTOSCAPE_DAGRE_JS</script>
+<script>@@cytoscape.min.js@@</script>
+<script>@@dagre.min.js@@</script>
+<script>@@cytoscape-dagre.js@@</script>
 <script>
 cytoscape.use(cytoscapeDagre);
 const COLOUR = {todo:'#8a93a5', wip:'#1f6f8b', done:'#3f7d58', shelved:'#b0b4bd'};
@@ -287,10 +288,13 @@ cytoscape({
   layout: {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70},
   style: [
     { selector: 'node', style: {
-        'label': 'data(label)', 'text-wrap': 'wrap', 'font-size': 9, 'shape': 'round-rectangle',
+        'label': 'data(label)', 'font-size': 9, 'shape': 'round-rectangle',
+        // text-wrap alone does nothing: without a max width the label just
+        // overflows the box it is supposed to sit inside.
+        'text-wrap': 'wrap', 'text-max-width': 136,
         'background-color': e => COLOUR[e.data('status')],
         'border-width': e => 4 - e.data('priority'), 'border-color': '#0f5c6b',
-        'color': '#fff', 'text-valign': 'center', 'width': 150, 'height': 34 } },
+        'color': '#fff', 'text-valign': 'center', 'width': 150, 'height': 44 } },
     { selector: ':parent', style: {
         'background-opacity': .08, 'text-valign': 'top', 'color': '#6a7a80' } },
     { selector: 'edge', style: {
@@ -357,13 +361,23 @@ def render_table(index: Index) -> str:
 
 
 def render_graph(index: Index) -> str:
+    """Inline the libraries in one pass, keyed by filename.
+
+    Sequential `str.replace` calls were wrong here and silently so: `DAGRE_JS` is a
+    substring of `CYTOSCAPE_DAGRE_JS`, so replacing the shorter marker first ate
+    the tail of the longer one. dagre was inlined twice, cytoscape-dagre never,
+    and the page rendered blank with a stray identifier. One regex pass over
+    delimited markers cannot collide however the names are chosen.
+    """
     body = _GRAPH.replace("ELEMENTS_JSON", json.dumps(_elements(index)))
-    for marker, name in (
-        ("CYTOSCAPE_JS", "cytoscape.min.js"),
-        ("DAGRE_JS", "dagre.min.js"),
-        ("CYTOSCAPE_DAGRE_JS", "cytoscape-dagre.js"),
-    ):
-        body = body.replace(marker, _inline(name))
+    wanted = {"cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"}
+    body = re.sub(
+        r"@@([\w.-]+)@@",
+        # Only known filenames are substituted: minified sources contain things
+        # like `e["@@iterator"]`, and a blind pattern would try to inline them.
+        lambda m: _inline(m.group(1)) if m.group(1) in wanted else m.group(0),
+        body,
+    )
     return _page("openproj — graph", body, "#cy { height: 78vh; border: 1px solid var(--line); }")
 
 
