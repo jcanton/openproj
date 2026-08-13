@@ -250,11 +250,33 @@ body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3r
 nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; }
 nav a { color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
+#moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent); color: #fff;
+         padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
+#moved a { color: #fff; }
+#moved .sha { font-family: ui-monospace, monospace; opacity: .7; }
 {{ style }}
 </style></head><body>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
 <a href="{{ links.timeline }}">Timeline</a><a href="{{ links.detail }}">Detail</a></nav>
 {{ content }}
+{% if live %}
+<div id="moved" hidden></div>
+<script>
+// Somebody else committed. Say so and get out of the way: reloading over an open
+// editor would throw away work that is not in git yet, and the whole point of one
+// Save being one commit is that nothing moves under you until you ask.
+const moved = document.getElementById('moved');
+const source = new EventSource('/api/events');
+source.onmessage = event => {
+  const {commit, changed} = JSON.parse(event.data);
+  const here = location.pathname.split('/').pop();
+  const mine = changed.includes(here);
+  moved.hidden = false;
+  moved.innerHTML = (mine ? 'This was just changed by somebody else. ' : 'The plan changed. ')
+    + `<a href="">reload</a> <span class="sha">${commit.slice(0, 7)}</span>`;
+};
+</script>
+{% endif %}
 </body></html>
 """
 
@@ -805,7 +827,13 @@ def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> s
     rendered body and stylesheet are marked safe here so the shell does not escape
     them a second time."""
     return _ENV.from_string(_SHELL).render(
-        title=title, content=Markup(content), style=Markup(style), links=links
+        title=title,
+        content=Markup(content),
+        style=Markup(style),
+        links=links,
+        # Only the server has an event stream to listen to. A static page opening a
+        # connection to nothing would retry forever in the console.
+        live=links.table.startswith("/"),
     )
 
 

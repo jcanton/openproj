@@ -202,3 +202,26 @@ def test_a_conflict_reaches_the_page_as_a_report_and_never_as_markers(
     assert "bo" in report and "cy" in report
     for marker in ("<<<<<<<", "=======", ">>>>>>>"):
         assert marker not in report
+
+
+def test_a_served_page_listens_for_somebody_elses_commit(page: str):
+    """Announced, never applied. Reloading over an open editor throws away work
+    that is not in git yet, and one Save being one commit means nothing moves
+    under you until you ask for it."""
+    assert "EventSource('/api/events')" in page
+    assert "location.reload" not in page.split("source.onmessage")[1][:400]
+
+
+def test_a_static_page_opens_no_event_stream(tmp_path: Path):
+    """There is no server behind a rendered file, and a page retrying a dead
+    connection forever is a console full of noise on somebody's laptop."""
+    from datetime import date
+
+    from openproj.index import build_index
+    from openproj.model import load_repo
+    from openproj.render import render_static
+
+    entities, config = load_repo(Path("seed"))
+    render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
+
+    assert "EventSource" not in (tmp_path / "index.html").read_text()
