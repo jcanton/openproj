@@ -30,6 +30,8 @@ from pydantic import BaseModel
 from ruamel.yaml import YAML
 
 _BRANCH = "refs/heads/main"
+_ORIGIN = "origin"
+_TRACKING = "refs/remotes/origin/main"
 _BOT = pygit2.Signature("openproj-bot", "openproj-bot@example.invalid")
 _LOCK = "openproj.lock"
 
@@ -38,10 +40,23 @@ class WriteResult(BaseModel):
     commit: str | None
     outcome: Literal["committed", "retried", "merged", "conflict"]
     conflict: str | None = None
+    # Whether the commit reached the remote. On an ephemeral filesystem an
+    # unpushed commit is a lost commit, so a caller that reports success without
+    # looking at this is how a team finds out on Monday that Friday is gone.
+    pushed: bool = False
 
 
 class StoreLocked(RuntimeError):
     """Another process already holds the writer lock on this repository."""
+
+
+class StoreDiverged(RuntimeError):
+    """Local and remote have both moved and neither contains the other.
+
+    Never resolved automatically: every automatic answer discards somebody's
+    commits, and a tracker that silently drops a commit is worse than one that
+    stops and says so.
+    """
 
 
 def _split(text: str) -> tuple[str, str]:
@@ -160,6 +175,12 @@ class Store:
         self._path = Path(repo_path)
         self._repo = pygit2.Repository(str(repo_path))
         self._remote = remote
+        if remote:
+            existing = {r.name for r in self._repo.remotes}
+            if _ORIGIN in existing:
+                self._repo.remotes.set_url(_ORIGIN, remote)
+            else:
+                self._repo.remotes.create(_ORIGIN, remote)
         self._writing = threading.Lock()
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
@@ -211,29 +232,100 @@ class Store:
         walk(self._tree(commit), "")
         return sorted(found)
 
+    # -- the remote ---------------------------------------------------------
+    #
+    # On Cloud Run the disk is ephemeral and the service scales to zero, so the
+    # durable copy is the remote and a commit that has not reached it does not
+    # exist. Push happens inside the writer lock, which is what keeps local
+    # strictly ahead of the remote rather than divergent.
+
+    def _remote_head(self) -> str | None:
+        repo = pygit2.Repository(str(self._path))
+        reference = repo.references.get(_TRACKING)
+        return str(reference.target) if reference else None
+
+    def fetch(self) -> str | None:
+        """Bring the tracking ref up to date. Returns the remote head if it moved."""
+        if not self._remote:
+            return None
+        before = self._remote_head()
+        self._repo.remotes[_ORIGIN].fetch(callbacks=None)
+        after = self._remote_head()
+        return after if after != before else None
+
+    def push(self) -> bool:
+        """Send local main to the remote. False when there was nothing to send.
+
+        Raises StoreDiverged when the two histories have genuinely forked, which
+        can only happen if something force-pushed or a second writer existed.
+        """
+        if not self._remote:
+            return False
+        self.fetch()
+        local, remote_head = self.head(), self._remote_head()
+        if remote_head == local:
+            return False
+        if remote_head is not None and not self._repo.descendant_of(local, remote_head):
+            raise StoreDiverged(
+                f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
+                "refusing to guess which commits to discard"
+            )
+        self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=None)
+        return True
+
     # -- writing ------------------------------------------------------------
 
     def write(
         self, path: str, content: str, base_commit: str, author: str, message: str
     ) -> WriteResult:
         with self._writing:
+            # Whatever the remote has is part of "current": writing on top of a
+            # stale local view would push a commit that silently reverts somebody.
+            if self._remote:
+                self._absorb_remote()
             current = self.head()
             if current == base_commit:
-                return WriteResult(commit=self._commit(path, content, author, message),
-                                   outcome="committed")
+                return self._finish(self._commit(path, content, author, message), "committed")
 
             was = self.read(base_commit, path)
             stored = self.read(current, path)
             if was == stored:
                 # Somebody edited a different file. Nobody needs to hear about it.
-                return WriteResult(commit=self._commit(path, content, author, message),
-                                   outcome="retried")
+                return self._finish(self._commit(path, content, author, message), "retried")
 
             merged, conflict = _merge(path, was or "", content, stored or "")
             if conflict is not None:
                 return WriteResult(commit=None, outcome="conflict", conflict=conflict)
-            return WriteResult(commit=self._commit(path, merged, author, message),
-                               outcome="merged")
+            return self._finish(self._commit(path, merged, author, message), "merged")
+
+    def _absorb_remote(self) -> None:
+        """Fast-forward onto anything the remote gained since the last write."""
+        self.fetch()
+        local, remote_head = self.head(), self._remote_head()
+        if remote_head is None or remote_head == local:
+            return
+        if self._repo.descendant_of(remote_head, local):
+            self._repo.references[_BRANCH].set_target(remote_head)
+        elif not self._repo.descendant_of(local, remote_head):
+            raise StoreDiverged(
+                f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
+                "refusing to guess which commits to discard"
+            )
+
+    def _finish(self, commit: str, outcome: str) -> WriteResult:
+        """Commit made. Try to push, and never claim success for a commit that is
+        still only on this disk."""
+        pushed = False
+        if self._remote:
+            try:
+                pushed = self.push()
+            except StoreDiverged:
+                raise
+            except Exception:
+                # The remote is unreachable. The commit is real and local; the
+                # caller is told it has not landed rather than told nothing.
+                pushed = False
+        return WriteResult(commit=commit, outcome=outcome, pushed=pushed)
 
     def _commit(self, path: str, content: str, author: str, message: str) -> str:
         parent = self.head()
