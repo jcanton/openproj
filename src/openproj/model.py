@@ -383,3 +383,30 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
                 )
             )
     return problems
+
+
+def split_front_matter(text: str) -> tuple[str, str]:
+    """The frontmatter block and the body, without reformatting either."""
+    if not text.startswith("---"):
+        return "", text
+    _, _, rest = text.partition("---\n")
+    front, sep, body = rest.partition("\n---\n")
+    return (front, body) if sep else ("", text)
+
+
+def patch_text(original: str, fields: dict, body: str | None = None) -> str:
+    """Apply only the named fields to a file, leaving everything else byte-identical.
+
+    Round-trip, not re-serialise: a person's comments, key order, blank lines and
+    list style survive a save. "Edit it in git if you prefer" stops being true the
+    first time a save reformats somebody's file, and nobody comes back after that.
+    """
+    front, existing_body = split_front_matter(original)
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    mapping = yaml.load(front) or {}
+    for key, value in fields.items():
+        mapping[key] = value
+    stream = io.StringIO()
+    yaml.dump(mapping, stream)
+    return f"---\n{stream.getvalue()}---\n{existing_body if body is None else body}"

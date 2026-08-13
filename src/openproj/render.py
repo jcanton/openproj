@@ -22,6 +22,7 @@ from pathlib import Path
 from jinja2 import Environment
 from markdown_it import MarkdownIt
 from markupsafe import Markup
+from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate
 from .model import Config, Entity, size_weeks
@@ -189,6 +190,24 @@ def _month_ticks(origin: date, last: date, x) -> list[dict]:
     return ticks
 
 
+class Links(BaseModel):
+    """Where the pages point at each other.
+
+    Static output links to sibling files; the server links to routes. Everything
+    else about the pages is identical, so this is the only thing that knows which
+    mode it is in.
+    """
+
+    table: str = "index.html"
+    detail: str = "detail.html"
+    graph: str = "graph.html"
+    timeline: str = "timeline.html"
+    entity: str = "detail.html#"  # prefix, then the entity id
+
+
+STATIC = Links()
+ROUTES = Links(table="/", detail="/detail", graph="/graph", timeline="/timeline", entity="/detail/")
+
 _MD = MarkdownIt("commonmark").enable("table")
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
@@ -233,8 +252,8 @@ nav a { color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
 {{ style }}
 </style></head><body>
-<nav><a href="index.html">Table</a><a href="graph.html">Graph</a>
-<a href="timeline.html">Timeline</a><a href="detail.html">Detail</a></nav>
+<nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
+<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.detail }}">Detail</a></nav>
 {{ content }}
 </body></html>
 """
@@ -289,7 +308,7 @@ function cell(row, key) {
   const derived = (key === 'start' || key === 'end') && row.derived;
   const text = Array.isArray(value) ? value.join(', ') : (value ?? '');
   // The title is the way into the shaping doc; the id is the way to cite it.
-  if (key === 'title') return `<td><a href="detail.html#${row.id}">${text}</a></td>`;
+  if (key === 'title') return `<td><a href="ENTITY_HREF${row.id}">${text}</a></td>`;
   if (key === 'prs') return `<td>${(value || []).map(prLink).join(', ')}</td>`;
   return `<td class="${derived ? 'derived' : ''}">${text}</td>`;
 }
@@ -367,7 +386,7 @@ cytoscape({
         'line-color': '#8a93a5', 'target-arrow-color': '#8a93a5' } },
   ],
 }).on('tap', 'node', evt => {
-  location.href = 'detail.html#' + evt.target.id();
+  location.href = 'ENTITY_HREF' + evt.target.id();
 });
 </script>
 """
@@ -378,7 +397,7 @@ _TIMELINE = """
   <div class="spacer" style="height: {{ t.header }}px"></div>
   {% for bar in t.bars %}
   <div class="row">
-    <a href="detail.html#{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a></div>
+    <a href="{{ links.entity }}{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a></div>
   {% endfor %}
 </div>
 <div class="scroll">
@@ -400,7 +419,7 @@ _TIMELINE = """
   {% endfor %}
   <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
   {% for bar in t.bars %}
-  <a href="detail.html#{{ bar.id }}"
+  <a href="{{ links.entity }}{{ bar.id }}"
      ><rect data-id="{{ bar.id }}" class="{{ bar.classes }}" x="{{ bar.x }}" y="{{ bar.y }}"
         width="{{ bar.width }}" height="14" fill="{{ bar.colour }}"
         ><title>{{ bar.tip }} — click to open</title></rect></a>
@@ -442,18 +461,19 @@ rect.late { stroke: #9a3327; stroke-width: 1.5; }
 
 
 _DETAIL = """
-<ul class="toc">
+{% if not single %}<ul class="toc">
   {% for e in entities %}
   <li><a href="#{{ e.id }}">{{ e.title }}</a>
       <span class="tocmeta">{{ e.kind }} · {{ e.status }} · {{ e.owner or "unowned" }}</span></li>
   {% endfor %}
-</ul>
+</ul>{% endif %}
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
-  <p class="back"><a href="#">← all</a></p>
+  <p class="back"><a href="{{ links.detail }}">← all</a></p>
   <h1>{{ e.title }}</h1>
   <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
-     {% if e.parent %}· in <a href="#{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
+     {% if e.parent %}· in
+     <a href="{{ links.entity }}{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
   <dl>
     <dt>Owner</dt><dd>{{ e.owner or "nobody" }}</dd>
     <dt>Reviewers</dt>
@@ -476,7 +496,7 @@ _DETAIL = """
   <div class="doc">{{ e.body|safe }}</div>
 </article>
 {% endfor %}
-<script>
+{% if not single %}<script>
 // One page, hash-routed: a stable shareable link per entity without a file each.
 // With no hash you get an index; with a hash you get exactly one document. Never
 // every document at once — that is a wall of text, not a detail view.
@@ -493,7 +513,7 @@ function show() {
 }
 addEventListener('hashchange', show);
 show();
-</script>
+</script>{% endif %}
 """
 
 _DETAIL_STYLE = """
@@ -517,9 +537,11 @@ dt.derived, dd.derived { font-style: italic; }
 """
 
 
-def _links(ids: list[str], index: Index) -> str:
+def _links(ids: list[str], index: Index, links: Links = STATIC) -> str:
     return ", ".join(
-        f'<a href="#{i}">{index.entities[i].title if i in index.entities else i}</a>' for i in ids
+        f'<a href="{links.entity}{i}">'
+        f"{index.entities[i].title if i in index.entities else i}</a>"
+        for i in ids
     )
 
 
@@ -561,29 +583,37 @@ def _detail_rows(index: Index) -> list[dict]:
     return rows
 
 
-def render_detail(index: Index) -> str:
-    body = _ENV.from_string(_DETAIL).render(entities=_detail_rows(index))
-    return _page("openproj — detail", body, _DETAIL_STYLE)
+def render_detail(index: Index, links: Links = STATIC, only: str | None = None) -> str:
+    """Every entity, or exactly one.
+
+    The server serves one per route; the static build serves them all in a page
+    that hides everything but the hash. Same markup, so the two cannot drift.
+    """
+    rows = _detail_rows(index)
+    if only is not None:
+        rows = [row for row in rows if row["id"] == only]
+    body = _ENV.from_string(_DETAIL).render(entities=rows, single=only is not None, links=links)
+    return _page("openproj — detail", body, _DETAIL_STYLE, links)
 
 
-def _page(title: str, content: str, style: str = "") -> str:
+def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> str:
     """Autoescaping protects entity titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
     them a second time."""
     return _ENV.from_string(_SHELL).render(
-        title=title, content=Markup(content), style=Markup(style)
+        title=title, content=Markup(content), style=Markup(style), links=links
     )
 
 
-def render_table(index: Index) -> str:
+def render_table(index: Index, links: Links = STATIC) -> str:
     payload = _payload(index)
     blockers = sum(1 for p in index.problems if p.severity == "blocker")
     body = _ENV.from_string(_TABLE).render(payload=payload, blockers=blockers)
-    body = body.replace("PAYLOAD_JSON", json.dumps(payload))
-    return _page("openproj — table", body, _TABLE_STYLE)
+    body = body.replace("PAYLOAD_JSON", json.dumps(payload)).replace("ENTITY_HREF", links.entity)
+    return _page("openproj — table", body, _TABLE_STYLE, links)
 
 
-def render_graph(index: Index) -> str:
+def render_graph(index: Index, links: Links = STATIC) -> str:
     """Inline the libraries in one pass, keyed by filename.
 
     Sequential `str.replace` calls were wrong here and silently so: `DAGRE_JS` is a
@@ -601,12 +631,15 @@ def render_graph(index: Index) -> str:
         lambda m: _inline(m.group(1)) if m.group(1) in wanted else m.group(0),
         body,
     )
-    return _page("openproj — graph", body, "#cy { height: 78vh; border: 1px solid var(--line); }")
+    body = body.replace("ENTITY_HREF", links.entity)
+    return _page(
+        "openproj — graph", body, "#cy { height: 78vh; border: 1px solid var(--line); }", links
+    )
 
 
-def render_timeline(index: Index) -> str:
-    body = _ENV.from_string(_TIMELINE).render(t=_timeline(index))
-    return _page("openproj — timeline", body, _TIMELINE_STYLE)
+def render_timeline(index: Index, links: Links = STATIC) -> str:
+    body = _ENV.from_string(_TIMELINE).render(t=_timeline(index), links=links)
+    return _page("openproj — timeline", body, _TIMELINE_STYLE, links)
 
 
 def render_static(index: Index, out_dir: Path) -> None:
