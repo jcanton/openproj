@@ -15,6 +15,7 @@ that looks like a commitment is how a timeline stops being believed.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -27,7 +28,29 @@ from pydantic import BaseModel
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate
 from .model import Config, Entity, size_weeks
 
-_STATIC = Path(__file__).resolve().parents[2] / "static"
+
+def _static_dir() -> Path:
+    """Where the vendored JS lives, in a checkout or in a container.
+
+    `parents[2]/static` is right for a source tree and wrong for an installed
+    wheel, where it resolves past site-packages to a directory that does not
+    exist — and `_inline` is a bare read_text, so the first GET /graph became an
+    uncaught FileNotFoundError. Found by building a wheel rather than by reading
+    the path. OPENPROJ_STATIC exists so a deployment can say where they are
+    instead of hoping.
+    """
+    candidates = [
+        Path(os.environ["OPENPROJ_STATIC"]) if "OPENPROJ_STATIC" in os.environ else None,
+        Path(__file__).resolve().parents[2] / "static",
+        Path(__file__).resolve().parent / "static",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_dir():
+            return candidate
+    raise RuntimeError(
+        "the vendored static/ directory is missing. It is not part of the wheel, so an "
+        "installed layout must be told where it is with OPENPROJ_STATIC."
+    )
 
 _DAY_PX = 6
 _ROW_PX = 22
@@ -48,7 +71,7 @@ _STATUS_COLOUR = {
 
 
 def _inline(name: str) -> str:
-    return (_STATIC / name).read_text(encoding="utf-8")
+    return (_static_dir() / name).read_text(encoding="utf-8")
 
 
 def _row(index: Index, entity_id: str) -> dict:

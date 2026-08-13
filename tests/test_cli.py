@@ -114,3 +114,28 @@ def test_serve_is_reachable_from_the_command_line():
     args = _parser().parse_args(["serve", "--repo", "seed", "--auth", "dev"])
     assert args.command == "serve"
     assert args.auth == "dev"
+
+
+def test_serve_listens_where_cloud_run_requires(monkeypatch):
+    """Cloud Run sets PORT and requires 0.0.0.0 — "notably not 127.0.0.1". A
+    container that binds the loopback passes every local test and then fails its
+    health check with no useful message."""
+    from openproj.cli import _parser
+
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("OPENPROJ_HOST", "0.0.0.0")
+    args = _parser().parse_args(["serve", "--repo", "seed"])
+
+    assert (args.host, args.port) == ("0.0.0.0", 8080)
+
+
+def test_the_vendored_static_directory_is_found_by_an_env_var(monkeypatch, tmp_path: Path):
+    """static/ is not in the wheel, so an installed layout resolves the source-tree
+    path past site-packages and GET /graph becomes an uncaught FileNotFoundError.
+    Found by building a wheel rather than by reading the path."""
+    from openproj.render import _static_dir
+
+    (tmp_path / "cytoscape.min.js").write_text("//")
+    monkeypatch.setenv("OPENPROJ_STATIC", str(tmp_path))
+
+    assert _static_dir() == tmp_path

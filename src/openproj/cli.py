@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -37,8 +38,11 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--repo", type=Path, required=True, help="a bare clone of the plan repo")
     serve.add_argument("--auth", choices=("dev", "github"), default="dev")
     serve.add_argument("--org", default="C2SM")
-    serve.add_argument("--host", default="127.0.0.1")
-    serve.add_argument("--port", type=int, default=8000)
+    # Cloud Run sets PORT and requires 0.0.0.0 — "notably not 127.0.0.1". Local
+    # runs keep the loopback default, so a development server is not quietly
+    # listening to the network.
+    serve.add_argument("--host", default=os.environ.get("OPENPROJ_HOST", "127.0.0.1"))
+    serve.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
 
     schedule = commands.add_parser("schedule", help="print the computed schedule")
     schedule.add_argument("repo", type=Path)
@@ -75,8 +79,6 @@ def _serve(args) -> int:
     visible in `ps` to every other process on the machine, and shell history keeps
     it long after the process is gone.
     """
-    import os
-
     import uvicorn
 
     from .web import create_app
