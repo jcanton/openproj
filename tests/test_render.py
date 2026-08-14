@@ -421,3 +421,67 @@ def test_opening_a_node_takes_two_clicks(rendered: Path):
     assert "cy.on('dbltap', 'node'" in body
     navigating = re.search(r"cy\.on\('tap', 'node'.*?\n\}\);", body, re.S).group(0)
     assert "location.href" not in navigating, "a single tap must not navigate"
+
+
+def test_drawing_a_dependency_does_not_write_one(rendered: Path):
+    """Edges accumulate in the browser and are committed together.
+
+    Saving on the second click meant one round trip and one full re-layout per
+    edge, so drawing five moved the graph four times underneath the person
+    drawing them.
+    """
+    body = read(rendered, "graph.html")
+    tap = re.search(r"cy\.on\('tap', 'node'.*?\n\}\);", body, re.S).group(0)
+
+    assert "fetch(" not in tap, "a click must not write"
+    assert "location.reload" not in tap, "a click must not re-lay-out the graph"
+    assert "classes: 'pending'" in tap
+
+
+def test_a_batch_of_edges_is_saved_against_the_commit_before_it(rendered: Path):
+    """Each write moves HEAD. Reusing the page's base for the second entity would
+    make it a conflict against a commit the same button had just created."""
+    body = read(rendered, "graph.html")
+    save = re.search(r"SAVE\.onclick.*?\n  \};", body, re.S).group(0)
+
+    assert "base.value = answer.commit" in save
+    assert "already saved" in save, "a partial failure must say what was written"
+
+
+def test_edges_are_routed_rather_than_drawn_over_whatever_is_between(rendered: Path):
+    body = read(rendered, "graph.html")
+
+    assert "'curve-style': 'round-taxi'" in body
+    assert "'taxi-radius'" in body
+    assert "'curve-style': 'bezier'" not in body
+
+
+def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):
+    """shaping first, done last. Alphabetical put `done` at the top, which is the
+    one group nobody opens the index looking for."""
+    from openproj.render import STATUSES
+
+    body = read(rendered, "detail.html")
+    headings = re.findall(r'<h2 class="tocgroup">\s*(\w+)', body)
+    present = [s for s in STATUSES if any(e.status == s for e in seed_index.entities.values())]
+
+    assert headings == present
+    assert set(headings) == {e.status for e in seed_index.entities.values()}
+
+
+def test_a_status_nobody_uses_gets_no_heading(seed_index: Index):
+    from openproj.render import _by_status
+
+    rows = [{"status": "ready"}, {"status": "done"}, {"status": "ready"}]
+
+    assert [g["status"] for g in _by_status(rows)] == ["ready", "done"]
+
+
+def test_an_unknown_status_still_reaches_the_index(seed_index: Index):
+    """An entity missing from the index because its status is misspelt is
+    invisible — and the index is how you find the thing to fix."""
+    from openproj.render import _by_status
+
+    groups = _by_status([{"status": "done"}, {"status": "wip"}])
+
+    assert [g["status"] for g in groups] == ["done", "wip"]

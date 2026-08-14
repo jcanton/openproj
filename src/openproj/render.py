@@ -122,7 +122,6 @@ def _payload(index: Index) -> dict:
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
         "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
-        "labels": STATUS_LABEL,
     }
 
 
@@ -317,8 +316,9 @@ body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3r
 nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; }
 nav a { color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
-#controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .75rem 0;
-            align-items: baseline; }
+#controls { margin: .75rem 0; }
+#controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
+                    margin-top: .5rem; }
 .facet { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .facet select { display: block; font: inherit; font-size: 13px; text-transform: none;
                 letter-spacing: 0; color: inherit; }
@@ -365,6 +365,7 @@ _TABLE = """
 </div>
 <div id="controls">
   <input id="q" type="search" placeholder="Search title, tags, body">
+  <div class="facets">
   {% for field in ['kind','status','owner','reviewers','priority','cycle','project','tags'] %}
   <label class="facet">{{ field }}
     <select data-field="{{ field }}"><option value="">all</option>
@@ -377,6 +378,7 @@ _TABLE = """
       {% for p in payload.predicates %}<option>{{ p }}</option>{% endfor %}
     </select>
   </label>
+  </div>
 </div>
 <div class="table-scroll"><table id="rows"><thead><tr>
   <th data-sort="id">id</th><th data-sort="title">title</th><th data-sort="status">status</th>
@@ -384,7 +386,7 @@ _TABLE = """
   <th data-sort="priority">priority</th><th data-sort="cycle">cycle</th>
   <th data-sort="size">weeks</th>
   <th data-sort="start">start</th><th data-sort="end">end</th>
-  <th data-sort="blocked_by">blockers</th><th data-field="prs">PRs</th><th>tags</th>
+  <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
 </tr></thead><tbody></tbody></table></div>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
@@ -465,7 +467,6 @@ const BASE = document.getElementById('base');
 const EDITABLE = DATA.editable;
 const SUGGESTS = DATA.suggests;
 const CHOICES = DATA.choices;
-const LABELS = DATA.labels;
 
 function coerce(type, raw) {
   raw = raw.trim();
@@ -531,7 +532,7 @@ if (EDITABLE) {
     // to write `in progres` into the corpus.
     cell.innerHTML = closed
       ? `<select data-type="text">${closed.map(o =>
-          `<option value="${o}" ${o === was ? 'selected' : ''}>${LABELS[o] || o}</option>`
+          `<option value="${o}" ${o === was ? 'selected' : ''}>${o}</option>`
         ).join('')}</select>`
       : `<input value="${was.replace(/"/g, '&quot;')}" data-type="${EDITABLE[field]}"` +
         `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
@@ -628,7 +629,8 @@ headers.forEach((th, i) => {
   };
 });
 
-for (const th of document.querySelectorAll('th[data-sort]'))
+for (const th of document.querySelectorAll('th[data-sort]')) {
+  th.classList.toggle('sorted', (params.get('sort') || 'id') === th.dataset.sort);
   th.addEventListener('click', () => {
     if (dragging) return;
     // Clicking the column you are already sorted by reverses it, which is what
@@ -637,6 +639,7 @@ for (const th of document.querySelectorAll('th[data-sort]'))
     params.set('sort', th.dataset.sort);
     update('desc', already && params.get('desc') !== '1' ? '1' : '');
   });
+}
 draw();
 </script>
 """
@@ -652,7 +655,9 @@ th, td {
      every column grows by exactly one cell's worth on the first drag. */
   box-sizing: border-box;
 }
-th[data-sort] { cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; }
+th { color: var(--muted); font-weight: 400; }
+th[data-sort] { cursor: pointer; user-select: none; }
+th.sorted { color: inherit; font-weight: 700; }
 th { position: relative; }
 th .grip {
   position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
@@ -667,14 +672,17 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 _GRAPH = """
 {% if editable %}
 <p class="editbar">
-  <button type="button" id="connect">Connect nodes</button>
+  <button type="button" id="connect">Edit dependencies</button>
+  <button type="button" id="save" hidden>Save</button>
+  <button type="button" id="discard" hidden>Discard</button>
   <span id="state"></span>
   <input type="hidden" id="base" value="{{ base_commit }}">
 </p>
 {% endif %}
 <p class="hint">Double-click a node to open it. Drag to pan, scroll to zoom, drag a node
-  to move it.{% if editable %} <strong>Connect nodes</strong> then click what must finish
-  first and what waits for it, to record a dependency.{% endif %}</p>
+  to move it.{% if editable %} In <strong>Edit dependencies</strong>, click what must
+  finish first and then what waits for it. Draw as many as you like; nothing is written
+  until you press Save.{% endif %}</p>
 <div id="cy"></div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
@@ -705,12 +713,22 @@ const cy = cytoscape({
     { selector: ':parent', style: {
         'background-opacity': .08, 'text-valign': 'top', 'color': '#6a7a80' } },
     { selector: 'edge', style: {
-        'width': 1.5, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+        // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
+        // so an edge that leaves horizontally and turns once reads as a route
+        // between ranks instead of a curve drawn over whatever is in between.
+        'width': 1.5, 'curve-style': 'round-taxi', 'taxi-direction': 'horizontal',
+        'taxi-turn': '50%', 'taxi-turn-min-distance': 12, 'taxi-radius': 8,
+        'target-arrow-shape': 'triangle',
         'line-color': '#8a93a5', 'target-arrow-color': '#8a93a5' } },
+    { selector: 'edge.pending', style: {
+        'line-color': '#9a3327', 'target-arrow-color': '#9a3327',
+        'line-style': 'dashed', 'width': 2 } },
   ],
 });
 
 const CONNECT = document.getElementById('connect');
+const SAVE = document.getElementById('save');
+const DISCARD = document.getElementById('discard');
 let connecting = false;
 let source = null;
 
@@ -719,14 +737,18 @@ function say(message) {
   if (state) state.textContent = message;
 }
 
-if (CONNECT) {
-  CONNECT.onclick = () => {
-    connecting = !connecting;
-    source = null;
-    cy.nodes().removeClass('picked');
-    CONNECT.textContent = connecting ? 'Stop connecting' : 'Connect nodes';
-    say(connecting ? 'click what must finish first, then what waits for it' : '');
-  };
+function pending() {
+  return cy.edges('.pending');
+}
+
+function tally(extra) {
+  const n = pending().length;
+  SAVE.hidden = DISCARD.hidden = !connecting;
+  SAVE.disabled = n === 0;
+  const drawn = n === 0 ? 'nothing drawn yet' :
+                n === 1 ? '1 dependency drawn — press Save to commit it' :
+                `${n} dependencies drawn — press Save to commit them`;
+  say(connecting ? (extra ? extra + ' · ' + drawn : drawn) : (extra || ''));
 }
 
 // Opening is on double-click: a single tap is also the first half of drawing an
@@ -735,35 +757,95 @@ cy.on('dbltap', 'node', evt => {
   if (!connecting) location.href = 'ENTITY_HREF' + evt.target.id();
 });
 
-cy.on('tap', 'node', async evt => {
+if (CONNECT) {
+  CONNECT.onclick = () => {
+    if (connecting && pending().length) {
+      say(`${pending().length} unsaved — Save or Discard first`);
+      return;
+    }
+    connecting = !connecting;
+    source = null;
+    cy.nodes().removeClass('picked');
+    CONNECT.textContent = connecting ? 'Stop editing' : 'Edit dependencies';
+    tally(connecting ? 'click what must finish first, then what waits for it' : '');
+  };
+
+  DISCARD.onclick = () => {
+    cy.remove(pending());
+    source = null;
+    cy.nodes().removeClass('picked');
+    tally('discarded');
+  };
+
+  // One PATCH per dependent, because depends_on lives on the entity that waits.
+  // Each write moves HEAD, so the base for the next one is the commit this one
+  // returned — reusing the page's base would make every write after the first a
+  // conflict against a commit this same button just created.
+  SAVE.onclick = async () => {
+    SAVE.disabled = true;
+    const wanted = new Map();
+    for (const edge of pending()) {
+      const target = edge.target().id();
+      wanted.set(target, [...(wanted.get(target) || []), edge.source().id()]);
+    }
+    const base = document.getElementById('base');
+    let written = 0;
+    for (const [id, sources] of wanted) {
+      const node = cy.getElementById(id);
+      const fields = {depends_on: [...new Set([...(node.data('depends_on') || []), ...sources])]};
+      const response = await fetch(`/api/entity/${id}`, {
+        method: 'PATCH', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({base_commit: base.value, fields, body: null}),
+      });
+      const answer = await response.json();
+      if (!response.ok) {
+        // The validator refuses an edge onto an ancestor, and a cycle. Say which,
+        // and say what did get written: stopping silently after three of five
+        // would leave the page disagreeing with the repository.
+        const why = answer.detail || (answer.problems || []).map(p => p.message).join('; ');
+        say(`${id}: ${why || 'refused'}${written ? ` — ${written} already saved` : ''}`);
+        SAVE.disabled = false;
+        return;
+      }
+      base.value = answer.commit;
+      written += 1;
+    }
+    location.reload();
+  };
+}
+
+cy.on('tap', 'node', evt => {
   const node = evt.target;
   if (!connecting) return;
   if (!source) {
     source = node;
     node.addClass('picked');
-    say(`${node.id()} must finish first — now click what waits for it`);
+    tally(`${node.id()} must finish first — now click what waits for it`);
     return;
   }
-  if (source.id() === node.id()) { say('an entity cannot wait for itself'); return; }
+  const from = source;
+  source = null;
+  from.removeClass('picked');
 
-  // depends_on is stored on the DEPENDENT, so the second click owns the edge.
-  const blocked = node.data('depends_on') || [];
-  const fields = {depends_on: [...new Set([...blocked, source.id()])]};
-  const response = await fetch(`/api/entity/${node.id()}`, {
-    method: 'PATCH', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({
-      base_commit: document.getElementById('base').value, fields, body: null,
-    }),
-  });
-  const answer = await response.json();
-  if (!response.ok) {
-    // The validator refuses an edge onto an ancestor, and a cycle. Say which.
-    say(answer.detail || (answer.problems || []).map(p => p.message).join('; ') || 'refused');
-    source.removeClass('picked');
-    source = null;
+  if (from.id() === node.id()) { tally('an entity cannot wait for itself'); return; }
+  if (cy.edges().some(e => e.source().id() === from.id() && e.target().id() === node.id())) {
+    tally('that dependency is already there');
     return;
   }
-  location.reload();
+  // Checked here as well as on the server so a batch fails while you are drawing
+  // it rather than at Save, when some of it has already been committed.
+  if (node.successors().some(e => e.id() === from.id())) {
+    tally(`${node.id()} already has to finish before ${from.id()}`);
+    return;
+  }
+  if (node.ancestors().some(e => e.id() === from.id())) {
+    tally('an entity cannot wait for what contains it');
+    return;
+  }
+
+  cy.add({group: 'edges', classes: 'pending',
+          data: {source: from.id(), target: node.id(), kind: 'depends'}});
+  tally();
 });
 </script>
 """
@@ -985,7 +1067,7 @@ _CONTROL = """
 <select name="{{ f.name }}" data-type="text" class="field"
         {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
   {% for s in (statuses if f.type == "status" else priorities) %}
-  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ labels.get(s, s) }}</option>
+  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ s }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
@@ -1005,7 +1087,7 @@ _CONTROL = """
 
 def _control_html(field: dict) -> str:
     return _ENV.from_string(_CONTROL).render(
-        f=field, statuses=STATUSES, priorities=PRIORITIES, labels=STATUS_LABEL
+        f=field, statuses=STATUSES, priorities=PRIORITIES
     )
 
 
@@ -1127,12 +1209,18 @@ document.getElementById('save').onclick = async () => {
 """
 
 _DETAIL = """
-{% if not single %}<ul class="toc">
-  {% for e in entities %}
-  <li><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a>
-      <span class="tocmeta">{{ e.kind }} · {{ e.status }} · {{ e.owner or "unowned" }}</span></li>
+{% if not single %}<div class="toc">
+  {% for group in groups %}
+  <h2 class="tocgroup">{{ group.status }}
+    <span class="tally">{{ group.entities|length }}</span></h2>
+  <ul>
+    {% for e in group.entities %}
+    <li><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a>
+        <span class="tocmeta">{{ e.kind }} · {{ e.owner or "unowned" }}</span></li>
+    {% endfor %}
+  </ul>
   {% endfor %}
-</ul>{% endif %}
+</div>{% endif %}
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
   <p class="back"><a href="{{ links.detail }}">← all</a></p>
@@ -1367,6 +1455,10 @@ show();
 """
 
 _DETAIL_STYLE = """
+.tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+            color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
+.tocgroup .tally { font-weight: 400; letter-spacing: 0; }
+.toc ul { margin: 0; }
 article.entity {
   width: var(--measure, 52rem); max-width: 100%; margin-bottom: 3rem; position: relative;
 }
@@ -1445,9 +1537,6 @@ EDITABLE: dict[str, str] = {
 }
 STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
 PRIORITIES = ("high", "medium", "low")
-# What each status is called on screen. The stored value stays a plain identifier
-# so it can be filtered and sorted; the label is for the person reading it.
-STATUS_LABEL = {"in_progress": "in progress"}
 
 # Which status first demands each field. Cumulative, per spec 5.1: permissive when
 # an idea is captured, strict once work starts, strictest when it is claimed done.
@@ -1683,11 +1772,10 @@ def _suggestions(index: Index) -> dict:
 
 
 _PEOPLE = """
-<p class="hint">Everyone named anywhere in the plan, and what they are on the hook for.
-   Roles come from the fields themselves — there is no separate list of members to
-   drift out of date.</p>
+<p class="hint">Everyone named anywhere in the plan, and what they are on the hook for.</p>
 <div id="controls">
   <input id="q" type="search" placeholder="Search person, entity, id">
+  <div class="facets">
   <label class="facet">role
     <select data-attr="role"><option value="">all</option>
       {% for value in facets.role %}<option>{{ value }}</option>{% endfor %}
@@ -1703,6 +1791,7 @@ _PEOPLE = """
       {% for value in facets.status %}<option>{{ value }}</option>{% endfor %}
     </select>
   </label>
+  </div>
 </div>
 <div id="summary"><span id="shown">{{ people|length }}</span> of {{ people|length }} people</div>
 {% for person in people %}
@@ -1799,7 +1888,7 @@ def render_people(index: Index, links: Links = STATIC) -> str:
                         "id": entity_id,
                         "title": entity.title,
                         "kind": entity.kind,
-                        "status": STATUS_LABEL.get(entity.status, entity.status),
+                        "status": entity.status,
                         "span": f"{span.start} → {span.end}" if span else "—",
                         "search": f"{entity_id} {entity.title}".lower(),
                     }
@@ -1827,6 +1916,22 @@ def render_people(index: Index, links: Links = STATIC) -> str:
     return _page("openproj — people", body, _PEOPLE_STYLE, links)
 
 
+def _by_status(rows: list[dict]) -> list[dict]:
+    """The index, in the order work moves through: shaping first, done last.
+
+    A status nobody uses is left out rather than shown empty, and a status the
+    validator does not know still gets a heading — the index is a way in, and an
+    entity missing from it because its status is misspelt is invisible.
+    """
+    known = list(STATUSES)
+    seen = sorted({row["status"] for row in rows}, key=lambda s: (s not in known, s))
+    order = [s for s in known if s in seen] + [s for s in seen if s not in known]
+    return [
+        {"status": status, "entities": [r for r in rows if r["status"] == status]}
+        for status in order
+    ]
+
+
 def render_detail(
     index: Index,
     links: Links = STATIC,
@@ -1849,6 +1954,7 @@ def render_detail(
         row["raw_body"] = entity.body
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
+        groups=_by_status(rows),
         single=only is not None,
         links=links,
         editable=base_commit is not None,

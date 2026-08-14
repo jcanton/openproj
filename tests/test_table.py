@@ -662,3 +662,17 @@ def test_a_create_racing_another_write_is_still_one_commit(client: TestClient):
     assert response.status_code == 201
     assert response.json()["outcome"] in ("committed", "retried")
     assert index_of(client)["entities"][TASK]["priority"] == "high"  # not rolled back
+
+
+def test_the_bold_column_is_the_one_being_sorted_by(page: str):
+    """Bold used to land on `prs` for the accidental reason that it was the one
+    column with no sort key, so it fell through to the browser's default `th`
+    weight — the one column you cannot sort by looked like the sorted one."""
+    assert "th { color: var(--muted); font-weight: 400; }" in page
+    assert "th.sorted" in page
+    assert re.search(r"classList\.toggle\('sorted',.*params\.get\('sort'\)", page)
+
+
+def test_the_search_box_is_not_the_tenth_filter(page: str):
+    """One search box beside nine dropdowns reads as the first dropdown."""
+    assert re.search(r'<input id="q"[^>]*>\s*<div class="facets">', page)
