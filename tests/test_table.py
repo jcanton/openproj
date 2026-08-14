@@ -670,9 +670,24 @@ def test_the_bold_column_is_the_one_being_sorted_by(page: str):
     weight — the one column you cannot sort by looked like the sorted one."""
     assert "th { color: var(--muted); font-weight: 400; }" in page
     assert "th.sorted" in page
-    assert re.search(r"classList\.toggle\('sorted',.*params\.get\('sort'\)", page)
+    # Inside draw(), not once at load: sorting redraws without reloading, so a
+    # marker set from the URL at load stays on whatever the page opened with.
+    body = re.search(r"function draw\(\) \{.*?\n\}", page, re.S).group(0)
+    assert re.search(r"classList\.toggle\('sorted', th\.dataset\.sort === sort\)", body)
 
 
 def test_the_search_box_is_not_the_tenth_filter(page: str):
     """One search box beside nine dropdowns reads as the first dropdown."""
     assert re.search(r'<input id="q"[^>]*>\s*<div class="facets">', page)
+
+
+def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
+    """Measured on one line, so a column is as wide as its widest value needs.
+
+    Only prs and tags may wrap — a row with three PR references on one line is
+    wider than the window on its own — and they split whatever is left.
+    """
+    assert ".measuring th, .measuring td { white-space: nowrap; }" in page
+    assert "const WRAPS = new Set(['prs', 'tags']);" in page
+    stored = r"if \(Object\.keys\(WIDTHS\)\.length\) applyWidths\(\); else fitWidths\(\);"
+    assert re.search(stored, page), "a width somebody dragged must survive the automatic fit"

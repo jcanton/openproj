@@ -448,6 +448,10 @@ function draw() {
     `<tr data-id="${row.id}" title="${(row.problems || []).join(' · ')}">` +
     keys.map(k => cell(row, k)).join('') + '</tr>').join('');
   document.getElementById('shown').textContent = rows.length;
+  // Sorting redraws without reloading, so the marker has to move with it. Set
+  // once at load, it stayed on whatever the URL said when the page opened.
+  for (const th of headers)
+    th.classList.toggle('sorted', th.dataset.sort === sort);
   for (const select of document.querySelectorAll('select[data-field]'))
     select.value = params.get(select.dataset.field) || '';
   document.getElementById('q').value = params.get('q') || '';
@@ -576,6 +580,53 @@ let dragging = false;
 const table = document.getElementById('rows');
 const headers = [...table.querySelectorAll('th')];
 
+// Columns that may wrap. Everything else is sized so that it never has to: a
+// column one character narrower than its widest value costs a second line on
+// every row that holds that value.
+const WRAPS = new Set(['prs', 'tags']);
+const FLOOR = 110;      // narrower than this and a wrapping column is unreadable
+const LONGEST = 200;    // and this is as far as the borrowing may squeeze a sentence
+
+// Size every column to its content and the table to the window, once, when
+// nothing has been dragged yet. Measured with every cell on one line, so a
+// column ends up as wide as its widest value needs and not one character more.
+function fitWidths() {
+  const scroll = table.parentElement;
+  table.classList.add('measuring');
+  table.style.tableLayout = 'auto';
+  table.style.width = 'max-content';
+  const natural = headers.map(th => th.getBoundingClientRect().width);
+  table.classList.remove('measuring');
+
+  const wrapping = headers.map(th => WRAPS.has(th.dataset.sort || th.textContent.trim()));
+  const fixed = natural.map((w, i) => wrapping[i] ? 0 : Math.ceil(w * 1.1));
+  let spare = scroll.clientWidth - fixed.reduce((a, b) => a + b, 0);
+
+  // The columns that never wrap can want more than the window on their own, and
+  // then the wrapping ones are left with nothing. Take the difference out of the
+  // widest of them — in practice title, the only one whose content is a sentence
+  // — rather than letting prs and tags collapse to a column of one character.
+  const need = FLOOR * wrapping.filter(Boolean).length - spare;
+  if (need > 0) {
+    let widest = 0;
+    fixed.forEach((w, i) => { if (w > fixed[widest]) widest = i; });
+    const give = Math.min(need, Math.max(0, fixed[widest] - LONGEST));
+    fixed[widest] -= give;
+    spare += give;
+  }
+
+  // Floor first and split only what is over it. Taking the larger of the floor
+  // and a proportional share instead hands out more than there is: each column
+  // separately clears the floor, and their sum quietly exceeds the window.
+  const share = natural.filter((w, i) => wrapping[i]).reduce((a, b) => a + b, 0) || 1;
+  const extra = Math.max(0, spare - FLOOR * wrapping.filter(Boolean).length);
+  headers.forEach((th, i) => {
+    const key = th.dataset.sort || `col${i}`;
+    WIDTHS[key] = wrapping[i] ? FLOOR + Math.floor(extra * natural[i] / share) : fixed[i];
+  });
+  applyWidths();
+}
+
 function applyWidths() {
   if (!Object.keys(WIDTHS).length) return;
   table.style.tableLayout = 'fixed';
@@ -590,7 +641,6 @@ function applyWidths() {
   // prevent. It scrolls sideways in its own container instead.
   table.style.width = total + 'px';
 }
-applyWidths();
 
 headers.forEach((th, i) => {
   const grip = document.createElement('span');
@@ -630,7 +680,6 @@ headers.forEach((th, i) => {
 });
 
 for (const th of document.querySelectorAll('th[data-sort]')) {
-  th.classList.toggle('sorted', (params.get('sort') || 'id') === th.dataset.sort);
   th.addEventListener('click', () => {
     if (dragging) return;
     // Clicking the column you are already sorted by reverses it, which is what
@@ -641,6 +690,9 @@ for (const th of document.querySelectorAll('th[data-sort]')) {
   });
 }
 draw();
+// After the first draw, because there is nothing to measure before the rows
+// exist. Stored widths win: they were set by hand, on purpose.
+if (Object.keys(WIDTHS).length) applyWidths(); else fitWidths();
 </script>
 """
 
@@ -654,6 +706,9 @@ th, td {
   /* Border-box, or a width set from a measured box gains the padding again and
      every column grows by exactly one cell's worth on the first drag. */
   box-sizing: border-box;
+  /* A PR reference has no space in it, so at a narrow width it hangs over the
+     next column instead of wrapping inside its own. */
+  overflow-wrap: anywhere;
 }
 th { color: var(--muted); font-weight: 400; }
 th[data-sort] { cursor: pointer; user-select: none; }
@@ -667,6 +722,7 @@ th .grip::before {
   background: var(--line-strong, #b7c5c9);
 }
 th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
+.measuring th, .measuring td { white-space: nowrap; }
 """
 
 _GRAPH = """
@@ -674,7 +730,7 @@ _GRAPH = """
 <p class="editbar">
   <button type="button" id="connect">Edit dependencies</button>
   <button type="button" id="save" hidden>Save</button>
-  <button type="button" id="discard" hidden>Discard</button>
+  <button type="button" id="discard" hidden>Reset</button>
   <span id="state"></span>
   <input type="hidden" id="base" value="{{ base_commit }}">
 </p>
@@ -682,7 +738,8 @@ _GRAPH = """
 <p class="hint">Double-click a node to open it. Drag to pan, scroll to zoom, drag a node
   to move it.{% if editable %} In <strong>Edit dependencies</strong>, click what must
   finish first and then what waits for it. Draw as many as you like; nothing is written
-  until you press Save.{% endif %}</p>
+  until you press Save. <strong>Reset</strong> clears what you have drawn and stays in
+  edit mode.{% endif %}</p>
 <div id="cy"></div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
@@ -716,8 +773,16 @@ const cy = cytoscape({
         // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
         // so an edge that leaves horizontally and turns once reads as a route
         // between ranks instead of a curve drawn over whatever is in between.
+        // taxi-direction is set per edge by route(); this is only the fallback
+        // for an edge added before the first routing pass.
         'width': 1.5, 'curve-style': 'round-taxi', 'taxi-direction': 'horizontal',
         'taxi-turn': '50%', 'taxi-turn-min-distance': 12, 'taxi-radius': 8,
+        // The default is outside-to-LINE, which trims the ends along the straight
+        // line between the two centres — so however cleanly the middle is routed,
+        // both stubs come out at an angle. outside-to-node trims towards the next
+        // control point instead, which is the whole difference between an
+        // orthogonal edge and one that only looks orthogonal in the middle.
+        'source-endpoint': 'outside-to-node', 'target-endpoint': 'outside-to-node',
         'target-arrow-shape': 'triangle',
         'line-color': '#8a93a5', 'target-arrow-color': '#8a93a5' } },
     { selector: 'edge.pending', style: {
@@ -725,6 +790,24 @@ const cy = cytoscape({
         'line-style': 'dashed', 'width': 2 } },
   ],
 });
+
+// Which way an edge is allowed to turn, decided from where the boxes actually
+// are rather than fixed in the stylesheet. Cytoscape computes a taxi turn from
+// node CENTRES, so when two boxes overlap in x — which compound containers
+// routinely do, being hundreds of pixels wide — the horizontal turn lands inside
+// the source box and the trimmed stub comes out at an angle. Up or down is then
+// the only right-angled way between them. Recomputed after every layout and
+// every drag, so an edge that is orthogonal stays orthogonal when nodes move.
+function route() {
+  cy.edges().forEach(edge => {
+    const from = edge.source().boundingBox(), to = edge.target().boundingBox();
+    const overlapsInX = from.x1 < to.x2 && to.x1 < from.x2;
+    edge.style('taxi-direction', overlapsInX ? 'vertical' : 'horizontal');
+  });
+}
+cy.on('layoutstop', route);
+cy.on('position', 'node', route);
+route();
 
 const CONNECT = document.getElementById('connect');
 const SAVE = document.getElementById('save');
@@ -759,22 +842,21 @@ cy.on('dbltap', 'node', evt => {
 
 if (CONNECT) {
   CONNECT.onclick = () => {
-    if (connecting && pending().length) {
-      say(`${pending().length} unsaved — Save or Discard first`);
-      return;
-    }
+    const dropped = connecting ? pending().length : 0;
+    if (dropped) cy.remove(pending());
     connecting = !connecting;
     source = null;
     cy.nodes().removeClass('picked');
-    CONNECT.textContent = connecting ? 'Stop editing' : 'Edit dependencies';
-    tally(connecting ? 'click what must finish first, then what waits for it' : '');
+    CONNECT.textContent = connecting ? 'Discard and exit' : 'Edit dependencies';
+    tally(connecting ? 'click what must finish first, then what waits for it'
+                     : dropped ? `discarded ${dropped}` : '');
   };
 
   DISCARD.onclick = () => {
     cy.remove(pending());
     source = null;
     cy.nodes().removeClass('picked');
-    tally('discarded');
+    tally('reset');
   };
 
   // One PATCH per dependent, because depends_on lives on the entity that waits.
@@ -845,6 +927,7 @@ cy.on('tap', 'node', evt => {
 
   cy.add({group: 'edges', classes: 'pending',
           data: {source: from.id(), target: node.id(), kind: 'depends'}});
+  route();
   tally();
 });
 </script>
