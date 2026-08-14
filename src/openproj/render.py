@@ -241,6 +241,7 @@ class Links(BaseModel):
     detail: str = "detail.html"
     graph: str = "graph.html"
     timeline: str = "timeline.html"
+    people: str = "people.html"
     entity: str = "detail.html#"  # prefix, then the entity id
     new: str = ""  # only the server can create; a rendered file has nowhere to post
 
@@ -248,7 +249,7 @@ class Links(BaseModel):
 STATIC = Links()
 ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
-    entity="/detail/", new="/new",
+    entity="/detail/", new="/new", people="/people",
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -300,7 +301,8 @@ nav a { color: var(--accent); }
 {{ style }}
 </style></head><body>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
-<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.detail }}">Detail</a></nav>
+<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.detail }}">Detail</a>
+<a href="{{ links.people }}">People</a></nav>
 {{ content }}
 {% if live %}
 <div id="moved" hidden></div>
@@ -531,6 +533,55 @@ if (EDITABLE) {
 document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
 for (const select of document.querySelectorAll('select[data-field]'))
   select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
+// Column widths, dragged and remembered. The defaults are whatever the browser
+// works out from the content, and are only frozen once somebody drags: measuring
+// them all at that moment is what keeps the other columns where they were.
+const WIDTHS = JSON.parse(localStorage.getItem('openproj:widths') || '{}');
+const table = document.getElementById('rows');
+const headers = [...table.querySelectorAll('th')];
+
+function applyWidths() {
+  if (!Object.keys(WIDTHS).length) return;
+  table.style.tableLayout = 'fixed';
+  headers.forEach((th, i) => {
+    const key = th.dataset.sort || `col${i}`;
+    if (WIDTHS[key]) th.style.width = WIDTHS[key] + 'px';
+  });
+}
+applyWidths();
+
+headers.forEach((th, i) => {
+  const grip = document.createElement('span');
+  grip.className = 'grip';
+  th.append(grip);
+  grip.onpointerdown = event => {
+    event.stopPropagation();          // a drag is not a click on the sort header
+    event.preventDefault();
+    grip.classList.add('dragging');
+    // Freeze every column first, or resizing one reflows all the others.
+    headers.forEach((other, j) => {
+      const key = other.dataset.sort || `col${j}`;
+      WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
+    });
+    table.style.tableLayout = 'fixed';
+    const key = th.dataset.sort || `col${i}`;
+    const from = event.clientX;
+    const was = WIDTHS[key];
+    const move = e => {
+      WIDTHS[key] = Math.max(40, was + e.clientX - from);
+      applyWidths();
+    };
+    const stop = () => {
+      grip.classList.remove('dragging');
+      localStorage.setItem('openproj:widths', JSON.stringify(WIDTHS));
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', stop);
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', stop);
+  };
+});
+
 for (const th of document.querySelectorAll('th[data-sort]'))
   th.addEventListener('click', () => {
     // Clicking the column you are already sorted by reverses it, which is what
@@ -550,6 +601,15 @@ _TABLE_STYLE = """
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left; }
 th[data-sort] { cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; }
+th { position: relative; }
+th .grip {
+  position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
+}
+th .grip::before {
+  content: ""; position: absolute; top: 20%; bottom: 20%; right: 3px; width: 1px;
+  background: var(--line-strong, #b7c5c9);
+}
+th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
 """
 
 _GRAPH = """
@@ -988,8 +1048,10 @@ _DETAIL = """
   {% endif %}
   <dl id="facts">
     {% for row in e.rows %}
-    <dt class="{% if row.derived %}derived{% endif %}">{{ row.label }}</dt>
-    <dd class="{% if row.derived %}derived{% endif %}">
+    <dt class="{% if row.derived %}derived{% endif %}
+               {% if row.editing_only %}editing-only{% endif %}">{{ row.label }}</dt>
+    <dd class="{% if row.derived %}derived{% endif %}
+               {% if row.editing_only %}editing-only{% endif %}">
       <span class="read">{{ row.display|safe }}</span>
       {% if editable and row.control %}{{ row.control|safe }}{% endif %}
     </dd>
@@ -1229,7 +1291,10 @@ dt.derived, dd.derived { font-style: italic; }
 .field { display: none; }
 .entity.editing .field { display: block; }
 .entity.editing .field[hidden] { display: none; }
-.bodybar { display: flex; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
+.bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
+.entity.editing .bodybar { display: flex; }
+.editing-only { display: none; }
+.entity.editing .editing-only { display: block; }
 .entity.editing .read { display: none; }
 .entity.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
@@ -1372,6 +1437,10 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 "display": display,
                 "control": _control_html(field),
                 "derived": False,
+                # "Review waived: no" is a line that says nothing. The row still
+                # exists while editing, because turning the waiver on is the whole
+                # point of having it; it just does not clutter the read view.
+                "editing_only": name == "review_waived" and not entity.review_waived,
             }
         )
     overrun = (
@@ -1385,16 +1454,26 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             "display": (f"{span.start} → {span.end}{overrun}" if span else "not scheduled"),
             "control": "",
             "derived": True,
+            "editing_only": False,
         }
     )
     if why:
-        rows.append({"label": "Why then", "display": why.text, "control": "", "derived": True})
+        rows.append(
+            {
+                "label": "Why then",
+                "display": why.text,
+                "control": "",
+                "derived": True,
+                "editing_only": False,
+            }
+        )
     rows.append(
         {
             "label": "Blocks",
             "display": _links(index.blocks[entity.id], index, links) or "nothing",
             "control": "",
             "derived": True,
+            "editing_only": False,
         }
     )
     return rows
@@ -1496,6 +1575,89 @@ def _suggestions(index: Index) -> dict:
         ],
         "tags": [{"value": t, "label": ""} for t in sorted(tags)],
     }
+
+
+_PEOPLE = """
+<p class="hint">Everyone named anywhere in the plan, and what they are on the hook for.
+   Roles come from the fields themselves — there is no separate list of members to
+   drift out of date.</p>
+{% for person in people %}
+<section class="person">
+  <h2>{{ person.login }}
+    <span class="tally">{{ person.counts }}</span></h2>
+  <table class="roles">
+    <thead><tr><th>role</th><th>entity</th><th>kind</th><th>status</th>
+      <th>scheduled</th></tr></thead>
+    <tbody>
+      {% for row in person.rows %}
+      <tr>
+        <td class="role">{{ row.role }}</td>
+        <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
+        <td>{{ row.kind }}</td>
+        <td>{{ row.status }}</td>
+        <td class="derived">{{ row.span }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+"""
+
+_PEOPLE_STYLE = """
+.hint { color: var(--muted); max-width: 46rem; }
+section.person { margin: 2rem 0; }
+section.person h2 { font-size: 1.05rem; margin-bottom: .3rem; }
+.tally { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: .5rem; }
+table.roles { border-collapse: collapse; width: 100%; max-width: 60rem; font-size: 13px; }
+table.roles th, table.roles td {
+  border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left;
+}
+table.roles th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.role { color: var(--accent); font-size: 12px; text-transform: uppercase;
+          letter-spacing: .04em; white-space: nowrap; }
+"""
+
+_ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"),
+          ("shaped_by", "shaper"))
+
+
+def render_people(index: Index, links: Links = STATIC) -> str:
+    """Everyone in the plan, and what they are on the hook for.
+
+    Built from the fields rather than from a roster: a page that reads a separate
+    list of members shows people who have nothing to do and misses whoever was
+    added this morning.
+    """
+    held: dict[str, list[dict]] = {}
+    for entity_id, entity in sorted(index.entities.items()):
+        span = index.spans.get(entity_id)
+        for field, role in _ROLES:
+            value = getattr(entity, field, None)
+            for login in value if isinstance(value, list) else [value] if value else []:
+                held.setdefault(login, []).append(
+                    {
+                        "role": role,
+                        "id": entity_id,
+                        "title": entity.title,
+                        "kind": entity.kind,
+                        "status": STATUS_LABEL.get(entity.status, entity.status),
+                        "span": f"{span.start} → {span.end}" if span else "—",
+                    }
+                )
+
+    people = []
+    for login, rows in sorted(held.items()):
+        tally = {role: sum(1 for r in rows if r["role"] == role) for _, role in _ROLES}
+        people.append(
+            {
+                "login": login,
+                "rows": rows,
+                "counts": ", ".join(f"{n} as {role}" for role, n in tally.items() if n),
+            }
+        )
+    body = _ENV.from_string(_PEOPLE).render(people=people, links=links)
+    return _page("openproj — people", body, _PEOPLE_STYLE, links)
 
 
 def render_detail(
@@ -1613,6 +1775,7 @@ def render_static(index: Index, out_dir: Path) -> None:
     for name, html in (
         ("index.html", render_table(index)),
         ("detail.html", render_detail(index)),
+        ("people.html", render_people(index)),
         ("graph.html", render_graph(index)),
         ("timeline.html", render_timeline(index)),
     ):

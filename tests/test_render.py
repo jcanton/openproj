@@ -16,7 +16,7 @@ from openproj.index import Index, build_index
 from openproj.model import load_repo
 from openproj.render import render_static
 
-PAGES = ("index.html", "detail.html", "graph.html", "timeline.html")
+PAGES = ("index.html", "detail.html", "people.html", "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -276,3 +276,46 @@ def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
     suggestions = _suggestions(seed_index.model_copy(update={"entities": polluted}))
 
     assert all("," not in person["value"] for person in suggestions["people"])
+
+
+# --- the people page --------------------------------------------------------
+
+
+def test_the_people_page_lists_everyone_the_plan_names(rendered: Path, seed_index: Index):
+    """Built from the fields, not from the roster.
+
+    A page that reads `config/people.yaml` would list somebody who has nothing to
+    do and miss whoever was assigned this morning — the plan itself is the only
+    record of who is on the hook for what.
+    """
+    body = read(rendered, "people.html")
+    named = {
+        login
+        for entity in seed_index.entities.values()
+        for field in ("owner", "shaped_by", "assignees", "reviewers")
+        for login in (
+            lambda v: v if isinstance(v, list) else [v] if v else []
+        )(getattr(entity, field, None))
+    }
+
+    assert named
+    for login in named:
+        assert login in body, login
+
+
+def test_a_person_row_says_which_hat_they_are_wearing(rendered: Path):
+    """Owning something and reviewing it are different obligations, and the point
+    of the page is telling somebody which of theirs is which."""
+    body = read(rendered, "people.html")
+
+    for role in ("owner", "assignee", "reviewer"):
+        assert f'class="role">{role}<' in body, role
+
+
+def test_every_person_row_links_to_the_entity(rendered: Path, seed_index: Index):
+    body = read(rendered, "people.html")
+    owned = [i for i, e in seed_index.entities.items() if e.owner]
+
+    assert owned
+    for entity_id in owned:
+        assert f'href="detail.html#{entity_id}"' in body, entity_id

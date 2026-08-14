@@ -221,6 +221,10 @@ def create_app(
     def timeline() -> HTMLResponse:
         return page(render.render_timeline(index_now()[1], render.ROUTES))
 
+    @app.get("/people", response_class=HTMLResponse)
+    def people() -> HTMLResponse:
+        return page(render.render_people(index_now()[1], render.ROUTES))
+
     @app.get("/new", response_class=HTMLResponse)
     def new(kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
