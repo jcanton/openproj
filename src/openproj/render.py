@@ -150,26 +150,41 @@ def _elements(index: Index) -> list[dict]:
     return elements
 
 
-def _timeline(index: Index) -> dict:
+def _timeline(
+    index: Index, window: tuple[date | None, date | None] = (None, None), zoom: float | None = None
+) -> dict:
     """Geometry for the hand-rolled SVG Gantt.
 
     No Gantt library: hatching, cycle rules and per-bar explanations are all custom,
     and the scheduler emits exact spans, so the renderer is the small part.
+
+    Zoom is a day width the server draws at, not a transform the browser applies.
+    Scaling the finished SVG horizontally would stretch every month label and every
+    rounded corner with it; recomputing costs one render and keeps the text upright.
+    A bar reaching past the window is clipped to it rather than dropped — a row that
+    disappears when you narrow the dates reads as work that went away.
     """
     drawn = {i: s for i, s in index.spans.items() if not s.unscheduled}
     if not drawn:
-        return {"bars": [], "rules": [], "width": _LEFT_PX, "height": _ROW_PX, "origin": None}
+        return {
+            "bars": [], "rules": [], "months": [], "today_x": None, "header": _HEADER_PX,
+            "width": _LEFT_PX, "height": _ROW_PX, "origin": None, "last": None, "zoom": "",
+        }
 
     starts = [s.start for s in drawn.values()] + [w[0] for w in index.cycles.values()]
     ends = [s.end for s in drawn.values()] + [w[1] for w in index.cycles.values()]
     origin, last = min(*starts, index.today), max(*ends, index.today)
+    origin, last = window[0] or origin, window[1] or last
+    if last <= origin:                      # a backwards window would invert every bar
+        last = origin + timedelta(days=1)
+    drawn = {i: s for i, s in drawn.items() if s.end >= origin and s.start <= last}
 
     # A corpus can span ten months. At a fixed day width that is 1800px of
     # coordinate space, and an SVG with no viewBox CLIPS rather than scales, so
     # everything past the fold silently vanished. Scale the day instead, floored
     # so a short plan does not turn into a hairline.
     days = max((last - origin).days, 1)
-    day_px = max(1.6, min(_DAY_PX, _PLOT_PX / days))
+    day_px = zoom if zoom else max(1.6, min(_DAY_PX, _PLOT_PX / days))
 
     def x(day: date) -> float:
         # Plot coordinates only. The label column is HTML beside the SVG, not
@@ -180,6 +195,7 @@ def _timeline(index: Index) -> dict:
     bars = []
     for row, entity_id in enumerate(order):
         span = drawn[entity_id]
+        visible_start, visible_end = max(span.start, origin), min(span.end, last)
         entity = index.entities[entity_id]
         classes = ["bar"]
         if span.estimated:
@@ -195,9 +211,11 @@ def _timeline(index: Index) -> dict:
                 "label": _clip(entity.title),
                 "full": f"{entity.title} ({entity_id})",
                 "classes": " ".join(classes),
-                "x": x(span.start),
+                "x": x(visible_start),
                 "y": row * _ROW_PX + _HEADER_PX,
-                "width": max(_DAY_PX, x(span.end + timedelta(days=1)) - x(span.start)),
+                "width": max(
+                    day_px, x(visible_end + timedelta(days=1)) - x(visible_start)
+                ),
                 "colour": _STATUS_COLOUR.get(entity.status, "#8a93a5"),
                 "owner": entity.owner or "unowned",
                 "tip": explanation.text if explanation else "Starts as soon as it can.",
@@ -212,7 +230,12 @@ def _timeline(index: Index) -> dict:
         "bars": bars,
         "rules": rules,
         "months": _month_ticks(origin, last, x),
-        "today_x": x(index.today),
+        # A window that excludes today has no today line. Drawing it at a clamped
+        # coordinate would put "now" on an edge it is not on.
+        "today_x": x(index.today) if origin <= index.today <= last else None,
+        "origin": origin.isoformat(),
+        "last": last.isoformat(),
+        "zoom": zoom or "",
         "header": _HEADER_PX,
         "width": x(last) + 24,
         "height": len(bars) * _ROW_PX + _HEADER_PX + 20,
@@ -294,6 +317,13 @@ body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3r
 nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; }
 nav a { color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
+#controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .75rem 0;
+            align-items: baseline; }
+.facet { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.facet select { display: block; font: inherit; font-size: 13px; text-transform: none;
+                letter-spacing: 0; color: inherit; }
+#q { font: inherit; font-size: 13px; padding: .15rem .3rem; min-width: 16rem; }
+.hint { color: var(--muted); font-size: 12px; }
 #moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent); color: #fff;
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
 #moved a { color: #fff; }
@@ -301,8 +331,8 @@ nav a { color: var(--accent); }
 {{ style }}
 </style></head><body>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
-<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.detail }}">Detail</a>
-<a href="{{ links.people }}">People</a></nav>
+<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.people }}">People</a>
+<a href="{{ links.detail }}">Detail</a></nav>
 {{ content }}
 {% if live %}
 <div id="moved" hidden></div>
@@ -336,13 +366,17 @@ _TABLE = """
 <div id="controls">
   <input id="q" type="search" placeholder="Search title, tags, body">
   {% for field in ['kind','status','owner','reviewers','priority','cycle','project','tags'] %}
-  <select data-field="{{ field }}"><option value="">{{ field }}</option>
-    {% for value in payload.facets.get(field, []) %}<option>{{ value }}</option>{% endfor %}
-  </select>
+  <label class="facet">{{ field }}
+    <select data-field="{{ field }}"><option value="">all</option>
+      {% for value in payload.facets.get(field, []) %}<option>{{ value }}</option>{% endfor %}
+    </select>
+  </label>
   {% endfor %}
-  <select data-field="predicate"><option value="">predicate</option>
-    {% for p in payload.predicates %}<option>{{ p }}</option>{% endfor %}
-  </select>
+  <label class="facet">state
+    <select data-field="predicate"><option value="">all</option>
+      {% for p in payload.predicates %}<option>{{ p }}</option>{% endfor %}
+    </select>
+  </label>
 </div>
 <div class="table-scroll"><table id="rows"><thead><tr>
   <th data-sort="id">id</th><th data-sort="title">title</th><th data-sort="status">status</th>
@@ -350,7 +384,7 @@ _TABLE = """
   <th data-sort="priority">priority</th><th data-sort="cycle">cycle</th>
   <th data-sort="size">weeks</th>
   <th data-sort="start">start</th><th data-sort="end">end</th>
-  <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
+  <th data-sort="blocked_by">blockers</th><th data-field="prs">PRs</th><th>tags</th>
 </tr></thead><tbody></tbody></table></div>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
@@ -537,6 +571,7 @@ for (const select of document.querySelectorAll('select[data-field]'))
 // works out from the content, and are only frozen once somebody drags: measuring
 // them all at that moment is what keeps the other columns where they were.
 const WIDTHS = JSON.parse(localStorage.getItem('openproj:widths') || '{}');
+let dragging = false;
 const table = document.getElementById('rows');
 const headers = [...table.querySelectorAll('th')];
 
@@ -560,9 +595,13 @@ headers.forEach((th, i) => {
   const grip = document.createElement('span');
   grip.className = 'grip';
   th.append(grip);
+  grip.onclick = event => event.stopPropagation();
   grip.onpointerdown = event => {
-    event.stopPropagation();          // a drag is not a click on the sort header
+    event.stopPropagation();
     event.preventDefault();
+    // The click that follows a drag lands on the header, not the grip, so
+    // stopping propagation here is not enough — the sort handler checks this.
+    dragging = true;
     grip.classList.add('dragging');
     // Freeze every column first, or resizing one reflows all the others.
     headers.forEach((other, j) => {
@@ -579,6 +618,7 @@ headers.forEach((th, i) => {
     };
     const stop = () => {
       grip.classList.remove('dragging');
+      setTimeout(() => { dragging = false; }, 0);   // after the click it caused
       localStorage.setItem('openproj:widths', JSON.stringify(WIDTHS));
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', stop);
@@ -590,6 +630,7 @@ headers.forEach((th, i) => {
 
 for (const th of document.querySelectorAll('th[data-sort]'))
   th.addEventListener('click', () => {
+    if (dragging) return;
     // Clicking the column you are already sorted by reverses it, which is what
     // every table anybody has used does.
     const already = (params.get('sort') || 'id') === th.dataset.sort;
@@ -601,7 +642,6 @@ draw();
 """
 
 _TABLE_STYLE = """
-#controls { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0; }
 #summary { color: var(--muted); }
 #blocker-count { color: #9a3327; }
 .table-scroll { overflow-x: auto; }
@@ -632,6 +672,9 @@ _GRAPH = """
   <input type="hidden" id="base" value="{{ base_commit }}">
 </p>
 {% endif %}
+<p class="hint">Double-click a node to open it. Drag to pan, scroll to zoom, drag a node
+  to move it.{% if editable %} <strong>Connect nodes</strong> then click what must finish
+  first and what waits for it, to record a dependency.{% endif %}</p>
 <div id="cy"></div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
@@ -686,12 +729,15 @@ if (CONNECT) {
   };
 }
 
+// Opening is on double-click: a single tap is also the first half of drawing an
+// edge, and on a graph you drag around, one stray click should not navigate away.
+cy.on('dbltap', 'node', evt => {
+  if (!connecting) location.href = 'ENTITY_HREF' + evt.target.id();
+});
+
 cy.on('tap', 'node', async evt => {
   const node = evt.target;
-  if (!connecting) {
-    location.href = 'ENTITY_HREF' + node.id();
-    return;
-  }
+  if (!connecting) return;
   if (!source) {
     source = node;
     node.addClass('picked');
@@ -723,6 +769,23 @@ cy.on('tap', 'node', async evt => {
 """
 
 _TIMELINE = """
+<form class="tl-controls" method="get" action="{{ links.timeline }}">
+  <label class="facet">from <input type="date" name="from" value="{{ window[0] }}"></label>
+  <label class="facet">to <input type="date" name="to" value="{{ window[1] }}"></label>
+  <label class="facet">zoom
+    <select name="zoom">
+      <option value="">fit to window</option>
+      {% for px, label in zooms %}
+      <option value="{{ px }}"{{ ' selected' if chosen == px else '' }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Apply</button>
+  <a class="reset" href="{{ links.timeline }}">Reset</a>
+</form>
+<p class="hint">Showing {{ t.origin or 'nothing' }}{% if t.last %} to {{ t.last }}{% endif %}.
+  Drag sideways or scroll to move through the plan. Bars reaching past the window are
+  clipped to it, never dropped.</p>
 <div class="tl">
 <div class="labels">
   <div class="spacer" style="height: {{ t.header }}px"></div>
@@ -748,7 +811,9 @@ _TIMELINE = """
   <line class="cycle-rule" x1="{{ rule.x }}" y1="0" x2="{{ rule.x }}" y2="{{ t.height }}"/>
   <text class="cycle-label" x="{{ rule.x + 3 }}" y="10">{{ rule.label }}</text>
   {% endfor %}
+  {% if t.today_x is not none %}
   <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
+  {% endif %}
   {% for bar in t.bars %}
   <a href="{{ links.entity }}{{ bar.id }}"
      ><rect data-id="{{ bar.id }}" class="{{ bar.classes }}" x="{{ bar.x }}" y="{{ bar.y }}"
@@ -767,11 +832,40 @@ _TIMELINE = """
 // Open on today rather than on the oldest finished work. The plan is scrollable
 // so history stays reachable, but "now" is what the page is for.
 const scroller = document.querySelector('.scroll');
+{% if t.today_x is not none %}
 scroller.scrollLeft = Math.max(0, {{ t.today_x }} - 320);
+{% endif %}
+
+// The window is re-rendered by the server, so zoom keeps its labels upright and
+// its corners round. Changing a control just submits; the button stays for
+// anybody without JavaScript, and the URL stays shareable either way.
+const form = document.querySelector('.tl-controls');
+form.querySelectorAll('input, select').forEach(control => {
+  control.onchange = () => form.submit();
+});
+
+// Drag to pan, which is what everybody tries first on a Gantt.
+let panning = null;
+scroller.onpointerdown = event => {
+  if (event.target.closest('a')) return;      // still let a bar be clicked
+  panning = {x: event.clientX, left: scroller.scrollLeft};
+  scroller.setPointerCapture(event.pointerId);
+  scroller.style.cursor = 'grabbing';
+};
+scroller.onpointermove = event => {
+  if (panning) scroller.scrollLeft = panning.left - (event.clientX - panning.x);
+};
+scroller.onpointerup = () => { panning = null; scroller.style.cursor = ''; };
 </script>
 """
 
 _TIMELINE_STYLE = """
+.tl-controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
+               margin: .75rem 0 .25rem; }
+.tl-controls input, .tl-controls select, .tl-controls button {
+  display: block; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0;
+}
+.tl-controls .reset { color: var(--accent); font-size: 13px; }
 .tl { display: flex; border: 1px solid var(--line); align-items: stretch; }
 .labels { flex: 0 0 250px; border-right: 1px solid var(--line); }
 .labels .row {
@@ -1273,7 +1367,6 @@ show();
 """
 
 _DETAIL_STYLE = """
-.hint { color: var(--muted); font-size: 12px; }
 article.entity {
   width: var(--measure, 52rem); max-width: 100%; margin-bottom: 3rem; position: relative;
 }
@@ -1593,8 +1686,27 @@ _PEOPLE = """
 <p class="hint">Everyone named anywhere in the plan, and what they are on the hook for.
    Roles come from the fields themselves — there is no separate list of members to
    drift out of date.</p>
+<div id="controls">
+  <input id="q" type="search" placeholder="Search person, entity, id">
+  <label class="facet">role
+    <select data-attr="role"><option value="">all</option>
+      {% for value in facets.role %}<option>{{ value }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="facet">kind
+    <select data-attr="kind"><option value="">all</option>
+      {% for value in facets.kind %}<option>{{ value }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="facet">status
+    <select data-attr="status"><option value="">all</option>
+      {% for value in facets.status %}<option>{{ value }}</option>{% endfor %}
+    </select>
+  </label>
+</div>
+<div id="summary"><span id="shown">{{ people|length }}</span> of {{ people|length }} people</div>
 {% for person in people %}
-<section class="person">
+<section class="person" data-login="{{ person.login }}">
   <h2>{{ person.login }}
     <span class="tally">{{ person.counts }}</span></h2>
   <table class="roles">
@@ -1602,7 +1714,8 @@ _PEOPLE = """
       <th>scheduled</th></tr></thead>
     <tbody>
       {% for row in person.rows %}
-      <tr>
+      <tr data-role="{{ row.role }}" data-kind="{{ row.kind }}" data-status="{{ row.status }}"
+          data-text="{{ row.search }}">
         <td class="role">{{ row.role }}</td>
         <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
         <td>{{ row.kind }}</td>
@@ -1612,12 +1725,45 @@ _PEOPLE = """
       {% endfor %}
     </tbody>
   </table>
+  <p class="empty" hidden>Nothing here matches.</p>
 </section>
 {% endfor %}
+<script>
+// A person whose own name matches keeps all their rows: searching for somebody is
+// asking what they are on the hook for, not asking to see only the rows that
+// happen to repeat their name.
+const SECTIONS = [...document.querySelectorAll('section.person')];
+const FILTERS = [...document.querySelectorAll('#controls select')];
+const q = document.getElementById('q');
+const shown = document.getElementById('shown');
+
+function apply() {
+  const text = q.value.trim().toLowerCase();
+  const want = FILTERS.filter(s => s.value).map(s => [s.dataset.attr, s.value]);
+  let visible = 0;
+  for (const section of SECTIONS) {
+    const person = section.dataset.login.toLowerCase();
+    let kept = 0;
+    for (const row of section.querySelectorAll('tbody tr')) {
+      const matches = want.every(([attr, value]) => row.dataset[attr] === value)
+        && (!text || person.includes(text) || row.dataset.text.includes(text));
+      row.hidden = !matches;
+      kept += matches ? 1 : 0;
+    }
+    section.hidden = kept === 0;
+    section.querySelector('.empty').hidden = kept > 0;
+    visible += kept > 0 ? 1 : 0;
+  }
+  shown.textContent = visible;
+}
+
+q.oninput = apply;
+FILTERS.forEach(select => { select.onchange = apply; });
+</script>
 """
 
 _PEOPLE_STYLE = """
-.hint { color: var(--muted); max-width: 46rem; }
+.hint { max-width: 46rem; font-size: 13px; }
 section.person { margin: 2rem 0; }
 section.person h2 { font-size: 1.05rem; margin-bottom: .3rem; }
 .tally { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: .5rem; }
@@ -1655,11 +1801,14 @@ def render_people(index: Index, links: Links = STATIC) -> str:
                         "kind": entity.kind,
                         "status": STATUS_LABEL.get(entity.status, entity.status),
                         "span": f"{span.start} → {span.end}" if span else "—",
+                        "search": f"{entity_id} {entity.title}".lower(),
                     }
                 )
 
     people = []
-    for login, rows in sorted(held.items()):
+    # Case-folded, or every capitalised login sorts ahead of the lowercase ones and
+    # "alphabetical" means ASCII to the page and nothing to the reader.
+    for login, rows in sorted(held.items(), key=lambda pair: pair[0].lower()):
         tally = {role: sum(1 for r in rows if r["role"] == role) for _, role in _ROLES}
         people.append(
             {
@@ -1668,7 +1817,13 @@ def render_people(index: Index, links: Links = STATIC) -> str:
                 "counts": ", ".join(f"{n} as {role}" for role, n in tally.items() if n),
             }
         )
-    body = _ENV.from_string(_PEOPLE).render(people=people, links=links)
+    # Only values that are actually on the page: a filter offering a status
+    # nobody holds is a dead end that looks like a bug.
+    facets = {
+        key: sorted({row[key] for rows in held.values() for row in rows})
+        for key in ("role", "kind", "status")
+    }
+    body = _ENV.from_string(_PEOPLE).render(people=people, links=links, facets=facets)
     return _page("openproj — people", body, _PEOPLE_STYLE, links)
 
 
@@ -1777,8 +1932,24 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     )
 
 
-def render_timeline(index: Index, links: Links = STATIC) -> str:
-    body = _ENV.from_string(_TIMELINE).render(t=_timeline(index), links=links)
+_ZOOMS = (("2", "months"), ("6", "weeks"), ("14", "days"), ("30", "close"))
+
+
+def render_timeline(
+    index: Index,
+    links: Links = STATIC,
+    window: tuple[date | None, date | None] = (None, None),
+    zoom: float | None = None,
+) -> str:
+    body = _ENV.from_string(_TIMELINE).render(
+        t=_timeline(index, window, zoom),
+        links=links,
+        zooms=_ZOOMS,
+        chosen=f"{zoom:g}" if zoom else "",
+        # Echo what was asked for, not what was computed: a `from` box that fills
+        # itself with the corpus start makes an empty window look like a set one.
+        window=[d.isoformat() if d else "" for d in window],
+    )
     return _page("openproj — timeline", body, _TIMELINE_STYLE, links)
 
 

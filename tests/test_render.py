@@ -319,3 +319,105 @@ def test_every_person_row_links_to_the_entity(rendered: Path, seed_index: Index)
     assert owned
     for entity_id in owned:
         assert f'href="detail.html#{entity_id}"' in body, entity_id
+
+
+def test_the_people_page_is_alphabetical_and_filterable(rendered: Path):
+    """Sorted by login, and filterable the way the table is.
+
+    Alphabetical because there is no better default: any other order — most work
+    first, say — makes finding one named person a scan rather than a lookup.
+    """
+    body = read(rendered, "people.html")
+    logins = re.findall(r'<section class="person" data-login="([^"]+)"', body)
+
+    assert logins == sorted(logins, key=str.lower)
+    # Case-folded, and the corpus has to hold both cases or a plain `sorted()`
+    # would pass this while putting every capitalised login ahead of the rest.
+    assert logins != sorted(logins), "the corpus no longer mixes case; this proves nothing"
+    assert '<input id="q"' in body
+    for attribute in ("role", "kind", "status"):
+        assert f'select data-attr="{attribute}"' in body, attribute
+    assert re.search(r'<tr data-role="[^"]+" data-kind="[^"]+" data-status="[^"]+"', body)
+
+
+def test_every_filter_offers_a_way_back_to_everything(rendered: Path):
+    """`<option value="">` used to repeat the field name, so a chosen filter had no
+    "off" — the way back looked like the label, not like a choice. The field name
+    moved to a label beside the control and the empty option says `all`."""
+    for page in ("index.html", "people.html"):
+        body = read(rendered, page)
+        for tag in re.findall(r"<select[^>]*>(.*?)</select>", body, re.S):
+            assert re.match(r'\s*<option value="">all</option>', tag), tag[:80]
+
+
+# --- the timeline window ----------------------------------------------------
+
+
+def counts(html: str) -> tuple[int, float]:
+    bars = re.findall(r'<rect data-id="[^"]+"[^>]*width="([\d.]+)"', html)
+    width = float(re.search(r'<svg width="([\d.]+)"', html).group(1))
+    return len(bars), width
+
+
+def test_a_narrowed_window_clips_bars_rather_than_dropping_them(seed_index: Index):
+    """A row that vanishes when you narrow the dates reads as work that went away.
+
+    Anything overlapping the window keeps its row and is drawn to the edge; only
+    work entirely outside it leaves, which is the one case where its absence means
+    what it looks like.
+    """
+    from datetime import date
+
+    from openproj.render import render_timeline
+
+    whole = render_timeline(seed_index)
+    window = render_timeline(seed_index, window=(date(2026, 9, 1), date(2026, 9, 30)))
+    spans = seed_index.spans
+    overlapping = sum(
+        1
+        for span in spans.values()
+        if not span.unscheduled and span.end >= date(2026, 9, 1) and span.start <= date(2026, 9, 30)
+    )
+
+    assert counts(window)[0] == overlapping
+    assert counts(window)[0] < counts(whole)[0]
+    assert 'value="2026-09-01"' in window and 'value="2026-09-30"' in window
+
+
+def test_zoom_is_drawn_rather_than_stretched(seed_index: Index):
+    """A day width the server renders at, not a transform the browser applies.
+
+    Scaling the finished SVG would stretch every month label and rounded corner
+    with it, so zooming has to change the geometry — which shows up as a wider
+    drawing holding the same number of bars, and unchanged text.
+    """
+    from openproj.render import render_timeline
+
+    near, far = render_timeline(seed_index, zoom=14.0), render_timeline(seed_index, zoom=2.0)
+
+    assert counts(near)[0] == counts(far)[0]
+    assert counts(near)[1] > counts(far)[1] * 3
+    assert "scale(" not in near
+    assert re.search(r'<text class="month-label"[^>]*>\w+', near)
+
+
+def test_a_window_that_excludes_today_draws_no_today_line(seed_index: Index):
+    """Clamping it to the edge would put "now" on a date it is not on."""
+    from datetime import date
+
+    from openproj.render import render_timeline
+
+    past = render_timeline(seed_index, window=(date(2026, 1, 1), date(2026, 2, 1)))
+
+    assert 'class="today"' not in past
+    assert 'class="today"' in render_timeline(seed_index)
+
+
+def test_opening_a_node_takes_two_clicks(rendered: Path):
+    """A single tap is also the first half of drawing an edge, and on a graph you
+    drag around, one stray click should not navigate away from the page."""
+    body = read(rendered, "graph.html")
+
+    assert "cy.on('dbltap', 'node'" in body
+    navigating = re.search(r"cy\.on\('tap', 'node'.*?\n\}\);", body, re.S).group(0)
+    assert "location.href" not in navigating, "a single tap must not navigate"

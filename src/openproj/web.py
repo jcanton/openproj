@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from ruamel.yaml import YAML
 
@@ -131,6 +131,22 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     return None
 
 
+def _as_date(value: str) -> date | None:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _as_zoom(value: str) -> float | None:
+    """Pixels per day, clamped. Unbounded, one typed zero makes an SVG megapixels
+    wide and the tab stops responding."""
+    try:
+        return min(60.0, max(0.5, float(value)))
+    except ValueError:
+        return None
+
+
 def create_app(
     repo: Path,
     *,
@@ -218,8 +234,17 @@ def create_app(
         return page(render.render_graph(index, render.ROUTES, base_commit=commit))
 
     @app.get("/timeline", response_class=HTMLResponse)
-    def timeline() -> HTMLResponse:
-        return page(render.render_timeline(index_now()[1], render.ROUTES))
+    def timeline(
+        from_: str = Query("", alias="from"), to: str = "", zoom: str = ""
+    ) -> HTMLResponse:
+        """The window and the day width come off the URL, so a view is a link.
+
+        Every one of the three is typed by hand as easily as it is picked, so all
+        three are parsed leniently: a nonsense value falls back to the default view
+        rather than turning a bookmark into a 422.
+        """
+        window = (_as_date(from_), _as_date(to))
+        return page(render.render_timeline(index_now()[1], render.ROUTES, window, _as_zoom(zoom)))
 
     @app.get("/people", response_class=HTMLResponse)
     def people() -> HTMLResponse:

@@ -137,14 +137,14 @@ def payload(html: str) -> dict:
 def columns(html: str) -> list[str]:
     """The field each column stands for, in order.
 
-    The header labels are abbreviations — `pri`, `blockers` — so the sort key is
-    the field name where there is one. This doubles as an assertion that every
-    sortable column still declares what it sorts by.
+    A label is written for a reader — `blockers`, `PRs`, `weeks` — and is not the
+    field name. Where the two differ the column says which field it stands for,
+    so this doubles as an assertion that every column declares itself.
     """
     found = []
     for tag, label in re.findall(r"<th([^>]*)>([^<]*)</th>", html):
-        sort = re.search(r'data-sort="([^"]+)"', tag)
-        found.append(sort.group(1) if sort else label.strip())
+        declared = re.search(r'data-(?:sort|field)="([^"]+)"', tag)
+        found.append(declared.group(1) if declared else label.strip())
     return found
 
 

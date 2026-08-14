@@ -1044,3 +1044,31 @@ def test_the_runner_sets_that_flag_when_it_is_told_to_exit(repo_path: Path):
     server.handle_exit(15, None)
 
     assert app.state.closing.is_set()
+
+
+# --- the timeline window is a URL -------------------------------------------
+
+
+def test_a_timeline_view_is_a_link(client: TestClient):
+    """Window and zoom live in the query string, so a view can be sent to somebody."""
+    page = client.get("/timeline?from=2026-09-01&to=2026-09-30&zoom=14").text
+
+    assert 'value="2026-09-01"' in page
+    assert 'value="2026-09-30"' in page
+    assert '<option value="14" selected>' in page
+
+
+def test_a_nonsense_window_falls_back_instead_of_failing(client: TestClient):
+    """These are typed as easily as picked, and a bookmark that 422s is a bug
+    report about a URL somebody edited by hand."""
+    for query in ("from=yesterday", "to=2026-13-01", "zoom=lots", "zoom=0", "from=x&to=y&zoom=z"):
+        response = client.get(f"/timeline?{query}")
+        assert response.status_code == 200, query
+        assert "<svg" in response.text, query
+
+
+def test_a_backwards_window_does_not_invert_the_drawing(client: TestClient):
+    response = client.get("/timeline?from=2026-10-01&to=2026-01-01")
+
+    assert response.status_code == 200
+    assert 'width="-' not in response.text
