@@ -344,14 +344,14 @@ _TABLE = """
     {% for p in payload.predicates %}<option>{{ p }}</option>{% endfor %}
   </select>
 </div>
-<table id="rows"><thead><tr>
+<div class="table-scroll"><table id="rows"><thead><tr>
   <th data-sort="id">id</th><th data-sort="title">title</th><th data-sort="status">status</th>
   <th data-sort="owner">owner</th><th data-sort="reviewers">reviewers</th>
   <th data-sort="priority">priority</th><th data-sort="cycle">cycle</th>
   <th data-sort="size">weeks</th>
   <th data-sort="start">start</th><th data-sort="end">end</th>
   <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
-</tr></thead><tbody></tbody></table>
+</tr></thead><tbody></tbody></table></div>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
 <div id="row-conflict" hidden></div>
@@ -543,10 +543,16 @@ const headers = [...table.querySelectorAll('th')];
 function applyWidths() {
   if (!Object.keys(WIDTHS).length) return;
   table.style.tableLayout = 'fixed';
+  let total = 0;
   headers.forEach((th, i) => {
     const key = th.dataset.sort || `col${i}`;
-    if (WIDTHS[key]) th.style.width = WIDTHS[key] + 'px';
+    if (WIDTHS[key]) { th.style.width = WIDTHS[key] + 'px'; total += WIDTHS[key]; }
   });
+  // The table stops being 100% wide once the columns are explicit. Left at 100%,
+  // a fixed layout divides the space it is given, so widening one column silently
+  // squeezes every other — which is precisely what freezing them was meant to
+  // prevent. It scrolls sideways in its own container instead.
+  table.style.width = total + 'px';
 }
 applyWidths();
 
@@ -598,8 +604,14 @@ _TABLE_STYLE = """
 #controls { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0; }
 #summary { color: var(--muted); }
 #blocker-count { color: #9a3327; }
+.table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left; }
+th, td {
+  border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left;
+  /* Border-box, or a width set from a measured box gains the padding again and
+     every column grows by exactly one cell's worth on the first drag. */
+  box-sizing: border-box;
+}
 th[data-sort] { cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; }
 th { position: relative; }
 th .grip {
