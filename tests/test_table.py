@@ -269,11 +269,10 @@ def test_the_create_form_writes_only_fields_a_person_owns(new_page: str):
     assert named - {"body"} <= set(EDITABLE)
     for field in ("title", "status", "owner", "reviewers", "review_waived", "parent"):
         assert field in named, field
-    # The kind is chosen by the route rather than by a control, so a pitch page
-    # offers exactly the fields a pitch has and never the ones it does not.
-    for field in ("appetite_weeks", "shaped_by"):
+    # Every kind's fields are on the page; which of them apply is `data-kinds`,
+    # checked by test_a_field_only_one_kind_has_is_absent_from_the_others.
+    for field in ("appetite_weeks", "shaped_by", "effort_weeks"):
         assert field in named, f"{field} is status-gated at creation and must be fillable"
-    assert "effort_weeks" not in named, "a pitch has no effort_weeks"
 
 
 def test_the_create_form_names_neither_the_id_nor_the_path(new_page: str):
@@ -335,15 +334,34 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     the form a schema dump rather than a question. `shaped_by` is a pitch rule too,
     so a task blocked on a missing `shaped_by` would be nonsense.
 
-    Absent rather than hidden: the page is rendered per kind, so the control that
-    does not belong is not there to be un-hidden by a stray line of script."""
-    pitch = controls(client.get("/new?kind=pitch").text)
-    task = controls(client.get("/new?kind=task").text)
+    The page carries all three kinds and hides what does not apply, so that
+    switching kind does not throw away a title somebody just typed. Each row says
+    which kinds own it, and the server refuses the rest — the guarantee is on the
+    side that writes the file, not in whichever controls a script left visible."""
+    page = client.get("/new?kind=pitch").text
+    found = re.findall(r'<dd data-kinds="([^"]*)">\s*<[^>]*name="([^"]+)"', page)
+    owners = {field: kinds.split() for kinds, field in found}
 
-    assert {"appetite_weeks", "shaped_by"} <= pitch
-    assert "effort_weeks" not in pitch
-    assert "effort_weeks" in task
-    assert not {"appetite_weeks", "shaped_by"} & task
+    assert owners["appetite_weeks"] == ["pitch"]
+    assert owners["shaped_by"] == ["pitch"]
+    assert owners["effort_weeks"] == ["task"]
+    assert owners["status"] == ["project", "pitch", "task"]
+
+
+def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
+    """The page hides them; this is what stops them.
+
+    `patch_text` writes every field into the frontmatter before the model parses
+    it, so an `effort_weeks` on a pitch would sit in the file unread — present in
+    git, invisible to the tool, and wrong the day somebody greps for it.
+    """
+    response = client.post(
+        "/api/entity",
+        json={"fields": {"kind": "pitch", "title": "x", "effort_weeks": 3}, "body": ""},
+    )
+
+    assert response.status_code == 422
+    assert "effort_weeks" in response.json()["detail"]
 
 
 def test_the_create_form_has_somewhere_to_put_the_server_refusal(new_page: str):
@@ -691,3 +709,28 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
     assert "const WRAPS = new Set(['prs', 'tags']);" in page
     stored = r"if \(Object\.keys\(WIDTHS\)\.length\) applyWidths\(\); else fitWidths\(\);"
     assert re.search(stored, page), "a width somebody dragged must survive the automatic fit"
+
+
+def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: TestClient):
+    """Same markup, same controls, same stylesheet.
+
+    A second, differently-shaped form for creating is what made the tool feel like
+    two tools: the facts list here has to be the facts list there, or the layout
+    moves under you between reading an entity and making one.
+    """
+    detail = client.get(f"/detail/{TASK}").text
+
+    for shape in ('<dl id="facts">', 'class="field title-field"', 'class="field bodybar"',
+                  'class="field body-field"', 'id="preview"'):
+        assert shape in new_page, shape
+        assert shape in detail, shape
+    assert "<label>" not in new_page, "the old flat list of labelled controls is gone"
+
+
+def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str):
+    """It was three links, and following one was a fresh page — so a title typed
+    before realising it should be a pitch was a title typed twice."""
+    assert '<select id="kind">' in new_page
+    assert "make a" not in new_page, "the links this replaced"
+    assert re.search(r"KIND\.onchange = showKind", new_page)
+    assert "location.href" not in re.search(r"function showKind.*?\n\}", new_page, re.S).group(0)

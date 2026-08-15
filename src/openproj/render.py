@@ -1197,30 +1197,57 @@ def _fields_html(fields: list[dict], body: str, rows: int = 18) -> str:
 
 
 _NEW = """
-<article class="entity">
+<article class="entity editing">
   <p class="back"><a href="{{ links.table }}">← table</a></p>
   <p class="editbar">
     <button type="button" id="save">Create</button>
-    <button type="button" id="preview">Preview</button>
     <span id="state"></span>
   </p>
-  <h1>New {{ kind }}</h1>
-  <p class="meta">The id and the file are the server's to choose.
-    {% for k in kinds %}{% if k != kind %}
-    <a href="{{ links.new }}?kind={{ k }}">make a {{ k }} instead</a>{% endif %}{% endfor %}</p>
-  <form id="edit" data-kind="{{ kind }}" onsubmit="return false">
+  <h1><input name="title" data-type="text" form="edit" value=""
+             class="field title-field" placeholder="Title"></h1>
+  <p class="meta">
+    <label class="kindpick">kind
+      <select id="kind">
+        {% for k in kinds %}<option value="{{ k }}"
+          {% if k == kind %}selected{% endif %}>{{ k }}</option>{% endfor %}
+      </select>
+    </label>
+    · the id and the file are the server's to choose</p>
+  <form id="edit" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <div id="fields">{{ fields_html|safe }}</div>
-    <div id="problems" hidden></div>
+    <dl id="facts">
+      {% for row in rows %}
+      <dt data-kinds="{{ row.kinds }}">{{ row.label }}</dt>
+      <dd data-kinds="{{ row.kinds }}">{{ row.control|safe }}</dd>
+      {% endfor %}
+    </dl>
+    <ul id="problems" class="problems" hidden></ul>
+    <p class="field bodybar">
+      <button type="button" id="preview">Preview the body</button>
+      <span class="hint">the fields above are shown as you set them</span>
+    </p>
+    <textarea name="body" class="field body-field" rows="14"
+              placeholder="The shaping document."></textarea>
+    <div class="doc" hidden></div>
   </form>
-  <div class="doc" hidden></div>
 </article>
 {{ combobox|safe }}
 <script>
 const FORM = document.getElementById('edit');
 const STATE = document.getElementById('state');
 const PROBLEMS = document.getElementById('problems');
-const ORDER = ['todo', 'wip', 'done'];
+const KIND = document.getElementById('kind');
+const ORDER = STATUS_ORDER_JSON;
+
+// Every kind's fields are on the page and the ones this kind does not have are
+// hidden, rather than each kind being its own round trip. Switching kind after
+// typing a title used to mean typing it again.
+function showKind() {
+  for (const element of FORM.querySelectorAll('[data-kinds]'))
+    element.hidden = !element.dataset.kinds.split(' ').includes(KIND.value);
+}
+KIND.onchange = showKind;
+showKind();
 
 function read(control) {
   if (control.dataset.type === 'bool') return control.checked;
@@ -1236,45 +1263,60 @@ function read(control) {
   return raw === '' ? null : raw;
 }
 
-document.getElementById('preview').onclick = async () => {
+const PREVIEW = document.getElementById('preview');
+const DOC = document.querySelector('.doc');
+const BODY = FORM.querySelector('[name=body]');
+
+PREVIEW.onclick = async () => {
+  if (!DOC.hidden) {
+    DOC.hidden = true;
+    BODY.hidden = false;
+    PREVIEW.textContent = 'Preview the body';
+    return;
+  }
   const response = await fetch('/api/preview', {
     method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: FORM.querySelector('[name=body]').value}),
+    body: JSON.stringify({body: BODY.value}),
   });
-  const doc = document.querySelector('.doc');
-  doc.hidden = false;
-  doc.innerHTML = (await response.json()).html;
+  DOC.innerHTML = (await response.json()).html;
+  DOC.hidden = false;
+  BODY.hidden = true;
+  PREVIEW.textContent = 'Back to the source';
 };
 
-
-
 document.getElementById('save').onclick = async () => {
-  const fields = {kind: FORM.dataset.kind};
-  const status = FORM.querySelector('[name=status]')?.value || 'todo';
+  const fields = {kind: KIND.value};
+  const status = FORM.querySelector('[name=status]')?.value || 'shaping';
   const missing = [];
   for (const control of FORM.querySelectorAll('[data-type]')) {
+    // A field this kind does not have is not empty, it is absent — sending it
+    // would ask the server to set an attribute the model does not define.
+    if (control.closest('[data-kinds]')?.hidden) continue;
     let value;
     try { value = read(control); } catch (error) { STATE.textContent = error.message; return; }
     const empty = value === null || (Array.isArray(value) && !value.length);
     const waived = control.name === 'reviewers' &&
       FORM.querySelector('[name=review_waived]')?.checked;
     const gate = control.dataset.requiredFrom;
-    // Cumulative: a field demanded from `todo` is demanded at every status after
+    // Cumulative: a field demanded from `ready` is demanded at every status after
     // it, which is why this compares positions rather than equality.
     if (gate && empty && !waived && ORDER.indexOf(status) >= ORDER.indexOf(gate))
       missing.push(control.name);
     if (!empty) fields[control.name] = value;
   }
+  const title = document.querySelector('.title-field');
+  if (title.value.trim()) fields.title = title.value.trim(); else missing.push('title');
   if (missing.length) {
     PROBLEMS.hidden = false;
-    PROBLEMS.textContent = `still needed at status ${status}: ${missing.join(', ')}`;
+    PROBLEMS.innerHTML =
+      `<li>still needed at status ${status}: ${missing.join(', ')}</li>`;
     return;
   }
   const response = await fetch('/api/entity', {
     method: 'POST', headers: {'content-type': 'application/json'},
     body: JSON.stringify({
       base_commit: FORM.querySelector('[name=base_commit]').value, fields,
-      body: FORM.querySelector('[name=body]').value || '',
+      body: BODY.value || '',
     }),
   });
   const answer = await response.json();
@@ -1282,8 +1324,9 @@ document.getElementById('save').onclick = async () => {
     // The client check is a courtesy; this is the truth, and swallowing it leaves
     // somebody staring at a form that looks fine.
     PROBLEMS.hidden = false;
-    PROBLEMS.textContent = (answer.problems || [])
-      .map(p => `${p.field}: ${p.message}`).join('; ') || answer.detail || 'refused';
+    PROBLEMS.innerHTML = (answer.problems || [])
+      .map(p => `<li>${p.field}: ${p.message}</li>`).join('')
+      || `<li>${answer.detail || 'refused'}</li>`;
     return;
   }
   location.href = '/detail/' + answer.id;
@@ -1578,6 +1621,10 @@ dt.derived, dd.derived { font-style: italic; }
 .entity.editing .read { display: none; }
 .entity.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
+/* The kind picker sits in the meta line, so it is a word in a sentence rather
+   than a block that pushes the rest of the sentence onto its own row. */
+.kindpick { display: inline; }
+.kindpick select { font: inherit; }
 input.field, select.field, textarea.field {
   width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
   border: 1px solid var(--line-strong, #b7c5c9); border-radius: 3px;
@@ -1794,31 +1841,56 @@ def _detail_rows(index: Index) -> list[dict]:
     return rows
 
 
+KINDS = ("project", "pitch", "task")
+
+
+def _new_rows() -> list[dict]:
+    """One row per field any kind has, each saying which kinds have it.
+
+    The union rather than one kind's worth, because the page carries all three and
+    hides what does not apply. Rendering only the chosen kind meant switching kind
+    was a fresh page, and a title typed before switching was gone.
+    """
+    rows: dict[str, dict] = {}
+    for kind in KINDS:
+        blank = {"project": Project, "pitch": Pitch, "task": Task}[kind](
+            id=f"{PREFIX[kind]}-000000",
+            kind=kind,
+            title="",
+            # Today, because a date field that starts empty is a date field
+            # somebody leaves empty. This is a blank; nothing is overwritten.
+            assigned_on=date.today(),
+        )
+        for field in _editable_for(blank):
+            if field["name"] == "title":
+                continue          # the title is the heading, not a row
+            row = rows.setdefault(
+                field["name"],
+                {"label": LABELS.get(field["name"], field["name"]),
+                 "control": _control_html(field), "kinds": []},
+            )
+            row["kinds"].append(kind)
+    return [{**row, "kinds": " ".join(row["kinds"])} for row in rows.values()]
+
+
 def render_new(
     kind: str, base_commit: str, links: Links = ROUTES, index: Index | None = None
 ) -> str:
-    """The create page, laid out exactly like a detail page in edit mode.
+    """The create page, which is the detail page in edit mode with nothing in it.
 
     A second, differently-shaped form for creating was the thing that made the
-    tool feel like two tools. The fields a kind has are decided here rather than
-    hidden by script, so the page shows what this kind actually is.
+    tool feel like two tools, so this is the same markup, the same controls and
+    the same stylesheet — a blank entity rather than a stored one.
     """
-    blank = {"project": Project, "pitch": Pitch, "task": Task}[kind](
-        id=f"{PREFIX[kind]}-000000",
-        kind=kind,
-        title="",
-        # Today, because a date field that starts empty is a date field somebody
-        # leaves empty. An existing value is never overwritten — this is a blank.
-        assigned_on=date.today(),
-    )
     body = _ENV.from_string(_NEW).render(
         kind=kind,
-        kinds=("project", "pitch", "task"),
+        kinds=KINDS,
+        rows=_new_rows(),
         base_commit=base_commit,
         links=links,
-        fields_html=_fields_html(_editable_for(blank), "", rows=14),
         combobox=_combobox_html(index),
     )
+    body = body.replace("STATUS_ORDER_JSON", json.dumps(list(STATUSES)))
     return _page(f"openproj — new {kind}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 

@@ -45,7 +45,7 @@ from ruamel.yaml import YAML
 from . import render
 from .auth import User, exchange_code, identify, login_url, read_session, sign_session
 from .index import build_index
-from .model import Config, Entity, parse_text, patch_text, validate_all
+from .model import Config, Entity, Pitch, Project, Task, parse_text, patch_text, validate_all
 from .store import Store
 
 SESSION_COOKIE = "__Host-openproj_session"
@@ -129,6 +129,9 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
         if stem == entity_id or stem.startswith(f"{entity_id}--"):
             return path
     return None
+
+
+MODELS = {"project": Project, "pitch": Pitch, "task": Task}
 
 
 def _as_date(value: str) -> date | None:
@@ -354,6 +357,16 @@ def create_app(
         kind = fields.get("kind")
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
+
+        # A pitch has an appetite and a task has an effort. The create page carries
+        # every kind's fields and hides the ones that do not apply, so what belongs
+        # to this kind is decided here rather than by which controls a script left
+        # visible: fields are written to the file before the model ever sees them,
+        # and a key the model does not own would sit in the frontmatter unread.
+        allowed = set(MODELS[kind].model_fields)
+        unknown = sorted(set(fields) - allowed)
+        if unknown:
+            raise HTTPException(422, f"a {kind} has no {', '.join(unknown)}")
 
         # Minted here, never accepted from the client: an id supplied by a browser
         # is a path supplied by a browser once it becomes `tasks/<id>.md`.
