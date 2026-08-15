@@ -130,7 +130,10 @@ def _elements(index: Index) -> list[dict]:
     for entity_id, entity in index.entities.items():
         data = {
             "id": entity_id,
-            "label": f"{entity.title}\n{entity_id}",
+            # The title alone. The id is on every other page and in the URL the
+            # node opens; on a box 150px wide it cost a line of the only text
+            # anybody reads the graph for.
+            "label": entity.title,
             "status": entity.status,
             "priority": entity.priority,
             "kind": entity.kind,
@@ -1071,15 +1074,19 @@ function attachSuggest(input) {
   const typed = () => (multi ? tokens()[tokens().length - 1] : input.value).trim().toLowerCase();
 
   function choose(value) {
+    // `C2SM/icon4py#` is half a reference. Appending the separator after one would
+    // end the entry at the point where the number still has to be typed.
+    const partial = value.endsWith('#');
     if (multi) {
       const held = tokens();
       held[held.length - 1] = value;
-      input.value = held.filter(Boolean).join(', ') + ', ';
+      input.value = held.filter(Boolean).join(', ') + (partial ? '' : ', ');
     } else {
       input.value = value;
     }
-    close();
     input.focus();
+    if (partial) { open(); return; }
+    close();
   }
 
   function close() { list.hidden = true; list.innerHTML = ''; active = -1; }
@@ -1701,7 +1708,7 @@ PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
 # — otherwise the suggestions are useless the moment there is more than one name.
 SUGGESTS = {
     "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
-    "parent": "entities", "depends_on": "entities", "tags": "tags",
+    "parent": "entities", "depends_on": "entities", "tags": "tags", "prs": "prs",
 }
 
 
@@ -1894,6 +1901,13 @@ def render_new(
     return _page(f"openproj — new {kind}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 
+def _pr_sort(ref: str) -> tuple[str, int]:
+    """Newest first within a repository. A PR number is a number, and sorting the
+    references as text puts #999 above #1400."""
+    repo, _, number = ref.partition("#")
+    return repo, int(number) if number.isdigit() else 0
+
+
 def _suggestions(index: Index) -> dict:
     """What already exists, offered rather than remembered.
 
@@ -1917,7 +1931,21 @@ def _suggestions(index: Index) -> dict:
     # {value, label}: the value is what gets written to the file, the label is the
     # human hint beside it. An id typed from memory is a dangling reference the
     # validator rejects after the save; offered, it cannot be mistyped at all.
+    # Two kinds of entry for one field. A whole reference completes a PR already
+    # cited somewhere in the plan; a bare `org/repo#` completes the half nobody
+    # remembers — which org, and whether it is icon4py or icon4pygen — and leaves
+    # the number to be typed. Everything here comes from the corpus, so it costs
+    # no network and cannot be stale in a way the plan is not already stale.
+    refs = {ref for entity in index.entities.values() for ref in entity.prs}
+    repos = {ref.split("#")[0] + "#" for ref in refs if "#" in ref}
     return {
+        "prs": (
+            [{"value": r, "label": "any pull request"} for r in sorted(repos)]
+            + [
+                {"value": r, "label": ""}
+                for r in sorted(refs, key=_pr_sort, reverse=True)
+            ]
+        ),
         "people": [{"value": p, "label": ""} for p in sorted(people)],
         "entities": [
             {"value": i, "label": e.title} for i, e in sorted(index.entities.items())

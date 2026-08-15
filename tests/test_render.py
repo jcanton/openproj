@@ -485,3 +485,48 @@ def test_an_unknown_status_still_reaches_the_index(seed_index: Index):
     groups = _by_status([{"status": "done"}, {"status": "wip"}])
 
     assert [g["status"] for g in groups] == ["done", "wip"]
+
+
+def test_a_pr_reference_completes_in_two_halves(demo_rendered: tuple[Path, Index]):
+    """`C2SM/icon4py#` and whole references, from what the plan already cites.
+
+    Nobody remembers whether it is icon4py or icon4pygen, or which org owns it,
+    and that half of the reference is the same on almost every row — so it is
+    offered on its own, with the number left to type.
+    """
+    from openproj.render import _suggestions
+
+    _, index = demo_rendered
+    offered = _suggestions(index)["prs"]
+    values = [item["value"] for item in offered]
+    cited = {ref for e in index.entities.values() for ref in e.prs}
+
+    assert "C2SM/icon4py#" in values
+    assert cited <= set(values)
+    assert values.index("C2SM/icon4py#") < min(values.index(c) for c in cited)
+
+
+def test_pull_requests_are_offered_newest_first(demo_rendered: tuple[Path, Index]):
+    """Sorted as text, #999 sits above #1400 — so the oldest work is what the
+    list shows first and the newest is what falls off the end of it."""
+    from openproj.render import _suggestions
+
+    _, index = demo_rendered
+    numbers = [
+        int(item["value"].split("#")[1])
+        for item in _suggestions(index)["prs"]
+        if item["value"].split("#")[1]
+    ]
+
+    assert numbers == sorted(numbers, reverse=True)
+
+
+def test_choosing_a_repository_does_not_end_the_entry(seed_index: Index):
+    """Half a reference is not a reference. Appending the separator after one
+    would close the entry at exactly the point the number has to be typed."""
+    from openproj.render import _combobox_html
+
+    html = _combobox_html(seed_index)
+
+    assert "const partial = value.endsWith('#');" in html
+    assert "(partial ? '' : ', ')" in html
