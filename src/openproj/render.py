@@ -1259,6 +1259,7 @@ function attachSuggest(input) {
     } else {
       input.value = value;
     }
+    input.dispatchEvent(new Event('input', {bubbles: true}));
     input.focus();
     if (partial) { open(); return; }
     close();
@@ -2168,16 +2169,17 @@ _CYCLE = """
   </dl>
 </form>
 
-<h2>Who is available</h2>
-<p class="hint">A percentage of the build weeks. Anybody not listed counts as
-  {{ (c.nominal * 100)|round|int }}% — a roster that has to name everybody to
-  schedule anybody goes stale and takes the dates with it.</p>
+<h2>Who is in this cycle</h2>
+<p class="hint">Availability is a fraction of the {{ c.build_weeks }} build weeks.
+  Only the people named here are in the cycle.</p>
 <table class="load"><thead><tr>
-  <th>person</th><th>available</th><th>capacity</th><th>bet</th><th>load</th>
+  <th></th><th>person</th><th>available</th><th>capacity</th><th>bet</th><th>load</th>
   <th>scheduled until</th></tr></thead>
-<tbody>
+<tbody id="roster">
   {% for row in c.people %}
   <tr data-login="{{ row.login }}" class="{{ 'over' if row.over else '' }}">
+    {% if editable %}<td><button type="button" class="drop" title="Take out of this
+      cycle">&#128465;</button></td>{% else %}<td></td>{% endif %}
     <td>{{ row.login }}</td>
     <td><span class="read">{{ (row.rate * 100)|round|int }}%</span>
         <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"></td>
@@ -2188,6 +2190,17 @@ _CYCLE = """
   </tr>
   {% endfor %}
 </tbody></table>
+{% if editable %}
+<p class="editbar"><input id="joining" placeholder="login" data-suggest="people"
+     autocomplete="off">
+   <button type="button" id="add">+ add to the cycle</button>
+   <span class="hint">added here, saved with the setup</span></p>
+{% endif %}
+{% if c.strangers %}
+<p class="problems" id="strangers">Bet into this cycle but not in it:
+  {{ c.strangers|join(', ') }}. Their work still counts against the plan; add them
+  or take the work out.</p>
+{% endif %}
 {% if c.over %}
 <p class="problems" id="over">Over capacity: {{ c.over|join(', ') }}. The room can
   still bet it — this is a number, not a refusal.</p>
@@ -2197,21 +2210,25 @@ _CYCLE = """
 <p class="hint">Everything ready or in progress. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
   was bet in, so its overrun keeps counting.</p>
-<div class="table-scroll"><table id="bets"><thead><tr>
-  <th>in {{ c.number }}</th><th>id</th><th>title</th><th>kind</th><th>status</th>
+<div class="table-scroll"><table id="bets" autocomplete="off"><thead><tr>
+  <th>in {{ c.number }}</th><th>title</th><th>kind</th><th>status</th>
   <th>appetite</th><th>assignees</th><th>reviewers</th><th>bet in</th>
 </tr></thead><tbody>
   {% for row in c.candidates %}
   <tr data-id="{{ row.id }}" class="{{ 'carried' if row.carried else '' }}">
-    <td><input type="checkbox" class="bet" {{ 'checked' if row.in_cycle else '' }}
+    <td><input type="checkbox" class="bet" autocomplete="off"
+               {{ 'checked' if row.in_cycle else '' }}
                {{ 'disabled' if row.carried else '' }}></td>
-    <td><a href="{{ links.entity }}{{ row.id }}">{{ row.id }}</a></td>
-    <td>{{ row.title }}</td>
+    <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
     <td>{{ row.kind }}</td>
     <td>{{ row.status }}</td>
-    <td class="derived">{{ row.size }}</td>
-    <td><span class="cell" data-field="assignees">{{ row.assignees }}</span></td>
-    <td><span class="cell" data-field="reviewers">{{ row.reviewers }}</span></td>
+    <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
+               autocomplete="off" value="{{ row.size }}"
+               placeholder="{{ row.size_hint }}"></td>
+    <td><input class="live wide" data-field="assignees" data-type="list"
+               data-suggest="people" autocomplete="off" value="{{ row.assignees }}"></td>
+    <td><input class="live wide" data-field="reviewers" data-type="list"
+               data-suggest="people" autocomplete="off" value="{{ row.reviewers }}"></td>
     <td class="derived">{{ row.cycle }}</td>
   </tr>
   {% endfor %}
@@ -2285,49 +2302,92 @@ for (const box of document.querySelectorAll('input.bet')) {
   };
 }
 
-// Assignees and reviewers, edited where the bet is made rather than one page away.
-for (const cell of document.querySelectorAll('#bets .cell')) {
-  cell.ondblclick = () => {
-    if (cell.querySelector('input')) return;
-    const was = cell.textContent.trim() === '—' ? '' : cell.textContent.trim();
-    const input = document.createElement('input');
-    input.value = was;
-    input.dataset.type = 'list';
-    input.dataset.suggest = 'people';
-    input.className = 'field';
-    input.style.display = 'inline-block';
-    cell.textContent = '';
-    cell.append(input);
-    attachSuggest(input);
-    input.focus();
-    let abandoned = false;
-    input.onkeydown = event => {
-      if (event.key === 'Escape') { abandoned = true; input.blur(); }
-      if (event.key === 'Enter') input.blur();
-    };
-    input.onblur = async () => {
-      const value = input.value.trim();
-      if (abandoned || value === was) { cell.textContent = was || '—'; return; }
-      const id = cell.closest('tr').dataset.id;
-      const people = value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
-      const response = await fetch(`/api/entity/${id}`, {
-        method: 'PATCH', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({
-          base_commit: BASE.value, fields: {[cell.dataset.field]: people}, body: null,
-        }),
-      });
-      const answer = await response.json();
-      if (!response.ok) {
-        cell.textContent = was || '—';
-        say(`${id}: ${answer.detail || 'refused'}`);
-        return;
-      }
-      BASE.value = answer.commit || BASE.value;
-      cell.textContent = people.join(', ') || '—';
-      say(`${id}: ${cell.dataset.field} saved — reload to see the load move`);
-    };
+// Every editable cell is an input already: a betting table is filled in, not
+// inspected, and a double-click to reach a field somebody is about to type in is
+// a step that only exists because the table also had to be readable.
+for (const input of document.querySelectorAll('#bets input.live')) {
+  if (input.dataset.suggest) attachSuggest(input);
+  let was = input.value;
+  let abandoned = false;
+  // Saving on blur alone is not safe when the field is already an input: the
+  // browser restores form values across a reload, autofills, and the picker
+  // rewrites the field to add a separator — none of which is a person deciding
+  // something, and all of which used to reach git. A cell saves only if somebody
+  // typed in it or picked from it, which is what an `input` event means.
+  let edited = false;
+  input.addEventListener('input', () => { edited = true; });
+  input.onkeydown = event => {
+    if (event.key === 'Escape') { abandoned = true; input.value = was; input.blur(); }
+    if (event.key === 'Enter') input.blur();
+  };
+  input.onblur = async () => {
+    const value = input.value.trim();
+    if (abandoned || !edited || value === was.trim()) { abandoned = false; return; }
+    const id = input.closest('tr').dataset.id;
+    const field = input.dataset.field;
+    let sent;
+    if (input.dataset.type === 'list') {
+      sent = value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
+    } else if (value === '') {
+      sent = null;
+    } else if (Number.isNaN(Number(value))) {
+      say(`${field} must be a number, not "${value}"`);
+      input.value = was;
+      return;
+    } else {
+      sent = Number(value);
+    }
+    const response = await fetch(`/api/entity/${id}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, fields: {[field]: sent}, body: null}),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      input.value = was;
+      say(`${id}: ${answer.detail || (answer.problems || []).map(p => p.message).join('; ')
+                    || 'refused'}`);
+      return;
+    }
+    BASE.value = answer.commit || BASE.value;
+    was = Array.isArray(sent) ? sent.join(', ') : input.value;
+    edited = false;
+    say(`${id}: ${field} saved — reload to see the load move`);
   };
 }
+
+// The roster is edited in the page and written by Save, so adding somebody and
+// setting their availability is one decision and one commit rather than two.
+const JOINING = document.getElementById('joining');
+if (JOINING) attachSuggest(JOINING);
+
+function dropRow(button) {
+  button.onclick = () => {
+    const row = button.closest('tr');
+    say(`${row.dataset.login} taken out — press Save to commit it`);
+    row.remove();
+  };
+}
+document.querySelectorAll('#roster .drop').forEach(dropRow);
+
+document.getElementById('add').onclick = () => {
+  const login = JOINING.value.trim().replace(/,$/, '');
+  if (!login) return;
+  if (document.querySelector(`#roster tr[data-login="${login}"]`)) {
+    say(`${login} is already in this cycle`);
+    return;
+  }
+  const row = document.createElement('tr');
+  row.dataset.login = login;
+  row.innerHTML =
+    `<td><button type="button" class="drop" title="Take out of this cycle">&#128465;</button></td>`
+    + `<td>${login}</td>`
+    + `<td><input class="field rate" data-login="${login}" value="1.0"></td>`
+    + `<td class="derived">—</td><td class="derived">—</td><td></td><td class="derived">—</td>`;
+  document.getElementById('roster').append(row);
+  dropRow(row.querySelector('.drop'));
+  JOINING.value = '';
+  say(`${login} added — press Save to commit it`);
+};
 </script>
 {% endif %}
 """
@@ -2348,6 +2408,17 @@ tr.over td { color: var(--danger); }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 tr.over .bar > span { background: var(--danger); }
 input.rate { width: 4rem; }
+#bets input.live { font: inherit; font-size: 13px; width: 5rem;
+                   background: var(--surface); color: inherit;
+                   border: 1px solid transparent; border-radius: 3px; padding: .1rem .3rem; }
+#bets input.live.wide { width: 11rem; }
+#bets input.live:hover { border-color: var(--line); }
+#bets input.live:focus { border-color: var(--accent); outline: none; }
+#bets td { position: relative; }
+button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
+              color: var(--muted); font-size: 13px; line-height: 1; }
+button.drop:hover { color: var(--danger); }
+#joining { font: inherit; font-size: 13px; width: 10rem; }
 #bets { border-collapse: collapse; width: 100%; font-size: 13px; }
 #bets th, #bets td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
                      text-align: left; }
@@ -2524,12 +2595,13 @@ def _cycle_view(index: Index, number: int) -> dict:
     held = index.load(number)
     nominal = index.nominal_availability
     build_weeks = plan.build_weeks if plan else 0.0
-    listed = set(plan.availability) if plan else set()
+    listed = list(plan.availability) if plan else []
 
-    # The team roster too, or a cycle nobody has been bet into yet has no names
-    # to set availability against — and setting it up is the first thing you do.
+    # Exactly who was named. Being on the roster IS being in the cycle, so a name
+    # is added deliberately rather than appearing because somebody was assigned
+    # something — which would make the roster a report instead of a decision.
     people = []
-    for login in sorted(listed | set(held) | set(index.known_people), key=str.lower):
+    for login in sorted(listed, key=str.lower):
         rate = plan.availability.get(login, nominal) if plan else nominal
         capacity = rate * build_weeks
         mine = [
@@ -2552,9 +2624,20 @@ def _cycle_view(index: Index, number: int) -> dict:
             }
         )
 
+    # Bet into this cycle and not on its roster. Dropping them silently would
+    # hide load from the one page that exists to add load up.
+    strangers = sorted(set(held) - set(listed), key=str.lower)
+
     candidates = []
-    for entity_id, entity in sorted(index.entities.items()):
-        if entity.status not in ("ready", "in_progress"):
+    # Ready first, then in progress, and by id inside each: the question at a
+    # betting table is what to pick up, and what is already running is context.
+    order = ("ready", "in_progress")
+    for entity_id, entity in sorted(
+        index.entities.items(), key=lambda kv: (order.index(kv[1].status)
+                                                if kv[1].status in order else len(order),
+                                                kv[0])
+    ):
+        if entity.status not in order:
             continue
         size, defaulted = size_weeks(
             entity, Config(default_task_effort=index.default_task_effort)
@@ -2565,9 +2648,11 @@ def _cycle_view(index: Index, number: int) -> dict:
                 "title": entity.title,
                 "kind": entity.kind,
                 "status": entity.status,
-                "size": f"{size:g}" + (" (assumed)" if defaulted else ""),
-                "assignees": ", ".join(entity.assignees) or "—",
-                "reviewers": ", ".join(entity.reviewers) or "—",
+                "size": "" if defaulted else f"{size:g}",
+                "size_field": "appetite_weeks" if entity.kind == "pitch" else "effort_weeks",
+                "size_hint": f"{size:g} assumed" if defaulted else "",
+                "assignees": ", ".join(entity.assignees),
+                "reviewers": ", ".join(entity.reviewers),
                 "cycle": entity.cycle if entity.cycle is not None else "—",
                 "in_cycle": entity.cycle == number,
                 # Bet in an earlier cycle and still running: shown, counted, and
@@ -2588,6 +2673,7 @@ def _cycle_view(index: Index, number: int) -> dict:
         "cooldown_weeks": f"{plan.cooldown_weeks:g}" if plan else "—",
         "nominal": nominal,
         "people": people,
+        "strangers": strangers,
         "over": [p["login"] for p in people if p["over"]],
         "candidates": candidates,
         "body": _MD.render(plan.body) if plan else "",

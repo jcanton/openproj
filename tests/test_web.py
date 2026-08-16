@@ -1209,3 +1209,46 @@ def test_the_cycle_page_puts_the_forecast_next_to_the_capacity(client: TestClien
 
     assert "scheduled until" in page
     assert "<th>capacity</th>" in page
+
+
+def test_only_the_named_are_in_a_cycle(client: TestClient, repo_path: Path):
+    """Being on the roster is what being in the cycle means, so a name is added
+    deliberately rather than appearing because somebody was assigned something —
+    which would make the roster a report instead of a decision."""
+    save(client, TASK, {"cycle": 44, "owner": "cy", "assignees": ["cy"],
+                        "effort_weeks": 1.0})
+    client.put(
+        "/api/cycle/44",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2026-12-14", "build_weeks": 4,
+                         "availability": {"ann": 1.0}},
+              "body": None},
+    )
+    page = client.get("/cycle/44").text
+    roster = re.findall(r'<tr data-login="([^"]+)"', page)
+
+    assert roster == ["ann"], "cy holds work here but was never named"
+    strangers = re.search(r'id="strangers">(.*?)</p>', page, re.S).group(1)
+    assert "cy" in strangers, "work counted here by somebody the cycle does not name"
+
+
+def test_the_bet_lists_what_to_pick_up_before_what_is_running(
+    client: TestClient, repo_path: Path
+):
+    """Ready first, in progress after, by id inside each. What is already running
+    is context at a betting table; what is ready is the question."""
+    client.put(
+        "/api/cycle/45",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-01-11", "build_weeks": 4}, "body": None},
+    )
+    page = client.get("/cycle/45").text
+    rows = re.findall(r'<tr data-id="([^"]+)"[^>]*>.*?<td>(\w+)</td>\s*<td>(\w+)</td>',
+                      page, re.S)
+    statuses = [status for _, _, status in rows]
+
+    assert set(statuses) <= {"ready", "in_progress"}
+    assert statuses == sorted(statuses, key=["ready", "in_progress"].index)
+    for status in ("ready", "in_progress"):
+        ids = [i for i, _, s in rows if s == status]
+        assert ids == sorted(ids)

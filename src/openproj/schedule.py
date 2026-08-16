@@ -109,10 +109,11 @@ def _availability_of(who: str, entity: Entity, config: Config) -> float:
     source: a global override and a per-cycle record would disagree the first
     time somebody set both.
 
-    Absent from the roster means "nobody said otherwise", not "unavailable" — a
-    roster that has to name everybody to schedule anybody is a roster that goes
-    stale and takes the dates with it. A rate of zero means the same, rather than
-    meaning a bet nobody can ever finish.
+    Being on a cycle's roster is what being in that cycle means, so somebody bet
+    into a cycle they are not on is a planning mistake — but it is not one the
+    scheduler can fix by refusing to produce a date. It uses the nominal rate and
+    the cycle page names them, which is where a person can act on it. A rate of
+    zero reads the same way rather than as a bet nobody can ever finish.
     """
     plan = config.plans.get(entity.cycle) if entity.cycle is not None else None
     stated = plan.availability.get(who) if plan else None

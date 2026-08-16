@@ -245,3 +245,27 @@ def test_the_parent_control_still_holds_the_id(client: TestClient):
 
     assert control, "parent must still be editable"
     assert control.group(1).startswith(("proj-", "pitch-", "task-")) or control.group(1) == ""
+
+
+def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):
+    """The bet table's fields are inputs from the start, so blur is not evidence
+    of a decision: the browser restores form values across a reload, autofills,
+    and the people picker rewrites a field to add its separator. All three used to
+    reach git — one of them emptied an assignees list nobody had touched."""
+    page = client.get("/cycle/37").text
+    live = re.search(r"for \(const input of document\.querySelectorAll\('#bets input\.live'\)\)"
+                     r".*?\n\}", page, re.S).group(0)
+
+    assert "let edited = false;" in live
+    assert "input.addEventListener('input', () => { edited = true; });" in live
+    assert "!edited" in live, "a blur without an edit must not write"
+    assert 'autocomplete="off"' in page
+
+
+def test_picking_a_suggestion_counts_as_typing(client: TestClient):
+    """`choose` sets the value directly, which fires no event — so a name picked
+    from the list without a keystroke would look like a field nobody edited."""
+    page = client.get("/cycle/37").text
+    choose = re.search(r"function choose\(value\) \{.*?\n  \}", page, re.S).group(0)
+
+    assert "dispatchEvent(new Event('input', {bubbles: true}))" in choose
