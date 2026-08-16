@@ -71,7 +71,7 @@ burndown charts, per-project permissions.
 
 | # | Decision | Reasoning |
 |---|---|---|
-| D1 | `appetite_weeks` means **elapsed weeks at nominal availability**, not person-weeks | Matches how the team already speaks about a "three-week bet" |
+| ~~D1~~ | ~~`appetite_weeks` means **elapsed weeks at nominal availability**, not person-weeks~~ **SUPERSEDED 2026-08-16 by D-C4:** it means person-weeks — the work one person would need — and assignees divide it. D1 was wrong about how the team estimates; see `2026-08-16-cycles-design.md` §0. | ~~Matches how the team already speaks about a "three-week bet"~~ |
 | D2 | Shape Up cycles are **soft walls** — the scheduler ignores them, the timeline flags overruns | The circuit breaker is a human decision; silently reflowing a bet misrepresents the process |
 | D3 | Project and repository name: **`openproj`**. Local-only while it is just jcanton and Claude; **pushed to the C2SM GitHub organisation at the same moment it goes to Cloud Run** | Nothing is shared yet, so nothing needs to be pushed. Going online and gaining an org-owned remote are the same event, which is also when backups start existing (§12) |
 | D4 | The plan data lives in **its own repository**, separate from `openproj`'s source | A plan commit must not trigger CI on tool code, and the write credential must be structurally incapable of touching source repos. While local, this is a second directory |

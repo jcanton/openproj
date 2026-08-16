@@ -1,209 +1,212 @@
-# Cycles as more than a label — design
+# Cycles, betting and capacity — design
 
-**Status:** analysis complete, three decisions open. Nothing implemented.
-**Proposal by:** jcanton, 2026-08-16.
-**Method:** five independent analyses of the codebase (data model, capacity semantics,
-write semantics, blast radius, lifecycle) followed by three adversarial critiques
-(over-building, contradictions, failure-in-use). Every claim below was re-verified by hand
-against the working tree.
+**Status:** decided, not implemented.
+**Proposal by:** jcanton, 2026-08-16. Decisions D-C1 … D-C4 taken 2026-08-16.
+**Method:** five independent analyses of the codebase followed by three adversarial critiques,
+then two rounds of correction from jcanton. Every claim about the code was verified by hand.
 
 ---
 
-## The proposal
+## 0. The correction that reframes everything
 
-> Make a cycle some sort of entity (not in the graph view). On creation choose the duration
-> (4 build + 2 cool-down) and set each dev's availability for that cycle. At the bottom of
-> the cycle's page, list every `ready` and `in_progress` item — no `shaping`, no `done` — and
-> assign assignees and reviewers to the ones being worked on, stamping them with the cycle.
+**D-C4 (decided): `appetite_weeks` and `effort_weeks` are PERSON-weeks — the work one person
+would need — and assignees divide them.**
 
-The instinct is right and the question behind it is the right question: **does this cycle's
-bet fit, and who is on the hook.** What follows argues that the answer costs about a tenth of
-what the proposal describes, and that three bugs it would build on top of are worth more than
-the feature.
+This overturns **D1** of the original spec, which says the opposite:
 
----
+> | D1 | `appetite_weeks` means **elapsed weeks at nominal availability**, not person-weeks |
 
-## 1. What is already broken
+D1 was wrong about how the team actually estimates. It was not a small error, and three things
+fall out of it:
 
-Four defects found while analysing the proposal. Three of them mean the tool is currently
-saying something untrue, and all four sit directly under the proposed feature.
+**1. The scheduler's durations are wrong today, in two compounding ways.** `_duration_weeks`
+returns the stated size as elapsed time, and `_place` then books *every* assignee for that whole
+span. A pitch with appetite 6 and three assignees is currently drawn as 6 elapsed weeks and
+charges 18 person-weeks of calendar. Under D-C4 it is **2 elapsed weeks and 6 person-weeks**. The
+seed corpus has 11 entities with more than one assignee, so this is not a corner case.
 
-### 1.1 The corpus already contradicts itself on carryover — **this is the important one**
+With exactly one assignee at full availability the two models agree, which is why nothing ever
+looked wrong.
+
+**2. Availability *does* belong in the duration.** I previously advised — from D1 — that
+availability must affect capacity and never dates. Under D-C4 that advice is wrong:
 
 ```
-task-0a1001   cycle: 37   2026-08-17 → 2026-09-09   overrun: None
-task-0b1002   cycle: 36   2026-09-10 → 2026-10-05   overrun: 7.43 weeks
+elapsed_weeks = appetite ÷ Σ availability(assignee)
 ```
 
-Two identically-situated records: both `in_progress`, both assigned inside cycle 36, both with
-jcanton on them, ~3.5 weeks each. One reports late, one reports fine. **The only difference is
-which integer somebody typed in the `cycle` field.**
+One person at 60% takes a 3-week bet 5 weeks. **That is the correct answer**, not the bug the
+old spec calls out at line 362. The old draft's `size / availability` was only a bug under D1's
+definition; it is right under D-C4. The dead `x/x` ratio in `_duration_weeks` becomes a live
+computation rather than a deletion.
 
-`cycle: int` does two jobs at once — it says *which betting table chose this*, and it says
-*which end date the overrun is measured against* (`schedule.py:100`). Re-stamping a carried-over
-item silently forgives its overrun.
+**3. Adding people makes work finish sooner** — which is what the room believes when it staffs a
+pitch with three names, and what the tool has never modelled.
 
-The proposal makes that re-stamping a one-click gesture, performed at exactly the moment work is
-slipping. That is the single thing most likely to make the team stop trusting the dates, and it
-fails Gate 1 in the unrecoverable direction: someone says *"that one's been late since June"*,
-the screen shows no flag, and both are right — because the record was re-bet that morning.
+### What this costs
 
-### 1.2 `_overrun` measures against the end of cool-down
-
-`schedule.py:100-103` compares against `window[1]`, the last day of the whole 6- or 8-week
-window. Shape Up says work lands by the end of *build*; cool-down is not build time. Every
-overrun is therefore understated by the cool-down length, and some are hidden entirely.
-
-### 1.3 The server never loads `people.yaml`
-
-`web.py:69` hardcodes `("defaults.yaml", "cycles.yaml", "holidays.yaml")`. `model._CONFIG_FILES`
-lists four, including `people.yaml`. Verified: `openproj check` sees 17 known people, the server
-sees zero — so the roster check that rejects an unknown login is **silently off in the web UI and
-on in CI**. One-line fix.
-
-### 1.4 `_duration_weeks` is dead arithmetic
-
-```python
-availability = config.nominal_availability
-ratio = config.nominal_availability / availability if availability else 1.0
-```
-
-`x/x`. Identically 1.0 for every possible config (`schedule.py:85-86`). The test that guards it
-runs at `nominal_availability=0.6` and cannot fail, because that field is both numerator and
-denominator. Deleting the ratio is not a cleanup: it is what makes *"should availability stretch
-the bars?"* an unaskable question rather than a one-line edit away from re-introducing the bug
-the spec explicitly names (it stretched every three-week bet to five).
+`GOLDEN_SPANS` in `tests/test_schedule.py` moves. That is correct and expected: the goldens pin
+the current, wrong, semantics. They get re-derived once, by hand, with the new definition stated
+in the file.
 
 ---
 
-## 2. What availability must mean
+## 1. The other decisions
 
-**Capacity, never duration.** All four analyses that addressed it agreed independently.
+**D-C1 (decided): `cycle:` means where it was bet.** Never overwritten on carryover, so the
+overrun flag keeps accusing. Carryover is shown by `cycle == N or (in_progress and cycle < N)`,
+never by re-stamping. This is the single thing protecting the tool's one date judgement.
 
-- D1 defines appetite as *elapsed weeks at nominal availability* — not person-weeks. If a
-  50%-available dev's three-week bet drew as six weeks, appetite would silently change meaning.
-- The capacity-1 rule in `_place` already serialises a person's work. Availability does not
-  change when a thing lands; it changes **how much fits**.
+**D-C2 (answered rather than decided): capacity is charged to whatever carries assignees.**
+The question was: a pitch says appetite 6, its three tasks say 2 + 2 + 2 — do you count 6, or 6,
+or 12? The rule needs no decision because assignment answers it:
 
-So the capacity check is:
+- You assign people to a **task** → the task is charged.
+- A pitch whose children carry the assignees charges **nothing itself** — its appetite is a
+  rollup, and charging both double-counts.
+- A pitch with no tasks yet, staffed directly, charges its own appetite.
+
+This is the same rule `schedule()` already uses for spans (`schedule.py:191-199`: a parent with
+children is a rollup and never books capacity), so both screens agree by construction.
+
+**D-C3 (decided): over-capacity is a warning on the cycle page, with numbers.** Not a `Problem`,
+not a CI blocker. A blocker here fails the build on whoever honestly declared they were busy, and
+`cli.py:7` already says a warning that fails the build is a rule that gets reverted.
+
+---
+
+## 2. What the team does today
+
+From the cycle-37 sheet (hackmd.io/GGkElar4QK-33TXRhbKxAg):
 
 ```
-sum of appetite of what a person is bet on   ≤   availability × build_weeks
+Length: 4 weeks
+Betting table: 14.07.2026        Review meeting: 11.08.2026 - 11:00
+
+## Available people:
+Christos: 100%      Edoardo: 3 weeks       Hannes: half cycle
+Ioannis: 60% of half cycle                 Mikael: 50%
+
+## Goal
+## Tasks
+Title                          | Appetite   | Developers                 | Support
+[CWP] STAC Browser             | full cycle | Christos 50% + Kostantinos | Nikki
+[GT4Py] Development work       | full cycle | Till & Hannes & Sara       | Enrique
+[ICON4Py] GPU bitwise reprod.  | 1-2 weeks  | Mikael                     | Jacopo
 ```
 
-with both sides in elapsed weeks at nominal availability. And a warning in the field's own help
-text, not in a design doc: **availability changes what fits, never when it lands.** Otherwise the
-first person to set 0.5 and see an unchanged timeline will conclude the field does nothing —
-and someone will "fix" it by dividing.
+Four things this tells us:
+
+- **There are no totals.** The sheet records availability and staffing and never adds them up.
+  The computed number is the whole value openproj adds; everything else is transcription.
+- **Availability is free text**, and inconsistent: `100%`, `3 weeks`, `half cycle`,
+  `60% of half cycle`. A number in a form is a real improvement, not bureaucracy.
+- **Appetite is prose** — `full cycle`, `1-2 weeks`. openproj already forces a number.
+- **`Support` is a role openproj does not have.** Distinct from reviewer — the sheet has both
+  concepts, and openproj has owner / assignees / reviewers / shaped_by. Open question below.
 
 ---
 
-## 3. Why a cycle should not be an `Entity`
+## 3. The plan
 
-Of `Entity`'s 17 fields, three are meaningful on a cycle. Several are worse than meaningless:
+The table stays what it is: the overview of everything. The betting table gets its own page,
+because a betting table needs the one thing an overview cannot show — how much of each person
+is spoken for.
 
-- **`status`** — a cycle's phase is a function of `today` and its dates. Storing it produces the
-  classic lie: `status: active` on cycle 36 that nobody flipped. And any word not in
-  `STATUS_ORDER` is a hard blocker (`model.py:376`), while any word *in* it drags in the gates
-  demanding an owner, a reviewer and a size.
-- **`depends_on`** — "38 follows 37" is temporal, not a dependency. Writing it puts a cycle into
-  the scheduler DAG and onto the graph.
-- **`assignees: list[str]`** — the field somebody will reach for to hold the roster. It cannot
-  carry a percentage, which is the number the whole feature exists for.
-- **Silently scheduled.** A cycle entity is not `shelved` and not `done`, so it reaches
-  `_place` with no size — `size_weeks` hands back `default_task_effort` and cycle 37 gets a
-  half-week Gantt bar that nobody wrote.
+### Slice 1 — make the arithmetic mean what the team means
 
-The proposal's own instinct — *"which does not appear in the graph view?"* — is the type error
-showing through. A record that has to be excluded from a dozen places is not a subtype.
+No new page, no new record. This is the foundation both screens stand on.
 
+1. `_duration_weeks` becomes `appetite ÷ Σ availability(assignees)`, defaulting every unlisted
+   person to 1.0, and floored so an all-zero roster cannot divide by zero.
+2. `_place` charges each assignee `appetite ÷ n_assignees` rather than booking all of them for
+   the whole span.
+3. Re-derive `GOLDEN_SPANS` and `GOLDEN_OVERRUNS`, with D-C4 written into the test file.
+4. Rewrite D1 in the original spec and mark it superseded, with the date and the reason. A spec
+   that quietly contradicts the code is worse than no spec.
+5. While in here, three verified defects that sit directly underneath: `_overrun` measures
+   against the end of cool-down rather than the end of build; `web.py:69` never loads
+   `people.yaml`, so the roster check is off in the UI and on in CI; and an undated cycle number
+   silently disables the overrun check (`schedule.py:100` uses `.get()`) — one warning fixes it.
+
+### Slice 2 — the cycle record
+
+`cycles/37.md`, a file with frontmatter and a body, **not** an `Entity`. It reuses the whole
+existing write path — `patch_text`, per-key frontmatter merge, scoped compare-and-swap — and the
+body is where the sheet's `## Goal` goes.
+
+```markdown
+---
+cycle: 37
+starts_on: 2026-07-26
+build_weeks: 4
+cooldown_weeks: 2
+# Fraction of the BUILD weeks, not of the whole window. 0.5 on a 4-week
+# cycle is 2 weeks of capacity.
+availability:
+  jcanton: 0.5
+  msimberg: 1.0
+  halungge: 0.5
 ---
 
-## 4. The betting table already exists
+## Goal
 
+Reproducibility and the land port are the two that cannot slip.
 ```
-/?status=ready&status=in_progress          sorted by cycle
-```
 
-`apply_filters` is AND-across-fields, OR-within-field (`index.py:172`); the client filters on the
-same nine fields; `cycle` is a sortable column; and `cycle`, `assignees` and `reviewers` are all
-inline-editable. That URL is the proposal's list, with facets for narrowing by project or owner,
-and it writes through the existing `PATCH /api/entity/{id}` — no new write surface, no batching,
-no second security review. The audit trail is `git log --since` on the meeting day.
+Not an `Entity` because of what `Entity` would drag in: a cycle has no `status` that is not
+derivable from its dates, `depends_on` between cycles is temporal rather than a dependency and
+would put cycles in the scheduler DAG and on the graph, and `assignees: list[str]` cannot carry
+a percentage — which is the number the whole feature exists for. It would also reach `_place`
+with no size and draw itself a half-week Gantt bar nobody wrote.
 
-**The delta between that URL and the proposed page is one number:** how much each person is
-holding against what they can hold.
+`config/cycles.yaml` keeps the dates it already has until every cycle has a record; the loader
+prefers the record when one exists. No migration of the 15 files carrying `cycle: <int>`.
 
----
+### Slice 3 — the page
 
-## 5. The plan
+`/cycle/{n}`, in three parts, matching the sheet the team already keeps:
 
-### Slice 1 — now (~10 lines of Python, one config scalar, one data decision)
+**Setup** — dates, build and cool-down weeks, and the roster: one row per person with a
+percentage. Rendered as `50% · 2.0 weeks` so the number and its meaning are never apart.
 
-1. `cooldown_weeks: 2` in `defaults.yaml`, beside `nominal_availability` and
-   `default_task_effort`. Build-end is `window[1] − cooldown_weeks` for every cycle in both
-   corpora. No per-cycle data entry, no migration, no reshaped `Config.cycles`.
-2. Retarget `_overrun` to build-end (§1.2). `GOLDEN_OVERRUNS` gets re-derived by hand;
-   `GOLDEN_SPANS` does **not** move — `_overrun` annotates, it does not place.
-3. Delete the availability ratio (§1.4), and the 0.6 test that cannot fail with it.
-4. Load `people.yaml` in `web.py` (§1.3).
-5. One warning: *"cycle N has no dates in config/cycles.yaml"*. Today a typo'd number silently
-   disables the overrun check for that record, because `schedule.py:100` uses `.get()`.
-6. Fix `task-0a1001` back to `cycle: 36` so the corpus stops contradicting itself.
+**The bet** — every `ready` or `in_progress` entity, exactly as jcanton described, with
+assignees and reviewers editable inline and a tick that stamps `cycle: N`. This is the existing
+table's row markup, payload, cell editor and people combobox — the same machinery, filtered, with
+one extra column.
 
-### Slice 2 — after one real betting meeting
-
-One column on `/people`, which already exists and is already per-person: weeks held in the
-current cycle against build weeks, over capacity in red. No availability coefficient yet —
-everyone is 1.0.
-
-### Slice 3 — only when somebody asks by name, with a number they have already been keeping
-
-`availability: {login: fraction}` as a plain map inside the existing `config/cycles.yaml`, and
-multiply the column by it. Both loaders filter on `Config.model_fields`, so old corpus and old
-code keep working. One `Config` field, one multiplication.
-
-### Stays unbuilt unless slice 2 proves otherwise
-
-A `Cycle` type, a `cycles/` directory, `write_many` and batch commits, `/api/cycle/{n}/bets`,
-`bet_on`, `bets:`, `cycles: list[int]`, per-cycle `build_weeks`/`cooldown_weeks`,
-`created_schema_version` on a cycle, a bespoke page, a nav entry, per-cycle static files, and the
-fifteen validation rules the analyses proposed between them.
-
-**Why so aggressive a cut:** `src/openproj/` is at 4,604 lines against the spec's stated ~4,000
-budget, which says *"materially larger means scope has escaped and someone should say so out
-loud."* The event being tooled happens eight times a year, for twenty people, in one room, with
-one driver.
+**Load** — per person: held ÷ available, as a bar, over capacity in red with both numbers shown.
+Held is `Σ appetite ÷ n_assignees` over what they are assigned in this cycle, by D-C2. Beside it,
+that person's actual scheduled end date out of `index.spans` — because a green capacity bar next
+to a timeline that runs into November is the failure that stops a room trusting the tool, and
+one column prevents it.
 
 ---
 
-## 6. Three decisions that are yours
+## 4. Open questions
 
-**D-C1. What does `cycle:` mean?**
-*Where it was bet* (never overwritten, so the overrun flag keeps accusing) or *where it is being
-worked* (overwritten on carryover, so the flag clears)? Recommendation: **where it was bet.**
-It preserves the one date judgement the tool makes. Carryover is then shown by
-`cycle == N or (in_progress and cycle < N)`, not by re-stamping.
+**Q1. Does `Support` become a field?** The sheet has it, openproj does not, and it is not the
+same as a reviewer. If it consumes capacity it needs a share; if it is "ask me when stuck" it is
+a name and nothing more. Recommendation: a `support: list[str]` people field that costs **no**
+capacity, added with the cycle page rather than before it.
 
-**D-C2. At which level is capacity charged?**
-On the seed corpus, jcanton's cycle-37 load is **10.0 weeks** charged at leaves (matching the
-scheduler's rollup rule) or **11.0 weeks** charged at pitch level (matching "we bet fourteen
-pitches"). Same person, same instant, a full bet apart. Whichever is chosen, the page must print
-the rule under the total.
+**Q2. Even split, or a share per person?** D-C4 divides appetite by the number of assignees. The
+real sheet writes `Christos 50% + Kostantinos`, which is a share per person per task. The even
+split is one number to maintain instead of N; the share is faithful. Recommendation: even split
+now, and revisit only if a real bet is misrepresented by it.
 
-**D-C3. Is over-capacity a blocker, a warning, or just a number?**
-Recommendation: **just a number**, at least until slice 2 has run twice. A blocker here fails CI
-on the person who honestly declared they were busy — `cli.py:7` already says a warning that fails
-the build is a rule that gets reverted rather than adopted.
+**Q3. Does availability come from the cycle record or from `people.yaml`?** A person's default
+availability is stable; the exception is what varies per cycle. Recommendation: the cycle record
+holds only the exceptions, everyone else defaults to 1.0. The roster stays where it is.
 
 ---
 
-## 7. Gates
+## 5. Gates
 
-**Gate A** — after slice 1, run one real betting meeting off `/?status=ready&status=in_progress`.
-Continue only if somebody asks for the capacity number during the meeting. If nobody does, the
-column is decoration.
+**Gate A** — after slice 1, the timeline redraws with different dates for every multi-assignee
+item. Show it in a planning meeting. Continue only if the new dates look *more* right than the
+old ones to someone who was not in this conversation.
 
-**Gate B** — after two meetings with the column, continue to slice 3 only if somebody asks to
-record a specific person's availability *and already has the number*. A field nobody is
-maintaining by hand today will not start being maintained because it has a form.
+**Gate B** — after slice 3 has run one real betting meeting, keep the availability field only if
+it was filled in before the second meeting. A field nobody maintains is decoration, and the
+sheet's `60% of half cycle` shows how much the team is willing to write down when it matters.
