@@ -313,30 +313,52 @@ def test_the_create_form_offers_the_three_kinds_and_nothing_else(client: TestCli
 def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     """The requiredness rules, carried by the form so it can check before posting.
 
-    Requiredness is status-gated and cumulative (spec §5.1): permissive when an
-    idea is captured, strict once work starts, strictest when it is claimed done.
-    An HTML `required` attribute cannot say that, because what is required depends
-    on the status chosen in the same form a moment ago.
+    Requiredness is status-gated: permissive when an idea is captured, strict once
+    work starts. An HTML `required` attribute cannot say that, because what is
+    required depends on the status chosen in the same form a moment ago.
 
-    Putting the gate on each control keeps the second copy of the rules honest —
-    it is a declaration next to the field it governs rather than a branch buried in
-    a script, and it is visible in the delivered page, so a reviewer can see what
-    the form believes and compare it with `model.validate_all`. That the copy is
-    only a copy is the point of `test_the_server_refusal_is_shown_and_not_swallowed`.
+    Every status that demands the field, not the first one — the rules are a chain
+    of `elif` and not a stack. Read cumulatively, `done` demanded an owner the
+    validator forgives it, so the form refused to create exactly the entity the
+    server would have accepted.
+
+    Putting the gates on each control keeps the second copy honest: it is a
+    declaration next to the field it governs rather than a branch buried in a
+    script, and it is visible in the delivered page. That the copy is only a copy
+    is the point of `test_the_server_refusal_is_shown_and_not_swallowed`.
     """
-    for field, gate in (
+    for field, gates in (
         ("owner", "ready"),
-        ("reviewers", "ready"),
+        ("reviewers", "ready in_progress"),
         ("appetite_weeks", "ready"),
         ("shaped_by", "ready"),
         ("assigned_on", "in_progress"),
         ("prs", "done"),
     ):
-        assert f'data-required-from="{gate}"' in control(new_page, field), field
+        assert f'data-required-at="{gates}"' in control(new_page, field), field
 
-    assert "data-required-from" not in control(new_page, "review_waived"), (
+    assert "data-required-at" not in control(new_page, "review_waived"), (
         "review_waived is the escape hatch from a rule, not a rule"
     )
+
+
+def test_the_gates_are_the_validator_s_own_and_not_a_second_copy(new_page: str):
+    """A hand-written map drifts the day somebody edits `_status_problems`, and the
+    drift shows up as a form that refuses what the server accepts — or worse,
+    accepts what it refuses. These are the validator's gates, run over a blank
+    entity of each kind at each status."""
+    from openproj.model import Pitch, Task, _status_problems
+    from openproj.render import REQUIRED_AT, STATUSES
+
+    for model, kind in ((Pitch, "pitch"), (Task, "task")):
+        for status in STATUSES:
+            blank = model(id=f"{kind}-000000", kind=kind, title="", status=status)
+            demanded = {field for _, field, _, _ in _status_problems(blank) if field}
+            for field in demanded:
+                assert status in REQUIRED_AT[field], (status, field)
+
+    assert "done" not in REQUIRED_AT["owner"], "done forgives the owner ready insists on"
+    assert control(new_page, "status"), "and the control that moves the gates is on the page"
 
 
 def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient):
@@ -481,7 +503,7 @@ def test_the_create_checks_the_status_gate_before_it_posts(new_page: str):
     rules are declared once in the markup rather than re-typed per field."""
     body = script(new_page)
 
-    assert re.search(r"required-?[Ff]rom", body), "the form must consult its own gate"
+    assert re.search(r"required-?[Aa]t", body), "the form must consult its own gate"
     assert "review_waived" in body, (
         "a waiver is how work with nothing to review gets created; a reviewers check "
         "that does not honour it makes the honest answer a fake reviewer"
@@ -747,6 +769,62 @@ def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str
     assert "make a" not in new_page, "the links this replaced"
     assert re.search(r"KIND\.onchange = showKind", new_page)
     assert "location.href" not in re.search(r"function showKind.*?\n\}", new_page, re.S).group(0)
+
+
+def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_page: str):
+    """owner, assignees, reviewers, parent, cycle and blocked_by all point at
+    something that already exists. Typed from memory a login is a typo, an id is a
+    dangling reference the validator rejects after the save rather than before it,
+    and a cycle number is off by one as often as it is right.
+
+    The detail page has had the combobox since it had a form; the create page —
+    the one place where everything is empty and nothing can be copied off the row
+    above — was six free-text boxes."""
+    for field, source in (
+        ("owner", "people"),
+        ("assignees", "people"),
+        ("reviewers", "people"),
+        ("parent", "entities"),
+        ("cycle", "cycles"),
+        ("depends_on", "entities"),
+    ):
+        assert f'data-suggest="{source}"' in control(new_page, field), field
+
+    # And the widget that reads them is on the page, wired to every one at once.
+    assert "for (const input of document.querySelectorAll('[data-suggest]'))" in new_page
+    suggestions = json.loads(
+        re.search(r'<script id="suggest"[^>]*>(.*?)</script>', new_page, re.S).group(1)
+    )
+    assert {"people", "entities", "cycles"} <= set(suggestions)
+    assert [entry["value"] for entry in suggestions["people"]] == ["ann", "bo", "cy"]
+
+
+def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
+    """The gates were a dict in `render.py` and nothing on screen said so: the first
+    a person heard of a gate was a refusal after pressing Create.
+
+    Marked on the label and re-marked when the status select moves, because what
+    is required changes under you the moment it does."""
+    facts = re.search(r'<dl id="facts">(.*?)</dl>', new_page, re.S).group(1)
+    marked = re.findall(r"<dt[^>]*>(\w[^<]*)\s*<span class=\"req\" hidden>required</span>", facts)
+
+    assert {"Owner", "Reviewers", "Assigned on", "PRs"} <= set(m.strip() for m in marked)
+    assert "Tags" not in marked, "a field no status demands carries no mark"
+    # Only in the form, and only for the status in force: the mark is toggled, and
+    # a mark that could not be taken off would be an asterisk beside every field.
+    assert "mark.hidden = !demanded" in new_page
+    assert "form.addEventListener('change', () => markRequired(form));" in new_page
+    assert "article.entity:not(.editing) .req { display: none; }" in new_page
+
+
+def test_the_create_button_follows_the_form_it_commits(new_page: str):
+    """It sat above the title, so the last thing on screen after filling a form in
+    was the body textarea and the action was a scroll back up. The bar is sticky,
+    so it is reachable from wherever the form has got to."""
+    assert new_page.index('id="commitbar"') > new_page.index('<dl id="facts">')
+    assert new_page.index('id="commitbar"') > new_page.index('class="field body-field"')
+    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", new_page, re.S)
+    assert '<p class="editbar">' not in new_page, "the bar it replaced"
 
 
 def test_the_columns_and_the_cells_agree_on_their_order(page: str):

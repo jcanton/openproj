@@ -538,6 +538,23 @@ def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
     assert all("," not in person["value"] for person in suggestions["people"])
 
 
+def test_a_cycle_number_is_offered_the_way_every_other_reference_is(seed_index: Index):
+    """It was the one reference on the form typed from memory, and it is a bare
+    number: nothing about `34` says whether it is the cycle running now. Every
+    cycle the plan names, newest first, labelled with the window somebody is
+    actually agreeing to."""
+    from openproj.render import _cycle_numbers, _suggestions
+
+    cycles = _suggestions(seed_index)["cycles"]
+
+    assert [c["value"] for c in cycles] == [
+        str(n) for n in sorted(_cycle_numbers(seed_index), reverse=True)
+    ]
+    dated = next(c for c in cycles if int(c["value"]) in seed_index.cycles)
+    starts, ends = seed_index.cycles[int(dated["value"])]
+    assert dated["label"] == f"{starts} → {ends}"
+
+
 # --- the people page --------------------------------------------------------
 
 
@@ -1302,6 +1319,116 @@ def test_an_empty_field_is_a_dash_and_not_a_word(demo_rendered: tuple[Path, Inde
     assert '<span class="empty">—</span>' in body
     for word in (">nothing<", ">none<", ">not scheduled<"):
         assert word not in body, word
+
+
+def test_the_shaping_doc_does_not_repeat_the_heading_it_is_under(
+    rendered: Path, seed_index: Index
+):
+    """In git that leading `# Title` is the only thing naming the file, so nearly
+    every doc in the corpus opens with it. On the page it lands directly under an
+    `<h1>` of the same words at the same weight, which reads as a rendering fault
+    rather than as a convention."""
+    body = read(rendered, "detail.html")
+    repeated = next(
+        e for e in seed_index.entities.values() if e.body.lstrip().startswith(f"# {e.title}")
+    )
+    article = re.search(rf'<article id="{repeated.id}".*?</article>', body, re.S).group(0)
+    headings = re.findall(r"<h[1-3][^>]*>(.*?)</h[1-3]>", article, re.S)
+
+    assert sum(repeated.title in heading for heading in headings) == 1
+    # The file is untouched: the heading is what names it everywhere else.
+    assert repeated.body.lstrip().startswith("# ")
+
+
+def test_a_first_heading_that_is_not_the_title_is_left_alone(rendered: Path, seed_index: Index):
+    """Only the repeat goes. A doc that opens on `## Problem` opens on Problem."""
+    body = read(rendered, "detail.html")
+    differs = next(
+        e
+        for e in seed_index.entities.values()
+        if e.body.lstrip().startswith("# ") and not e.body.lstrip().startswith(f"# {e.title}")
+    )
+    article = re.search(rf'<article id="{differs.id}".*?</article>', body, re.S).group(0)
+    first = differs.body.lstrip().splitlines()[0].lstrip("# ").strip()
+
+    assert f"<h1>{first}</h1>" in article
+
+
+def test_the_leading_heading_is_matched_on_words_and_not_on_bytes():
+    """A heading wrapped across two lines, or double-spaced, or in different case
+    is the same heading — and a doc whose first section merely starts with the
+    same word is not."""
+    from openproj.render import _drop_repeated_title
+
+    assert _drop_repeated_title("# Port  ecRad\n\nBody.\n", "Port ecRad") == "Body.\n"
+    assert _drop_repeated_title("## port ecrad ##\n\nBody.\n", "Port ecRad") == "Body.\n"
+    assert _drop_repeated_title("# Port ecRad shortwave\n\nB.\n", "Port ecRad").startswith("#")
+    assert _drop_repeated_title("Plain prose.\n", "Plain prose") == "Plain prose.\n"
+
+
+def test_the_detail_page_wears_the_same_chips_every_other_view_wears(rendered: Path):
+    """Status had a colour on the graph, on the timeline, in the table and in the
+    bet table, and was a bold word here — on the page where somebody decides what
+    to do about it."""
+    body = read(rendered, "detail.html")
+
+    assert '<span class="chip st-in_progress">In progress</span>' in body
+    assert '<span class="chip kind-task">Task</span>' in body
+    assert "<b>in_progress</b>" not in body
+
+
+def test_the_line_that_says_a_bet_does_not_fit_is_drawn_as_a_problem(
+    demo_rendered: tuple[Path, Index],
+):
+    """It wore the same muted italic as every other derived value, so the sentence
+    saying this overruns its cycle read exactly like the sentence saying when it
+    starts. It stays italic — it is still computed — and gains the warning
+    colour."""
+    out, index = demo_rendered
+    body = read(out, "detail.html")
+    over = next(i for i, span in index.spans.items() if span.overruns_cycle_weeks)
+    article = re.search(rf'<article id="{over}".*?</article>', body, re.S).group(0)
+    row = re.search(r"<dt[^>]*>Scheduled</dt>\s*<dd([^>]*)>(.*?)</dd>", article, re.S)
+
+    assert "derived" in row.group(1), "still marked as computed"
+    assert '<span class="overrun">' in row.group(2)
+    assert "dt.derived, dd.derived { font-style: italic; }" in body
+    assert ".overrun { color: var(--sev-warn); font-weight: 600; }" in body
+
+
+def test_the_detail_column_is_centred_and_the_facts_sit_beside_the_document(rendered: Path):
+    """It was an 832px article flush left with a full-height rule down its right
+    edge, which on a wide screen is not a document — it is the left half of a
+    two-pane layout whose right half failed to load.
+
+    A container query and not a media query: the width that decides whether the
+    facts fit beside the prose is the column's, and the reader sets that with the
+    grip. A window breakpoint would put a sidebar on a column dragged to 400px."""
+    body = read(rendered, "detail.html")
+
+    assert re.search(r"article\.entity \{[^}]*margin: 0 auto", body, re.S)
+    assert "container-type: inline-size" in body
+    assert "@container (min-width: 56rem)" in body
+    assert re.search(r"\.panes > \.facts \{[^}]*grid-column: 2", body, re.S)
+    assert re.search(r"\.panes > \.main \{[^}]*grid-column: 1", body, re.S)
+    # The grip is a handle now, not a border: a full-height rule in --line is
+    # exactly how a page draws the edge of a pane.
+    assert re.search(r"#grip::before \{[^}]*height: 48px", body, re.S)
+    # And it belongs to a document. On the index every article is hidden, so it
+    # measured zero and parked itself down the left edge of the list.
+    assert "grip.hidden = !article" in body
+    assert "candidate.offsetParent !== null" in body
+
+
+def test_every_page_echoes_the_iso_value_of_a_date_box(rendered: Path):
+    """Every date the plan prints is ISO and every `<input type=date>` is drawn in
+    the reader's locale, so one desk edits 2026-09-01 as 01/09/2026 and the next
+    as 09/01/2026. The box keeps its locale; the stored value is echoed beside
+    it."""
+    for name in PAGES:
+        body = read(rendered, name)
+        assert "document.querySelectorAll('input[type=date]')" in body, name
+        assert ".iso { display: block;" in body, name
 
 
 # --- cycles -----------------------------------------------------------------

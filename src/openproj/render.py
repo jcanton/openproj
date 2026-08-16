@@ -465,6 +465,28 @@ _REMOTE_IMG = re.compile(r'<img\s+src="(https?://[^"]+)"(?:[^>]*?alt="([^"]*)")?
 _ASSET_IMG = re.compile(r'<img\s+src="assets/([0-9a-f]{16}\.(?:png|jpg|gif|webp))"')
 
 
+# A leading `# Title` line, with the optional closing hashes ATX headings allow.
+_LEADING_HEADING = re.compile(r"\A\s*#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*(?:\r?\n|\Z)")
+
+
+def _drop_repeated_title(body: str, title: str) -> str:
+    """The shaping document's own first heading, when the page already is it.
+
+    Nearly every doc in the corpus opens by restating its title, because in git
+    that heading is the only thing naming the file. On the page it lands directly
+    under an `<h1>` saying the same words at the same weight, which reads as a
+    rendering fault rather than as a convention. The file keeps its heading — that
+    is what git holds and what the editor shows — and only the reading view drops
+    it. Whitespace is normalised before comparing so a wrapped or double-spaced
+    heading still counts; anything else is somebody's real first section.
+    """
+    match = _LEADING_HEADING.match(body)
+    if not match:
+        return body
+    same = " ".join(match.group(1).split()).casefold() == " ".join(title.split()).casefold()
+    return body[match.end() :].lstrip("\n") if same else body
+
+
 def _body_html(entity: Entity, links: Links = STATIC) -> str:
     """The shaping document, rendered, with PR references made clickable.
 
@@ -476,7 +498,7 @@ def _body_html(entity: Entity, links: Links = STATIC) -> str:
     it travels with the clone, and it is served from the same origin as the page.
     Those are drawn.
     """
-    return _after_markdown(_MD.render(entity.body), links)
+    return _after_markdown(_MD.render(_drop_repeated_title(entity.body, entity.title)), links)
 
 
 def _after_markdown(html: str, links: Links) -> str:
@@ -710,6 +732,42 @@ a, a:visited { color: var(--accent); }
                  border: 1px solid var(--line-strong); background: var(--surface);
                  color: var(--fg); cursor: pointer; }
 #clear-filters:hover { border-color: var(--accent); color: var(--accent); }
+/* The one action that writes, on every page that writes. It follows the form it
+   commits instead of sitting above it, and it is sticky rather than merely last:
+   these forms are the length of the plan, and a Save at the far end of one is a
+   Save you go looking for while holding an unsaved decision in your head.
+   Defined here rather than per page because four pages have one, and four copies
+   of a commit bar is four answers to "have I saved this yet". */
+.commitbar {
+  /* Under the suggestion popup (20) and under the shell's banner (40): a bar
+     that is always on screen is always in front of something. */
+  position: sticky; bottom: 0; z-index: 10;
+  display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap;
+  margin: 1.5rem 0 0; padding: .5rem .75rem;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+}
+/* Unsaved work is a warning, not decoration: this is the state in which closing
+   the tab loses something. */
+.commitbar.dirty { border-color: var(--warn); }
+#unsaved { font-size: 12px; color: var(--muted); }
+.commitbar.dirty #unsaved { color: var(--warn); font-weight: 600; }
+#save, .commitbar button { font: inherit; font-size: 13px; padding: .25rem .8rem;
+        border-radius: 2px; border: 1px solid var(--line-strong);
+        background: var(--surface); color: var(--fg); cursor: pointer; }
+#save:disabled { color: var(--muted); cursor: default; }
+#save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+/* What the status chosen in this form will make the server refuse it without.
+   A warning colour because it is a refusal waiting to happen, and a word rather
+   than an asterisk because an asterisk means "required" only to people who have
+   already been told. */
+.req { font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+       color: var(--sev-warn); font-weight: 600; }
+/* Every date the plan renders is ISO; every `<input type=date>` renders in the
+   browser's locale. So one reader edits 2026-09-01 as 01/09/2026 and the next as
+   09/01/2026, and neither can tell which. The box keeps its locale — that is
+   what it is typed in — and the value the file holds is echoed beside it. */
+.iso { display: block; font-family: var(--font-mono); font-size: 11px;
+       color: var(--muted); font-variant-numeric: tabular-nums; }
 /* Inside the body, not above it or beside it: an empty table with the message
    somewhere else is still a header row over a void. Two tables draw one now —
    the plan's rows and the people's — so the shape of "there is nothing here"
@@ -764,6 +822,21 @@ THEME.onclick = () => {
 // so it follows the system as it changes.
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', labelTheme);
 labelTheme();
+
+// The one format that never moves. A date box is drawn by the browser in the
+// reader's locale, so the same stored 2026-09-01 reads as 01/09/2026 here and
+// 09/01/2026 one desk over, while every date the plan *prints* is ISO. The echo
+// carries the class the box carries, so it appears and disappears with it rather
+// than repeating a value that is already on screen in read mode.
+for (const box of document.querySelectorAll('input[type=date]')) {
+  const echo = document.createElement('span');
+  echo.className = box.classList.contains('field') ? 'iso field' : 'iso';
+  const show = () => { echo.textContent = box.value || '—'; };
+  show();
+  box.addEventListener('input', show);
+  box.addEventListener('change', show);
+  box.insertAdjacentElement('afterend', echo);
+}
 </script>
 {% if live %}
 <div id="moved" hidden></div>
@@ -2553,9 +2626,9 @@ dd, td.edit { position: relative; }
 _CONTROL = """
 {% if f.type in ("status", "priority") %}
 <select name="{{ f.name }}" data-type="text" class="field"
-        {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+        {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
   {% for s in (statuses if f.type == "status" else priorities) %}
-  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ s }}</option>
+  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ s|human }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
@@ -2563,13 +2636,52 @@ _CONTROL = """
        {% if f.value %}checked{% endif %}>
 {% elif f.type == "date" %}
 <input type="date" name="{{ f.name }}" data-type="date" value="{{ f.text }}" class="field"
-       {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+       {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% else %}
 <input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}" class="field"
        autocomplete="off"
        {% if f.list %}data-suggest="{{ f.list }}"{% endif %}
-       {% if f.gate %}data-required-from="{{ f.gate }}"{% endif %}>
+       {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% endif %}
+"""
+
+# One script for both forms that carry a status. Written once because the create
+# page and the detail page ask the same question of the same controls, and two
+# copies of a validation courtesy is one copy that quietly stops matching.
+_REQUIRED_JS = """
+// The word printed beside a control, which is the word somebody is looking at.
+// The `<dt>` holds the label and then the mark, so its first node is the name.
+function labelOf(control) {
+  const dt = control.closest('dd')?.previousElementSibling;
+  return dt ? dt.childNodes[0].textContent.trim() : control.name;
+}
+
+// What the chosen status will make the server refuse this form without. Marked
+// on the label rather than announced after a rejected save: which fields a
+// status demands is the thing you need before you fill the form in, and the
+// rules change under you the moment the status select does.
+function markRequired(form) {
+  const status = form.querySelector('[name=status]')?.value || 'shaping';
+  const waived = form.querySelector('[name=review_waived]')?.checked;
+  for (const control of form.querySelectorAll('[data-required-at]')) {
+    // review_waived is the escape hatch from the reviewer rule, so honouring it
+    // here is the difference between a mark and a nag.
+    const demanded = control.dataset.requiredAt.split(' ').includes(status)
+      && !(control.name === 'reviewers' && waived);
+    if (demanded) control.setAttribute('aria-required', 'true');
+    else control.removeAttribute('aria-required');
+    const mark = control.closest('dd')?.previousElementSibling?.querySelector('.req');
+    if (mark) mark.hidden = !demanded;
+  }
+}
+
+// `change` and not `input`: the two controls that move the gates are a select
+// and a checkbox, and both report on change. It listens on the form so a control
+// that appears later — a kind switch unhides three — is covered without rewiring.
+function watchRequired(form) {
+  form.addEventListener('change', () => markRequired(form));
+  markRequired(form);
+}
 """
 
 
@@ -2579,71 +2691,63 @@ def _control_html(field: dict) -> str:
     )
 
 
-_FIELDS = """
-{% for f in fields %}
-<label>{{ f.name }}{{ f.control|safe }}</label>
-{% endfor %}
-<label class="wide">body
-  <textarea name="body" rows="{{ rows }}">{{ body }}</textarea>
-</label>
-"""
-
-
-def _fields_html(fields: list[dict], body: str, rows: int = 18) -> str:
-    """The same controls whether an entity exists yet or not.
-
-    Rendered through `_control_html` rather than a second copy of the markup: two
-    copies drift the first time one gains an attribute, and the drift shows up as
-    a field that autocompletes when you edit it and not when you create it.
-    """
-    return _ENV.from_string(_FIELDS).render(
-        fields=[{**f, "control": _control_html(f)} for f in fields], body=body, rows=rows
-    )
+# `_FIELDS` and `_fields_html` were the flat list of `<label>field</label>` this
+# replaced, and nothing has called them since the create page became the detail
+# page with nothing in it. They were the last place a raw field name reached a
+# reader, and dead code that still renders is code somebody wires back up.
 
 
 _NEW = """
 <article class="entity editing">
   <p class="back"><a href="{{ links.table }}">← table</a></p>
-  <p class="editbar">
-    <button type="button" id="save">Create</button>
-    <span id="state"></span>
-  </p>
   <h1><input name="title" data-type="text" form="edit" value=""
              class="field title-field" placeholder="Title"></h1>
   <p class="meta">
     <label class="kindpick">kind
       <select id="kind">
         {% for k in kinds %}<option value="{{ k }}"
-          {% if k == kind %}selected{% endif %}>{{ k }}</option>{% endfor %}
+          {% if k == kind %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
       </select>
     </label>
     · the id and the file are the server's to choose</p>
   <form id="edit" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <dl id="facts">
-      {% for row in rows %}
-      <dt data-kinds="{{ row.kinds }}">{{ row.label }}</dt>
-      <dd data-kinds="{{ row.kinds }}">{{ row.control|safe }}</dd>
-      {% endfor %}
-    </dl>
-    <ul id="problems" class="problems" hidden></ul>
-    <p class="field bodybar">
-      <button type="button" id="preview">Preview the body</button>
-      <span class="hint">paste or drop an image to put it in the plan</span>
-      <span class="hint" id="upload"></span>
-    </p>
-    <textarea name="body" class="field body-field" rows="14"
-              placeholder="The shaping document."></textarea>
-    <div class="doc" hidden></div>
+    <div class="panes">
+      <aside class="facts">
+        <dl id="facts">
+          {% for row in rows %}
+          <dt data-kinds="{{ row.kinds }}">{{ row.label }}{% if row.gates %}
+            <span class="req" hidden>required</span>{% endif %}</dt>
+          <dd data-kinds="{{ row.kinds }}">{{ row.control|safe }}</dd>
+          {% endfor %}
+        </dl>
+      </aside>
+      <div class="main">
+        <ul id="problems" class="problems" hidden></ul>
+        <p class="field bodybar">
+          <button type="button" id="preview">Preview the body</button>
+          <span class="hint">paste or drop an image to put it in the plan</span>
+          <span class="hint" id="upload"></span>
+        </p>
+        <textarea name="body" class="field body-field" rows="14"
+                  placeholder="The shaping document."></textarea>
+        <div class="doc" hidden></div>
+      </div>
+    </div>
   </form>
+  <div class="commitbar" id="commitbar">
+    <span id="unsaved">Nothing is written until you press Create</span>
+    <button type="button" id="save">Create</button>
+    <span id="state" role="status"></span>
+  </div>
 </article>
 {{ combobox|safe }}
+<script>{{ required|safe }}</script>
 <script>
 const FORM = document.getElementById('edit');
 const STATE = document.getElementById('state');
 const PROBLEMS = document.getElementById('problems');
 const KIND = document.getElementById('kind');
-const ORDER = STATUS_ORDER_JSON;
 
 // Every kind's fields are on the page and the ones this kind does not have are
 // hidden, rather than each kind being its own round trip. Switching kind after
@@ -2654,6 +2758,9 @@ function showKind() {
 }
 KIND.onchange = showKind;
 showKind();
+// The status select is inside the form, so one listener on the form catches both
+// it and the review_waived checkbox that lets one of its rules off.
+watchRequired(FORM);
 
 function read(control) {
   if (control.dataset.type === 'bool') return control.checked;
@@ -2704,19 +2811,24 @@ document.getElementById('save').onclick = async () => {
     const empty = value === null || (Array.isArray(value) && !value.length);
     const waived = control.name === 'reviewers' &&
       FORM.querySelector('[name=review_waived]')?.checked;
-    const gate = control.dataset.requiredFrom;
-    // Cumulative: a field demanded from `ready` is demanded at every status after
-    // it, which is why this compares positions rather than equality.
-    if (gate && empty && !waived && ORDER.indexOf(status) >= ORDER.indexOf(gate))
-      missing.push(control.name);
+    // The same gates the labels are marked from, so what the form refuses and
+    // what it warned you about cannot be two different lists.
+    const gates = control.dataset.requiredAt;
+    if (gates && empty && !waived && gates.split(' ').includes(status))
+      missing.push(labelOf(control));
     if (!empty) fields[control.name] = value;
   }
   const title = document.querySelector('.title-field');
-  if (title.value.trim()) fields.title = title.value.trim(); else missing.push('title');
+  if (title.value.trim()) fields.title = title.value.trim(); else missing.push('Title');
   if (missing.length) {
+    // The words on the page, not the words in the file: `appetite_weeks` and
+    // `in_progress` are what git holds, and a refusal that names them sends
+    // somebody looking for a field with that label.
+    const chosen = FORM.querySelector('[name=status]');
     PROBLEMS.hidden = false;
-    PROBLEMS.innerHTML =
-      `<li>still needed at status ${status}: ${missing.join(', ')}</li>`;
+    PROBLEMS.innerHTML = `<li>still needed at status ` +
+      `${chosen?.selectedOptions[0]?.textContent.trim() || status}: ` +
+      `${missing.join(', ')}</li>`;
     return;
   }
   const response = await fetch('/api/entity', {
@@ -2749,7 +2861,8 @@ _DETAIL = """
   <ul>
     {% for e in group.entities %}
     <li><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a>
-        <span class="tocmeta">{{ e.kind }} · {{ e.owner or "unowned" }}</span></li>
+        <span class="tocmeta"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>
+          {{ e.owner or "unowned" }}</span></li>
     {% endfor %}
   </ul>
   {% endfor %}
@@ -2757,45 +2870,55 @@ _DETAIL = """
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
   <p class="back"><a href="{{ links.detail }}">← all</a></p>
-  {% if editable %}
-  <p class="editbar">
-    <button type="button" id="toggle">Edit</button>
-    <button type="button" id="save" hidden>Save</button>
-    <span id="state"></span>
-  </p>
-  {% endif %}
   <h1><span class="read">{{ e.title }}</span></h1>
-  <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
+  <p class="meta"><code>{{ e.id }}</code>
+     <span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>
+     <span class="chip st-{{ e.status }}">{{ e.status|human }}</span>
      {% if e.parent %}· in {{ e.parent_link|safe }}{% endif %}</p>
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" class="field title-field">
   {% endif %}
-  <dl id="facts">
-    {% for row in e.rows %}
-    <dt class="{% if row.derived %}derived{% endif %}
-               {% if row.editing_only %}editing-only{% endif %}">{{ row.label }}</dt>
-    <dd class="{% if row.derived %}derived{% endif %}
-               {% if row.editing_only %}editing-only{% endif %}">
-      <span class="read">{{ row.display|safe }}</span>
-      {% if editable and row.control %}{{ row.control|safe }}{% endif %}
-    </dd>
-    {% endfor %}
-  </dl>
-  {% if e.problems %}<ul class="problems">
-    {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
-  <div class="doc read">{{ e.body|safe }}</div>
+  <div class="panes">
+    <aside class="facts">
+      <dl id="facts">
+        {% for row in e.rows %}
+        <dt class="{% if row.derived %}derived{% endif %}
+                   {% if row.editing_only %}editing-only{% endif %}">{{ row.label }}{% if
+          editable and row.gates %} <span class="req" hidden>required</span>{% endif %}</dt>
+        <dd class="{% if row.derived %}derived{% endif %}
+                   {% if row.editing_only %}editing-only{% endif %}">
+          <span class="read">{{ row.display|safe }}</span>
+          {% if editable and row.control %}{{ row.control|safe }}{% endif %}
+        </dd>
+        {% endfor %}
+      </dl>
+    </aside>
+    <div class="main">
+      {% if e.problems %}<ul class="problems">
+        {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+      <div class="doc read">{{ e.body|safe }}</div>
+      {% if editable %}
+      <p class="field bodybar">
+        <button type="button" id="preview">Preview the body</button>
+        <span class="hint">paste or drop an image to put it in the plan</span>
+        <span class="hint" id="upload"></span>
+      </p>
+      <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
+      <div id="body-preview" class="field doc" hidden></div>
+      <div id="conflict" hidden></div>
+      {% endif %}
+    </div>
+  </div>
   {% if editable %}
-    <p class="field bodybar">
-      <button type="button" id="preview">Preview the body</button>
-      <span class="hint">paste or drop an image to put it in the plan</span>
-      <span class="hint" id="upload"></span>
-    </p>
-    <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
-    <div id="body-preview" class="field doc" hidden></div>
-    <div id="conflict" hidden></div>
   </form>
+  <div class="commitbar" id="commitbar">
+    <span id="unsaved">Nothing to save</span>
+    <button type="button" id="toggle">Edit</button>
+    <button type="button" id="save" hidden>Save</button>
+    <span id="state" role="status"></span>
+  </div>
   {% endif %}
 </article>
 {% endfor %}
@@ -2809,7 +2932,12 @@ const saved = localStorage.getItem('openproj:measure');
 if (saved) root.style.setProperty('--measure', saved);
 
 function place() {
-  const article = document.querySelector('article.entity');
+  // The visible one. On the index view every article is hidden, and measuring a
+  // hidden element gives zero — which parked the handle against the left edge of
+  // the page, a rule down the side of a list it has nothing to do with.
+  const article = [...document.querySelectorAll('article.entity')]
+    .find(candidate => candidate.offsetParent !== null);
+  grip.hidden = !article;
   if (article) grip.style.left = article.getBoundingClientRect().right + 'px';
 }
 place();
@@ -2819,7 +2947,9 @@ grip.onpointerdown = event => {
   grip.setPointerCapture(event.pointerId);
   grip.classList.add('dragging');
   const move = e => {
-    const width = Math.max(320, e.clientX - 20);
+    // The column is centred, so its right edge is half a width from the middle of
+    // the window: dragging that edge out by one pixel is two pixels of column.
+    const width = Math.max(320, (e.clientX - innerWidth / 2) * 2);
     root.style.setProperty('--measure', width + 'px');
     place();
   };
@@ -2834,6 +2964,7 @@ grip.onpointerdown = event => {
 };
 </script>
 {% if editable %}{{ combobox|safe }}{% endif %}
+{% if editable %}<script>{{ required|safe }}</script>{% endif %}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
 // field as this tab last saw it, overwriting whatever somebody else changed while
@@ -2877,12 +3008,37 @@ function changed() {
   return fields;
 }
 
+// What has been typed and not committed, said out loud in the bar that commits
+// it. An editor whose only signal is a button that always looks the same is an
+// editor you close with work in it.
+const BAR = document.getElementById('commitbar');
+const UNSAVED = document.getElementById('unsaved');
+
+function dirty() {
+  let fields = {};
+  // A number typed as a word throws in `read`; that is Save's message to deliver,
+  // not a reason for the counter to stop counting the rest.
+  try { fields = changed(); } catch (error) { fields = {}; }
+  const count = Object.keys(fields).length + (BODY.value === ORIGINAL_BODY ? 0 : 1);
+  const editing = document.querySelector('article.entity').classList.contains('editing');
+  BAR.classList.toggle('dirty', count > 0);
+  UNSAVED.textContent = count
+    ? `${count} unsaved change${count === 1 ? '' : 's'}`
+    : (editing ? 'Nothing changed yet' : 'Nothing to save');
+}
+FORM.addEventListener('input', dirty);
+FORM.addEventListener('change', dirty);
+// The status select decides which fields the server will refuse this without,
+// and the checkbox beside it lets one of those rules off.
+watchRequired(FORM);
+
 function show(editing) {
   // One class on the article. Each fact is a single row whose value swaps for its
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
   document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
+  dirty();
 }
 
 document.getElementById('toggle').onclick = () => {
@@ -2982,6 +3138,9 @@ function show() {
   }
   document.querySelector('.toc').style.display = found ? 'none' : '';
   if (found) scrollTo(0, 0);
+  // The width handle belongs to whichever document is on screen, and to no
+  // document when the page is the index.
+  place();
 }
 addEventListener('hashchange', show);
 show();
@@ -2993,19 +3152,50 @@ _DETAIL_STYLE = """
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
 .tocgroup .tally { font-weight: 400; letter-spacing: 0; }
 .toc ul { margin: 0; }
+/* Centred, and a container so the panes below can ask how wide the column
+   actually is. It sat flush left with a full-height rule down its right edge,
+   which on a wide screen is not a document — it is the left half of a two-pane
+   layout whose right half failed to load. */
 article.entity {
-  width: var(--measure, 52rem); max-width: 100%; margin-bottom: 3rem; position: relative;
+  width: var(--measure, 64rem); max-width: 100%; margin: 0 auto 3rem; position: relative;
+  container-type: inline-size;
 }
+/* The facts beside the document rather than stacked on top of it: the reader
+   comes for the shaping doc and glances at the facts, and a screen-and-a-half of
+   metadata before the first sentence is the wrong way round. A container query
+   and not a media query, because the width that decides this is the column's,
+   which the reader sets with the grip — not the window's. */
+.panes { display: grid; gap: 0 2.5rem; }
+@container (min-width: 56rem) {
+  /* 20rem and not less: these are the controls the entity is edited through, and
+     a reviewers box too narrow to show three logins is a sidebar that looks
+     tidier than the page it replaced and is worse to use. */
+  .panes { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; }
+  .panes > .main { grid-column: 1; grid-row: 1; }
+  .panes > .facts { grid-column: 2; grid-row: 1; border-left: 1px solid var(--line);
+                    padding-left: 1.5rem; }
+  /* Half a sidebar is not two columns. Stacked, each fact is a caption over its
+     value and reads down the edge of the page. */
+  .panes > .facts dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .panes > .facts dt { padding-top: .7rem; }
+  .panes > .facts dt:first-child { padding-top: 0; }
+}
+/* A handle, not a border. It was a full-height 2px rule in --line, which is
+   exactly how a page draws the edge of a pane; this is a short grip that says
+   what it is when you reach for it. */
 #grip {
   position: fixed; top: 0; bottom: 0; width: 10px; cursor: col-resize; z-index: 30;
 }
 #grip::before {
-  content: ""; position: absolute; inset: 0 4px; background: var(--line);
-  transition: background .15s;
+  content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 48px;
+  transform: translateY(-50%); border-radius: 2px; background: var(--line-strong);
+  opacity: .35; transition: opacity .15s, background .15s;
 }
-#grip:hover::before, #grip.dragging::before { background: var(--accent); }
+#grip:hover::before, #grip.dragging::before { opacity: 1; background: var(--accent); }
 article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
-.meta { color: var(--muted); margin-top: 0; }
+.meta { color: var(--muted); margin-top: 0; display: flex; flex-wrap: wrap;
+        gap: .4rem; align-items: baseline; }
+.meta code { font-family: var(--font-mono); font-size: 12px; }
 .back { margin: 0 0 .5rem; font-size: 12px; }
 .editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
 #state { color: var(--muted); font-size: 12px; }
@@ -3015,6 +3205,13 @@ dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
      padding-top: .35rem; }
 dd { margin: 0; }
 dt.derived, dd.derived { font-style: italic; }
+/* Still italic, because it is still computed and typing over it would change
+   nothing. Coloured, because it is the one computed line that is a problem. */
+.overrun { color: var(--sev-warn); font-weight: 600; }
+/* The marks belong to the form, so they are not on the page when there is no
+   form on it — in read mode a row saying REQUIRED beside a filled-in value is
+   an instruction with nothing to do. */
+article.entity:not(.editing) .req { display: none; }
 .problems { color: var(--warn); padding-left: 1.1rem; }
 
 /* The two modes of the same rows. Controls are hidden until the article is
@@ -3076,23 +3273,40 @@ EDITABLE: dict[str, str] = {
 STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
 PRIORITIES = ("high", "medium", "low")
 
-# Which status first demands each field. Cumulative, per spec 5.1: permissive when
-# an idea is captured, strict once work starts, strictest when it is claimed done.
-# An HTML `required` attribute cannot express this, because what is required
-# depends on the status chosen in the same form a moment ago. This is a copy of
-# validate_all and is only ever a courtesy — the server's answer is the truth.
-REQUIRED_FROM = {
-    "owner": "ready",
-    "reviewers": "ready",
-    "effort_weeks": "ready",
-    "appetite_weeks": "ready",
-    "shaped_by": "ready",
-    "assigned_on": "in_progress",
-    "prs": "done",
-}
+def _required_at() -> dict[str, tuple[str, ...]]:
+    """Which statuses demand each field, asked of the validator rather than copied.
+
+    An HTML `required` attribute cannot express this: what a form must hold depends
+    on the status chosen in that same form a moment ago. So the page carries the
+    gates itself — and the previous version of this map carried them as "the first
+    status that demands it", read cumulatively, which is not what the rules say.
+    `_status_problems` is a chain of `elif`: `done` wants a PR and forgives the
+    owner that `ready` insists on, deliberately, because migrated history often
+    cannot name who owned something in 2025. Read cumulatively the form refused to
+    create exactly the entity the server would have accepted.
+
+    Derived by running the validator's own gate over a blank entity of each kind at
+    each status and collecting the fields it names. It cannot drift from the rule
+    it mirrors, because it *is* the rule. It is still only a courtesy: the server's
+    answer is the truth, and `test_the_server_refusal_is_shown_and_not_swallowed`
+    is what says so.
+    """
+    from .model import _status_problems
+
+    gates: dict[str, list[str]] = {}
+    for kind, model in (("project", Project), ("pitch", Pitch), ("task", Task)):
+        for status in STATUSES:
+            blank = model(id=f"{PREFIX[kind]}-000000", kind=kind, title="", status=status)
+            for _, field, _, _ in _status_problems(blank):
+                if field and status not in gates.setdefault(field, []):
+                    gates[field].append(status)
+    return {field: tuple(statuses) for field, statuses in gates.items()}
+
+
 # Fields only one kind has, so the create form can hide the rest.
 KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
+REQUIRED_AT = _required_at()
 
 # The reader's name for a field. `effort_weeks` and `appetite_weeks` are two
 # storage fields holding one quantity, and calling it Effort here, Appetite on the
@@ -3178,6 +3392,10 @@ PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
 SUGGESTS = {
     "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
     "parent": "entities", "depends_on": "entities", "tags": "tags", "prs": "prs",
+    # A cycle number is a reference too. Typed from memory it is off by one as
+    # often as it is right, and an entity bet into a cycle nobody has named is
+    # weeks that never appear on anybody's capacity.
+    "cycle": "cycles",
 }
 
 
@@ -3188,7 +3406,7 @@ def _editable_for(entity: Entity) -> list[dict]:
             "name": name,
             "type": kind,
             "value": getattr(entity, name),
-            "gate": REQUIRED_FROM.get(name),
+            "gates": REQUIRED_AT.get(name, ()),
             "list": SUGGESTS.get(name),
             "text": ", ".join(str(v) for v in getattr(entity, name))
             if kind == "list"
@@ -3236,6 +3454,12 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             display = ", ".join(_pr_link(ref) for ref in entity.prs) or empty
         elif name == "review_waived":
             display = "waived" if entity.review_waived else empty
+        elif name == "status":
+            # The same chip the table, the people page and the bet table wear. A
+            # status is the one field on this page every other view colours.
+            display = f'<span class="chip st-{entity.status}">{_human(entity.status)}</span>'
+        elif name == "priority":
+            display = _human(entity.priority)
         elif field["type"] == "list":
             display = field["text"] or empty
         else:
@@ -3245,6 +3469,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 "label": LABELS.get(name, name),
                 "display": display,
                 "control": _control_html(field),
+                "gates": field["gates"],
                 "derived": False,
                 # "Review waived: no" is a line that says nothing. The row still
                 # exists while editing, because turning the waiver on is the whole
@@ -3252,8 +3477,15 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 "editing_only": name == "review_waived" and not entity.review_waived,
             }
         )
+    # The one derived line on the page that is a decision and not a fact. It wore
+    # the same muted italic as every other computed value, so the sentence that
+    # says this bet does not fit read exactly like the sentence saying when it
+    # starts. It keeps the italic — it is still computed, and pretending otherwise
+    # would invite somebody to edit it — and gains the warning colour on top.
     overrun = (
-        f" · overruns cycle {entity.cycle} by {span.overruns_cycle_weeks:.1f} weeks"
+        f' · <span class="overrun"><span class="sev-mark sev-mark-warn"'
+        f' aria-hidden="true">▲</span> overruns cycle {entity.cycle}'
+        f" by {span.overruns_cycle_weeks:.1f} weeks</span>"
         if span and span.overruns_cycle_weeks
         else ""
     )
@@ -3262,6 +3494,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             "label": "Scheduled",
             "display": (f"{span.start} → {span.end}{overrun}" if span else empty),
             "control": "",
+            "gates": (),
             "derived": True,
             "editing_only": False,
         }
@@ -3272,6 +3505,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 "label": "Why then",
                 "display": why.text,
                 "control": "",
+                "gates": (),
                 "derived": True,
                 "editing_only": False,
             }
@@ -3281,6 +3515,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             "label": "Blocks",
             "display": _links(index.blocks[entity.id], index, links) or empty,
             "control": "",
+            "gates": (),
             "derived": True,
             "editing_only": False,
         }
@@ -3353,7 +3588,7 @@ def _new_rows() -> list[dict]:
             row = rows.setdefault(
                 field["name"],
                 {"label": LABELS.get(field["name"], field["name"]),
-                 "control": _control_html(field), "kinds": []},
+                 "control": _control_html(field), "gates": field["gates"], "kinds": []},
             )
             row["kinds"].append(kind)
     return [{**row, "kinds": " ".join(row["kinds"])} for row in rows.values()]
@@ -3375,8 +3610,8 @@ def render_new(
         base_commit=base_commit,
         links=links,
         combobox=_combobox_html(index),
+        required=_REQUIRED_JS,
     )
-    body = body.replace("STATUS_ORDER_JSON", json.dumps(list(STATUSES)))
     return _page(f"openproj — new {kind}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 
@@ -3430,6 +3665,20 @@ def _suggestions(index: Index) -> dict:
             {"value": i, "label": e.title} for i, e in sorted(index.entities.items())
         ],
         "tags": [{"value": t, "label": ""} for t in sorted(tags)],
+        # Newest first: the cycle being bet into is nearly always the highest
+        # number, and the label is the window, because 37 means nothing and
+        # "2026-08-24 → 2026-10-04" is the thing being agreed to.
+        "cycles": [
+            {
+                "value": str(number),
+                "label": (
+                    f"{index.cycles[number][0]} → {index.cycles[number][1]}"
+                    if number in index.cycles
+                    else "no dates"
+                ),
+            }
+            for number in sorted(_cycle_numbers(index), reverse=True)
+        ],
     }
 
 
@@ -3857,27 +4106,9 @@ document.getElementById('add').onclick = () => {
 """
 
 _CYCLE_STYLE = """
-/* The one action on the page, and it follows the forms it commits instead of
-   sitting above them. Sticky rather than merely last: the betting table is the
-   length of the plan, and a Save button at either end of it is a Save button you
-   have to go looking for while holding an unsaved decision in your head. */
-.commitbar {
-  /* Under the suggestion popup (20) and under the shell's banner (40): a bar
-     that is always on screen is always in front of something. */
-  position: sticky; bottom: 0; z-index: 10;
-  display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap;
-  margin: 1.5rem 0 0; padding: .5rem .75rem;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
-}
-/* Unsaved work is a warning, not decoration: this is the state in which closing
-   the tab loses something. */
-.commitbar.dirty { border-color: var(--warn); }
-#unsaved { font-size: 12px; color: var(--muted); }
-.commitbar.dirty #unsaved { color: var(--warn); font-weight: 600; }
-#save { font: inherit; font-size: 13px; padding: .25rem .8rem; border-radius: 2px;
-        border: 1px solid var(--line-strong); background: var(--surface);
-        color: var(--fg); cursor: pointer; }
-#save:disabled { color: var(--muted); cursor: default; }
+/* .commitbar, #unsaved and #save are the shell's: the cycle page was the first
+   to need a bar that says whether the page is saved, and then the detail page
+   and the create page needed the same one. */
 /* A destructive control asks before it acts, and the question replaces the
    glyph rather than appearing beside it, so the row does not jump. */
 .confirm { font-size: 12px; color: var(--warn); }
@@ -3920,7 +4151,6 @@ button.drop:hover { color: var(--danger); }
 tr.carried td { color: var(--muted); }
 #bets tr.pending td { box-shadow: inset 3px 0 0 -1px var(--accent); }
 #bets tr.pending td:first-child { box-shadow: inset 3px 0 0 0 var(--accent); }
-#save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 
 /* The cycles index. One card per cycle, and the sentence the method turns on —
    this much bet, that much to bet with — is the largest thing on it. */
@@ -4671,6 +4901,7 @@ def render_detail(
         base_commit=base_commit or "",
         statuses=STATUSES,
         combobox=_combobox_html(index),
+        required=_REQUIRED_JS,
     )
     return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
@@ -4689,7 +4920,11 @@ def _facets_html(index: Index) -> str:
 
 def _combobox_html(index: Index | None) -> str:
     """The suggestion data and the widget that filters it, for any page with inputs."""
-    data = _suggestions(index) if index else {"people": [], "entities": [], "tags": []}
+    data = (
+        _suggestions(index)
+        if index
+        else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
+    )
     return _COMBOBOX.replace("SUGGEST_JSON", json.dumps(data))
 
 

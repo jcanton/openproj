@@ -59,6 +59,13 @@ def controls(html: str) -> set[str]:
     return set(re.findall(r'<(?:input|textarea|select)[^>]*\bname="([^"]+)"', html))
 
 
+def control(html: str, name: str) -> str:
+    """The one tag that owns a field, so its attributes can be read."""
+    match = re.search(rf'<(?:input|textarea|select)[^>]*\bname="{name}"[^>]*>', html)
+    assert match, f"no control named {name!r}"
+    return match.group(0)
+
+
 # --------------------------------------------------------------------------- #
 # What the page offers
 # --------------------------------------------------------------------------- #
@@ -126,6 +133,61 @@ def test_the_editor_pulls_in_no_library_at_all(page: str):
     assert "codemirror" not in page.lower()
     assert "CodeMirror" not in page
     assert not re.search(r"<script[^>]+src=", page)
+
+
+def test_edit_and_save_follow_the_thing_they_commit(page: str):
+    """Edit sat above the title, so on an entity with a shaping doc the action was
+    a scroll away from every field it acted on. The bar is sticky and it is the
+    same bar the cycle page and the create page carry, because three answers to
+    "have I saved this yet" is three ways to close a tab with work in it."""
+    assert page.index('id="commitbar"') > page.index('<dl id="facts">')
+    assert page.index('id="commitbar"') > page.index('class="field body-field"')
+    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", page, re.S)
+    assert '<p class="editbar">' not in page, "the bar it replaced"
+    # And both buttons are in it, so Cancel is never somewhere else from Save.
+    bar = re.search(r'<div class="commitbar".*?</div>', page, re.S).group(0)
+    assert 'id="toggle"' in bar and 'id="save"' in bar
+
+
+def test_the_bar_says_how_much_is_unsaved(page: str):
+    """A button that looks the same whether or not anything has been typed is a
+    button you press to find out. The count is of changed fields plus the body,
+    because those are exactly what a save would send."""
+    assert 'id="unsaved"' in page
+    assert "BAR.classList.toggle('dirty', count > 0)" in page
+    assert re.search(r"unsaved change\$\{count === 1 \? '' : 's'\}", page)
+    assert ".commitbar.dirty { border-color: var(--warn); }" in page
+
+
+def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: str):
+    """The rules were a dict in `render.py` and nowhere on screen. Marked live,
+    because moving a task to in_progress is the moment `assigned_on` starts
+    mattering — and the moment nobody is looking at the validator."""
+    assert 'data-required-at="in_progress"' in control(page, "assigned_on")
+    assert 'data-required-at="ready in_progress"' in control(page, "reviewers")
+    assert "function markRequired(form)" in page
+    assert "form.addEventListener('change', () => markRequired(form));" in page
+    # The waiver is a rule being let off, not a rule being broken.
+    assert "control.name === 'reviewers' && waived" in page
+
+
+def test_a_date_box_says_what_it_will_store(page: str):
+    """`assigned_on` is printed 2026-07-06 in the read view and drawn 07/06/2026 or
+    06/07/2026 in the control that edits it, depending on where the reader is
+    sitting. The echo is the value the file gets."""
+    assert 'type="date"' in control(page, "assigned_on")
+    assert "document.querySelectorAll('input[type=date]')" in page
+    assert "echo.className = box.classList.contains('field') ? 'iso field' : 'iso'" in page
+
+
+def test_the_facts_read_as_a_column_beside_the_document(page: str):
+    """One `<article>` still — the sidebar is a pane inside the entity, not a
+    second entity — and the prose keeps the measure while the facts take the
+    space that was empty to the right of it."""
+    assert page.count("<article") == 1
+    assert '<aside class="facts">' in page
+    assert page.index('<aside class="facts">') < page.index('<div class="main">')
+    assert re.search(r"article\.entity \{[^}]*margin: 0 auto", page, re.S)
 
 
 # --------------------------------------------------------------------------- #
