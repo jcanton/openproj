@@ -383,6 +383,7 @@ a, a:visited { color: var(--accent); }
                 letter-spacing: 0; color: inherit; }
 #q { font: inherit; font-size: 13px; padding: .15rem .3rem; min-width: 16rem; }
 .hint { color: var(--muted); font-size: 12px; }
+.empty { color: var(--line-strong); }
 #moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent);
          color: var(--on-accent);
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
@@ -1917,25 +1918,29 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     span = index.spans.get(entity.id)
     why = index.explanations.get(entity.id)
     rows = []
+    # One mark for "there is nothing here", everywhere. Spelled-out words —
+    # `nothing`, `none`, `no` — sit at the same weight as a real value and have
+    # to be read before you know the row is empty; a dash is empty at a glance.
+    empty = '<span class="empty">—</span>'
     for field in _editable_for(entity):
         name = field["name"]
         if name == "title":
             continue
         if name == "depends_on":
-            display = _links(index.blocked_by[entity.id], index, links) or "nothing"
+            display = _links(index.blocked_by[entity.id], index, links) or empty
         elif name == "parent":
             # By title and linked, the way blockers already read. An id is what
             # the field stores; it is not what anybody is looking for when they
             # ask what this belongs to.
-            display = _links([entity.parent], index, links) if entity.parent else "nothing"
+            display = _links([entity.parent], index, links) if entity.parent else empty
         elif name == "prs":
-            display = ", ".join(_pr_link(ref) for ref in entity.prs) or "none"
+            display = ", ".join(_pr_link(ref) for ref in entity.prs) or empty
         elif name == "review_waived":
-            display = "waived" if entity.review_waived else "no"
+            display = "waived" if entity.review_waived else empty
         elif field["type"] == "list":
-            display = field["text"] or "—"
+            display = field["text"] or empty
         else:
-            display = str(field["text"]) if field["text"] not in ("", None) else "—"
+            display = str(field["text"]) if field["text"] not in ("", None) else empty
         rows.append(
             {
                 "label": LABELS.get(name, name),
@@ -1956,7 +1961,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     rows.append(
         {
             "label": "Scheduled",
-            "display": (f"{span.start} → {span.end}{overrun}" if span else "not scheduled"),
+            "display": (f"{span.start} → {span.end}{overrun}" if span else empty),
             "control": "",
             "derived": True,
             "editing_only": False,
@@ -1975,7 +1980,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     rows.append(
         {
             "label": "Blocks",
-            "display": _links(index.blocks[entity.id], index, links) or "nothing",
+            "display": _links(index.blocks[entity.id], index, links) or empty,
             "control": "",
             "derived": True,
             "editing_only": False,
@@ -2004,7 +2009,7 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
                 "size": f"{size:g} weeks" + (" (assumed)" if defaulted else ""),
                 "assigned_on": entity.assigned_on,
                 "cycle": entity.cycle,
-                "span": f"{span.start} → {span.end}" if span else "not scheduled",
+                "span": f"{span.start} → {span.end}" if span else "—",
                 "overrun": (
                     f"overruns cycle {entity.cycle} by {span.overruns_cycle_weeks:.1f} weeks"
                     if span and span.overruns_cycle_weeks

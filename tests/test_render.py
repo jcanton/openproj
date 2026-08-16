@@ -627,3 +627,15 @@ def test_the_parent_reads_as_a_title_and_edits_as_an_id(demo_rendered: tuple[Pat
 
     assert parent.title in parent_row
     assert f">{child.parent}<" not in parent_row
+
+
+def test_an_empty_field_is_a_dash_and_not_a_word(demo_rendered: tuple[Path, Index]):
+    """`nothing`, `none`, `no` and `not scheduled` sat at the same weight as a
+    real value and had to be read before you knew the row was empty. One faint
+    dash is empty at a glance, and it is the same mark in every row."""
+    out, _ = demo_rendered
+    body = read(out, "detail.html")
+
+    assert '<span class="empty">—</span>' in body
+    for word in (">nothing<", ">none<", ">not scheduled<"):
+        assert word not in body, word
