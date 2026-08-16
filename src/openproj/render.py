@@ -14,11 +14,13 @@ that looks like a commitment is how a timeline stops being believed.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shutil
 from datetime import date, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 from jinja2 import Environment
@@ -72,6 +74,25 @@ def _status_class(status: str) -> str:
 
 def _inline(name: str) -> str:
     return (_static_dir() / name).read_text(encoding="utf-8")
+
+
+def _inline_font(name: str) -> str:
+    """A woff2 as a data: URI. Binary, so not _inline's read_text.
+
+    Linked the ordinary way this would be one more thing a CDN, a proxy or a
+    train tunnel can take away, and the static export has to work from file://
+    where a relative font URL resolves against whatever directory somebody
+    dropped the page in. Base64 costs a third more bytes than the file; the
+    whole face is 48 KB, and the pages already inline 650 KB of graph library.
+    """
+    raw = (_static_dir() / name).read_bytes()
+    return "data:font/woff2;base64," + base64.b64encode(raw).decode("ascii")
+
+
+@lru_cache(maxsize=1)
+def _font_uri() -> str:
+    """Cached, because every served page carries it and the encode is not free."""
+    return _inline_font("inter-latin-wght-normal.woff2")
 
 
 def _row(index: Index, entity_id: str) -> dict:
@@ -344,6 +365,18 @@ try {
 } catch (e) { /* a browser with storage denied still gets the system theme */ }
 </script>
 <style>
+/* Inlined, not linked: a linked face is one more thing a CDN, a proxy or a train
+   tunnel can take away, tests/test_render.py asserts no page reaches the network,
+   and the static export has to work from file:// where a relative font URL
+   resolves against whatever directory somebody dropped the page in. One variable
+   file covers 100..900, so this is 48 KB for every weight the app uses. */
+@font-face {
+  font-family: "Inter var";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("{{ font }}") format("woff2-variations");
+}
 /* Three states, not two: an explicit choice stamps data-theme, and the default
    is no stamp at all, where only the media query separates one from the other.
    Every colour is a token so that nothing has its only definition inside a
@@ -353,35 +386,92 @@ try {
      dark against a light system kept rendering its buttons, scrollbars and date
      pickers light — the parts of the page the stylesheet does not draw. */
   color-scheme: light;
-  --bg: #ffffff; --fg: #1a2226; --surface: #ffffff;
-  --line: #d7dfe1; --line-strong: #b7c5c9; --muted: #6a7a80;
+  --font-sans: "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --bg: #ffffff; --fg: #14211f; --surface: #ffffff; --surface-2: #f5f8f8;
+  --line: #dce4e5; --line-strong: #b4c3c7; --muted: #5a6b70;
   --accent: #0f5c6b; --on-accent: #ffffff;
-  --danger: #9a3327; --warn: #8f5c07;
-  --st-shaping: #b9a6c9; --st-ready: #8a93a5; --st-in_progress: #1f6f8b;
-  --st-done: #3f7d58; --st-shelved: #b0b4bd;
+  --danger: #9a3327; --warn: #8a5308; --ok: #2f7248;
+  /* The em dash that means "no value" was #b7c5c9 against white: 1.77:1, which
+     is not a colour, it is an absence. It is a real piece of information. */
+  --empty: #7c8d93; --focus: #0f5c6b;
+  /* Four tokens per status, not one. Fill and ink draw *shapes* — a graph node,
+     a timeline bar. Soft and text draw *chips* — the pill in a table cell, which
+     needs a ground light enough to sit inside a row of running text. */
+  --st-shaping: #5b4b9e; --st-shaping-ink: #ffffff;
+  --st-shaping-soft: #ede9f8; --st-shaping-text: #4a3c86;
+  --st-ready: #2c5f8f; --st-ready-ink: #ffffff;
+  --st-ready-soft: #e4eef8; --st-ready-text: #23507a;
+  --st-in_progress: #8a5308; --st-in_progress-ink: #ffffff;
+  --st-in_progress-soft: #f8eedc; --st-in_progress-text: #774606;
+  --st-done: #2f7248; --st-done-ink: #ffffff;
+  --st-done-soft: #e3f1e8; --st-done-text: #256040;
+  --st-shelved: #566a72; --st-shelved-ink: #ffffff;
+  --st-shelved-soft: #ebeff1; --st-shelved-text: #465861;
+  /* Kind is drawn in ink, never in hue: two colour languages on one row and
+     neither one is read. */
+  --kind-ink: #5a6b70; --kind-line: #b4c3c7;
+  --sev-blocker: #9a3327; --sev-blocker-soft: #f9e9e6;
+  --sev-warn: #8a5308; --sev-warn-soft: #f8eedc;
+  /* One label colour for every status fill, because in each theme all five inks
+     are the same. The graph reads it for node text and the timeline for the
+     hatch that marks a guess. */
   --on-status: #ffffff; --hatch: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #11181b; --fg: #dbe4e7; --surface: #182126;
-    --line: #263539; --line-strong: #3a4d53; --muted: #8da0a8;
+    --bg: #11181b; --fg: #dde6e7; --surface: #171f22; --surface-2: #1c262a;
+    --line: #263336; --line-strong: #3a4d53; --muted: #93a6aa;
     --accent: #5cb9ca; --on-accent: #0b1214;
-    --danger: #e0796a; --warn: #d6a33f;
-    --st-shaping: #9b86ad; --st-ready: #717b8c; --st-in_progress: #2b7f9c;
-    --st-done: #418062; --st-shelved: #7d828b;
+    --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
+    --empty: #7e9199; --focus: #5cb9ca;
+    /* Dark fills invert: a light shape carrying dark ink pops off a dark canvas
+       instead of sinking into it. So --on-status and --hatch flip with them —
+       white text on these fills would be the failure the light theme avoids. */
+    --st-shaping: #a79ae6; --st-shaping-ink: #0f1416;
+    --st-shaping-soft: #252041; --st-shaping-text: #b8aaf0;
+    --st-ready: #7fb2de; --st-ready-ink: #0f1416;
+    --st-ready-soft: #152b3e; --st-ready-text: #8fbeea;
+    --st-in_progress: #d9a557; --st-in_progress-ink: #0f1416;
+    --st-in_progress-soft: #332409; --st-in_progress-text: #e2b268;
+    --st-done: #6fc095; --st-done-ink: #0f1416;
+    --st-done-soft: #14301f; --st-done-text: #7ecda2;
+    --st-shelved: #9daeb6; --st-shelved-ink: #0f1416;
+    --st-shelved-soft: #1e262a; --st-shelved-text: #a6b7bf;
+    --kind-ink: #93a6aa; --kind-line: #3a4d53;
+    --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
+    --sev-warn: #d9a557; --sev-warn-soft: #332409;
+    --on-status: #0f1416; --hatch: #0f1416;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #11181b; --fg: #dbe4e7; --surface: #182126;
-  --line: #263539; --line-strong: #3a4d53; --muted: #8da0a8;
+  --bg: #11181b; --fg: #dde6e7; --surface: #171f22; --surface-2: #1c262a;
+  --line: #263336; --line-strong: #3a4d53; --muted: #93a6aa;
   --accent: #5cb9ca; --on-accent: #0b1214;
-  --danger: #e0796a; --warn: #d6a33f;
-  --st-shaping: #9b86ad; --st-ready: #717b8c; --st-in_progress: #2b7f9c;
-  --st-done: #418062; --st-shelved: #7d828b;
+  --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
+  --empty: #7e9199; --focus: #5cb9ca;
+  --st-shaping: #a79ae6; --st-shaping-ink: #0f1416;
+  --st-shaping-soft: #252041; --st-shaping-text: #b8aaf0;
+  --st-ready: #7fb2de; --st-ready-ink: #0f1416;
+  --st-ready-soft: #152b3e; --st-ready-text: #8fbeea;
+  --st-in_progress: #d9a557; --st-in_progress-ink: #0f1416;
+  --st-in_progress-soft: #332409; --st-in_progress-text: #e2b268;
+  --st-done: #6fc095; --st-done-ink: #0f1416;
+  --st-done-soft: #14301f; --st-done-text: #7ecda2;
+  --st-shelved: #9daeb6; --st-shelved-ink: #0f1416;
+  --st-shelved-soft: #1e262a; --st-shelved-text: #a6b7bf;
+  --kind-ink: #93a6aa; --kind-line: #3a4d53;
+  --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
+  --sev-warn: #d9a557; --sev-warn-soft: #332409;
+  --on-status: #0f1416; --hatch: #0f1416;
 }
-body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3rem;
+/* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
+   spacing of the curly quotes and slashes that PR refs and paths are full of. */
+body { font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+       font-feature-settings: "cv05" 1, "ss03" 1;
+       margin: 0; padding: 1rem 1.25rem 3rem;
        background: var(--bg); color: var(--fg); }
 nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; align-items: center; }
 /* Every link, not only the nav. The browser's default blue and its visited
@@ -406,12 +496,51 @@ a, a:visited { color: var(--accent); }
                 letter-spacing: 0; color: inherit; }
 #q { font: inherit; font-size: 13px; padding: .15rem .3rem; min-width: 16rem; }
 .hint { color: var(--muted); font-size: 12px; }
-.empty { color: var(--line-strong); }
+.empty { color: var(--empty); }
+.num { font-variant-numeric: tabular-nums; }
+/* One chip everywhere a status or a kind is named, defined here rather than per
+   page because the table, the detail page, the people page and the cycle bet
+   table were four different ways of saying the same word. The word is always
+   inside the chip, so the colour is redundant encoding and a reader who cannot
+   separate the hues loses nothing. */
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 11px;
+        line-height: 1.45; text-transform: uppercase; letter-spacing: .04em;
+        padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
+.chip.st-shaping { background: var(--st-shaping-soft); color: var(--st-shaping-text); }
+.chip.st-ready { background: var(--st-ready-soft); color: var(--st-ready-text); }
+.chip.st-in_progress { background: var(--st-in_progress-soft);
+                       color: var(--st-in_progress-text); }
+.chip.st-done { background: var(--st-done-soft); color: var(--st-done-text); }
+.chip.st-shelved { background: var(--st-shelved-soft); color: var(--st-shelved-text); }
+/* Kind never competes with status for attention: no hue, only a weight and a
+   hairline. A project is the only one that gets the accent, because it is the
+   only one there are ever a handful of. */
+.chip.kind-project { color: var(--fg); font-weight: 650; border: 1px solid var(--accent); }
+.chip.kind-pitch { color: var(--kind-ink); border: 1px solid var(--kind-line); }
+.chip.kind-task { color: var(--kind-ink); }
+/* A problem reads the same on every page: a bar down the left of the row, a soft
+   ground on the cell that caused it, a glyph carrying the message. Three classes
+   rather than one, so a row can be marked without tinting every cell in it. */
+.sev-row-blocker { border-left: 3px solid var(--sev-blocker); }
+.sev-row-warn { border-left: 3px solid var(--sev-warn); }
+.sev-cell-blocker { background: var(--sev-blocker-soft); }
+.sev-cell-warn { background: var(--sev-warn-soft); }
+.sev-mark { font-family: var(--font-mono); font-size: 11px; cursor: help; }
+.sev-mark-blocker { color: var(--sev-blocker); }
+.sev-mark-warn { color: var(--sev-warn); }
+/* Every interactive thing, and :focus-visible rather than :focus so a mouse
+   click does not leave a ring behind it. :where() keeps the specificity at zero,
+   so a page stylesheet loaded after this one still wins on colour. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 #moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent);
          color: var(--on-accent);
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
 #moved a { color: var(--on-accent); }
-#moved .sha { font-family: ui-monospace, monospace; opacity: .7; }
+#moved .sha { font-family: var(--font-mono); opacity: .7; }
 {{ style }}
 </style></head><body>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
@@ -504,7 +633,7 @@ _TABLE = """
   <th data-sort="priority">priority</th><th data-sort="status">status</th>
   <th data-sort="owner">owner</th><th data-sort="assignees">assignees</th>
   <th data-sort="reviewers">reviewers</th><th data-sort="cycle">cycle</th>
-  <th data-sort="size">weeks</th>
+  <th data-sort="size">appetite</th>
   <th data-sort="start">start</th><th data-sort="end">end</th>
   <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
 </tr></thead><tbody></tbody></table></div>
@@ -1248,7 +1377,10 @@ rect.late { stroke: var(--danger); stroke-width: 1.5; }
 """
 
 
-_COMBOBOX = """
+# Raw, because the JS in here contains regex escapes. `\\.` is not a Python escape,
+# so it survived as a literal backslash and the widget worked — while emitting a
+# SyntaxWarning on every fresh compile, and Python 3.14 turns that into an error.
+_COMBOBOX = r"""
 <script id="suggest" type="application/json">SUGGEST_JSON</script>
 <script>
 // Paste or drop an image and it goes into the plan repository, content-addressed,
@@ -1891,12 +2023,12 @@ input.field, select.field, textarea.field {
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
 textarea.body-field {
-  min-height: 60vh; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-height: 60vh; font-family: var(--font-mono);
   font-size: 13px; line-height: 1.55; resize: vertical;
 }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
-.doc code { background: var(--surface-2, rgba(127,127,127,.12)); padding: 0 .25em; }
+.doc code { background: var(--surface-2); padding: 0 .25em; }
 #conflict { border-left: 3px solid var(--danger); padding: .5rem .8rem; margin-top: 1rem;
             white-space: pre-wrap; font-size: 13px; }
 """
@@ -1945,13 +2077,66 @@ REQUIRED_FROM = {
 KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 
+# The reader's name for a field. `effort_weeks` and `appetite_weeks` are two
+# storage fields holding one quantity, and calling it Effort here, Appetite on the
+# detail page and weeks in the table made it look like three different numbers
+# nobody could reconcile. Appetite is the domain's word and the spec's; the field
+# names stay as they are, because those are what git holds.
 LABELS = {
     "title": "Title", "status": "Status", "owner": "Owner", "assignees": "Assignees",
     "reviewers": "Reviewers", "review_waived": "Review waived", "assigned_on": "Assigned on",
     "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
     "tags": "Tags", "prs": "PRs", "appetite_weeks": "Appetite (weeks)",
-    "shaped_by": "Shaped by", "effort_weeks": "Effort (weeks)",
+    "shaped_by": "Shaped by", "effort_weeks": "Appetite (weeks)",
 }
+
+# The reader's word for a value. `in_progress`, `missing_required_fields` and
+# `overruns_cycle` are identifiers: they belong in a `value=`, a class and a
+# `data-*` attribute, and nowhere a person reads. One map rather than one per
+# page, because five pages inventing their own is how `in_progress` became
+# "In progress", "in progress" and "in_progress" on the same screen.
+#
+# Statuses, priorities, kinds and predicates share it: their identifiers do not
+# collide, and a caller rendering an option has no reason to know which family a
+# value came from. Anything unknown comes back unchanged, so a value added to the
+# model still renders — badly, but it renders.
+HUMAN = {
+    # statuses
+    "shaping": "Shaping",
+    "ready": "Ready",
+    "in_progress": "In progress",
+    "done": "Done",
+    "shelved": "Shelved",
+    # priorities
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    # kinds
+    "project": "Project",
+    "pitch": "Pitch",
+    "task": "Task",
+    # predicates, as COMPUTED_PREDICATES spells them. `missing_required_fields`
+    # is not what it does — it matches any problem of any severity — so it says so.
+    "blocked": "Blocked",
+    "unblocked": "Not blocked",
+    "overruns_cycle": "Overruns its cycle",
+    "missing_required_fields": "Has a problem",
+    "review_waived": "Review waived",
+}
+
+
+def _human(value: object) -> str:
+    """The word a reader gets for an identifier the data model uses."""
+    if value is None:
+        return ""
+    return HUMAN.get(str(value), str(value))
+
+
+# Available to every template as both `human(x)` and `x|human`, so no page has to
+# be handed the map, and as `label(field)` for a field name.
+_ENV.globals["human"] = _human
+_ENV.filters["human"] = _human
+_ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
 PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
@@ -2087,7 +2272,7 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
                 "owner": entity.owner,
                 "reviewers": entity.reviewers,
                 "review_waived": entity.review_waived,
-                "size_label": "Appetite" if entity.kind == "pitch" else "Effort",
+                "size_label": "Appetite",
                 "size": f"{size:g} weeks" + (" (assumed)" if defaulted else ""),
                 "assigned_on": entity.assigned_on,
                 "cycle": entity.cycle,
@@ -2581,7 +2766,10 @@ input.rate { width: 4rem; }
                    border: 1px solid transparent; border-radius: 3px; padding: .1rem .3rem; }
 #bets input.live.wide { width: 11rem; }
 #bets input.live:hover { border-color: var(--line); }
-#bets input.live:focus { border-color: var(--accent); outline: none; }
+/* The border is the hover affordance, not the focus one. Suppressing the outline
+   here left the only keyboard-reachable cell on the page with nothing to say it
+   had focus; the shell's :focus-visible ring draws it now. */
+#bets input.live:focus { border-color: var(--accent); }
 #bets td { position: relative; }
 button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
@@ -3036,6 +3224,7 @@ def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> s
         title=title,
         content=Markup(content),
         style=Markup(style),
+        font=_font_uri(),
         links=links,
         # Only the server has an event stream to listen to. A static page opening a
         # connection to nothing would retry forever in the console.

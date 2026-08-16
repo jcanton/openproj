@@ -576,6 +576,134 @@ def test_a_status_colour_is_a_token_and_not_baked_into_a_bar(rendered: Path):
     assert "rect.st-done { fill: var(--st-done); }" in timeline
 
 
+# --- typeface ---------------------------------------------------------------
+
+
+def test_the_typeface_travels_with_the_page(rendered: Path):
+    """Linked, the face is one more thing a CDN or a proxy can take away, and the
+    static export has to work from file:// where a relative font URL resolves
+    against whatever directory somebody dropped the page in."""
+    for page in PAGES:
+        body = read(rendered, page)
+        assert "@font-face" in body, page
+        assert re.search(r'src: url\("data:font/woff2;base64,[A-Za-z0-9+/=]{100,}"\)', body), page
+
+
+def test_no_page_asks_the_network_for_a_font(rendered: Path):
+    """The network assertion covers scripts, stylesheets and images. A font is the
+    fourth way out, and the one a stylesheet can open without a tag."""
+    for page in PAGES:
+        body = read(rendered, page)
+        for url in re.findall(r"url\(\s*[\"']?([^\"')]+)", body):
+            assert url.startswith("data:") or url.startswith("#"), (page, url[:60])
+        assert "fonts.googleapis" not in body and "fonts.gstatic" not in body, page
+
+
+def test_the_vendored_face_is_the_one_that_was_checksummed():
+    """A vendored binary nobody verifies is a vendored binary nobody can audit.
+    The other three files in static/ have been listed since they were added."""
+    import hashlib
+
+    from openproj.render import _static_dir
+
+    static = _static_dir()
+    sums = dict(
+        reversed(line.split(maxsplit=1))
+        for line in (static / "SHA256SUMS").read_text().splitlines()
+        if line.strip()
+    )
+    name = "inter-latin-wght-normal.woff2"
+    assert name in sums, "the face must be listed in SHA256SUMS"
+    digest = hashlib.sha256((static / name).read_bytes()).hexdigest()
+    assert digest == sums[name].strip()
+
+
+def test_the_page_names_its_fonts_once(rendered: Path):
+    """Two font stacks written out by hand drift the first time one is changed."""
+    body = read(rendered, "index.html")
+    style = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
+
+    assert "font-family: var(--font-sans)" in style
+    declarations = re.findall(r"font-family:\s*([^;]+);", style)
+    for value in declarations:
+        assert "var(--font-" in value or "Inter var" in value, value
+
+
+# --- tokens shared by every page --------------------------------------------
+
+
+def test_a_status_carries_a_chip_palette_as_well_as_a_fill(rendered: Path):
+    """Fill and ink draw shapes — a graph node, a timeline bar. Soft and text draw
+    a chip, which has to sit inside a row of running text without shouting."""
+    style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
+    light = re.search(r":root \{(.*?)\}", style, re.S).group(1)
+
+    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+        for suffix in ("", "-ink", "-soft", "-text"):
+            assert f"--st-{status}{suffix}:" in light, f"--st-{status}{suffix}"
+        assert f".chip.st-{status} {{" in style
+
+
+def test_the_dark_theme_flips_the_ink_with_the_fill(rendered: Path):
+    """Dark fills are light shapes: white label text on them is exactly the
+    failure the light theme's white text avoids. The graph reads --on-status for
+    its node labels and the timeline reads --hatch, so both have to flip too."""
+    style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
+    dark = re.search(r':root\[data-theme="dark"\] \{(.*?)\}', style, re.S).group(1)
+
+    assert "--on-status: #ffffff" not in dark
+    assert "--hatch: #ffffff" not in dark
+    assert re.search(r"--st-done-ink: (#0f1416)", dark)
+
+
+def test_every_page_can_draw_a_problem_and_a_focus_ring(rendered: Path):
+    """Severity and focus are shell rules, not table rules: a warning means the
+    same thing on the cycle page, and every page has something to tab to."""
+    for page in PAGES:
+        body = read(rendered, page)
+        assert ":focus-visible {" in body, page
+        assert "outline: 2px solid var(--focus)" in body, page
+        assert ".sev-row-blocker { border-left: 3px solid var(--sev-blocker); }" in body, page
+    assert "outline: none" not in read(rendered, "index.html")
+
+
+def test_the_dash_that_means_no_value_is_readable(rendered: Path):
+    """It was --line-strong: 1.77:1 against white, which is not a colour, it is an
+    absence. Whether a field is empty is a fact somebody has to be able to read."""
+    detail = read(rendered, "detail.html")
+
+    assert '<span class="empty">—</span>' in detail
+    assert ".empty { color: var(--empty); }" in detail
+
+
+# --- one word per identifier -------------------------------------------------
+
+
+def test_every_identifier_a_reader_could_meet_has_a_word_for_it():
+    """Five pages inventing their own map is how `in_progress` became "In
+    progress", "in progress" and "in_progress" on the same screen."""
+    from openproj.index import COMPUTED_PREDICATES
+    from openproj.render import HUMAN, KINDS, PRIORITIES, STATUSES, _human
+
+    for value in (*STATUSES, *PRIORITIES, *KINDS, *COMPUTED_PREDICATES):
+        assert value in HUMAN, value
+        assert _human(value) != value, f"{value} is still its own identifier"
+
+    assert _human("in_progress") == "In progress"
+    assert _human(None) == ""
+    assert _human("a status nobody has added yet") == "a status nobody has added yet"
+
+
+def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
+    """APPETITE (WEEKS) on detail, EFFORT (WEEKS) on the create form and WEEKS in
+    the table were one number under three names. The stored fields keep theirs."""
+    from openproj.render import LABELS
+
+    assert LABELS["appetite_weeks"] == LABELS["effort_weeks"] == "Appetite (weeks)"
+    assert "Effort" not in read(rendered, "detail.html")
+    assert '<th data-sort="size">appetite</th>' in read(rendered, "index.html")
+
+
 def test_the_graph_repaints_rather_than_reloads_on_a_theme_change(rendered: Path):
     """Cytoscape resolved those colours once, when it was built: the tokens
     change, the values it already computed do not."""
