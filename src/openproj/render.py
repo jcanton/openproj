@@ -642,6 +642,14 @@ a, a:visited { color: var(--accent); }
 .hint { color: var(--muted); font-size: 12px; }
 .empty { color: var(--empty); }
 .num { font-variant-numeric: tabular-nums; }
+/* One meter for the whole app: weeks bet against weeks available. It was a rule
+   on the cycle page until the cycles index and then the people page needed the
+   same picture, and a second copy of a meter is two meters that disagree about
+   what full looks like. */
+.bar { display: inline-block; width: 140px; height: 8px; background: var(--line);
+       border-radius: 4px; overflow: hidden; vertical-align: middle; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+.over .bar > span { background: var(--danger); }
 /* One chip everywhere a status or a kind is named, defined here rather than per
    page because the table, the detail page, the people page and the cycle bet
    table were four different ways of saying the same word. The word is always
@@ -702,6 +710,13 @@ a, a:visited { color: var(--accent); }
                  border: 1px solid var(--line-strong); background: var(--surface);
                  color: var(--fg); cursor: pointer; }
 #clear-filters:hover { border-color: var(--accent); color: var(--accent); }
+/* Inside the body, not above it or beside it: an empty table with the message
+   somewhere else is still a header row over a void. Two tables draw one now —
+   the plan's rows and the people's — so the shape of "there is nothing here"
+   lives with the button that gets you out of it. */
+tr.nothing td { padding: 2.5rem .5rem; text-align: center; }
+tr.nothing .headline { margin: 0 0 .25rem; color: var(--fg); font-size: 15px; }
+tr.nothing .hint { margin: 0 0 .75rem; }
 /* Above everything a page can stick to its own edges — the cycle page's commit
    bar sits in exactly this corner — because news that the plan moved under you
    is the one thing on screen that must not be behind something else. */
@@ -875,9 +890,14 @@ function update(field, value) {
 }
 
 function clearFilters() {
+  // Every control the page actually draws, and not only the entity fields above:
+  // the people page filters by role, which is not a field of an entity, and a
+  // Clear that left it set is a Clear that did not clear.
+  const onPage = [...document.querySelectorAll('select[data-field]')]
+    .map(select => select.dataset.field);
   // Not the sort order: clearing the filters and losing the column somebody
   // sorted by is a second surprise on top of the one they were undoing.
-  for (const field of [...FILTERS, 'predicate', 'q']) params.delete(field);
+  for (const field of [...FILTERS, ...onPage, 'predicate', 'q']) params.delete(field);
   settled();
 }
 
@@ -1573,11 +1593,6 @@ td .sev-mark { margin-left: .25rem; }
 .eid { font-family: var(--font-mono); }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
-/* Inside the body, not above it or beside it: an empty table with the message
-   somewhere else is still a header row over a void. */
-tr.nothing td { padding: 2.5rem .5rem; text-align: center; }
-tr.nothing .headline { margin: 0 0 .25rem; color: var(--fg); font-size: 15px; }
-tr.nothing .hint { margin: 0 0 .75rem; }
 th .grip {
   position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
 }
@@ -3094,6 +3109,10 @@ LABELS = {
     # people in the same control bar, so they take their words from here too.
     "kind": "Kind", "project": "Project", "size": "Appetite", "blocked_by": "Blockers",
     "start": "Start", "end": "End", "id": "Id", "predicate": "Flags",
+    # The people page's own facet. Which hat somebody is wearing is not stored on
+    # an entity at all — it is which field their name is in — but it is read in
+    # the same control bar as the rest, so it takes its word from the same map.
+    "role": "Role",
 }
 
 # The reader's word for a value. `in_progress`, `missing_required_fields` and
@@ -3129,6 +3148,12 @@ HUMAN = {
     "missing_required_fields": "Has a problem",
     "has_blocker": "Has a blocking problem",
     "review_waived": "Review waived",
+    # roles, which the people page filters by. Already English, but a dropdown
+    # reading "owner, Pitch, Ready" is three labelling conventions in one bar.
+    "owner": "Owner",
+    "assignee": "Assignee",
+    "reviewer": "Reviewer",
+    "shaper": "Shaper",
 }
 
 
@@ -3872,10 +3897,6 @@ table.load th, table.load td {
 table.load th { color: var(--muted); font-weight: 400; font-size: 11px;
                 text-transform: uppercase; letter-spacing: .04em; }
 tr.over td { color: var(--danger); }
-.bar { display: inline-block; width: 140px; height: 8px; background: var(--line);
-       border-radius: 4px; overflow: hidden; vertical-align: middle; }
-.bar > span { display: block; height: 100%; background: var(--accent); }
-tr.over .bar > span { background: var(--danger); }
 input.rate { width: 4rem; }
 #bets input.live { font: inherit; font-size: 13px; width: 5rem;
                    background: var(--surface); color: inherit;
@@ -3912,7 +3933,6 @@ tr.carried td { color: var(--muted); }
 .card .bet { margin: 0 0 .35rem; font-size: 13px; }
 .card .bet b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
 .card .bar { display: block; width: 100%; height: 10px; }
-.card.over .bar > span { background: var(--danger); }
 .card.over .bet b { color: var(--danger); }
 .card .note { margin: .35rem 0 0; }
 /* The create form is not another cycle in the list, and it writes a record. The
@@ -4055,96 +4075,182 @@ document.getElementById('yes').onclick = async () => {
 """
 
 _PEOPLE = """
-<p class="hint">Everyone named anywhere in the plan, and what they are on the hook for.</p>
+<p class="hint">Everyone named anywhere in the plan, and what they are on the hook
+  for.
+  {%- if load.cycle is none %}
+  {%- elif load.recorded %} The weeks are cycle {{ load.cycle }}'s: what is bet on
+  somebody there, against what they are available for. Weeks bet into another cycle
+  are counted beside them, and work bet into no cycle at all is in the rows and in no
+  number.
+  {%- else %} The weeks are cycle {{ load.cycle }}'s: what is bet on somebody there.
+  That cycle has no record, so there is no availability to bet it against.
+  {%- endif %}</p>
 <div id="controls">
   <input id="q" type="search" placeholder="Search person, entity, id">
   <div class="facets">
-  <label class="facet">role
-    <select data-attr="role"><option value="">all</option>
-      {% for value in facets.role %}<option>{{ value }}</option>{% endfor %}
+  {% for field in ['role', 'kind', 'status'] %}
+  <label class="facet">{{ label(field) }}
+    <select data-field="{{ field }}"><option value="">all</option>
+      {% for value in facets[field] %}
+      <option value="{{ value }}">{{ value|human }}</option>{% endfor %}
     </select>
   </label>
-  <label class="facet">kind
-    <select data-attr="kind"><option value="">all</option>
-      {% for value in facets.kind %}<option>{{ value }}</option>{% endfor %}
-    </select>
-  </label>
-  <label class="facet">status
-    <select data-attr="status"><option value="">all</option>
-      {% for value in facets.status %}<option>{{ value }}</option>{% endfor %}
-    </select>
-  </label>
+  {% endfor %}
   </div>
 </div>
 <div id="summary"><span id="shown">{{ people|length }}</span> of {{ people|length }} people</div>
-{% for person in people %}
-<section class="person" data-login="{{ person.login }}">
-  <h2>{{ person.login }}
-    <span class="tally">{{ person.counts }}</span></h2>
-  <table class="roles">
-    <thead><tr><th>role</th><th>entity</th><th>kind</th><th>status</th>
-      <th>scheduled</th></tr></thead>
-    <tbody>
-      {% for row in person.rows %}
-      <tr data-role="{{ row.role }}" data-kind="{{ row.kind }}" data-status="{{ row.status }}"
-          data-text="{{ row.search }}">
-        <td class="role">{{ row.role }}</td>
-        <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
-        <td>{{ row.kind }}</td>
-        <td>{{ row.status }}</td>
-        <td class="derived">{{ row.span }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="empty" hidden>Nothing here matches.</p>
-</section>
-{% endfor %}
+{#- One table for the whole page. Fifteen tables meant fifteen headers, and a
+    column of statuses that started at a different x for every person cannot be
+    read down. The person is a group row inside it instead of a heading above a
+    table of their own. -#}
+<table id="roles">
+  <thead><tr><th scope="col">role</th><th scope="col">entity</th><th scope="col">kind</th>
+    <th scope="col">status</th><th scope="col">scheduled</th></tr></thead>
+  {% for person in people %}
+  <tbody class="person" data-login="{{ person.login }}">
+    <tr class="group{{ ' over' if person.over else '' }}">
+      <th colspan="5" scope="colgroup"><div class="groupline">
+        {%- if person.link %}
+        <a class="who" href="{{ links.table }}?{{ person.link.field }}={{ person.login|urlencode }}"
+           title="{{ person.link.says }}">{{ person.login }}</a>
+        {%- else %}
+        <span class="who">{{ person.login }}</span>
+        {%- endif %}
+        {%- if person.capacity %}
+        <span class="load"><b class="num held">{{ '%.1f'|format(person.held) }}</b> of
+          <b class="num">{{ '%.1f'|format(person.capacity) }}</b> weeks
+          <span class="bar"><span style="width: {{ person.percent }}%"></span></span></span>
+        {%- elif person.held and load.recorded %}
+        <span class="load stranger"><b class="num held">{{ '%.1f'|format(person.held) }}</b>
+          weeks bet, and not on cycle {{ load.cycle }}'s roster</span>
+        {%- elif person.held %}
+        <span class="load"><b class="num held">{{ '%.1f'|format(person.held) }}</b>
+          weeks bet against no roster</span>
+        {%- elif load.cycle is not none %}
+        <span class="load none">nothing bet in cycle {{ load.cycle }}</span>
+        {%- endif %}
+        {%- if person.elsewhere %}
+        <span class="elsewhere">+<span class="num">{{ '%.1f'|format(person.elsewhere) }}</span>
+          weeks in other cycles</span>
+        {%- endif %}
+        {#- The counts keep their old job and take on the way in: three of the
+            four roles are a filter the table has, so a count is a link to the
+            rows it counts. -#}
+        <span class="tally">
+          {%- for t in person.tally -%}
+            {%- if t.field %}<a href="{{ links.table }}?{{ t.field }}={{ person.login|urlencode
+              }}">{{ t.n }} as {{ t.role }}</a>{% else %}{{ t.n }} as {{ t.role }}{% endif -%}
+            {{- ' · ' if not loop.last else '' -}}
+          {%- endfor -%}
+        </span>
+      </div></th>
+    </tr>
+    {% for row in person.rows %}
+    <tr data-role="{{ row.role }}" data-kind="{{ row.kind }}" data-status="{{ row.status }}"
+        data-text="{{ row.search }}">
+      <td class="role">{{ row.role }}</td>
+      <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
+      <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
+      <td><span class="chip st-{{ row.status }}">{{ row.status|human }}</span></td>
+      <td class="derived">{{ row.span }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+  {#- Which emptiness this is decides what to do about it, so the page says which
+      one it is rather than leaving a header row over a void. -#}
+  <tbody id="nothing"{% if people %} hidden{% endif %}>
+    <tr class="nothing"><td colspan="5">
+      {% if people %}
+      <p class="headline">No person matches these filters.</p>
+      <p class="hint">Every row is filtered out by the controls above.</p>
+      <button type="button" id="clear-filters">Clear filters</button>
+      {% else %}
+      <p class="headline">Nobody is named in this plan yet.</p>
+      <p class="hint">People appear here as soon as they own, are assigned, review or
+        shape something.</p>
+      {% endif %}
+    </td></tr>
+  </tbody>
+</table>
+{{ filters|safe }}
 <script>
 // A person whose own name matches keeps all their rows: searching for somebody is
 // asking what they are on the hook for, not asking to see only the rows that
 // happen to repeat their name.
-const SECTIONS = [...document.querySelectorAll('section.person')];
-const FILTERS = [...document.querySelectorAll('#controls select')];
-const q = document.getElementById('q');
-const shown = document.getElementById('shown');
+const GROUPS = [...document.querySelectorAll('tbody.person')];
+const NOTHING = document.getElementById('nothing');
+const COUNT = document.getElementById('shown');
 
+// Hidden, not removed: the rows are rendered once by the server, and rebuilding
+// them here to show twelve of fifteen is a second copy of the markup that has to
+// keep agreeing with the first.
 function apply() {
-  const text = q.value.trim().toLowerCase();
-  const want = FILTERS.filter(s => s.value).map(s => [s.dataset.attr, s.value]);
+  const text = (params.get('q') || '').trim().toLowerCase();
+  const want = ['role', 'kind', 'status']
+    .map(field => [field, params.get(field)]).filter(([, value]) => value);
   let visible = 0;
-  for (const section of SECTIONS) {
-    const person = section.dataset.login.toLowerCase();
+  for (const group of GROUPS) {
+    const person = group.dataset.login.toLowerCase();
     let kept = 0;
-    for (const row of section.querySelectorAll('tbody tr')) {
-      const matches = want.every(([attr, value]) => row.dataset[attr] === value)
+    for (const row of group.querySelectorAll('tr[data-role]')) {
+      const keep = want.every(([field, value]) => row.dataset[field] === value)
         && (!text || person.includes(text) || row.dataset.text.includes(text));
-      row.hidden = !matches;
-      kept += matches ? 1 : 0;
+      row.hidden = !keep;
+      kept += keep ? 1 : 0;
     }
-    section.hidden = kept === 0;
-    section.querySelector('.empty').hidden = kept > 0;
+    group.hidden = kept === 0;
     visible += kept > 0 ? 1 : 0;
   }
-  shown.textContent = visible;
+  COUNT.textContent = visible;
+  NOTHING.hidden = visible > 0;
 }
 
-q.oninput = apply;
-FILTERS.forEach(select => { select.onchange = apply; });
+addEventListener('openproj:filter', apply);
+// Absent on a plan nobody is named in, where there is no filter to clear.
+const CLEAR = document.getElementById('clear-filters');
+if (CLEAR) CLEAR.onclick = clearFilters;
+apply();
 </script>
 """
 
 _PEOPLE_STYLE = """
 .hint { max-width: 46rem; font-size: 13px; }
-section.person { margin: 2rem 0; }
-section.person h2 { font-size: 1.05rem; margin-bottom: .3rem; }
-.tally { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: .5rem; }
-table.roles { border-collapse: collapse; width: 100%; max-width: 60rem; font-size: 13px; }
-table.roles th, table.roles td {
-  border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left;
-}
-table.roles th { color: var(--muted); font-weight: 600; font-size: 12px; }
-td.role { color: var(--accent); font-size: 12px; text-transform: uppercase;
+#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
+#shown { font-variant-numeric: tabular-nums; }
+#roles { border-collapse: collapse; width: 100%; max-width: 72rem; font-size: 13px; }
+#roles th, #roles td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
+                       text-align: left; }
+/* The id selector above outranks the shell's centred empty row, which is how the
+   message ended up hugging the left edge of a table with nothing in it. */
+#roles tr.nothing td { text-align: center; }
+/* Sticky against the page rather than a scroll box: five columns fit any screen,
+   so the page itself scrolls and the header rides down it. A collapsed border is
+   not painted on a sticky cell — the first row scrolls straight over the top of
+   it — so the rule is drawn inside the box instead. */
+#roles thead th { position: sticky; top: 0; z-index: 2; background: var(--surface);
+                  box-shadow: inset 0 -1px 0 var(--line);
+                  color: var(--muted); font-weight: 400; font-size: 11px;
+                  text-transform: uppercase; letter-spacing: .04em; }
+/* A ground, not only a bold name: the group row is the only thing separating one
+   person's rows from the next person's now that they share a table, and a run of
+   twelve review rows is long enough to lose the boundary in. */
+tr.group > th { font-weight: 400; background: var(--surface-2);
+                border-top: 1px solid var(--line-strong); }
+.groupline { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .75rem; }
+.who { font-size: 15px; font-weight: 650; }
+.load { color: var(--muted); font-size: 12px; }
+.load b { color: var(--fg); font-size: 13px; font-weight: 600; }
+/* The number that says the person is over, in the colour that says so. The bar
+   beside it turns with the row through the shell's `.over` rule. */
+tr.group.over .load b.held { color: var(--danger); }
+.load.stranger { color: var(--warn); }
+.load.stranger b { color: var(--warn); }
+.elsewhere { color: var(--muted); font-size: 12px; }
+.tally { color: var(--muted); font-size: 12px; margin-left: auto; }
+/* Muted and not accent: the accent is what a link is on every other page, and a
+   column of teal words beside a column of teal links reads as twelve dead links. */
+td.role { color: var(--muted); font-size: 12px; text-transform: uppercase;
           letter-spacing: .04em; white-space: nowrap; }
 """
 
@@ -4155,6 +4261,16 @@ _ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer
 # entity at a time gave you — a person with twenty rows had their four ownerships
 # scattered through it, and ownership is the thing being on the page is for.
 _ROLE_ORDER = ("owner", "assignee", "shaper", "reviewer")
+
+# Which table filter answers "show me this person's <role>", and the words for
+# what that link opens. The table facets three of the four fields a person's name
+# can sit in; `shaped_by` is not one of them, so a shaper count stays a count
+# rather than becoming a link to a filter the table does not have.
+_ROLE_FILTER = {
+    "owner": ("owner", "owns"),
+    "assignee": ("assignees", "is assigned"),
+    "reviewer": ("reviewers", "reviews"),
+}
 
 
 def _cycle_view(index: Index, number: int) -> dict:
@@ -4286,6 +4402,39 @@ def render_cycle(
     )
 
 
+def _cycle_numbers(index: Index) -> set[int]:
+    """Every cycle the plan names.
+
+    Three sets that are not the same set: the cycles with a record, the cycles
+    config/cycles.yaml dates, and the cycles entities point at. A page that asks
+    only one of them loses exactly the cycle somebody is looking for — the one
+    holding work with nothing written down behind it.
+    """
+    return (
+        set(index.plans)
+        | set(index.cycles)
+        | {e.cycle for e in index.entities.values() if e.cycle is not None}
+    )
+
+
+def _current_cycle(index: Index) -> int | None:
+    """The cycle the plan is in now, or the nearest thing to one.
+
+    The cycle whose window holds today; failing that the next one to start,
+    because between two cycles the live question is the one coming; failing that
+    the last one there was, because work bet into a cycle that has ended is still
+    work somebody is holding. A cycle with no dates cannot be any of the three.
+    """
+    dated = sorted(index.cycles.items(), key=lambda pair: pair[1][0])
+    for number, (starts, ends) in dated:
+        if starts <= index.today <= ends:
+            return number
+    for number, (starts, _) in dated:
+        if starts > index.today:
+            return number
+    return dated[-1][0] if dated else None
+
+
 def _cycle_totals(index: Index, number: int) -> dict:
     """One cycle's card: what is bet against what there is to bet with.
 
@@ -4326,11 +4475,7 @@ def render_cycles(
     # Every cycle the plan names, not only the ones with a file. A cycle dated in
     # config, or one that entities point at with nothing behind it, is exactly
     # the cycle somebody needs to find: it holds work and holds no record.
-    numbers = (
-        set(index.plans)
-        | set(index.cycles)
-        | {e.cycle for e in index.entities.values() if e.cycle is not None}
-    )
+    numbers = _cycle_numbers(index)
     rows = [_cycle_totals(index, number) for number in sorted(numbers, reverse=True)]
     last = index.plans[max(index.plans)] if index.plans else None
     # The number to propose comes from every cycle the plan names, not only from
@@ -4370,6 +4515,47 @@ def render_cycles(
     return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links)
 
 
+def _person_load(index: Index, logins: list[str]) -> dict:
+    """What each person is on the hook for in weeks, against what they have.
+
+    Counts were the old answer — "1 as owner, 2 as assignee, 12 as reviewer" adds
+    a half-hour review to a six-week build and calls the sum a workload. The
+    weeks come from `index.load`, the same function the cycle page bets with, so
+    the two pages cannot come to different conclusions about the same person.
+
+    One cycle, named on the page, rather than every cycle summed: availability is
+    recorded per cycle, so adding up five cycles of it against a plan that only
+    ever bets the current one makes everybody look idle. Weeks bet into any other
+    cycle are carried separately instead of dropped — that number is usually the
+    reason somebody is busier than this cycle says they are.
+    """
+    number = _current_cycle(index)
+    plan = index.plans.get(number) if number is not None else None
+    here = index.load(number) if number is not None else {}
+    elsewhere: dict[str, float] = {}
+    for other in _cycle_numbers(index) - {number}:
+        for login, weeks in index.load(other).items():
+            elsewhere[login] = elsewhere.get(login, 0.0) + weeks
+
+    people = {}
+    for login in logins:
+        held = here.get(login, 0.0)
+        # Being on the roster is being in the cycle, which is the cycle page's
+        # rule. Falling back to the nominal rate for somebody nobody added would
+        # invent availability out of a default and hide the fact that the bet is
+        # off the books.
+        rostered = plan is not None and login in plan.availability
+        capacity = plan.capacity(login, index.nominal_availability) if rostered else 0.0
+        people[login] = {
+            "held": held,
+            "capacity": capacity,
+            "over": bool(capacity) and held > capacity,
+            "percent": min(100, round(100 * held / capacity)) if capacity else 0,
+            "elsewhere": elsewhere.get(login, 0.0),
+        }
+    return {"cycle": number, "recorded": plan is not None, "people": people}
+
+
 def render_people(index: Index, links: Links = STATIC) -> str:
     """Everyone in the plan, and what they are on the hook for.
 
@@ -4398,16 +4584,34 @@ def render_people(index: Index, links: Links = STATIC) -> str:
     for rows_for_person in held.values():
         rows_for_person.sort(key=lambda r: (_ROLE_ORDER.index(r["role"]), r["title"]))
 
+    load = _person_load(index, list(held))
     people = []
     # Case-folded, or every capitalised login sorts ahead of the lowercase ones and
     # "alphabetical" means ASCII to the page and nothing to the reader.
     for login, rows in sorted(held.items(), key=lambda pair: pair[0].lower()):
-        tally = {role: sum(1 for r in rows if r["role"] == role) for _, role in _ROLES}
+        counts = {role: sum(1 for r in rows if r["role"] == role) for _, role in _ROLES}
+        tally = [
+            {"role": role, "n": counts[role], "field": _ROLE_FILTER.get(role, ("",))[0]}
+            for role in _ROLE_ORDER
+            if counts[role]
+        ]
+        # Which filter the name itself opens. The most answerable role they
+        # actually hold, because a link to what somebody owns is an empty table
+        # for somebody who owns nothing — and a link that lands on an empty table
+        # teaches people the link is broken.
+        opens = next((t["role"] for t in tally if t["field"]), None)
         people.append(
             {
                 "login": login,
                 "rows": rows,
-                "counts": ", ".join(f"{n} as {role}" for role, n in tally.items() if n),
+                "tally": tally,
+                "link": {
+                    "field": _ROLE_FILTER[opens][0],
+                    "says": f"Everything {login} {_ROLE_FILTER[opens][1]}, in the table",
+                }
+                if opens
+                else None,
+                **load["people"][login],
             }
         )
     # Only values that are actually on the page: a filter offering a status
@@ -4416,7 +4620,9 @@ def render_people(index: Index, links: Links = STATIC) -> str:
         key: sorted({row[key] for rows in held.values() for row in rows})
         for key in ("role", "kind", "status")
     }
-    body = _ENV.from_string(_PEOPLE).render(people=people, links=links, facets=facets)
+    body = _ENV.from_string(_PEOPLE).render(
+        people=people, links=links, facets=facets, load=load, filters=_FILTER_JS
+    )
     return _page("openproj — people", body, _PEOPLE_STYLE, links)
 
 

@@ -901,8 +901,12 @@ def test_clearing_the_filters_is_a_button_and_never_a_form_field(page: str):
     assert 'name="clear' not in page
     # The sort is not a filter: losing the column you sorted by would be a second
     # surprise on top of the one you were undoing.
-    cleared = r"for \(const field of \[\.\.\.FILTERS, 'predicate', 'q'\]\) params\.delete"
+    cleared = (r"for \(const field of \[\.\.\.FILTERS, \.\.\.onPage, 'predicate', 'q'\]\)"
+               r" params\.delete")
     assert re.search(cleared, body)
+    # And every control the page draws, not only the entity fields: the people
+    # page filters by role, which is not a field of an entity and was left set.
+    assert "document.querySelectorAll('select[data-field]')]\n    .map(select" in body
 
 
 def test_a_sortable_header_is_a_button_that_says_which_way_it_sorts(page: str):

@@ -586,9 +586,13 @@ def test_the_people_page_is_alphabetical_and_filterable(rendered: Path):
 
     Alphabetical because there is no better default: any other order — most work
     first, say — makes finding one named person a scan rather than a lookup.
+
+    `data-field` and not `data-attr`: the control bar is the shared one now, so a
+    dropdown means the same thing and writes the same query-string key on every
+    page that has one.
     """
     body = read(rendered, "people.html")
-    logins = re.findall(r'<section class="person" data-login="([^"]+)"', body)
+    logins = re.findall(r'<tbody class="person" data-login="([^"]+)"', body)
 
     assert logins == sorted(logins, key=str.lower)
     # Case-folded, and the corpus has to hold both cases or a plain `sorted()`
@@ -596,8 +600,184 @@ def test_the_people_page_is_alphabetical_and_filterable(rendered: Path):
     assert logins != sorted(logins), "the corpus no longer mixes case; this proves nothing"
     assert '<input id="q"' in body
     for attribute in ("role", "kind", "status"):
-        assert f'select data-attr="{attribute}"' in body, attribute
+        assert f'select data-field="{attribute}"' in body, attribute
     assert re.search(r'<tr data-role="[^"]+" data-kind="[^"]+" data-status="[^"]+"', body)
+
+
+def test_the_people_page_is_one_table_with_one_header(rendered: Path):
+    """F22. Fifteen people meant fifteen tables, each sizing its own columns, so
+    `status` began at a different place for every person and the page could not be
+    read down a column. One table, the person as a group row inside it, one
+    header — and the header sticks, because the page is longer than the screen and
+    a column heading that scrolled away leaves five unlabelled columns.
+    """
+    body = read(rendered, "people.html")
+    people = re.findall(r'<tbody class="person"', body)
+    table = re.search(r"<table id=\"roles\">.*?</table>", body, re.S).group(0)
+
+    assert len(people) > 5, "the corpus names enough people for this to matter"
+    assert body.count("<table") == 1, "one table, not one per person"
+    assert body.count("<thead>") == 1
+    # Every person is a tbody inside that one table rather than a section beside it.
+    assert table.count('<tbody class="person"') == len(people)
+    assert len(re.findall(r'<tr class="group', table)) == len(people)
+    assert '<th colspan="5" scope="colgroup">' in table
+    assert "#roles thead th { position: sticky; top: 0;" in body
+
+
+def test_a_people_row_wears_the_chips_the_table_wears(rendered: Path):
+    """F3. The one view people live in was the one view with no colour language at
+    all: `in_progress` in plain text beside `task` in plain text, while the graph
+    and the timeline had been drawing both in tokens for months."""
+    body = read(rendered, "people.html")
+
+    assert '<span class="chip st-in_progress">In progress</span>' in body
+    assert '<span class="chip kind-task">Task</span>' in body
+    # The identifier stays in `data-status`, where the filter reads it, and never
+    # reaches a reader.
+    assert ">in_progress<" not in body
+
+
+def test_a_person_is_weighed_in_weeks_and_not_in_things(demo_rendered: tuple[Path, Index]):
+    """F23. "1 as owner, 2 as assignee, 12 as reviewer" adds a half-hour review to
+    a six-week build and calls the sum a workload.
+
+    The weeks come from `index.load`, which is the function the cycle page bets
+    with, so the two pages cannot reach different answers about the same person —
+    and the meter is the one the cycle page draws, so they cannot disagree about
+    what full looks like either.
+    """
+    out, index = demo_rendered
+    body = read(out, "people.html")
+    held, plan = index.load(37), index.plans[37]
+    who = max(plan.availability, key=lambda login: held.get(login, 0.0))
+    capacity = plan.capacity(who, index.nominal_availability)
+    group = re.search(rf'<tbody class="person" data-login="{who}">.*?</tr>', body, re.S).group(0)
+
+    assert index.cycles[37][0] <= index.today <= index.cycles[37][1], "37 is the live cycle"
+    assert "The weeks are cycle 37's" in body
+    assert held[who] and capacity
+    assert f'<b class="num held">{held[who]:.1f}</b>' in group
+    assert f'<b class="num">{capacity:.1f}</b>' in group
+    percent = min(100, round(100 * held[who] / capacity))
+    assert f'<span class="bar"><span style="width: {percent}%">' in group
+    assert ".bar > span { display: block; height: 100%; background: var(--accent); }" in body
+    # Weeks lead and the counts follow: the counts are a way into the table now,
+    # not the answer to "how much is on this person".
+    assert group.index('class="load"') < group.index('class="tally"')
+
+
+def test_a_person_over_their_availability_says_so_in_the_group_row(
+    demo_rendered: tuple[Path, Index],
+):
+    """The number the room acts on. Over capacity is the one state on this page
+    that changes what happens next, so it is a colour and not only a ratio."""
+    out, index = demo_rendered
+    body = read(out, "people.html")
+    held, plan = index.load(37), index.plans[37]
+    over = [
+        who for who in plan.availability
+        if held.get(who, 0.0) > plan.capacity(who, index.nominal_availability)
+    ]
+
+    assert over, "the demo overbets somebody"
+    for who in over:
+        group = re.search(rf'<tbody class="person" data-login="{who}">.*?</tr>', body, re.S)
+        assert '<tr class="group over">' in group.group(0), who
+    assert ".over .bar > span { background: var(--danger); }" in body
+    assert "tr.group.over .load b.held { color: var(--danger); }" in body
+
+
+def test_weeks_bet_into_another_cycle_are_counted_beside_this_one(
+    demo_rendered: tuple[Path, Index],
+):
+    """One cycle is the honest denominator — availability is recorded per cycle —
+    but somebody booked solid in the next one reads as idle if that is the only
+    cycle the page ever asks about."""
+    out, index = demo_rendered
+    body = read(out, "people.html")
+    elsewhere: dict[str, float] = {}
+    for number in set(index.cycles) - {37}:
+        for login, weeks in index.load(number).items():
+            elsewhere[login] = elsewhere.get(login, 0.0) + weeks
+
+    assert elsewhere, "the demo bets work into more than one cycle"
+    for login, weeks in elsewhere.items():
+        group = re.search(rf'<tbody class="person" data-login="{login}">.*?</tr>', body, re.S)
+        assert re.search(rf'\+<span class="num">{weeks:.1f}</span>\s+weeks in other cycles',
+                         group.group(0)), login
+
+
+def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(rendered: Path):
+    """The golden corpus dates its cycles in config and writes a record for none of
+    them, so there is availability for nobody. "0.0 of 0.0 weeks" would be a
+    meter reading zero; what is true is that there is nothing to bet against."""
+    body = read(rendered, "people.html")
+
+    assert "has no record, so there is no availability to bet it against" in body
+    assert "weeks bet against no roster" in body
+    assert 'class="bar"' not in body, "no meter without something to measure against"
+
+
+def test_every_person_links_to_the_table_filtered_by_them(rendered: Path):
+    """F24. A name on this page was a heading, and the question a name raises —
+    show me all of it — is a filter the table already has. The link opens the most
+    answerable role somebody actually holds, because a link to what a person owns
+    lands on an empty table for a person who owns nothing, and a link that lands on
+    nothing teaches people the link is broken."""
+    from openproj.render import _FILTER_JS, _ROLE_FILTER, _ROLE_ORDER
+
+    body = read(rendered, "people.html")
+    groups = re.findall(r'<tbody class="person" data-login="[^"]+">.*?</tbody>', body, re.S)
+
+    assert groups
+    for group in groups:
+        login = re.search(r'data-login="([^"]+)"', group).group(1)
+        roles = set(re.findall(r'<tr data-role="(\w+)"', group))
+        opens = next((r for r in _ROLE_ORDER if r in roles and r in _ROLE_FILTER), None)
+        if opens is None:
+            # Only a shaper: `shaped_by` is not one of the table's facets, so the
+            # name stays a name rather than becoming a link to a filter that does
+            # not exist.
+            assert f'<span class="who">{login}</span>' in group, login
+            continue
+        assert f'<a class="who" href="index.html?{_ROLE_FILTER[opens][0]}={login}"' in group, login
+        # And each count is the way into the rows it counted.
+        for role in roles & set(_ROLE_FILTER):
+            assert f'href="index.html?{_ROLE_FILTER[role][0]}={login}">' in group, (login, role)
+    # The keys are the table's own, or the link opens a table that filters nothing.
+    for field, _ in _ROLE_FILTER.values():
+        assert f"'{field}'" in _FILTER_JS, field
+
+
+def test_the_people_page_says_when_its_filters_match_nothing(rendered: Path):
+    """F1. Filtered to nothing, the page hid every section and left a control bar
+    over a void — which reads as a broken app rather than as a filter that matched
+    nothing. The message goes inside the table body, where the rows were."""
+    body = read(rendered, "people.html")
+    empty = re.search(r'<tbody id="nothing"[^>]*>.*?</tbody>', body, re.S).group(0)
+
+    assert re.search(r'<tbody id="nothing" hidden>', body), "hidden while there is anything"
+    assert '<tr class="nothing"><td colspan="5">' in empty, "inside the body, not beside it"
+    assert "No person matches these filters." in empty
+    assert '<button type="button" id="clear-filters">Clear filters</button>' in empty
+    assert "NOTHING.hidden = visible > 0;" in body
+    assert "if (CLEAR) CLEAR.onclick = clearFilters;" in body
+
+
+def test_a_plan_that_names_nobody_says_so_instead_of_offering_a_clear(tmp_path: Path):
+    """The emptiness decides what to do about it, and there is nothing to clear on
+    a plan nobody is named in."""
+    from datetime import date
+
+    from openproj.model import Config
+    from openproj.render import render_people
+
+    body = render_people(build_index([], Config(), date(2026, 8, 17)))
+
+    assert "Nobody is named in this plan yet." in body
+    assert "No person matches these filters." not in body
+    assert '<button type="button" id="clear-filters">' not in body
 
 
 def test_every_filter_offers_a_way_back_to_everything(rendered: Path):
@@ -1072,9 +1252,12 @@ def test_a_persons_rows_lead_with_what_they_own(rendered: Path):
     from openproj.render import _ROLE_ORDER
 
     body = read(rendered, "people.html")
-    for section in re.findall(r'<section class="person".*?</section>', body, re.S):
-        roles = re.findall(r'<tr data-role="(\w+)"', section)
-        assert roles == sorted(roles, key=_ROLE_ORDER.index), section[:60]
+    groups = re.findall(r'<tbody class="person".*?</tbody>', body, re.S)
+
+    assert groups
+    for group in groups:
+        roles = re.findall(r'<tr data-role="(\w+)"', group)
+        assert roles == sorted(roles, key=_ROLE_ORDER.index), group[:60]
     assert _ROLE_ORDER[0] == "owner"
 
 
