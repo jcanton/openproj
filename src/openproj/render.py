@@ -71,6 +71,15 @@ _MIN_BAR_PX = 3
 # row it sat four pixels above the label naming it, all the way down the chart.
 _BAR_PX = 14
 _BAR_TOP = (_ROW_PX - _BAR_PX) // 2
+# The status glyph sits on a baseline inside the bar, not at its top edge, so the
+# server and the filter script both have to place it from the same offset. A 9px
+# glyph is about 6.5px of cap height, centred in a 14px bar.
+_GLYPH_DY = 10.5
+# Narrower than this and the glyph is wider than the bar it names, so it spills
+# onto the page — a mark in a status colour sitting on no status colour. A bar
+# that short has already lost its fill as a channel too; the tooltip and the label
+# beside it are what is left, and both still say the status in words.
+_GLYPH_MIN_PX = 11
 _LABEL_CHARS = 40
 # Per level of containment. Enough to read as a step at 11px, small enough that a
 # task three deep still has most of the 250px label column to write its name in.
@@ -330,6 +339,10 @@ def _timeline(
         classes = ["bar", *marks]
         if span.overruns_cycle_weeks:
             classes.append("late")
+        width = round(
+            max(_MIN_BAR_PX, day_px, x(visible_end + timedelta(days=1)) - x(visible_start)),
+            1,
+        )
         bars.append(
             {
                 "id": entity_id,
@@ -341,14 +354,12 @@ def _timeline(
                 "marks": marks,
                 "x": x(visible_start),
                 "y": row * _ROW_PX + _HEADER_PX + _BAR_TOP,
-                "width": round(
-                    max(
-                        _MIN_BAR_PX, day_px,
-                        x(visible_end + timedelta(days=1)) - x(visible_start),
-                    ),
-                    1,
-                ),
+                "width": width,
                 "colour": _status_class(entity.status),
+                # The channel that is not colour. Five fills on a luminance ladder
+                # are separable; they are not nameable, and nothing on a bar says
+                # the word. Empty on a bar too narrow to hold the mark inside it.
+                "glyph": STATUS_GLYPH.get(entity.status, "") if width >= _GLYPH_MIN_PX else "",
             }
         )
         size, _ = size_weeks(entity, config)
@@ -555,83 +566,94 @@ try {
   --font-sans: "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --bg: #ffffff; --fg: #14211f; --surface: #ffffff; --surface-2: #f5f8f8;
-  --line: #dce4e5; --line-strong: #b4c3c7; --muted: #5a6b70;
+  /* --line-strong is the only boundary of every drawn input, button and popup,
+     so it is a UI boundary and owes 3:1. It was #b4c3c7 — 1.81:1 — which drew a
+     text field as a rumour. */
+  --line: #dce4e5; --line-strong: #879398; --muted: #5a6b70;
   --accent: #0f5c6b; --on-accent: #ffffff;
   --danger: #9a3327; --warn: #8a5308; --ok: #2f7248;
-  /* The em dash that means "no value" was #b7c5c9 against white: 1.77:1, which
-     is not a colour, it is an absence. It is a real piece of information. */
-  --empty: #7c8d93; --focus: #0f5c6b;
+  /* The em dash that means "no value" is *text*, so it owes 4.5:1 and not the
+     3.45 it was first given. Whether a field is empty is a fact, not a hint. */
+  --empty: #5f7176; --focus: #0f5c6b;
   /* Four tokens per status, not one. Fill and ink draw *shapes* — a graph node,
      a timeline bar. Soft and text draw *chips* — the pill in a table cell, which
-     needs a ground light enough to sit inside a row of running text. */
-  --st-shaping: #5b4b9e; --st-shaping-ink: #ffffff;
-  --st-shaping-soft: #ede9f8; --st-shaping-text: #4a3c86;
-  --st-ready: #2c5f8f; --st-ready-ink: #ffffff;
-  --st-ready-soft: #e4eef8; --st-ready-text: #23507a;
-  --st-in_progress: #8a5308; --st-in_progress-ink: #ffffff;
-  --st-in_progress-soft: #f8eedc; --st-in_progress-text: #774606;
-  --st-done: #2f7248; --st-done-ink: #ffffff;
-  --st-done-soft: #e3f1e8; --st-done-text: #256040;
-  --st-shelved: #566a72; --st-shelved-ink: #ffffff;
-  --st-shelved-soft: #ebeff1; --st-shelved-text: #465861;
+     needs a ground light enough to sit inside a row of running text.
+     The five fills are a *luminance ladder*, not five hues at one lightness:
+     hue is the channel a dichromat loses, and on the graph and the timeline the
+     fill used to be the only channel there was. Work gets more solid as it
+     advances — parked is the faintest, done the darkest — so the order survives
+     every kind of colour vision. Which is why the ink is no longer white
+     everywhere: it flips with the rung its fill sits on. */
+  --st-shaping: #7e61c2; --st-shaping-ink: #ffffff;
+  --st-shaping-soft: #efedf5; --st-shaping-text: #5e3eaa;
+  --st-ready: #275e92; --st-ready-ink: #ffffff;
+  --st-ready-soft: #ecf1f6; --st-ready-text: #22578a;
+  --st-in_progress: #603a04; --st-in_progress-ink: #ffffff;
+  --st-in_progress-soft: #f7f2eb; --st-in_progress-text: #734f1b;
+  --st-done: #0d311f; --st-done-ink: #ffffff;
+  --st-done-soft: #ecf6f1; --st-done-text: #18633d;
+  --st-shelved: #8a979f; --st-shelved-ink: #101416;
+  --st-shelved-soft: #eff2f3; --st-shelved-text: #495760;
   /* Kind is drawn in ink, never in hue: two colour languages on one row and
-     neither one is read. */
-  --kind-ink: #5a6b70; --kind-line: #b4c3c7;
+     neither one is read. The hairline is the same boundary every input has —
+     written as a reference rather than a second copy of the value, because the
+     copy is how a boundary token gets fixed in one place and not the other. */
+  --kind-ink: var(--muted); --kind-line: var(--line-strong);
   --sev-blocker: #9a3327; --sev-blocker-soft: #f9e9e6;
   --sev-warn: #8a5308; --sev-warn-soft: #f8eedc;
-  /* One label colour for every status fill, because in each theme all five inks
-     are the same. The graph reads it for node text and the timeline for the
-     hatch that marks a guess. */
-  --on-status: #ffffff; --hatch: #ffffff;
+  /* The ground a cycle runs over on the timeline. It was --surface-2, which is
+     1.07:1 against the page — a band nobody could see, keyed in the legend by a
+     different token again. One token, 1.50:1 against the page in both themes,
+     and still light enough to carry an accent-coloured cycle number at 5:1. */
+  --band: #c3d6de;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #11181b; --fg: #dde6e7; --surface: #171f22; --surface-2: #1c262a;
-    --line: #263336; --line-strong: #3a4d53; --muted: #93a6aa;
+    --line: #263336; --line-strong: #5c7076; --muted: #93a6aa;
     --accent: #5cb9ca; --on-accent: #0b1214;
     --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
-    --empty: #7e9199; --focus: #5cb9ca;
-    /* Dark fills invert: a light shape carrying dark ink pops off a dark canvas
-       instead of sinking into it. So --on-status and --hatch flip with them —
-       white text on these fills would be the failure the light theme avoids. */
-    --st-shaping: #a79ae6; --st-shaping-ink: #0f1416;
-    --st-shaping-soft: #252041; --st-shaping-text: #b8aaf0;
-    --st-ready: #7fb2de; --st-ready-ink: #0f1416;
-    --st-ready-soft: #152b3e; --st-ready-text: #8fbeea;
-    --st-in_progress: #d9a557; --st-in_progress-ink: #0f1416;
-    --st-in_progress-soft: #332409; --st-in_progress-text: #e2b268;
-    --st-done: #6fc095; --st-done-ink: #0f1416;
-    --st-done-soft: #14301f; --st-done-text: #7ecda2;
-    --st-shelved: #9daeb6; --st-shelved-ink: #0f1416;
-    --st-shelved-soft: #1e262a; --st-shelved-text: #a6b7bf;
-    --kind-ink: #93a6aa; --kind-line: #3a4d53;
+    --empty: #84969c; --focus: #5cb9ca;
+    /* The same ladder, climbed the other way: parked is the darkest rung here
+       and done the lightest, so a shape is always the *more* solid the further
+       the work has got. The ink flips rung by rung with it — one label colour
+       for all five was only ever true while all five fills were one lightness. */
+    --st-shaping: #9077cb; --st-shaping-ink: #101416;
+    --st-shaping-soft: #262034; --st-shaping-text: #b09fd8;
+    --st-ready: #7aacdc; --st-ready-ink: #101416;
+    --st-ready-soft: #1d2a38; --st-ready-text: #87b3dd;
+    --st-in_progress: #f9c275; --st-in_progress-ink: #101416;
+    --st-in_progress-soft: #3b2d19; --st-in_progress-text: #daaf74;
+    --st-done: #d7f4e6; --st-done-ink: #101416;
+    --st-done-soft: #1d372b; --st-done-text: #5cce97;
+    --st-shelved: #5e6a73; --st-shelved-ink: #ffffff;
+    --st-shelved-soft: #242b30; --st-shelved-text: #a6b1ba;
     --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
     --sev-warn: #d9a557; --sev-warn-soft: #332409;
-    --on-status: #0f1416; --hatch: #0f1416;
+    --band: #2a3941;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #11181b; --fg: #dde6e7; --surface: #171f22; --surface-2: #1c262a;
-  --line: #263336; --line-strong: #3a4d53; --muted: #93a6aa;
+  --line: #263336; --line-strong: #5c7076; --muted: #93a6aa;
   --accent: #5cb9ca; --on-accent: #0b1214;
   --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
-  --empty: #7e9199; --focus: #5cb9ca;
-  --st-shaping: #a79ae6; --st-shaping-ink: #0f1416;
-  --st-shaping-soft: #252041; --st-shaping-text: #b8aaf0;
-  --st-ready: #7fb2de; --st-ready-ink: #0f1416;
-  --st-ready-soft: #152b3e; --st-ready-text: #8fbeea;
-  --st-in_progress: #d9a557; --st-in_progress-ink: #0f1416;
-  --st-in_progress-soft: #332409; --st-in_progress-text: #e2b268;
-  --st-done: #6fc095; --st-done-ink: #0f1416;
-  --st-done-soft: #14301f; --st-done-text: #7ecda2;
-  --st-shelved: #9daeb6; --st-shelved-ink: #0f1416;
-  --st-shelved-soft: #1e262a; --st-shelved-text: #a6b7bf;
-  --kind-ink: #93a6aa; --kind-line: #3a4d53;
+  --empty: #84969c; --focus: #5cb9ca;
+  --st-shaping: #9077cb; --st-shaping-ink: #101416;
+  --st-shaping-soft: #262034; --st-shaping-text: #b09fd8;
+  --st-ready: #7aacdc; --st-ready-ink: #101416;
+  --st-ready-soft: #1d2a38; --st-ready-text: #87b3dd;
+  --st-in_progress: #f9c275; --st-in_progress-ink: #101416;
+  --st-in_progress-soft: #3b2d19; --st-in_progress-text: #daaf74;
+  --st-done: #d7f4e6; --st-done-ink: #101416;
+  --st-done-soft: #1d372b; --st-done-text: #5cce97;
+  --st-shelved: #5e6a73; --st-shelved-ink: #ffffff;
+  --st-shelved-soft: #242b30; --st-shelved-text: #a6b1ba;
   --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
   --sev-warn: #d9a557; --sev-warn-soft: #332409;
-  --on-status: #0f1416; --hatch: #0f1416;
+  --band: #2a3941;
 }
 /* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
    spacing of the curly quotes and slashes that PR refs and paths are full of. */
@@ -680,12 +702,12 @@ a, a:visited { color: var(--accent); }
 .chip { display: inline-block; font-family: var(--font-mono); font-size: 11px;
         line-height: 1.45; text-transform: uppercase; letter-spacing: .04em;
         padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
-.chip.st-shaping { background: var(--st-shaping-soft); color: var(--st-shaping-text); }
-.chip.st-ready { background: var(--st-ready-soft); color: var(--st-ready-text); }
-.chip.st-in_progress { background: var(--st-in_progress-soft);
-                       color: var(--st-in_progress-text); }
-.chip.st-done { background: var(--st-done-soft); color: var(--st-done-text); }
-.chip.st-shelved { background: var(--st-shelved-soft); color: var(--st-shelved-text); }
+{#- Written by the loop rather than by hand: five statuses times four tokens is
+    twenty values to keep in step, and the pair that drifts is the pair nobody
+    reads until a chip turns white on white. -#}
+{% for s in statuses %}
+.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text); }
+{%- endfor %}
 /* Kind never competes with status for attention: no hue, only a weight and a
    hairline. A project is the only one that gets the accent, because it is the
    only one there are ever a handful of. */
@@ -714,17 +736,22 @@ a, a:visited { color: var(--accent); }
    graph and the timeline draw the same statuses in the same tokens, and every
    swatch is the token the shape is actually filled with — a legend naming a
    different colour from the one on screen is worse than no legend, because it
-   is believed. */
+   is believed. The swatch carries the glyph too: colour is no longer the only
+   channel on a bar or a node, so a key to the colour alone keys half the
+   drawing. */
 .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
           list-style: none; margin: .75rem 0 0; padding: 0;
           font-size: 12px; color: var(--muted); }
 .legend li { display: flex; align-items: center; gap: .35rem; }
 .legend .swatch { width: 20px; height: 11px; border-radius: 2px; flex: none; }
-.legend .swatch.st-shaping { background: var(--st-shaping); }
-.legend .swatch.st-ready { background: var(--st-ready); }
-.legend .swatch.st-in_progress { background: var(--st-in_progress); }
-.legend .swatch.st-done { background: var(--st-done); }
-.legend .swatch.st-shelved { background: var(--st-shelved); }
+/* inline-flex on the span only. Two of these swatches are <svg>, where a flex
+   display on the root would be laying out a replaced element as a box. */
+.legend span.swatch { display: inline-flex; align-items: center; justify-content: center;
+                      font-family: var(--font-sans); font-weight: 700;
+                      font-size: 9px; line-height: 1; }
+{% for s in statuses %}
+.legend .swatch.st-{{ s }} { background: var(--st-{{ s }}); color: var(--st-{{ s }}-ink); }
+{%- endfor %}
 /* The way out of a filter, on every page that has one. Three pages were drawing
    this button themselves, which is three chances for the way out of a filter to
    look like something else. */
@@ -1703,10 +1730,13 @@ _GRAPH = """
 {% endif %}
 {{ facets|safe }}
 {#- The one thing on this canvas that is not a word. Every swatch is the token
-    the node is actually filled with, so the legend cannot drift from the graph. -#}
-<ul class="legend" aria-label="What a node colour means">
+    the node is actually filled with and carries the glyph the node's title is
+    prefixed with, so the legend cannot drift from the graph and it keys both
+    channels rather than only the one a dichromat cannot use. -#}
+<ul class="legend" aria-label="What a node's colour and mark mean">
   {% for status in statuses %}
-  <li><span class="swatch st-{{ status }}"></span>{{ status|human }}</li>
+  <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
+    >{{ status|human }}</li>
   {% endfor %}
 </ul>
 <div id="summary"><span id="shown">{{ total }}</span> of {{ total }} shown<span
@@ -1745,6 +1775,15 @@ const INK = () => ({
   in_progress: token('--st-in_progress-ink'), done: token('--st-done-ink'),
   shelved: token('--st-shelved-ink'),
 });
+// The fill is the only status channel on this canvas, and five fills on a
+// luminance ladder are separable without being nameable: you can see that one
+// box is darker than the next and still not know which state that is. So a
+// node's own title carries the status glyph in front of it — the same glyph the
+// timeline draws at a bar's left edge and the legend below shows in its swatch.
+// Not a token: a shape, so it survives a screenshot, a projector and deuteranopia.
+const GLYPH = {{ glyphs|tojson }};
+const labelOf = node =>
+  (GLYPH[node.data('status')] || '') + ' ' + (node.data('label') || '');
 
 // Cytoscape aligns a left-aligned label by its RIGHT edge against the box's left
 // edge, so putting a group's name inside its own box means knowing how wide the
@@ -1755,7 +1794,9 @@ const GROUP_SIZE = 12;
 const GROUP_MAX = 300;    // the width the label is told to ellipsise at
 function groupWidth(node) {
   ruler.font = `600 ${GROUP_SIZE}px ${token('--font-sans')}`;
-  return Math.min(GROUP_MAX, ruler.measureText(node.data('label') || '').width);
+  // The string the box is actually labelled with, glyph included. Measuring the
+  // bare title put every group name a glyph's width off the box it belongs to.
+  return Math.min(GROUP_MAX, ruler.measureText(labelOf(node)).width);
 }
 
 // Named once: filtering re-runs it, and a second copy of the options is how the
@@ -1773,7 +1814,7 @@ const cy = cytoscape({
   maxZoom: 2,
   style: [
     { selector: 'node', style: {
-        'label': 'data(label)', 'font-size': 10, 'shape': 'round-rectangle',
+        'label': labelOf, 'font-size': 10, 'shape': 'round-rectangle',
         // One typeface for the whole app, this canvas included — and the ruler
         // above measures group labels in it, so a second stack here would put
         // every group label a few pixels off the box it belongs to.
@@ -1785,7 +1826,11 @@ const cy = cytoscape({
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
         'border-width': e => ({high: 4, medium: 2, low: 1})[e.data('priority')] ?? 2,
-        'border-color': token('--accent'),
+        // The fill's own ink, not the accent. The fills are a luminance ladder,
+        // so one border colour for all five is 2:1 against the darkest of them —
+        // and the border is how priority is drawn, which makes it a channel that
+        // has to be legible on every rung, not only on the middle ones.
+        'border-color': e => INK()[e.data('status')],
         'color': e => INK()[e.data('status')], 'text-valign': 'center',
         'width': 150, 'height': 44 } },
     { selector: '.picked', style: {
@@ -1850,7 +1895,7 @@ function route() {
 function paint() {
   cy.style()
     .selector('node').style({'background-color': e => COLOUR()[e.data('status')],
-                             'border-color': token('--accent'),
+                             'border-color': e => INK()[e.data('status')],
                              'color': e => INK()[e.data('status')]})
     .selector('.picked').style({'border-color': token('--danger')})
     .selector(':parent').style({'color': token('--fg'),
@@ -2109,19 +2154,21 @@ _TIMELINE = """
   clipped to it, never dropped.</p>
 {#- Statuses first and marks second, because they are two questions: what state
     is this in, and how much of this bar is a guess. Every swatch is drawn from
-    the same token or the same pattern the plot uses. -#}
-<ul class="legend" aria-label="What a bar colour means">
+    the same token or the same pattern the plot uses — including the glyph, which
+    is the half of the status channel that is not colour. -#}
+<ul class="legend" aria-label="What a bar's colour and mark mean">
   {% for status in statuses %}
-  <li><span class="swatch st-{{ status }}"></span>{{ status|human }}</li>
+  <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
+    >{{ status|human }}</li>
   {% endfor %}
 </ul>
 <ul class="legend" aria-label="What a bar marking means">
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
-      ><rect class="neutral" width="20" height="11"/><rect class="mark mark-estimated"
-        width="20" height="11"/></svg>appetite assumed</li>
+      ><rect class="st-ready" width="20" height="11"/><rect
+        class="mark mark-estimated st-ready" width="20" height="11"/></svg>appetite assumed</li>
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
-      ><rect class="neutral" width="20" height="11"/><rect class="mark mark-unowned"
-        width="20" height="11"/></svg>nobody on it</li>
+      ><rect class="st-ready" width="20" height="11"/><rect
+        class="mark mark-unowned st-ready" width="20" height="11"/></svg>nobody on it</li>
   <li><span class="swatch outline late"></span>overruns its cycle</li>
   <li><span class="swatch rule today"></span>today</li>
   <li><span class="swatch rule boundary"></span>a cycle closes</li>
@@ -2145,15 +2192,25 @@ _TIMELINE = """
 <svg width="{{ t.width }}" height="{{ t.height }}"
      viewBox="0 0 {{ t.width }} {{ t.height }}" role="img"
      aria-label="Every scheduled entity as a bar, earliest first within its parent">
+  {#- One pair of patterns per status, not one pair in all. A pattern resolves
+      its own custom properties against the tree it is declared in, never against
+      the shape that references it, so a single --hatch could only ever be right
+      for one rung of the ladder — white lines over a near-white "done" bar, or
+      near-black ones over a dark "shelved" one. The stroke is the fill's own ink,
+      which is the token that already means "what reads on this". -#}
   <defs>
-    <pattern id="hatch-estimated" width="6" height="6" patternTransform="rotate(45)"
-             patternUnits="userSpaceOnUse">
-      <line x1="0" y="0" x2="0" y2="6" stroke="var(--hatch)" stroke-opacity=".55" stroke-width="3"/>
+    {% for status in statuses %}
+    <pattern id="hatch-estimated-st-{{ status }}" width="6" height="6"
+             patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--st-{{ status }}-ink)"
+            stroke-opacity=".55" stroke-width="3"/>
     </pattern>
-    <pattern id="hatch-unowned" width="8" height="8" patternTransform="rotate(-45)"
-             patternUnits="userSpaceOnUse">
-      <line x1="0" y="0" x2="0" y2="8" stroke="var(--hatch)" stroke-opacity=".7" stroke-width="4"/>
+    <pattern id="hatch-unowned-st-{{ status }}" width="8" height="8"
+             patternTransform="rotate(-45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--st-{{ status }}-ink)"
+            stroke-opacity=".7" stroke-width="4"/>
     </pattern>
+    {% endfor %}
   </defs>
   {#- A band of its own above the months. A cycle label used to be drawn at y=10
       and a month label at y=18 inside one 26px strip, so a cycle closing near the
@@ -2176,14 +2233,20 @@ _TIMELINE = """
   {#- Drawn over the grid and under today. A bar is the subject of the page; the
       rules behind it are furniture, and the one line that must never be hidden
       by a bar is the one saying where now is. -#}
+  {#- The glyph is the bar's second channel, drawn in the fill's own ink at the
+      left edge. It is dropped on a bar too narrow to hold it rather than left to
+      spill onto the page, where it would be a mark in a status colour sitting on
+      no status colour at all. -#}
   {% for bar in t.bars %}
   <a href="{{ links.entity }}{{ bar.id }}" aria-label="{{ bar.full }}"
      ><rect data-id="{{ bar.id }}" class="{{ bar.classes }} {{ bar.colour }}"
         x="{{ bar.x }}" y="{{ bar.y }}"
         width="{{ bar.width }}" height="{{ bar_px }}"
         ><title>{{ t.rows[bar.id].tip }} — click to open</title></rect>{% for mark in
-        bar.marks %}<rect class="mark mark-{{ mark }}" x="{{ bar.x }}" y="{{ bar.y }}"
-        width="{{ bar.width }}" height="{{ bar_px }}"/>{% endfor %}</a>
+        bar.marks %}<rect class="mark mark-{{ mark }} {{ bar.colour }}" x="{{ bar.x }}"
+        y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar_px }}"/>{% endfor %}{% if
+        bar.glyph %}<text class="bar-glyph {{ bar.colour }}" aria-hidden="true"
+        x="{{ bar.x + 3 }}" y="{{ bar.y + glyph_dy }}">{{ bar.glyph }}</text>{% endif %}</a>
   {% endfor %}
   {% if t.today_x is not none %}
   <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
@@ -2209,7 +2272,7 @@ const svg = scroller.querySelector('svg');
 const plot = document.querySelector('.tl');
 const nothing = document.getElementById('nothing');
 const ROW_PX = {{ row_px }}, HEADER = {{ t.header }}, WIDTH = {{ t.width }};
-const BAR_TOP = {{ bar_top }};
+const BAR_TOP = {{ bar_top }}, GLYPH_DY = {{ glyph_dy }};
 const RECTS = [...svg.querySelectorAll('rect[data-id]')];
 const LABELS = new Map([...document.querySelectorAll('.labels .row')]
   .map(row => [row.dataset.id, row]));
@@ -2353,9 +2416,15 @@ function applyFilter() {
     rect.parentNode.style.display = on ? '' : 'none';
     LABELS.get(rect.dataset.id).hidden = !on;
     if (!on) continue;
-    // The bar and whatever is hatched over it are one row and move together.
+    // The bar, whatever is hatched over it and the glyph naming its status are
+    // one row and move together. The glyph is a <text>, so it sits on a baseline
+    // rather than at the rect's top edge — moved by the same amount, from the
+    // same offset the server drew it at.
+    const y = row * ROW_PX + HEADER + BAR_TOP;
     for (const shape of rect.parentNode.querySelectorAll('rect'))
-      shape.setAttribute('y', row * ROW_PX + HEADER + BAR_TOP);
+      shape.setAttribute('y', y);
+    const glyph = rect.parentNode.querySelector('text.bar-glyph');
+    if (glyph) glyph.setAttribute('y', y + GLYPH_DY);
     row++;
   }
   const height = row * ROW_PX + HEADER + 20;
@@ -2395,20 +2464,17 @@ _TIMELINE_STYLE = """
 .tl-controls .button.primary:hover { color: var(--on-accent); opacity: .9; }
 #summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
 #shown { font-variant-numeric: tabular-nums; }
-/* The ground under a legend hatch. --muted rather than a line colour because it
-   is the one token that tracks the status fills through the themes: a mid tone
-   in light and a light one in dark, so --hatch reads on it exactly as it reads
-   on a bar. */
-rect.neutral { fill: var(--muted); }
-/* The three markings, drawn the way the plot draws them: a hatch over a neutral
-   ground, an outline, a rule. A legend that redraws a mark in its own way is a
-   legend that can be wrong about the picture beside it. */
+/* The three markings, drawn the way the plot draws them: a hatch over a real
+   status fill, an outline, a rule. A legend that redraws a mark in its own way
+   is a legend that can be wrong about the picture beside it — which is how the
+   band key came to be a bordered --surface-2 swatch standing in for an unbordered
+   --surface-2 band, two wrong answers agreeing with each other. */
 .legend .swatch.outline { background: var(--surface-2); }
 .legend .swatch.late { border: 1.5px solid var(--danger); }
 .legend .swatch.rule { width: 2px; height: 13px; border-radius: 0; }
 .legend .swatch.today { background: var(--danger); }
 .legend .swatch.boundary { background: none; border-left: 2px dashed var(--line-strong); }
-.legend .swatch.band { background: var(--surface-2); border: 1px solid var(--line); }
+.legend .swatch.band { background: var(--band); }
 .tl { display: flex; border: 1px solid var(--line); align-items: stretch; }
 .tl[hidden] { display: none; }
 .labels { flex: 0 0 250px; border-right: 1px solid var(--line); }
@@ -2422,27 +2488,34 @@ svg { display: block; }
 .month-label { font-size: 9px; fill: var(--muted); }
 /* The band a cycle runs for, start of build to end of cooldown. It carries its
    own number, so the ground only has to say "there is a cycle here"; the dashed
-   rule inside it is where one closes. */
-.cycle-band { fill: var(--surface-2); }
+   rule inside it is where one closes. --band and not --surface-2: a panel tint
+   behind a panel is a panel, but behind the page it is 1.07:1 and there is no
+   band at all. Same token as the legend key, because they are the same band. */
+.cycle-band { fill: var(--band); }
 .band-rule { stroke: var(--line); }
-.cycle-rule { stroke: var(--line); stroke-dasharray: 3 3; }
+/* Where a cycle closes — the one rule on this chart that is a fact about the
+   plan rather than grid furniture, so it is drawn in the boundary token and not
+   the hairline one. The legend already keyed it as --line-strong while the plot
+   drew it in --line, which is a legend describing a line nobody could see. */
+.cycle-rule { stroke: var(--line-strong); stroke-dasharray: 3 3; }
 .cycle-label { font-size: 10px; fill: var(--accent); font-weight: 600; }
 .today { stroke: var(--danger); stroke-width: 1.5; }
 .today-label { font-size: 10px; fill: var(--danger); font-weight: 600; }
 rect.bar { rx: 3; }
-rect.st-shaping { fill: var(--st-shaping); }
-rect.st-ready { fill: var(--st-ready); }
-rect.st-in_progress { fill: var(--st-in_progress); }
-rect.st-done { fill: var(--st-done); }
-rect.st-shelved { fill: var(--st-shelved); }
 /* An assumed appetite and work nobody is on are hatched, not outlined: the
    outline says "overruns its cycle", and one channel carrying three facts says
    none of them. Drawn as a second rect over the bar so the status colour stays
    underneath, and transparent to the pointer so the bar is still what you hover. */
 rect.mark { rx: 3; pointer-events: none; }
-rect.mark-estimated { fill: url(#hatch-estimated); }
-rect.mark-unowned { fill: url(#hatch-unowned); }
 rect.late { stroke: var(--danger); stroke-width: 1.5; }
+/* The bar's second channel: which status this is, said as a shape. Drawn in the
+   fill's own ink, and transparent to the pointer so the thing under the cursor
+   at the left end of a bar is still the bar.
+   The face is the inlined one, not the mono stack: the mono stack is whatever
+   the reader's machine happens to have, and this glyph is the channel that has
+   to survive when the colour does not. */
+text.bar-glyph { font-family: var(--font-sans); font-size: 9px; font-weight: 700;
+                 pointer-events: none; }
 /* Beside the plot rather than over it: the plot is as tall as its rows, and an
    overlay on an empty one has nothing to cover. */
 #nothing { border: 1px solid var(--line); padding: 2.5rem 1rem; text-align: center; }
@@ -2465,6 +2538,26 @@ rect.late { stroke: var(--danger); stroke-width: 1.5; }
 #tip .guess { color: var(--muted); font-style: italic; }
 #tip .tip-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
 """
+
+
+def _status_paint_css() -> str:
+    """The per-status half of the timeline's stylesheet.
+
+    Twenty rules — a fill, a glyph ink and two hatch references for each status —
+    so it is written by a loop. Spelled out by hand, the one that goes missing is
+    a hatch, and a missing hatch does not look broken: it looks like a bar that
+    has stopped being a guess.
+    """
+    rules = [f"rect.st-{s} {{ fill: var(--st-{s}); }}" for s in STATUSES]
+    # The label on a shape belongs to the fill it sits on, not to the page: on the
+    # dark theme's top rungs the fill is nearly white, and --fg on it is nothing.
+    rules += [f"text.bar-glyph.st-{s} {{ fill: var(--st-{s}-ink); }}" for s in STATUSES]
+    rules += [
+        f"rect.mark-{mark}.st-{s} {{ fill: url(#hatch-{mark}-st-{s}); }}"
+        for mark in ("estimated", "unowned")
+        for s in STATUSES
+    ]
+    return "\n".join(rules) + "\n"
 
 
 # Raw, because the JS in here contains regex escapes. `\\.` is not a Python escape,
@@ -3273,6 +3366,26 @@ EDITABLE: dict[str, str] = {
 STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
 PRIORITIES = ("high", "medium", "low")
 
+# The redundant channel. On the graph and the timeline a fill is the only thing
+# telling two shapes apart, and a luminance ladder makes five fills *separable*
+# without making any one of them *nameable* — you can see that a bar is darker
+# than its neighbour and still not know which state that is. So every status also
+# owns a mark that is not colour: drawn at a bar's left edge, prefixed to a node's
+# title, and shown inside the legend swatch beside the word it stands for.
+#
+# All five are in the vendored face's latin subset, so a page that falls back to
+# no webfont at all still draws five different shapes rather than five boxes.
+# Chosen to be different SHAPES, not different weights of one shape: a small dot
+# and a large dot are two glyphs a reader has to compare, which is the failure
+# the ladder was already meant to fix.
+STATUS_GLYPH = {
+    "shaping": "?",              # still a question
+    "ready": "»",           # queued at the gate
+    "in_progress": "↑",     # under way
+    "done": "•",            # solid, settled
+    "shelved": "−",         # parked, nothing moving
+}
+
 def _required_at() -> dict[str, tuple[str, ...]]:
     """Which statuses demand each field, asked of the validator rather than copied.
 
@@ -3382,6 +3495,9 @@ def _human(value: object) -> str:
 # be handed the map, and as `label(field)` for a field name.
 _ENV.globals["human"] = _human
 _ENV.filters["human"] = _human
+# The mark that says the same thing the colour says, for every legend and every
+# shape that draws one. Unknown values get nothing rather than a box glyph.
+_ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
@@ -4938,6 +5054,10 @@ def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> s
         style=Markup(style),
         font=_font_uri(),
         links=links,
+        # The shell writes the chip and legend rules for every status, so a
+        # status added to the model cannot arrive with three of its four tokens
+        # wired up and the fourth still spelled out on a line nobody edited.
+        statuses=STATUSES,
         # Only the server has an event stream to listen to. A static page opening a
         # connection to nothing would retry forever in the console.
         live=links.table.startswith("/"),
@@ -4988,6 +5108,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         facets=_facets_html(index),
         filters=_FILTER_JS,
         statuses=STATUSES,
+        glyphs=STATUS_GLYPH,
         total=len(index.entities),
     )
     body = body.replace("ELEMENTS_JSON", json.dumps(_elements(index)))
@@ -5029,6 +5150,7 @@ def render_timeline(
         row_px=_ROW_PX,
         bar_px=_BAR_PX,
         bar_top=_BAR_TOP,
+        glyph_dy=_GLYPH_DY,
         facets=_facets_html(index),
         filters=_FILTER_JS,
     )
@@ -5036,7 +5158,7 @@ def render_timeline(
     # whole plan: a bar that is not on this window cannot be filtered onto it.
     payload = {"rows": timeline["rows"], "human": HUMAN}
     body = body.replace("BARS_JSON", json.dumps(payload))
-    return _page("openproj — timeline", body, _TIMELINE_STYLE, links)
+    return _page("openproj — timeline", body, _TIMELINE_STYLE + _status_paint_css(), links)
 
 
 def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> None:

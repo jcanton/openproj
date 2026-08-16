@@ -14,7 +14,7 @@ import pytest
 
 from openproj.index import Index, build_index
 from openproj.model import load_repo
-from openproj.render import render_static
+from openproj.render import STATUS_GLYPH, STATUSES, render_static
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
          "graph.html", "timeline.html")
@@ -36,6 +36,43 @@ def rendered(seed_index: Index, tmp_path: Path) -> Path:
 
 def read(directory: Path, name: str) -> str:
     return (directory / name).read_text(encoding="utf-8")
+
+
+def _luminance(colour: str) -> float:
+    """WCAG relative luminance of a #rrggbb."""
+    value = colour.lstrip("#")
+    channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast(a: str, b: str) -> float:
+    """The WCAG ratio between two colours, either way round."""
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def tokens(page: str) -> dict[str, dict[str, str]]:
+    """Every colour token, per theme, read out of a page that actually rendered.
+
+    Three blocks, not two: a reader who has never touched the toggle matches only
+    the media query, so a value that is right in `[data-theme="dark"]` and wrong
+    in the media block is wrong for most of the people who will ever see it. They
+    are returned separately so a test can say they agree.
+    """
+    style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    blocks = {
+        "light": re.search(r"^:root \{(.*?)^\}", style, re.S | re.M).group(1),
+        "dark": re.search(r'^:root\[data-theme="dark"\] \{(.*?)^\}', style, re.S | re.M).group(1),
+        "dark-by-system": re.search(
+            r'@media \(prefers-color-scheme: dark\) \{\s*'
+            r':root:not\(\[data-theme="light"\]\) \{(.*?)^  \}',
+            style, re.S | re.M).group(1),
+    }
+    return {
+        name: dict(re.findall(r"(--[\w-]+): (#[0-9a-f]{6})", body))
+        for name, body in blocks.items()
+    }
 
 
 def test_render_static_writes_all_three_pages(rendered: Path):
@@ -206,16 +243,22 @@ def test_the_graph_says_when_it_is_drawing_nothing(rendered: Path):
 
 def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
     """Status is the only thing on this canvas that is not a word. The swatch is
-    the token the node is actually filled with — a legend naming a colour that is
-    not on screen is worse than none, because it gets believed."""
-    from openproj.render import STATUSES
+    the token the node is actually filled with and the glyph the node is actually
+    marked with — a legend naming a colour that is not on screen is worse than
+    none, because it gets believed, and a legend keying only the colour keys the
+    half of the encoding a dichromat cannot use."""
+    from openproj.render import STATUS_GLYPH, STATUSES
 
     graph = read(rendered, "graph.html")
     legend = re.search(r'<ul class="legend".*?</ul>', graph, re.S).group(0)
 
     for status in STATUSES:
-        assert f'<span class="swatch st-{status}"></span>' in legend, status
-        assert f".legend .swatch.st-{status} {{ background: var(--st-{status}); }}" in graph
+        assert f'<span class="swatch st-{status}" aria-hidden="true">' in legend, status
+        assert STATUS_GLYPH[status] in legend, status
+        assert (
+            f".legend .swatch.st-{status} {{ background: var(--st-{status}); "
+            f"color: var(--st-{status}-ink); }}"
+        ) in graph
     assert "In progress" in legend, "the reader's word, not the stored one"
 
 
@@ -251,6 +294,9 @@ def test_a_node_takes_its_ink_from_the_fill_it_sits_on(rendered: Path):
     assert "'color': e => INK()[e.data('status')]" in repaint
     assert "'background-color': e => COLOUR()[e.data('status')]" in repaint
     assert "'text-background-color': token('--surface')" in repaint
+    # The border draws priority, so it is a channel of its own — and one colour
+    # for all five fills is 2:1 against the darkest rung of the ladder.
+    assert "'border-color': e => INK()[e.data('status')]" in repaint
 
 
 def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path):
@@ -264,8 +310,8 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
 
     from openproj.model import Config, Task
 
-    assert 'id="hatch-estimated"' in read(rendered, "timeline.html")
-    assert 'id="hatch-unowned"' in read(rendered, "timeline.html")
+    assert 'id="hatch-estimated-st-ready"' in read(rendered, "timeline.html")
+    assert 'id="hatch-unowned-st-ready"' in read(rendered, "timeline.html")
 
     guessed = Task(id="task-000001", kind="task", title="No size given", owner="ann")
     nobodys = Task(id="task-000002", kind="task", title="Nobody owns this", effort_weeks=1.0)
@@ -278,14 +324,38 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
     assert 'data-id="task-000002" class="bar unowned' in body
     # The patterns were declared and then referenced by nothing, so the class was
     # the whole of the encoding and the bar looked exactly like a commitment. The
-    # legend draws itself from the same two patterns, so only the plot is counted.
+    # legend draws itself from the same patterns, so only the plot is counted.
     plot = body[body.index("<svg width="):]
-    assert plot.count('class="mark mark-estimated"') == 1
-    assert plot.count('class="mark mark-unowned"') == 1
-    assert "rect.mark-estimated { fill: url(#hatch-estimated); }" in body
-    assert "rect.mark-unowned { fill: url(#hatch-unowned); }" in body
+    assert plot.count('class="mark mark-estimated st-shaping"') == 1
+    assert plot.count('class="mark mark-unowned st-shaping"') == 1
+    assert "rect.mark-estimated.st-shaping { fill: url(#hatch-estimated-st-shaping); }" in body
+    assert "rect.mark-unowned.st-shaping { fill: url(#hatch-unowned-st-shaping); }" in body
     # The outline channel says one thing only, and it is not this one.
     assert "rect.estimated { stroke" not in body
+
+
+def test_a_hatch_is_drawn_in_the_ink_of_the_bar_it_covers(rendered: Path):
+    """One --hatch for all five statuses was only ever right while all five fills
+    were one lightness. On the ladder the light theme's shelved bar is pale and
+    the dark theme's done bar is nearly white, so a white hatch on either is no
+    hatch at all — and a pattern resolves its custom properties against the tree
+    it is declared in, never against the shape referencing it, so there is no way
+    to say "the ink of whatever I am painting" with one pattern."""
+    from openproj.render import STATUSES
+
+    body = read(rendered, "timeline.html")
+
+    assert "--hatch" not in body, "one hatch colour cannot serve the whole ladder"
+    for status in STATUSES:
+        for mark in ("estimated", "unowned"):
+            pattern = re.search(
+                rf'<pattern id="hatch-{mark}-st-{status}".*?</pattern>', body, re.S
+            )
+            assert pattern, (mark, status)
+            assert f"stroke=\"var(--st-{status}-ink)\"" in pattern.group(0), (mark, status)
+            assert (
+                f"rect.mark-{mark}.st-{status} {{ fill: url(#hatch-{mark}-st-{status}); }}"
+            ) in body
 
 
 def test_the_timeline_orders_its_rows_by_containment(tmp_path: Path):
@@ -401,12 +471,15 @@ def test_a_bar_carries_what_it_is_holding(rendered: Path, seed_index: Index):
 def test_the_timeline_names_every_colour_it_draws(rendered: Path):
     """A colour with no key is a colour the reader has to guess at, and the pink
     outline meant something nothing on the page named."""
+    from openproj.render import STATUS_GLYPH
+
     body = read(rendered, "timeline.html")
     legend = re.search(r'<ul class="legend" aria-label="What a bar marking means">(.*?)</ul>',
                        body, re.S).group(1)
 
     for status in ("shaping", "ready", "in_progress", "done", "shelved"):
-        assert f'<span class="swatch st-{status}"></span>' in body, status
+        assert f'<span class="swatch st-{status}" aria-hidden="true">' in body, status
+        assert STATUS_GLYPH[status] in body, status
     assert "appetite assumed" in legend
     assert "nobody on it" in legend
     assert "overruns its cycle" in legend
@@ -1193,16 +1266,216 @@ def test_a_status_carries_a_chip_palette_as_well_as_a_fill(rendered: Path):
         assert f".chip.st-{status} {{" in style
 
 
-def test_the_dark_theme_flips_the_ink_with_the_fill(rendered: Path):
-    """Dark fills are light shapes: white label text on them is exactly the
-    failure the light theme's white text avoids. The graph reads --on-status for
-    its node labels and the timeline reads --hatch, so both have to flip too."""
+def test_no_theme_has_one_ink_for_every_status(rendered: Path):
+    """The fills are a luminance ladder now, which is the whole point of them:
+    they run from pale to near-black in the light theme and back the other way in
+    the dark one. So there is no single label colour that reads on all five, and
+    --on-status and --hatch — the two tokens that assumed there was — are gone."""
     style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
-    dark = re.search(r':root\[data-theme="dark"\] \{(.*?)\}', style, re.S).group(1)
+    themes = tokens(read(rendered, "index.html"))
 
-    assert "--on-status: #ffffff" not in dark
-    assert "--hatch: #ffffff" not in dark
-    assert re.search(r"--st-done-ink: (#0f1416)", dark)
+    assert "--on-status" not in style, "one ink for five fills is the assumption that broke"
+    assert "--hatch:" not in style
+    for name in ("light", "dark"):
+        inks = {themes[name][f"--st-{s}-ink"] for s in STATUSES}
+        assert len(inks) == 2, (name, inks)
+
+
+# --- the palette is a contract ----------------------------------------------
+
+# The ten fills, written out rather than read from the file they are being
+# checked against. Every other assertion in this block is a computed property,
+# and a computed property tells you a value is *self-consistent*, not that it is
+# the value that was agreed: a palette drifting one hex at a time passes every
+# ratio test on the way down. This is the list somebody has to change on purpose.
+PALETTE = {
+    "light": {
+        "shaping": ("#7e61c2", "#ffffff"),
+        "ready": ("#275e92", "#ffffff"),
+        "in_progress": ("#603a04", "#ffffff"),
+        "done": ("#0d311f", "#ffffff"),
+        "shelved": ("#8a979f", "#101416"),
+    },
+    "dark": {
+        "shaping": ("#9077cb", "#101416"),
+        "ready": ("#7aacdc", "#101416"),
+        "in_progress": ("#f9c275", "#101416"),
+        "done": ("#d7f4e6", "#101416"),
+        "shelved": ("#5e6a73", "#ffffff"),
+    },
+}
+
+
+def test_every_status_fill_carries_ink_that_reads_on_it(rendered: Path):
+    """A bar and a node are the two places where a status is drawn as a shape, and
+    the ladder spans the whole lightness range — so which ink reads on a fill is a
+    per-status question with a per-status answer. 4.5:1 because the ink is text:
+    the node's title, and the glyph at the bar's left edge."""
+    themes = tokens(read(rendered, "index.html"))
+
+    for name, wanted in PALETTE.items():
+        for status, (fill, ink) in wanted.items():
+            assert themes[name][f"--st-{status}"] == fill, (name, status)
+            assert themes[name][f"--st-{status}-ink"] == ink, (name, status)
+            assert contrast(fill, ink) >= 4.5, (name, status, contrast(fill, ink))
+        # And a shape has to exist against its own page before its border helps.
+        # Rounded to the two places the palette states, because the faintest rung
+        # is a hair under 3 unrounded and it is the value that was agreed.
+        page = themes[name]["--bg"]
+        for status, (fill, _) in wanted.items():
+            assert round(contrast(fill, page), 2) >= 3.0, (name, status, contrast(fill, page))
+
+
+def test_the_five_fills_are_separated_by_lightness_and_not_only_by_hue(rendered: Path):
+    """Hue is the channel a dichromat loses, and on the graph and the timeline the
+    fill used to be the only channel there was: five hues at one lightness
+    (1.02–1.11:1 between any two) collapsed into one colour. Lightness is what
+    every kind of colour vision keeps, so consecutive rungs are held apart by it."""
+    themes = tokens(read(rendered, "index.html"))
+
+    for name in ("light", "dark"):
+        rungs = sorted(_luminance(themes[name][f"--st-{s}"]) for s in STATUSES)
+        for lower, upper in zip(rungs, rungs[1:], strict=False):
+            gap = (upper + 0.05) / (lower + 0.05)
+            assert gap >= 1.3, (name, gap)
+
+
+def test_a_chip_pair_is_readable_in_both_themes(rendered: Path):
+    """A chip carries its word, so it does not need the ladder — but the word is
+    text on a tinted ground, and text owes 4.5:1 wherever it is."""
+    themes = tokens(read(rendered, "index.html"))
+
+    for name in ("light", "dark"):
+        for status in STATUSES:
+            soft = themes[name][f"--st-{status}-soft"]
+            text = themes[name][f"--st-{status}-text"]
+            assert contrast(soft, text) >= 4.5, (name, status, contrast(soft, text))
+
+
+def test_a_boundary_and_an_absent_value_are_both_visible(rendered: Path):
+    """--line-strong is the sole boundary of every drawn input, button and popup,
+    which makes it a UI component boundary at 3:1; it was 1.81. --empty is the em
+    dash that means "no value", which makes it text at 4.5:1, not the 3.45 it was
+    first given — whether a field is empty is a fact, not a hint."""
+    themes = tokens(read(rendered, "index.html"))
+
+    for name in ("light", "dark"):
+        page = themes[name]["--bg"]
+        assert contrast(themes[name]["--line-strong"], page) >= 3.0, name
+        assert contrast(themes[name]["--empty"], page) >= 4.5, name
+    # One value, referenced rather than copied: the kind chip's hairline is the
+    # same boundary an input has, and a copy is how one of them gets fixed.
+    assert "--kind-line: var(--line-strong)" in read(rendered, "index.html")
+
+
+def test_the_three_theme_blocks_agree_about_every_colour(rendered: Path):
+    """A reader who has never touched the toggle matches only the media query. A
+    token that is right under [data-theme="dark"] and stale in the media block is
+    stale for most of the people who will ever see the page."""
+    themes = tokens(read(rendered, "index.html"))
+
+    assert themes["dark"] == themes["dark-by-system"]
+    assert set(themes["dark"]) <= set(themes["light"]), "no colour defined only in the dark"
+
+
+# --- the channel that is not colour ------------------------------------------
+
+
+def test_every_status_owns_a_mark_that_is_not_a_colour(rendered: Path):
+    """The ladder makes five fills separable. It does not make one of them
+    nameable: you can see that a bar is darker than its neighbour and still not
+    know which state that is. Five different SHAPES, so no reader has to compare
+    two sizes of the same one."""
+    assert set(STATUS_GLYPH) == set(STATUSES)
+    assert len(set(STATUS_GLYPH.values())) == len(STATUSES), "two statuses share a glyph"
+
+
+def test_a_bar_says_its_status_without_using_colour(rendered: Path):
+    """Fill is the only status channel on a bar — no label sits on one — so the
+    glyph goes at its left edge, in the fill's own ink, and moves with the bar
+    when a filter closes the rows above it."""
+    body = read(rendered, "timeline.html")
+    plot = body[body.index("<svg width="):]
+    # One anchor per row, so a glyph is checked against the bar it is inside
+    # rather than against whichever bar happens to share its x.
+    rows = re.findall(r"<a href=\"[^\"]*\" aria-label=\"[^\"]*\"\s*>(.*?)</a>", plot, re.S)
+    assert rows, "the seed corpus draws no bars"
+
+    marked = 0
+    for row in rows:
+        bar = re.search(
+            r'<rect data-id="[^"]+" class="[^"]*(st-\w+)"\s+x="([\d.]+)" y="([\d.]+)"'
+            r'\s+width="([\d.]+)"',
+            row,
+        )
+        assert bar, row[:120]
+        status, x, y, width = bar.group(1), *(float(bar.group(i)) for i in (2, 3, 4))
+        glyph = re.search(r'<text class="bar-glyph (st-\w+)"[^>]*x="([\d.]+)" y="([\d.]+)">(.)<',
+                          row)
+        if width < 11:
+            assert glyph is None, "a mark wider than its bar spills onto the page"
+            continue
+        assert glyph, (status, width)
+        marked += 1
+        assert glyph.group(1) == status
+        assert glyph.group(4) == STATUS_GLYPH[status.removeprefix("st-")]
+        # Inside the bar it names, on the baseline the filter script re-places it at.
+        assert float(glyph.group(2)) == x + 3
+        assert float(glyph.group(3)) == y + 10.5
+    assert marked, "no bar on the seed corpus carries its status as a shape"
+    for status in STATUSES:
+        assert f"text.bar-glyph.st-{status} {{ fill: var(--st-{status}-ink); }}" in body
+    assert "const glyph = rect.parentNode.querySelector('text.bar-glyph');" in body
+    assert "glyph.setAttribute('y', y + GLYPH_DY)" in body
+
+
+def test_a_node_says_its_status_without_using_colour(rendered: Path):
+    """Same glyph, same meaning, on the other surface where a fill is the only
+    thing telling two shapes apart. Prefixed to the node's own title, so the box
+    still reads as the thing it names."""
+    graph = read(rendered, "graph.html")
+
+    assert re.search(r"const GLYPH = \{.*shelved.*\};", graph)
+    for glyph in STATUS_GLYPH.values():
+        assert glyph.encode("unicode_escape").decode() in graph or glyph in graph, glyph
+    assert "'label': labelOf" in graph, "the mapper, not data(label)"
+    # The group ruler measures what the box is actually labelled with. Measuring
+    # the bare title puts every group name a glyph's width off its own box.
+    assert "ruler.measureText(labelOf(node))" in graph
+
+
+def test_the_cycle_band_is_one_token_and_it_can_be_seen(rendered: Path):
+    """It was --surface-2 — a panel tint, 1.07:1 behind the page — keyed in the
+    legend by that same token plus a border the plot does not draw. Two wrong
+    answers agreeing with each other."""
+    body = read(rendered, "timeline.html")
+    themes = tokens(body)
+
+    assert ".cycle-band { fill: var(--band); }" in body
+    assert ".legend .swatch.band { background: var(--band); }" in body
+    assert "--surface-2" not in re.search(r"\.cycle-band \{[^}]*\}", body).group(0)
+    for name in ("light", "dark"):
+        page, band = themes[name]["--bg"], themes[name]["--band"]
+        assert contrast(band, page) >= 1.45, (name, contrast(band, page))
+        # It carries the cycle number, and that number is 10px text.
+        accent = themes[name]["--accent"]
+        assert contrast(band, accent) >= 4.5, (name, contrast(band, accent))
+
+
+def test_the_legend_draws_a_cycle_boundary_the_way_the_plot_does(rendered: Path):
+    """The key drew it in --line-strong and the plot in --line, so the legend was
+    describing a dashed rule that at 1.13:1 was not on the chart at all."""
+    body = read(rendered, "timeline.html")
+    themes = tokens(body)
+
+    plot = re.search(r"\.cycle-rule \{([^}]*)\}", body).group(1)
+    key = re.search(r"\.legend \.swatch\.boundary \{([^}]*)\}", body).group(1)
+    stroke = re.search(r"var\((--[\w-]+)\)", plot).group(1)
+
+    assert stroke == re.search(r"var\((--[\w-]+)\)", key).group(1)
+    assert "dashed" in key and "dasharray" in plot
+    for name in ("light", "dark"):
+        assert contrast(themes[name][stroke], themes[name]["--bg"]) >= 3.0, name
 
 
 def test_every_page_can_draw_a_problem_and_a_focus_ring(rendered: Path):
