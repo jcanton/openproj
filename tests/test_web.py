@@ -323,6 +323,40 @@ def test_an_entity_that_does_not_exist_is_a_404_and_not_an_empty_page(client: Te
     assert client.get("/detail/task-ffffff").status_code == 404
 
 
+@pytest.mark.parametrize(
+    "route", ["/", f"/detail/{TASK}", "/detail", "/graph", "/timeline", "/people",
+              "/cycles", "/new?kind=task"]
+)
+def test_no_page_declares_one_name_twice(client: TestClient, route: str):
+    """Several `<script>` blocks, one global scope between them.
+
+    The graph called the node you picked first `source` and the shell calls the
+    event stream `source`; a second top-level declaration of a name is a
+    SyntaxError that throws away the *whole* later script, so the plan-changed
+    banner was dead on that one page and nowhere else. Nothing in the page says
+    so — it fails silently, in the console, on one route.
+    """
+    from openproj.render import _static_dir
+
+    # Only the scripts this app writes. The vendored bundles declare their own
+    # names at column 0 inside their own module wrappers — cytoscape-dagre has
+    # two `defaults` in two webpack modules — and they are not ours to police.
+    # Matched by content rather than by size: the smallest of them is 12 KB.
+    vendored = {
+        (_static_dir() / name).read_text()
+        for name in ("cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js")
+    }
+    ours = "\n".join(
+        block
+        for block in re.findall(r"<script[^>]*>(.*?)</script>", client.get(route).text, re.S)
+        if block not in vendored
+    )
+    names = re.findall(r"^(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)", ours, re.M)
+    twice = sorted({name for name in names if names.count(name) > 1})
+
+    assert not twice, f"{route} declares {twice} more than once"
+
+
 def test_the_graph_still_carries_its_libraries_inline(client: TestClient):
     """Serving the pages must not turn them back into pages that fetch from a CDN.
 

@@ -237,6 +237,16 @@ def test_the_editing_instructions_appear_with_the_mode(client: TestClient):
     assert "getElementById('howto').hidden = !connecting" in page
 
 
+def test_the_graph_shows_one_hint_or_the_other_and_never_both(client: TestClient):
+    """The standing hint says drag a node to move it; edit mode says click what
+    must finish first. In edit mode a click picks a node, so the standing hint was
+    telling you to drag the thing you are being asked to click."""
+    page = client.get("/graph").text
+
+    assert re.search(r'<p class="hint" id="panhint">', page)
+    assert "PANHINT.hidden = connecting" in page
+
+
 def test_the_parent_control_still_holds_the_id(client: TestClient):
     """The facts list reads it as a linked title; the input underneath is what
     gets written, and the file stores an id. Showing the title in the control

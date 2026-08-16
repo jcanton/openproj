@@ -144,6 +144,115 @@ def test_the_graph_is_a_compound_dag_coloured_by_status(rendered: Path):
     assert "dagre" in body and '"rankDir": "LR"' in body.replace("'", '"')
 
 
+def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):
+    """The graph filters on the table's row, not on a graph-shaped subset of it.
+
+    A node holding only what cytoscape draws is how a dropdown comes to filter one
+    view and quietly do nothing in the next.
+    """
+    from openproj.render import _elements, _row
+
+    nodes = {
+        e["data"]["id"]: e["data"] for e in _elements(seed_index) if "source" not in e["data"]
+    }
+
+    for entity_id in seed_index.entities:
+        for field, value in _row(seed_index, entity_id).items():
+            assert nodes[entity_id][field] == value, f"{entity_id}.{field}"
+        # And the two keys the row does not carry, because only a canvas needs them.
+        assert nodes[entity_id]["label"] == seed_index.entities[entity_id].title
+        assert nodes[entity_id]["depends_on"] == seed_index.blocked_by[entity_id]
+
+
+def test_the_graph_filters_the_plan_the_way_the_table_does(rendered: Path):
+    """One control bar over one `matches()`. While the filter model lived inside
+    the table's script, "three views share one filter" was true of one view, and a
+    second copy of the predicate is how a facet acquires a second meaning."""
+    table = read(rendered, "index.html")
+    graph = read(rendered, "graph.html")
+    model = re.search(r"function matches\(row\) \{.*?\n\}", table, re.S).group(0)
+
+    assert model in graph, "the graph must ask the same question, not a similar one"
+    assert re.findall(r'<select data-field="([^"]+)"', graph) == re.findall(
+        r'<select data-field="([^"]+)"', table
+    )
+    assert "URLSearchParams" in graph and "history.replaceState" in graph
+    assert '<input id="q"' in graph
+
+
+def test_hiding_a_node_never_leaves_an_edge_pointing_at_nothing(rendered: Path):
+    """An arrow leaving the canvas for something you filtered out is the one thing
+    a dependency graph must not draw: it says a dependency exists and refuses to
+    say what it is, which is exactly the fact somebody filtered to find."""
+    graph = read(rendered, "graph.html")
+    body = re.search(r"function applyFilter\(\) \{.*?\n\}", graph, re.S).group(0)
+
+    assert "neighborhood('node')" in body, "what a shown node points at stays on the canvas"
+    assert "toggleClass('aside'" in body, "and is faded, because it did not match"
+    assert "ancestors()" in body, "the box that holds it comes too, or its contents float"
+    assert re.search(r"on\(edge\.source\(\)\.id\(\)\) && on\(edge\.target\(\)\.id\(\)\)", body)
+    assert "selector: 'node.aside'" in graph
+
+
+def test_the_graph_says_when_it_is_drawing_nothing(rendered: Path):
+    """An empty canvas is indistinguishable from a graph that failed to draw."""
+    graph = read(rendered, "graph.html")
+
+    assert 'id="nothing"' in graph
+    assert "No entity matches these filters." in graph
+    assert 'id="clear-filters"' in graph
+    assert "#nothing[hidden] { display: none; }" in graph, "hidden loses to display:flex"
+
+
+def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
+    """Status is the only thing on this canvas that is not a word. The swatch is
+    the token the node is actually filled with — a legend naming a colour that is
+    not on screen is worse than none, because it gets believed."""
+    from openproj.render import STATUSES
+
+    graph = read(rendered, "graph.html")
+    legend = re.search(r'<ul class="legend".*?</ul>', graph, re.S).group(0)
+
+    for status in STATUSES:
+        assert f'<span class="swatch st-{status}"></span>' in legend, status
+        assert f".legend .swatch.st-{status} {{ background: var(--st-{status}); }}" in graph
+    assert "In progress" in legend, "the reader's word, not the stored one"
+
+
+def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
+    """It was 9px of --muted sitting on the box border, where every edge crossing
+    the box ran through it — a label saying only that something is grouped."""
+    graph = read(rendered, "graph.html")
+    parent = re.search(r"\{ selector: ':parent', style: \{(.*?)\} \},", graph, re.S).group(1)
+    node = re.search(r"\{ selector: 'node', style: \{(.*?)\} \},", graph, re.S).group(1)
+
+    assert "'text-valign': 'top'" in parent and "'text-halign': 'left'" in parent
+    assert "'text-margin-x'" in parent, "pulled inside the box rather than left of it"
+    assert "'text-background-color': token('--surface')" in parent, "on its own ground"
+    assert "'font-size': GROUP_SIZE" in parent
+    assert int(re.search(r"const GROUP_SIZE = (\d+)", graph).group(1)) > int(
+        re.search(r"'font-size': (\d+)", node).group(1)
+    ), "the group is the heading of what is inside it"
+
+
+def test_a_node_takes_its_ink_from_the_fill_it_sits_on(rendered: Path):
+    """In dark mode the fills are light shapes carrying dark ink, so the label
+    colour belongs to the status, not to the theme's foreground."""
+    from openproj.render import STATUSES
+
+    graph = read(rendered, "graph.html")
+    repaint = re.search(r"function paint\(\) \{.*?\n\}", graph, re.S).group(0)
+
+    for status in STATUSES:
+        assert f"token('--st-{status}-ink')" in graph, status
+    assert "'color': e => INK()[e.data('status')]" in graph
+    # Resolved once at build time, the ink stays light on a fill that just turned
+    # light, so the repaint has to re-read it exactly as it re-reads the fill.
+    assert "'color': e => INK()[e.data('status')]" in repaint
+    assert "'background-color': e => COLOUR()[e.data('status')]" in repaint
+    assert "'text-background-color': token('--surface')" in repaint
+
+
 def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path):
     """An estimated or unowned span is a forecast, not a commitment. If the two
     look alike, a guess gets read as a promise.
@@ -366,7 +475,7 @@ def test_every_filter_offers_a_way_back_to_everything(rendered: Path):
     """`<option value="">` used to repeat the field name, so a chosen filter had no
     "off" — the way back looked like the label, not like a choice. The field name
     moved to a label beside the control and the empty option says `all`."""
-    for page in ("index.html", "people.html"):
+    for page in ("index.html", "people.html", "graph.html"):
         body = read(rendered, page)
         for tag in re.findall(r"<select[^>]*>(.*?)</select>", body, re.S):
             assert re.match(r'\s*<option value="">all</option>', tag), tag[:80]

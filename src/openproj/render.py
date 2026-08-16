@@ -162,15 +162,15 @@ def _payload(index: Index) -> dict:
 def _elements(index: Index) -> list[dict]:
     elements: list[dict] = []
     for entity_id, entity in index.entities.items():
-        data = {
-            "id": entity_id,
-            # The title alone. The id is on every other page and in the URL the
-            # node opens; on a box 150px wide it cost a line of the only text
-            # anybody reads the graph for.
+        # The same row the table filters on, not a graph-shaped subset of it. The
+        # facet bar is one control bar over one `matches()`, and a node carrying
+        # only what cytoscape draws is how a dropdown ends up filtering the table
+        # and quietly doing nothing here.
+        data = _row(index, entity_id) | {
+            # The title alone, under the key cytoscape draws. The id is on every
+            # other page and in the URL the node opens; on a box 150px wide it
+            # cost a line of the only text anybody reads the graph for.
             "label": entity.title,
-            "status": entity.status,
-            "priority": entity.priority,
-            "kind": entity.kind,
             # Carried so a new edge is added to what is there rather than replacing
             # it: a PATCH sends the whole field, and depends_on is a list.
             "depends_on": index.blocked_by[entity_id],
@@ -637,6 +637,98 @@ source.onmessage = event => {
 </body></html>
 """
 
+_FACETS = """
+<div id="controls">
+  <input id="q" type="search" placeholder="Search title, tags, body">
+  <div class="facets">
+  {% for field in ['kind','priority','status','owner','assignees','reviewers',
+                   'cycle','project','tags'] %}
+  <label class="facet">{{ label(field) }}
+    <select data-field="{{ field }}"><option value="">all</option>
+      {% for value in facets.get(field, []) %}
+      <option value="{{ value }}">{{ value|human }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <label class="facet">{{ label('predicate') }}
+    <select data-field="predicate"><option value="">all</option>
+      {% for p in predicates %}<option value="{{ p }}">{{ p|human }}</option>{% endfor %}
+    </select>
+  </label>
+  </div>
+</div>
+"""
+
+# The filter model itself, shared by every view that offers the bar above. The
+# README has always said three views filter the same plan the same way; while
+# `matches` lived inside the table's script, that was true of one of them, and a
+# second copy of it is how a facet comes to mean something different per page.
+_FILTER_JS = """
+<script>
+const params = new URLSearchParams(location.search);
+
+// Every field the control bar offers. A field in one list and not the other is a
+// dropdown that changes the URL and filters nothing.
+const FILTERS = ['kind','status','owner','assignees','reviewers','priority',
+                 'cycle','project','tags'];
+
+function wanted(field) { return params.getAll(field).filter(Boolean); }
+
+// AND between fields, OR inside one: two owners means either of them, an owner
+// and a status means both. Anything shaped like a table row can be asked — the
+// graph hands it a node's data, which is that same row.
+function matches(row) {
+  const q = (params.get('q') || '').trim().toLowerCase();
+  if (q && !(row.title + ' ' + row.tags.join(' ')).toLowerCase().includes(q)) return false;
+  for (const field of FILTERS) {
+    const values = wanted(field);
+    if (!values.length) continue;
+    const held = [].concat(row[field] ?? []).map(String);
+    if (!values.some(v => held.includes(v))) return false;
+  }
+  const preds = wanted('predicate');
+  if (preds.length && !preds.some(p => row.predicates.includes(p))) return false;
+  return true;
+}
+
+// The controls take their state from the query string rather than from
+// themselves, so a filtered view somebody pasted to you opens with its dropdowns
+// already set.
+function syncFilters() {
+  for (const select of document.querySelectorAll('select[data-field]'))
+    select.value = params.get(select.dataset.field) || '';
+  document.getElementById('q').value = params.get('q') || '';
+}
+
+// replaceState rather than pushState: a filter is not a page you want to walk
+// back out of one dropdown at a time. The view redraws on the event instead of
+// being called from here, because each one draws something different out of the
+// same answer.
+function settled() {
+  history.replaceState(null, '', '?' + params.toString());
+  syncFilters();
+  dispatchEvent(new Event('openproj:filter'));
+}
+
+function update(field, value) {
+  if (value) params.set(field, value); else params.delete(field);
+  settled();
+}
+
+function clearFilters() {
+  // Not the sort order: clearing the filters and losing the column somebody
+  // sorted by is a second surprise on top of the one they were undoing.
+  for (const field of [...FILTERS, 'predicate', 'q']) params.delete(field);
+  settled();
+}
+
+document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
+for (const select of document.querySelectorAll('select[data-field]'))
+  select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
+syncFilters();
+</script>
+"""
+
 _TABLE = """
 <p class="editbar"><a class="button" href="{{ links.new }}">New entity</a>
    <span class="hint">double-click a cell to edit it</span>
@@ -647,25 +739,7 @@ _TABLE = """
     "" if blockers == 1 else "s" }}</span></a> ·
   <span id="shown">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
 </div>
-<div id="controls">
-  <input id="q" type="search" placeholder="Search title, tags, body">
-  <div class="facets">
-  {% for field in ['kind','priority','status','owner','assignees','reviewers',
-                   'cycle','project','tags'] %}
-  <label class="facet">{{ label(field) }}
-    <select data-field="{{ field }}"><option value="">all</option>
-      {% for value in payload.facets.get(field, []) %}
-      <option value="{{ value }}">{{ value|human }}</option>{% endfor %}
-    </select>
-  </label>
-  {% endfor %}
-  <label class="facet">{{ label('predicate') }}
-    <select data-field="predicate"><option value="">all</option>
-      {% for p in payload.predicates %}<option value="{{ p }}">{{ p|human }}</option>{% endfor %}
-    </select>
-  </label>
-  </div>
-</div>
+{{ facets|safe }}
 <div class="table-scroll"><table id="rows"><thead><tr>
   {#- A real button inside every sortable header, not a click handler on the cell:
       there is no way to tab to a table cell, so sorting was mouse-only. The
@@ -690,6 +764,7 @@ _TABLE = """
 {% endif %}
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
 {% if editable %}{{ combobox|safe }}{% endif %}
+{{ filters|safe }}
 <script>
 // A payload that did not survive the trip is a third kind of empty, and it used
 // to look exactly like the other two: a header row over a void. A truncated
@@ -703,7 +778,6 @@ const LOADED = DATA !== null;
 if (!LOADED) DATA = {rows: {}, problems: [], choices: {}, suggests: {}, human: {},
                      labels: {}, editable: null};
 
-const params = new URLSearchParams(location.search);
 const tbody = document.querySelector('#rows tbody');
 const HUMAN = DATA.human;
 const FIELD_LABELS = DATA.labels;
@@ -723,10 +797,6 @@ const attr = value => String(value)
 // so the two are edited together or every cell shifts one column left.
 const keys = ['id','title','priority','status','owner','assignees','reviewers','cycle',
               'size','start','end','blocked_by','prs','tags'];
-// Every field the control bar offers. A field in one list and not the other is
-// a dropdown that changes the URL and filters nothing.
-const FILTERS = ['kind','status','owner','assignees','reviewers','priority',
-                 'cycle','project','tags'];
 
 // Which column carries a complaint about a field the table has no column for.
 // Anything still unplaced falls to the id cell, because a row that says
@@ -776,22 +846,6 @@ function summarise() {
   // Danger at zero is danger nobody reads. A plan with nothing wrong with it was
   // shouting in the same colour as one that is on fire.
   document.getElementById('blockers').classList.toggle('none', BLOCKERS === 0);
-}
-
-function wanted(field) { return params.getAll(field).filter(Boolean); }
-
-function matches(row) {
-  const q = (params.get('q') || '').trim().toLowerCase();
-  if (q && !(row.title + ' ' + row.tags.join(' ')).toLowerCase().includes(q)) return false;
-  for (const field of FILTERS) {
-    const values = wanted(field);
-    if (!values.length) continue;
-    const held = [].concat(row[field] ?? []).map(String);
-    if (!values.some(v => held.includes(v))) return false;
-  }
-  const preds = wanted('predicate');
-  if (preds.length && !preds.some(p => row.predicates.includes(p))) return false;
-  return true;
 }
 
 // What the cell holds, as opposed to what it shows. A status cell shows a chip
@@ -935,24 +989,10 @@ function draw() {
     th.setAttribute('aria-sort', here ? (descending ? 'descending' : 'ascending') : 'none');
     th.querySelector('.dir').textContent = here ? (descending ? '▾' : '▴') : '';
   }
-  for (const select of document.querySelectorAll('select[data-field]'))
-    select.value = params.get(select.dataset.field) || '';
-  document.getElementById('q').value = params.get('q') || '';
 }
-
-function update(field, value) {
-  if (value) params.set(field, value); else params.delete(field);
-  history.replaceState(null, '', '?' + params.toString());
-  draw();
-}
-
-function clearFilters() {
-  // Not the sort order: clearing the filters and losing the column somebody
-  // sorted by is a second surprise on top of the one they were undoing.
-  for (const field of [...FILTERS, 'predicate', 'q']) params.delete(field);
-  history.replaceState(null, '', '?' + params.toString());
-  draw();
-}
+// The control bar changed the query string; what that means to a table is a
+// redraw, and to the graph beside it a different set of nodes.
+addEventListener('openproj:filter', draw);
 
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
@@ -1115,9 +1155,6 @@ document.getElementById('blockers').addEventListener('click', event => {
   event.preventDefault();
   update('predicate', 'has_blocker');
 });
-document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
-for (const select of document.querySelectorAll('select[data-field]'))
-  select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
 // The banner in the shell has no id in its URL to compare against on this page,
 // because the table shows every entity rather than one. So the table says what
 // it is looking at, and "somebody changed the thing in front of you" stays
@@ -1414,18 +1451,36 @@ _GRAPH = """
   <input type="hidden" id="base" value="{{ base_commit }}">
 </p>
 {% endif %}
-<p class="hint">Double-click a node to open it. Drag to pan, scroll to zoom, drag a node
-  to move it.</p>
+<p class="hint" id="panhint">Double-click a node to open it. Drag to pan, scroll to zoom,
+  drag a node to move it.</p>
 {% if editable %}
 <p class="hint" id="howto" hidden>Click what must finish first and then what waits for
   it. Draw as many as you like; nothing is written until you press Save.
   <strong>Reset</strong> clears what you have drawn and stays in edit mode.</p>
 {% endif %}
-<div id="cy"></div>
+{{ facets|safe }}
+{#- The one thing on this canvas that is not a word. Every swatch is the token
+    the node is actually filled with, so the legend cannot drift from the graph. -#}
+<ul class="legend" aria-label="What a node colour means">
+  {% for status in statuses %}
+  <li><span class="swatch st-{{ status }}"></span>{{ status|human }}</li>
+  {% endfor %}
+</ul>
+<div id="summary"><span id="shown">{{ total }}</span> of {{ total }} shown<span
+  id="context"></span></div>
+<div class="canvas">
+  <div id="cy"></div>
+  <div id="nothing" hidden>
+    <p class="headline">No entity matches these filters.</p>
+    <p class="hint">Every node is filtered out by the controls above.</p>
+    <button type="button" id="clear-filters">Clear filters</button>
+  </div>
+</div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
 <script>@@dagre.min.js@@</script>
 <script>@@cytoscape-dagre.js@@</script>
+{{ filters|safe }}
 <script>
 cytoscape.use(cytoscapeDagre);
 
@@ -1438,14 +1493,48 @@ const COLOUR = () => ({
   in_progress: token('--st-in_progress'), done: token('--st-done'),
   shelved: token('--st-shelved'),
 });
+// A label's colour belongs to the fill it sits on, not to the page. In dark mode
+// these fills are light shapes carrying dark ink, so the text on a node flips
+// with its own background rather than with the theme's foreground — white on
+// them would be exactly the failure the light theme avoids.
+const INK = () => ({
+  shaping: token('--st-shaping-ink'), ready: token('--st-ready-ink'),
+  in_progress: token('--st-in_progress-ink'), done: token('--st-done-ink'),
+  shelved: token('--st-shelved-ink'),
+});
+
+// Cytoscape aligns a left-aligned label by its RIGHT edge against the box's left
+// edge, so putting a group's name inside its own box means knowing how wide the
+// name is. There is no API for that and character counts put an "i" and a "W" in
+// different places, so it is measured on a canvas in the font the graph draws in.
+const ruler = document.createElement('canvas').getContext('2d');
+const GROUP_SIZE = 12;
+const GROUP_MAX = 300;    // the width the label is told to ellipsise at
+function groupWidth(node) {
+  ruler.font = `600 ${GROUP_SIZE}px ${token('--font-sans')}`;
+  return Math.min(GROUP_MAX, ruler.measureText(node.data('label') || '').width);
+}
+
+// Named once: filtering re-runs it, and a second copy of the options is how the
+// graph comes to lay itself out one way at load and another way afterwards.
+const LAYOUT = {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70};
 
 const cy = cytoscape({
   container: document.getElementById('cy'),
   elements: JSON.parse(document.getElementById('elements').textContent),
-  layout: {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70},
+  layout: LAYOUT,
+  // Filtering re-fits what is left to the window, and two boxes fitted to a
+  // 1400px canvas came out at nearly 3x — the same graph reading as a different
+  // app. Zooming in by hand stops at the same place, which at a 10px label is
+  // still twice as large as anybody needs.
+  maxZoom: 2,
   style: [
     { selector: 'node', style: {
-        'label': 'data(label)', 'font-size': 9, 'shape': 'round-rectangle',
+        'label': 'data(label)', 'font-size': 10, 'shape': 'round-rectangle',
+        // One typeface for the whole app, this canvas included — and the ruler
+        // above measures group labels in it, so a second stack here would put
+        // every group label a few pixels off the box it belongs to.
+        'font-family': token('--font-sans'),
         // text-wrap alone does nothing: without a max width the label just
         // overflows the box it is supposed to sit inside.
         'text-wrap': 'wrap', 'text-max-width': 136,
@@ -1454,12 +1543,27 @@ const cy = cytoscape({
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
         'border-width': e => ({high: 4, medium: 2, low: 1})[e.data('priority')] ?? 2,
         'border-color': token('--accent'),
-        'color': token('--on-status'), 'text-valign': 'center',
+        'color': e => INK()[e.data('status')], 'text-valign': 'center',
         'width': 150, 'height': 44 } },
     { selector: '.picked', style: {
         'border-color': token('--danger'), 'border-width': 5 } },
+    // The name of a group used to be 9px of --muted sitting ON the box's border,
+    // where every edge crossing the box ran straight through it. Inside, top
+    // left, on its own ground: a box whose name you cannot read is a box that
+    // says only that something is grouped, not what by.
     { selector: ':parent', style: {
-        'background-opacity': .08, 'text-valign': 'top', 'color': token('--muted') } },
+        'background-opacity': .08, 'padding': 20,
+        'font-size': GROUP_SIZE, 'font-weight': 600, 'color': token('--fg'),
+        // Ellipsis rather than wrap: the offset below is measured on one line,
+        // and a label that wrapped would be positioned as if it had not.
+        'text-wrap': 'ellipsis', 'text-max-width': GROUP_MAX,
+        'text-valign': 'top', 'text-halign': 'left',
+        'text-margin-x': e => groupWidth(e) + 12, 'text-margin-y': 17,
+        'text-background-color': token('--surface'), 'text-background-opacity': 1,
+        'text-background-padding': 3, 'text-background-shape': 'roundrectangle' } },
+    // On the canvas only because something that did match points at it. Faded
+    // rather than removed, so no arrow leaves for a box you cannot see.
+    { selector: 'node.aside', style: { 'opacity': .32 } },
     { selector: 'edge', style: {
         // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
         // so an edge that leaves horizontally and turns once reads as a route
@@ -1497,31 +1601,103 @@ function route() {
   });
 }
 // The style above was resolved from tokens once, at build time. Flipping the
-// theme changes the tokens, not the resolved values, so they are re-read.
-addEventListener('themechange', () => {
+// theme changes the tokens, not the resolved values, so every one of them is
+// re-read — the ink with the fill, because a light fill needs dark text on it
+// and the two are not the same token any more.
+function paint() {
   cy.style()
     .selector('node').style({'background-color': e => COLOUR()[e.data('status')],
                              'border-color': token('--accent'),
-                             'color': token('--on-status')})
+                             'color': e => INK()[e.data('status')]})
     .selector('.picked').style({'border-color': token('--danger')})
-    .selector(':parent').style({'color': token('--muted')})
+    .selector(':parent').style({'color': token('--fg'),
+                                'text-background-color': token('--surface'),
+                                'text-margin-x': e => groupWidth(e) + 12})
     .selector('edge').style({'line-color': token('--st-ready'),
                              'target-arrow-color': token('--st-ready')})
     .selector('edge.pending').style({'line-color': token('--danger'),
                                      'target-arrow-color': token('--danger')})
     .update();
   route();
-});
+}
+addEventListener('themechange', paint);
+// The face is inlined but still swaps in asynchronously, and a group label
+// measured against the fallback stays where the fallback put it.
+if (document.fonts) document.fonts.ready.then(paint);
 
 cy.on('layoutstop', route);
 cy.on('position', 'node', route);
 route();
 
+// One filter model, three views — the graph's answer to it is which boxes are on
+// the canvas. Hiding a node takes its edges with it, and an arrow leaving for
+// something you filtered out is the one thing a dependency graph must not draw,
+// so: a node that matches is drawn; anything it depends on or that depends on it
+// is drawn faded, because "this is blocked by something you filtered out" is
+// exactly the fact you were filtering for; a box containing either is kept, or
+// its contents float outside the group they belong to. Everything else leaves
+// the layout, and an edge is drawn when both of its ends are still on the
+// canvas — which, by construction, every edge of a matching node is.
+let laidOut = cy.nodes().map(node => node.id()).sort().join(',');
+
+function applyFilter() {
+  const keep = new Set();
+  cy.nodes().forEach(node => { if (matches(node.data())) keep.add(node.id()); });
+  const aside = new Set();
+  for (const id of keep)
+    cy.getElementById(id).neighborhood('node').forEach(near => {
+      if (!keep.has(near.id())) aside.add(near.id());
+    });
+  // A container earns its place by what it holds, so it is never the faded one:
+  // the group's name is how you know where the boxes inside it live.
+  const boxes = new Set();
+  for (const id of [...keep, ...aside])
+    cy.getElementById(id).ancestors().forEach(box => {
+      if (!keep.has(box.id()) && !aside.has(box.id())) boxes.add(box.id());
+    });
+  const on = id => keep.has(id) || aside.has(id) || boxes.has(id);
+
+  cy.batch(() => {
+    cy.nodes().forEach(node => {
+      node.style('display', on(node.id()) ? 'element' : 'none');
+      node.toggleClass('aside', aside.has(node.id()));
+    });
+    cy.edges().forEach(edge => {
+      const both = on(edge.source().id()) && on(edge.target().id());
+      edge.style('display', both ? 'element' : 'none');
+    });
+  });
+
+  document.getElementById('shown').textContent = keep.size;
+  document.getElementById('context').textContent = aside.size
+    ? ` · ${aside.size} more faded, because what is shown depends on ` +
+      (aside.size === 1 ? 'it' : 'them')
+    : '';
+  // An empty canvas is indistinguishable from a graph that failed to draw.
+  document.getElementById('nothing').hidden = keep.size > 0;
+
+  // Only when the set actually changed: re-running dagre on every keystroke in
+  // the search box moves every box under the hand that is typing.
+  const now = cy.nodes(':visible').map(node => node.id()).sort().join(',');
+  if (now === laidOut || !keep.size) return;
+  laidOut = now;
+  cy.elements(':visible').layout({...LAYOUT, fit: true}).run();
+}
+
+addEventListener('openproj:filter', applyFilter);
+document.getElementById('clear-filters').onclick = clearFilters;
+applyFilter();
+
 const CONNECT = document.getElementById('connect');
 const SAVE = document.getElementById('save');
 const DISCARD = document.getElementById('discard');
+const PANHINT = document.getElementById('panhint');
 let connecting = false;
-let source = null;
+// `blocker`, not `source`: two classic scripts on one page share one global
+// scope, and the shell's `const source = new EventSource(...)` below threw on a
+// name this file had already taken — which killed the plan-changed banner on
+// this page and nowhere else.
+let blocker = null;
 
 function say(message) {
   const state = document.getElementById('state');
@@ -1553,18 +1729,21 @@ if (CONNECT) {
     const dropped = connecting ? pending().length : 0;
     if (dropped) cy.remove(pending());
     connecting = !connecting;
-    source = null;
+    blocker = null;
     cy.nodes().removeClass('picked');
     CONNECT.textContent = connecting ? 'Discard and exit' : 'Edit dependencies';
     // Instructions for a mode you are not in are noise on every other visit.
     document.getElementById('howto').hidden = !connecting;
+    // One hint or the other, never both: in edit mode a click picks a node, so
+    // the standing hint was telling you to drag what you are meant to click.
+    PANHINT.hidden = connecting;
     tally(connecting ? 'click what must finish first, then what waits for it'
                      : dropped ? `discarded ${dropped}` : '');
   };
 
   DISCARD.onclick = () => {
     cy.remove(pending());
-    source = null;
+    blocker = null;
     cy.nodes().removeClass('picked');
     tally('reset');
   };
@@ -1609,14 +1788,14 @@ if (CONNECT) {
 cy.on('tap', 'node', evt => {
   const node = evt.target;
   if (!connecting) return;
-  if (!source) {
-    source = node;
+  if (!blocker) {
+    blocker = node;
     node.addClass('picked');
     tally(`${node.id()} must finish first — now click what waits for it`);
     return;
   }
-  const from = source;
-  source = null;
+  const from = blocker;
+  blocker = null;
   from.removeClass('picked');
 
   if (from.id() === node.id()) { tally('an entity cannot wait for itself'); return; }
@@ -1641,6 +1820,40 @@ cy.on('tap', 'node', evt => {
   tally();
 });
 </script>
+"""
+
+_GRAPH_STYLE = """
+#state { color: var(--muted); font-size: 12px; }
+#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
+#shown { font-variant-numeric: tabular-nums; }
+/* Every swatch is the token the node is actually filled with, not the chip's
+   softer ground: a legend naming a different colour from the one on screen is
+   worse than no legend, because it is believed. */
+.legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
+          list-style: none; margin: .75rem 0 0; padding: 0;
+          font-size: 12px; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: .35rem; }
+.legend .swatch { width: 20px; height: 11px; border-radius: 2px; }
+.legend .swatch.st-shaping { background: var(--st-shaping); }
+.legend .swatch.st-ready { background: var(--st-ready); }
+.legend .swatch.st-in_progress { background: var(--st-in_progress); }
+.legend .swatch.st-done { background: var(--st-done); }
+.legend .swatch.st-shelved { background: var(--st-shelved); }
+.canvas { position: relative; }
+#cy { height: 78vh; border: 1px solid var(--line); }
+/* Over the canvas rather than instead of it: cytoscape measures its container
+   when it is built, and a container that was display:none at that moment comes
+   back sized zero. */
+#nothing { position: absolute; inset: 0; display: flex; flex-direction: column;
+           align-items: center; justify-content: center;
+           background: var(--bg); text-align: center; }
+#nothing[hidden] { display: none; }
+#nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
+#nothing .hint { margin: 0 0 .75rem; }
+#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
+                 border: 1px solid var(--line-strong); background: var(--surface);
+                 color: var(--fg); cursor: pointer; }
+#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
 """
 
 _TIMELINE = """
@@ -3604,6 +3817,18 @@ def render_detail(
     return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 
+def _facets_html(index: Index) -> str:
+    """The control bar, for any view that filters the plan.
+
+    One bar and one `matches()` in `_FILTER_JS`, rather than a copy per page: the
+    table's dropdowns and the graph's have to mean the same thing, or a link
+    somebody pasted filters differently depending on which view it opens in.
+    """
+    return _ENV.from_string(_FACETS).render(
+        facets=index.facets, predicates=list(index.facets["predicate"])
+    )
+
+
 def _combobox_html(index: Index | None) -> str:
     """The suggestion data and the widget that filters it, for any page with inputs."""
     data = _suggestions(index) if index else {"people": [], "entities": [], "tags": []}
@@ -3647,6 +3872,8 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         editable=base_commit is not None,
         base_commit=base_commit or "",
         links=links,
+        facets=_facets_html(index),
+        filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
     body = body.replace("PAYLOAD_JSON", json.dumps(payload)).replace("ENTITY_HREF", links.entity)
@@ -3663,7 +3890,12 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     delimited markers cannot collide however the names are chosen.
     """
     body = _ENV.from_string(_GRAPH).render(
-        editable=base_commit is not None, base_commit=base_commit or ""
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        facets=_facets_html(index),
+        filters=_FILTER_JS,
+        statuses=STATUSES,
+        total=len(index.entities),
     )
     body = body.replace("ELEMENTS_JSON", json.dumps(_elements(index)))
     wanted = {"cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"}
@@ -3675,9 +3907,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         body,
     )
     body = body.replace("ENTITY_HREF", links.entity)
-    return _page(
-        "openproj — graph", body, "#cy { height: 78vh; border: 1px solid var(--line); }", links
-    )
+    return _page("openproj — graph", body, _GRAPH_STYLE, links)
 
 
 _ZOOMS = (("2", "months"), ("6", "weeks"), ("14", "days"), ("30", "close"))
