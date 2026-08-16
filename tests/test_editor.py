@@ -307,6 +307,37 @@ def test_work_is_autosaved_so_a_dropped_connection_costs_two_minutes(client: Tes
     assert "event.returnValue = ''" in page
 
 
+def test_taking_somebody_out_of_a_cycle_takes_two_clicks(client: TestClient):
+    """The second click answers a question rather than repeating the gesture that
+    asked it. The first one used to remove the row, and the row above it was one
+    pixel away from the availability field somebody was typing in."""
+    page = client.get("/cycle/37").text
+    drop = re.search(r"function dropRow\(button\) \{.*?\n\}", page, re.S).group(0)
+
+    assert "asking.hidden = false;" in drop, "the glyph asks"
+    assert "asking.querySelector('.no').onclick" in drop, "and can be told no"
+    yes = re.search(r"asking\.querySelector\('\.yes'\)\.onclick = \(\) => \{.*?\n  \};",
+                    drop, re.S).group(0)
+    assert "row.remove();" in yes, "only the answer removes anything"
+    assert "row.remove();" not in drop.split("asking.querySelector('.yes')")[0]
+
+
+def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
+    client: TestClient,
+):
+    """Every commit comes back down the event stream, including this page's own.
+    The shell suppresses the ones it made, but only if it is told a write is in
+    the air before it starts — the server announces a commit before it answers
+    the request that made it."""
+    page = client.get("/cycle/37").text
+
+    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 2, \
+        "the cycle record and each entity in the batch"
+    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 2
+    assert "window.SHOWING = ['cycle-' + NUMBER]" in page, \
+        "so a write that lands here reads as landing here"
+
+
 def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
     """Left to the next page load, the number somebody is setting is invisible at
     the moment they are setting it — which is most of the moment that matters."""

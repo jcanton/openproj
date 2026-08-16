@@ -1124,18 +1124,97 @@ def test_an_empty_field_is_a_dash_and_not_a_word(demo_rendered: tuple[Path, Inde
 # --- cycles -----------------------------------------------------------------
 
 
-def test_a_new_cycle_still_has_a_roster_to_set_availability_against(seed_index: Index):
+def test_a_new_cycle_still_has_a_roster_to_set_availability_against(
+    demo_rendered: tuple[Path, Index],
+):
     """Built only from who is bet or already listed, a cycle nobody has bet into
     yet shows an empty table — and setting the roster up is the first thing you
-    do on it. The team list seeds it."""
+    do on it. The team list seeds it.
+
+    Against the demo and not the corpus: the corpus has no config/people.yaml, so
+    `known_people` is empty there and this passed over an empty set for as long
+    as `_cycle_view` ignored the roster it names."""
     from openproj.render import _cycle_view
 
-    view = _cycle_view(seed_index.model_copy(update={"plans": {}}), 99)
+    _, index = demo_rendered
+    view = _cycle_view(index, 99)
     logins = [row["login"] for row in view["people"]]
 
-    assert set(seed_index.known_people) <= set(logins)
+    assert index.known_people, "the demo names a team"
+    assert set(index.known_people) <= set(logins)
     assert logins == sorted(logins, key=str.lower)
     assert all(row["held"] == 0.0 for row in view["people"])
+    assert not view["recorded"], "and it says the record does not exist yet"
+
+
+def test_a_recorded_cycle_is_its_roster_and_nobody_else(demo_rendered: tuple[Path, Index]):
+    """The team list seeds a cycle that has no record. It must never leak into one
+    that has: being on the roster is what being in the cycle means, and a name
+    that appears by itself makes the roster a report instead of a decision."""
+    from openproj.render import _cycle_view
+
+    _, index = demo_rendered
+    view = _cycle_view(index, 37)
+    logins = [row["login"] for row in view["people"]]
+
+    assert 37 in index.plans
+    assert logins == sorted(index.plans[37].availability, key=str.lower)
+    assert set(index.known_people) - set(logins), "the demo team is larger than the cycle"
+
+
+def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[Path, Index]):
+    """F25. A cycle with dates in config/cycles.yaml, or one that entities point
+    at with nothing behind it, is the cycle worth finding — and it was the one
+    the index left out, because it iterated the records."""
+    out, index = demo_rendered
+    body = read(out, "cycles.html")
+    cards = [int(n) for n in re.findall(r'<h2><a href="[^"]*?(\d+)">Cycle \d+</a></h2>', body)]
+    named = set(index.plans) | set(index.cycles) | {
+        e.cycle for e in index.entities.values() if e.cycle is not None
+    }
+
+    assert set(cards) == named
+    assert cards == sorted(cards, reverse=True), "newest first"
+    assert len(named - set(index.plans)) >= 1, "the demo has cycles with no record"
+
+
+def test_a_cycle_card_carries_the_meter_the_cycle_page_draws(
+    demo_rendered: tuple[Path, Index],
+):
+    """F25. `9.2 of 19.8 weeks bet` is the sentence the method turns on, and it
+    was a fragment at the end of a bullet list."""
+    from openproj.render import _cycle_totals
+
+    out, index = demo_rendered
+    totals = _cycle_totals(index, 37)
+    card = re.search(r'<li class="card[^"]*">\s*<h2><a href="[^"]*?37">.*?</li>',
+                     read(out, "cycles.html"), re.S).group(0)
+
+    assert totals["capacity"] > 0 and totals["bet"] > 0
+    assert f'<b class="num">{totals["bet"]:.1f}</b>' in card
+    assert f'<b class="num">{totals["capacity"]:.1f}</b>' in card
+    assert f'<span class="bar"><span style="width: {totals["percent"]}%">' in card
+    # The bar is the one the cycle page draws, so the two pages cannot disagree
+    # about what full looks like.
+    assert ".bar > span { display: block; height: 100%; background: var(--accent); }" in \
+        read(out, "cycles.html")
+
+
+def test_a_cycle_bet_into_by_somebody_off_the_roster_is_not_counted_short(
+    demo_rendered: tuple[Path, Index],
+):
+    """The direction this number must never be wrong in. Summed over the roster's
+    rows, a cycle looked emptier the more of it was bet by people nobody had
+    added to it."""
+    from openproj.render import _cycle_totals, _cycle_view
+
+    _, index = demo_rendered
+    view = _cycle_view(index, 37)
+    totals = _cycle_totals(index, 37)
+
+    assert view["strangers"], "the demo bets work by somebody the cycle does not name"
+    assert totals["bet"] > sum(person["held"] for person in view["people"])
+    assert totals["bet"] == pytest.approx(sum(index.load(37).values()))
 
 
 def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Index]):

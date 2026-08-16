@@ -261,6 +261,21 @@ def index_of(client: httpx.Client) -> dict:
     return client.get("/api/index.json").json()
 
 
+def bet_rows(page: str) -> list[tuple[str, str, str]]:
+    """(id, kind, status) per row of the betting table.
+
+    Read off the chips rather than off bare cells: a chip is markup, and the
+    regex that read `<td>ready</td>` did not fail when the cell grew one — it
+    matched nothing and left three assertions passing over an empty list.
+    """
+    return re.findall(
+        r'<tr data-id="([^"]+)"[^>]*>.*?<span class="chip kind-(\w+)">'
+        r'.*?<span class="chip st-(\w+)">',
+        page,
+        re.S,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 1. Reads, which need no login and are the same pages Phase 1 shipped
 # --------------------------------------------------------------------------- #
@@ -1278,15 +1293,172 @@ def test_the_bet_lists_what_to_pick_up_before_what_is_running(
               "fields": {"starts_on": "2027-01-11", "build_weeks": 4}, "body": None},
     )
     page = client.get("/cycle/45").text
-    rows = re.findall(r'<tr data-id="([^"]+)"[^>]*>.*?<td>(\w+)</td>\s*<td>(\w+)</td>',
-                      page, re.S)
+    rows = bet_rows(page)
     statuses = [status for _, _, status in rows]
 
+    assert statuses, "the fixture has work to bet"
     assert set(statuses) <= {"ready", "in_progress"}
     assert statuses == sorted(statuses, key=["ready", "in_progress"].index)
     for status in ("ready", "in_progress"):
         ids = [i for i, _, s in rows if s == status]
         assert ids == sorted(ids)
+
+
+def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
+    client: TestClient, repo_path: Path
+):
+    """One chip everywhere a status is named. The betting table said `in_progress`
+    in the same ink as the title beside it, so the one column a room reads down
+    was the one column with nothing to read down."""
+    client.put(
+        "/api/cycle/46",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-02-08", "build_weeks": 4}, "body": None},
+    )
+    page = client.get("/cycle/46").text
+    rows = bet_rows(page)
+
+    assert rows
+    for entity_id, kind, status in rows:
+        assert f'<span class="chip st-{status}">' in page, entity_id
+        assert f'<span class="chip kind-{kind}">' in page, entity_id
+    assert "In progress" in page or "in_progress" not in [s for _, _, s in rows]
+    assert ">in_progress<" not in page, "the identifier is the class, never the word"
+
+
+def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_path: Path):
+    """F25. The index listed the cycles with a record, which are the ones somebody
+    has already thought about. A cycle holding work and holding no record is the
+    one worth finding, and it was the one the page left out."""
+    client.put(
+        "/api/cycle/47",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-03-08", "build_weeks": 4,
+                         "availability": {"ann": 1.0}}, "body": None},
+    )
+    save(client, TASK, {"cycle": 48, "owner": "bo", "assignees": ["bo"],
+                        "effort_weeks": 2.0})
+    page = client.get("/cycles").text
+    cards = re.findall(r'<h2><a href="/cycle/(\d+)">Cycle \d+</a></h2>', page)
+
+    assert cards == ["48", "47"], "newest first, record or not"
+    assert re.search(r'>2\.0</b> weeks bet against\s+no roster', page), "48 holds work"
+
+
+def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo_path: Path):
+    """F25. `9.2 of 19.8 weeks bet` is the sentence the method turns on, and it
+    was a fragment at the end of a bullet. The weeks counted are every week
+    charged to the cycle, including work belonging to somebody the roster does
+    not name — a cycle must never look emptier than it is."""
+    client.put(
+        "/api/cycle/49",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-04-05", "build_weeks": 4,
+                         "availability": {"ann": 0.5}}, "body": None},
+    )
+    save(client, TASK, {"cycle": 49, "owner": "cy", "assignees": ["cy"],
+                        "effort_weeks": 3.0})
+    card = re.search(r'<li class="card([^"]*)">\s*<h2><a href="/cycle/49".*?</li>',
+                     client.get("/cycles").text, re.S).group(0)
+
+    assert "<b class=\"num\">3.0</b> of" in card, "cy is not on the roster and still counts"
+    assert "<b class=\"num\">2.0</b> weeks bet" in card, "ann at half of four weeks"
+    assert re.search(r'<span class="bar"><span style="width: 100%">', card)
+    assert card.startswith('<li class="card over">'), "3.0 bet against 2.0 of capacity"
+
+
+def test_the_create_form_is_not_another_cycle_in_the_list(client: TestClient):
+    """F26. Four inputs and a button that writes a file sat at the same level as
+    the list above them, with nothing between the two saying which was which."""
+    page = client.get("/cycles").text
+
+    assert '<section id="create">' in page
+    assert "<h2>Start a cycle</h2>" in page
+    assert "#create { border-top: 1px solid var(--line);" in page
+    assert page.index('id="start"') > page.index('id="cooldown"'), \
+        "F15: the button follows the fields it commits"
+
+
+def test_starting_a_cycle_asks_before_it_writes(client: TestClient):
+    """F26. Starting a cycle writes a file and moves every date on every page
+    that reads it, off one click beside four inputs somebody was just typing in."""
+    page = client.get("/cycles").text
+    reveal = re.search(r"START\.onclick = \(\) => \{.*?\n\};", page, re.S).group(0)
+    commit = re.search(r"document\.getElementById\('yes'\)\.onclick = async \(\) => \{"
+                       r".*?\n\};", page, re.S).group(0)
+
+    assert "fetch(" not in reveal, "the first click asks, it does not write"
+    assert "CONFIRM.hidden = false;" in reveal
+    assert "confirm-number" in reveal, "the question names the cycle being started"
+    assert "fetch(`/api/cycle/${number}`" in commit
+    assert "document.getElementById('no').onclick" in page, "and a way to say no"
+
+
+def test_the_glyph_that_takes_somebody_out_of_a_cycle_says_so_and_asks(
+    client: TestClient, repo_path: Path
+):
+    """F26. An unlabelled bin next to the availability field, one click from
+    removing a person and their capacity with them."""
+    client.put(
+        "/api/cycle/51",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-07-05", "build_weeks": 4,
+                         "availability": {"ann": 1.0, "bo": 0.5}}, "body": None},
+    )
+    page = client.get("/cycle/51").text
+    rows = re.findall(r'<tr data-login="([^"]+)"', page)
+
+    assert rows == ["ann", "bo"]
+    for login in rows:
+        assert f'aria-label="Take {login} out of this cycle"' in page
+        assert f'aria-label="{login} availability"' in page
+    dropcell = re.search(r'<td class="dropcell">.*?</td>', page, re.S).group(0)
+    assert 'class="confirm" hidden>' in dropcell
+    assert 'class="yes">yes</button>' in dropcell and 'class="no">no</button>' in dropcell
+    # The row the add box builds is a second copy of the same cell, and a copy
+    # that drifts is a row whose only destructive control loses its name.
+    minted = re.search(r"function dropCell\(login\) \{.*?\n\}", page, re.S).group(0)
+    assert 'aria-label="Take ${login} out of this cycle"' in minted
+    assert 'class="confirm" hidden>' in minted
+
+
+def test_the_save_button_follows_what_it_commits(client: TestClient):
+    """F15. Every commit action on this page sat above the form it commits, which
+    on a betting table means a screen away from the row being argued about."""
+    page = client.get("/cycle/37").text
+
+    assert page.index('id="commitbar"') > page.index('<form id="setup"')
+    assert page.index('id="commitbar"') > page.index('<table id="bets"')
+    assert "position: sticky; bottom: 0;" in page, "and stays in reach"
+
+
+def test_the_cycle_page_says_what_is_unsaved_and_that_a_save_landed(client: TestClient):
+    """F5. One save model for the page, said out loud: the bar names what is
+    unsaved, and the receipt survives the reload that proves it landed."""
+    page = client.get("/cycle/37").text
+    mark = re.search(r"function mark\(\) \{.*?\n\}", page, re.S).group(0)
+    click = re.search(r"SAVE\.onclick = async \(\) => \{.*?\n\};", page, re.S).group(0)
+
+    assert '<span id="unsaved">Nothing to save</span>' in page
+    assert 'id="state" role="status"' in page, "a receipt nobody is told about"
+    assert "UNSAVED.textContent" in mark and "BAR.classList.toggle('dirty'" in mark
+    assert "sessionStorage.setItem(RECEIPT" in click
+    assert "sessionStorage.getItem(RECEIPT)" in page
+    assert re.search(r"receipt = `\$\{quiet \? 'Autosaved' : 'Saved'\}", page), \
+        "the two-minute autosave confirms in the same place as the button"
+
+
+def test_a_cycle_with_no_record_is_a_form_and_says_so(client: TestClient):
+    """F25 links here for every cycle the plan names, so a cycle nobody has
+    written down yet has to be worth arriving at: the team list seeds the roster,
+    because an empty table beside an add box is a form nobody can tell is
+    working."""
+    page = client.get("/cycle/37").text
+    roster = re.findall(r'<tr data-login="([^"]+)"', page)
+
+    assert "No record yet" in page
+    assert "the record Save would write" in page
+    assert roster == ["ann", "bo", "cy"], "config/people.yaml, sorted"
 
 
 # --- images -----------------------------------------------------------------

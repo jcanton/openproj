@@ -29,7 +29,7 @@ from markupsafe import Markup
 from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
-from .model import Config, Entity, Pitch, Project, Task, size_weeks
+from .model import Config, Cycle, Entity, Pitch, Project, Task, size_weeks
 
 
 def _static_dir() -> Path:
@@ -702,8 +702,11 @@ a, a:visited { color: var(--accent); }
                  border: 1px solid var(--line-strong); background: var(--surface);
                  color: var(--fg); cursor: pointer; }
 #clear-filters:hover { border-color: var(--accent); color: var(--accent); }
-#moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent);
-         color: var(--on-accent);
+/* Above everything a page can stick to its own edges — the cycle page's commit
+   bar sits in exactly this corner — because news that the plan moved under you
+   is the one thing on screen that must not be behind something else. */
+#moved { position: fixed; right: 1rem; bottom: 1rem; z-index: 40;
+         background: var(--accent); color: var(--on-accent);
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
 #moved a { color: var(--on-accent); }
 #moved .sha { font-family: var(--font-mono); opacity: .7; }
@@ -3408,15 +3411,16 @@ def _suggestions(index: Index) -> dict:
 _CYCLE = """
 <p class="editbar">
   <a href="{{ links.cycles }}">← all cycles</a>
-  {% if editable %}
-  <button type="button" id="save" disabled>Save</button>
-  <span id="state"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-  {% endif %}
 </p>
 <h1>Cycle {{ c.number }}</h1>
+{% if c.recorded %}
 <p class="meta">{{ c.starts_on }} → builds until <b>{{ c.builds_until }}</b>
    → cool-down ends {{ c.ends_on }}</p>
+{% else %}
+<p class="meta">No record yet{% if c.dated %} — config/cycles.yaml puts this cycle at
+   {{ c.starts_on }} → {{ c.ends_on }}{% endif %}. Nothing holds these weeks: what is
+   below is the record Save would write.</p>
+{% endif %}
 
 <form id="setup" onsubmit="return false">
   <dl id="facts">
@@ -3445,12 +3449,15 @@ _CYCLE = """
   {% for row in c.people %}
   <tr data-login="{{ row.login }}" data-held="{{ row.held }}"
       class="{{ 'over' if row.over else '' }}">
-    {% if editable %}<td><button type="button" class="drop" title="Take out of this
-      cycle">&#128465;</button></td>{% else %}<td></td>{% endif %}
+    {% if editable %}<td class="dropcell"><button type="button" class="drop"
+      title="Take {{ row.login }} out of this cycle"
+      aria-label="Take {{ row.login }} out of this cycle">&#128465;</button><span
+      class="confirm" hidden>out?<button type="button" class="yes">yes</button><button
+      type="button" class="no">no</button></span></td>{% else %}<td></td>{% endif %}
     <td>{{ row.login }}</td>
     <td><span class="read">{{ (row.rate * 100)|round|int }}%</span>
         <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"
-               autocomplete="off"></td>
+               aria-label="{{ row.login }} availability" autocomplete="off"></td>
     <td class="derived capacity">{{ '%.1f'|format(row.capacity) }} wk</td>
     <td class="derived">{{ '%.1f'|format(row.held) }} wk</td>
     <td><span class="bar"><span style="width: {{ row.percent }}%"></span></span></td>
@@ -3487,8 +3494,8 @@ _CYCLE = """
                {{ 'checked' if row.in_cycle else '' }}
                {{ 'disabled' if row.carried else '' }}></td>
     <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
-    <td>{{ row.kind }}</td>
-    <td>{{ row.status }}</td>
+    <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
+    <td><span class="chip st-{{ row.status }}">{{ row.status|human }}</span></td>
     <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
                autocomplete="off" value="{{ row.size }}"
                placeholder="{{ row.size_hint }}"></td>
@@ -3502,31 +3509,65 @@ _CYCLE = """
 </tbody></table></div>
 <div class="doc">{{ c.body|safe }}</div>
 {% if editable %}
+<div class="commitbar" id="commitbar">
+  <span id="unsaved">Nothing to save</span>
+  <button type="button" id="save" disabled>Save</button>
+  <span id="state" role="status"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</div>
 {{ combobox|safe }}
 <script>
 const BASE = document.getElementById('base');
 const STATE = document.getElementById('state');
+const BAR = document.getElementById('commitbar');
+const UNSAVED = document.getElementById('unsaved');
 const NUMBER = {{ c.number }};
+// What is on this page, so the shell's banner can tell a write that lands here
+// from one that lands somewhere else. The cycle record and every entity that can
+// be bet into it: those are the ids the server announces.
+window.SHOWING = ['cycle-' + NUMBER].concat(
+  [...document.querySelectorAll('#bets tbody tr')].map(tr => tr.dataset.id));
 
 function say(message) { STATE.textContent = message; }
 
 async function put(fields) {
-  const response = await fetch(`/api/cycle/${NUMBER}`, {
-    method: 'PUT', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
-  });
-  const answer = await response.json();
-  if (!response.ok) { say(answer.detail || 'refused'); return null; }
-  BASE.value = answer.commit || BASE.value;
-  return answer;
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch(`/api/cycle/${NUMBER}`, {
+      method: 'PUT', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
+    });
+    const answer = await response.json();
+    if (!response.ok) { say(answer.detail || 'refused'); return null; }
+    committed = answer.commit;
+    BASE.value = answer.commit || BASE.value;
+    return answer;
+  } finally {
+    // Announced even when the write was refused, or one refusal leaves every
+    // later event held back and the shell's banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
 }
 
 const SAVE = document.getElementById('save');
 let ROSTER_DIRTY = false;
 
+// The receipt has to outlive the reload that proves it. Saving reloads, because
+// half the numbers on this page — capacity, load, the scheduled-until column —
+// are derived from what was just written; a confirmation that only lived in the
+// DOM would be thrown away by the very thing it is confirming.
+const RECEIPT = 'openproj:cycle-saved';
+let receipt = '';
+
+try {
+  const landed = sessionStorage.getItem(RECEIPT);
+  if (landed) { say(landed); sessionStorage.removeItem(RECEIPT); }
+} catch (e) { /* the save still landed; only the sentence about it is missing */ }
+
 // The whole roster in one write. A name left out means somebody was taken off,
 // which per-field merging would silently undo.
-async function saveSetup(quiet) {
+async function saveSetup() {
   const setup = document.getElementById('setup');
   const availability = {};
   for (const input of document.querySelectorAll('input.rate')) {
@@ -3541,7 +3582,6 @@ async function saveSetup(quiet) {
   };
   if (!(await put(fields))) return false;
   ROSTER_DIRTY = false;
-  if (!quiet) say('setup saved');
   return true;
 }
 
@@ -3553,7 +3593,6 @@ for (const box of document.querySelectorAll('input.bet')) {
     const row = box.closest('tr');
     pend(row.dataset.id, 'cycle', box.checked ? NUMBER : null);
     row.querySelector('td:last-child').textContent = box.checked ? NUMBER : '—';
-    say(`${PENDING.size} unsaved`);
   };
 }
 
@@ -3565,6 +3604,9 @@ const PENDING = new Map();   // entity id -> {field: value}
 
 function pend(id, field, value) {
   PENDING.set(id, {...(PENDING.get(id) || {}), [field]: value});
+  // A new edit makes the last receipt untrue: "saved 3" sitting beside "2
+  // unsaved changes" reads as though the three came back.
+  say('');
   mark();
 }
 
@@ -3575,6 +3617,11 @@ function mark() {
   for (const fields of PENDING.values()) edits += Object.keys(fields).length;
   SAVE.disabled = edits === 0;
   SAVE.textContent = edits ? `Save ${edits} change${edits === 1 ? '' : 's'}` : 'Save';
+  // Said in words next to the button rather than only by the button's own
+  // label, because the label is what will happen and this is what is true now.
+  UNSAVED.textContent = edits
+    ? `${edits} unsaved change${edits === 1 ? '' : 's'}` : 'Nothing to save';
+  BAR.classList.toggle('dirty', edits > 0);
   for (const tr of document.querySelectorAll('#bets tbody tr'))
     tr.classList.toggle('pending', PENDING.has(tr.dataset.id));
 }
@@ -3589,35 +3636,52 @@ addEventListener('beforeunload', event => {
 async function flush(quiet) {
   if (!PENDING.size && !ROSTER_DIRTY) return true;
   SAVE.disabled = true;
-  if (ROSTER_DIRTY && !(await saveSetup(true))) { mark(); return false; }
+  let saved = 0;
+  if (ROSTER_DIRTY) {
+    if (!(await saveSetup())) { mark(); return false; }
+    saved += 1;
+  }
   // One entity per commit, each against the commit the last one returned: a
   // batch that fails half way is still a readable history rather than one commit
   // nobody can unpick.
-  let written = 0;
   for (const [id, fields] of [...PENDING]) {
-    const response = await fetch(`/api/entity/${id}`, {
-      method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
-    });
-    const answer = await response.json();
-    if (!response.ok) {
-      say(`${id}: ${answer.detail
-            || (answer.problems || []).map(p => p.message).join('; ') || 'refused'}`
-          + (written ? ` — ${written} already saved` : ''));
-      mark();
-      return false;
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const response = await fetch(`/api/entity/${id}`, {
+        method: 'PATCH', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
+      });
+      const answer = await response.json();
+      if (!response.ok) {
+        say(`${id}: ${answer.detail
+              || (answer.problems || []).map(p => p.message).join('; ') || 'refused'}`
+            + (saved ? ` — ${saved} already saved` : ''));
+        mark();
+        return false;
+      }
+      committed = answer.commit;
+      BASE.value = answer.commit || BASE.value;
+      PENDING.delete(id);
+      saved += 1;
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
-    BASE.value = answer.commit || BASE.value;
-    PENDING.delete(id);
-    written += 1;
   }
   mark();
-  say(quiet ? `autosaved ${written}` : `saved ${written}`);
+  receipt = `${quiet ? 'Autosaved' : 'Saved'} ${saved} change${saved === 1 ? '' : 's'}`;
+  say(receipt);
   return true;
 }
 
 SAVE.onclick = async () => {
-  if (await flush(false)) location.reload();
+  if (await flush(false)) {
+    // Reloaded because capacity, load and the scheduled-until column are all
+    // derived from what was just written, and the receipt is handed across the
+    // reload so that pressing Save says something rather than blinking.
+    try { sessionStorage.setItem(RECEIPT, receipt); } catch (e) { /* still saved */ }
+    location.reload();
+  }
 };
 
 // Every two minutes, so a dropped connection or a closed laptop costs the last
@@ -3662,7 +3726,6 @@ for (const input of document.querySelectorAll('#bets input.live')) {
     was = input.value;
     edited = false;
     pend(id, field, staged);
-    say(`${PENDING.size} unsaved`);
   };
 }
 
@@ -3707,16 +3770,35 @@ const HELD = HELD_JSON;
 const JOINING = document.getElementById('joining');
 if (JOINING) attachSuggest(JOINING);
 
+// Two clicks, and the second one answers a question rather than repeating the
+// gesture that asked it. Taking somebody out of a cycle takes their capacity out
+// with them, and the glyph that did it was one unlabelled pixel target away from
+// the availability field next to it.
 function dropRow(button) {
-  button.onclick = () => {
+  const cell = button.closest('td');
+  const asking = cell.querySelector('.confirm');
+  button.onclick = () => { button.hidden = true; asking.hidden = false; };
+  asking.querySelector('.no').onclick = () => { asking.hidden = true; button.hidden = false; };
+  asking.querySelector('.yes').onclick = () => {
     const row = button.closest('tr');
-    say(`${row.dataset.login} taken out — press Save to commit it`);
+    say(`${row.dataset.login} taken out — Save writes it`);
     row.remove();
     recount();
     dirty();
   };
 }
 document.querySelectorAll('#roster .drop').forEach(dropRow);
+
+// The same cell the roster loop above renders. Kept as one string rather than
+// built up, so that the two copies of it can be read against each other; a test
+// asserts both carry the name and the question.
+function dropCell(login) {
+  return `<td class="dropcell"><button type="button" class="drop"`
+    + ` title="Take ${login} out of this cycle"`
+    + ` aria-label="Take ${login} out of this cycle">&#128465;</button>`
+    + `<span class="confirm" hidden>out?<button type="button" class="yes">yes</button>`
+    + `<button type="button" class="no">no</button></span></td>`;
+}
 
 document.getElementById('add').onclick = () => {
   const login = JOINING.value.trim().replace(/,$/, '');
@@ -3730,10 +3812,10 @@ document.getElementById('add').onclick = () => {
   // Somebody added to the cycle may already be bet into it — that is exactly why
   // the page named them below the table. Their load comes with them.
   row.dataset.held = (HELD[login] || 0);
-  row.innerHTML =
-    `<td><button type="button" class="drop" title="Take out of this cycle">&#128465;</button></td>`
+  row.innerHTML = dropCell(login)
     + `<td>${login}</td>`
-    + `<td><input class="field rate" data-login="${login}" value="1.0"></td>`
+    + `<td><input class="field rate" data-login="${login}" value="1.0"`
+    + ` aria-label="${login} availability" autocomplete="off"></td>`
     + `<td class="derived capacity">—</td>`
     + `<td class="derived">${(HELD[login] || 0).toFixed(1)} wk</td>`
     + `<td><span class="bar"><span style="width: 0%"></span></span></td>`
@@ -3743,13 +3825,43 @@ document.getElementById('add').onclick = () => {
   JOINING.value = '';
   recount();
   dirty();
-  say(`${login} added — press Save to commit it`);
+  say(`${login} added — Save writes it`);
 };
 </script>
 {% endif %}
 """
 
 _CYCLE_STYLE = """
+/* The one action on the page, and it follows the forms it commits instead of
+   sitting above them. Sticky rather than merely last: the betting table is the
+   length of the plan, and a Save button at either end of it is a Save button you
+   have to go looking for while holding an unsaved decision in your head. */
+.commitbar {
+  /* Under the suggestion popup (20) and under the shell's banner (40): a bar
+     that is always on screen is always in front of something. */
+  position: sticky; bottom: 0; z-index: 10;
+  display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap;
+  margin: 1.5rem 0 0; padding: .5rem .75rem;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+}
+/* Unsaved work is a warning, not decoration: this is the state in which closing
+   the tab loses something. */
+.commitbar.dirty { border-color: var(--warn); }
+#unsaved { font-size: 12px; color: var(--muted); }
+.commitbar.dirty #unsaved { color: var(--warn); font-weight: 600; }
+#save { font: inherit; font-size: 13px; padding: .25rem .8rem; border-radius: 2px;
+        border: 1px solid var(--line-strong); background: var(--surface);
+        color: var(--fg); cursor: pointer; }
+#save:disabled { color: var(--muted); cursor: default; }
+/* A destructive control asks before it acts, and the question replaces the
+   glyph rather than appearing beside it, so the row does not jump. */
+.confirm { font-size: 12px; color: var(--warn); }
+td .confirm { white-space: nowrap; }
+.confirm button { font: inherit; font-size: 12px; margin-left: .25rem;
+                  padding: 0 .35rem; border-radius: 2px;
+                  border: 1px solid var(--line-strong); background: var(--surface);
+                  color: var(--fg); cursor: pointer; }
+.confirm button.yes { border-color: var(--danger); color: var(--danger); }
 #setup .field, table.load .field { display: inline-block; }
 #setup .field { width: 12rem; }
 #setup .read, table.load .read { display: none; }
@@ -3788,61 +3900,155 @@ tr.carried td { color: var(--muted); }
 #bets tr.pending td { box-shadow: inset 3px 0 0 -1px var(--accent); }
 #bets tr.pending td:first-child { box-shadow: inset 3px 0 0 0 var(--accent); }
 #save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+/* The cycles index. One card per cycle, and the sentence the method turns on —
+   this much bet, that much to bet with — is the largest thing on it. */
+.cards { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: .75rem;
+         grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); }
+.card { border: 1px solid var(--line); border-radius: 3px; padding: .6rem .8rem;
+        background: var(--surface); }
+.card h2 { font-size: 1.05rem; margin: 0; }
+.card .window { color: var(--muted); font-size: 12px; margin: .1rem 0 .5rem; }
+.card .bet { margin: 0 0 .35rem; font-size: 13px; }
+.card .bet b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.card .bar { display: block; width: 100%; height: 10px; }
+.card.over .bar > span { background: var(--danger); }
+.card.over .bet b { color: var(--danger); }
+.card .note { margin: .35rem 0 0; }
+/* The create form is not another cycle in the list, and it writes a record. The
+   rule and the heading are what say so before the button does. */
+#create { border-top: 1px solid var(--line); margin-top: 2.5rem; padding-top: 1rem; }
+#create h2 { font-size: 1.05rem; margin: 0 0 .2rem; }
+#start { font: inherit; font-size: 13px; padding: .25rem .8rem; border-radius: 2px;
+         border: 1px solid var(--accent); background: var(--surface);
+         color: var(--accent); cursor: pointer; }
+#confirm { margin: .6rem 0 0; font-size: 13px; }
 """
 
 _CYCLES = """
-<p class="hint">Every cycle the plan has a record for. A cycle sets the build and
-  cool-down weeks and who is available for it.</p>
-<div class="toc"><ul>
+<h1>Cycles</h1>
+<p class="hint">Every cycle the plan names — the ones with a record, the ones
+  config/cycles.yaml dates, and the ones something has been bet into. A cycle sets
+  the build and cool-down weeks and who is available for it.</p>
+{% if cycles %}
+<ul class="cards">
   {% for c in cycles %}
-  <li><a href="{{ links.cycle }}{{ c.number }}">Cycle {{ c.number }}</a>
-      <span class="tocmeta">{{ c.starts_on }} → {{ c.builds_until }}
-        · {{ c.people }} people · {{ '%.1f'|format(c.held) }} of
-        {{ '%.1f'|format(c.capacity) }} weeks bet</span></li>
+  <li class="card{{ ' over' if c.over else '' }}">
+    <h2><a href="{{ links.cycle }}{{ c.number }}">Cycle {{ c.number }}</a></h2>
+    <p class="window">{% if c.recorded %}{{ c.starts_on }} → builds until
+      {{ c.builds_until }}{% elif c.starts_on %}{{ c.starts_on }} → {{ c.ends_on }}
+      {% else %}no dates{% endif %}
+      · {{ c.people }} {{ 'person' if c.people == 1 else 'people' }}</p>
+    {% if c.recorded %}
+    <p class="bet"><b class="num">{{ '%.1f'|format(c.bet) }}</b> of
+      <b class="num">{{ '%.1f'|format(c.capacity) }}</b> weeks bet</p>
+    <span class="bar"><span style="width: {{ c.percent }}%"></span></span>
+    {% else %}
+    <p class="bet"><b class="num">{{ '%.1f'|format(c.bet) }}</b> weeks bet against
+      no roster</p>
+    <p class="hint note">No record yet, so there is no capacity to bet against.</p>
+    {% endif %}
+  </li>
   {% endfor %}
-</ul></div>
+</ul>
+{% else %}
+<p class="hint">No cycle has been named yet — not in a record, not in
+  config/cycles.yaml, and nothing has been bet into one. Start one below.</p>
+{% endif %}
 {% if editable %}
-<p class="editbar">
-  <label class="facet">number
-    <input id="number" type="number" value="{{ next.number }}" min="0" max="9999"></label>
-  <label class="facet">starts
-    <input id="starts" type="date" value="{{ next.starts_on }}"></label>
-  <label class="facet">build weeks
-    <input id="build" type="number" value="{{ next.build_weeks }}" step="0.5"></label>
-  <label class="facet">cool-down
-    <input id="cooldown" type="number" value="{{ next.cooldown_weeks }}" step="0.5"></label>
-  <button type="button" id="start">Start it</button>
-  <span class="hint">{{ next.roster|length }} people carried from cycle
-    {{ next.number - 1 }}</span>
-  <span id="state"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</p>
+<section id="create">
+  <h2>Start a cycle</h2>
+  <p class="hint">This writes a cycle record. The dates and the roster are carried
+    from the last cycle and corrected on the new cycle's own page.</p>
+  <p class="editbar">
+    <label class="facet">number
+      <input id="number" type="number" value="{{ next.number }}" min="0" max="9999"></label>
+    <label class="facet">starts
+      <input id="starts" type="date" value="{{ next.starts_on }}"></label>
+    <label class="facet">build weeks
+      <input id="build" type="number" value="{{ next.build_weeks }}" step="0.5"></label>
+    <label class="facet">cool-down
+      <input id="cooldown" type="number" value="{{ next.cooldown_weeks }}" step="0.5"></label>
+  </p>
+  <p class="editbar">
+    <button type="button" id="start">Start it</button>
+    {% if next.roster %}
+    <span class="hint">{{ next.roster|length }} people carried from cycle
+      {{ next.from_cycle }}</span>
+    {% else %}
+    <span class="hint">no roster to carry over — set availability on the new
+      cycle's own page</span>
+    {% endif %}
+    <span id="state" role="status"></span>
+    <input type="hidden" id="base" value="{{ base_commit }}">
+  </p>
+  <p class="confirm" id="confirm" hidden>Start cycle <b id="confirm-number"></b> on
+    <b id="confirm-starts"></b>, <b id="confirm-length"></b>, with
+    <b id="confirm-people"></b>? This commits a cycle record.
+    <button type="button" id="yes">Yes, start it</button>
+    <button type="button" id="no">Cancel</button></p>
+</section>
 <script>
 const ROSTER = ROSTER_JSON;
+const START = document.getElementById('start');
+const CONFIRM = document.getElementById('confirm');
+const STATE = document.getElementById('state');
+const field = id => document.getElementById(id);
+
+// Starting a cycle writes a file and moves every date on every page that reads
+// it. It was one click on a button beside four inputs somebody had just been
+// typing in, with no sentence anywhere saying what the click would do.
+START.onclick = () => {
+  const people = Object.keys(ROSTER).length;
+  field('confirm-number').textContent = field('number').value;
+  field('confirm-starts').textContent = field('starts').value;
+  field('confirm-length').textContent =
+    `${field('build').value} build weeks + ${field('cooldown').value} cool-down`;
+  field('confirm-people').textContent =
+    `${people} ${people === 1 ? 'person' : 'people'} carried over`;
+  CONFIRM.hidden = false;
+  START.hidden = true;
+  STATE.textContent = '';
+};
+
+document.getElementById('no').onclick = () => {
+  CONFIRM.hidden = true;
+  START.hidden = false;
+};
+
 // Defaults carried from the last cycle: the length rarely changes, the next one
 // starts when the last one ends, and mostly the same people are in it at mostly
 // the same rates. All of it is corrected on the cycle's own page afterwards.
-document.getElementById('start').onclick = async () => {
-  const number = Number(document.getElementById('number').value);
-  const response = await fetch(`/api/cycle/${number}`, {
-    method: 'PUT', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({
-      base_commit: document.getElementById('base').value,
-      fields: {
-        starts_on: document.getElementById('starts').value,
-        build_weeks: Number(document.getElementById('build').value),
-        cooldown_weeks: Number(document.getElementById('cooldown').value),
-        availability: ROSTER,
-      },
-      body: null,
-    }),
-  });
-  const answer = await response.json();
-  if (!response.ok) {
-    document.getElementById('state').textContent = answer.detail || 'refused';
-    return;
+document.getElementById('yes').onclick = async () => {
+  const number = Number(field('number').value);
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch(`/api/cycle/${number}`, {
+      method: 'PUT', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        base_commit: field('base').value,
+        fields: {
+          starts_on: field('starts').value,
+          build_weeks: Number(field('build').value),
+          cooldown_weeks: Number(field('cooldown').value),
+          availability: ROSTER,
+        },
+        body: null,
+      }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      STATE.textContent = answer.detail || 'refused';
+      CONFIRM.hidden = true;
+      START.hidden = false;
+      return;
+    }
+    committed = answer.commit;
+    location.href = '/cycle/' + number;
+  } finally {
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
-  location.href = '/cycle/' + number;
 };
 </script>
 {% endif %}
@@ -3962,15 +4168,24 @@ def _cycle_view(index: Index, number: int) -> dict:
     plan = index.plans.get(number)
     held = index.load(number)
     nominal = index.nominal_availability
-    build_weeks = plan.build_weeks if plan else 0.0
-    listed = list(plan.availability) if plan else []
+    window = index.cycles.get(number)
+    # A cycle with no record has a page too, because the index links to every
+    # cycle the plan names and not only to the ones somebody wrote down. That
+    # page is a form: everything on it is the record Save would write — the
+    # model's own default length, the config window's start if there is one, and
+    # the team list as a roster to correct. An empty table with an add box next
+    # to it is a form nobody can tell is working.
+    proposed = plan or Cycle(cycle=number, starts_on=window[0] if window else index.today)
+    build_weeks = proposed.build_weeks
+    listed = list(plan.availability) if plan else list(index.known_people)
+    ends_on = plan.ends_on.isoformat() if plan else (window[1].isoformat() if window else "")
 
     # Exactly who was named. Being on the roster IS being in the cycle, so a name
     # is added deliberately rather than appearing because somebody was assigned
     # something — which would make the roster a report instead of a decision.
     people = []
     for login in sorted(listed, key=str.lower):
-        rate = plan.availability.get(login, nominal) if plan else nominal
+        rate = proposed.availability.get(login, nominal)
         capacity = rate * build_weeks
         mine = [
             index.spans[i].end
@@ -4034,11 +4249,13 @@ def _cycle_view(index: Index, number: int) -> dict:
 
     return {
         "number": number,
-        "starts_on": plan.starts_on.isoformat() if plan else "—",
-        "builds_until": plan.builds_until.isoformat() if plan else "—",
-        "ends_on": plan.ends_on.isoformat() if plan else "—",
-        "build_weeks": f"{build_weeks:g}",
-        "cooldown_weeks": f"{plan.cooldown_weeks:g}" if plan else "—",
+        "recorded": plan is not None,
+        "dated": window is not None,
+        "starts_on": proposed.starts_on.isoformat(),
+        "builds_until": plan.builds_until.isoformat() if plan else "",
+        "ends_on": ends_on,
+        "build_weeks": f"{proposed.build_weeks:g}",
+        "cooldown_weeks": f"{proposed.cooldown_weeks:g}",
         "nominal": nominal,
         "people": people,
         "held": held,
@@ -4069,23 +4286,58 @@ def render_cycle(
     )
 
 
+def _cycle_totals(index: Index, number: int) -> dict:
+    """One cycle's card: what is bet against what there is to bet with.
+
+    The bet counts every week charged to the cycle, including work belonging to
+    somebody the roster does not name. Summing only the roster's rows made a
+    cycle look emptier the more of it was bet by people nobody had added — which
+    is the direction the number must never be wrong in.
+    """
+    plan = index.plans.get(number)
+    window = index.cycles.get(number)
+    bet = sum(index.load(number).values())
+    capacity = (
+        sum(plan.capacity(who, index.nominal_availability) for who in plan.availability)
+        if plan
+        else 0.0
+    )
+    return {
+        "number": number,
+        "recorded": plan is not None,
+        "starts_on": plan.starts_on.isoformat()
+        if plan
+        else (window[0].isoformat() if window else ""),
+        "builds_until": plan.builds_until.isoformat() if plan else "",
+        "ends_on": plan.ends_on.isoformat()
+        if plan
+        else (window[1].isoformat() if window else ""),
+        "people": len(plan.availability) if plan else 0,
+        "bet": bet,
+        "capacity": capacity,
+        "percent": min(100, round(100 * bet / capacity)) if capacity else 0,
+        "over": bool(capacity) and bet > capacity,
+    }
+
+
 def render_cycles(
     index: Index, links: Links = STATIC, base_commit: str | None = None
 ) -> str:
-    rows = []
-    for number in sorted(index.plans, reverse=True):
-        view = _cycle_view(index, number)
-        rows.append(
-            {
-                "number": number,
-                "starts_on": view["starts_on"],
-                "builds_until": view["builds_until"],
-                "people": len(view["people"]),
-                "held": sum(p["held"] for p in view["people"]),
-                "capacity": sum(p["capacity"] for p in view["people"]),
-            }
-        )
+    # Every cycle the plan names, not only the ones with a file. A cycle dated in
+    # config, or one that entities point at with nothing behind it, is exactly
+    # the cycle somebody needs to find: it holds work and holds no record.
+    numbers = (
+        set(index.plans)
+        | set(index.cycles)
+        | {e.cycle for e in index.entities.values() if e.cycle is not None}
+    )
+    rows = [_cycle_totals(index, number) for number in sorted(numbers, reverse=True)]
     last = index.plans[max(index.plans)] if index.plans else None
+    # The number to propose comes from every cycle the plan names, not only from
+    # the recorded ones: a plan whose cycles live in config/cycles.yaml would
+    # otherwise be offered cycle 1 while it is running cycle 37.
+    top = max(numbers) if numbers else 0
+    ends = index.cycles.get(top)
     body = _ENV.from_string(_CYCLES).render(
         cycles=rows,
         links=links,
@@ -4094,12 +4346,15 @@ def render_cycles(
         # The next cycle starts when the last one ends and is the same length,
         # because both are true far more often than not.
         next={
-            "number": (max(index.plans) + 1) if index.plans else 1,
-            "starts_on": (last.ends_on + timedelta(days=1)).isoformat()
-            if last
+            "number": top + 1,
+            "starts_on": (ends[1] + timedelta(days=1)).isoformat()
+            if ends
             else index.today.isoformat(),
             "build_weeks": f"{last.build_weeks:g}" if last else "4",
             "cooldown_weeks": f"{last.cooldown_weeks:g}" if last else "2",
+            # Which cycle the roster below was taken from, which is the last one
+            # with a record and not necessarily the last one that exists.
+            "from_cycle": max(index.plans) if index.plans else top,
             # The people who worked the last cycle, at the rates they worked it
             # at. A team changes slowly and availability changes every cycle, so
             # this is a starting point to correct rather than a claim — and it
