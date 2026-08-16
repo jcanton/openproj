@@ -1,6 +1,6 @@
 # Cycles, betting and capacity — design
 
-**Status:** decided, not implemented.
+**Status:** all three slices implemented, 2026-08-16. Open questions Q1–Q3 answered.
 **Proposal by:** jcanton, 2026-08-16. Decisions D-C1 … D-C4 taken 2026-08-16.
 **Method:** five independent analyses of the codebase followed by three adversarial critiques,
 then two rounds of correction from jcanton. Every claim about the code was verified by hand.
@@ -185,19 +185,16 @@ one column prevents it.
 
 ## 4. Open questions
 
-**Q1. Does `Support` become a field?** The sheet has it, openproj does not, and it is not the
-same as a reviewer. If it consumes capacity it needs a share; if it is "ask me when stuck" it is
-a name and nothing more. Recommendation: a `support: list[str]` people field that costs **no**
-capacity, added with the cycle page rather than before it.
+**Q1 — answered: no `support` field.** jcanton: *"we don't do support in openproj. we have
+reviewer for that and that role includes support, but makes people accountable."*
 
-**Q2. Even split, or a share per person?** D-C4 divides appetite by the number of assignees. The
-real sheet writes `Christos 50% + Kostantinos`, which is a share per person per task. The even
-split is one number to maintain instead of N; the share is faithful. Recommendation: even split
-now, and revisit only if a real bet is misrepresented by it.
+**Q2 — answered: even split.** One number to maintain instead of one per person per task. The
+real sheet's `Christos 50% + Kostantinos` is more faithful and is not worth the typing yet.
 
-**Q3. Does availability come from the cycle record or from `people.yaml`?** A person's default
-availability is stable; the exception is what varies per cycle. Recommendation: the cycle record
-holds only the exceptions, everyone else defaults to 1.0. The roster stays where it is.
+**Q3 — answered: per-cycle is what counts.** The cycle record holds the availability; anyone it
+does not name works at `nominal_availability`. `config/people.yaml` seeds the *roster* on the
+setup page — otherwise a cycle nobody has been bet into yet has no names to set availability
+against, and setting them is the first thing you do — but it holds no rates.
 
 ---
 

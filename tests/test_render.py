@@ -16,7 +16,8 @@ from openproj.index import Index, build_index
 from openproj.model import load_repo
 from openproj.render import render_static
 
-PAGES = ("index.html", "detail.html", "people.html", "graph.html", "timeline.html")
+PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
+         "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -639,3 +640,57 @@ def test_an_empty_field_is_a_dash_and_not_a_word(demo_rendered: tuple[Path, Inde
     assert '<span class="empty">—</span>' in body
     for word in (">nothing<", ">none<", ">not scheduled<"):
         assert word not in body, word
+
+
+# --- cycles -----------------------------------------------------------------
+
+
+def test_a_new_cycle_still_has_a_roster_to_set_availability_against(seed_index: Index):
+    """Built only from who is bet or already listed, a cycle nobody has bet into
+    yet shows an empty table — and setting the roster up is the first thing you
+    do on it. The team list seeds it."""
+    from openproj.render import _cycle_view
+
+    view = _cycle_view(seed_index.model_copy(update={"plans": {}}), 99)
+    logins = [row["login"] for row in view["people"]]
+
+    assert set(seed_index.known_people) <= set(logins)
+    assert logins == sorted(logins, key=str.lower)
+    assert all(row["held"] == 0.0 for row in view["people"])
+
+
+def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Index]):
+    """D-C2: a pitch whose children carry the names charges nothing itself. Its
+    appetite is a rollup, and charging both counts the same work twice."""
+    _, index = demo_rendered
+    held = index.load(37)
+    rolled_up = [
+        e for e in index.entities.values() if e.cycle == 37 and index.children.get(e.id)
+    ]
+
+    assert rolled_up, "the corpus has a parent bet into cycle 37"
+    for parent in rolled_up:
+        only_parent = index.model_copy(
+            update={"entities": {parent.id: parent}, "children": {}}
+        )
+        assert only_parent.load(37), "the same parent IS charged when it has no children"
+    assert held, "and the leaves are charged in the real index"
+
+
+def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Path, Index]):
+    """Even split, decided 2026-08-16: one number to maintain instead of one per
+    person per task."""
+    from openproj.model import Config, size_weeks
+
+    _, index = demo_rendered
+    shared = next(
+        e for e in index.entities.values()
+        if e.cycle == 37 and len(e.assignees) > 1 and not index.children.get(e.id)
+    )
+    size, _ = size_weeks(shared, Config(default_task_effort=index.default_task_effort))
+    held = index.load(37)
+    people = list(dict.fromkeys(([shared.owner] if shared.owner else []) + shared.assignees))
+
+    assert len(people) > 1
+    for who in people:
+        assert held[who] >= size / len(people) - 1e-9

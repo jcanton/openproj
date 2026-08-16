@@ -1092,3 +1092,120 @@ def test_the_server_reads_the_same_config_the_cli_does(repo_path: Path):
     assert set(model.CONFIG_FILES) == {"defaults.yaml", "cycles.yaml",
                                        "holidays.yaml", "people.yaml"}
     assert served.known_people == ["ann", "bo", "cy"]
+
+
+# --- cycle records ----------------------------------------------------------
+
+
+def test_a_cycle_is_created_and_then_updated_in_place(client: TestClient, repo_path: Path):
+    """PUT, not PATCH: a roster is written in one sitting, and a name that is
+    missing means somebody was taken off rather than left alone."""
+    base = git_head(repo_path)
+    made = client.put(
+        "/api/cycle/37",
+        json={"base_commit": base, "fields": {
+            "starts_on": "2026-08-17", "build_weeks": 4, "cooldown_weeks": 2,
+            "availability": {"ann": 0.5, "bo": 1.0}}, "body": "## Goal\n\nShip it.\n"},
+    )
+    assert made.status_code == 200
+
+    stored = file_at(repo_path, made.json()["commit"], "cycles/0037.md")
+    assert "cycle: 37" in stored
+    assert "ann: 0.5" in stored
+    assert "Ship it." in stored
+
+    smaller = client.put(
+        "/api/cycle/37",
+        json={"base_commit": made.json()["commit"],
+              "fields": {"availability": {"ann": 0.5}}, "body": None},
+    )
+    assert smaller.status_code == 200
+    assert "bo" not in file_at(repo_path, smaller.json()["commit"], "cycles/0037.md")
+
+
+def test_a_cycle_the_server_could_not_read_back_is_never_committed(
+    client: TestClient, repo_path: Path
+):
+    """Parsed before writing. A roster that fails to load would take every date on
+    every page with it, and the file would already be in git."""
+    before = git_head(repo_path)
+    refused = client.put(
+        "/api/cycle/37",
+        json={"base_commit": before,
+              "fields": {"starts_on": "2026-08-17", "availability": {"ann": "half"}},
+              "body": None},
+    )
+
+    assert refused.status_code == 422
+    assert "availability of ann" in refused.json()["detail"]
+    assert git_head(repo_path) == before
+
+
+def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_path: Path):
+    """The server loads `cycles/*.md` the same way the CLI does, so a record
+    written through the API changes the dates the very next request."""
+    base = git_head(repo_path)
+    client.put(
+        "/api/cycle/41",
+        json={"base_commit": base,
+              "fields": {"starts_on": "2026-11-02", "build_weeks": 4, "cooldown_weeks": 2},
+              "body": None},
+    )
+
+    # Asked through the running server rather than by opening a second Store:
+    # single-writer is enforced by a lock, so a second handle in the same process
+    # is exactly the thing the lock exists to refuse.
+    timeline = client.get("/timeline").text
+
+    assert "cycle 41" in timeline
+
+
+def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_path: Path):
+    """The number the team's own sheet does not have. Their HackMD records
+    availability and staffing and never adds them up."""
+    save(client, TASK, {"cycle": 37, "assignees": ["ann"], "effort_weeks": 3.0})
+    client.put(
+        "/api/cycle/37",
+        json={"base_commit": git_head(repo_path), "fields": {
+            "starts_on": "2026-08-17", "build_weeks": 4, "cooldown_weeks": 2,
+            "availability": {"ann": 0.25}}, "body": None},
+    )
+    page = client.get("/cycle/37").text
+
+    assert "Cycle 37" in page
+    assert "builds until" in page
+    assert re.search(r'data-login="ann"', page)
+    assert "Over capacity" in page, "ann holds more than a quarter of four weeks"
+
+
+def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
+    client: TestClient, repo_path: Path
+):
+    """D-C1: `cycle` says where a thing was BET. Re-stamping an in-progress item
+    into the current cycle moves the deadline its overrun is measured against and
+    silently forgives the slip — at exactly the moment the slip is happening."""
+    save(client, TASK, {"cycle": 36, "status": "in_progress",
+                        "assigned_on": "2026-07-01"})
+    client.put(
+        "/api/cycle/40",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2026-10-19", "build_weeks": 4}, "body": None},
+    )
+    page = client.get("/cycle/40").text
+    rows = re.findall(r'<tr data-id="([^"]+)" class="([^"]*)">.*?<input type="checkbox"'
+                      r' class="bet"([^>]*)>', page, re.S)
+    carried = [(i, attrs) for i, cls, attrs in rows if "carried" in cls]
+
+    assert carried, "the fixture has in-progress work from an earlier cycle"
+    for entity_id, attrs in carried:
+        assert "disabled" in attrs, entity_id
+
+
+def test_the_cycle_page_puts_the_forecast_next_to_the_capacity(client: TestClient):
+    """A green bar beside a timeline running a month past the cycle is the failure
+    that stops a room trusting the tool, and the two come from different
+    subsystems. On one row they cannot quietly disagree."""
+    page = client.get("/cycle/37").text
+
+    assert "scheduled until" in page
+    assert "<th>capacity</th>" in page

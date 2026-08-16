@@ -271,12 +271,15 @@ class Links(BaseModel):
     people: str = "people.html"
     entity: str = "detail.html#"  # prefix, then the entity id
     new: str = ""  # only the server can create; a rendered file has nowhere to post
+    cycles: str = "cycles.html"
+    cycle: str = "cycles.html#"  # prefix, then the cycle number
 
 
 STATIC = Links()
 ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
+    cycles="/cycles", cycle="/cycle/",
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -392,7 +395,8 @@ a, a:visited { color: var(--accent); }
 {{ style }}
 </style></head><body>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
-<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.people }}">People</a>
+<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.cycles }}">Cycles</a>
+<a href="{{ links.people }}">People</a>
 <a href="{{ links.detail }}">Detail</a>
 <button type="button" id="theme"></button></nav>
 {{ content }}
@@ -2134,6 +2138,277 @@ def _suggestions(index: Index) -> dict:
     }
 
 
+_CYCLE = """
+<p class="editbar">
+  <a href="{{ links.cycles }}">← all cycles</a>
+  {% if editable %}
+  <button type="button" id="save">Save the setup</button>
+  <span id="state"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+  {% endif %}
+</p>
+<h1>Cycle {{ c.number }}</h1>
+<p class="meta">{{ c.starts_on }} → builds until <b>{{ c.builds_until }}</b>
+   → cool-down ends {{ c.ends_on }}</p>
+
+<form id="setup" onsubmit="return false">
+  <dl id="facts">
+    <dt>Starts on</dt>
+    <dd><span class="read">{{ c.starts_on }}</span>
+        <input type="date" name="starts_on" data-type="date" value="{{ c.starts_on }}"
+               class="field"></dd>
+    <dt>Build weeks</dt>
+    <dd><span class="read">{{ c.build_weeks }}</span>
+        <input name="build_weeks" data-type="number" value="{{ c.build_weeks }}"
+               class="field"></dd>
+    <dt>Cool-down weeks</dt>
+    <dd><span class="read">{{ c.cooldown_weeks }}</span>
+        <input name="cooldown_weeks" data-type="number" value="{{ c.cooldown_weeks }}"
+               class="field"></dd>
+  </dl>
+</form>
+
+<h2>Who is available</h2>
+<p class="hint">A percentage of the build weeks. Anybody not listed counts as
+  {{ (c.nominal * 100)|round|int }}% — a roster that has to name everybody to
+  schedule anybody goes stale and takes the dates with it.</p>
+<table class="load"><thead><tr>
+  <th>person</th><th>available</th><th>capacity</th><th>bet</th><th>load</th>
+  <th>scheduled until</th></tr></thead>
+<tbody>
+  {% for row in c.people %}
+  <tr data-login="{{ row.login }}" class="{{ 'over' if row.over else '' }}">
+    <td>{{ row.login }}</td>
+    <td><span class="read">{{ (row.rate * 100)|round|int }}%</span>
+        <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"></td>
+    <td class="derived">{{ '%.1f'|format(row.capacity) }} wk</td>
+    <td class="derived">{{ '%.1f'|format(row.held) }} wk</td>
+    <td><span class="bar"><span style="width: {{ row.percent }}%"></span></span></td>
+    <td class="derived">{{ row.until }}</td>
+  </tr>
+  {% endfor %}
+</tbody></table>
+{% if c.over %}
+<p class="problems" id="over">Over capacity: {{ c.over|join(', ') }}. The room can
+  still bet it — this is a number, not a refusal.</p>
+{% endif %}
+
+<h2>The bet</h2>
+<p class="hint">Everything ready or in progress. Ticking one stamps it with cycle
+  {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
+  was bet in, so its overrun keeps counting.</p>
+<div class="table-scroll"><table id="bets"><thead><tr>
+  <th>in {{ c.number }}</th><th>id</th><th>title</th><th>kind</th><th>status</th>
+  <th>appetite</th><th>assignees</th><th>reviewers</th><th>bet in</th>
+</tr></thead><tbody>
+  {% for row in c.candidates %}
+  <tr data-id="{{ row.id }}" class="{{ 'carried' if row.carried else '' }}">
+    <td><input type="checkbox" class="bet" {{ 'checked' if row.in_cycle else '' }}
+               {{ 'disabled' if row.carried else '' }}></td>
+    <td><a href="{{ links.entity }}{{ row.id }}">{{ row.id }}</a></td>
+    <td>{{ row.title }}</td>
+    <td>{{ row.kind }}</td>
+    <td>{{ row.status }}</td>
+    <td class="derived">{{ row.size }}</td>
+    <td><span class="cell" data-field="assignees">{{ row.assignees }}</span></td>
+    <td><span class="cell" data-field="reviewers">{{ row.reviewers }}</span></td>
+    <td class="derived">{{ row.cycle }}</td>
+  </tr>
+  {% endfor %}
+</tbody></table></div>
+<div class="doc">{{ c.body|safe }}</div>
+{% if editable %}
+{{ combobox|safe }}
+<script>
+const BASE = document.getElementById('base');
+const STATE = document.getElementById('state');
+const NUMBER = {{ c.number }};
+
+function say(message) { STATE.textContent = message; }
+
+async function put(fields) {
+  const response = await fetch(`/api/cycle/${NUMBER}`, {
+    method: 'PUT', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
+  });
+  const answer = await response.json();
+  if (!response.ok) { say(answer.detail || 'refused'); return null; }
+  BASE.value = answer.commit || BASE.value;
+  return answer;
+}
+
+// The whole roster in one write. A name left out means somebody was taken off,
+// which per-field merging would silently undo.
+document.getElementById('save').onclick = async () => {
+  const setup = document.getElementById('setup');
+  const availability = {};
+  for (const input of document.querySelectorAll('input.rate')) {
+    const rate = Number(input.value);
+    if (rate > 0) availability[input.dataset.login] = rate;
+  }
+  const fields = {
+    starts_on: setup.querySelector('[name=starts_on]').value,
+    build_weeks: Number(setup.querySelector('[name=build_weeks]').value),
+    cooldown_weeks: Number(setup.querySelector('[name=cooldown_weeks]').value),
+    availability,
+  };
+  say('saving…');
+  if (await put(fields)) location.reload();
+};
+
+// Ticking is a write to the ENTITY, not to the cycle: `cycle` lives on the thing
+// being bet, and one row is one commit so a half-finished betting table is still
+// a readable history rather than one commit nobody can unpick.
+for (const box of document.querySelectorAll('input.bet')) {
+  box.onchange = async () => {
+    const row = box.closest('tr');
+    const id = row.dataset.id;
+    box.disabled = true;
+    const response = await fetch(`/api/entity/${id}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        base_commit: BASE.value,
+        fields: {cycle: box.checked ? NUMBER : null},
+        body: null,
+      }),
+    });
+    const answer = await response.json();
+    box.disabled = false;
+    if (!response.ok) {
+      box.checked = !box.checked;
+      say(`${id}: ${answer.detail || 'refused'}`);
+      return;
+    }
+    BASE.value = answer.commit || BASE.value;
+    say(`${id} ${box.checked ? 'bet into' : 'taken out of'} cycle ${NUMBER}`);
+    row.querySelector('td:last-child').textContent = box.checked ? NUMBER : '—';
+  };
+}
+
+// Assignees and reviewers, edited where the bet is made rather than one page away.
+for (const cell of document.querySelectorAll('#bets .cell')) {
+  cell.ondblclick = () => {
+    if (cell.querySelector('input')) return;
+    const was = cell.textContent.trim() === '—' ? '' : cell.textContent.trim();
+    const input = document.createElement('input');
+    input.value = was;
+    input.dataset.type = 'list';
+    input.dataset.suggest = 'people';
+    input.className = 'field';
+    input.style.display = 'inline-block';
+    cell.textContent = '';
+    cell.append(input);
+    attachSuggest(input);
+    input.focus();
+    let abandoned = false;
+    input.onkeydown = event => {
+      if (event.key === 'Escape') { abandoned = true; input.blur(); }
+      if (event.key === 'Enter') input.blur();
+    };
+    input.onblur = async () => {
+      const value = input.value.trim();
+      if (abandoned || value === was) { cell.textContent = was || '—'; return; }
+      const id = cell.closest('tr').dataset.id;
+      const people = value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
+      const response = await fetch(`/api/entity/${id}`, {
+        method: 'PATCH', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({
+          base_commit: BASE.value, fields: {[cell.dataset.field]: people}, body: null,
+        }),
+      });
+      const answer = await response.json();
+      if (!response.ok) {
+        cell.textContent = was || '—';
+        say(`${id}: ${answer.detail || 'refused'}`);
+        return;
+      }
+      BASE.value = answer.commit || BASE.value;
+      cell.textContent = people.join(', ') || '—';
+      say(`${id}: ${cell.dataset.field} saved — reload to see the load move`);
+    };
+  };
+}
+</script>
+{% endif %}
+"""
+
+_CYCLE_STYLE = """
+#setup .field, table.load .field { display: inline-block; }
+#setup .field { width: 12rem; }
+#setup .read, table.load .read { display: none; }
+table.load { border-collapse: collapse; font-size: 13px; margin: .5rem 0 1rem; }
+table.load th, table.load td {
+  border-bottom: 1px solid var(--line); padding: .3rem .6rem; text-align: left;
+}
+table.load th { color: var(--muted); font-weight: 400; font-size: 11px;
+                text-transform: uppercase; letter-spacing: .04em; }
+tr.over td { color: var(--danger); }
+.bar { display: inline-block; width: 140px; height: 8px; background: var(--line);
+       border-radius: 4px; overflow: hidden; vertical-align: middle; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+tr.over .bar > span { background: var(--danger); }
+input.rate { width: 4rem; }
+#bets { border-collapse: collapse; width: 100%; font-size: 13px; }
+#bets th, #bets td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
+                     text-align: left; }
+#bets th { color: var(--muted); font-weight: 400; font-size: 11px;
+           text-transform: uppercase; letter-spacing: .04em; }
+tr.carried td { color: var(--muted); }
+"""
+
+_CYCLES = """
+<p class="hint">Every cycle the plan has a record for. A cycle sets the build and
+  cool-down weeks and who is available for it.</p>
+<div class="toc"><ul>
+  {% for c in cycles %}
+  <li><a href="{{ links.cycle }}{{ c.number }}">Cycle {{ c.number }}</a>
+      <span class="tocmeta">{{ c.starts_on }} → {{ c.builds_until }}
+        · {{ c.people }} people · {{ '%.1f'|format(c.held) }} of
+        {{ '%.1f'|format(c.capacity) }} weeks bet</span></li>
+  {% endfor %}
+</ul></div>
+{% if editable %}
+<p class="editbar">
+  <label class="facet">number
+    <input id="number" type="number" value="{{ next.number }}" min="0" max="9999"></label>
+  <label class="facet">starts
+    <input id="starts" type="date" value="{{ next.starts_on }}"></label>
+  <label class="facet">build weeks
+    <input id="build" type="number" value="{{ next.build_weeks }}" step="0.5"></label>
+  <label class="facet">cool-down
+    <input id="cooldown" type="number" value="{{ next.cooldown_weeks }}" step="0.5"></label>
+  <button type="button" id="start">Start it</button>
+  <span id="state"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</p>
+<script>
+// Defaults carried from the last cycle: the length rarely changes, and the next
+// one starts when the last one ends. Both are still typed over before saving.
+document.getElementById('start').onclick = async () => {
+  const number = Number(document.getElementById('number').value);
+  const response = await fetch(`/api/cycle/${number}`, {
+    method: 'PUT', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      base_commit: document.getElementById('base').value,
+      fields: {
+        starts_on: document.getElementById('starts').value,
+        build_weeks: Number(document.getElementById('build').value),
+        cooldown_weeks: Number(document.getElementById('cooldown').value),
+      },
+      body: null,
+    }),
+  });
+  const answer = await response.json();
+  if (!response.ok) {
+    document.getElementById('state').textContent = answer.detail || 'refused';
+    return;
+  }
+  location.href = '/cycle/' + number;
+};
+</script>
+{% endif %}
+"""
+
 _PEOPLE = """
 <p class="hint">Everyone named anywhere in the plan, and what they are on the hook for.</p>
 <div id="controls">
@@ -2235,6 +2510,142 @@ _ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer
 # entity at a time gave you — a person with twenty rows had their four ownerships
 # scattered through it, and ownership is the thing being on the page is for.
 _ROLE_ORDER = ("owner", "assignee", "shaper", "reviewer")
+
+
+def _cycle_view(index: Index, number: int) -> dict:
+    """Everything the cycle page shows, computed once so the markup only lays out.
+
+    A person's scheduled end date sits beside their capacity bar deliberately: a
+    green bar next to a timeline that runs a month past the cycle is the failure
+    that stops a room trusting the tool, and the two numbers come from different
+    subsystems. Put together, they cannot quietly disagree.
+    """
+    plan = index.plans.get(number)
+    held = index.load(number)
+    nominal = index.nominal_availability
+    build_weeks = plan.build_weeks if plan else 0.0
+    listed = set(plan.availability) if plan else set()
+
+    # The team roster too, or a cycle nobody has been bet into yet has no names
+    # to set availability against — and setting it up is the first thing you do.
+    people = []
+    for login in sorted(listed | set(held) | set(index.known_people), key=str.lower):
+        rate = plan.availability.get(login, nominal) if plan else nominal
+        capacity = rate * build_weeks
+        mine = [
+            index.spans[i].end
+            for i, e in index.entities.items()
+            if e.cycle == number and login in (e.assignees + ([e.owner] if e.owner else []))
+            and i in index.spans
+        ]
+        people.append(
+            {
+                "login": login,
+                "rate": rate,
+                "capacity": capacity,
+                "held": held.get(login, 0.0),
+                "over": capacity and held.get(login, 0.0) > capacity,
+                "percent": min(100, round(100 * held.get(login, 0.0) / capacity))
+                if capacity
+                else 0,
+                "until": max(mine).isoformat() if mine else "—",
+            }
+        )
+
+    candidates = []
+    for entity_id, entity in sorted(index.entities.items()):
+        if entity.status not in ("ready", "in_progress"):
+            continue
+        size, defaulted = size_weeks(
+            entity, Config(default_task_effort=index.default_task_effort)
+        )
+        candidates.append(
+            {
+                "id": entity_id,
+                "title": entity.title,
+                "kind": entity.kind,
+                "status": entity.status,
+                "size": f"{size:g}" + (" (assumed)" if defaulted else ""),
+                "assignees": ", ".join(entity.assignees) or "—",
+                "reviewers": ", ".join(entity.reviewers) or "—",
+                "cycle": entity.cycle if entity.cycle is not None else "—",
+                "in_cycle": entity.cycle == number,
+                # Bet in an earlier cycle and still running: shown, counted, and
+                # not re-stampable. Overwriting its cycle would move the deadline
+                # its overrun is measured against and forgive the slip.
+                "carried": entity.status == "in_progress"
+                and entity.cycle is not None
+                and entity.cycle < number,
+            }
+        )
+
+    return {
+        "number": number,
+        "starts_on": plan.starts_on.isoformat() if plan else "—",
+        "builds_until": plan.builds_until.isoformat() if plan else "—",
+        "ends_on": plan.ends_on.isoformat() if plan else "—",
+        "build_weeks": f"{build_weeks:g}",
+        "cooldown_weeks": f"{plan.cooldown_weeks:g}" if plan else "—",
+        "nominal": nominal,
+        "people": people,
+        "over": [p["login"] for p in people if p["over"]],
+        "candidates": candidates,
+        "body": _MD.render(plan.body) if plan else "",
+    }
+
+
+def render_cycle(
+    index: Index, number: int, links: Links = ROUTES, base_commit: str | None = None
+) -> str:
+    body = _ENV.from_string(_CYCLE).render(
+        c=_cycle_view(index, number),
+        links=links,
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        combobox=_combobox_html(index),
+    )
+    return _page(
+        f"openproj — cycle {number}",
+        body,
+        _DETAIL_STYLE + _CYCLE_STYLE + _SUGGEST_STYLE,
+        links,
+    )
+
+
+def render_cycles(
+    index: Index, links: Links = STATIC, base_commit: str | None = None
+) -> str:
+    rows = []
+    for number in sorted(index.plans, reverse=True):
+        view = _cycle_view(index, number)
+        rows.append(
+            {
+                "number": number,
+                "starts_on": view["starts_on"],
+                "builds_until": view["builds_until"],
+                "people": len(view["people"]),
+                "held": sum(p["held"] for p in view["people"]),
+                "capacity": sum(p["capacity"] for p in view["people"]),
+            }
+        )
+    last = index.plans[max(index.plans)] if index.plans else None
+    body = _ENV.from_string(_CYCLES).render(
+        cycles=rows,
+        links=links,
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        # The next cycle starts when the last one ends and is the same length,
+        # because both are true far more often than not.
+        next={
+            "number": (max(index.plans) + 1) if index.plans else 1,
+            "starts_on": (last.ends_on + timedelta(days=1)).isoformat()
+            if last
+            else index.today.isoformat(),
+            "build_weeks": f"{last.build_weeks:g}" if last else "4",
+            "cooldown_weeks": f"{last.cooldown_weeks:g}" if last else "2",
+        },
+    )
+    return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links)
 
 
 def render_people(index: Index, links: Links = STATIC) -> str:
@@ -2436,6 +2847,7 @@ def render_static(index: Index, out_dir: Path) -> None:
         ("index.html", render_table(index)),
         ("detail.html", render_detail(index)),
         ("people.html", render_people(index)),
+        ("cycles.html", render_cycles(index)),
         ("graph.html", render_graph(index)),
         ("timeline.html", render_timeline(index)),
     ):

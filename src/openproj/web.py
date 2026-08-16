@@ -48,10 +48,12 @@ from .index import build_index
 from .model import (
     CONFIG_FILES,
     Config,
+    Cycle,
     Entity,
     Pitch,
     Project,
     Task,
+    parse_cycle_text,
     parse_text,
     patch_text,
     validate_all,
@@ -73,6 +75,27 @@ MAX_BODY_BYTES = 256 * 1024
 _DEV_SECRETS = {"", "dev-secret", "change-me", "secret"}
 
 
+CYCLE_DIR = "cycles"
+# A cycle file is named by its number alone, zero-padded so that the order the
+# store lists paths in is also the order a person means. Kept separate from
+# ID_PATTERN rather than folded into it: the entity id pattern is what keeps the
+# writable surface closed by construction, and widening it to admit a fourth
+# shape is how that property gets lost by degrees.
+CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
+
+
+def _cycles_at(store: Store, commit: str) -> list[Cycle]:
+    return [
+        parse_cycle_text(store.read(commit, path), path)
+        for path in store.paths(commit)
+        if path.endswith(".md") and path.split("/")[0] == CYCLE_DIR
+    ]
+
+
+def _cycle_path(number: int) -> str:
+    return f"{CYCLE_DIR}/{number:04d}.md"
+
+
 def _config_at(store: Store, commit: str) -> Config:
     yaml = YAML(typ="safe")
     data: dict = {}
@@ -86,7 +109,9 @@ def _config_at(store: Store, commit: str) -> Config:
         loaded = yaml.load(raw)
         if isinstance(loaded, dict):
             data.update({k: v for k, v in loaded.items() if k in Config.model_fields})
-    return Config.model_validate(data)
+    # The cycle records last, so a record supersedes the dates in cycles.yaml the
+    # same way it does under the CLI.
+    return Config.model_validate(data).with_plans(_cycles_at(store, commit))
 
 
 def _entities_at(store: Store, commit: str) -> list[Entity]:
@@ -100,6 +125,31 @@ def _entities_at(store: Store, commit: str) -> list[Entity]:
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
 # then breaks the scheduler on the next read. The client coerces; this is the
 # server refusing to take its word for it.
+def _reject_bad_cycle(fields: dict) -> None:
+    """A form returns strings here too, and an availability of `"half"` is valid
+    YAML that parses and then divides a date by a word."""
+    for name in ("build_weeks", "cooldown_weeks"):
+        if name in fields and fields[name] is not None:
+            fields[name] = _as_positive(fields[name], name)
+    rates = fields.get("availability")
+    if rates is not None:
+        if not isinstance(rates, dict):
+            raise HTTPException(422, "availability must be a map of login to fraction")
+        fields["availability"] = {
+            str(who): _as_positive(rate, f"availability of {who}") for who, rate in rates.items()
+        }
+
+
+def _as_positive(value: object, name: str) -> float:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"{name} must be a number, not {value!r}") from None
+    if number <= 0:
+        raise HTTPException(422, f"{name} must be greater than zero, not {number:g}")
+    return number
+
+
 _NUMERIC = ("cycle", "appetite_weeks", "effort_weeks")
 _LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on")
 
@@ -262,6 +312,22 @@ def create_app(
         window = (_as_date(from_), _as_date(to))
         return page(render.render_timeline(index_now()[1], render.ROUTES, window, _as_zoom(zoom)))
 
+    @app.get("/cycles", response_class=HTMLResponse)
+    def cycles() -> HTMLResponse:
+        commit, index = index_now()
+        return page(render.render_cycles(index, render.ROUTES, commit))
+
+    @app.get("/cycle/{number}", response_class=HTMLResponse)
+    def cycle(number: int) -> HTMLResponse:
+        """Typed `int`, so nothing that is not a number ever reaches a path.
+
+        Stronger than a pattern: FastAPI refuses a non-integral value before the
+        handler body runs, so `..` and `%2F` cannot get as far as being rejected
+        by a regex somebody might later relax.
+        """
+        commit, index = index_now()
+        return page(render.render_cycle(index, number, render.ROUTES, commit))
+
     @app.get("/people", response_class=HTMLResponse)
     def people() -> HTMLResponse:
         return page(render.render_people(index_now()[1], render.ROUTES))
@@ -356,6 +422,45 @@ def create_app(
         )
         if written.commit:
             await announce(written.commit, [entity_id])
+        return _result(written, base)
+
+    @app.put("/api/cycle/{number}")
+    async def save_cycle(number: int, request: Request) -> JSONResponse:
+        """Create or update one cycle record.
+
+        PUT rather than PATCH because a cycle is set up in one sitting: the whole
+        roster is written at once, and a missing name means somebody was removed
+        rather than left alone. That is the opposite of an entity's per-field
+        merge, and conflating the two would make removing a person impossible.
+        """
+        user = writer(request)
+        payload = await request.json()
+        body = payload.get("body")
+        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
+            raise HTTPException(413, "that body is too large to commit")
+        if not CYCLE_PATTERN.match(str(number)):
+            raise HTTPException(422, "a cycle is numbered 0 to 9999")
+
+        base = payload["base_commit"]
+        path = _cycle_path(number)
+        original = store.read(base, path) or "---\n---\n"
+        fields = {k: v for k, v in (payload.get("fields") or {}).items()}
+        fields["cycle"] = number
+        _reject_bad_cycle(fields)
+
+        content = patch_text(original, fields, body)
+        # Parse before writing, not after: a roster that fails to load would take
+        # every date on every page with it, and the file would already be in git.
+        parse_cycle_text(content, path)
+        written = store.write(
+            path=path,
+            content=content,
+            base_commit=base,
+            author=user.login,
+            message=f"cycle {number}: {', '.join(k for k in fields if k != 'cycle') or 'goal'}",
+        )
+        if written.commit:
+            await announce(written.commit, [f"cycle-{number}"])
         return _result(written, base)
 
     @app.post("/api/entity")

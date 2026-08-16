@@ -21,12 +21,21 @@ from .model import (
     PRIORITY_RANK,
     STATUS_ORDER,
     Config,
+    Cycle,
     Entity,
     Problem,
     ancestors,
+    size_weeks,
     validate_all,
 )
 from .schedule import Explanation, Span, schedule
+
+
+def _people_on(entity: Entity) -> list[str]:
+    """Everyone answerable for the work, each once. The same set the scheduler
+    divides a size among, so the page and the timeline cannot disagree."""
+    named = ([entity.owner] if entity.owner else []) + list(entity.assignees)
+    return list(dict.fromkeys(named))
 
 COMPUTED_PREDICATES = (
     "blocked",
@@ -53,8 +62,32 @@ class Index(BaseModel):
     # Carried so a renderer needs nothing but the index: the timeline cannot draw
     # cycle boundaries or a today line without them, and it is handed no Config.
     cycles: dict[int, tuple[date, date]]
+    plans: dict[int, Cycle]
     today: date
     default_task_effort: float
+    nominal_availability: float = 1.0
+    # The roster from config/people.yaml, so a cycle nobody has been bet into yet
+    # still has names to set availability against.
+    known_people: list[str] = []
+
+    def load(self, cycle: int) -> dict[str, float]:
+        """Person-weeks each person is holding in this cycle.
+
+        Charged where the assignees are, and split evenly among them (D-C4): a
+        pitch whose children carry the names charges nothing itself, because its
+        appetite is a rollup and charging both counts the same work twice.
+        """
+        held: dict[str, float] = {}
+        for entity in self.entities.values():
+            if entity.cycle != cycle or entity.status in ("done", "shelved"):
+                continue
+            people = _people_on(entity)
+            if not people or self.children.get(entity.id):
+                continue
+            size, _ = size_weeks(entity, Config(default_task_effort=self.default_task_effort))
+            for who in people:
+                held[who] = held.get(who, 0.0) + size / len(people)
+        return held
 
 
 def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
@@ -137,6 +170,9 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,
         cycles=config.cycles,
+        plans=config.plans,
+        nominal_availability=config.nominal_availability,
+        known_people=config.known_people,
         today=today,
         default_task_effort=config.default_task_effort,
     )

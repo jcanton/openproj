@@ -527,3 +527,17 @@ def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
     assert overruns == pytest.approx(GOLDEN_OVERRUNS)
     assert not [s for s in spans.values() if s.estimated or s.unowned]
     assert not [s for s in spans.values() if s.unscheduled or s.historical]
+
+
+def test_a_cool_down_longer_than_the_window_does_not_invert_the_build():
+    """It would put the end of build before the cycle began, and then everything
+    in that cycle overruns by definition. Clamped rather than rejected: a bad
+    number in one config file should cost that cycle's flag, not every date."""
+    from openproj.model import Config
+    from openproj.schedule import build_end
+
+    window = (date(2026, 6, 22), date(2026, 8, 14))
+    absurd = Config(cycles={36: window}, cooldown_weeks=20.0)
+
+    assert build_end(36, window, absurd) == window[0]
+    assert build_end(36, window, absurd) >= window[0]

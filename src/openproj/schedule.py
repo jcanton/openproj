@@ -157,9 +157,16 @@ def build_end(number: int | None, window: tuple[date, date], config: Config) -> 
     cool-down applied to the end of the window.
     """
     plan = config.plans.get(number) if number is not None else None
-    if plan is not None:
-        return plan.builds_until
-    return window[1] - timedelta(days=round(config.cooldown_weeks * 7))
+    ends = (
+        plan.builds_until
+        if plan is not None
+        else window[1] - timedelta(days=round(config.cooldown_weeks * 7))
+    )
+    # A cool-down longer than the window would put the end of build before the
+    # cycle began, and then every entity in it overruns by definition. Clamped
+    # rather than rejected: a bad number in one config file should cost that
+    # cycle's flag, not every date on the page.
+    return max(ends, window[0])
 
 
 def _ordering(
