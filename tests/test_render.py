@@ -276,6 +276,84 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
 
     assert 'data-id="task-000001" class="bar estimated' in body
     assert 'data-id="task-000002" class="bar unowned' in body
+    # The patterns were declared and then referenced by nothing, so the class was
+    # the whole of the encoding and the bar looked exactly like a commitment. The
+    # legend draws itself from the same two patterns, so only the plot is counted.
+    plot = body[body.index("<svg width="):]
+    assert plot.count('class="mark mark-estimated"') == 1
+    assert plot.count('class="mark mark-unowned"') == 1
+    assert "rect.mark-estimated { fill: url(#hatch-estimated); }" in body
+    assert "rect.mark-unowned { fill: url(#hatch-unowned); }" in body
+    # The outline channel says one thing only, and it is not this one.
+    assert "rect.estimated { stroke" not in body
+
+
+def test_the_timeline_orders_its_rows_by_containment(tmp_path: Path):
+    """A project, then its pitches, then their tasks. Ordered by start date the
+    rows said nothing the table's start column does not say better."""
+    from datetime import date
+
+    from openproj.model import Config, Pitch, Project, Task
+
+    project = Project(id="proj-000001", kind="project", title="A project")
+    pitch = Pitch(id="pitch-000001", kind="pitch", title="A pitch", owner="ann",
+                  appetite_weeks=3.0, parent="proj-000001")
+    task = Task(id="task-000001", kind="task", title="A task", owner="bo",
+                effort_weeks=1.0, parent="pitch-000001")
+    other = Task(id="task-000002", kind="task", title="An unparented task", owner="cy",
+                 effort_weeks=1.0)
+    index = build_index([task, other, pitch, project], Config(), date(2026, 8, 17))
+    out = tmp_path / "tree"
+    render_static(index, out)
+
+    rows = re.findall(r'<div class="row" data-id="([^"]+)" data-depth="(\d+)"',
+                      read(out, "timeline.html"))
+
+    assert rows[:3] == [("proj-000001", "0"), ("pitch-000001", "1"), ("task-000001", "2")]
+    assert ("task-000002", "0") in rows
+    # Depth is an indent in the label column, not a fact the plot draws.
+    assert 'style="padding-left: 32px"' in read(out, "timeline.html")
+
+
+def test_a_child_stays_indented_when_its_parent_is_not_drawn(tmp_path: Path):
+    """Indentation is containment, not adjacency: a task that jumps to the left
+    margin when its parent falls out of the window reads as a task that changed
+    parents."""
+    from datetime import date
+
+    from openproj.model import Config, Pitch, Task
+
+    # A shelved pitch has no span at all, so it is never a row.
+    parent = Pitch(id="pitch-000001", kind="pitch", title="Parked", status="shelved",
+                   owner="ann", appetite_weeks=2.0)
+    child = Task(id="task-000001", kind="task", title="Still live", owner="bo",
+                 effort_weeks=1.0, parent="pitch-000001")
+    index = build_index([parent, child], Config(), date(2026, 8, 17))
+    out = tmp_path / "orphaned"
+    render_static(index, out)
+    body = read(out, "timeline.html")
+
+    assert 'data-id="pitch-000001" class="bar' not in body
+    assert re.search(r'data-id="task-000001" data-depth="1"', body)
+
+
+def test_a_same_day_span_is_still_wide_enough_to_hit(tmp_path: Path):
+    """At the fitted day width a one-day span was 1.6px of target. Nobody hovers
+    that and nobody clicks it either."""
+    from datetime import date
+
+    from openproj.model import Config, Task
+
+    brief = Task(id="task-000001", kind="task", title="A day of it", owner="ann",
+                 effort_weeks=0.2)
+    index = build_index([brief], Config(), date(2026, 8, 17))
+    out = tmp_path / "brief"
+    render_static(index, out)
+
+    widths = re.findall(r'<rect data-id="[^"]+"[^>]*width="([\d.]+)"',
+                        read(out, "timeline.html"))
+
+    assert widths and all(float(width) >= 3 for width in widths)
 
 
 def test_the_timeline_draws_cycle_boundaries_and_today(rendered: Path):
@@ -283,6 +361,57 @@ def test_the_timeline_draws_cycle_boundaries_and_today(rendered: Path):
     assert 'class="today"' in body
     assert 'class="cycle-rule"' in body
     assert "cycle 36" in body
+
+
+def test_a_cycle_gets_a_band_of_its_own_above_the_months(rendered: Path):
+    """The cycle label was drawn at y=10 and the month label at y=18 inside one
+    26px strip, so a cycle closing near the first of a month wrote one word over
+    the other. And the one line every reader looks for was unlabelled."""
+    body = read(rendered, "timeline.html")
+
+    assert 'class="cycle-band"' in body
+    band = int(re.search(r'<line class="band-rule" x1="0" y1="(\d+)"', body).group(1))
+    cycle_label = float(re.search(r'<text class="cycle-label"[^>]*y="([\d.]+)"', body).group(1))
+    month_label = float(re.search(r'<text class="month-label"[^>]*y="([\d.]+)"', body).group(1))
+    month_rule = float(re.search(r'<line class="month-rule" x1="[\d.]+" y1="([\d.]+)"',
+                                 body).group(1))
+
+    assert cycle_label < band < month_label
+    assert month_rule == band
+    assert re.search(r'<text class="today-label"[^>]*>today</text>', body)
+
+
+def test_a_bar_carries_what_it_is_holding(rendered: Path, seed_index: Index):
+    """A bar said its dates nowhere. The only hoverable thing on it was a native
+    tooltip with one sentence about why it starts when it does."""
+    body = read(rendered, "timeline.html")
+    payload = json.loads(
+        re.search(r'<script id="bars" type="application/json">(.*?)</script>', body, re.S).group(1)
+    )
+    drawn = re.findall(r'<rect data-id="([^"]+)"', body)
+
+    assert set(payload["rows"]) == set(drawn)
+    row = payload["rows"][drawn[0]]
+    for key in ("title", "status", "owner", "weeks", "start", "end", "tip", "predicates"):
+        assert key in row, key
+    assert payload["human"]["in_progress"] == "In progress"
+    assert 'id="tip"' in body
+
+
+def test_the_timeline_names_every_colour_it_draws(rendered: Path):
+    """A colour with no key is a colour the reader has to guess at, and the pink
+    outline meant something nothing on the page named."""
+    body = read(rendered, "timeline.html")
+    legend = re.search(r'<ul class="legend" aria-label="What a bar marking means">(.*?)</ul>',
+                       body, re.S).group(1)
+
+    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+        assert f'<span class="swatch st-{status}"></span>' in body, status
+    assert "appetite assumed" in legend
+    assert "nobody on it" in legend
+    assert "overruns its cycle" in legend
+    assert "today" in legend
+    assert "a cycle closes" in legend
 
 
 def test_every_explanation_reaches_the_reader(rendered: Path, seed_index: Index):
@@ -542,6 +671,96 @@ def test_a_window_that_excludes_today_draws_no_today_line(seed_index: Index):
 
     assert 'class="today"' not in past
     assert 'class="today"' in render_timeline(seed_index)
+
+
+def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
+    """They rendered empty under a sentence naming the dates being drawn, so the
+    controls disagreed with the picture. What is lost by filling them in — "am I
+    looking at everything?" — is answered by the sentence instead."""
+    from datetime import date
+
+    from openproj.render import render_timeline
+
+    whole = render_timeline(seed_index)
+    origin = re.search(r'name="from" value="([\d-]+)"', whole).group(1)
+    last = re.search(r'name="to" value="([\d-]+)"', whole).group(1)
+
+    assert f"Showing the whole plan, {origin} to {last}." in " ".join(whole.split())
+
+    windowed = render_timeline(seed_index, window=(date(2026, 9, 1), date(2026, 9, 30)))
+    assert 'name="from" value="2026-09-01"' in windowed
+    assert "a window of the plan" in " ".join(windowed.split())
+    # Apply was a button and Reset a bare link, which reads as one control and one
+    # afterthought.
+    assert '<button type="submit" class="button primary">Apply</button>' in whole
+    assert 'class="button reset"' in whole
+
+
+def test_the_timeline_filters_with_the_same_bar_the_table_does(rendered: Path):
+    """The README has always said three views filter the same plan the same way.
+    Two of them do now, and the third read the same query string for its dates
+    and ignored it for everything else."""
+    body = read(rendered, "timeline.html")
+
+    assert '<select data-field="status">' in body
+    assert '<select data-field="predicate">' in body
+    assert "function matches(row)" in body
+    assert "addEventListener('openproj:filter', applyFilter)" in body
+    assert 'id="clear-filters"' in body
+    # The window is the server's and the facets are the page's, and a plain submit
+    # would carry only the form's own fields.
+    assert "params.set(control.name, control.value)" in body
+
+
+def test_an_empty_timeline_says_which_kind_of_empty_it_is(tmp_path: Path):
+    """A blank rectangle is the same picture for a plan with nothing in it, a plan
+    with nothing scheduled, and a filter that matched nothing. Which one it is
+    decides what to do next."""
+    from datetime import date
+
+    from openproj.model import Config, Task
+
+    empty = build_index([], Config(), date(2026, 8, 17))
+    render_static(empty, tmp_path / "empty")
+    body = read(tmp_path / "empty", "timeline.html")
+    assert "This plan has no entities yet." in body
+    assert '<button type="button" id="clear-filters" hidden>' in body
+
+    parked = Task(id="task-000001", kind="task", title="Parked", status="shelved")
+    render_static(build_index([parked], Config(), date(2026, 8, 17)), tmp_path / "parked")
+    parked_body = read(tmp_path / "parked", "timeline.html")
+    assert "Nothing in this plan has dates." in parked_body
+    assert '<div class="tl" hidden>' in parked_body
+
+    live = Task(id="task-000002", kind="task", title="Live", owner="ann", effort_weeks=1.0)
+    index = build_index([live], Config(), date(2026, 8, 17))
+    render_static(index, tmp_path / "live")
+    live_body = read(tmp_path / "live", "timeline.html")
+    assert "No entity matches these filters." in live_body
+    assert '<button type="button" id="clear-filters">Clear' in live_body
+
+    # A window with nothing in it is the dates' fault, and clearing a filter would
+    # not bring a single bar back.
+    from openproj.render import render_timeline
+
+    elsewhere = render_timeline(index, window=(date(2027, 1, 1), date(2027, 2, 1)))
+    assert "Nothing is scheduled in this window." in elsewhere
+    assert '<button type="button" id="clear-filters" hidden>' in elsewhere
+
+
+def test_a_month_names_its_year_only_when_the_year_changes(seed_index: Index):
+    """"Aug 2026" on every tick spends a third of a narrow month restating what
+    the tick before it already said."""
+    from openproj.render import render_timeline
+
+    labels = re.findall(r'<text class="month-label"[^>]*>([^<]+)</text>',
+                        render_timeline(seed_index))
+
+    assert labels
+    assert re.fullmatch(r"[A-Z][a-z]{2} \d{4}", labels[0]), labels[0]
+    assert [label for label in labels[1:] if " " in label] == [
+        label for label in labels[1:] if label.startswith("Jan ")
+    ]
 
 
 def test_opening_a_node_takes_two_clicks(rendered: Path):

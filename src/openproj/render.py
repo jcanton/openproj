@@ -59,8 +59,22 @@ _DAY_PX = 6
 _ROW_PX = 22
 _LEFT_PX = 250
 _PLOT_PX = 1100
-_HEADER_PX = 26
+# The header is two bands, not one. Cycle labels used to be drawn at y=10 and month
+# labels at y=18 inside the same 26px strip, so a cycle boundary landing near the
+# first of a month wrote one word on top of the other.
+_BAND_PX = 18
+_HEADER_PX = _BAND_PX + 22
+# A one-day span at the fitted day width is 1.6px of target. Nobody hovers that,
+# and nobody clicks it either, so the shortest bar is still a thing you can hit.
+_MIN_BAR_PX = 3
+# A bar is shorter than its row, so it is centred in it. Drawn at the top of the
+# row it sat four pixels above the label naming it, all the way down the chart.
+_BAR_PX = 14
+_BAR_TOP = (_ROW_PX - _BAR_PX) // 2
 _LABEL_CHARS = 40
+# Per level of containment. Enough to read as a step at 11px, small enough that a
+# task three deep still has most of the 250px label column to write its name in.
+_INDENT_PX = 12
 
 
 def _clip(text: str) -> str:
@@ -186,6 +200,66 @@ def _elements(index: Index) -> list[dict]:
     return elements
 
 
+def _containment_rows(index: Index, drawn: set[str]) -> list[tuple[str, int]]:
+    """Ids in reading order — a project, then its pitches, then their tasks — and
+    the depth each one sits at.
+
+    Sorted by start date, the rows said nothing the table's start column does not
+    say better, and threw away the one thing a Gantt has that a table has not: a
+    project's work as a block you can see at once. Siblings still order by date,
+    so within a parent the reading is unchanged.
+
+    Depth is counted through the whole containment chain, not only the drawn part
+    of it: a parent whose span fell outside the window still holds its children,
+    and a task that jumps to the left margin when you narrow the dates reads as a
+    task that changed parents.
+    """
+    kids: dict[str, list[str]] = {i: [] for i in index.entities}
+    roots: list[str] = []
+    for entity_id, entity in index.entities.items():
+        # `parent not in entities` covers both a root and an orphan pointing at an
+        # id that no longer exists. Dropping the orphan would lose a real bar.
+        if entity.parent in index.entities:
+            kids[entity.parent].append(entity_id)
+        else:
+            roots.append(entity_id)
+
+    when: dict[str, date] = {}
+
+    def earliest(entity_id: str, seen: frozenset[str]) -> date:
+        """When a subtree starts, so a parent sorts with the work inside it."""
+        if entity_id in when:
+            return when[entity_id]
+        if entity_id in seen:               # a parent cycle in the files, not a tree
+            return date.max
+        seen = seen | {entity_id}
+        span = index.spans.get(entity_id)
+        best = span.start if span and entity_id in drawn else date.max
+        for kid in kids[entity_id]:
+            best = min(best, earliest(kid, seen))
+        when[entity_id] = best
+        return best
+
+    def ordered(ids: list[str]) -> list[str]:
+        return sorted(ids, key=lambda i: (earliest(i, frozenset()), i))
+
+    rows: list[tuple[str, int]] = []
+
+    def walk(entity_id: str, depth: int) -> None:
+        if entity_id in drawn:
+            rows.append((entity_id, depth))
+        for kid in ordered(kids[entity_id]):
+            walk(kid, depth + 1)
+
+    for entity_id in ordered(roots):
+        walk(entity_id, 0)
+    # Anything the walk could not reach is in a parent cycle. It still has a span
+    # and still belongs on the chart; a row silently missing from a plan is worse
+    # than a row drawn at the margin.
+    placed = {i for i, _ in rows}
+    return rows + [(i, 0) for i in sorted(drawn - placed)]
+
+
 def _timeline(
     index: Index, window: tuple[date | None, date | None] = (None, None), zoom: float | None = None
 ) -> dict:
@@ -200,11 +274,25 @@ def _timeline(
     A bar reaching past the window is clipped to it rather than dropped — a row that
     disappears when you narrow the dates reads as work that went away.
     """
+    total = len(index.entities)
     drawn = {i: s for i, s in index.spans.items() if not s.unscheduled}
     if not drawn:
+        # An empty plot and a plot that failed are the same picture, and which one
+        # it is decides what to do next. Nothing here is about the filters, so
+        # neither copy offers to clear them.
+        blank = (
+            {"headline": "This plan has no entities yet.",
+             "detail": "Nothing has been pitched, shaped or scheduled."}
+            if not total
+            else {"headline": "Nothing in this plan has dates.",
+                  "detail": "Every entity is done, shelved, or waiting on something "
+                            "that has not been scheduled."}
+        )
         return {
-            "bars": [], "rules": [], "months": [], "today_x": None, "header": _HEADER_PX,
-            "width": _LEFT_PX, "height": _ROW_PX, "origin": None, "last": None, "zoom": "",
+            "bars": [], "cycles": [], "months": [], "today_x": None, "header": _HEADER_PX,
+            "band": _BAND_PX, "width": _LEFT_PX, "height": _ROW_PX, "origin": None,
+            "last": None, "zoom": "", "rows": {}, "total": total, "offscreen": total,
+            "blank": blank,
         }
 
     starts = [s.start for s in drawn.values()] + [w[0] for w in index.cycles.values()]
@@ -227,44 +315,71 @@ def _timeline(
         # inside it, so that it can stay put while the plot scrolls.
         return round((day - origin).days * day_px, 1)
 
-    order = sorted(drawn, key=lambda i: (drawn[i].start, i))
-    bars = []
-    for row, entity_id in enumerate(order):
+    config = Config(default_task_effort=index.default_task_effort)
+    bars, rows = [], {}
+    for row, (entity_id, depth) in enumerate(_containment_rows(index, set(drawn))):
         span = drawn[entity_id]
         visible_start, visible_end = max(span.start, origin), min(span.end, last)
         entity = index.entities[entity_id]
-        classes = ["bar"]
-        if span.estimated:
-            classes.append("estimated")
-        if span.unowned:
-            classes.append("unowned")
+        # Hatched, not outlined: the outline says "overruns its cycle", and one
+        # channel carrying three different facts is a channel that says none of
+        # them. A guess and a commitment have to be told apart at a glance. The
+        # hatch is a second rect over the bar, so the class on the bar stays a
+        # statement about the span rather than an instruction about paint.
+        marks = [name for name in ("estimated", "unowned") if getattr(span, name)]
+        classes = ["bar", *marks]
         if span.overruns_cycle_weeks:
             classes.append("late")
-        explanation = index.explanations.get(entity_id)
         bars.append(
             {
                 "id": entity_id,
                 "label": _clip(entity.title),
                 "full": f"{entity.title} ({entity_id})",
+                "depth": depth,
+                "indent": depth * _INDENT_PX,
                 "classes": " ".join(classes),
+                "marks": marks,
                 "x": x(visible_start),
-                "y": row * _ROW_PX + _HEADER_PX,
-                "width": max(
-                    day_px, x(visible_end + timedelta(days=1)) - x(visible_start)
+                "y": row * _ROW_PX + _HEADER_PX + _BAR_TOP,
+                "width": round(
+                    max(
+                        _MIN_BAR_PX, day_px,
+                        x(visible_end + timedelta(days=1)) - x(visible_start),
+                    ),
+                    1,
                 ),
                 "colour": _status_class(entity.status),
-                "owner": entity.owner or "unowned",
-                "tip": explanation.text if explanation else "Starts as soon as it can.",
             }
         )
-    rules = [
-        {"x": x(window[1]), "label": f"cycle {number}"}
-        for number, window in sorted(index.cycles.items())
-        if origin <= window[1] <= last
-    ]
+        size, _ = size_weeks(entity, config)
+        explanation = index.explanations.get(entity_id)
+        # The table's own row, so the shared `matches()` reads the same fields on
+        # this page as on the other two, plus the two things only a bar wants to
+        # say: what it is holding, and why it starts when it does.
+        rows[entity_id] = _row(index, entity_id) | {
+            "weeks": round(size, 2),
+            "tip": explanation.text if explanation else "Starts as soon as it can.",
+        }
+    cycles = []
+    for number, (opens, closes) in sorted(index.cycles.items()):
+        if closes < origin or opens > last:
+            continue
+        left = x(max(opens, origin))
+        cycles.append(
+            {
+                "number": number,
+                "label": f"cycle {number}",
+                "x": left,
+                "width": round(max(1.0, x(min(closes, last) + timedelta(days=1)) - left), 1),
+                # The dashed rule only where the cycle really closes. Drawn at a
+                # clamped edge it would claim a cycle ends where the window does.
+                "rule_x": x(closes) if origin <= closes <= last else None,
+            }
+        )
     return {
         "bars": bars,
-        "rules": rules,
+        "rows": rows,
+        "cycles": cycles,
         "months": _month_ticks(origin, last, x),
         # A window that excludes today has no today line. Drawing it at a clamped
         # coordinate would put "now" on an edge it is not on.
@@ -273,17 +388,36 @@ def _timeline(
         "last": last.isoformat(),
         "zoom": zoom or "",
         "header": _HEADER_PX,
+        "band": _BAND_PX,
         "width": x(last) + 24,
         "height": len(bars) * _ROW_PX + _HEADER_PX + 20,
+        "total": total,
+        "offscreen": total - len(bars),
+        # Which emptiness this page can arrive at. With bars on it the only way to
+        # empty it is the control bar, and that is the one emptiness a button can
+        # undo; with none, the dates are what is wrong and clearing a filter would
+        # not bring a single one back.
+        "blank": {
+            "headline": "No entity matches these filters.",
+            "detail": "Every bar is filtered out by the controls above.",
+        } if bars else {
+            "headline": "Nothing is scheduled in this window.",
+            "detail": "Every dated entity in this plan falls outside it.",
+        },
     }
 
 
 def _month_ticks(origin: date, last: date, x) -> list[dict]:
-    """A bar chart with no dates on it is a picture, not a plan."""
+    """A bar chart with no dates on it is a picture, not a plan.
+
+    The year only where it changes: "Aug 2026" on every tick spends a third of a
+    narrow month restating what the tick before it already said.
+    """
     ticks, cursor = [], date(origin.year, origin.month, 1)
     while cursor <= last:
         if cursor >= origin:
-            ticks.append({"x": x(cursor), "label": cursor.strftime("%b %Y")})
+            year = not ticks or cursor.month == 1
+            ticks.append({"x": x(cursor), "label": cursor.strftime("%b %Y" if year else "%b")})
         cursor = date(cursor.year + cursor.month // 12, cursor.month % 12 + 1, 1)
     return ticks
 
@@ -546,6 +680,28 @@ a, a:visited { color: var(--accent); }
   outline-offset: 2px;
   border-radius: 2px;
 }
+/* The key to the one thing on a page that is not a word. Shared, because the
+   graph and the timeline draw the same statuses in the same tokens, and every
+   swatch is the token the shape is actually filled with — a legend naming a
+   different colour from the one on screen is worse than no legend, because it
+   is believed. */
+.legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
+          list-style: none; margin: .75rem 0 0; padding: 0;
+          font-size: 12px; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: .35rem; }
+.legend .swatch { width: 20px; height: 11px; border-radius: 2px; flex: none; }
+.legend .swatch.st-shaping { background: var(--st-shaping); }
+.legend .swatch.st-ready { background: var(--st-ready); }
+.legend .swatch.st-in_progress { background: var(--st-in_progress); }
+.legend .swatch.st-done { background: var(--st-done); }
+.legend .swatch.st-shelved { background: var(--st-shelved); }
+/* The way out of a filter, on every page that has one. Three pages were drawing
+   this button themselves, which is three chances for the way out of a filter to
+   look like something else. */
+#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
+                 border: 1px solid var(--line-strong); background: var(--surface);
+                 color: var(--fg); cursor: pointer; }
+#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
 #moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent);
          color: var(--on-accent);
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
@@ -1419,10 +1575,6 @@ td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
 tr.nothing td { padding: 2.5rem .5rem; text-align: center; }
 tr.nothing .headline { margin: 0 0 .25rem; color: var(--fg); font-size: 15px; }
 tr.nothing .hint { margin: 0 0 .75rem; }
-#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
-                 border: 1px solid var(--line-strong); background: var(--surface);
-                 color: var(--fg); cursor: pointer; }
-#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
 th .grip {
   position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
 }
@@ -1826,19 +1978,6 @@ _GRAPH_STYLE = """
 #state { color: var(--muted); font-size: 12px; }
 #summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
 #shown { font-variant-numeric: tabular-nums; }
-/* Every swatch is the token the node is actually filled with, not the chip's
-   softer ground: a legend naming a different colour from the one on screen is
-   worse than no legend, because it is believed. */
-.legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
-          list-style: none; margin: .75rem 0 0; padding: 0;
-          font-size: 12px; color: var(--muted); }
-.legend li { display: flex; align-items: center; gap: .35rem; }
-.legend .swatch { width: 20px; height: 11px; border-radius: 2px; }
-.legend .swatch.st-shaping { background: var(--st-shaping); }
-.legend .swatch.st-ready { background: var(--st-ready); }
-.legend .swatch.st-in_progress { background: var(--st-in_progress); }
-.legend .swatch.st-done { background: var(--st-done); }
-.legend .swatch.st-shelved { background: var(--st-shelved); }
 .canvas { position: relative; }
 #cy { height: 78vh; border: 1px solid var(--line); }
 /* Over the canvas rather than instead of it: cytoscape measures its container
@@ -1850,16 +1989,17 @@ _GRAPH_STYLE = """
 #nothing[hidden] { display: none; }
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
-#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
-                 border: 1px solid var(--line-strong); background: var(--surface);
-                 color: var(--fg); cursor: pointer; }
-#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
 """
 
 _TIMELINE = """
+{{ facets|safe }}
 <form class="tl-controls" method="get" action="{{ links.timeline }}">
-  <label class="facet">from <input type="date" name="from" value="{{ window[0] }}"></label>
-  <label class="facet">to <input type="date" name="to" value="{{ window[1] }}"></label>
+  {#- Prefilled with the window on screen, not the one that was asked for. Two
+      empty boxes under a sentence reading "Showing 2026-02-02 to 2026-11-27" ask
+      the reader to believe the page over the controls; Reset is what says the
+      window is the default one. -#}
+  <label class="facet">from <input type="date" name="from" value="{{ t.origin or '' }}"></label>
+  <label class="facet">to <input type="date" name="to" value="{{ t.last or '' }}"></label>
   <label class="facet">zoom
     <select name="zoom">
       <option value="">fit to window</option>
@@ -1868,23 +2008,52 @@ _TIMELINE = """
       {% endfor %}
     </select>
   </label>
-  <button type="submit">Apply</button>
-  <a class="reset" href="{{ links.timeline }}">Reset</a>
+  <button type="submit" class="button primary">Apply</button>
+  <a class="button reset" href="{{ links.timeline }}">Reset</a>
 </form>
-<p class="hint">Showing {{ t.origin or 'nothing' }}{% if t.last %} to {{ t.last }}{% endif %}.
-  Drag sideways or scroll to move through the plan. Bars reaching past the window are
+<p class="hint">{% if windowed %}Showing {{ t.origin }} to {{ t.last }}, a window of the
+  plan — Reset goes back to all of it.{% else %}Showing the whole plan{% if t.origin %},
+  {{ t.origin }} to {{ t.last }}{% endif %}.{% endif %}
+  Drag sideways or scroll to move through it. Bars reaching past the window are
   clipped to it, never dropped.</p>
-<div class="tl">
+{#- Statuses first and marks second, because they are two questions: what state
+    is this in, and how much of this bar is a guess. Every swatch is drawn from
+    the same token or the same pattern the plot uses. -#}
+<ul class="legend" aria-label="What a bar colour means">
+  {% for status in statuses %}
+  <li><span class="swatch st-{{ status }}"></span>{{ status|human }}</li>
+  {% endfor %}
+</ul>
+<ul class="legend" aria-label="What a bar marking means">
+  <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
+      ><rect class="neutral" width="20" height="11"/><rect class="mark mark-estimated"
+        width="20" height="11"/></svg>appetite assumed</li>
+  <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
+      ><rect class="neutral" width="20" height="11"/><rect class="mark mark-unowned"
+        width="20" height="11"/></svg>nobody on it</li>
+  <li><span class="swatch outline late"></span>overruns its cycle</li>
+  <li><span class="swatch rule today"></span>today</li>
+  <li><span class="swatch rule boundary"></span>a cycle closes</li>
+  <li><span class="swatch band"></span>a cycle, build and cooldown</li>
+</ul>
+<div id="summary"><span id="shown">{{ t.bars|length }}</span> of {{ t.bars|length }}
+  drawn{% if t.offscreen %} · {{ t.offscreen }} with no dates in this
+  window{% endif %}</div>
+<div class="tl"{% if not t.bars %} hidden{% endif %}>
 <div class="labels">
   <div class="spacer" style="height: {{ t.header }}px"></div>
+  {#- Indented by containment, so a project's work reads as a block. The clipped
+      label is what fits in 250px; the whole title is on the anchor. -#}
   {% for bar in t.bars %}
-  <div class="row">
+  <div class="row" data-id="{{ bar.id }}" data-depth="{{ bar.depth }}"
+       style="padding-left: {{ 8 + bar.indent }}px">
     <a href="{{ links.entity }}{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a></div>
   {% endfor %}
 </div>
 <div class="scroll">
 <svg width="{{ t.width }}" height="{{ t.height }}"
-     viewBox="0 0 {{ t.width }} {{ t.height }}" role="img">
+     viewBox="0 0 {{ t.width }} {{ t.height }}" role="img"
+     aria-label="Every scheduled entity as a bar, earliest first within its parent">
   <defs>
     <pattern id="hatch-estimated" width="6" height="6" patternTransform="rotate(45)"
              patternUnits="userSpaceOnUse">
@@ -1895,32 +2064,71 @@ _TIMELINE = """
       <line x1="0" y="0" x2="0" y2="8" stroke="var(--hatch)" stroke-opacity=".7" stroke-width="4"/>
     </pattern>
   </defs>
-  {% for rule in t.rules %}
-  <line class="cycle-rule" x1="{{ rule.x }}" y1="0" x2="{{ rule.x }}" y2="{{ t.height }}"/>
-  <text class="cycle-label" x="{{ rule.x + 3 }}" y="10">{{ rule.label }}</text>
-  {% endfor %}
-  {% if t.today_x is not none %}
-  <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
+  {#- A band of its own above the months. A cycle label used to be drawn at y=10
+      and a month label at y=18 inside one 26px strip, so a cycle closing near the
+      first of a month wrote one word over the other. -#}
+  {% for cycle in t.cycles %}
+  <rect class="cycle-band" x="{{ cycle.x }}" y="0"
+        width="{{ cycle.width }}" height="{{ t.band }}"/>
+  <text class="cycle-label" x="{{ cycle.x + 4 }}" y="12">{{ cycle.label }}</text>
+  {% if cycle.rule_x is not none %}
+  <line class="cycle-rule" x1="{{ cycle.rule_x }}" y1="0" x2="{{ cycle.rule_x }}"
+        y2="{{ t.height }}"/>
   {% endif %}
-  {% for bar in t.bars %}
-  <a href="{{ links.entity }}{{ bar.id }}"
-     ><rect data-id="{{ bar.id }}" class="{{ bar.classes }} {{ bar.colour }}"
-        x="{{ bar.x }}" y="{{ bar.y }}"
-        width="{{ bar.width }}" height="14"
-        ><title>{{ bar.tip }} — click to open</title></rect></a>
   {% endfor %}
+  <line class="band-rule" x1="0" y1="{{ t.band }}" x2="{{ t.width }}" y2="{{ t.band }}"/>
   {% for month in t.months %}
-  <line class="month-rule" x1="{{ month.x }}" y1="{{ t.header }}" x2="{{ month.x }}"
+  <line class="month-rule" x1="{{ month.x }}" y1="{{ t.band }}" x2="{{ month.x }}"
         y2="{{ t.height }}"/>
   <text class="month-label" x="{{ month.x + 3 }}" y="{{ t.header - 8 }}">{{ month.label }}</text>
   {% endfor %}
+  {#- Drawn over the grid and under today. A bar is the subject of the page; the
+      rules behind it are furniture, and the one line that must never be hidden
+      by a bar is the one saying where now is. -#}
+  {% for bar in t.bars %}
+  <a href="{{ links.entity }}{{ bar.id }}" aria-label="{{ bar.full }}"
+     ><rect data-id="{{ bar.id }}" class="{{ bar.classes }} {{ bar.colour }}"
+        x="{{ bar.x }}" y="{{ bar.y }}"
+        width="{{ bar.width }}" height="{{ bar_px }}"
+        ><title>{{ t.rows[bar.id].tip }} — click to open</title></rect>{% for mark in
+        bar.marks %}<rect class="mark mark-{{ mark }}" x="{{ bar.x }}" y="{{ bar.y }}"
+        width="{{ bar.width }}" height="{{ bar_px }}"/>{% endfor %}</a>
+  {% endfor %}
+  {% if t.today_x is not none %}
+  <line class="today" x1="{{ t.today_x }}" y1="0" x2="{{ t.today_x }}" y2="{{ t.height }}"/>
+  {#- In the gutter under the last row: the two bands above are full of cycle and
+      month labels, and there is exactly one today line to name. -#}
+  <text class="today-label" x="{{ t.today_x + 4 }}" y="{{ t.height - 6 }}">today</text>
+  {% endif %}
 </svg>
 </div>
 </div>
+<div id="nothing"{% if t.bars %} hidden{% endif %}>
+  <p class="headline">{{ t.blank.headline }}</p>
+  <p class="hint">{{ t.blank.detail }}</p>
+  <button type="button" id="clear-filters"{% if not t.bars %} hidden{% endif %}>Clear
+    filters</button>
+</div>
+<div id="tip" role="tooltip" hidden></div>
+<script id="bars" type="application/json">BARS_JSON</script>
+{{ filters|safe }}
 <script>
+const scroller = document.querySelector('.scroll');
+const svg = scroller.querySelector('svg');
+const plot = document.querySelector('.tl');
+const nothing = document.getElementById('nothing');
+const ROW_PX = {{ row_px }}, HEADER = {{ t.header }}, WIDTH = {{ t.width }};
+const BAR_TOP = {{ bar_top }};
+const RECTS = [...svg.querySelectorAll('rect[data-id]')];
+const LABELS = new Map([...document.querySelectorAll('.labels .row')]
+  .map(row => [row.dataset.id, row]));
+// The bars are drawn by the server, so a payload that will not parse costs the
+// filters and not the chart. Everything below asks whether it is there.
+let DATA = null;
+try { DATA = JSON.parse(document.getElementById('bars').textContent); } catch (e) { DATA = null; }
+
 // Open on today rather than on the oldest finished work. The plan is scrollable
 // so history stays reachable, but "now" is what the page is for.
-const scroller = document.querySelector('.scroll');
 {% if t.today_x is not none %}
 scroller.scrollLeft = Math.max(0, {{ t.today_x }} - 320);
 {% endif %}
@@ -1929,9 +2137,28 @@ scroller.scrollLeft = Math.max(0, {{ t.today_x }} - 320);
 // its corners round. Changing a control just submits; the button stays for
 // anybody without JavaScript, and the URL stays shareable either way.
 const form = document.querySelector('.tl-controls');
-form.querySelectorAll('input, select').forEach(control => {
-  control.onchange = () => form.submit();
+form.addEventListener('submit', event => {
+  // The window belongs to the server and the facets to the page, and both live
+  // in one query string. A plain submit carries only this form's own fields, so
+  // applying a date range used to clear every dropdown above it.
+  event.preventDefault();
+  for (const control of form.elements) {
+    if (!control.name) continue;
+    if (control.value) params.set(control.name, control.value);
+    else params.delete(control.name);
+  }
+  location.search = params.toString();
 });
+form.querySelectorAll('input, select').forEach(control => {
+  control.onchange = () => form.requestSubmit();
+});
+form.querySelector('.reset').onclick = event => {
+  // The window, not the filters: a button that undoes two things while naming
+  // one is a button nobody presses twice.
+  event.preventDefault();
+  for (const field of ['from', 'to', 'zoom']) params.delete(field);
+  location.search = params.toString();
+};
 
 // Drag to pan, which is what everybody tries first on a Gantt.
 let panning = null;
@@ -1945,17 +2172,154 @@ scroller.onpointermove = event => {
   if (panning) scroller.scrollLeft = panning.left - (event.clientX - panning.x);
 };
 scroller.onpointerup = () => { panning = null; scroller.style.cursor = ''; };
+
+const TIP = document.getElementById('tip');
+const human = value => (DATA && DATA.human[value]) || value;
+// A title comes out of a file in the plan repository and is written into markup
+// here, which is the one place on this page that turns stored text into HTML.
+const esc = text => String(text ?? '').replace(/[&<>"]/g,
+  c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const DASH = '<span class="empty">—</span>';
+
+function tipHtml(row) {
+  // An owner who is also an assignee is one person, not two. The scheduler
+  // already reads them that way — `_people_on` dedupes — and a box that says
+  // "ann, ann" is a box nobody trusts the rest of.
+  const others = (row.assignees || []).filter(who => who && who !== row.owner);
+  const facts = [
+    ['Owner', row.owner ? esc(row.owner) : DASH],
+    ...(others.length ? [['With', esc(others.join(', '))]] : []),
+    ['Appetite', row.weeks + (row.weeks === 1 ? ' week' : ' weeks')
+      + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')],
+    ['Scheduled', row.start && row.end
+      ? `<span class="num">${row.start}</span> to <span class="num">${row.end}</span>` : DASH],
+  ];
+  return `<p class="tip-title">${esc(row.title)}</p>` +
+    `<p class="tip-chips"><span class="chip st-${row.status}">${esc(human(row.status))}</span> ` +
+    `<span class="chip kind-${row.kind}">${esc(human(row.kind))}</span></p>` +
+    '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
+    '</dl>' + `<p class="tip-why">${esc(row.tip)}</p>`;
+}
+
+// A bar carried its dates, its owner and its appetite nowhere: the only thing
+// hoverable was a native tooltip holding one sentence about why it starts when
+// it does. That sentence is still here, at the bottom, where it reads as the
+// answer to a question the rest of the box has just raised.
+function showTip(id, x, y) {
+  const row = DATA && DATA.rows[id];
+  if (!row) return;
+  TIP.innerHTML = tipHtml(row);
+  TIP.hidden = false;
+  place(x, y);
+}
+
+function place(x, y) {
+  const box = TIP.getBoundingClientRect();
+  const left = x + 14 + box.width > innerWidth - 8 ? x - 14 - box.width : x + 14;
+  const top = y + 14 + box.height > innerHeight - 8 ? y - 14 - box.height : y + 14;
+  TIP.style.left = Math.max(8, left) + 'px';
+  TIP.style.top = Math.max(8, top) + 'px';
+}
+
+svg.addEventListener('pointerover', event => {
+  const rect = event.target.closest('rect[data-id]');
+  if (rect) showTip(rect.dataset.id, event.clientX, event.clientY);
+});
+svg.addEventListener('pointermove', event => {
+  if (!TIP.hidden) place(event.clientX, event.clientY);
+});
+svg.addEventListener('pointerout', event => {
+  if (event.target.closest('rect[data-id]')) TIP.hidden = true;
+});
+// The keyboard reaches a row through the label beside it: an SVG anchor is not
+// focusable in Chrome, and giving every bar a tabindex would put two stops on
+// one row for the sake of the second one. So the label opens the same box.
+for (const [id, row] of LABELS) {
+  const link = row.querySelector('a');
+  link.addEventListener('focus', () => {
+    const box = link.getBoundingClientRect();
+    showTip(id, box.right, box.bottom);
+  });
+  link.addEventListener('blur', () => { TIP.hidden = true; });
+}
+// The native tooltip holds the same sentence, arrives a second later and lands
+// somewhere else. The markup keeps it so a page without script still explains
+// itself; the anchor carries the accessible name either way.
+if (DATA) for (const title of svg.querySelectorAll('title')) title.remove();
+
+// One filter model, three views: the timeline's answer to it is which rows
+// are on the chart. A hidden row leaves no gap: the rows below it move up, the
+// drawing shrinks to what is left, and the rules that span the whole plot are
+// cut to the new height.
+const FULL_HEIGHT = svg.querySelectorAll('.cycle-rule, .month-rule, .today');
+const TODAY_LABEL = svg.querySelector('.today-label');
+
+function applyFilter() {
+  if (!DATA) return;
+  let row = 0;
+  for (const rect of RECTS) {
+    const on = matches(DATA.rows[rect.dataset.id]);
+    rect.parentNode.style.display = on ? '' : 'none';
+    LABELS.get(rect.dataset.id).hidden = !on;
+    if (!on) continue;
+    // The bar and whatever is hatched over it are one row and move together.
+    for (const shape of rect.parentNode.querySelectorAll('rect'))
+      shape.setAttribute('y', row * ROW_PX + HEADER + BAR_TOP);
+    row++;
+  }
+  const height = row * ROW_PX + HEADER + 20;
+  svg.setAttribute('height', height);
+  svg.setAttribute('viewBox', `0 0 ${WIDTH} ${height}`);
+  for (const line of FULL_HEIGHT) line.setAttribute('y2', height);
+  if (TODAY_LABEL) TODAY_LABEL.setAttribute('y', height - 6);
+  document.getElementById('shown').textContent = row;
+  // A chart with no bars in it is a grid, which reads as an app that failed
+  // rather than as a filter that matched nothing.
+  plot.hidden = row === 0;
+  nothing.hidden = row > 0;
+}
+
+addEventListener('openproj:filter', applyFilter);
+document.getElementById('clear-filters').onclick = clearFilters;
+applyFilter();
 </script>
 """
 
 _TIMELINE_STYLE = """
-.tl-controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
+.tl-controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: end;
                margin: .75rem 0 .25rem; }
-.tl-controls input, .tl-controls select, .tl-controls button {
+.tl-controls input, .tl-controls select {
   display: block; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0;
 }
-.tl-controls .reset { color: var(--accent); font-size: 13px; }
+/* Apply was a button and Reset was a bare link, which reads as one control and
+   one afterthought. They are the same pair of scissors pointed two ways, so they
+   are the same size and shape; only the fill says which one is the verb. */
+.tl-controls .button { font: inherit; font-size: 13px; line-height: 1.4;
+                       padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
+                       border: 1px solid var(--line-strong); background: var(--surface);
+                       color: var(--fg); text-decoration: none; }
+.tl-controls .button:hover { border-color: var(--accent); color: var(--accent); }
+.tl-controls .button.primary { background: var(--accent); border-color: var(--accent);
+                               color: var(--on-accent); }
+.tl-controls .button.primary:hover { color: var(--on-accent); opacity: .9; }
+#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
+#shown { font-variant-numeric: tabular-nums; }
+/* The ground under a legend hatch. --muted rather than a line colour because it
+   is the one token that tracks the status fills through the themes: a mid tone
+   in light and a light one in dark, so --hatch reads on it exactly as it reads
+   on a bar. */
+rect.neutral { fill: var(--muted); }
+/* The three markings, drawn the way the plot draws them: a hatch over a neutral
+   ground, an outline, a rule. A legend that redraws a mark in its own way is a
+   legend that can be wrong about the picture beside it. */
+.legend .swatch.outline { background: var(--surface-2); }
+.legend .swatch.late { border: 1.5px solid var(--danger); }
+.legend .swatch.rule { width: 2px; height: 13px; border-radius: 0; }
+.legend .swatch.today { background: var(--danger); }
+.legend .swatch.boundary { background: none; border-left: 2px dashed var(--line-strong); }
+.legend .swatch.band { background: var(--surface-2); border: 1px solid var(--line); }
 .tl { display: flex; border: 1px solid var(--line); align-items: stretch; }
+.tl[hidden] { display: none; }
 .labels { flex: 0 0 250px; border-right: 1px solid var(--line); }
 .labels .row {
   height: 22px; line-height: 22px; font-size: 11px; color: var(--muted);
@@ -1965,17 +2329,50 @@ _TIMELINE_STYLE = """
 svg { display: block; }
 .month-rule { stroke: var(--line); }
 .month-label { font-size: 9px; fill: var(--muted); }
+/* The band a cycle runs for, start of build to end of cooldown. It carries its
+   own number, so the ground only has to say "there is a cycle here"; the dashed
+   rule inside it is where one closes. */
+.cycle-band { fill: var(--surface-2); }
+.band-rule { stroke: var(--line); }
 .cycle-rule { stroke: var(--line); stroke-dasharray: 3 3; }
-.cycle-label { font-size: 9px; fill: var(--accent); font-weight: 600; }
+.cycle-label { font-size: 10px; fill: var(--accent); font-weight: 600; }
 .today { stroke: var(--danger); stroke-width: 1.5; }
+.today-label { font-size: 10px; fill: var(--danger); font-weight: 600; }
 rect.bar { rx: 3; }
 rect.st-shaping { fill: var(--st-shaping); }
 rect.st-ready { fill: var(--st-ready); }
 rect.st-in_progress { fill: var(--st-in_progress); }
 rect.st-done { fill: var(--st-done); }
 rect.st-shelved { fill: var(--st-shelved); }
-rect.estimated { stroke: var(--warn); stroke-width: 1; }
+/* An assumed appetite and work nobody is on are hatched, not outlined: the
+   outline says "overruns its cycle", and one channel carrying three facts says
+   none of them. Drawn as a second rect over the bar so the status colour stays
+   underneath, and transparent to the pointer so the bar is still what you hover. */
+rect.mark { rx: 3; pointer-events: none; }
+rect.mark-estimated { fill: url(#hatch-estimated); }
+rect.mark-unowned { fill: url(#hatch-unowned); }
 rect.late { stroke: var(--danger); stroke-width: 1.5; }
+/* Beside the plot rather than over it: the plot is as tall as its rows, and an
+   overlay on an empty one has nothing to cover. */
+#nothing { border: 1px solid var(--line); padding: 2.5rem 1rem; text-align: center; }
+#nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
+#nothing .hint { margin: 0 0 .75rem; }
+/* Follows the pointer, so it cannot be hovered itself and never becomes the
+   thing under the cursor. */
+#tip { position: fixed; z-index: 5; max-width: 22rem; pointer-events: none;
+       background: var(--surface); color: var(--fg); font-size: 12px;
+       border: 1px solid var(--line-strong); border-radius: 3px;
+       padding: .4rem .55rem; box-shadow: 0 2px 8px rgb(0 0 0 / .18); }
+#tip[hidden] { display: none; }
+#tip .tip-title { margin: 0; font-size: 13px; font-weight: 600; }
+#tip .tip-chips { margin: .25rem 0 .35rem; }
+#tip dl { display: grid; grid-template-columns: auto 1fr; gap: 0 .6rem; margin: 0; }
+#tip dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
+          letter-spacing: .04em; }
+#tip dd { margin: 0; }
+#tip .num { font-variant-numeric: tabular-nums; }
+#tip .guess { color: var(--muted); font-style: italic; }
+#tip .tip-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
 """
 
 
@@ -3919,15 +4316,30 @@ def render_timeline(
     window: tuple[date | None, date | None] = (None, None),
     zoom: float | None = None,
 ) -> str:
+    timeline = _timeline(index, window, zoom)
     body = _ENV.from_string(_TIMELINE).render(
-        t=_timeline(index, window, zoom),
+        t=timeline,
         links=links,
         zooms=_ZOOMS,
         chosen=f"{zoom:g}" if zoom else "",
-        # Echo what was asked for, not what was computed: a `from` box that fills
-        # itself with the corpus start makes an empty window look like a set one.
-        window=[d.isoformat() if d else "" for d in window],
+        # Whether this is a window or the whole plan. The date boxes echo what is
+        # on screen either way — they used to echo the request, so the default view
+        # showed two empty boxes under a sentence naming the dates it was drawing,
+        # and the controls disagreed with the picture. What is lost by filling them
+        # in is the answer to "am I looking at everything", and that is a sentence,
+        # not two empty boxes.
+        windowed=bool(window[0] or window[1]),
+        statuses=STATUSES,
+        row_px=_ROW_PX,
+        bar_px=_BAR_PX,
+        bar_top=_BAR_TOP,
+        facets=_facets_html(index),
+        filters=_FILTER_JS,
     )
+    # The rows the shared `matches()` reads, for the bars that were drawn. Not the
+    # whole plan: a bar that is not on this window cannot be filtered onto it.
+    payload = {"rows": timeline["rows"], "human": HUMAN}
+    body = body.replace("BARS_JSON", json.dumps(payload))
     return _page("openproj — timeline", body, _TIMELINE_STYLE, links)
 
 
