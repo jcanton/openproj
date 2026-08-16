@@ -319,9 +319,13 @@ def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
     for status in STATUSES:
         assert f'<span class="swatch st-{status}" aria-hidden="true">' in legend, status
         assert STATUS_GLYPH[status] in legend, status
+        # Border as well as fill and ink. A node is a bordered shape now — on the
+        # light theme the fill is a tint and the border is what makes it one — so
+        # a key drawn without it keys a shape that is not on the canvas.
         assert (
             f".legend .swatch.st-{status} {{ background: var(--st-{status}); "
-            f"color: var(--st-{status}-ink); }}"
+            f"color: var(--st-{status}-ink);\n"
+            f"                             border: 1px solid var(--st-{status}-line); }}"
         ) in graph
     assert "In progress" in legend, "the reader's word, not the stored one"
 
@@ -359,8 +363,13 @@ def test_a_node_takes_its_ink_from_the_fill_it_sits_on(rendered: Path):
     assert "'background-color': e => COLOUR()[e.data('status')]" in repaint
     assert "'text-background-color': token('--surface')" in repaint
     # The border draws priority, so it is a channel of its own — and one colour
-    # for all five fills is 2:1 against the darkest rung of the ladder.
-    assert "'border-color': e => INK()[e.data('status')]" in repaint
+    # for all five fills is 2:1 against the darkest rung of the ladder. It is the
+    # status's own --st-X-line now, the same value the timeline strokes its bars
+    # with, and it is re-read on a theme flip exactly as the fill and ink are.
+    for status in STATUSES:
+        assert f"token('--st-{status}-line')" in graph, status
+    assert "'border-color': e => LINE()[e.data('status')]" in graph
+    assert "'border-color': e => LINE()[e.data('status')]" in repaint
 
 
 def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path):
@@ -1512,83 +1521,135 @@ def test_a_status_carries_a_chip_palette_as_well_as_a_fill(rendered: Path):
     light = re.search(r":root \{(.*?)\}", style, re.S).group(1)
 
     for status in ("shaping", "ready", "in_progress", "done", "shelved"):
-        for suffix in ("", "-ink", "-soft", "-text"):
+        for suffix in ("", "-ink", "-line", "-soft", "-text"):
             assert f"--st-{status}{suffix}:" in light, f"--st-{status}{suffix}"
         assert f".chip.st-{status} {{" in style
 
 
-def test_no_theme_has_one_ink_for_every_status(rendered: Path):
-    """The fills are a luminance ladder now, which is the whole point of them:
-    they run from pale to near-black in the light theme and back the other way in
-    the dark one. So there is no single label colour that reads on all five, and
-    --on-status and --hatch — the two tokens that assumed there was — are gone."""
+def test_the_ink_on_a_shape_stays_a_per_status_token(rendered: Path):
+    """--on-status and --hatch assumed one label colour read on all five fills,
+    and the ladder is what broke that assumption; both tokens are gone.
+
+    The light theme happens to carry one ink on all five today — a ladder of
+    tints has one — but the tokens stay per status, because the dark theme still
+    needs an exception and a collapsed token has nowhere to put it. The exception
+    is measured here rather than asserted: `shelved` keeps white ink for exactly
+    as long as #101416 fails 4.5:1 on the fill under it."""
     style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
     themes = tokens(read(rendered, "index.html"))
 
     assert "--on-status" not in style, "one ink for five fills is the assumption that broke"
     assert "--hatch:" not in style
-    for name in ("light", "dark"):
-        inks = {themes[name][f"--st-{s}-ink"] for s in STATUSES}
-        assert len(inks) == 2, (name, inks)
+    assert {themes["light"][f"--st-{s}-ink"] for s in STATUSES} == {"#101416"}
+    assert themes["dark"]["--st-shelved-ink"] == "#ffffff"
+    assert contrast(themes["dark"]["--st-shelved"], "#101416") < 4.5, (
+        "the dark exception has stopped being necessary — unify the ink"
+    )
 
 
 # --- the palette is a contract ----------------------------------------------
 
-# The ten fills, written out rather than read from the file they are being
-# checked against. Every other assertion in this block is a computed property,
-# and a computed property tells you a value is *self-consistent*, not that it is
-# the value that was agreed: a palette drifting one hex at a time passes every
-# ratio test on the way down. This is the list somebody has to change on purpose.
+# The ten fills and the ten borders, written out rather than read from the file
+# they are being checked against. Every other assertion in this block is a
+# computed property, and a computed property tells you a value is
+# *self-consistent*, not that it is the value that was agreed: a palette drifting
+# one hex at a time passes every ratio test on the way down. This is the list
+# somebody has to change on purpose.
 PALETTE = {
     "light": {
-        "shaping": ("#7e61c2", "#ffffff"),
-        "ready": ("#275e92", "#ffffff"),
-        "in_progress": ("#603a04", "#ffffff"),
-        "done": ("#0d311f", "#ffffff"),
-        "shelved": ("#8a979f", "#101416"),
+        "shaping": ("#d2c5ee", "#101416", "#7e61c2"),
+        "ready": ("#83b8e9", "#101416", "#275e92"),
+        "in_progress": ("#e18606", "#101416", "#603a04"),
+        "done": ("#2b925e", "#101416", "#0d311f"),
+        "shelved": ("#e1e5e9", "#101416", "#88959d"),
     },
     "dark": {
-        "shaping": ("#9077cb", "#101416"),
-        "ready": ("#7aacdc", "#101416"),
-        "in_progress": ("#f9c275", "#101416"),
-        "done": ("#d7f4e6", "#101416"),
-        "shelved": ("#5e6a73", "#ffffff"),
+        "shaping": ("#9077cb", "#101416", "#56477a"),
+        "ready": ("#7aacdc", "#101416", "#44607a"),
+        "in_progress": ("#f9c275", "#101416", "#82663d"),
+        "done": ("#d7f4e6", "#101416", "#6a7972"),
+        "shelved": ("#5e6a73", "#ffffff", "#3c4449"),
     },
 }
 
 
 def test_every_status_fill_carries_ink_that_reads_on_it(rendered: Path):
     """A bar and a node are the two places where a status is drawn as a shape, and
-    the ladder spans the whole lightness range — so which ink reads on a fill is a
-    per-status question with a per-status answer. 4.5:1 because the ink is text:
-    the node's title, and the glyph at the bar's left edge."""
+    which ink reads on a fill is a per-status question with a per-status answer.
+    4.5:1 because the ink is text: the node's title, and the glyph at the bar's
+    left edge.
+
+    Both themes are tints under dark ink now. The light one was white ink on
+    every fill, and white ink is what dragged every fill down the luminance scale
+    to carry it — which is how the amber came out brown and the green nearly
+    black."""
     themes = tokens(read(rendered, "index.html"))
 
     for name, wanted in PALETTE.items():
-        for status, (fill, ink) in wanted.items():
+        for status, (fill, ink, _) in wanted.items():
             assert themes[name][f"--st-{status}"] == fill, (name, status)
             assert themes[name][f"--st-{status}-ink"] == ink, (name, status)
             assert contrast(fill, ink) >= 4.5, (name, status, contrast(fill, ink))
-        # And a shape has to exist against its own page before its border helps.
-        # Rounded to the two places the palette states, because the faintest rung
-        # is a hair under 3 unrounded and it is the value that was agreed.
-        page = themes[name]["--bg"]
-        for status, (fill, _) in wanted.items():
-            assert round(contrast(fill, page), 2) >= 3.0, (name, status, contrast(fill, page))
+
+
+def test_a_status_shape_is_bounded_against_the_page_it_sits_on(rendered: Path):
+    """--st-X-line is the edge of a status shape, and it is not decoration: the
+    faintest light fill is 1.27:1 against a white page, so without a border a
+    pale bar is not a shape at all. Which of the two carries the 3:1 a drawn
+    boundary owes differs by theme, and both answers are asserted rather than one
+    generalised into a number that happens to pass twice:
+
+    * light — the border carries it. Each value is version 2's fill, already
+      measured against this page; `shelved` is nudged one step off #8a979f,
+      which was 2.9966 and written down as 3.00.
+    * dark — the fill carries it, at 3.23:1 at worst, and the border is one step
+      inside the fill rather than outside it. It still has to be *seen*, because
+      the graph draws priority as border width and a border the colour of its own
+      box is a width nobody can read. Each one is the contrast midpoint between
+      its fill and the page: the same ratio either side.
+    """
+    themes = tokens(read(rendered, "index.html"))
+    page = {name: themes[name]["--bg"] for name in PALETTE}
+
+    for name, wanted in PALETTE.items():
+        for status, (fill, _, line) in wanted.items():
+            assert themes[name][f"--st-{status}-line"] == line, (name, status)
+            if name == "light":
+                assert contrast(line, page[name]) >= 3.0, (
+                    name, status, contrast(line, page[name]))
+            else:
+                assert contrast(fill, page[name]) >= 3.0, (
+                    name, status, contrast(fill, page[name]))
+            # The border against the shape it borders, in both themes: an edge
+            # nobody can see is an edge that is not there.
+            assert contrast(line, fill) >= 1.75, (name, status, contrast(line, fill))
+    # Defined in all three blocks, not two. A reader who has never touched the
+    # toggle matches only the media query.
+    for name in ("dark", "dark-by-system"):
+        for status in STATUSES:
+            assert themes[name][f"--st-{status}-line"] == PALETTE["dark"][status][2], name
 
 
 def test_the_five_fills_are_separated_by_lightness_and_not_only_by_hue(rendered: Path):
     """Hue is the channel a dichromat loses, and on the graph and the timeline the
     fill used to be the only channel there was: five hues at one lightness
     (1.02–1.11:1 between any two) collapsed into one colour. Lightness is what
-    every kind of colour vision keeps, so consecutive rungs are held apart by it."""
+    every kind of colour vision keeps, so consecutive rungs are held apart by it.
+
+    1.27 and not the 1.3 this once asked for. Inverting the light theme narrowed
+    the band the five rungs live in: the ink no longer flips, so no rung has to
+    be dark enough to carry white text, and the whole ladder now spans 3.08:1
+    instead of the old 14.2. The four gaps it shipped with are 1.280, 1.296,
+    1.313 and 1.416 — the closest pair being `shelved` to `shaping` — and this
+    floor sits just under the worst of them rather than at a round number that
+    would have let two more rungs drift together before anything failed."""
     themes = tokens(read(rendered, "index.html"))
 
     for name in ("light", "dark"):
         rungs = sorted(_luminance(themes[name][f"--st-{s}"]) for s in STATUSES)
         for lower, upper in zip(rungs, rungs[1:], strict=False):
             gap = (upper + 0.05) / (lower + 0.05)
-            assert gap >= 1.3, (name, gap)
+            assert gap >= 1.27, (name, gap)
 
 
 def test_a_chip_pair_is_readable_in_both_themes(rendered: Path):
@@ -1607,12 +1668,21 @@ def test_a_boundary_and_an_absent_value_are_both_visible(rendered: Path):
     """--line-strong is the sole boundary of every drawn input, button and popup,
     which makes it a UI component boundary at 3:1; it was 1.81. --empty is the em
     dash that means "no value", which makes it text at 4.5:1, not the 3.45 it was
-    first given — whether a field is empty is a fact, not a hint."""
+    first given — whether a field is empty is a fact, not a hint.
+
+    Measured against --surface-2 as well as the page, and that is the assertion
+    that was missing: a bordered control sits on the panel tint as often as on
+    the page — a hovered table cell, a popup, the commit bar — and both themes
+    passed 3:1 on the page while landing at 2.95 and 2.97 on the tint. A ratio
+    against the wrong ground is a measurement of something nobody is looking at.
+    """
     themes = tokens(read(rendered, "index.html"))
 
     for name in ("light", "dark"):
         page = themes[name]["--bg"]
-        assert contrast(themes[name]["--line-strong"], page) >= 3.0, name
+        for ground in (page, themes[name]["--surface"], themes[name]["--surface-2"]):
+            assert contrast(themes[name]["--line-strong"], ground) >= 3.0, (
+                name, ground, contrast(themes[name]["--line-strong"], ground))
         assert contrast(themes[name]["--empty"], page) >= 4.5, name
     # One value, referenced rather than copied: the kind chip's hairline is the
     # same boundary an input has, and a copy is how one of them gets fixed.
@@ -1729,6 +1799,50 @@ def test_the_legend_draws_a_cycle_boundary_the_way_the_plot_does(rendered: Path)
     assert "dashed" in key and "dasharray" in plot
     for name in ("light", "dark"):
         assert contrast(themes[name][stroke], themes[name]["--bg"]) >= 3.0, name
+
+
+def test_a_bar_that_overruns_its_cycle_is_one_of_the_bars_on_the_corpus(rendered: Path):
+    """The cascade test that pins the overrun outline against the status border
+    asks about `rect.bar.late`. This is what says such a rect exists at all: if
+    nothing in the corpus overruns, that test is asking about a bar nobody
+    draws, and it would keep passing while the outline was painted out."""
+    body = read(rendered, "timeline.html")
+    plot = body[body.index("<svg width="):]
+
+    # By label, not by id: the fixture rewrites every id, and the failure message
+    # is only useful if it names the bar somebody can go and look at.
+    late = re.findall(
+        r'aria-label="([^"]*)"\s*><rect data-id="[^"]+" class="([^"]*\blate\b[^"]*)"', plot
+    )
+    assert late, "no bar on the corpus overruns its cycle any more"
+    for label, classes in late:
+        # `bar` as well as `late`: the outline is written as `rect.bar.late`, so a
+        # rect that lost the `bar` class would silently lose the outline too.
+        assert "bar" in classes.split(), label
+        assert any(cls.startswith("st-") for cls in classes.split()), label
+    # And the row beside the plot says it in words, for a reader who has neither
+    # the colour nor the width.
+    assert "overruns its cycle" in body
+
+
+def test_a_dependency_arrow_can_be_seen_on_the_canvas_it_is_drawn_on(rendered: Path):
+    """The arrows were drawn in --st-ready, from when that fill was a dark blue.
+    Inverting the light theme made it a tint — #83b8e9 is 2.10:1 on a white page
+    — and a dependency graph whose dependencies you cannot see is a box of
+    boxes. An arrow is a drawn boundary, not a status, so it takes the token
+    that is held at 3:1 against the page in both themes."""
+    graph = read(rendered, "graph.html")
+    themes = tokens(graph)
+
+    edge = re.search(r"'line-color': token\('(--[\w-]+)'\)", graph).group(1)
+    assert not edge.startswith("--st-"), f"an arrow is not a status: {edge}"
+    # Both the build-time style and the repaint, or the toggle undoes it.
+    assert graph.count(f"'line-color': token('{edge}')") == 2, edge
+    assert graph.count(f"'target-arrow-color': token('{edge}')") == 2, edge
+    for name in ("light", "dark"):
+        # #cy has no background of its own, so the canvas is the page.
+        assert contrast(themes[name][edge], themes[name]["--bg"]) >= 3.0, (
+            name, contrast(themes[name][edge], themes[name]["--bg"]))
 
 
 def test_every_page_can_draw_a_problem_and_a_focus_ring(rendered: Path):

@@ -295,3 +295,65 @@ def test_a_conflict_report_is_a_report_on_the_table_as_well_as_the_detail_page(i
         )
         assert sheet.value(path, "border-left") == "3px solid var(--danger)", name
         assert sheet.value(path, "padding") == ".5rem .8rem", name
+
+
+# --------------------------------------------------------------------------- #
+# D: the status border, and the outline it must not smother
+# --------------------------------------------------------------------------- #
+
+
+def test_an_overrunning_bar_still_reads_as_overrunning(index: Index):
+    """Every bar has a border now — the light theme's fills are tints, and a tint
+    on a white page is not a shape without one — and "overruns its cycle" was
+    already drawn as a `--danger` outline on the same rectangle.
+
+    That is two rules setting `stroke` on one element, `rect.bar.late` and
+    `rect.bar.st-ready`, both (0,2,1). Specificity cannot separate them, so
+    document order is the whole of the answer, and getting it backwards paints
+    the alarm out in a status colour on every bar that carries it — while every
+    existing assertion about `rect.late` keeps passing, because the rule is
+    still in the sheet. Ten of the seventeen bars in the shipped demo corpus
+    overrun, `Porting land` among them.
+    """
+    sheet = sheet_of(render_timeline(index, ROUTES))
+    plot = PAGE + [el("div", "tl"), el("div", "scroll"), el("svg"), el("a")]
+    ordinary = plot + [el("rect", "bar st-ready")]
+    overrun = plot + [el("rect", "bar late st-ready")]
+    # The hatch is a second rect over the bar, same geometry. A stroke on it would
+    # be drawn after the bar's and straight down the middle of the outline.
+    hatch = plot + [el("rect", "mark mark-estimated st-ready")]
+
+    assert sheet.value(ordinary, "stroke") == "var(--st-ready-line)", (
+        says(sheet, ordinary, "stroke")
+    )
+    assert sheet.value(ordinary, "stroke-width") == "1"
+    assert sheet.value(overrun, "stroke") == "var(--danger)", says(sheet, overrun, "stroke")
+    assert float(sheet.value(overrun, "stroke-width")) > float(
+        sheet.value(ordinary, "stroke-width")
+    ), "the alarm has to be heavier than the border every other bar wears"
+    assert sheet.value(hatch, "stroke") is None, says(sheet, hatch, "stroke")
+
+
+def test_a_bar_and_the_key_that_names_it_are_drawn_the_same_way(index: Index):
+    """A legend that redraws a mark in its own way is a legend that can be wrong
+    about the picture beside it. The overrun key was 1.5px while an overrunning
+    bar was the only bar with a stroke on it; now that every bar has one, a key
+    at the old width keys the ordinary border rather than the alarm."""
+    sheet = sheet_of(render_timeline(index, ROUTES))
+    plot = PAGE + [el("div", "tl"), el("div", "scroll"), el("svg"), el("a")]
+    overrun = plot + [el("rect", "bar late st-ready")]
+    key = PAGE + [el("ul", "legend"), el("li"), el("span", "swatch outline late")]
+
+    width = sheet.value(overrun, "stroke-width")
+    assert sheet.value(key, "border") == f"{width}px solid var(--danger)", (
+        says(sheet, key, "border")
+    )
+    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+        swatch = PAGE + [el("ul", "legend"), el("li"), el("span", f"swatch st-{status}")]
+        assert sheet.value(swatch, "background") == f"var(--st-{status})", status
+        assert sheet.value(swatch, "border") == f"1px solid var(--st-{status}-line)", (
+            says(sheet, swatch, "border")
+        )
+        # The key is the same 20x11 as every other key: on content-box a border
+        # would have made the bordered ones two pixels taller than the rules.
+        assert sheet.value(swatch, "box-sizing") == "border-box", status

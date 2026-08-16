@@ -685,31 +685,50 @@ try {
   --bg: #ffffff; --fg: #14211f; --surface: #ffffff; --surface-2: #f5f8f8;
   /* --line-strong is the only boundary of every drawn input, button and popup,
      so it is a UI boundary and owes 3:1. It was #b4c3c7 — 1.81:1 — which drew a
-     text field as a rumour. */
-  --line: #dce4e5; --line-strong: #879398; --muted: #5a6b70;
+     text field as a rumour. Measured against --surface-2 and not the page: a
+     bordered control sits on the panel tint as often as on white, and #879398
+     was 3.15 on the page but 2.95 there — passing the measurement nobody makes
+     against the ground the control is actually on. */
+  --line: #dce4e5; --line-strong: #859195; --muted: #5a6b70;
   --accent: #0f5c6b; --on-accent: #ffffff;
   --danger: #9a3327; --warn: #8a5308; --ok: #2f7248;
   /* The em dash that means "no value" is *text*, so it owes 4.5:1 and not the
      3.45 it was first given. Whether a field is empty is a fact, not a hint. */
   --empty: #5f7176; --focus: #0f5c6b;
-  /* Four tokens per status, not one. Fill and ink draw *shapes* — a graph node,
-     a timeline bar. Soft and text draw *chips* — the pill in a table cell, which
-     needs a ground light enough to sit inside a row of running text.
+  /* Five tokens per status, not one. Fill, ink and line draw *shapes* — a graph
+     node, a timeline bar. Soft and text draw *chips* — the pill in a table cell,
+     which needs a ground light enough to sit inside a row of running text.
      The five fills are a *luminance ladder*, not five hues at one lightness:
      hue is the channel a dichromat loses, and on the graph and the timeline the
      fill used to be the only channel there was. Work gets more solid as it
-     advances — parked is the faintest, done the darkest — so the order survives
-     every kind of colour vision. Which is why the ink is no longer white
-     everywhere: it flips with the rung its fill sits on. */
-  --st-shaping: #7e61c2; --st-shaping-ink: #ffffff;
+     advances — done is furthest from the page, parked is nearest — so the order
+     survives every kind of colour vision.
+     This theme used to run the ladder the other way, with white ink on every
+     fill. White ink is what forced it: an ink that light drags every fill down
+     the luminance scale to carry it, and a low-luminance amber is brown while a
+     low-luminance green is nearly black. So the light theme now inverts exactly
+     as the dark one already did — a tint, dark ink on it, and the value that
+     used to BE the fill demoted to its border. --st-X-line is that border, and
+     it is not decoration: the faintest fill is 1.27:1 against a white page, so
+     the border is the only thing making a pale bar a shape, and it is the token
+     that owes the 3:1 a drawn boundary owes. Each one is version 2's fill,
+     already measured against this page.
+     --st-X-ink is one value on all five here, because a ladder of tints has one
+     ink that reads on every rung. Five tokens are kept rather than collapsed to
+     one: a status added later may sit somewhere that needs its own. */
+  --st-shaping: #d2c5ee; --st-shaping-ink: #101416; --st-shaping-line: #7e61c2;
   --st-shaping-soft: #efedf5; --st-shaping-text: #5e3eaa;
-  --st-ready: #275e92; --st-ready-ink: #ffffff;
+  --st-ready: #83b8e9; --st-ready-ink: #101416; --st-ready-line: #275e92;
   --st-ready-soft: #ecf1f6; --st-ready-text: #22578a;
-  --st-in_progress: #603a04; --st-in_progress-ink: #ffffff;
+  --st-in_progress: #e18606; --st-in_progress-ink: #101416; --st-in_progress-line: #603a04;
   --st-in_progress-soft: #f7f2eb; --st-in_progress-text: #734f1b;
-  --st-done: #0d311f; --st-done-ink: #ffffff;
+  --st-done: #2b925e; --st-done-ink: #101416; --st-done-line: #0d311f;
   --st-done-soft: #ecf6f1; --st-done-text: #18633d;
-  --st-shelved: #8a979f; --st-shelved-ink: #101416;
+  /* #8a979f, the faintest rung's old fill, is 2.9966 against the page. Nudged
+     one step rather than rounded up to the 3.00 it was written down as: the
+     border of the palest shape on the page is the last place to spend a
+     rounding error. */
+  --st-shelved: #e1e5e9; --st-shelved-ink: #101416; --st-shelved-line: #88959d;
   --st-shelved-soft: #eff2f3; --st-shelved-text: #495760;
   /* Kind is drawn in ink, never in hue: two colour languages on one row and
      neither one is read. The hairline is the same boundary every input has —
@@ -728,23 +747,38 @@ try {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #11181b; --fg: #dde6e7; --surface: #171f22; --surface-2: #1c262a;
-    --line: #263336; --line-strong: #5c7076; --muted: #93a6aa;
+    --line: #263336; --line-strong: #61767c; --muted: #93a6aa;
     --accent: #5cb9ca; --on-accent: #0b1214;
     --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
     --empty: #84969c; --focus: #5cb9ca;
     /* The same ladder, climbed the other way: parked is the darkest rung here
        and done the lightest, so a shape is always the *more* solid the further
-       the work has got. The ink flips rung by rung with it — one label colour
-       for all five was only ever true while all five fills were one lightness. */
-    --st-shaping: #9077cb; --st-shaping-ink: #101416;
+       the work has got. This theme was already tints under dark ink, which is
+       what the light one has now been rebuilt to be; the fills below are
+       unchanged.
+       --st-X-line here is not the fill's own value. It could have been — every
+       fill already clears 3.23:1 against this ground, so nothing needs the
+       border for separation. But the graph draws PRIORITY as border *width*,
+       and a border the colour of the box it surrounds is a width nobody can
+       read: high and low priority would differ only by the size of the node.
+       So each border is the contrast midpoint between its own fill and the
+       page — the same ratio either side, which is the most an edge can be worth
+       when it has to read against both. `shelved` gets 1.79 and 1.81 because
+       its fill is only 3.23 from the ground and there is no more room there.
+       --st-shelved-ink stays white. The brief that inverted the light theme
+       said this one clears 6.03:1 on #101416 and could join the others; it is
+       3.34:1, and this ink is the node's label and the bar's glyph, which is
+       text and owes 4.5. Lifting the fill instead would put it 1.10 from
+       `shaping` and collapse the top of the ladder. */
+    --st-shaping: #9077cb; --st-shaping-ink: #101416; --st-shaping-line: #56477a;
     --st-shaping-soft: #262034; --st-shaping-text: #b09fd8;
-    --st-ready: #7aacdc; --st-ready-ink: #101416;
+    --st-ready: #7aacdc; --st-ready-ink: #101416; --st-ready-line: #44607a;
     --st-ready-soft: #1d2a38; --st-ready-text: #87b3dd;
-    --st-in_progress: #f9c275; --st-in_progress-ink: #101416;
+    --st-in_progress: #f9c275; --st-in_progress-ink: #101416; --st-in_progress-line: #82663d;
     --st-in_progress-soft: #3b2d19; --st-in_progress-text: #daaf74;
-    --st-done: #d7f4e6; --st-done-ink: #101416;
+    --st-done: #d7f4e6; --st-done-ink: #101416; --st-done-line: #6a7972;
     --st-done-soft: #1d372b; --st-done-text: #5cce97;
-    --st-shelved: #5e6a73; --st-shelved-ink: #ffffff;
+    --st-shelved: #5e6a73; --st-shelved-ink: #ffffff; --st-shelved-line: #3c4449;
     --st-shelved-soft: #242b30; --st-shelved-text: #a6b1ba;
     --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
     --sev-warn: #d9a557; --sev-warn-soft: #332409;
@@ -754,19 +788,19 @@ try {
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #11181b; --fg: #dde6e7; --surface: #171f22; --surface-2: #1c262a;
-  --line: #263336; --line-strong: #5c7076; --muted: #93a6aa;
+  --line: #263336; --line-strong: #61767c; --muted: #93a6aa;
   --accent: #5cb9ca; --on-accent: #0b1214;
   --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
   --empty: #84969c; --focus: #5cb9ca;
-  --st-shaping: #9077cb; --st-shaping-ink: #101416;
+  --st-shaping: #9077cb; --st-shaping-ink: #101416; --st-shaping-line: #56477a;
   --st-shaping-soft: #262034; --st-shaping-text: #b09fd8;
-  --st-ready: #7aacdc; --st-ready-ink: #101416;
+  --st-ready: #7aacdc; --st-ready-ink: #101416; --st-ready-line: #44607a;
   --st-ready-soft: #1d2a38; --st-ready-text: #87b3dd;
-  --st-in_progress: #f9c275; --st-in_progress-ink: #101416;
+  --st-in_progress: #f9c275; --st-in_progress-ink: #101416; --st-in_progress-line: #82663d;
   --st-in_progress-soft: #3b2d19; --st-in_progress-text: #daaf74;
-  --st-done: #d7f4e6; --st-done-ink: #101416;
+  --st-done: #d7f4e6; --st-done-ink: #101416; --st-done-line: #6a7972;
   --st-done-soft: #1d372b; --st-done-text: #5cce97;
-  --st-shelved: #5e6a73; --st-shelved-ink: #ffffff;
+  --st-shelved: #5e6a73; --st-shelved-ink: #ffffff; --st-shelved-line: #3c4449;
   --st-shelved-soft: #242b30; --st-shelved-text: #a6b1ba;
   --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
   --sev-warn: #d9a557; --sev-warn-soft: #332409;
@@ -895,14 +929,23 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
           list-style: none; margin: .75rem 0 0; padding: 0;
           font-size: 12px; color: var(--muted); }
 .legend li { display: flex; align-items: center; gap: .35rem; }
-.legend .swatch { width: 20px; height: 11px; border-radius: 2px; flex: none; }
+/* border-box so a key that carries a border is the same 20x11 as one that does
+   not: every status swatch grew a border with the shapes it keys, and on
+   content-box the row of keys came out at three different heights. */
+.legend .swatch { width: 20px; height: 11px; border-radius: 2px; flex: none;
+                  box-sizing: border-box; }
 /* inline-flex on the span only. Two of these swatches are <svg>, where a flex
    display on the root would be laying out a replaced element as a box. */
 .legend span.swatch { display: inline-flex; align-items: center; justify-content: center;
                       font-family: var(--font-sans); font-weight: 700;
                       font-size: 9px; line-height: 1; }
+{#- Fill, ink AND border: the shapes these key are bordered now, and a key drawn
+    without the border is a key to a different shape — which on the light theme
+    is the difference between a pale swatch floating on the page and the bar the
+    reader is looking at. -#}
 {% for s in statuses %}
-.legend .swatch.st-{{ s }} { background: var(--st-{{ s }}); color: var(--st-{{ s }}-ink); }
+.legend .swatch.st-{{ s }} { background: var(--st-{{ s }}); color: var(--st-{{ s }}-ink);
+                             border: 1px solid var(--st-{{ s }}-line); }
 {%- endfor %}
 /* The row a page's own controls stand in: the table's create link, the cycle
    page's "back to all cycles" and its "add somebody", the two rows of the cycles
@@ -2274,6 +2317,15 @@ const INK = () => ({
   in_progress: token('--st-in_progress-ink'), done: token('--st-done-ink'),
   shelved: token('--st-shelved-ink'),
 });
+// The edge of a status shape, the same token the timeline strokes its bars with
+// and the same one the legend below draws round its keys. Read through token()
+// and re-read on themechange like the other two: a border resolved once at build
+// time is a light theme's border still on the boxes after the toggle.
+const LINE = () => ({
+  shaping: token('--st-shaping-line'), ready: token('--st-ready-line'),
+  in_progress: token('--st-in_progress-line'), done: token('--st-done-line'),
+  shelved: token('--st-shelved-line'),
+});
 // The fill is the only status channel on this canvas, and five fills on a
 // luminance ladder are separable without being nameable: you can see that one
 // box is darker than the next and still not know which state that is. So a
@@ -2325,11 +2377,14 @@ const cy = cytoscape({
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
         'border-width': e => ({high: 4, medium: 2, low: 1})[e.data('priority')] ?? 2,
-        // The fill's own ink, not the accent. The fills are a luminance ladder,
-        // so one border colour for all five is 2:1 against the darkest of them —
-        // and the border is how priority is drawn, which makes it a channel that
-        // has to be legible on every rung, not only on the middle ones.
-        'border-color': e => INK()[e.data('status')],
+        // The status's own boundary token, not the accent and no longer the ink.
+        // The fills are a luminance ladder, so one border colour for all five is
+        // 2:1 against the darkest of them — and this border is how priority is
+        // drawn, which makes it a channel that has to be legible on every rung,
+        // not only the middle ones. --st-X-line is exactly that value, and using
+        // it here is what makes a node the same shape as its bar on the timeline
+        // and its key in the legend.
+        'border-color': e => LINE()[e.data('status')],
         'color': e => INK()[e.data('status')], 'text-valign': 'center',
         'width': 150, 'height': 44 } },
     { selector: '.picked', style: {
@@ -2366,7 +2421,13 @@ const cy = cytoscape({
         // orthogonal edge and one that only looks orthogonal in the middle.
         'source-endpoint': 'outside-to-node', 'target-endpoint': 'outside-to-node',
         'target-arrow-shape': 'triangle',
-        'line-color': token('--st-ready'), 'target-arrow-color': token('--st-ready') } },
+        // --line-strong, not --st-ready. An arrow was drawn in the ready fill
+        // back when that fill was a dark blue; the light theme's fills are tints
+        // now and #83b8e9 on a white page is 2.10:1 — a dependency you cannot
+        // see. An arrow is not a status, it is a drawn boundary, and this is the
+        // token that is held at 3:1 against the page in both themes.
+        'line-color': token('--line-strong'),
+        'target-arrow-color': token('--line-strong') } },
     { selector: 'edge.pending', style: {
         'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
         'line-style': 'dashed', 'width': 2 } },
@@ -2389,19 +2450,20 @@ function route() {
 }
 // The style above was resolved from tokens once, at build time. Flipping the
 // theme changes the tokens, not the resolved values, so every one of them is
-// re-read — the ink with the fill, because a light fill needs dark text on it
-// and the two are not the same token any more.
+// re-read — the ink and the border with the fill, because all three differ per
+// status and per theme, and a box that keeps one of the three from the theme it
+// was built in is a box wearing two palettes at once.
 function paint() {
   cy.style()
     .selector('node').style({'background-color': e => COLOUR()[e.data('status')],
-                             'border-color': e => INK()[e.data('status')],
+                             'border-color': e => LINE()[e.data('status')],
                              'color': e => INK()[e.data('status')]})
     .selector('.picked').style({'border-color': token('--danger')})
     .selector(':parent').style({'color': token('--fg'),
                                 'text-background-color': token('--surface'),
                                 'text-margin-x': e => groupWidth(e) + 12})
-    .selector('edge').style({'line-color': token('--st-ready'),
-                             'target-arrow-color': token('--st-ready')})
+    .selector('edge').style({'line-color': token('--line-strong'),
+                             'target-arrow-color': token('--line-strong')})
     .selector('edge.pending').style({'line-color': token('--danger'),
                                      'target-arrow-color': token('--danger')})
     .update();
@@ -2700,13 +2762,19 @@ _TIMELINE = """
     >{{ status|human }}</li>
   {% endfor %}
 </ul>
+{#- `bar`, and inset by half a pixel: these two keys are bars, so they carry the
+    stroke every bar carries — and an SVG stroke is centred on the edge, so a
+    rect filling its own viewBox would have had half of its border clipped
+    away. -#}
 <ul class="legend" aria-label="What a bar marking means">
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
-      ><rect class="st-ready" width="20" height="11"/><rect
-        class="mark mark-estimated st-ready" width="20" height="11"/></svg>appetite assumed</li>
+      ><rect class="bar st-ready" x=".5" y=".5" width="19" height="10"/><rect
+        class="mark mark-estimated st-ready" x=".5" y=".5" width="19"
+        height="10"/></svg>appetite assumed</li>
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
-      ><rect class="st-ready" width="20" height="11"/><rect
-        class="mark mark-unowned st-ready" width="20" height="11"/></svg>nobody on it</li>
+      ><rect class="bar st-ready" x=".5" y=".5" width="19" height="10"/><rect
+        class="mark mark-unowned st-ready" x=".5" y=".5" width="19"
+        height="10"/></svg>nobody on it</li>
   <li><span class="swatch outline late"></span>overruns its cycle</li>
   <li><span class="swatch rule today"></span>today</li>
   <li><span class="swatch rule boundary"></span>a cycle closes</li>
@@ -3013,7 +3081,10 @@ _TIMELINE_STYLE = """
    band key came to be a bordered --surface-2 swatch standing in for an unbordered
    --surface-2 band, two wrong answers agreeing with each other. */
 .legend .swatch.outline { background: var(--surface-2); }
-.legend .swatch.late { border: 1.5px solid var(--danger); }
+/* 2.5px, the width the plot draws it at. It was 1.5 while an overrunning bar was
+   the only bar with a stroke on it; every bar has one now, and a key drawn at
+   the old width would be keying the ordinary border rather than the alarm. */
+.legend .swatch.late { border: 2.5px solid var(--danger); }
 .legend .swatch.rule { width: 2px; height: 13px; border-radius: 0; }
 .legend .swatch.today { background: var(--danger); }
 .legend .swatch.boundary { background: none; border-left: 2px dashed var(--line-strong); }
@@ -3057,7 +3128,10 @@ rect.bar { rx: 3; }
    none of them. Drawn as a second rect over the bar so the status colour stays
    underneath, and transparent to the pointer so the bar is still what you hover. */
 rect.mark { rx: 3; pointer-events: none; }
-rect.late { stroke: var(--danger); stroke-width: 1.5; }
+/* `rect.late` used to live here. It is written by _status_paint_css() now,
+   after the per-status strokes: both selectors are (0,2,1), so document order
+   is the only thing left to decide the tie, and the tie decides whether a bar
+   that overruns its cycle still says so. */
 /* The bar's second channel: which status this is, said as a shape. Drawn in the
    fill's own ink, and transparent to the pointer so the thing under the cursor
    at the left end of a bar is still the bar.
@@ -3105,12 +3179,24 @@ def _timeline_css() -> str:
 def _status_paint_css() -> str:
     """The per-status half of the timeline's stylesheet.
 
-    Twenty rules — a fill, a glyph ink and two hatch references for each status —
-    so it is written by a loop. Spelled out by hand, the one that goes missing is
-    a hatch, and a missing hatch does not look broken: it looks like a bar that
-    has stopped being a guess.
+    Twenty-five rules — a fill, a border, a glyph ink and two hatch references
+    for each status — so it is written by a loop. Spelled out by hand, the one
+    that goes missing is a hatch, and a missing hatch does not look broken: it
+    looks like a bar that has stopped being a guess.
+
+    The overrun outline is written here too, at the end, and not with the rest of
+    the timeline's rules. It has to beat the per-status stroke below and the two
+    selectors weigh the same, so the only thing that decides it is which comes
+    last in the sheet.
     """
     rules = [f"rect.st-{s} {{ fill: var(--st-{s}); }}" for s in STATUSES]
+    # On the bar, never on the hatch rect stacked over it: the two are the same
+    # rectangle, so a stroke on both draws the border twice — and on an
+    # overrunning bar the second one would paint the status colour straight down
+    # the middle of the danger outline that is the whole point of it.
+    rules += [
+        f"rect.bar.st-{s} {{ stroke: var(--st-{s}-line); stroke-width: 1; }}" for s in STATUSES
+    ]
     # The label on a shape belongs to the fill it sits on, not to the page: on the
     # dark theme's top rungs the fill is nearly white, and --fg on it is nothing.
     rules += [f"text.bar-glyph.st-{s} {{ fill: var(--st-{s}-ink); }}" for s in STATUSES]
@@ -3119,6 +3205,11 @@ def _status_paint_css() -> str:
         for mark in ("estimated", "unowned")
         for s in STATUSES
     ]
+    # Overruns its cycle. It was the only stroke on the chart and 1.5px was
+    # plenty; now every bar carries one, so this has to be the heavier of the two
+    # as well as the redder — 2.5px against 1px on a 14px bar, which reads as a
+    # ring round the bar rather than as an edge on it.
+    rules.append("rect.bar.late { stroke: var(--danger); stroke-width: 2.5; }")
     return "\n".join(rules) + "\n"
 
 
