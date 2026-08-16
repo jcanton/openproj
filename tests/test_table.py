@@ -77,7 +77,7 @@ from test_web import (
 from openproj.auth import sign_session
 from openproj.index import build_index
 from openproj.model import load_repo
-from openproj.render import EDITABLE, LABELS, PRIORITIES, STATUSES, render_static
+from openproj.render import EDITABLE, HUMAN, LABELS, PRIORITIES, STATUSES, render_static
 from openproj.web import SESSION_COOKIE, create_app
 
 # The columns the table draws that nobody may type into. Kept as an expectation
@@ -310,6 +310,32 @@ def test_the_create_form_offers_the_three_kinds_and_nothing_else(client: TestCli
     assert client.get("/new?kind=milestone").status_code == 422
 
 
+def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
+    new_page: str, client: TestClient
+):
+    """The last of F11. `in_progress` is what git holds and the option's `value`
+    keeps it, because that is what gets POSTed and PATCHed; the text beside it is
+    what a person reads. The two closed sets on these forms — status and priority
+    — were rendering the identifier as the option's words, on both the create form
+    and the detail page, which is the one surface where somebody chooses a status
+    by name rather than recognising a chip.
+
+    Both forms, because they are one template: `_CONTROL` renders every control on
+    each of them, and a fix that reaches only one of two pages built from one
+    string is a fix that did not happen.
+    """
+    detail = client.get(f"/detail/{TASK}").text
+
+    for page in (new_page, detail):
+        for name, values in (("status", STATUSES), ("priority", PRIORITIES)):
+            select = re.search(rf'<select name="{name}".*?</select>', page, re.S).group(0)
+            offered = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', select)
+            assert [value for value, _ in offered] == list(values), name
+            for value, word in offered:
+                assert word.strip() == LABELS.get(value, HUMAN[value]), (name, value)
+                assert value not in word, f"{value} is its own identifier, not a word"
+
+
 def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     """The requiredness rules, carried by the form so it can check before posting.
 
@@ -346,9 +372,18 @@ def test_the_gates_are_the_validator_s_own_and_not_a_second_copy(new_page: str):
     """A hand-written map drifts the day somebody edits `_status_problems`, and the
     drift shows up as a form that refuses what the server accepts — or worse,
     accepts what it refuses. These are the validator's gates, run over a blank
-    entity of each kind at each status."""
-    from openproj.model import Pitch, Task, _status_problems
+    entity of each kind at each status.
+
+    The derivation lives in `model` beside the rule it mirrors. `render` used to do
+    it here by importing `model._status_problems` across the module boundary at
+    import time, which handed the renderer the shape of a problem tuple; it asks
+    `model.required_at()` now. A test may still know the private — that is the
+    point of a cross-check — but the page may not.
+    """
+    from openproj.model import Pitch, Task, _status_problems, required_at
     from openproj.render import REQUIRED_AT, STATUSES
+
+    assert REQUIRED_AT == required_at(), "the page prints the model's answer, not its own"
 
     for model, kind in ((Pitch, "pitch"), (Task, "task")):
         for status in STATUSES:
@@ -740,8 +775,9 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
     assert ".measuring th, .measuring td { white-space: nowrap; }" in page
     assert "const WRAPS = new Set(['prs', 'tags']);" in page
     stored = r"if \(Object\.keys\(WIDTHS\)\.length\) applyWidths\(\); else fitWidths\(\);"
-    assert "const keyOf = (th, i) => th.dataset.sort || th.textContent.trim();" in page, (
-        "a width belongs to a column, not to a position in the row"
+    assert "const keyOf = th => th.dataset.col;" in page, (
+        "a width belongs to a column — not to a position in the row, and not to "
+        "the word printed above it"
     )
     assert re.search(stored, page), "a width somebody dragged must survive the automatic fit"
 
@@ -835,13 +871,31 @@ def test_the_create_button_follows_the_form_it_commits(new_page: str):
 
 
 def test_the_columns_and_the_cells_agree_on_their_order(page: str):
-    """Two hand-maintained lists, index-parallel, with nothing enforcing it. Edit
-    one and every cell shifts a column left of where its header says it is."""
-    headers = columns(page)
-    keys = re.search(r"const keys = \[(.*?)\];", page, re.S).group(1)
-    listed = re.findall(r"'([^']+)'", keys)
+    """They were two hand-maintained lists, index-parallel, with nothing enforcing
+    it: edit one and every cell shifts a column left of where its header says it
+    is. Both are emitted from `_TABLE_COLUMNS` now, and this is what says so."""
+    from openproj.render import _TABLE_COLUMNS, _TABLE_DERIVED
 
-    assert headers == listed
+    headers = columns(page)
+    listed = json.loads(re.search(r"const keys = (\[.*?\]);", page, re.S).group(1))
+
+    assert headers == listed == [name for name, _ in _TABLE_COLUMNS]
+    # And every column the payload withholds an editor for is one of them: a
+    # derived name that is not a drawn column withholds an editor from nothing.
+    assert set(_TABLE_DERIVED) <= set(listed)
+
+
+def test_a_column_header_is_the_label_map_s_word_for_the_field(page: str):
+    """The header words were a literal list beside the central map F11 asked
+    everything to go through, so `size` was headed `appetite` in one place and
+    `Appetite` in the other — same words, two sources, and only one of them moves
+    when the word does. Read off the rendered header rather than off the map, or
+    the assertion is the map compared with itself."""
+    from openproj.render import _TABLE_COLUMNS
+
+    for name, _ in _TABLE_COLUMNS:
+        header = re.search(rf'<th data-col="{name}"[^>]*>(.*?)</th>', page, re.S).group(1)
+        assert LABELS[name] in re.sub(r"<[^>]*>", "", header), name
 
 
 def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestClient):
@@ -1113,7 +1167,13 @@ def test_the_header_and_the_two_identity_columns_stay_put(page: str):
     a container the height of its own content gives `top: 0` nothing to hold
     against.
     """
-    assert "max-height: calc(100vh - 15rem)" in page, "the body scrolls in the container"
+    # Named, not a bare number: 15rem is a measurement of the stack above the rows
+    # — nav, heading, edit bar, summary, facets — and it has already been wrong
+    # once, when the page gained a heading and the box ran off the bottom.
+    assert "--above-rows: 15rem;" in page
+    assert "max-height: calc(100vh - var(--above-rows))" in page, (
+        "the body scrolls in the container"
+    )
     assert "thead th {\n  position: sticky; top: 0; z-index: 3; background: var(--surface);" in page
     assert '[data-col="id"] { position: sticky; left: 0; z-index: 1;' in page
     assert '[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;' in page
@@ -1175,7 +1235,14 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
 
     body = script(page)
     assert "'Double-click to edit ' + named" in body, "and a description, not only a colour"
-    assert re.search(r"const WHY = \{\s*\n\s*size:", body)
+    # Shipped from `_TABLE_WHY`, whose keys ARE `_TABLE_DERIVED`. Written out again
+    # in the script, a fifth derived column would arrive with no class and refuse
+    # with `undefined` — a cell that will not be edited and will not say why.
+    from openproj.render import _TABLE_DERIVED
+
+    why = json.loads(re.search(r"const WHY = (\{.*?\});", body, re.S).group(1))
+    assert set(why) == set(_TABLE_DERIVED)
+    assert all(sentence.strip() for sentence in why.values())
     assert "data-why=\"${esc(WHY[key])}\"" in body
     # Through `announce`, so the refusal reaches somebody who cannot see the bar
     # it is drawn in — and from Enter as well as from a double-click.

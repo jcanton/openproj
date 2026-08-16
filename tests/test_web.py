@@ -1308,6 +1308,28 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
         assert "disabled" in attrs, entity_id
 
 
+def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
+    """It carried `class="table-scroll"` against a stylesheet that has never held
+    the rule — a class doing nothing, which reads to the next person as a layout
+    they must not disturb.
+
+    Wiring it would have been worse than leaving it inert: every appetite,
+    assignees and reviewers box in this table opens a suggestion popup that
+    `attachSuggest` inserts as the input's own next sibling, so an `overflow` on
+    an ancestor cuts the list off against the bottom of the table on the last
+    rows. A page that scrolls sideways is a nuisance; an autocomplete cut in half
+    looks broken.
+    """
+    page = client.get("/cycle/37").text
+
+    assert 'class="table-scroll"' not in page
+    # The class still exists, on the one table with a sticky header to hold up.
+    assert 'class="table-scroll"' in client.get("/").text
+    assert re.search(r'<input class="live wide" data-field="assignees"[^>]*data-suggest', page), (
+        "and this is the reason: the popups live inside the cells"
+    )
+
+
 def test_the_cycle_page_puts_the_forecast_next_to_the_capacity(client: TestClient):
     """A green bar beside a timeline running a month past the cycle is the failure
     that stops a room trusting the tool, and the two come from different
@@ -1660,6 +1682,37 @@ def test_the_preview_shows_what_the_page_will_show(client: TestClient):
     assert f'<img src="/{path}"' in stored
     assert '<a href="https://example.com/b.png">b (external image)</a>' in previewed
     assert "https://github.com/C2SM/icon4py/pull/1364" in previewed
+
+
+def test_the_preview_renders_with_the_page_s_own_markdown(client: TestClient):
+    """It built a second MarkdownIt, and the second one disagreed with `_MD` about
+    both of the things it had been taught: tables were not enabled, so a table
+    previewed as a wall of pipes and rendered as a table once saved, and it did
+    not drop the leading heading that only restates the title — so the preview
+    showed a heading the saved page suppresses. Preview is the one place somebody
+    checks a document before committing it; a preview that is wrong about the page
+    is worse than no preview.
+    """
+    body = "# Bubble\n\n| field | weeks |\n|---|---|\n| appetite | 6 |\n"
+
+    previewed = client.post(
+        "/api/preview", json={"body": body, "title": "Bubble"}
+    ).json()["html"]
+
+    assert "<table>" in previewed, "the same tables the saved page renders"
+    assert "<h1>Bubble</h1>" not in previewed, "and the same repeated title dropped"
+    # Without a title nothing is dropped: the heading is only a repetition when
+    # there is something for it to repeat.
+    assert "<h1>Bubble</h1>" in client.post("/api/preview", json={"body": body}).json()["html"]
+
+
+def test_both_editors_send_the_title_they_are_previewing(client: TestClient):
+    """The title that decides whether the document's own first heading is a
+    repetition is the one in the box, not the one in the repository — the same
+    Save is about to change it."""
+    for page in (client.get(f"/detail/{TASK}").text, client.get("/new?kind=pitch").text):
+        assert "const TITLED = document.querySelector('.title-field');" in page
+        assert "body: JSON.stringify({body: BODY.value, title: TITLED.value})" in page
 
 
 def test_the_preview_still_refuses_html(client: TestClient):

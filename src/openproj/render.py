@@ -29,7 +29,7 @@ from markupsafe import Markup
 from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
-from .model import Config, Cycle, Entity, Pitch, Project, Task, size_weeks
+from .model import Config, Cycle, Entity, Pitch, Project, Task, required_at, size_weeks
 
 
 def _static_dir() -> Path:
@@ -176,17 +176,47 @@ def _row(index: Index, entity_id: str) -> dict:
     }
 
 
-# Columns the table shows that are computed rather than owned. `size` is the least
-# obvious: it shows effort_weeks *or an assumed default*, so a control on it would
-# let somebody commit the assumption without meaning to.
-_TABLE_DERIVED = ("size", "start", "end", "blocked_by")
+# Columns the table shows that are computed rather than owned, each with what the
+# cell answers when somebody tries to edit it. `size` is the least obvious: it
+# shows effort_weeks *or an assumed default*, so a control on it would let
+# somebody commit the assumption without meaning to.
+#
+# The names and the sentences are one map because they were two: the script
+# carried its own literal list of four, so a fifth derived column would have kept
+# its editor open and refused with `undefined`. A cell that will not be edited and
+# will not say why is indistinguishable from a cell that is broken.
+_TABLE_WHY = {
+    "size": "Derived from the pitch appetite or the task effort, and from the default "
+    "when neither is set.",
+    "start": "Derived from assigned_on, from what blocks it, and from what the people "
+    "on it are already doing.",
+    "end": "Derived from the start and the appetite.",
+    "blocked_by": "Counted from depends_on.",
+}
+_TABLE_DERIVED = tuple(_TABLE_WHY)
+
+# Every column the table draws, in the order it draws them, and whether it sorts.
+# One list rather than three: the header row, the `keys` the cells are built from
+# and the width the empty row spans were a Jinja loop and two JavaScript literals
+# that had to be edited together, with a comment saying so. Nothing enforced it,
+# and index-parallel lists that drift shift every cell one column left. The word
+# in each header comes from LABELS, so the column and the facet naming the same
+# field cannot be given two different words.
+_TABLE_COLUMNS = (
+    ("id", True), ("title", True), ("priority", True), ("status", True),
+    ("owner", True), ("assignees", True), ("reviewers", True), ("cycle", True),
+    ("size", True), ("start", True), ("end", True), ("blocked_by", True),
+    ("prs", False), ("tags", False),
+)
 
 
 def _payload(index: Index) -> dict:
     return {
         "rows": {i: _row(index, i) for i in index.entities},
-        "facets": index.facets,
-        "predicates": list(index.facets["predicate"]),
+        # No `facets` and no `predicates`: the control bar is server-rendered from
+        # `index.facets` and the script reads its own `<select>`s, so both keys
+        # were the whole facet index inlined into every table page and read by
+        # nothing. Two tests had grown to protect the weight.
         # Flat, exactly as the validator produced them, and grouped by the page.
         # Grouped here as well, the table would have carried two copies of one
         # aggregation — the one rendered into the rows and the one it has to
@@ -586,7 +616,15 @@ try {
    tunnel can take away, tests/test_render.py asserts no page reaches the network,
    and the static export has to work from file:// where a relative font URL
    resolves against whatever directory somebody dropped the page in. One variable
-   file covers 100..900, so this is 48 KB for every weight the app uses. */
+   file covers 100..900, so this is 48 KB for every weight the app uses.
+
+   Inter, Copyright 2016 The Inter Project Authors, https://github.com/rsms/inter
+   SIL Open Font License 1.1 — full text in static/inter-LICENSE.txt, and the file
+   this is the base64 of is static/inter-latin-wght-normal.woff2, checksummed in
+   static/SHA256SUMS. The licence obliges the notice to travel with the font, and
+   every one of these pages IS a copy of the font: the bytes are in the data: URI
+   below, so a page handed to somebody on a memory stick has redistributed it. The
+   notice therefore has to be in the page and not only in the repository. */
 @font-face {
   font-family: "Inter var";
   font-style: normal;
@@ -747,6 +785,14 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
 .hint { color: var(--muted); font-size: 12px; }
 .empty { color: var(--empty); }
 .num { font-variant-numeric: tabular-nums; }
+/* The two lines every view writes about itself: the count under the controls of
+   what is on screen, and the place a refusal or a receipt is written into. Four
+   pages drew `#summary` and three drew `#state`, and the copies had already come
+   apart — the table's summary was the one that never got the margin or the size
+   the other three share, so this is theirs. `#shown` was three copies of `.num`
+   under a different name; it wears `.num` now. */
+#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
+#state { color: var(--muted); font-size: 12px; }
 /* One meter for the whole app: weeks bet against weeks available. It was a rule
    on the cycle page until the cycles index and then the people page needed the
    same picture, and a second copy of a meter is two meters that disagree about
@@ -1017,17 +1063,20 @@ source.onmessage = event => {
 </body></html>
 """
 
+# The control bar, for every view that filters something. The field list is a
+# parameter because the people page filters by role, kind and status while the
+# plan's three views filter by nine fields and a flag — and that page used to
+# draw the whole bar again by hand, which is how a search box comes to be labelled
+# on one page and not on the next.
 _FACETS = """
 <div id="controls">
   {#- A placeholder is not a name: it is gone the moment anything is typed, and
       it never reaches the accessibility tree as one. Every dropdown beside this
       box is wrapped in its `<label>`; the search box was the one control in the
       bar that had nothing to say what it searches. -#}
-  <input id="q" type="search" aria-label="Search title, tags, body"
-         placeholder="Search title, tags, body">
+  <input id="q" type="search" aria-label="{{ search }}" placeholder="{{ search }}">
   <div class="facets">
-  {% for field in ['kind','priority','status','owner','assignees','reviewers',
-                   'cycle','project','tags'] %}
+  {% for field in fields %}
   <label class="facet">{{ label(field) }}
     <select data-field="{{ field }}"><option value="">all</option>
       {% for value in facets.get(field, []) %}
@@ -1035,14 +1084,17 @@ _FACETS = """
     </select>
   </label>
   {% endfor %}
-  <label class="facet">{{ label('predicate') }}
-    <select data-field="predicate"><option value="">all</option>
-      {% for p in predicates %}<option value="{{ p }}">{{ p|human }}</option>{% endfor %}
-    </select>
-  </label>
   </div>
 </div>
 """
+
+# The plan's own filters, in the order the bar draws them. `predicate` is last and
+# is a field like any other here: its values are `index.facets["predicate"]`, so
+# the select it needs is the select every other field gets.
+_PLAN_FACETS = (
+    "kind", "priority", "status", "owner", "assignees", "reviewers",
+    "cycle", "project", "tags", "predicate",
+)
 
 # The filter model itself, shared by every view that offers the bar above. The
 # README has always said three views filter the same plan the same way; while
@@ -1138,7 +1190,7 @@ _TABLE = """
     }}</strong> <span id="blocker-word">blocking problem{{
     "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
     "entity" if blocked == 1 else "entities" }}{% endif %}</span></a> ·
-  <span id="shown">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
+  <span id="shown" class="num">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
 </div>
 {{ facets|safe }}
 {#- role="grid" only where the cells are editable. It is a claim about who owns
@@ -1151,16 +1203,13 @@ _TABLE = """
       columns that cannot be sorted have no button, which is the difference said
       out loud. data-col names the field the column stands for, so the narrow
       breakpoint and the sticky rules pick columns by name rather than by
-      counting them. -#}
-  {% for column, header, sortable in [
-      ('id', 'id', true), ('title', 'title', true), ('priority', 'priority', true),
-      ('status', 'status', true), ('owner', 'owner', true), ('assignees', 'assignees', true),
-      ('reviewers', 'reviewers', true), ('cycle', 'cycle', true), ('size', 'appetite', true),
-      ('start', 'start', true), ('end', 'end', true), ('blocked_by', 'blockers', true),
-      ('prs', 'prs', false), ('tags', 'tags', false)] %}
+      counting them — and so does the remembered width, which is why the header
+      word is free to be the reader's word rather than the field's. -#}
+  {% for column, sortable in columns %}
   {%- if sortable %}<th data-col="{{ column }}" data-sort="{{ column }}" aria-sort="none"
-    ><button type="button">{{ header }}<span class="dir" aria-hidden="true"></span></button></th>
-  {%- else %}<th data-col="{{ column }}">{{ header }}</th>{% endif %}
+    ><button type="button">{{ label(column) }}<span class="dir"
+      aria-hidden="true"></span></button></th>
+  {%- else %}<th data-col="{{ column }}">{{ label(column) }}</th>{% endif %}
   {%- endfor %}
 </tr></thead><tbody></tbody></table></div>
 {% if editable %}
@@ -1203,10 +1252,11 @@ const human = value => HUMAN[value] ?? (value ?? '');
 const esc = value => String(value ?? '').replace(/[&<>"]/g,
   c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
-// Index-parallel with the header row above. Nothing enforces that at runtime,
-// so the two are edited together or every cell shifts one column left.
-const keys = ['id','title','priority','status','owner','assignees','reviewers','cycle',
-              'size','start','end','blocked_by','prs','tags'];
+// The same list the header row above was drawn from, emitted rather than
+// retyped: these were two literals that had to stay index-parallel, with a
+// comment asking whoever edited one to remember the other, and nothing enforcing
+// it at runtime. One column out of step shifts every cell one column left.
+const keys = {{ columns|map(attribute=0)|list|tojson }};
 
 // Which column carries a complaint about a field the table has no column for.
 // Anything still unplaced falls to the id cell, because a row that says
@@ -1279,14 +1329,10 @@ function stored(row, key) {
 // Why a computed column refuses a double-click. A cell that silently ignores one
 // is indistinguishable from a cell that is broken, and every one of these is the
 // scheduler's output: typing over a forecast is how a plan stops being believed.
-const WHY = {
-  size: 'Derived from the pitch appetite or the task effort, and from the default '
-    + 'when neither is set.',
-  start: 'Derived from assigned_on, from what blocks it, and from what the people '
-    + 'on it are already doing.',
-  end: 'Derived from the start and the appetite.',
-  blocked_by: 'Counted from depends_on.',
-};
+// Shipped from `_TABLE_WHY`, which is also the list of columns the payload
+// withholds an editor for — written out again here, a fifth derived column would
+// have arrived with no class and no sentence.
+const WHY = {{ why|tojson }};
 
 function tagsHtml(list) {
   const tags = (list || []).map(esc);
@@ -1702,10 +1748,12 @@ const headers = [...table.querySelectorAll('th')];
 // every row that holds that value.
 const WRAPS = new Set(['prs', 'tags']);
 
-// A column's identity is its sort key, or its label where it has none. It used
-// to be the column's POSITION for those two, so inserting a column anywhere to
-// their left silently handed prs the width somebody had dragged for blockers.
-const keyOf = (th, i) => th.dataset.sort || th.textContent.trim();
+// A column's identity is the field it stands for. It used to be the column's
+// POSITION for the two that do not sort, so inserting a column anywhere to their
+// left silently handed prs the width somebody had dragged for blockers — and
+// then it was the header's own text, which tied a remembered width to the word
+// printed above it rather than to the column.
+const keyOf = th => th.dataset.col;
 const FLOOR = 110;      // narrower than this and a wrapping column is unreadable
 const LONGEST = 200;    // and this is as far as the borrowing may squeeze a sentence
 
@@ -1731,7 +1779,7 @@ function fitWidths() {
   const scroll = table.parentElement;
   const natural = naturalWidths();
 
-  const wrapping = headers.map(th => WRAPS.has(keyOf(th, 0)));
+  const wrapping = headers.map(th => WRAPS.has(keyOf(th)));
   const fixed = natural.map((w, i) => wrapping[i] ? 0 : Math.ceil(w * 1.1));
   let spare = scroll.clientWidth - fixed.reduce((a, b) => a + b, 0);
 
@@ -1754,7 +1802,7 @@ function fitWidths() {
   const share = natural.filter((w, i) => wrapping[i]).reduce((a, b) => a + b, 0) || 1;
   const extra = Math.max(0, spare - FLOOR * wrapping.filter(Boolean).length);
   headers.forEach((th, i) => {
-    const key = keyOf(th, i);
+    const key = keyOf(th);
     WIDTHS[key] = wrapping[i] ? FLOOR + Math.floor(extra * natural[i] / share) : fixed[i];
   });
   applyWidths();
@@ -1764,12 +1812,12 @@ function applyWidths() {
   if (!Object.keys(WIDTHS).length) return;
   table.style.tableLayout = 'fixed';
   let total = 0;
-  headers.forEach((th, i) => {
+  headers.forEach(th => {
     // A column the narrow breakpoint dropped is not part of the total. Counted
     // in, the table is set wider than the columns it actually draws and the last
     // one floats away from the right edge of nothing.
     if (th.offsetParent === null) { th.style.width = ''; return; }
-    const key = keyOf(th, i);
+    const key = keyOf(th);
     if (WIDTHS[key]) { th.style.width = WIDTHS[key] + 'px'; total += WIDTHS[key]; }
   });
   // The table stops being 100% wide once the columns are explicit. Left at 100%,
@@ -1797,7 +1845,7 @@ headers.forEach((th, i) => {
   // one line — the width you would have dragged to, without the dragging.
   grip.ondblclick = event => {
     event.stopPropagation();
-    const key = keyOf(th, i);
+    const key = keyOf(th);
     WIDTHS[key] = Math.ceil(naturalWidths()[i]);
     localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
     applyWidths();
@@ -1810,12 +1858,12 @@ headers.forEach((th, i) => {
     dragging = true;
     grip.classList.add('dragging');
     // Freeze every column first, or resizing one reflows all the others.
-    headers.forEach((other, j) => {
-      const key = keyOf(other, j);
+    headers.forEach(other => {
+      const key = keyOf(other);
       WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
     });
     table.style.tableLayout = 'fixed';
-    const key = keyOf(th, i);
+    const key = keyOf(th);
     const from = event.clientX;
     const was = WIDTHS[key];
     const move = e => {
@@ -1862,11 +1910,14 @@ addEventListener('resize', () => { applyWidths(); stickyOffset(); });
 """
 
 _TABLE_STYLE = """
-/* Where a refused save and a refused edit both answer. It stays on screen
-   because the rows scroll inside their own box rather than scrolling the page
-   out from under the bar that is talking to you. */
-#state { color: var(--muted); font-size: 12px; }
-#summary { color: var(--muted); }
+:root {
+  /* Everything stacked above the rows: the nav, the heading, the edit bar, the
+     summary line and the facet bar. Named, because the number is a measurement
+     of that stack and not a taste — it grew from 13rem when the page gained a
+     heading, and at 13rem the box ran past the bottom of the window and the page
+     scrolled the sticky header out of reach. */
+  --above-rows: 15rem;
+}
 /* The whole phrase, not the digit: "1 blocking problems" in danger red with the
    count black beside it read as two separate facts. And the colour has to mean
    something — at zero it is muted, because danger nobody can act on is danger
@@ -1876,12 +1927,14 @@ _TABLE_STYLE = """
 #blockers.none { color: var(--muted); }
 /* The table body scrolls in here rather than in the page. `position: sticky` on
    a header needs a scroll container to hold against, and a container the height
-   of its own content gives `top: 0` nothing to do. */
-/* The stack above the rows: nav, heading, edit bar, summary, facets. Grown by
-   the heading the page did not use to have — left at 13rem the box ran past the
-   bottom of the window, and the page scrolled the sticky header out of reach. */
-.table-scroll { overflow: auto; max-height: calc(100vh - 15rem); min-height: 9rem;
-                overscroll-behavior: contain; }
+   of its own content gives `top: 0` nothing to do.
+   This page and no other, which is why the rule is not in the shell: the cycle
+   page's bet table wore the class with no rule behind it, and sharing the
+   overflow with it would have clipped the suggestion popups its cells open —
+   `attachSuggest` inserts the list as the input's own next sibling, so an
+   `overflow` on any ancestor cuts it off. That table lost the class instead. */
+.table-scroll { overflow: auto; max-height: calc(100vh - var(--above-rows));
+                min-height: 9rem; overscroll-behavior: contain; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td {
   border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left;
@@ -1919,8 +1972,11 @@ thead th {
                      background: var(--surface); box-shadow: 1px 0 0 var(--line); }
 thead [data-col="id"], thead [data-col="title"] { z-index: 4; }
 thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line); }
-/* After the sticky rules and at the same weight, or a problem in the id or the
-   title column loses its ground to the sticky one. */
+/* One weight heavier than the sticky rules above — an element and a class beats
+   a bare attribute selector — so a problem in the id or the title column keeps
+   its ground. It is the specificity that does it and not the order: written the
+   other way up these would still win, and the comment that said "after the
+   sticky rules" was describing a cascade nothing depends on. */
 td.sev-cell-blocker { background: var(--sev-blocker-soft); }
 td.sev-cell-warn { background: var(--sev-warn-soft); }
 /* Editable and derived cells looked identical, and the only thing that said
@@ -1960,15 +2016,6 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 
 _GRAPH = """
 <h1>Graph</h1>
-{% if editable %}
-<p class="editbar">
-  <button type="button" id="connect">Edit dependencies</button>
-  <button type="button" id="save" hidden>Save</button>
-  <button type="button" id="discard" hidden>Reset</button>
-  <span id="state" role="status"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</p>
-{% endif %}
 <p class="hint" id="panhint">Double-click a node to open it. Drag to pan, scroll to zoom,
   drag a node to move it.</p>
 {% if editable %}
@@ -1987,16 +2034,32 @@ _GRAPH = """
     >{{ status|human }}</li>
   {% endfor %}
 </ul>
-<div id="summary"><span id="shown">{{ total }}</span> of {{ total }} shown<span
+<div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
   id="context"></span></div>
 <div class="canvas">
   <div id="cy"></div>
+  {#- Written by the script, because which emptiness this is is not known until
+      the payload has been parsed and the filter has run. -#}
   <div id="nothing" hidden>
-    <p class="headline">No entity matches these filters.</p>
-    <p class="hint">Every node is filtered out by the controls above.</p>
-    <button type="button" id="clear-filters">Clear filters</button>
+    <p class="headline"></p>
+    <p class="hint"></p>
+    <button type="button" id="clear-filters" hidden>Clear filters</button>
   </div>
 </div>
+{% if editable %}
+{#- Under the canvas it writes to, like every other page's primary action: Create,
+    Edit and Save the setup all moved below their forms and the graph was the
+    fourth page with one. Sticky as well as last, because the drawing you are
+    committing is 78vh tall and a Save at the far end of it is a Save you go
+    looking for while holding an unsaved decision in your head. -#}
+<div class="commitbar" id="commitbar">
+  <button type="button" id="connect">Edit dependencies</button>
+  <button type="button" id="save" hidden>Save</button>
+  <button type="button" id="discard" hidden>Reset</button>
+  <span id="state" role="status"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</div>
+{% endif %}
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
 <script>@@dagre.min.js@@</script>
@@ -2004,6 +2067,17 @@ _GRAPH = """
 {{ filters|safe }}
 <script>
 cytoscape.use(cytoscapeDagre);
+
+// A payload that did not survive the trip is a third kind of empty, and an empty
+// canvas looks the same whichever one it is: a bordered box with nothing in it,
+// which reads as a graph that failed to draw. Parsed defensively so the page can
+// tell the three apart — without the guard a truncated payload threw here and
+// took the whole script with it, leaving the box and no explanation at all.
+let ELEMENTS = null;
+try {
+  ELEMENTS = JSON.parse(document.getElementById('elements').textContent);
+} catch (error) { ELEMENTS = null; }
+const LOADED = ELEMENTS !== null;
 
 // Read from the stylesheet rather than repeated here, so one token set decides
 // what a status looks like on the timeline, in the table and on this canvas.
@@ -2053,7 +2127,7 @@ const LAYOUT = {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70};
 
 const cy = cytoscape({
   container: document.getElementById('cy'),
-  elements: JSON.parse(document.getElementById('elements').textContent),
+  elements: ELEMENTS || [],
   layout: LAYOUT,
   // Filtering re-fits what is left to the window, and two boxes fitted to a
   // 1400px canvas came out at nearly 3x — the same graph reading as a different
@@ -2176,6 +2250,32 @@ route();
 // canvas — which, by construction, every edge of a matching node is.
 let laidOut = cy.nodes().map(node => node.id()).sort().join(',');
 
+const NOTHING = document.getElementById('nothing');
+const CLEAR = document.getElementById('clear-filters');
+
+// Three ways for a canvas to be empty, and they drew one picture. Which one it
+// is decides what to do next, so the box says which one it is — the same three
+// sentences the table gives, because it is the same three facts about the same
+// plan. Only the filtered one offers a way out: there is nothing to clear when
+// the plan is empty or the payload never arrived.
+function drawNothing() {
+  let headline = 'No entity matches these filters.';
+  let detail = 'Every node is filtered out by the controls above.';
+  let clearable = true;
+  if (!LOADED) {
+    headline = 'The plan could not be loaded.';
+    detail = 'This page arrived without its data, so there is nothing to draw or filter.';
+    clearable = false;
+  } else if (!cy.nodes().length) {
+    headline = 'This plan has no entities yet.';
+    detail = 'Nothing has been pitched, shaped or scheduled.';
+    clearable = false;
+  }
+  NOTHING.querySelector('.headline').textContent = headline;
+  NOTHING.querySelector('.hint').textContent = detail;
+  CLEAR.hidden = !clearable;
+}
+
 function applyFilter() {
   const keep = new Set();
   cy.nodes().forEach(node => { if (matches(node.data())) keep.add(node.id()); });
@@ -2210,7 +2310,8 @@ function applyFilter() {
       (aside.size === 1 ? 'it' : 'them')
     : '';
   // An empty canvas is indistinguishable from a graph that failed to draw.
-  document.getElementById('nothing').hidden = keep.size > 0;
+  NOTHING.hidden = keep.size > 0;
+  if (!keep.size) drawNothing();
 
   // Only when the set actually changed: re-running dagre on every keystroke in
   // the search box moves every box under the hand that is typing.
@@ -2221,7 +2322,7 @@ function applyFilter() {
 }
 
 addEventListener('openproj:filter', applyFilter);
-document.getElementById('clear-filters').onclick = clearFilters;
+CLEAR.onclick = clearFilters;
 applyFilter();
 
 const CONNECT = document.getElementById('connect');
@@ -2371,9 +2472,6 @@ cy.on('tap', 'node', evt => {
 """
 
 _GRAPH_STYLE = """
-#state { color: var(--muted); font-size: 12px; }
-#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
-#shown { font-variant-numeric: tabular-nums; }
 .canvas { position: relative; }
 #cy { height: 78vh; border: 1px solid var(--line); }
 /* Over the canvas rather than instead of it: cytoscape measures its container
@@ -2435,7 +2533,7 @@ _TIMELINE = """
   <li><span class="swatch rule boundary"></span>a cycle closes</li>
   <li><span class="swatch band"></span>a cycle, build and cooldown</li>
 </ul>
-<div id="summary"><span id="shown">{{ t.bars|length }}</span> of {{ t.bars|length }}
+<div id="summary"><span id="shown" class="num">{{ t.bars|length }}</span> of {{ t.bars|length }}
   drawn{% if t.offscreen %} · {{ t.offscreen }} with no dates in this
   window{% endif %}</div>
 <div class="tl"{% if not t.bars %} hidden{% endif %}>
@@ -2735,8 +2833,6 @@ _TIMELINE_STYLE = """
 .tl-controls .button.primary { background: var(--accent); border-color: var(--accent);
                                color: var(--on-accent); }
 .tl-controls .button.primary:hover { color: var(--on-accent); opacity: .9; }
-#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
-#shown { font-variant-numeric: tabular-nums; }
 /* The three markings, drawn the way the plot draws them: a hatch over a real
    status fill, an outline, a rule. A legend that redraws a mark in its own way
    is a legend that can be wrong about the picture beside it — which is how the
@@ -2754,8 +2850,12 @@ _TIMELINE_STYLE = """
 .labels .row {
   /* Fixed, not min: the row carries a clipped title and a clipped-off sentence
      of what the bar draws, and the second one must not add a pixel of height —
-     every row here lines up with a bar 22px down the plot beside it. */
-  height: 22px; line-height: 22px; font-size: 11px; color: var(--muted);
+     every row here lines up with the bar the scheduler placed beside it. Written
+     from `_ROW_PX`, which is the number the plot is laid out with: as a literal
+     it was a third copy, and one that would only ever be found by noticing that
+     the labels had drifted a row out of step halfway down a long plan. */
+  height: {{ row_px }}px; line-height: {{ row_px }}px; font-size: 11px;
+  color: var(--muted);
   padding: 0 .5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .scroll { overflow-x: auto; flex: 1 1 auto; min-width: 0; }
@@ -2814,6 +2914,18 @@ text.bar-glyph { font-family: var(--font-sans); font-size: 9px; font-weight: 700
 #tip .guess { color: var(--muted); font-style: italic; }
 #tip .tip-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
 """
+
+
+def _timeline_css() -> str:
+    """The timeline's whole stylesheet: the written half and the two derived ones.
+
+    Rendered rather than concatenated because one rule in it is geometry the
+    server already decided — the label column's row height has to be `_ROW_PX` or
+    the names walk out of step with the bars they name, one pixel per row.
+    """
+    return (
+        _ENV.from_string(_TIMELINE_STYLE).render(row_px=_ROW_PX) + _status_paint_css()
+    )
 
 
 def _status_paint_css() -> str:
@@ -3213,6 +3325,12 @@ function read(control) {
 const PREVIEW = document.getElementById('preview');
 const DOC = document.querySelector('.doc');
 const BODY = FORM.querySelector('[name=body]');
+// The box holding the title, for the preview: the page suppresses the document's
+// own leading heading when it repeats the title, and a preview that does not know
+// the title cannot suppress it. Found by class rather than through the form,
+// because on the create page the title sits outside `<form>` and is bound to it
+// by a `form=` attribute — which `querySelector` on the form does not see.
+const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
 
 PREVIEW.onclick = async () => {
@@ -3222,9 +3340,12 @@ PREVIEW.onclick = async () => {
     PREVIEW.textContent = 'Preview the body';
     return;
   }
+  // The title goes with it: the page drops a leading heading that only restates
+  // the title, so a preview without one shows a heading the saved page will not.
+  // The title in the FORM, not the stored one — this same Save may change it.
   const response = await fetch('/api/preview', {
     method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: BODY.value}),
+    body: JSON.stringify({body: BODY.value, title: TITLED.value}),
   });
   DOC.innerHTML = (await response.json()).html;
   DOC.hidden = false;
@@ -3441,6 +3562,12 @@ const FORM = document.getElementById('edit');
 const ORIGINAL = {};
 const CONTROLS = [...FORM.querySelectorAll('[data-type]')];
 const BODY = FORM.querySelector('[name=body]');
+// The box holding the title, for the preview: the page suppresses the document's
+// own leading heading when it repeats the title, and a preview that does not know
+// the title cannot suppress it. Found by class rather than through the form,
+// because on the create page the title sits outside `<form>` and is bound to it
+// by a `form=` attribute — which `querySelector` on the form does not see.
+const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
 const DRAFT = `openproj:${FORM.dataset.id}`;
 
@@ -3528,9 +3655,12 @@ document.getElementById('preview').onclick = async () => {
   }
   // A round trip, not a second markdown implementation: two renderers disagree
   // eventually, and the one people trust would not be the one that gets committed.
+  // The title goes with it: the page drops a leading heading that only restates
+  // the title, so a preview without one shows a heading the saved page will not.
+  // The title in the FORM, not the stored one — this same Save may change it.
   const response = await fetch('/api/preview', {
     method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: BODY.value}),
+    body: JSON.stringify({body: BODY.value, title: TITLED.value}),
   });
   pane.innerHTML = (await response.json()).html;
   pane.hidden = false;
@@ -3679,7 +3809,6 @@ article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
 .meta code { font-family: var(--font-mono); font-size: 12px; }
 .back { margin: 0 0 .5rem; font-size: 12px; }
 .editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
-#state { color: var(--muted); font-size: 12px; }
 
 dl { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .45rem 1rem; margin: 1rem 0; }
 dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
@@ -3778,40 +3907,15 @@ STATUS_GLYPH = {
     "shelved": "−",         # parked, nothing moving
 }
 
-def _required_at() -> dict[str, tuple[str, ...]]:
-    """Which statuses demand each field, asked of the validator rather than copied.
-
-    An HTML `required` attribute cannot express this: what a form must hold depends
-    on the status chosen in that same form a moment ago. So the page carries the
-    gates itself — and the previous version of this map carried them as "the first
-    status that demands it", read cumulatively, which is not what the rules say.
-    `_status_problems` is a chain of `elif`: `done` wants a PR and forgives the
-    owner that `ready` insists on, deliberately, because migrated history often
-    cannot name who owned something in 2025. Read cumulatively the form refused to
-    create exactly the entity the server would have accepted.
-
-    Derived by running the validator's own gate over a blank entity of each kind at
-    each status and collecting the fields it names. It cannot drift from the rule
-    it mirrors, because it *is* the rule. It is still only a courtesy: the server's
-    answer is the truth, and `test_the_server_refusal_is_shown_and_not_swallowed`
-    is what says so.
-    """
-    from .model import _status_problems
-
-    gates: dict[str, list[str]] = {}
-    for kind, model in (("project", Project), ("pitch", Pitch), ("task", Task)):
-        for status in STATUSES:
-            blank = model(id=f"{PREFIX[kind]}-000000", kind=kind, title="", status=status)
-            for _, field, _, _ in _status_problems(blank):
-                if field and status not in gates.setdefault(field, []):
-                    gates[field].append(status)
-    return {field: tuple(statuses) for field, statuses in gates.items()}
-
-
 # Fields only one kind has, so the create form can hide the rest.
 KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
-REQUIRED_AT = _required_at()
+# The validator's own gate, asked rather than copied — and asked through the front
+# door. This module used to import `model._status_problems` at import time and run
+# the derivation itself, which put the shape of a problem tuple in the renderer's
+# hands; the derivation lives with the rule now, and `test_the_gates_are_the_
+# validator_s_own_and_not_a_second_copy` is what keeps it honest.
+REQUIRED_AT = required_at()
 
 # The reader's name for a field. `effort_weeks` and `appetite_weeks` are two
 # storage fields holding one quantity, and calling it Effort here, Appetite on the
@@ -4046,42 +4150,34 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
 
 
 def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
-    rows = []
-    for entity_id, entity in sorted(index.entities.items()):
-        span = index.spans.get(entity_id)
-        why = index.explanations.get(entity_id)
-        size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
-        rows.append(
-            {
-                "id": entity_id,
-                "title": entity.title,
-                "kind": entity.kind,
-                "status": entity.status,
-                "parent": entity.parent,
-                "owner": entity.owner,
-                "reviewers": entity.reviewers,
-                "review_waived": entity.review_waived,
-                "size_label": "Appetite",
-                "size": f"{size:g} weeks" + (" (assumed)" if defaulted else ""),
-                "assigned_on": entity.assigned_on,
-                "cycle": entity.cycle,
-                "span": f"{span.start} → {span.end}" if span else "—",
-                "overrun": (
-                    f"overruns cycle {entity.cycle} by {span.overruns_cycle_weeks:.1f} weeks"
-                    if span and span.overruns_cycle_weeks
-                    else ""
-                ),
-                "why": why.text if why else "",
-                "blocked_by": _links(index.blocked_by[entity_id], index),
-                "blocks": _links(index.blocks[entity_id], index),
-                "parent_link": _links([entity.parent], index, links) if entity.parent else "",
-                "prs": ", ".join(_pr_link(ref) for ref in entity.prs),
-                "tags": entity.tags,
-                "problems": [p.message for p in index.problems if p.entity_id == entity_id],
-                "body": _body_html(entity, links),
-            }
-        )
-    return rows
+    """One entry per entity: what the page's own furniture needs, and nothing else.
+
+    Every fact this page prints comes from `_fact_rows`, which builds each line
+    with its value AND its control so the read view and the edit view cannot show
+    different things. This carried a second, read-only copy of thirteen of those
+    facts — a size, a span, an overrun, a why, blockers, blocks, PRs, tags — that
+    reached no template and no test after `_fact_rows` superseded them. A field
+    formatted in two places is a field that will be formatted two ways.
+    """
+    return [
+        {
+            "id": entity_id,
+            "title": entity.title,
+            "kind": entity.kind,
+            "status": entity.status,
+            # `parent` decides whether the meta line says "in" at all; the link is
+            # what it says. Both, because an id that is not in this plan still
+            # names a parent and `_links` renders it as itself.
+            "parent": entity.parent,
+            "parent_link": _links([entity.parent], index, links) if entity.parent else "",
+            # The index groups by status and names the owner beside each title, so
+            # those two are read before any one entity is opened.
+            "owner": entity.owner,
+            "problems": [p.message for p in index.problems if p.entity_id == entity_id],
+            "body": _body_html(entity, links),
+        }
+        for entity_id, entity in sorted(index.entities.items())
+    ]
 
 
 KINDS = ("project", "pitch", "task")
@@ -4285,7 +4381,13 @@ _CYCLE = """
 <p class="hint">Everything ready or in progress. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
   was bet in, so its overrun keeps counting.</p>
-<div class="table-scroll"><table id="bets" autocomplete="off"><thead><tr>
+{#- No `table-scroll` wrapper. It wore one from the day it was written, against a
+    stylesheet that has never carried the rule, so the class did nothing; and
+    giving it the rule is worse than leaving it inert, because every appetite,
+    assignees and reviewers box in here opens a suggestion popup that is inserted
+    as the input's own next sibling — an `overflow` on an ancestor cuts the list
+    off against the bottom of the table on the last rows. -#}
+<table id="bets" autocomplete="off"><thead><tr>
   <th>in {{ c.number }}</th><th>title</th><th>kind</th><th>status</th>
   <th>appetite</th><th>assignees</th><th>reviewers</th><th>bet in</th>
 </tr></thead><tbody>
@@ -4315,7 +4417,7 @@ _CYCLE = """
     <td class="derived">{{ row.cycle }}</td>
   </tr>
   {% endfor %}
-</tbody></table></div>
+</tbody></table>
 <div class="doc">{{ c.body|safe }}</div>
 {% if editable %}
 <div class="commitbar" id="commitbar">
@@ -4860,21 +4962,9 @@ _PEOPLE = """
   {%- else %} The weeks are cycle {{ load.cycle }}'s: what is bet on somebody there.
   That cycle has no record, so there is no availability to bet it against.
   {%- endif %}</p>
-<div id="controls">
-  <input id="q" type="search" aria-label="Search person, entity, id"
-         placeholder="Search person, entity, id">
-  <div class="facets">
-  {% for field in ['role', 'kind', 'status'] %}
-  <label class="facet">{{ label(field) }}
-    <select data-field="{{ field }}"><option value="">all</option>
-      {% for value in facets[field] %}
-      <option value="{{ value }}">{{ value|human }}</option>{% endfor %}
-    </select>
-  </label>
-  {% endfor %}
-  </div>
-</div>
-<div id="summary"><span id="shown">{{ people|length }}</span> of {{ people|length }} people</div>
+{{ facets|safe }}
+<div id="summary"><span id="shown" class="num">{{ people|length }}</span>
+  of {{ people|length }} people</div>
 {#- One table for the whole page. Fifteen tables meant fifteen headers, and a
     column of statuses that started at a different x for every person cannot be
     read down. The person is a group row inside it instead of a heading above a
@@ -4992,8 +5082,6 @@ apply();
 
 _PEOPLE_STYLE = """
 .hint { max-width: 46rem; font-size: 13px; }
-#summary { color: var(--muted); font-size: 13px; margin: .5rem 0 .25rem; }
-#shown { font-variant-numeric: tabular-nums; }
 #roles { border-collapse: collapse; width: 100%; max-width: 72rem; font-size: 13px; }
 #roles th, #roles td { border-bottom: 1px solid var(--line); padding: .3rem .5rem;
                        text-align: left; }
@@ -5068,7 +5156,6 @@ def _cycle_view(index: Index, number: int) -> dict:
     # the team list as a roster to correct. An empty table with an add box next
     # to it is a form nobody can tell is working.
     proposed = plan or Cycle(cycle=number, starts_on=window[0] if window else index.today)
-    build_weeks = proposed.build_weeks
     listed = list(plan.availability) if plan else list(index.known_people)
     ends_on = plan.ends_on.isoformat() if plan else (window[1].isoformat() if window else "")
 
@@ -5078,7 +5165,11 @@ def _cycle_view(index: Index, number: int) -> dict:
     people = []
     for login in sorted(listed, key=str.lower):
         rate = proposed.availability.get(login, nominal)
-        capacity = rate * build_weeks
+        # Asked of the cycle rather than multiplied out here. It was
+        # `rate * build_weeks`, which is `Cycle.capacity` written a second time —
+        # and the cycles index already asks the cycle, so the two pages computed
+        # one number two ways.
+        capacity = proposed.capacity(login, nominal)
         mine = [
             index.spans[i].end
             for i, e in index.entities.items()
@@ -5409,7 +5500,14 @@ def render_people(index: Index, links: Links = STATIC) -> str:
         for key in ("role", "kind", "status")
     }
     body = _ENV.from_string(_PEOPLE).render(
-        people=people, links=links, facets=facets, load=load, filters=_FILTER_JS
+        people=people,
+        links=links,
+        # The same bar the plan's three views draw, over this page's own three
+        # fields. Which hat somebody is wearing is not a field of an entity, so
+        # `role` is only ever offered here.
+        facets=_facets_html(facets, ("role", "kind", "status"), "Search person, entity, id"),
+        load=load,
+        filters=_FILTER_JS,
     )
     return _page("openproj — people", body, _PEOPLE_STYLE, links)
 
@@ -5469,16 +5567,20 @@ def render_detail(
     return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 
-def _facets_html(index: Index) -> str:
-    """The control bar, for any view that filters the plan.
+def _facets_html(
+    facets: dict,
+    fields: tuple[str, ...] = _PLAN_FACETS,
+    search: str = "Search title, tags, body",
+) -> str:
+    """The control bar, for any view that filters anything.
 
     One bar and one `matches()` in `_FILTER_JS`, rather than a copy per page: the
     table's dropdowns and the graph's have to mean the same thing, or a link
-    somebody pasted filters differently depending on which view it opens in.
+    somebody pasted filters differently depending on which view it opens in. The
+    people page had written its own, over its own three fields, and had already
+    drifted — same markup, a different search box.
     """
-    return _ENV.from_string(_FACETS).render(
-        facets=index.facets, predicates=list(index.facets["predicate"])
-    )
+    return _ENV.from_string(_FACETS).render(facets=facets, fields=fields, search=search)
 
 
 def _combobox_html(index: Index | None) -> str:
@@ -5511,16 +5613,24 @@ def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> s
     )
 
 
-def preview_html(body: str, links: Links = ROUTES) -> str:
-    """Markdown rendered for the preview pane, with HTML disabled.
+def preview_html(body: str, links: Links = ROUTES, title: str = "") -> str:
+    """Markdown rendered for the preview pane, exactly as the page will render it.
 
-    markdown-it-py leaves raw HTML alone by default. The body is written by
-    signed-in members and rendered back to every reader, so a script tag in a
-    shaping doc would run in everybody's browser.
+    `_MD` and not a second MarkdownIt: the one built here had tables switched off,
+    so a shaping doc's table previewed as a wall of pipes and then rendered as a
+    table once saved — the preview disagreeing with the page about the one thing
+    somebody opens a preview to check. HTML stays disabled in both, because the
+    body is written by signed-in members and rendered back to every reader, and
+    markdown-it-py leaves raw HTML alone by default.
+
+    The title is what the page drops from the top of the document when the doc
+    opens by restating it. Passed in rather than looked up, because a preview is
+    of the box in front of somebody, which is not what is committed yet — and
+    empty by default, which drops nothing.
 
     Routes by default: the only thing that asks for a preview is the server.
     """
-    return _after_markdown(MarkdownIt("commonmark", {"html": False}).render(body), links)
+    return _after_markdown(_MD.render(_drop_repeated_title(body, title)), links)
 
 
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
@@ -5536,7 +5646,9 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         editable=base_commit is not None,
         base_commit=base_commit or "",
         links=links,
-        facets=_facets_html(index),
+        columns=_TABLE_COLUMNS,
+        why=_TABLE_WHY,
+        facets=_facets_html(index.facets),
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
@@ -5556,7 +5668,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     body = _ENV.from_string(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        facets=_facets_html(index),
+        facets=_facets_html(index.facets),
         filters=_FILTER_JS,
         statuses=STATUSES,
         glyphs=STATUS_GLYPH,
@@ -5602,14 +5714,14 @@ def render_timeline(
         bar_px=_BAR_PX,
         bar_top=_BAR_TOP,
         glyph_dy=_GLYPH_DY,
-        facets=_facets_html(index),
+        facets=_facets_html(index.facets),
         filters=_FILTER_JS,
     )
     # The rows the shared `matches()` reads, for the bars that were drawn. Not the
     # whole plan: a bar that is not on this window cannot be filtered onto it.
     payload = {"rows": timeline["rows"], "human": HUMAN}
     body = body.replace("BARS_JSON", _json(payload))
-    return _page("openproj — timeline", body, _TIMELINE_STYLE + _status_paint_css(), links)
+    return _page("openproj — timeline", body, _timeline_css(), links)
 
 
 def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> None:

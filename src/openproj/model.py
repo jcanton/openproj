@@ -449,6 +449,35 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
         yield "blocker", "prs", "a done entity needs at least one PR", 1
 
 
+def required_at() -> dict[str, tuple[str, ...]]:
+    """Which statuses demand each field, derived from the gate rather than copied.
+
+    A form needs this and an HTML `required` attribute cannot express it: what the
+    form must hold depends on the status chosen in that same form a moment ago. So
+    the page carries the gates itself — and the map it used to carry was written by
+    hand as "the first status that demands it", read cumulatively, which is not
+    what the rules say. `_status_problems` is a chain of `elif`: `done` wants a PR
+    and forgives the owner that `ready` insists on, deliberately, because migrated
+    history often cannot name who owned something in 2025. Read cumulatively, the
+    form refused to create exactly the entity the server would have accepted.
+
+    Derived by running the gate over a blank entity of each kind at each status and
+    collecting the fields it names, so it cannot drift from the rule it mirrors —
+    it *is* the rule. It lives here rather than in `render.py`, which used to reach
+    across and import `_status_problems`: the fields a status demands are this
+    module's knowledge, and the page is only the thing that prints them. It is
+    still only a courtesy; the server's answer is the truth.
+    """
+    gates: dict[str, list[str]] = {}
+    for kind, model in (("project", Project), ("pitch", Pitch), ("task", Task)):
+        for status in STATUS_ORDER:
+            blank = model(id=f"{_PREFIX_FOR_KIND[kind]}-000000", kind=kind, title="", status=status)
+            for _, field, _, _ in _status_problems(blank):
+                if field and status not in gates.setdefault(field, []):
+                    gates[field].append(status)
+    return {field: tuple(statuses) for field, statuses in gates.items()}
+
+
 def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
     """A word nobody defined, named where it is rather than as a stack trace."""
     if entity.status not in STATUS_ORDER:

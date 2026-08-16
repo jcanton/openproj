@@ -375,9 +375,20 @@ def create_app(
         A second markdown implementation in JavaScript would eventually disagree
         with this one, and the renderer people trust would not be the one whose
         output gets committed.
+
+        The title comes with the body because the page drops a leading heading
+        that only restates it, and the title being previewed is the one in the
+        form — not the one in the repository, which the same Save is about to
+        change.
         """
         payload = await request.json()
-        return JSONResponse({"html": render.preview_html(payload.get("body") or "")})
+        return JSONResponse(
+            {
+                "html": render.preview_html(
+                    payload.get("body") or "", title=payload.get("title") or ""
+                )
+            }
+        )
 
     @app.get("/healthz")
     def healthz() -> dict:

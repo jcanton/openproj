@@ -128,8 +128,12 @@ def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, se
     scheduled = payload["rows"]["task-53a9f0"]
     assert scheduled["start"] == "2026-08-17"
     assert scheduled["derived"] is True
-    assert payload["facets"]["owner"] == seed_index.facets["owner"]
-    assert payload["predicates"] == list(seed_index.facets["predicate"])
+    # And nothing beyond what the script reads. `facets` and `predicates` were the
+    # whole facet index inlined into every table page for a control bar that is
+    # rendered by the server and re-read from its own `<select>`s — dead weight
+    # two assertions had grown up to protect.
+    assert "facets" not in payload
+    assert "predicates" not in payload
 
 
 def test_the_table_shows_a_persistent_blocker_count(rendered: Path, seed_index: Index):
@@ -233,14 +237,55 @@ def test_hiding_a_node_never_leaves_an_edge_pointing_at_nothing(rendered: Path):
     assert "selector: 'node.aside'" in graph
 
 
-def test_the_graph_says_when_it_is_drawing_nothing(rendered: Path):
-    """An empty canvas is indistinguishable from a graph that failed to draw."""
+def test_the_graph_says_which_of_the_three_emptinesses_it_is(rendered: Path):
+    """An empty canvas is indistinguishable from a graph that failed to draw, and
+    it was one hardcoded sentence saying the filters did it — which is the wrong
+    thing to do next in two of the three cases. The table has said which one it is
+    since F1; the graph is the fourth view and was left behind.
+
+    The parse guard is half of it: without it a payload that did not survive the
+    trip threw on `JSON.parse` and took the whole script with it, so the page that
+    could least afford to be silent was the one that said nothing at all.
+    """
     graph = read(rendered, "graph.html")
+    body = re.search(r"function drawNothing\(\) \{.*?\n\}", graph, re.S).group(0)
 
     assert 'id="nothing"' in graph
-    assert "No entity matches these filters." in graph
-    assert 'id="clear-filters"' in graph
     assert "#nothing[hidden] { display: none; }" in graph, "hidden loses to display:flex"
+    assert "No entity matches these filters." in body
+    assert "This plan has no entities yet." in body
+    assert "The plan could not be loaded." in body
+    # Only the filtered one offers a way out: there is nothing to clear when the
+    # plan is empty or the payload never arrived, and a Clear that clears nothing
+    # is how a control teaches people it is decoration.
+    assert body.count("clearable = false") == 2
+    assert "CLEAR.hidden = !clearable;" in body
+
+    assert re.search(r"try \{\s*\n\s*ELEMENTS = JSON\.parse", graph), "the payload may be truncated"
+    assert "const LOADED = ELEMENTS !== null;" in graph
+    assert "elements: ELEMENTS || []," in graph
+
+
+def test_the_graph_commits_below_the_canvas_like_every_other_page(
+    rendered: Path, seed_index: Index
+):
+    """F15 moved Create, Edit and Save the setup below the forms they commit; the
+    graph is the fourth page with a primary action and was missed, so Save for a
+    dependency sat above the 78vh canvas the dependency is drawn on.
+
+    Served rather than rendered: a static export has no server to write to, so it
+    has no action bar at all — which is the other half of the claim.
+    """
+    from openproj.render import ROUTES, render_graph
+
+    live = render_graph(seed_index, ROUTES, base_commit="deadbee")
+
+    assert '<p class="editbar">' not in live, "the bar it replaced"
+    assert live.index('id="commitbar"') > live.index('<div class="canvas">')
+    assert live.index('id="connect"') > live.index('id="cy"')
+    # The shell's bar, not a fourth one drawn by hand.
+    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", live, re.S)
+    assert 'id="commitbar"' not in read(rendered, "graph.html")
 
 
 def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
@@ -1296,6 +1341,45 @@ def test_the_vendored_face_is_the_one_that_was_checksummed():
     assert digest == sums[name].strip()
 
 
+def test_the_vendoring_note_covers_every_file_it_is_about():
+    """VENDOR.md was titled "Vendored JavaScript" and never mentioned the font that
+    had been sitting beside the scripts, so the one binary in the repository was
+    the one with no provenance written down.
+
+    Its update procedure was worse than incomplete: `shasum -a 256 *.js >
+    SHA256SUMS` truncates, so following it wrote three lines over four and deleted
+    the woff2's checksum — the instruction for keeping the files auditable was the
+    instruction that stopped them being auditable.
+    """
+    from openproj.render import _static_dir
+
+    static = _static_dir()
+    doc = (static / "VENDOR.md").read_text(encoding="utf-8")
+    listed = [
+        line.split(maxsplit=1)[1].strip()
+        for line in (static / "SHA256SUMS").read_text().splitlines()
+        if line.strip()
+    ]
+
+    for name in listed:
+        assert name in doc, f"{name} is checksummed and undocumented"
+    assert "*.js > SHA256SUMS" not in doc, "that command deletes the woff2's checksum"
+    assert "*.js *.woff2 > SHA256SUMS" in doc
+    assert "SIL Open Font License" in doc and "inter-LICENSE.txt" in doc
+
+
+def test_the_font_licence_travels_with_the_font(rendered: Path):
+    """Every page carries the whole face as a base64 `data:` URI, so every page IS
+    a copy of the font — a single exported HTML file handed to somebody has
+    redistributed it. The OFL asks the notice to travel with a copy, and a notice
+    that lives only in the repository does not travel with a page."""
+    for name in PAGES:
+        body = read(rendered, name)
+        assert "SIL Open Font License" in body, name
+        assert "The Inter Project Authors" in body, name
+        assert "inter-LICENSE.txt" in body, name
+
+
 def test_the_page_names_its_fonts_once(rendered: Path):
     """Two font stacks written out by hand drift the first time one is changed."""
     body = read(rendered, "index.html")
@@ -1305,6 +1389,100 @@ def test_the_page_names_its_fonts_once(rendered: Path):
     declarations = re.findall(r"font-family:\s*([^;]+);", style)
     for value in declarations:
         assert "var(--font-" in value or "Inter var" in value, value
+
+
+def test_the_furniture_every_page_shares_is_written_once(rendered: Path):
+    """`#summary` was defined on four pages and `#state` on three, and they had
+    already come apart: the table's summary alone was the page's own font size
+    with no margin under it, so the one line every view uses to say how much of
+    itself is on screen looked different on the view people use most.
+
+    `#shown` was three copies of `.num` under another name. It wears `.num`.
+    """
+    for name in PAGES:
+        style = re.search(r"<style>(.*?)</style>", read(rendered, name), re.S).group(1)
+        assert style.count("#summary {") == 1, name
+        assert style.count("#state {") == 1, name
+        assert "#shown {" not in style, name
+
+    for name in ("index.html", "graph.html", "timeline.html", "people.html"):
+        assert '<span id="shown" class="num">' in read(rendered, name), name
+
+
+def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
+    """Two facet bars, the same markup, one of them written out by hand over its
+    own three fields — and already drifted, because only one of the two search
+    boxes had been given a name when the other was. `_FACETS` takes the field list
+    as a parameter now, so there is one bar and the people page passes its own
+    fields through it.
+
+    `role` is only ever offered here: which hat somebody is wearing is not a field
+    of an entity, it is which field their name is in.
+    """
+    people, index = read(rendered, "people.html"), read(rendered, "index.html")
+    shape = (r'<div id="controls"><input id="q" type="search" aria-label="([^"]+)"'
+             r' placeholder="\1">\s*<div class="facets">')
+
+    for name, page in (("people", people), ("index", index)):
+        assert re.search(shape, page), name
+
+    assert re.findall(r'<select data-field="([^"]+)"', people) == ["role", "kind", "status"]
+    assert 'aria-label="Search person, entity, id"' in people
+    assert 'aria-label="Search title, tags, body"' in index
+
+
+def test_no_fact_is_formatted_for_the_detail_page_twice(seed_index: Index):
+    """`_fact_rows` builds each line of the facts list with its value AND its
+    control, so the read view and the edit view cannot show different things.
+    `_detail_rows` carried a second, read-only copy of thirteen of those facts — a
+    size, a span, an overrun, an explanation, blockers, blocks, PRs, tags — and
+    not one of them reached a template or a test after `_fact_rows` superseded
+    them. A field formatted in two places is a field formatted two ways, and the
+    dead copy is the one that goes on being maintained by accident.
+    """
+    from openproj.render import _DETAIL, _detail_rows
+
+    for key in _detail_rows(seed_index)[0]:
+        assert re.search(rf"\be\.{key}\b", _DETAIL), f"{key} is built and read by nobody"
+
+
+def test_the_labels_and_the_bars_are_laid_out_on_one_row_height(
+    seed_index: Index, monkeypatch: pytest.MonkeyPatch
+):
+    """The label column's rows have to be exactly as tall as the rows the plot is
+    drawn with, or the names walk out of step with the bars they name, one pixel
+    per row — a drift nothing catches until somebody reads a long plan and finds a
+    title against the wrong bar. It was `height: 22px` written into the stylesheet,
+    a third copy of `_ROW_PX`, so this moves the constant and asks both."""
+    from openproj import render
+
+    monkeypatch.setattr(render, "_ROW_PX", 30)
+    page = render.render_timeline(seed_index)
+
+    assert "height: 30px; line-height: 30px;" in page
+    ys = [int(y) for y in re.findall(r'<rect data-id="[^"]+"[^>]*\sy="(\d+)"', page, re.S)]
+    assert len(ys) > 2
+    assert sorted(ys)[1] - sorted(ys)[0] == 30, "the bars step by what the labels are tall"
+
+
+def test_the_renderer_asks_the_model_rather_than_reaching_into_it():
+    """`render` imported `model._status_problems` at import time to derive the
+    create form's required-field gates. A private name crossing a module boundary
+    is an interface nobody agreed to: the renderer had to know the shape of a
+    problem tuple to unpack it, so a change to the validator's own bookkeeping
+    would have broken a page. `model.required_at()` is the front door."""
+    from openproj import render
+
+    source = Path(render.__file__).read_text(encoding="utf-8")
+    # Comments dropped: this file explains what it stopped doing, and the point is
+    # that nothing executable reaches for the name any more.
+    code = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
+    )
+
+    assert "_status_problems" not in code
+    for imported in re.findall(r"^from \.model import (.+)$", code, re.M):
+        assert not re.search(r"\b_", imported), imported
 
 
 # --- tokens shared by every page --------------------------------------------
@@ -1583,7 +1761,9 @@ def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
     assert "Effort" not in read(rendered, "detail.html")
     index = read(rendered, "index.html")
     header = re.search(r'<th data-col="size"[^>]*>(.*?)</th>', index, re.S).group(1)
-    assert "appetite" in header and "weeks" not in header
+    # The header is now the label map's own word rather than a literal beside it,
+    # so this is the same assertion made of one source instead of two.
+    assert LABELS["size"] in header and "weeks" not in header.lower()
 
 
 def test_the_graph_repaints_rather_than_reloads_on_a_theme_change(rendered: Path):
@@ -1804,6 +1984,32 @@ def test_a_recorded_cycle_is_its_roster_and_nobody_else(demo_rendered: tuple[Pat
     assert 37 in index.plans
     assert logins == sorted(index.plans[37].availability, key=str.lower)
     assert set(index.known_people) - set(logins), "the demo team is larger than the cycle"
+
+
+def test_one_capacity_formula_answers_both_cycle_pages(demo_rendered: tuple[Path, Index]):
+    """Weeks a person can hold in a cycle is `Cycle.capacity`. The cycle page was
+    multiplying `rate * build_weeks` out itself while the cycles index asked the
+    cycle, so one number had two implementations — and the two pages showing it
+    beside each other would disagree the first time the definition acquired a
+    holiday, a part week or a floor.
+
+    Asked of every person on a real roster, at whatever rate they were recorded
+    at, because a formula that is only checked at 1.0 is a formula only checked
+    where every version of it agrees.
+    """
+    from openproj.render import _cycle_totals, _cycle_view
+
+    out, index = demo_rendered
+    plan = index.plans[37]
+    view = _cycle_view(index, 37)
+    page = read(out, "cycles.html")
+
+    assert {row["rate"] for row in view["people"]} - {1.0}, "the demo records real rates"
+    for row in view["people"]:
+        assert row["capacity"] == plan.capacity(row["login"], index.nominal_availability)
+    # And the card adds up exactly what the page's rows show, one roster, one sum.
+    assert _cycle_totals(index, 37)["capacity"] == sum(r["capacity"] for r in view["people"])
+    assert f'<b class="num">{_cycle_totals(index, 37)["capacity"]:.1f}</b>' in page
 
 
 def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[Path, Index]):
