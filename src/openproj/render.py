@@ -25,7 +25,7 @@ from pathlib import Path
 
 from jinja2 import Environment
 from markdown_it import MarkdownIt
-from markupsafe import Markup
+from markupsafe import Markup, escape
 from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
@@ -95,6 +95,14 @@ def _clip(text: str) -> str:
 # A status is a class, not a colour baked into the markup: the same rect has to
 # be one colour on a white ground and another on a dark one, and a `fill`
 # attribute written at render time cannot change when somebody flips the toggle.
+#
+# It is also the *only* way a status is allowed to reach a class attribute.
+# `status` is deliberately a permissive `str` — a file written before a
+# vocabulary change has to load and be reported, not take the index down — so it
+# holds whatever is in the file. Escaping it would have been enough to stop the
+# injection and would still have written `class="chip st-ready&#34; onmouseover"`
+# into the page; folding it to a rung of the ladder means an attribute that
+# names a rule the stylesheet actually has.
 def _status_class(status: str) -> str:
     return f"st-{status}" if status in STATUSES else "st-ready"
 
@@ -534,10 +542,18 @@ _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
 
-def _pr_link(ref: str) -> str:
-    """A dead PR reference teaches people the field is decorative."""
+def _pr_link(ref: str) -> Markup:
+    """A dead PR reference teaches people the field is decorative.
+
+    `Markup(...).format` and not an f-string. Called from `_after_markdown` the
+    reference has already been through the markdown escaper and is harmless;
+    called from the facts list it is `entity.prs`, which is free text a member
+    types and nothing validates, and an f-string put it straight into an `href`
+    and a link text. That is the whole of the difference between a decorative
+    field and a script that runs for everybody who opens the page.
+    """
     repo, _, number = ref.partition("#")
-    return f'<a href="https://github.com/{repo}/pull/{number}">{ref}</a>'
+    return Markup('<a href="https://github.com/{}/pull/{}">{}</a>').format(repo, number, ref)
 
 
 _REMOTE_IMG = re.compile(r'<img\s+src="(https?://[^"]+)"(?:[^>]*?alt="([^"]*)")?[^>]*>')
@@ -568,7 +584,7 @@ def _drop_repeated_title(body: str, title: str) -> str:
     return body[match.end() :].lstrip("\n") if same else body
 
 
-def _body_html(entity: Entity, links: Links = STATIC) -> str:
+def _body_html(entity: Entity, links: Links = STATIC) -> Markup:
     """The shaping document, rendered, with PR references made clickable.
 
     A remote image would make the page fetch from the network, which is exactly
@@ -582,22 +598,45 @@ def _body_html(entity: Entity, links: Links = STATIC) -> str:
     return _after_markdown(_MD.render(_drop_repeated_title(entity.body, entity.title)), links)
 
 
-def _after_markdown(html: str, links: Links) -> str:
+def _after_markdown(html: str, links: Links) -> Markup:
     """What every renderer does to markdown once it is HTML.
 
     One function because the preview has to show what the page will show. Written
     twice, the preview drew an uploaded image against the current URL — so a
     figure that renders fine on `/detail/task-x` was a broken image in the preview
     of that same document, which is the one place somebody checks it.
+
+    Everything here rewrites markup that markdown-it has *already* escaped —
+    `_MD` runs with `html: false`, so the body a member typed reached this
+    function as text — and the three patterns only match characters that survive
+    that escaping. Which is why these substitutions are the one place in the file
+    that composes markup without `Markup(...).format`: the input is not free
+    text, it is markdown-it's own output. `Markup` at the end says so, and is
+    what lets `{{ e.body }}` render without a `|safe` beside it.
     """
     html = _REMOTE_IMG.sub(
         lambda m: f'<a href="{m.group(1)}">{m.group(2) or "image"} (external image)</a>', html
     )
     html = _ASSET_IMG.sub(lambda m: f'<img src="{links.asset}{m.group(1)}"', html)
-    return _PR.sub(lambda m: _pr_link(m.group(0)), html)
+    return Markup(_PR.sub(lambda m: str(_pr_link(m.group(0))), html))
 
 
 _ENV = Environment(autoescape=True)
+
+
+def _fragment(template: str, **values: object) -> Markup:
+    """One rendered piece of a page, typed as the markup it is.
+
+    Autoescaping is only half a boundary while the pieces come back as `str`:
+    every page then had to write `{{ facets|safe }}`, and `|safe` on a variable
+    is a claim about whatever that variable holds *today*. `{{ row.display }}`
+    beside `{{ e.body }}` beside `{{ e.parent_link }}` all read alike and one of
+    them was a title somebody typed. With the fragments typed instead, a value
+    that is markup renders and a value that is not gets escaped — which is the
+    same rule for every page, enforced by the type rather than by remembering.
+    """
+    return Markup(_ENV.from_string(template).render(**values))
+
 
 _SHELL = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -945,6 +984,32 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 // those two messages a ReferenceError instead.
 const ANNOUNCE = document.getElementById('announce');
 
+// Stored text into markup, for every script on every page. Five of these pages
+// build markup by string concatenation out of a file in the plan repository,
+// and a title, a login, a tag and an id are all sentences somebody typed: `<`
+// opens a tag on everybody else's screen and `"` ends the attribute it is
+// sitting in. This lived in the table's script and again in the timeline's,
+// which is why the tooltip escaped the text of a chip and not the class beside
+// it, and why the combobox — in a third script that had no copy at all —
+// escaped nothing. One definition, declared before the content for the same
+// reason `announce` is: two classic scripts share one global scope, so a second
+// `const esc` anywhere on the page is a SyntaxError rather than a duplicate.
+//
+// Four characters and not five: `'` is never used to quote an attribute in this
+// file, and `&` has to be in the list or `&amp;` in a title comes back out as
+// `&` and the escaping is not idempotent.
+const esc = value => String(value ?? '').replace(/[&<>"]/g,
+  c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+// The ladder the stylesheet actually has rules for, and `_status_class` in
+// Python written once more in the language that draws the other half of these
+// chips. Escaping an unknown status would be enough to make it harmless and
+// would still put `class="chip st-&quot; onmouseover"` in the page: a class
+// attribute names a rule, so a status nobody has heard of gets the rung the
+// server would have given it rather than its own text.
+const STATUS_RUNGS = {{ statuses|tojson }};
+const stClass = status => STATUS_RUNGS.includes(status) ? `st-${status}` : 'st-ready';
+
 // `announce` and not `say`: two classic scripts on one page share one global
 // scope, and the graph and the cycle page each already own a `say`.
 function announce(message) {
@@ -1049,8 +1114,10 @@ function showMoved({commit, changed}) {
   const showing = window.SHOWING || (here ? [here] : []);
   const seen = changed.some(id => showing.includes(id));
   moved.hidden = false;
+  // The sha comes off a stream, so it is escaped like anything else that
+  // arrives from outside this script — a value nothing on this page validates.
   moved.innerHTML = (seen ? 'This was just changed by somebody else. ' : 'The plan changed. ')
-    + `<a href="">reload</a> <span class="sha">${commit.slice(0, 7)}</span>`;
+    + `<a href="">reload</a> <span class="sha">${esc(String(commit).slice(0, 7))}</span>`;
 }
 
 const source = new EventSource('/api/events');
@@ -1100,7 +1167,7 @@ _PLAN_FACETS = (
 # README has always said three views filter the same plan the same way; while
 # `matches` lived inside the table's script, that was true of one of them, and a
 # second copy of it is how a facet comes to mean something different per page.
-_FILTER_JS = """
+_FILTER_JS = Markup("""
 <script>
 const params = new URLSearchParams(location.search);
 
@@ -1169,7 +1236,7 @@ for (const select of document.querySelectorAll('select[data-field]'))
   select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
 syncFilters();
 </script>
-"""
+""")
 
 _TABLE = """
 <h1>Table</h1>
@@ -1192,7 +1259,7 @@ _TABLE = """
     "entity" if blocked == 1 else "entities" }}{% endif %}</span></a> ·
   <span id="shown" class="num">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
 </div>
-{{ facets|safe }}
+{{ facets }}
 {#- role="grid" only where the cells are editable. It is a claim about who owns
     the arrow keys — a screen reader hands them to the page inside a grid and
     keeps them for its own cursor inside a table — and on a rendered file there
@@ -1219,8 +1286,8 @@ _TABLE = """
 <div id="row-conflict" role="status" aria-live="polite" hidden></div>
 {% endif %}
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
-{% if editable %}{{ combobox|safe }}{% endif %}
-{{ filters|safe }}
+{% if editable %}{{ combobox }}{% endif %}
+{{ filters }}
 <script>
 // A payload that did not survive the trip is a third kind of empty, and it used
 // to look exactly like the other two: a header row over a void. A truncated
@@ -1243,14 +1310,9 @@ const FIELD_LABELS = DATA.labels;
 // renders, which beats a blank cell.
 const human = value => HUMAN[value] ?? (value ?? '');
 
-// Stored text into markup. Every row on this page is built by string
-// concatenation from a file in the plan repository, and a title is a sentence
-// somebody typed: `<` opens a tag on everybody else's screen and `"` ends the
-// attribute it is sitting in. One helper for cells and attributes both, and the
-// same four characters the timeline escapes — it is the same data, so it gets
-// the same care.
-const esc = value => String(value ?? '').replace(/[&<>"]/g,
-  c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+// `esc` comes from the shell, which declares it before this script runs. It was
+// declared here as well as in the timeline, and the third page that needed it —
+// the combobox, on four pages — had neither copy in scope.
 
 // The same list the header row above was drawn from, emitted rather than
 // retyped: these were two literals that had to stay index-parallel, with a
@@ -1342,6 +1404,11 @@ const WHY = {{ why|tojson }};
 // three merged PRs is 128px tall against a 50px row, so the column that sets the
 // height of the plan had simply moved one to the left. Any list in a cell has
 // this shape, so the clamp takes rendered pieces and the noun to count them by.
+//
+// `pieces` are already markup — a caller hands it `list.map(esc)` or
+// `list.map(prLink)` — which makes this the one function here that must NOT
+// escape what it is given. Everything it adds of its own is a literal or a
+// count, so nothing else on this line can carry stored text.
 function clamped(pieces, noun) {
   if (pieces.length < 2) return pieces.join('');
   const [first, ...rest] = pieces;
@@ -1363,7 +1430,7 @@ function shown(row, key) {
     return `<span class="chip kind-${esc(row.kind)}">${esc(human(row.kind))}</span>` +
       ` <span class="eid">${esc(row.id)}</span>`;
   if (key === 'status')
-    return `<span class="chip st-${esc(row.status)}">${esc(human(row.status))}</span>`;
+    return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
   if (key === 'tags') return clamped((value || []).map(esc), 'tag');
   return esc(stored(row, key));
@@ -1399,7 +1466,12 @@ function cell(row, key) {
   // times forty rows is 560 stops if every cell takes one, which is not a
   // keyboard path, it is a maze.
   const reachable = EDITABLE && (editable || key in WHY);
-  return `<td data-col="${key}"${editable ? ` data-entity="${row.id}" data-field="${key}"` : ''}` +
+  // `row.id` is escaped like anything else here. An id that fails its pattern is
+  // a *reported* blocker and not a refusal, so the entity still loads and still
+  // draws a row: one shaped `task-000001"><img src=x onerror=…>` put ten
+  // elements into the table body while the text beside them read correctly.
+  return `<td data-col="${key}"` +
+    `${editable ? ` data-entity="${esc(row.id)}" data-field="${key}"` : ''}` +
     `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
@@ -1415,7 +1487,7 @@ function rowHtml(row) {
   // read; the glyph in the cell says which thing. The message used to live only
   // in a native tooltip on the row, where it was found by accident or not at all.
   const worst = TROUBLE[row.id];
-  return `<tr data-id="${row.id}"${worst ? ` class="sev-row-${SEV_CLASS[worst]}"` : ''}>` +
+  return `<tr data-id="${esc(row.id)}"${worst ? ` class="sev-row-${SEV_CLASS[worst]}"` : ''}>` +
     keys.map(key => cell(row, key)).join('') + '</tr>';
 }
 
@@ -1621,12 +1693,14 @@ function openEditor(cell) {
   // to write `in progres` into the corpus. The option's value is the stored
   // identifier and its text is the word for it, so picking "In progress"
   // still writes `in_progress`.
+  // Every interpolation escaped, including the ones that are a closed set today.
+  // A rule with an exception in it is a rule nobody applies to the next line.
   cell.innerHTML = closed
     ? `<select data-type="text" aria-label="${named}">${closed.map(o =>
-        `<option value="${o}" ${o === was ? 'selected' : ''}>${human(o)}</option>`
+        `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>${esc(human(o))}</option>`
       ).join('')}</select>`
-    : `<input value="${esc(was)}" data-type="${EDITABLE[field]}" aria-label="${named}"` +
-      `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
+    : `<input value="${esc(was)}" data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
+      `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`;
   const input = cell.querySelector('select, input');
   // The table gets the autocomplete the detail page has. Suggestions that only
   // appear in one of the two places are suggestions nobody relies on.
@@ -2036,7 +2110,7 @@ _GRAPH = """
   it. Draw as many as you like; nothing is written until you press Save.
   <strong>Reset</strong> clears what you have drawn and stays in edit mode.</p>
 {% endif %}
-{{ facets|safe }}
+{{ facets }}
 {#- The one thing on this canvas that is not a word. Every swatch is the token
     the node is actually filled with and carries the glyph the node's title is
     prefixed with, so the legend cannot drift from the graph and it keys both
@@ -2077,7 +2151,7 @@ _GRAPH = """
 <script>@@cytoscape.min.js@@</script>
 <script>@@dagre.min.js@@</script>
 <script>@@cytoscape-dagre.js@@</script>
-{{ filters|safe }}
+{{ filters }}
 <script>
 cytoscape.use(cytoscapeDagre);
 
@@ -2500,7 +2574,7 @@ _GRAPH_STYLE = """
 
 _TIMELINE = """
 <h1>Timeline</h1>
-{{ facets|safe }}
+{{ facets }}
 <form class="tl-controls" method="get" action="{{ links.timeline }}">
   {#- Prefilled with the window on screen, not the one that was asked for. Two
       empty boxes under a sentence reading "Showing 2026-02-02 to 2026-11-27" ask
@@ -2649,7 +2723,7 @@ _TIMELINE = """
 </div>
 <div id="tip" role="tooltip" hidden></div>
 <script id="bars" type="application/json">BARS_JSON</script>
-{{ filters|safe }}
+{{ filters }}
 <script>
 const scroller = document.querySelector('.scroll');
 const svg = scroller.querySelector('svg');
@@ -2713,10 +2787,7 @@ scroller.onpointerup = () => { panning = null; scroller.style.cursor = ''; };
 
 const TIP = document.getElementById('tip');
 const human = value => (DATA && DATA.human[value]) || value;
-// A title comes out of a file in the plan repository and is written into markup
-// here, which is the one place on this page that turns stored text into HTML.
-const esc = text => String(text ?? '').replace(/[&<>"]/g,
-  c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+// `esc` is the shell's, declared once for every page. See `_SHELL`.
 const DASH = '<span class="empty">—</span>';
 
 function tipHtml(row) {
@@ -2730,11 +2801,17 @@ function tipHtml(row) {
     ['Appetite', row.weeks + (row.weeks === 1 ? ' week' : ' weeks')
       + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')],
     ['Scheduled', row.start && row.end
-      ? `<span class="num">${row.start}</span> to <span class="num">${row.end}</span>` : DASH],
+      ? `<span class="num">${esc(row.start)}</span> to <span class="num">${esc(row.end)}</span>`
+      : DASH],
   ];
+  // The class attributes are escaped too, and not only the words beside them.
+  // They were not: a status reading `ready" onmouseover=alert(1) x="` came back
+  // out of this line as a real event handler that fired on hover, on the one
+  // element of the box that a pointer is guaranteed to cross.
   return `<p class="tip-title">${esc(row.title)}</p>` +
-    `<p class="tip-chips"><span class="chip st-${row.status}">${esc(human(row.status))}</span> ` +
-    `<span class="chip kind-${row.kind}">${esc(human(row.kind))}</span></p>` +
+    `<p class="tip-chips"><span class="chip ${stClass(row.status)}">` +
+    `${esc(human(row.status))}</span> ` +
+    `<span class="chip kind-${esc(row.kind)}">${esc(human(row.kind))}</span></p>` +
     '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
     '</dl>' + `<p class="tip-why">${esc(row.tip)}</p>`;
 }
@@ -3110,9 +3187,16 @@ function attachSuggest(input) {
       .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
       .filter(item => !multi || !tokens().slice(0, -1).includes(item.value))
       .slice(0, 8);
+    // Everything but the counter is stored text. For the `entities` source the
+    // value is an id and the label IS an entity title, so before this, opening
+    // the Parent list on the detail page inserted whatever the last person to
+    // rename an entity had typed — as markup, into a page that then offers a
+    // Save button. `esc` is the shell's, so this widget uses the same one the
+    // table and the timeline do rather than being the one script with none.
     list.innerHTML = matches
-      .map((m, i) => `<li id="${id}-${i}" role="option" data-value="${m.value}">` +
-        `${m.value}${m.label ? ` <span class="dim">${m.label}</span>` : ''}</li>`).join('');
+      .map((m, i) => `<li id="${id}-${i}" role="option" data-value="${esc(m.value)}">` +
+        `${esc(m.value)}${m.label ? ` <span class="dim">${esc(m.label)}</span>` : ''}</li>`)
+      .join('');
     active = matches.length ? 0 : -1;
     list.hidden = !matches.length;
     input.setAttribute('aria-expanded', String(!list.hidden));
@@ -3198,7 +3282,7 @@ _CONTROL = """
 # One script for both forms that carry a status. Written once because the create
 # page and the detail page ask the same question of the same controls, and two
 # copies of a validation courtesy is one copy that quietly stops matching.
-_REQUIRED_JS = """
+_REQUIRED_JS = Markup("""
 // The word printed beside a control, which is the word somebody is looking at.
 // The `<dt>` holds the label and then the mark, so its first node is the name.
 function labelOf(control) {
@@ -3250,13 +3334,11 @@ function watchRequired(form) {
   form.addEventListener('change', () => markRequired(form));
   markRequired(form);
 }
-"""
+""")
 
 
-def _control_html(field: dict) -> str:
-    return _ENV.from_string(_CONTROL).render(
-        f=field, statuses=STATUSES, priorities=PRIORITIES
-    )
+def _control_html(field: dict) -> Markup:
+    return _fragment(_CONTROL, f=field, statuses=STATUSES, priorities=PRIORITIES)
 
 
 # `_FIELDS` and `_fields_html` were the flat list of `<label>field</label>` this
@@ -3293,7 +3375,7 @@ _NEW = """
           <dt data-kinds="{{ row.kinds }}"><label for="{{ row.for
             }}">{{ row.label }}</label>{% if row.gates %}
             <span class="req" hidden>required</span>{% endif %}</dt>
-          <dd data-kinds="{{ row.kinds }}">{{ row.control|safe }}</dd>
+          <dd data-kinds="{{ row.kinds }}">{{ row.control }}</dd>
           {% endfor %}
         </dl>
       </aside>
@@ -3319,8 +3401,8 @@ _NEW = """
     <span id="state" role="status"></span>
   </div>
 </article>
-{{ combobox|safe }}
-<script>{{ required|safe }}</script>
+{{ combobox }}
+<script>{{ required }}</script>
 <script>
 const FORM = document.getElementById('edit');
 const PROBLEMS = document.getElementById('problems');
@@ -3412,9 +3494,15 @@ document.getElementById('save').onclick = async () => {
     // somebody looking for a field with that label.
     const chosen = FORM.querySelector('[name=status]');
     PROBLEMS.hidden = false;
-    PROBLEMS.innerHTML = `<li>still needed at status ` +
-      `${chosen?.selectedOptions[0]?.textContent.trim() || status}: ` +
-      `${missing.join(', ')}</li>`;
+    // `replaceChildren` with one line of text, not `innerHTML`: every word in
+    // this sentence comes off the page — an option's label, a control's `<dt>` —
+    // and the page it comes off is one whose fields hold whatever the plan
+    // holds. There is no markup wanted here at all, so none is built.
+    const line = document.createElement('li');
+    line.textContent = 'still needed at status '
+      + `${chosen?.selectedOptions[0]?.textContent.trim() || status}: `
+      + missing.join(', ');
+    PROBLEMS.replaceChildren(line);
     return;
   }
   // The shell's banner is told before the request goes and told the sha after,
@@ -3482,8 +3570,8 @@ _DETAIL = """
   <h1><span class="read">{{ e.title }}</span></h1>
   <p class="meta"><code>{{ e.id }}</code>
      <span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>
-     <span class="chip st-{{ e.status }}">{{ e.status|human }}</span>
-     {% if e.parent %}· in {{ e.parent_link|safe }}{% endif %}</p>
+     <span class="chip {{ status_class(e.status) }}">{{ e.status|human }}</span>
+     {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
@@ -3506,8 +3594,8 @@ _DETAIL = """
           editable and row.gates %} <span class="req" hidden>required</span>{% endif %}</dt>
         <dd class="{% if row.derived %}derived{% endif %}
                    {% if row.editing_only %}editing-only{% endif %}">
-          <span class="read">{{ row.display|safe }}</span>
-          {% if editable and row.control %}{{ row.control|safe }}{% endif %}
+          <span class="read">{{ row.display }}</span>
+          {% if editable and row.control %}{{ row.control }}{% endif %}
         </dd>
         {% endfor %}
       </dl>
@@ -3515,7 +3603,7 @@ _DETAIL = """
     <div class="main">
       {% if e.problems %}<ul class="problems">
         {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
-      <div class="doc read">{{ e.body|safe }}</div>
+      <div class="doc read">{{ e.body }}</div>
       {% if editable %}
       <p class="field bodybar">
         <button type="button" id="preview">Preview the body</button>
@@ -3588,8 +3676,8 @@ grip.onpointerdown = event => {
   addEventListener('pointerup', stop);
 };
 </script>
-{% if editable %}{{ combobox|safe }}{% endif %}
-{% if editable %}<script>{{ required|safe }}</script>{% endif %}
+{% if editable %}{{ combobox }}{% endif %}
+{% if editable %}<script>{{ required }}</script>{% endif %}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
 // field as this tab last saw it, overwriting whatever somebody else changed while
@@ -4031,6 +4119,11 @@ _ENV.filters["human"] = _human
 # shape that draws one. Unknown values get nothing rather than a box glyph.
 _ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
+# Every chip on every page names its rung through this, so the four templates
+# that draw one cannot disagree with the two that build one in Python. They did:
+# the detail page's meta line escaped the status into its class and the facts
+# list two elements away did not, which is one page holding both answers.
+_ENV.globals["status_class"] = _status_class
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
 PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
@@ -4072,10 +4165,21 @@ def _editable_for(entity: Entity, prefix: str = "field") -> list[dict]:
     ]
 
 
-def _links(ids: list[str], index: Index, links: Links = STATIC) -> str:
-    return ", ".join(
-        f'<a href="{links.entity}{i}">'
-        f"{index.entities[i].title if i in index.entities else i}</a>"
+def _links(ids: list[str], index: Index, links: Links = STATIC) -> Markup:
+    """Ids as titles, linked. Every one of the three values in here is free text.
+
+    A title arrives through `PATCH /api/entity`, which does not police it, and an
+    id that fails its pattern is a reported problem and not a refusal — so both
+    reach this line as whatever somebody typed. Built with an f-string, a title
+    holding a `<script>` ran on the parent link of every child of that entity,
+    on the page that then offers the reader a Save button. `Markup(...).format`
+    escapes each value as it goes in, which is the only version of this that
+    stays correct when a fourth value is added to it.
+    """
+    return Markup(", ").join(
+        Markup('<a href="{}{}">{}</a>').format(
+            links.entity, i, index.entities[i].title if i in index.entities else i
+        )
         for i in ids
     )
 
@@ -4086,6 +4190,14 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     One row per fact, not two lists: the edit view is the read view with the values
     swapped for controls, so nothing is ever shown twice and the layout does not
     move when you press Edit.
+
+    Every `display` is a `Markup`, including the ones that are only ever a word.
+    The template renders it without `|safe`, so the type is what decides whether
+    a value is markup or text: a bare `str` that turned up here would be escaped
+    rather than injected. That is the wrong way round from how this started —
+    one `|safe` in the template covered eighteen values, of which five were
+    somebody's free text and one of those was `status`, which arrived straight
+    out of a file and into a class attribute.
     """
     span = index.spans.get(entity.id)
     why = index.explanations.get(entity.id)
@@ -4093,7 +4205,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     # One mark for "there is nothing here", everywhere. Spelled-out words —
     # `nothing`, `none`, `no` — sit at the same weight as a real value and have
     # to be read before you know the row is empty; a dash is empty at a glance.
-    empty = '<span class="empty">—</span>'
+    empty = Markup('<span class="empty">—</span>')
     for field in _editable_for(entity, entity.id):
         name = field["name"]
         if name == "title":
@@ -4106,19 +4218,25 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             # ask what this belongs to.
             display = _links([entity.parent], index, links) if entity.parent else empty
         elif name == "prs":
-            display = ", ".join(_pr_link(ref) for ref in entity.prs) or empty
+            display = Markup(", ").join(_pr_link(ref) for ref in entity.prs) or empty
         elif name == "review_waived":
-            display = "waived" if entity.review_waived else empty
+            display = Markup("waived") if entity.review_waived else empty
         elif name == "status":
             # The same chip the table, the people page and the bet table wear. A
             # status is the one field on this page every other view colours.
-            display = f'<span class="chip st-{entity.status}">{_human(entity.status)}</span>'
+            # Through `_status_class`, so a status nobody has heard of gets the
+            # ready ladder rung rather than putting its own text in a class
+            # attribute: an unknown status is a *reported problem*, not a
+            # refusal, so `status` holds whatever a hand-edited file holds.
+            display = Markup('<span class="chip {}">{}</span>').format(
+                _status_class(entity.status), _human(entity.status)
+            )
         elif name == "priority":
-            display = _human(entity.priority)
+            display = escape(_human(entity.priority))
         elif field["type"] == "list":
-            display = field["text"] or empty
+            display = escape(field["text"]) if field["text"] else empty
         else:
-            display = str(field["text"]) if field["text"] not in ("", None) else empty
+            display = escape(field["text"]) if field["text"] not in ("", None) else empty
         rows.append(
             {
                 "label": LABELS.get(name, name),
@@ -4142,17 +4260,20 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     # starts. It keeps the italic — it is still computed, and pretending otherwise
     # would invite somebody to edit it — and gains the warning colour on top.
     overrun = (
-        f' · <span class="overrun"><span class="sev-mark sev-mark-warn"'
-        f' aria-hidden="true">▲</span> overruns cycle {entity.cycle}'
-        f" by {span.overruns_cycle_weeks:.1f} weeks</span>"
+        Markup(
+            ' · <span class="overrun"><span class="sev-mark sev-mark-warn"'
+            ' aria-hidden="true">▲</span> overruns cycle {} by {} weeks</span>'
+        ).format(entity.cycle, f"{span.overruns_cycle_weeks:.1f}")
         if span and span.overruns_cycle_weeks
-        else ""
+        else Markup("")
     )
     rows.append(
         {
             "label": "Scheduled",
             "for": "",
-            "display": (f"{span.start} → {span.end}{overrun}" if span else empty),
+            "display": (
+                Markup("{} → {}{}").format(span.start, span.end, overrun) if span else empty
+            ),
             "control": "",
             "gates": (),
             "derived": True,
@@ -4164,7 +4285,11 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             {
                 "label": "Why then",
                 "for": "",
-                "display": why.text,
+                # An explanation names the person who is busy and the entity that
+                # finishes first — a login and an id, both free text, both
+                # concatenated into the sentence by the scheduler. The one row on
+                # this page that reads as prose is still two stored values.
+                "display": escape(why.text),
                 "control": "",
                 "gates": (),
                 "derived": True,
@@ -4439,7 +4564,7 @@ _CYCLE = """
                {{ 'disabled' if row.carried else '' }}></td>
     <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
     <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
-    <td><span class="chip st-{{ row.status }}">{{ row.status|human }}</span></td>
+    <td><span class="chip {{ status_class(row.status) }}">{{ row.status|human }}</span></td>
     <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
                aria-label="{{ row.title }} appetite in weeks"
                autocomplete="off" value="{{ row.size }}"
@@ -4454,7 +4579,7 @@ _CYCLE = """
   </tr>
   {% endfor %}
 </tbody></table>
-<div class="doc">{{ c.body|safe }}</div>
+<div class="doc">{{ c.body }}</div>
 {% if editable %}
 <div class="commitbar" id="commitbar">
   <span id="unsaved">Nothing to save</span>
@@ -4462,7 +4587,7 @@ _CYCLE = """
   <span id="state" role="status"></span>
   <input type="hidden" id="base" value="{{ base_commit }}">
 </div>
-{{ combobox|safe }}
+{{ combobox }}
 <script>
 const BASE = document.getElementById('base');
 const BAR = document.getElementById('commitbar');
@@ -4745,9 +4870,10 @@ document.querySelectorAll('#roster .drop').forEach(dropRow);
 // built up, so that the two copies of it can be read against each other; a test
 // asserts both carry the name and the question.
 function dropCell(login) {
+  const who = esc(login);
   return `<td class="dropcell"><button type="button" class="drop"`
-    + ` title="Take ${login} out of this cycle"`
-    + ` aria-label="Take ${login} out of this cycle">&#128465;</button>`
+    + ` title="Take ${who} out of this cycle"`
+    + ` aria-label="Take ${who} out of this cycle">&#128465;</button>`
     + `<span class="confirm" hidden>out?<button type="button" class="yes">yes</button>`
     + `<button type="button" class="no">no</button></span></td>`;
 }
@@ -4755,7 +4881,11 @@ function dropCell(login) {
 document.getElementById('add').onclick = () => {
   const login = JOINING.value.trim().replace(/,$/, '');
   if (!login) return;
-  if (document.querySelector(`#roster tr[data-login="${login}"]`)) {
+  // CSS.escape, the way `refusals()` already does it on the detail page. A login
+  // is typed, and a quote or a bracket in one made this a selector that is not a
+  // selector: the browser threw inside the handler and the Add button stopped
+  // working — for every later click too, with nothing on screen saying why.
+  if (document.querySelector(`#roster tr[data-login="${CSS.escape(login)}"]`)) {
     say(`${login} is already in this cycle`);
     return;
   }
@@ -4764,10 +4894,15 @@ document.getElementById('add').onclick = () => {
   // Somebody added to the cycle may already be bet into it — that is exactly why
   // the page named them below the table. Their load comes with them.
   row.dataset.held = (HELD[login] || 0);
+  // A login is typed here rather than read out of the plan, which makes this the
+  // one injection on these pages that starts as a person doing it to themselves
+  // — and ends as everybody's, because Save writes the name into the cycle file
+  // and the roster is drawn from that file for every reader afterwards.
+  const who = esc(login);
   row.innerHTML = dropCell(login)
-    + `<td>${login}</td>`
-    + `<td><input class="field rate" data-login="${login}" value="1.0"`
-    + ` aria-label="${login} availability" autocomplete="off"></td>`
+    + `<td>${who}</td>`
+    + `<td><input class="field rate" data-login="${who}" value="1.0"`
+    + ` aria-label="${who} availability" autocomplete="off"></td>`
     + `<td class="derived capacity">—</td>`
     + `<td class="derived">${(HELD[login] || 0).toFixed(1)} wk</td>`
     + `<td><span class="bar"><span style="width: 0%"></span></span></td>`
@@ -4998,7 +5133,7 @@ _PEOPLE = """
   {%- else %} The weeks are cycle {{ load.cycle }}'s: what is bet on somebody there.
   That cycle has no record, so there is no availability to bet it against.
   {%- endif %}</p>
-{{ facets|safe }}
+{{ facets }}
 <div id="summary"><span id="shown" class="num">{{ people|length }}</span>
   of {{ people|length }} people</div>
 {#- One table for the whole page. Fifteen tables meant fifteen headers, and a
@@ -5053,7 +5188,7 @@ _PEOPLE = """
       <td class="role">{{ row.role }}</td>
       <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
       <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
-      <td><span class="chip st-{{ row.status }}">{{ row.status|human }}</span></td>
+      <td><span class="chip {{ status_class(row.status) }}">{{ row.status|human }}</span></td>
       <td class="derived">{{ row.span }}</td>
     </tr>
     {% endfor %}
@@ -5075,7 +5210,7 @@ _PEOPLE = """
     </td></tr>
   </tbody>
 </table>
-{{ filters|safe }}
+{{ filters }}
 <script>
 // A person whose own name matches keeps all their rows: searching for somebody is
 // asking what they are on the hook for, not asking to see only the rows that
@@ -5281,7 +5416,10 @@ def _cycle_view(index: Index, number: int) -> dict:
         "strangers": strangers,
         "over": [p["login"] for p in people if p["over"]],
         "candidates": candidates,
-        "body": _MD.render(plan.body) if plan else "",
+        # Markup, so the template renders it without `|safe`: the goal of a
+        # cycle is prose somebody typed, and `_MD` runs with HTML disabled, so
+        # what comes back is escaped already.
+        "body": Markup(_MD.render(plan.body)) if plan else Markup(""),
     }
 
 
@@ -5607,7 +5745,7 @@ def _facets_html(
     facets: dict,
     fields: tuple[str, ...] = _PLAN_FACETS,
     search: str = "Search title, tags, body",
-) -> str:
+) -> Markup:
     """The control bar, for any view that filters anything.
 
     One bar and one `matches()` in `_FILTER_JS`, rather than a copy per page: the
@@ -5616,17 +5754,20 @@ def _facets_html(
     people page had written its own, over its own three fields, and had already
     drifted — same markup, a different search box.
     """
-    return _ENV.from_string(_FACETS).render(facets=facets, fields=fields, search=search)
+    return _fragment(_FACETS, facets=facets, fields=fields, search=search)
 
 
-def _combobox_html(index: Index | None) -> str:
+def _combobox_html(index: Index | None) -> Markup:
     """The suggestion data and the widget that filters it, for any page with inputs."""
     data = (
         _suggestions(index)
         if index
         else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
     )
-    return _COMBOBOX.replace("SUGGEST_JSON", _json(data))
+    # The marker is swapped before the result is typed as markup: `Markup.replace`
+    # escapes what it is handed, which would put `&#34;` through the middle of the
+    # JSON the widget parses.
+    return Markup(_COMBOBOX.replace("SUGGEST_JSON", _json(data)))
 
 
 def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> str:

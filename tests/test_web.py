@@ -1527,7 +1527,10 @@ def test_the_glyph_that_takes_somebody_out_of_a_cycle_says_so_and_asks(
     # The row the add box builds is a second copy of the same cell, and a copy
     # that drifts is a row whose only destructive control loses its name.
     minted = re.search(r"function dropCell\(login\) \{.*?\n\}", page, re.S).group(0)
-    assert 'aria-label="Take ${login} out of this cycle"' in minted
+    # `${who}` and not `${login}`: the name is escaped once at the top of the
+    # function, because a login is typed and this cell is markup.
+    assert "const who = esc(login);" in minted
+    assert 'aria-label="Take ${who} out of this cycle"' in minted
     assert 'class="confirm" hidden>' in minted
 
 

@@ -947,7 +947,10 @@ def test_a_status_is_a_chip_and_a_kind_rides_with_the_id(page: str):
     """
     body = script(page)
 
-    assert re.search(r'class="chip st-\$\{esc\(row\.status\)\}"', body), "a status is a chip"
+    # Through `stClass`, which is `_status_class` in the other language: a class
+    # attribute names a rule the stylesheet has, so a status nobody has heard of
+    # gets the ready rung rather than putting its own text in the attribute.
+    assert re.search(r'class="chip \$\{stClass\(row\.status\)\}"', body), "a status is a chip"
     assert re.search(r'class="chip kind-\$\{esc\(row\.kind\)\}"', body), "so is a kind"
     assert "esc(human(row.status))" in body and "esc(human(row.kind))" in body, (
         "the chip carries the word, not the identifier"
@@ -967,8 +970,13 @@ def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
     assert '<label class="facet">state' not in page
 
     # Including inside the editor a double-click opens, or picking "In progress"
-    # from a cell would write the label back into the corpus.
-    assert re.search(r'<option value="\$\{o\}"[^>]*>\$\{human\(o\)\}</option>', script(page))
+    # from a cell would write the label back into the corpus. Both go through
+    # `esc` — the closed set is a closed set today, and a rule with an exception
+    # in it is a rule nobody applies to the next line.
+    assert re.search(
+        r'<option value="\$\{esc\(o\)\}"[^>]*>\$\{esc\(human\(o\)\)\}</option>',
+        script(page),
+    )
 
 
 def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: str):
@@ -1375,7 +1383,7 @@ def test_the_editor_a_cell_opens_says_what_it_is_editing(page: str):
 
     assert "const named = esc(FIELD_LABELS[field] || field);" in body
     assert '<select data-type="text" aria-label="${named}">' in body
-    assert 'data-type="${EDITABLE[field]}" aria-label="${named}"' in body
+    assert 'data-type="${esc(EDITABLE[field])}" aria-label="${named}"' in body
 
 
 def test_the_suggestion_popup_announces_itself(page: str):
