@@ -20,7 +20,7 @@ from pydantic import BaseModel, field_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 
-_CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
+CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 
 
@@ -48,6 +48,10 @@ class Config(BaseModel):
     schema_version: int = 1
     nominal_availability: float = 1.0
     default_task_effort: float = 0.5
+    # Shape Up's cool-down is not build time, so a bet that lands in it did not
+    # fit its box. The overrun is measured against the end of BUILD, and this is
+    # how many weeks of the window are not build.
+    cooldown_weeks: float = 2.0
     holidays: list[date] = []
     cycles: dict[int, tuple[date, date]] = {}
     # The roster, from config/people.yaml. Empty means the check is off, which is
@@ -63,7 +67,7 @@ def load_config(root: Path) -> Config:
     still loads rather than taking the whole index down.
     """
     data: dict[str, object] = {}
-    for name in _CONFIG_FILES:
+    for name in CONFIG_FILES:
         path = root / "config" / name
         if not path.is_file():
             continue
@@ -427,6 +431,18 @@ def _problems_for(
         yield "blocker", "parent", "part of a parent cycle", 1
     elif entity.kind == "task" and entity.parent is None:
         yield "warning", "parent", "a task should have a parent", 1
+
+    if entity.cycle is not None and entity.cycle not in config.cycles:
+        # `_overrun` looks the window up with `.get`, so a number nobody has dated
+        # does not raise — it silently returns None and the entity stops being
+        # checked for overrun at all. A typo therefore reads as "on time" forever.
+        yield (
+            "warning",
+            "cycle",
+            f"cycle {entity.cycle} has no dates in config/cycles.yaml, "
+            "so this is not checked for overrun",
+            3,
+        )
 
     yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
     yield from _vocabulary_problems(entity)

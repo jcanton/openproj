@@ -53,9 +53,12 @@ def pitch(suffix: str, *, owner: str | None = "ann", size: float | None = None, 
 
 
 def run(
-    entities: list[Entity], today: date = MONDAY, config: Config = CONFIG
+    entities: list[Entity],
+    today: date = MONDAY,
+    config: Config = CONFIG,
+    availability: dict[str, float] | None = None,
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
-    return schedule(entities, config, today)
+    return schedule(entities, config, today, availability)
 
 
 # --------------------------------------------------------------------------- #
@@ -209,10 +212,31 @@ def test_step8_a_parent_spans_from_its_first_child_to_its_last():
     assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
 
 
-def test_step9_finishing_after_the_cycle_ends_records_the_overrun_in_weeks():
+def test_step9_finishing_after_the_cycle_builds_records_the_overrun_in_weeks():
+    """Against the end of BUILD, not the end of the window: cool-down is not
+    build time, and measuring to the window's end understated every overrun by
+    the cool-down length and hid the small ones entirely."""
     spans, _ = run([task("aaa001", cycle=36), task("aaa002", owner="bo", cycle=37)])
-    assert spans["task-aaa001"].overruns_cycle_weeks == pytest.approx(1.0)
+
+    # Cycle 36 builds until 2026-07-31; cycle 37 until 2026-09-25.
+    assert spans["task-aaa001"].overruns_cycle_weeks == pytest.approx(3.0)
     assert spans["task-aaa002"].overruns_cycle_weeks is None
+
+
+def test_an_overrun_is_measured_against_build_and_not_against_cool_down():
+    """The same span, the same cycle, two cool-down settings."""
+    from openproj.model import Config
+
+    window = {36: (date(2026, 6, 22), date(2026, 8, 14))}
+    none = Config(cycles=window, cooldown_weeks=0.0, holidays=CONFIG.holidays)
+    two = Config(cycles=window, cooldown_weeks=2.0, holidays=CONFIG.holidays)
+
+    without, _ = run([task("aaa001", cycle=36)], config=none)
+    with_cooldown, _ = run([task("aaa001", cycle=36)], config=two)
+
+    assert with_cooldown["task-aaa001"].overruns_cycle_weeks == pytest.approx(
+        without["task-aaa001"].overruns_cycle_weeks + 2.0
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -240,20 +264,56 @@ def test_step9_a_cycle_with_no_configured_dates_is_not_an_overrun():
     assert spans["task-aaa001"].overruns_cycle_weeks is None
 
 
-def test_regression_a_three_week_appetite_is_three_working_weeks_not_five():
-    """Appetite is ELAPSED weeks at nominal availability, so it is never divided.
+def test_a_size_is_person_weeks_and_the_people_on_it_divide_it():
+    """D-C4: a size is the work ONE person would need, so three names on a
+    six-week bet is two elapsed weeks. Staffing something makes it finish sooner,
+    which is what a room believes when it puts three people on one pitch.
 
-    This must be run at an availability other than 1.0 to mean anything. At 1.0
-    the buggy `size / availability` and the correct `size * (nominal / availability)`
-    agree, and an earlier version of this test asserted only the 1.0 case — it
-    passed with the bug present, which is worse than having no test at all.
-    """
-    spans, _ = run([pitch("bbb001", size=3.0)], config=HALF_TIME)
-    assert spans["pitch-bbb001"].end == date(2026, 9, 4)  # three working weeks
-    assert spans["pitch-bbb001"].end != date(2026, 9, 18)  # five: the bug
+    This reverses D1 and the test that used to sit here, which asserted a size was
+    never divided. That was right about the arithmetic the code did and wrong
+    about what the number meant."""
+    alone, _ = run([pitch("bbb001", owner="ann", size=6.0)])
+    shared, _ = run([pitch("bbb001", owner="ann", assignees=["bo", "cy"], size=6.0)])
 
-    at_nominal, _ = run([pitch("bbb001", size=3.0)])
-    assert at_nominal["pitch-bbb001"].end == spans["pitch-bbb001"].end
+    assert alone["pitch-bbb001"].end == date(2026, 9, 25)     # six working weeks
+    assert shared["pitch-bbb001"].end == date(2026, 8, 28)    # two
+
+
+def test_an_owner_who_is_also_an_assignee_is_one_person():
+    """Most owners are. Counted twice they were booked twice, and now that the
+    people on a bet divide it, they would have halved it single-handed."""
+    once, _ = run([pitch("bbb001", owner="ann", size=4.0)])
+    twice, _ = run([pitch("bbb001", owner="ann", assignees=["ann"], size=4.0)])
+
+    assert once["pitch-bbb001"] == twice["pitch-bbb001"]
+
+
+def test_availability_stretches_the_work_of_whoever_is_slower():
+    """One person at 60% takes a three-week bet five weeks. That IS the answer,
+    not the bug the old spec called out — that draft was only wrong under D1's
+    reading of what a size means."""
+    full, _ = run([pitch("bbb001", owner="ann", size=3.0)])
+    half, _ = run([pitch("bbb001", owner="ann", size=3.0)], availability={"ann": 0.5})
+
+    assert full["pitch-bbb001"].end == date(2026, 9, 4)      # three working weeks
+    assert half["pitch-bbb001"].end == date(2026, 9, 25)     # six
+
+
+def test_somebody_nobody_rated_works_at_the_nominal_rate():
+    """Absent from the map means nobody said otherwise, not unavailable. A roster
+    that must name everybody to schedule anybody goes stale and takes the dates
+    with it."""
+    rated, _ = run([pitch("bbb001", owner="ann", size=3.0)], availability={"zz": 0.1})
+    unrated, _ = run([pitch("bbb001", owner="ann", size=3.0)])
+
+    assert rated["pitch-bbb001"] == unrated["pitch-bbb001"]
+
+
+def test_unowned_work_is_one_notional_person_rather_than_a_division_by_zero():
+    spans, _ = run([task("aaa001", owner=None, size=2.0)])
+
+    assert spans["task-aaa001"].unowned
+    assert spans["task-aaa001"].end == date(2026, 8, 28)     # two working weeks
 
 
 def test_regression_a_task_and_a_pitch_of_the_same_size_take_the_same_time():
@@ -395,13 +455,19 @@ def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_mov
 
 GOLDEN_TODAY = date(2026, 8, 17)
 
+# Re-derived 2026-08-16 for D-C4: a size is person-weeks and the people on it
+# divide it. Every entity with more than one worker moved; the single-worker ones
+# did not, which is the check that the change did what it says. Two were verified
+# by hand against the definition rather than copied out of the run:
+#   task-53a9f0  size 2.0, one worker  -> 2 elapsed weeks, 08-17 .. 08-28
+#   pitch-48ea9e size 2.0, two workers -> 1 elapsed week,  08-17 .. 08-21
 GOLDEN_SPANS = {
-    "proj-7e57a0": (date(2026, 8, 31), date(2026, 9, 4)),
+    "proj-7e57a0": (date(2026, 8, 24), date(2026, 8, 28)),
     "pitch-1b3f9a": (date(2026, 8, 31), date(2026, 9, 4)),
-    "pitch-48ea9e": (date(2026, 8, 17), date(2026, 8, 28)),
+    "pitch-48ea9e": (date(2026, 8, 17), date(2026, 8, 21)),
     "pitch-5e7b1c": (date(2026, 8, 17), date(2026, 9, 21)),
-    "task-0e4b7a": (date(2026, 8, 31), date(2026, 9, 4)),
-    "task-2b6c94": (date(2026, 8, 31), date(2026, 9, 2)),
+    "task-0e4b7a": (date(2026, 8, 24), date(2026, 8, 28)),
+    "task-2b6c94": (date(2026, 8, 24), date(2026, 8, 26)),
     "task-53a9f0": (date(2026, 8, 17), date(2026, 8, 28)),
     "task-58d7c6": (date(2026, 9, 15), date(2026, 9, 21)),
     "task-5a4e39": (date(2026, 8, 17), date(2026, 8, 17)),
@@ -420,15 +486,18 @@ GOLDEN_ABSENT = {
     "task-3e07b2",
 }
 
+# Measured against the end of BUILD rather than the end of the window, so every
+# one of these grew by the two cool-down weeks — except where the span itself
+# also moved. Cool-down is not build time.
 GOLDEN_OVERRUNS = {
-    "pitch-48ea9e": 14.0,
-    "pitch-5e7b1c": 38 / 7,
-    "task-2b6c94": 159 / 7,
-    "task-53a9f0": 2.0,
-    "task-58d7c6": 38 / 7,
-    "task-5a4e39": 3 / 7,
-    "task-5c1d84": 31 / 7,
-    "task-5f062b": 10 / 7,
+    "pitch-48ea9e": 15.0,
+    "pitch-5e7b1c": 52 / 7,
+    "task-2b6c94": 166 / 7,
+    "task-53a9f0": 4.0,
+    "task-58d7c6": 52 / 7,
+    "task-5a4e39": 17 / 7,
+    "task-5c1d84": 45 / 7,
+    "task-5f062b": 24 / 7,
 }
 
 

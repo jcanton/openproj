@@ -45,7 +45,17 @@ from ruamel.yaml import YAML
 from . import render
 from .auth import User, exchange_code, identify, login_url, read_session, sign_session
 from .index import build_index
-from .model import Config, Entity, Pitch, Project, Task, parse_text, patch_text, validate_all
+from .model import (
+    CONFIG_FILES,
+    Config,
+    Entity,
+    Pitch,
+    Project,
+    Task,
+    parse_text,
+    patch_text,
+    validate_all,
+)
 from .store import Store
 
 SESSION_COOKIE = "__Host-openproj_session"
@@ -66,7 +76,10 @@ _DEV_SECRETS = {"", "dev-secret", "change-me", "secret"}
 def _config_at(store: Store, commit: str) -> Config:
     yaml = YAML(typ="safe")
     data: dict = {}
-    for name in ("defaults.yaml", "cycles.yaml", "holidays.yaml"):
+    # The same list the CLI reads. Hardcoded here, this was missing people.yaml,
+    # so `known_people` was empty under `serve` and the roster check that rejects
+    # an unknown login was silently off in the browser and on in CI.
+    for name in CONFIG_FILES:
         raw = store.read(commit, f"config/{name}")
         if raw is None:
             continue

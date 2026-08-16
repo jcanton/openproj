@@ -7,10 +7,12 @@ working day, never the same one.
 Two invariants earn their own tests because breaking either produces a schedule
 that looks plausible and is wrong:
 
-* A size is never divided by availability. `appetite_weeks` already means elapsed
-  weeks at nominal availability, so the ratio `nominal / availability(owner)` is
-  1 unless someone works at a different rate. Dividing turns every three-week bet
-  into five.
+* A size is PERSON-weeks, and the people on it divide it — each at their own
+  availability. Three names on a six-week bet is two elapsed weeks, and one
+  person at 60% takes a three-week bet five weeks. (D-C4, 2026-08-16. This
+  reverses D1, which said a size was already elapsed weeks and must never be
+  divided; D1 was wrong about how the team estimates, and with a single assignee
+  at full availability the two readings agree, which is why it went unnoticed.)
 * Only leaves consume a worker's capacity. A parent's span is a rollup of work its
   children already booked; booking the parent too double-books its owner.
 
@@ -79,28 +81,76 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
     return day
 
 
-def _duration_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
-    """Elapsed weeks, and whether the size was defaulted rather than stated."""
+def _duration_weeks(
+    entity: Entity, config: Config, availability: dict[str, float] | None = None
+) -> tuple[float, bool]:
+    """Elapsed weeks, and whether the size was defaulted rather than stated.
+
+    A size is PERSON-weeks — the work one person would need — so the people on it
+    divide it, each at their own availability (D-C4, 2026-08-16; this supersedes
+    D1, which said the opposite and was wrong about how the team estimates).
+
+    Two consequences worth stating, because both reverse earlier behaviour:
+    staffing a bet with three people makes it finish sooner, which is what the
+    room believes when it puts three names on one; and one person at 60% takes a
+    three-week bet five weeks, which is the right answer rather than the bug the
+    old spec calls out — that draft was only wrong under D1's reading.
+
+    Nobody assigned is one notional person at nominal availability. Zero would be
+    a division by zero, and infinity is not a useful forecast for unowned work.
+    """
     size, defaulted = size_weeks(entity, config)
-    availability = config.nominal_availability
-    ratio = config.nominal_availability / availability if availability else 1.0
-    return size * ratio, defaulted
+    rates = [_availability_of(who, config, availability) for who in _workers(entity)]
+    return size / (sum(rates) or config.nominal_availability or 1.0), defaulted
+
+
+def _availability_of(
+    who: str, config: Config, availability: dict[str, float] | None
+) -> float:
+    """This cycle's figure for one person, or the global default.
+
+    Absent from the map means "nobody said otherwise", not "unavailable" — a
+    roster that has to name everybody to schedule anybody is a roster that goes
+    stale and takes the dates with it.
+    """
+    stated = (availability or {}).get(who)
+    return stated if stated else config.nominal_availability or 1.0
 
 
 def _workers(entity: Entity) -> list[str]:
-    return ([entity.owner] if entity.owner else []) + list(entity.assignees)
+    """Everyone on the hook, each counted once.
+
+    An owner who is also an assignee — which is most of them — was counted twice,
+    so they were booked twice and, now that the workers divide the size, would
+    have halved it on their own.
+    """
+    named = ([entity.owner] if entity.owner else []) + list(entity.assignees)
+    return list(dict.fromkeys(named))
 
 
 def _overrun(entity: Entity, end: date, config: Config) -> float | None:
-    """Weeks past the end of the entity's cycle, or None.
+    """Weeks past the end of the cycle's BUILD, or None.
+
+    Cool-down is not build time — Shape Up's whole point is that work lands
+    inside the build weeks and the cool-down is for the mess afterwards. Measured
+    against the end of the window instead, every overrun was understated by the
+    cool-down length and some were hidden completely.
 
     A cycle nobody has dated yet is not an overrun. Indexing `config.cycles`
     directly would turn one unconfigured number into a KeyError for every span.
     """
     window = config.cycles.get(entity.cycle) if entity.cycle is not None else None
-    if window is None or end <= window[1]:
+    if window is None:
         return None
-    return (end - window[1]).days / 7
+    builds_until = build_end(window, config)
+    if end <= builds_until:
+        return None
+    return (end - builds_until).days / 7
+
+
+def build_end(window: tuple[date, date], config: Config) -> date:
+    """The last day of a cycle's build, which is its end less the cool-down."""
+    return window[1] - timedelta(days=round(config.cooldown_weeks * 7))
 
 
 def _ordering(
@@ -157,7 +207,10 @@ def _unschedulable(active: dict[str, Entity]) -> set[str]:
 
 
 def schedule(
-    entities: list[Entity], config: Config, today: date
+    entities: list[Entity],
+    config: Config,
+    today: date,
+    availability: dict[str, float] | None = None,
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
     live = {e.id: e for e in entities if e.status != "shelved"}
     children: dict[str, list[str]] = defaultdict(list)
@@ -198,7 +251,7 @@ def schedule(
             )
             continue
 
-        duration, estimated = _duration_weeks(entity, config)
+        duration, estimated = _duration_weeks(entity, config, availability)
         workers = _workers(entity)
         span, explanation = _place(
             entity, duration, workers, booked, spans, floor, config

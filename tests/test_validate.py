@@ -388,3 +388,20 @@ def test_a_stale_vocabulary_still_schedules_and_renders():
 
     assert "task-aaa111" in index.spans
     assert any(p.field == "status" for p in index.problems)
+
+
+def test_a_cycle_nobody_dated_is_reported_rather_than_ignored():
+    """`_overrun` looks the window up with `.get`, so an undated number does not
+    raise — it returns None, and the entity silently stops being checked for
+    overrun. A typo therefore reads as "on time" forever, which is the one
+    reading nobody would question."""
+    config = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
+    entities = [task(cycle=99), task(id="task-000002", cycle=36)]
+
+    problems = validate_all(entities, config)
+    reported = [p for p in problems if p.field == "cycle"]
+
+    assert len(reported) == 1
+    assert reported[0].entity_id == entities[0].id
+    assert reported[0].severity == "warning"
+    assert "no dates" in reported[0].message

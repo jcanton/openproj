@@ -113,6 +113,9 @@ SEED = {
     "config/defaults.yaml": (
         "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
     ),
+    # Present so that a server which fails to read it is caught. It was not, and
+    # the roster check was off in the browser for as long as this file was absent.
+    "config/people.yaml": "known_people: [ann, bo, cy]\n",
     f"projects/{PROJECT}.md": (
         "---\n"
         "id: proj-a10000\n"
@@ -1072,3 +1075,20 @@ def test_a_backwards_window_does_not_invert_the_drawing(client: TestClient):
 
     assert response.status_code == 200
     assert 'width="-' not in response.text
+
+
+def test_the_server_reads_the_same_config_the_cli_does(repo_path: Path):
+    """The list was hardcoded here and had drifted: `people.yaml` was missing, so
+    `known_people` was empty under `serve` and the roster check that rejects an
+    unknown login was silently off in the browser while on in CI. Both now read
+    `model.CONFIG_FILES`, so a fifth file cannot reach one and not the other."""
+    from openproj import model
+    from openproj.store import Store
+    from openproj.web import _config_at
+
+    store = Store(repo_path)
+    served = _config_at(store, store.head())
+
+    assert set(model.CONFIG_FILES) == {"defaults.yaml", "cycles.yaml",
+                                       "holidays.yaml", "people.yaml"}
+    assert served.known_people == ["ann", "bo", "cy"]
