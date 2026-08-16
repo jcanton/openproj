@@ -17,7 +17,15 @@ from datetime import date
 
 from pydantic import BaseModel
 
-from .model import Config, Entity, Problem, ancestors, validate_all
+from .model import (
+    PRIORITY_RANK,
+    STATUS_ORDER,
+    Config,
+    Entity,
+    Problem,
+    ancestors,
+    validate_all,
+)
 from .schedule import Explanation, Span, schedule
 
 COMPUTED_PREDICATES = (
@@ -61,6 +69,21 @@ def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
         if by_id[ancestor].kind == "project":
             return ancestor
     return None
+
+
+def _ordered(field: str, values: set[str]) -> list[str]:
+    """Alphabetical, except where the values are a sequence rather than a set.
+
+    Sorting a status alphabetically puts `done` at the top of the menu and
+    `shaping` second from the bottom — the exact reverse of the order work moves
+    in, for the first four of five. Priority reads `high, low, medium`, which is
+    not an order anybody means by priority.
+    """
+    ranked = {"status": STATUS_ORDER, "priority": tuple(PRIORITY_RANK)}.get(field)
+    if ranked is None:
+        return sorted(values)
+    known = [v for v in ranked if v in values]
+    return known + sorted(v for v in values if v not in ranked)
 
 
 def _facet_values(entity: Entity, field: str, by_id: dict[str, Entity]) -> list[str]:
@@ -110,7 +133,7 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
         spans=spans,
         explanations=explanations,
         problems=validate_all(entities, config),
-        facets={field: sorted(values) for field, values in facets.items()}
+        facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,
         cycles=config.cycles,

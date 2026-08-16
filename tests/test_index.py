@@ -476,8 +476,11 @@ def test_the_seed_blocked_set_is_exactly_the_live_diamond(seed_index: Index):
 
 def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
     assert seed_index.facets["kind"] == ["pitch", "project", "task"]
-    assert seed_index.facets["status"] == ["done", "in_progress", "ready", "shelved"]
-    assert seed_index.facets["priority"] == ["high", "low", "medium"]
+    # A sequence, not a set: alphabetical put `done` at the top of the status
+    # menu and read `high, low, medium` for priority, which is not an order
+    # anybody means by priority. Everything else is genuinely alphabetical.
+    assert seed_index.facets["status"] == ["ready", "in_progress", "done", "shelved"]
+    assert seed_index.facets["priority"] == ["high", "medium", "low"]
     assert seed_index.facets["cycle"] == ["28", "34", "35", "36"]
     assert seed_index.facets["project"] == ["proj-7e57a0"]
     assert seed_index.facets["owner"] == [
@@ -576,3 +579,15 @@ def test_a_dangling_dependency_does_not_count_as_a_blocker():
     index = build_index(entities, CONFIG, TODAY)
     assert apply_filters(index, {"predicate": ["blocked"]}, "") == []
     assert apply_filters(index, {"predicate": ["unblocked"]}, "") == ["task-c00001"]
+
+
+def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(seed_index: Index):
+    """Present-only, ordered by the sequence, and anything off the sequence lands
+    at the end rather than being dropped — a menu that silently omits a value is
+    a filter that cannot find the rows holding it."""
+    from openproj.index import _ordered
+
+    assert _ordered("status", {"done", "shaping"}) == ["shaping", "done"]
+    assert _ordered("status", {"done", "wip"}) == ["done", "wip"]
+    assert _ordered("priority", {"low", "high"}) == ["high", "low"]
+    assert _ordered("owner", {"bo", "ann"}) == ["ann", "bo"]

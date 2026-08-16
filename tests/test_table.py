@@ -77,7 +77,7 @@ from test_web import (
 from openproj.auth import sign_session
 from openproj.index import build_index
 from openproj.model import load_repo
-from openproj.render import EDITABLE, STATUSES, render_static
+from openproj.render import EDITABLE, PRIORITIES, STATUSES, render_static
 from openproj.web import SESSION_COOKIE, create_app
 
 # The columns the table draws that nobody may type into. Kept as an expectation
@@ -686,7 +686,7 @@ def test_the_bold_column_is_the_one_being_sorted_by(page: str):
     """Bold used to land on `prs` for the accidental reason that it was the one
     column with no sort key, so it fell through to the browser's default `th`
     weight — the one column you cannot sort by looked like the sorted one."""
-    assert "th { color: var(--muted); font-weight: 400; }" in page
+    assert "th { color: var(--muted); font-weight: 400;" in page
     assert "th.sorted" in page
     # Inside draw(), not once at load: sorting redraws without reloading, so a
     # marker set from the URL at load stays on whatever the page opened with.
@@ -708,6 +708,9 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
     assert ".measuring th, .measuring td { white-space: nowrap; }" in page
     assert "const WRAPS = new Set(['prs', 'tags']);" in page
     stored = r"if \(Object\.keys\(WIDTHS\)\.length\) applyWidths\(\); else fitWidths\(\);"
+    assert "const keyOf = (th, i) => th.dataset.sort || th.textContent.trim();" in page, (
+        "a width belongs to a column, not to a position in the row"
+    )
     assert re.search(stored, page), "a width somebody dragged must survive the automatic fit"
 
 
@@ -734,3 +737,41 @@ def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str
     assert "make a" not in new_page, "the links this replaced"
     assert re.search(r"KIND\.onchange = showKind", new_page)
     assert "location.href" not in re.search(r"function showKind.*?\n\}", new_page, re.S).group(0)
+
+
+def test_the_columns_and_the_cells_agree_on_their_order(page: str):
+    """Two hand-maintained lists, index-parallel, with nothing enforcing it. Edit
+    one and every cell shifts a column left of where its header says it is."""
+    headers = columns(page)
+    keys = re.search(r"const keys = \[(.*?)\];", page, re.S).group(1)
+    listed = re.findall(r"'([^']+)'", keys)
+
+    assert headers == listed
+
+
+def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestClient):
+    """Three sites, and missing any one of them fails quietly rather than loudly:
+    a column with no payload key renders blank on every row until somebody edits
+    it, and a dropdown missing from the client-side filter changes the URL and
+    filters nothing."""
+    payload_json = json.loads(re.search(
+        r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
+    row = next(iter(payload_json["rows"].values()))
+    offered = re.findall(r'<select data-field="([^"]+)"', page)
+    filtered = re.search(r"for \(const field of \[(.*?)\]\)", page, re.S).group(1)
+
+    assert "assignees" in columns(page)
+    assert "assignees" in row
+    assert "assignees" in offered
+    assert set(offered) - {"predicate"} <= set(re.findall(r"'([^']+)'", filtered))
+
+
+def test_a_status_column_sorts_the_way_work_moves(page: str):
+    """Sorted as text, `done` heads the column and `shaping` sits second from
+    last — the reverse of the order work moves in, for four of the five."""
+    assert re.search(r"const rank = DATA\.choices\[sort\];", page)
+    payload_json = json.loads(re.search(
+        r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
+
+    assert payload_json["choices"]["status"] == list(STATUSES)
+    assert payload_json["choices"]["priority"] == list(PRIORITIES)

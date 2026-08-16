@@ -25,7 +25,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 from pydantic import BaseModel
 
-from .index import COMPUTED_PREDICATES, Index, _matches_predicate
+from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
 from .model import Config, Entity, Pitch, Project, Task, size_weeks
 
 
@@ -83,6 +83,7 @@ def _row(index: Index, entity_id: str) -> dict:
         "kind": entity.kind,
         "status": entity.status,
         "owner": entity.owner,
+        "assignees": entity.assignees,
         "reviewers": entity.reviewers,
         "review_waived": entity.review_waived,
         "priority": entity.priority,
@@ -99,6 +100,9 @@ def _row(index: Index, entity_id: str) -> dict:
         "blocked_by": len(index.blocked_by[entity_id]),
         "prs": entity.prs,
         "tags": entity.tags,
+        # Not a column, but the control bar offers it: a dropdown whose value the
+        # client cannot see is a filter that changes the URL and does nothing.
+        "project": _project_of(entity, index.entities),
         "problems": [p.message for p in index.problems if p.entity_id == entity_id],
         "predicates": [p for p in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, p)],
     }
@@ -364,7 +368,10 @@ a, a:visited { color: var(--accent); }
 #theme {
   margin-left: auto; width: 28px; height: 28px; border-radius: 50%;
   border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
-  font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+  /* The glyphs are small inside their em box — the sun especially — so the box
+     is grown until the drawing fills the button rather than floating in it. */
+  font-size: 19px; line-height: 26px; cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
 }
 #theme:hover { border-color: var(--accent); color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
@@ -452,7 +459,8 @@ _TABLE = """
 <div id="controls">
   <input id="q" type="search" placeholder="Search title, tags, body">
   <div class="facets">
-  {% for field in ['kind','status','owner','reviewers','priority','cycle','project','tags'] %}
+  {% for field in ['kind','priority','status','owner','assignees','reviewers',
+                   'cycle','project','tags'] %}
   <label class="facet">{{ field }}
     <select data-field="{{ field }}"><option value="">all</option>
       {% for value in payload.facets.get(field, []) %}<option>{{ value }}</option>{% endfor %}
@@ -467,9 +475,10 @@ _TABLE = """
   </div>
 </div>
 <div class="table-scroll"><table id="rows"><thead><tr>
-  <th data-sort="id">id</th><th data-sort="title">title</th><th data-sort="status">status</th>
-  <th data-sort="owner">owner</th><th data-sort="reviewers">reviewers</th>
-  <th data-sort="priority">priority</th><th data-sort="cycle">cycle</th>
+  <th data-sort="id">id</th><th data-sort="title">title</th>
+  <th data-sort="priority">priority</th><th data-sort="status">status</th>
+  <th data-sort="owner">owner</th><th data-sort="assignees">assignees</th>
+  <th data-sort="reviewers">reviewers</th><th data-sort="cycle">cycle</th>
   <th data-sort="size">weeks</th>
   <th data-sort="start">start</th><th data-sort="end">end</th>
   <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
@@ -490,7 +499,10 @@ function wanted(field) { return params.getAll(field).filter(Boolean); }
 function matches(row) {
   const q = (params.get('q') || '').trim().toLowerCase();
   if (q && !(row.title + ' ' + row.tags.join(' ')).toLowerCase().includes(q)) return false;
-  for (const field of ['kind','status','owner','reviewers','priority','cycle','tags']) {
+  // Every field the control bar offers. A field in one list and not the other is
+  // a dropdown that changes the URL and filters nothing.
+  for (const field of ['kind','status','owner','assignees','reviewers','priority',
+                       'cycle','project','tags']) {
     const values = wanted(field);
     if (!values.length) continue;
     const held = [].concat(row[field] ?? []).map(String);
@@ -523,12 +535,21 @@ function prLink(ref) {
 }
 
 function draw() {
-  const keys = ['id','title','status','owner','reviewers','priority','cycle','size',
-                'start','end','blocked_by','prs','tags'];
+  // Index-parallel with the header row above. Nothing enforces that at runtime,
+  // so the two are edited together or every cell shifts one column left.
+  const keys = ['id','title','priority','status','owner','assignees','reviewers','cycle',
+                'size','start','end','blocked_by','prs','tags'];
   const sort = params.get('sort') || 'id';
   const descending = params.get('desc') === '1';
+  // A status and a priority are sequences, not words: sorted as text, `done`
+  // heads the status column and `high, low, medium` is not an order anybody
+  // means by priority. Everything else really is alphabetical.
+  const rank = DATA.choices[sort];
+  const key = rank
+    ? row => String(rank.indexOf(row[sort])).padStart(3, '0')
+    : row => String(row[sort] ?? '');
   const rows = Object.values(DATA.rows).filter(matches)
-    .sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? '')));
+    .sort((a, b) => key(a).localeCompare(key(b)));
   if (descending) rows.reverse();
   tbody.innerHTML = rows.map(row =>
     `<tr data-id="${row.id}" title="${(row.problems || []).join(' · ')}">` +
@@ -661,7 +682,10 @@ for (const select of document.querySelectorAll('select[data-field]'))
 // Column widths, dragged and remembered. The defaults are whatever the browser
 // works out from the content, and are only frozen once somebody drags: measuring
 // them all at that moment is what keeps the other columns where they were.
-const WIDTHS = JSON.parse(localStorage.getItem('openproj:widths') || '{}');
+// Bumped when the columns changed: widths stored against the old positional
+// keys would land on the wrong columns rather than simply being ignored.
+const WIDTH_KEY = 'openproj:widths:2';
+const WIDTHS = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
 let dragging = false;
 const table = document.getElementById('rows');
 const headers = [...table.querySelectorAll('th')];
@@ -670,21 +694,37 @@ const headers = [...table.querySelectorAll('th')];
 // column one character narrower than its widest value costs a second line on
 // every row that holds that value.
 const WRAPS = new Set(['prs', 'tags']);
+
+// A column's identity is its sort key, or its label where it has none. It used
+// to be the column's POSITION for those two, so inserting a column anywhere to
+// their left silently handed prs the width somebody had dragged for blockers.
+const keyOf = (th, i) => th.dataset.sort || th.textContent.trim();
 const FLOOR = 110;      // narrower than this and a wrapping column is unreadable
 const LONGEST = 200;    // and this is as far as the borrowing may squeeze a sentence
 
 // Size every column to its content and the table to the window, once, when
 // nothing has been dragged yet. Measured with every cell on one line, so a
 // column ends up as wide as its widest value needs and not one character more.
-function fitWidths() {
-  const scroll = table.parentElement;
+// What each column would need with every cell on one line. Measured from a
+// layout that has forgotten the widths already applied, or a column can only
+// ever be measured wider than it currently is.
+function naturalWidths() {
+  const applied = headers.map(th => th.style.width);
+  headers.forEach(th => { th.style.width = ''; });
   table.classList.add('measuring');
   table.style.tableLayout = 'auto';
   table.style.width = 'max-content';
   const natural = headers.map(th => th.getBoundingClientRect().width);
   table.classList.remove('measuring');
+  headers.forEach((th, i) => { th.style.width = applied[i]; });
+  return natural;
+}
 
-  const wrapping = headers.map(th => WRAPS.has(th.dataset.sort || th.textContent.trim()));
+function fitWidths() {
+  const scroll = table.parentElement;
+  const natural = naturalWidths();
+
+  const wrapping = headers.map(th => WRAPS.has(keyOf(th, 0)));
   const fixed = natural.map((w, i) => wrapping[i] ? 0 : Math.ceil(w * 1.1));
   let spare = scroll.clientWidth - fixed.reduce((a, b) => a + b, 0);
 
@@ -707,7 +747,7 @@ function fitWidths() {
   const share = natural.filter((w, i) => wrapping[i]).reduce((a, b) => a + b, 0) || 1;
   const extra = Math.max(0, spare - FLOOR * wrapping.filter(Boolean).length);
   headers.forEach((th, i) => {
-    const key = th.dataset.sort || `col${i}`;
+    const key = keyOf(th, i);
     WIDTHS[key] = wrapping[i] ? FLOOR + Math.floor(extra * natural[i] / share) : fixed[i];
   });
   applyWidths();
@@ -718,7 +758,7 @@ function applyWidths() {
   table.style.tableLayout = 'fixed';
   let total = 0;
   headers.forEach((th, i) => {
-    const key = th.dataset.sort || `col${i}`;
+    const key = keyOf(th, i);
     if (WIDTHS[key]) { th.style.width = WIDTHS[key] + 'px'; total += WIDTHS[key]; }
   });
   // The table stops being 100% wide once the columns are explicit. Left at 100%,
@@ -733,6 +773,15 @@ headers.forEach((th, i) => {
   grip.className = 'grip';
   th.append(grip);
   grip.onclick = event => event.stopPropagation();
+  // Double-click a grip and the column shrinks to what its widest cell needs on
+  // one line — the width you would have dragged to, without the dragging.
+  grip.ondblclick = event => {
+    event.stopPropagation();
+    const key = keyOf(th, i);
+    WIDTHS[key] = Math.ceil(naturalWidths()[i]);
+    localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
+    applyWidths();
+  };
   grip.onpointerdown = event => {
     event.stopPropagation();
     event.preventDefault();
@@ -742,11 +791,11 @@ headers.forEach((th, i) => {
     grip.classList.add('dragging');
     // Freeze every column first, or resizing one reflows all the others.
     headers.forEach((other, j) => {
-      const key = other.dataset.sort || `col${j}`;
+      const key = keyOf(other, j);
       WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
     });
     table.style.tableLayout = 'fixed';
-    const key = th.dataset.sort || `col${i}`;
+    const key = keyOf(th, i);
     const from = event.clientX;
     const was = WIDTHS[key];
     const move = e => {
@@ -756,7 +805,7 @@ headers.forEach((th, i) => {
     const stop = () => {
       grip.classList.remove('dragging');
       setTimeout(() => { dragging = false; }, 0);   // after the click it caused
-      localStorage.setItem('openproj:widths', JSON.stringify(WIDTHS));
+      localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', stop);
     };
@@ -796,7 +845,8 @@ th, td {
      next column instead of wrapping inside its own. */
   overflow-wrap: anywhere;
 }
-th { color: var(--muted); font-weight: 400; }
+th { color: var(--muted); font-weight: 400;
+     text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
 th[data-sort] { cursor: pointer; user-select: none; }
 th.sorted { color: inherit; font-weight: 700; }
 th { position: relative; }
