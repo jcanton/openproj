@@ -81,9 +81,7 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
     return day
 
 
-def _duration_weeks(
-    entity: Entity, config: Config, availability: dict[str, float] | None = None
-) -> tuple[float, bool]:
+def _duration_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
     """Elapsed weeks, and whether the size was defaulted rather than stated.
 
     A size is PERSON-weeks — the work one person would need — so the people on it
@@ -100,20 +98,24 @@ def _duration_weeks(
     a division by zero, and infinity is not a useful forecast for unowned work.
     """
     size, defaulted = size_weeks(entity, config)
-    rates = [_availability_of(who, config, availability) for who in _workers(entity)]
+    rates = [_availability_of(who, entity, config) for who in _workers(entity)]
     return size / (sum(rates) or config.nominal_availability or 1.0), defaulted
 
 
-def _availability_of(
-    who: str, config: Config, availability: dict[str, float] | None
-) -> float:
-    """This cycle's figure for one person, or the global default.
+def _availability_of(who: str, entity: Entity, config: Config) -> float:
+    """One person's rate in the cycle this entity was bet into.
 
-    Absent from the map means "nobody said otherwise", not "unavailable" — a
+    Read from the entity's own cycle rather than passed in, so there is one
+    source: a global override and a per-cycle record would disagree the first
+    time somebody set both.
+
+    Absent from the roster means "nobody said otherwise", not "unavailable" — a
     roster that has to name everybody to schedule anybody is a roster that goes
-    stale and takes the dates with it.
+    stale and takes the dates with it. A rate of zero means the same, rather than
+    meaning a bet nobody can ever finish.
     """
-    stated = (availability or {}).get(who)
+    plan = config.plans.get(entity.cycle) if entity.cycle is not None else None
+    stated = plan.availability.get(who) if plan else None
     return stated if stated else config.nominal_availability or 1.0
 
 
@@ -142,14 +144,21 @@ def _overrun(entity: Entity, end: date, config: Config) -> float | None:
     window = config.cycles.get(entity.cycle) if entity.cycle is not None else None
     if window is None:
         return None
-    builds_until = build_end(window, config)
+    builds_until = build_end(entity.cycle, window, config)
     if end <= builds_until:
         return None
     return (end - builds_until).days / 7
 
 
-def build_end(window: tuple[date, date], config: Config) -> date:
-    """The last day of a cycle's build, which is its end less the cool-down."""
+def build_end(number: int | None, window: tuple[date, date], config: Config) -> date:
+    """The last day of a cycle's build.
+
+    From the cycle's own record where there is one, and otherwise from the global
+    cool-down applied to the end of the window.
+    """
+    plan = config.plans.get(number) if number is not None else None
+    if plan is not None:
+        return plan.builds_until
     return window[1] - timedelta(days=round(config.cooldown_weeks * 7))
 
 
@@ -207,10 +216,7 @@ def _unschedulable(active: dict[str, Entity]) -> set[str]:
 
 
 def schedule(
-    entities: list[Entity],
-    config: Config,
-    today: date,
-    availability: dict[str, float] | None = None,
+    entities: list[Entity], config: Config, today: date
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
     live = {e.id: e for e in entities if e.status != "shelved"}
     children: dict[str, list[str]] = defaultdict(list)
@@ -251,7 +257,7 @@ def schedule(
             )
             continue
 
-        duration, estimated = _duration_weeks(entity, config, availability)
+        duration, estimated = _duration_weeks(entity, config)
         workers = _workers(entity)
         span, explanation = _place(
             entity, duration, workers, booked, spans, floor, config

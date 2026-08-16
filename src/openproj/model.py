@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import re
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +22,7 @@ from ruamel.yaml.comments import CommentedSeq
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
+_CYCLE_DIR = "cycles"
 
 
 class Problem(BaseModel):
@@ -36,6 +37,40 @@ class Problem(BaseModel):
     field: str | None
     message: str
     rule_version: int
+
+
+class Cycle(BaseModel):
+    """One cycle, as the betting table sets it up.
+
+    Stored as `cycles/<number>.md`, frontmatter and a body, so it reuses the whole
+    existing write path — per-key frontmatter merge, three-way body merge, scoped
+    compare-and-swap. The body is where the cycle's goal goes.
+
+    Only `starts_on` is stored. An end date stored beside a length is a second
+    copy of one fact, and the two disagree the first time somebody moves a date.
+    """
+
+    cycle: int
+    starts_on: date
+    build_weeks: float = 4.0
+    cooldown_weeks: float = 2.0
+    # Fraction of the BUILD weeks, per person. Absent means nobody said
+    # otherwise, which is not the same as unavailable — see `_availability_of`.
+    availability: dict[str, float] = {}
+    body: str = ""
+
+    @property
+    def builds_until(self) -> date:
+        return self.starts_on + timedelta(days=round(self.build_weeks * 7) - 1)
+
+    @property
+    def ends_on(self) -> date:
+        weeks = self.build_weeks + self.cooldown_weeks
+        return self.starts_on + timedelta(days=round(weeks * 7) - 1)
+
+    def capacity(self, who: str, nominal: float = 1.0) -> float:
+        """Weeks of work this person can hold in this cycle."""
+        return self.availability.get(who, nominal) * self.build_weeks
 
 
 class Config(BaseModel):
@@ -58,6 +93,19 @@ class Config(BaseModel):
     # the right default: a tracker that refuses a name because nobody has written
     # a roster yet is a tracker nobody finishes setting up.
     known_people: list[str] = []
+    # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
+    plans: dict[int, Cycle] = {}
+
+    def with_plans(self, plans: list[Cycle]) -> Config:
+        """A cycle record supersedes `config/cycles.yaml` for its own number.
+
+        Both exist on purpose: the YAML is how the dates were kept before there
+        were records, and a repository part-way through will have some of each.
+        """
+        windows = dict(self.cycles) | {c.cycle: (c.starts_on, c.ends_on) for c in plans}
+        return self.model_copy(
+            update={"cycles": windows, "plans": {c.cycle: c for c in plans}}
+        )
 
 
 def load_config(root: Path) -> Config:
@@ -206,6 +254,21 @@ def parse_file(path: Path) -> Entity:
     return parse_text(path.read_text(encoding="utf-8"), str(path))
 
 
+def parse_cycle_text(text: str, source: str) -> Cycle:
+    """Parse one cycle file. Same frontmatter-and-body shape as an entity, and a
+    different type: nearly every field an Entity carries is nonsense on a cycle,
+    and the one it would reach for — `assignees: list[str]` — cannot hold the
+    fraction that is the whole point of the record."""
+    frontmatter, body = _split(text, source)
+    data = _round_trip_yaml().load(frontmatter) or {}
+    fields = {k: v for k, v in data.items() if k in Cycle.model_fields}
+    return Cycle.model_validate({**fields, "body": body})
+
+
+def parse_cycle_file(path: Path) -> Cycle:
+    return parse_cycle_text(path.read_text(encoding="utf-8"), str(path))
+
+
 def _in_the_style_of(old: object, new: object) -> object:
     """Keep a hand-written `tags: [a, b]` from becoming a three-line block list
     the moment somebody adds a tag from the web.
@@ -248,12 +311,21 @@ def serialise(entity: Entity, original_text: str | None = None) -> str:
 
 
 def load_repo(root: Path) -> tuple[list[Entity], Config]:
+    """Everything in a plan repository, with the cycle records folded into the
+    config rather than returned beside it.
+
+    Sixteen call sites take `(entities, config)`, and a cycle is configuration in
+    the sense that matters here: nothing iterates it, everything looks it up. A
+    third element would have been a third thing for every caller to thread
+    through and drop.
+    """
     entities = [
         parse_file(path)
         for directory in _ENTITY_DIRS
         for path in sorted((root / directory).glob("*.md"))
     ]
-    return entities, load_config(root)
+    plans = [parse_cycle_file(path) for path in sorted((root / _CYCLE_DIR).glob("*.md"))]
+    return entities, load_config(root).with_plans(plans)
 
 
 def ancestors(entity_id: str, by_id: dict[str, Entity]) -> list[str]:

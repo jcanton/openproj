@@ -23,7 +23,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from openproj import model
-from openproj.model import Config, Entity, Pitch, Task
+from openproj.model import Config, Cycle, Entity, Pitch, Task
 from openproj.schedule import Explanation, Span, schedule, working_days_after
 
 MONDAY = date(2026, 8, 17)
@@ -58,7 +58,14 @@ def run(
     config: Config = CONFIG,
     availability: dict[str, float] | None = None,
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
-    return schedule(entities, config, today, availability)
+    """`availability` is a convenience: it becomes cycle 36's roster, which is the
+    cycle the helpers below put entities in by default."""
+    if availability is not None:
+        config = config.with_plans(
+            [Cycle(cycle=36, starts_on=date(2026, 6, 22), build_weeks=6.0,
+                   availability=availability)]
+        )
+    return schedule(entities, config, today)
 
 
 # --------------------------------------------------------------------------- #
@@ -292,8 +299,9 @@ def test_availability_stretches_the_work_of_whoever_is_slower():
     """One person at 60% takes a three-week bet five weeks. That IS the answer,
     not the bug the old spec called out — that draft was only wrong under D1's
     reading of what a size means."""
-    full, _ = run([pitch("bbb001", owner="ann", size=3.0)])
-    half, _ = run([pitch("bbb001", owner="ann", size=3.0)], availability={"ann": 0.5})
+    full, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)])
+    half, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)],
+                  availability={"ann": 0.5})
 
     assert full["pitch-bbb001"].end == date(2026, 9, 4)      # three working weeks
     assert half["pitch-bbb001"].end == date(2026, 9, 25)     # six
@@ -303,10 +311,14 @@ def test_somebody_nobody_rated_works_at_the_nominal_rate():
     """Absent from the map means nobody said otherwise, not unavailable. A roster
     that must name everybody to schedule anybody goes stale and takes the dates
     with it."""
-    rated, _ = run([pitch("bbb001", owner="ann", size=3.0)], availability={"zz": 0.1})
-    unrated, _ = run([pitch("bbb001", owner="ann", size=3.0)])
+    rated, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)],
+                   availability={"zz": 0.1})
+    unrated, _ = run([pitch("bbb001", owner="ann", size=3.0, cycle=36)])
 
-    assert rated["pitch-bbb001"] == unrated["pitch-bbb001"]
+    # Dates only: the rated run has a cycle RECORD, whose own build length also
+    # decides the overrun, and this test is about the rate rather than the box.
+    assert rated["pitch-bbb001"].start == unrated["pitch-bbb001"].start
+    assert rated["pitch-bbb001"].end == unrated["pitch-bbb001"].end
 
 
 def test_unowned_work_is_one_notional_person_rather_than_a_division_by_zero():
