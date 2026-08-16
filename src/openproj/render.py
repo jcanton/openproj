@@ -2856,7 +2856,7 @@ document.getElementById('save').onclick = async () => {
 _DETAIL = """
 {% if not single %}<div class="toc">
   {% for group in groups %}
-  <h2 class="tocgroup">{{ group.status }}
+  <h2 class="tocgroup">{{ group.status|human }}
     <span class="tally">{{ group.entities|length }}</span></h2>
   <ul>
     {% for e in group.entities %}

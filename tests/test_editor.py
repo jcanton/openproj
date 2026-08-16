@@ -326,8 +326,12 @@ def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):
     and the people picker rewrites a field to add its separator. All three used to
     reach git — one of them emptied an assignees list nobody had touched."""
     page = client.get("/cycle/37").text
-    live = re.search(r"for \(const input of document\.querySelectorAll\('#bets input\.live'\)\)"
-                     r".*?\n\}", page, re.S).group(0)
+    live = re.search(
+        r"for \(const input of document\.querySelectorAll\('#bets input\.live'\)\)"
+        r".*?\n\}",
+        page,
+        re.S,
+    ).group(0)
 
     assert "let edited = false;" in live
     assert "input.addEventListener('input', () => { edited = true; });" in live
@@ -361,8 +365,11 @@ def test_nothing_on_the_cycle_page_is_written_until_save(client: TestClient):
 def test_work_is_autosaved_so_a_dropped_connection_costs_two_minutes(client: TestClient):
     page = client.get("/cycle/37").text
 
-    assert re.search(r"setInterval\(\(\) => \{ if \(PENDING\.size \|\| ROSTER_DIRTY\)"
-                     r" flush\(true\); \}, 120000\);", page)
+    assert re.search(
+        r"setInterval\(\(\) => \{ if \(PENDING\.size \|\| ROSTER_DIRTY\)"
+        r" flush\(true\); \}, 120000\);",
+        page,
+    )
     # And the browser's own warning, which is the only thing that can stop a tab
     # closing on unsaved work.
     assert "addEventListener('beforeunload'" in page
@@ -378,8 +385,9 @@ def test_taking_somebody_out_of_a_cycle_takes_two_clicks(client: TestClient):
 
     assert "asking.hidden = false;" in drop, "the glyph asks"
     assert "asking.querySelector('.no').onclick" in drop, "and can be told no"
-    yes = re.search(r"asking\.querySelector\('\.yes'\)\.onclick = \(\) => \{.*?\n  \};",
-                    drop, re.S).group(0)
+    yes = re.search(
+        r"asking\.querySelector\('\.yes'\)\.onclick = \(\) => \{.*?\n  \};", drop, re.S
+    ).group(0)
     assert "row.remove();" in yes, "only the answer removes anything"
     assert "row.remove();" not in drop.split("asking.querySelector('.yes')")[0]
 
@@ -393,11 +401,13 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
     the request that made it."""
     page = client.get("/cycle/37").text
 
-    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 2, \
+    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 2, (
         "the cycle record and each entity in the batch"
+    )
     assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 2
-    assert "window.SHOWING = ['cycle-' + NUMBER]" in page, \
+    assert "window.SHOWING = ['cycle-' + NUMBER]" in page, (
         "so a write that lands here reads as landing here"
+    )
 
 
 def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
@@ -406,8 +416,11 @@ def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
     page = client.get("/cycle/37").text
 
     assert "function recount()" in page
-    assert re.search(r"if \(event\.target\.matches\('input\.rate, \[name=build_weeks\]'\)\)"
-                     r" recount\(\);", page)
+    assert re.search(
+        r"if \(event\.target\.matches\('input\.rate, \[name=build_weeks\]'\)\)"
+        r" recount\(\);",
+        page,
+    )
 
 
 def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):
@@ -418,9 +431,15 @@ def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_
 
     client.put(
         "/api/cycle/50",
-        json={"base_commit": git_head(repo_path),
-              "fields": {"starts_on": "2027-06-07", "build_weeks": 4,
-                         "availability": {"cy": 0.5, "ann": 1.0}}, "body": None},
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {
+                "starts_on": "2027-06-07",
+                "build_weeks": 4,
+                "availability": {"cy": 0.5, "ann": 1.0},
+            },
+            "body": None,
+        },
     )
     page = client.get("/cycles").text
     carried = re.search(r"const ROSTER = (\{.*?\});", page).group(1)

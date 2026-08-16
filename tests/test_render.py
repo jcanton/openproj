@@ -1006,14 +1006,17 @@ def test_edges_are_routed_rather_than_drawn_over_whatever_is_between(rendered: P
 def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):
     """shaping first, done last. Alphabetical put `done` at the top, which is the
     one group nobody opens the index looking for."""
-    from openproj.render import STATUSES
+    from openproj.render import STATUSES, _human
 
     body = read(rendered, "detail.html")
-    headings = re.findall(r'<h2 class="tocgroup">\s*(\w+)', body)
+    headings = re.findall(r'<h2 class="tocgroup">\s*([^<]+?)\s*<span', body)
     present = [s for s in STATUSES if any(e.status == s for e in seed_index.entities.values())]
 
-    assert headings == present
-    assert set(headings) == {e.status for e in seed_index.entities.values()}
+    assert headings == [_human(s) for s in present]
+    assert set(headings) == {_human(e.status) for e in seed_index.entities.values()}
+    # The heading was the last place a status was still spelled the way the file spells it,
+    # two lines above a kind that already read as a word.
+    assert not [h for h in headings if "_" in h]
 
 
 def test_a_status_nobody_uses_gets_no_heading(seed_index: Index):
