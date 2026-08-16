@@ -3206,6 +3206,24 @@ function labelOf(control) {
   return dt ? dt.childNodes[0].textContent.trim() : control.name;
 }
 
+// What the server refused a write with, in the words on this page. A Problem
+// carries its field as an identifier because that is what marks the control;
+// printing that identifier is how `appetite_weeks` ended up in a sentence under
+// a label reading "Appetite (weeks)". The field is named by the same `labelOf`
+// the form's own check uses, so the two refusals cannot drift apart.
+function refusals(answer) {
+  const problems = answer.problems || [];
+  if (!problems.length) return [answer.detail || 'refused'];
+  return problems.map(problem => {
+    // `CSS.escape` because the field arrives over the wire: an unescaped one
+    // would be a malformed selector, and a DOMException here would swallow the
+    // whole refusal rather than one line of it.
+    const control = problem.field
+      && document.querySelector(`[data-type][name="${CSS.escape(problem.field)}"]`);
+    return control ? `${labelOf(control)}: ${problem.message}` : problem.message;
+  });
+}
+
 // What the chosen status will make the server refuse this form without. Marked
 // on the label rather than announced after a rejected save: which fields a
 // status demands is the thing you need before you fill the form in, and the
@@ -3416,11 +3434,16 @@ document.getElementById('save').onclick = async () => {
     const answer = await response.json();
     if (!response.ok) {
       // The client check is a courtesy; this is the truth, and swallowing it leaves
-      // somebody staring at a form that looks fine.
+      // somebody staring at a form that looks fine. Named by the same `labelOf`
+      // the check above uses, so the server's refusal and the form's own name the
+      // field identically — and built as text nodes, because `answer.detail`
+      // quotes back whatever key was posted.
       PROBLEMS.hidden = false;
-      PROBLEMS.innerHTML = (answer.problems || [])
-        .map(p => `<li>${p.field}: ${p.message}</li>`).join('')
-        || `<li>${answer.detail || 'refused'}</li>`;
+      PROBLEMS.replaceChildren(...refusals(answer).map(text => {
+        const item = document.createElement('li');
+        item.textContent = text;
+        return item;
+      }));
       return;
     }
     committed = answer.commit;
@@ -5737,17 +5760,23 @@ def render_timeline(
     return _page("openproj — timeline", body, _timeline_css(), links)
 
 
-def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> None:
-    """The pages, and the images they name.
+def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tuple[str, ...]:
+    """The pages, and the images they name. Returns what it wrote, in order.
 
     Without the copy an exported plan renders every uploaded figure as a broken
     image — the markdown points at `assets/…` relative to the page, which is
     exactly right and exactly useless if the directory is not there.
+
+    The names come back rather than being restated by the caller, because they
+    already were: the export grew from three pages to six and the CLI went on
+    announcing "index.html, graph.html and timeline.html" to somebody who had
+    just been handed six files.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     assets = (repo / "assets") if repo else None
     if assets and assets.is_dir():
         shutil.copytree(assets, out_dir / "assets", dirs_exist_ok=True)
+    written: list[str] = []
     for name, html in (
         ("index.html", render_table(index)),
         ("detail.html", render_detail(index)),
@@ -5757,3 +5786,5 @@ def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> None
         ("timeline.html", render_timeline(index)),
     ):
         (out_dir / name).write_text(html, encoding="utf-8")
+        written.append(name)
+    return tuple(written)

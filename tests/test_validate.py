@@ -33,17 +33,17 @@ PROJECT_ID = "proj-ccc333"
 NEEDS_TITLE = "title must not be empty"
 BAD_ID_PATTERN = "id must match ^(proj|pitch|task)-[0-9a-f]{6}$"
 NEEDS_OWNER = "a ready entity needs an owner"
-NEEDS_REVIEWER = "a ready entity needs a reviewer, or review_waived"
-NEEDS_EFFORT = "a ready task needs effort_weeks"
-NEEDS_APPETITE = "a ready pitch needs appetite_weeks"
-NEEDS_SHAPED_BY = "a ready pitch needs shaped_by"
-NEEDS_ASSIGNED_ON = "work in progress needs assigned_on"
+NEEDS_REVIEWER = "a ready entity needs a reviewer, or review waived"
+NEEDS_EFFORT = "a ready task needs an appetite"
+NEEDS_APPETITE = "a ready pitch needs an appetite"
+NEEDS_SHAPED_BY = "a ready pitch needs to say who shaped it"
+NEEDS_ASSIGNED_ON = "work in progress needs the date it was assigned"
 NEEDS_INDEPENDENT_REVIEWER = (
-    "work in progress needs a reviewer other than its owner, or review_waived"
+    "work in progress needs a reviewer other than its owner, or review waived"
 )
 NEEDS_PR = "a done entity needs at least one PR"
 SHOULD_HAVE_PARENT = "a task should have a parent"
-DEPENDS_ON_CYCLE = "part of a depends_on cycle"
+DEPENDS_ON_CYCLE = "part of a blocked-by cycle"
 PARENT_CYCLE = "part of a parent cycle"
 
 
@@ -52,11 +52,11 @@ def bad_id_prefix(kind: str) -> str:
 
 
 def missing_target(target: str) -> str:
-    return f"depends_on target {target} does not exist"
+    return f"blocked by {target}, which does not exist"
 
 
 def shelved_target(target: str) -> str:
-    return f"depends_on target {target} is shelved"
+    return f"blocked by {target}, which is shelved"
 
 
 def ancestor_dep(target: str) -> str:
@@ -405,3 +405,50 @@ def test_a_cycle_nobody_dated_is_reported_rather_than_ignored():
     assert reported[0].entity_id == entities[0].id
     assert reported[0].severity == "warning"
     assert "no dates" in reported[0].message
+
+
+def test_no_message_names_a_field_the_way_the_file_spells_it():
+    """A message is a sentence somebody reads; `Problem.field` is the identifier.
+
+    `work in progress needs a reviewer other than its owner, or review_waived` was
+    printed two inches under a checkbox the same page labels "Review waived" — one
+    field, two names, on one screen, which is what F11 was about. The identifier is
+    not lost by fixing that: it stays on `Problem.field`, which is how the page
+    finds the control to mark and how a caller filters.
+
+    The forbidden set is derived from the models rather than listed, so a tenth
+    field added tomorrow is covered without anybody remembering this test. Only
+    snake_case names are checked: a one-word field like `owner` or `title` is
+    already the word a reader uses, so forbidding it would forbid English.
+    """
+    spelled_in_the_file = {
+        name
+        for model in (Project, Pitch, Task)
+        for name in model.model_fields
+        if "_" in name
+    }
+    assert "review_waived" in spelled_in_the_file, "the derivation still finds the fields"
+
+    # Every gate, tripped at once: each status, each kind, a missing dependency, a
+    # shelved one, and a pair that depend on each other.
+    loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
+    entities = [
+        pitch(status="ready", owner=None, reviewers=[], appetite_weeks=None, shaped_by=None),
+        task(status="in_progress", assigned_on=None, reviewers=["jcanton"], owner="jcanton"),
+        project(status="ready", owner=None, reviewers=[]),
+        Task(id=OTHER_TASK_ID, kind="task", title="T", status="ready", owner="jcanton",
+             reviewers=["msimberg"], effort_weeks=None, depends_on=["task-999999", SHELVED_ID]),
+        Task(id=SHELVED_ID, kind="task", title="D", status="shelved", owner="jcanton"),
+        Task(id=loop_a, kind="task", title="A", status="shaping", depends_on=[loop_b]),
+        Task(id=loop_b, kind="task", title="B", status="shaping", depends_on=[loop_a]),
+    ]
+    problems = check(*entities)
+    assert len(problems) >= 9, f"the gates did not all fire: {[p.message for p in problems]}"
+
+    leaked = sorted(
+        (p.field, p.message)
+        for p in problems
+        for name in spelled_in_the_file
+        if name in p.message
+    )
+    assert leaked == [], f"a rule spelled a field the file's way: {leaked}"

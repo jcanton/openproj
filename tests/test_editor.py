@@ -544,3 +544,29 @@ def test_every_answer_a_write_gives_lands_in_a_live_region(client: TestClient, p
     assert '<ul id="problems" class="problems" role="status" aria-live="polite" hidden>' in new
     # And the table's, which writes the conflict into the box and returns.
     assert '<div id="row-conflict" role="status" aria-live="polite" hidden>' in client.get("/").text
+
+
+def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient):
+    """The form's own check already refused in the words on the page — and said so
+    in a comment — while the server's refusal ten lines below printed `p.field`.
+
+    So one rejected save read "still needed at status Ready: Appetite (weeks)" and
+    the next read "appetite_weeks: a ready pitch needs an appetite", from the same
+    `<ul>`, about the same box. Both go through `labelOf` now.
+
+    The list is built from text nodes rather than interpolated into `innerHTML`,
+    because `answer.detail` quotes back a key the request supplied: a 422 is the
+    server repeating the client's own string, and repeating it as markup is how a
+    refusal becomes an element.
+    """
+    new = client.get("/new?kind=pitch").text
+
+    assert "function refusals(answer) {" in new
+    assert "return control ? `${labelOf(control)}: ${problem.message}` : problem.message;" in new
+    assert "if (!problems.length) return [answer.detail || 'refused'];" in new
+    assert "CSS.escape(problem.field)" in new, "the field arrives over the wire"
+    # Built, not interpolated.
+    assert "item.textContent = text;" in new
+    assert "PROBLEMS.replaceChildren(" in new
+    assert "PROBLEMS.innerHTML = (answer.problems" not in new, "the interpolation this replaced"
+    assert "${p.field}" not in new, "the identifier this replaced"

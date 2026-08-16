@@ -77,10 +77,25 @@ def tokens(page: str) -> dict[str, dict[str, str]]:
     }
 
 
-def test_render_static_writes_all_three_pages(rendered: Path):
+def test_render_static_writes_every_page_and_says_which(rendered: Path, seed_index):
+    """The export grew from three pages to six; the count in this test's own name,
+    in `render`'s help and in the line it prints did not.
+
+    So `render` handed over six files and announced three, and the two pages a
+    reader would most want to send somebody — the people table and the cycles
+    index — were not among the ones it named. The names come back from
+    `render_static` now, which is the only thing that knows them.
+    """
     for name in PAGES:
         assert (rendered / name).is_file(), name
         assert read(rendered, name).lstrip().startswith("<!doctype html>")
+
+    import tempfile
+
+    from openproj.render import render_static
+
+    with tempfile.TemporaryDirectory() as directory:
+        assert render_static(seed_index, Path(directory)) == PAGES
 
 
 def test_no_page_reaches_the_network(rendered: Path):

@@ -29,7 +29,7 @@ def _parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="validate a plan repository")
     check.add_argument("repo", type=Path)
 
-    render = commands.add_parser("render", help="write the three static pages")
+    render = commands.add_parser("render", help="write the static pages")
     render.add_argument("repo", type=Path)
     render.add_argument("out_dir", type=Path)
     render.add_argument("--today", type=date.fromisoformat, default=None)
@@ -67,8 +67,8 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     from .render import render_static
 
     entities, config = load_repo(repo)
-    render_static(build_index(entities, config, today or date.today()), out_dir, repo)
-    print(f"wrote index.html, graph.html and timeline.html to {out_dir}")
+    written = render_static(build_index(entities, config, today or date.today()), out_dir, repo)
+    print(f"wrote {', '.join(written)} to {out_dir}")
     return 0
 
 

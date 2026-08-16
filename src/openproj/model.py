@@ -398,20 +398,20 @@ def _dependency_problems(
     entity: Entity, by_id: dict[str, Entity], parent_cycles: set[str], dep_cycles: set[str]
 ) -> Iterator[tuple[str, str | None, str, int]]:
     if entity.id in dep_cycles:
-        yield "blocker", "depends_on", "part of a depends_on cycle", 1
+        yield "blocker", "depends_on", "part of a blocked-by cycle", 1
         return
     # A parent cycle makes "ancestor" undefined, so the relational checks are
     # skipped rather than reporting a second, derived problem for one broken chain.
     own_ancestors = set() if entity.id in parent_cycles else set(ancestors(entity.id, by_id))
     for target in entity.depends_on:
         if target not in by_id:
-            yield "blocker", "depends_on", f"depends_on target {target} does not exist", 1
+            yield "blocker", "depends_on", f"blocked by {target}, which does not exist", 1
         elif target in own_ancestors:
             yield "blocker", "depends_on", f"cannot depend on {target}: it is an ancestor", 1
         elif entity.id in ancestors(target, by_id):
             yield "blocker", "depends_on", f"cannot depend on {target}: it is a descendant", 1
         elif by_id[target].status == "shelved":
-            yield "warning", "depends_on", f"depends_on target {target} is shelved", 1
+            yield "warning", "depends_on", f"blocked by {target}, which is shelved", 1
 
 
 def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
@@ -422,6 +422,12 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
     people put half-formed things. `done` is exempt from the earlier gates for a
     duller reason: migrated history often cannot say who owned something in 2025,
     and a validator that blocks on unknowable facts gets switched off.
+
+    Every message names its field the way the reader's screen names it, never the
+    way the file spells it. A message is a sentence somebody reads, and it used to
+    sit two inches under a checkbox labelled "Review waived" saying `review_waived`
+    — one field with two names on one screen. The identifier is not lost: it stays
+    on `Problem.field`, which is how the page finds the control to mark.
     """
     if entity.status in ("shaping", "shelved"):
         return
@@ -429,20 +435,23 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
         if entity.owner is None:
             yield "blocker", "owner", "a ready entity needs an owner", 1
         if not (entity.review_waived or entity.reviewers):
-            yield "blocker", "reviewers", "a ready entity needs a reviewer, or review_waived", 1
+            yield "blocker", "reviewers", "a ready entity needs a reviewer, or review waived", 1
         field = _SIZE_FIELD.get(entity.kind)
         if field is not None and getattr(entity, field) is None:
-            yield "blocker", field, f"a ready {entity.kind} needs {field}", 1
+            # One word for both fields, because they are one quantity: a pitch
+            # stores it as appetite_weeks and a task as effort_weeks, and the
+            # reader is asked for an appetite either way.
+            yield "blocker", field, f"a ready {entity.kind} needs an appetite", 1
         if entity.kind == "pitch" and entity.shaped_by is None:
-            yield "blocker", "shaped_by", "a ready pitch needs shaped_by", 2
+            yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
     elif entity.status == "in_progress":
         if entity.assigned_on is None:
-            yield "blocker", "assigned_on", "work in progress needs assigned_on", 1
+            yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
         if not entity.review_waived and not (set(entity.reviewers) - {entity.owner}):
             yield (
                 "blocker",
                 "reviewers",
-                "work in progress needs a reviewer other than its owner, or review_waived",
+                "work in progress needs a reviewer other than its owner, or review waived",
                 1,
             )
     elif entity.status == "done" and not entity.prs:
