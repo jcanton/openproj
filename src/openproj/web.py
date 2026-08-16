@@ -497,9 +497,16 @@ def create_app(
                      f"{MAX_ASSET_BYTES // 1024} KB"
             )
         path, fresh = store.put_asset(data, IMAGE_TYPES[kind], user.login)
+        # The sha goes back to the uploader as well as out to everybody else. The
+        # shell's banner suppresses news of a commit the tab made itself, and it
+        # can only do that if the request that made it hands the sha back — an
+        # upload that only announced popped "The plan changed." over its own paste.
+        commit = store.head()
         if fresh:
-            await announce(store.head(), [])
-        return JSONResponse({"path": path, "url": f"/{path}", "fresh": fresh})
+            await announce(commit, [])
+        return JSONResponse(
+            {"path": path, "url": f"/{path}", "fresh": fresh, "commit": commit}
+        )
 
     @app.get("/assets/{name}")
     def asset(name: str) -> Response:

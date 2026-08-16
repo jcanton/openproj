@@ -99,6 +99,26 @@ def _inline(name: str) -> str:
     return (_static_dir() / name).read_text(encoding="utf-8")
 
 
+def _json(data: object) -> str:
+    """JSON for a `<script>` block, with the characters that can end one escaped.
+
+    Every page ships its data inlined, and `json.dumps` leaves `<` alone — so an
+    entity titled `</script>...` closed the block it was sitting in and everything
+    after it became live markup on the page. `\\u003c` is ordinary JSON: the parser
+    reads back the same string, and the character never reaches the HTML tokeniser.
+
+    U+2028 and U+2029 need no handling here: they are line terminators in
+    JavaScript source and legal inside a JSON string, and `json.dumps` escapes
+    them already because it escapes everything outside ASCII.
+    """
+    return (
+        json.dumps(data)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
 def _inline_font(name: str) -> str:
     """A woff2 as a data: URI. Binary, so not _inline's read_text.
 
@@ -689,11 +709,17 @@ a, a:visited { color: var(--accent); }
 /* One meter for the whole app: weeks bet against weeks available. It was a rule
    on the cycle page until the cycles index and then the people page needed the
    same picture, and a second copy of a meter is two meters that disagree about
-   what full looks like. */
-.bar { display: inline-block; width: 140px; height: 8px; background: var(--line);
-       border-radius: 4px; overflow: hidden; vertical-align: middle; }
-.bar > span { display: block; height: 100%; background: var(--accent); }
-.over .bar > span { background: var(--danger); }
+   what full looks like.
+   `span.bar` and not `.bar`, because this stylesheet is on every page and every
+   timeline bar is a rect wearing the same class. In SVG2 `width` and `height`
+   are CSS geometry properties on a rect, and any author rule beats a
+   presentation attribute — so a bare `.bar` here drew all seventeen Gantt bars
+   at 140x8 and the chart stopped being about dates. Every meter site is a span;
+   the element name is the whole of what keeps the two apart. */
+span.bar { display: inline-block; width: 140px; height: 8px; background: var(--line);
+           border-radius: 4px; overflow: hidden; vertical-align: middle; }
+span.bar > span { display: block; height: 100%; background: var(--accent); }
+.over span.bar > span { background: var(--danger); }
 /* One chip everywhere a status or a kind is named, defined here rather than per
    page because the table, the detail page, the people page and the cycle bet
    table were four different ways of saying the same word. The word is always
@@ -1013,9 +1039,14 @@ _TABLE = """
    <span class="hint">double-click a cell to edit it</span>
    <span id="state"></span></p>
 <div id="summary">
+  {#- Two numbers, because the count is of problems and the link filters
+      entities: "3 blocking problems" opening a table of 2 rows is the exact way
+      a count stops being believed. The second number is the one the link keeps
+      its promise about. -#}
   <a id="blockers" href="?predicate=has_blocker"><strong id="blocker-count">{{ blockers
     }}</strong> <span id="blocker-word">blocking problem{{
-    "" if blockers == 1 else "s" }}</span></a> ·
+    "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
+    "entity" if blocked == 1 else "entities" }}{% endif %}</span></a> ·
   <span id="shown">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
 </div>
 {{ facets|safe }}
@@ -1066,11 +1097,14 @@ const FIELD_LABELS = DATA.labels;
 // renders, which beats a blank cell.
 const human = value => HUMAN[value] ?? (value ?? '');
 
-// Attribute text. A problem message quotes the field it is about, so a stored
-// value with a quote in it would close the attribute and let the rest become
-// markup on everybody else's screen.
-const attr = value => String(value)
-  .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+// Stored text into markup. Every row on this page is built by string
+// concatenation from a file in the plan repository, and a title is a sentence
+// somebody typed: `<` opens a tag on everybody else's screen and `"` ends the
+// attribute it is sitting in. One helper for cells and attributes both, and the
+// same four characters the timeline escapes — it is the same data, so it gets
+// the same care.
+const esc = value => String(value ?? '').replace(/[&<>"]/g,
+  c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
 // Index-parallel with the header row above. Nothing enforces that at runtime,
 // so the two are edited together or every cell shifts one column left.
@@ -1085,7 +1119,8 @@ const SEV_CLASS = {blocker: 'blocker', warning: 'warn'};
 
 let MARKS = {};     // entity id -> column -> {severity, messages}
 let TROUBLE = {};   // entity id -> the worst severity found on it
-let BLOCKERS = 0;
+let BLOCKERS = 0;   // blocking problems
+let BLOCKED = 0;    // entities carrying at least one of them — what the link opens
 
 // The problems arrive flat, exactly as the validator produced them, and are
 // grouped here rather than on the server: /api/index.json hands back the same
@@ -1116,12 +1151,20 @@ function regroup(problems) {
     if (MARKS[id]) row.predicates.push('missing_required_fields');
     if (TROUBLE[id] === 'blocker') row.predicates.push('has_blocker');
   }
+  // Counted off the same pass that decides the predicate, so the number beside
+  // the link and the rows behind it cannot come apart.
+  BLOCKED = Object.values(TROUBLE).filter(severity => severity === 'blocker').length;
 }
 
 function summarise() {
   document.getElementById('blocker-count').textContent = BLOCKERS;
-  document.getElementById('blocker-word').textContent =
-    BLOCKERS === 1 ? 'blocking problem' : 'blocking problems';
+  // The count is of problems and the link filters entities. One entity can hold
+  // three of them, so the population the link opens is named as well — a count
+  // that opens a table of a different size is a count nobody trusts again.
+  document.getElementById('blocker-word').textContent = BLOCKERS
+    ? `blocking problem${BLOCKERS === 1 ? '' : 's'} on ${BLOCKED} ` +
+      `${BLOCKED === 1 ? 'entity' : 'entities'}`
+    : 'blocking problems';
   // Danger at zero is danger nobody reads. A plan with nothing wrong with it was
   // shouting in the same colour as one that is on fire.
   document.getElementById('blockers').classList.toggle('none', BLOCKERS === 0);
@@ -1149,7 +1192,7 @@ const WHY = {
 };
 
 function tagsHtml(list) {
-  const tags = list || [];
+  const tags = (list || []).map(esc);
   if (tags.length < 2) return tags.join('');
   // Five tags wrapped to five lines and every row on screen grew to match, so
   // one line and a count. The count is exact: "+2" means two you cannot see, not
@@ -1165,17 +1208,18 @@ function shown(row, key) {
   // The title is the way into the shaping doc; the id is the way to cite it.
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
-  if (key === 'title') return `<a href="ENTITY_HREF${row.id}">${row.title}</a>`;
+  if (key === 'title') return `<a href="ENTITY_HREF${esc(row.id)}">${esc(row.title)}</a>`;
   if (key === 'prs') return (value || []).map(prLink).join(', ');
   // Kind is filterable everywhere and visible nowhere. It rides with the id,
   // which was already carrying it in a prefix nobody should have to decode.
   if (key === 'id')
-    return `<span class="chip kind-${row.kind}">${human(row.kind)}</span>` +
-      ` <span class="eid">${row.id}</span>`;
-  if (key === 'status') return `<span class="chip st-${row.status}">${human(row.status)}</span>`;
-  if (key === 'priority') return human(row.priority);
+    return `<span class="chip kind-${esc(row.kind)}">${esc(human(row.kind))}</span>` +
+      ` <span class="eid">${esc(row.id)}</span>`;
+  if (key === 'status')
+    return `<span class="chip st-${esc(row.status)}">${esc(human(row.status))}</span>`;
+  if (key === 'priority') return esc(human(row.priority));
   if (key === 'tags') return tagsHtml(value);
-  return stored(row, key);
+  return esc(stored(row, key));
 }
 
 function cell(row, key) {
@@ -1186,7 +1230,7 @@ function cell(row, key) {
   // by hovering the row, and a tooltip is not something a table gets hovered for.
   const glyph = mark
     ? ` <span class="sev-mark sev-mark-${SEV_CLASS[mark.severity]}" role="img"` +
-      ` aria-label="${attr(note)}" title="${attr(note)}">⚠</span>`
+      ` aria-label="${esc(note)}" title="${esc(note)}">⚠</span>`
     : '';
   const body = shown(row, key) + glyph;
   const editable = EDITABLE && key in EDITABLE;
@@ -1202,13 +1246,13 @@ function cell(row, key) {
   const named = (FIELD_LABELS[key] || key).toLowerCase();
   const tip = note || (editable ? 'Double-click to edit ' + named : WHY[key] || '');
   return `<td data-col="${key}"${editable ? ` data-entity="${row.id}" data-field="${key}"` : ''}` +
-    `${!editable && key in WHY ? ` data-why="${attr(WHY[key])}"` : ''}` +
-    ` class="${classes}"${tip ? ` title="${attr(tip)}"` : ''}>${body}</td>`;
+    `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
+    ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
 }
 
 function prLink(ref) {
   const [repo, number] = ref.split('#');
-  return `<a href="https://github.com/${repo}/pull/${number}">${ref}</a>`;
+  return `<a href="https://github.com/${esc(repo)}/pull/${esc(number)}">${esc(ref)}</a>`;
 }
 
 function rowHtml(row) {
@@ -1383,7 +1427,7 @@ if (EDITABLE) {
       ? `<select data-type="text">${closed.map(o =>
           `<option value="${o}" ${o === was ? 'selected' : ''}>${human(o)}</option>`
         ).join('')}</select>`
-      : `<input value="${attr(was)}" data-type="${EDITABLE[field]}"` +
+      : `<input value="${esc(was)}" data-type="${EDITABLE[field]}"` +
         `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
     const input = cell.querySelector('select, input');
     // The table gets the autocomplete the detail page has. Suggestions that only
@@ -2052,22 +2096,33 @@ if (CONNECT) {
     for (const [id, sources] of wanted) {
       const node = cy.getElementById(id);
       const fields = {depends_on: [...new Set([...(node.data('depends_on') || []), ...sources])]};
-      const response = await fetch(`/api/entity/${id}`, {
-        method: 'PATCH', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({base_commit: base.value, fields, body: null}),
-      });
-      const answer = await response.json();
-      if (!response.ok) {
-        // The validator refuses an edge onto an ancestor, and a cycle. Say which,
-        // and say what did get written: stopping silently after three of five
-        // would leave the page disagreeing with the repository.
-        const why = answer.detail || (answer.problems || []).map(p => p.message).join('; ');
-        say(`${id}: ${why || 'refused'}${written ? ` — ${written} already saved` : ''}`);
-        SAVE.disabled = false;
-        return;
+      // Declared before the request and answered in `finally`, because the server
+      // announces a commit to the event stream before it answers the request that
+      // made it — so this tab can hear about its own write first. Announced even
+      // on a refusal, or one rejected edge holds every later event forever.
+      dispatchEvent(new Event('openproj:writing'));
+      let committed = null;
+      try {
+        const response = await fetch(`/api/entity/${id}`, {
+          method: 'PATCH', headers: {'content-type': 'application/json'},
+          body: JSON.stringify({base_commit: base.value, fields, body: null}),
+        });
+        const answer = await response.json();
+        if (!response.ok) {
+          // The validator refuses an edge onto an ancestor, and a cycle. Say which,
+          // and say what did get written: stopping silently after three of five
+          // would leave the page disagreeing with the repository.
+          const why = answer.detail || (answer.problems || []).map(p => p.message).join('; ');
+          say(`${id}: ${why || 'refused'}${written ? ` — ${written} already saved` : ''}`);
+          SAVE.disabled = false;
+          return;
+        }
+        committed = answer.commit;
+        base.value = answer.commit;
+        written += 1;
+      } finally {
+        dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
       }
-      base.value = answer.commit;
-      written += 1;
     }
     location.reload();
   };
@@ -2585,18 +2640,31 @@ function attachUploads(area, status) {
     // and the text cannot be typed over the spot it is going to land in.
     const token = `![uploading ${file.name || 'image'}…]()`;
     insert(token);
-    const response = await fetch('/api/asset', {
-      method: 'POST', headers: {'content-type': file.type}, body: file,
-    });
-    const answer = await response.json();
-    const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
-    area.value = area.value.replace(
-      token, response.ok ? `![${alt}](${answer.path})` : ''
-    );
-    area.dispatchEvent(new Event('input', {bubbles: true}));
-    status.textContent = response.ok
-      ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
-      : (answer.detail || 'that upload was refused');
+    // An upload is a commit like any other, so the shell's banner is told before
+    // it starts and told its sha afterwards. Without this the server announced
+    // the paste to every tab including this one, and "The plan changed." landed
+    // over your own image with nothing left to take it away again.
+    dispatchEvent(new Event('openproj:writing'));
+    let committed = null;
+    try {
+      const response = await fetch('/api/asset', {
+        method: 'POST', headers: {'content-type': file.type}, body: file,
+      });
+      const answer = await response.json();
+      // Only a fresh upload made a commit. Claiming the sha of one that was
+      // already in the plan would swallow a banner about somebody else's write.
+      if (response.ok && answer.fresh) committed = answer.commit;
+      const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
+      area.value = area.value.replace(
+        token, response.ok ? `![${alt}](${answer.path})` : ''
+      );
+      area.dispatchEvent(new Event('input', {bubbles: true}));
+      status.textContent = response.ok
+        ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
+        : (answer.detail || 'that upload was refused');
+    } finally {
+      dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+    }
   }
 
   area.addEventListener('paste', event => {
@@ -2924,24 +2992,37 @@ document.getElementById('save').onclick = async () => {
       `${missing.join(', ')}</li>`;
     return;
   }
-  const response = await fetch('/api/entity', {
-    method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({
-      base_commit: FORM.querySelector('[name=base_commit]').value, fields,
-      body: BODY.value || '',
-    }),
-  });
-  const answer = await response.json();
-  if (!response.ok) {
-    // The client check is a courtesy; this is the truth, and swallowing it leaves
-    // somebody staring at a form that looks fine.
-    PROBLEMS.hidden = false;
-    PROBLEMS.innerHTML = (answer.problems || [])
-      .map(p => `<li>${p.field}: ${p.message}</li>`).join('')
-      || `<li>${answer.detail || 'refused'}</li>`;
-    return;
+  // The shell's banner is told before the request goes and told the sha after,
+  // because the server announces a commit to the event stream before it answers
+  // the request that made it. Creating an entity is a write like any other, and
+  // an unannounced one comes back to this tab as somebody else's news.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch('/api/entity', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        base_commit: FORM.querySelector('[name=base_commit]').value, fields,
+        body: BODY.value || '',
+      }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      // The client check is a courtesy; this is the truth, and swallowing it leaves
+      // somebody staring at a form that looks fine.
+      PROBLEMS.hidden = false;
+      PROBLEMS.innerHTML = (answer.problems || [])
+        .map(p => `<li>${p.field}: ${p.message}</li>`).join('')
+        || `<li>${answer.detail || 'refused'}</li>`;
+      return;
+    }
+    committed = answer.commit;
+    location.href = '/detail/' + answer.id;
+  } finally {
+    // Announced even when refused, or one rejected form leaves every later event
+    // held back and the banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
-  location.href = '/detail/' + answer.id;
 };
 </script>
 """
@@ -3017,6 +3098,13 @@ _DETAIL = """
 {% endfor %}
 <div id="grip" title="drag to set the width"></div>
 <script>
+// What this page is looking at, for the shell's "somebody else changed this"
+// banner. The shell falls back to the last segment of the URL, which is the id
+// on /detail/<id> and the word "detail" on every other shape this page takes —
+// the static export holds all of them in one file, and a write to any of them
+// read as a write to nothing.
+window.SHOWING = {{ showing|tojson }};
+
 // The reader decides how wide prose should be. Remembered per browser rather than
 // per entity: it is a property of the screen it is being read on, not of the plan.
 const grip = document.getElementById('grip');
@@ -3179,25 +3267,39 @@ async function save() {
   }
 
   STATE.textContent = 'saving…';
-  const response = await fetch(`/api/entity/${FORM.dataset.id}`, {
-    method: 'PATCH', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({
-      base_commit: FORM.querySelector('[name=base_commit]').value, fields, body,
-    }),
-  });
-  const answer = await response.json();
-  const box = document.getElementById('conflict');
-  if (response.status === 409) {
-    // Into its own box, never into the textarea: text pasted into the editing
-    // surface is text somebody saves back.
-    box.hidden = false;
-    box.textContent = answer.conflict;
-    STATE.textContent = 'not saved';
-    return;
+  // The shell's banner has to know a write is in the air before it starts: the
+  // server announces a commit to the event stream before it answers the request
+  // that made it, so the news of your own save can arrive before you know its
+  // sha. Without this, saving this page told you this page had just been changed
+  // by somebody else.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch(`/api/entity/${FORM.dataset.id}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        base_commit: FORM.querySelector('[name=base_commit]').value, fields, body,
+      }),
+    });
+    const answer = await response.json();
+    const box = document.getElementById('conflict');
+    if (response.status === 409) {
+      // Into its own box, never into the textarea: text pasted into the editing
+      // surface is text somebody saves back.
+      box.hidden = false;
+      box.textContent = answer.conflict;
+      STATE.textContent = 'not saved';
+      return;
+    }
+    if (!response.ok) { STATE.textContent = answer.detail || 'refused'; return; }
+    committed = answer.commit;
+    localStorage.removeItem(DRAFT);
+    location.reload();
+  } finally {
+    // Announced even when refused, or one 409 leaves every event after it held
+    // back and the banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
-  if (!response.ok) { STATE.textContent = answer.detail || 'refused'; return; }
-  localStorage.removeItem(DRAFT);
-  location.reload();
 }
 
 
@@ -4026,10 +4128,14 @@ addEventListener('beforeunload', event => {
 async function flush(quiet) {
   if (!PENDING.size && !ROSTER_DIRTY) return true;
   SAVE.disabled = true;
+  // Counted in edits, the unit `mark()` counts, and not in commits. Two fields on
+  // one row is one write, so counting writes said "2 unsaved changes" and then
+  // "Saved 1 change" about the same two edits — and a save you have to reconcile
+  // against its own receipt is a save you do not believe.
   let saved = 0;
   if (ROSTER_DIRTY) {
     if (!(await saveSetup())) { mark(); return false; }
-    saved += 1;
+    saved += 1;      // the whole roster is one edit to `mark()` too
   }
   // One entity per commit, each against the commit the last one returned: a
   // batch that fails half way is still a readable history rather than one commit
@@ -4053,7 +4159,7 @@ async function flush(quiet) {
       committed = answer.commit;
       BASE.value = answer.commit || BASE.value;
       PENDING.delete(id);
-      saved += 1;
+      saved += Object.keys(fields).length;
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
@@ -4278,7 +4384,7 @@ tr.carried td { color: var(--muted); }
 .card .window { color: var(--muted); font-size: 12px; margin: .1rem 0 .5rem; }
 .card .bet { margin: 0 0 .35rem; font-size: 13px; }
 .card .bet b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
-.card .bar { display: block; width: 100%; height: 10px; }
+.card span.bar { display: block; width: 100%; height: 10px; }
 .card.over .bet b { color: var(--danger); }
 .card .note { margin: .35rem 0 0; }
 /* The create form is not another cycle in the list, and it writes a record. The
@@ -4739,7 +4845,7 @@ def render_cycle(
         base_commit=base_commit or "",
         combobox=_combobox_html(index),
     )
-    body = body.replace("HELD_JSON", json.dumps(view["held"]))
+    body = body.replace("HELD_JSON", _json(view["held"]))
     return _page(
         f"openproj — cycle {number}",
         body,
@@ -4824,10 +4930,18 @@ def render_cycles(
     numbers = _cycle_numbers(index)
     rows = [_cycle_totals(index, number) for number in sorted(numbers, reverse=True)]
     last = index.plans[max(index.plans)] if index.plans else None
-    # The number to propose comes from every cycle the plan names, not only from
-    # the recorded ones: a plan whose cycles live in config/cycles.yaml would
-    # otherwise be offered cycle 1 while it is running cycle 37.
-    top = max(numbers) if numbers else 0
+    # The number to propose comes from the cycles the plan has *decided* — the
+    # ones with a record and the ones config/cycles.yaml dates — and not from
+    # every number an entity happens to mention. A plan whose cycles live only in
+    # config would otherwise be offered cycle 1 while it is running cycle 37; but
+    # unioning `entity.cycle` in overshoots the other way, and worse. One bet into
+    # a cycle nobody has written down — which the listing above actively invites —
+    # made the form propose the number after *that*, with no dates behind it, so
+    # the real last cycle's end date was thrown away and the proposal started
+    # today. Entity-referenced numbers belong to the listing; they are not a
+    # decision about when the next cycle begins.
+    decided = set(index.plans) | set(index.cycles)
+    top = max(decided) if decided else 0
     ends = index.cycles.get(top)
     body = _ENV.from_string(_CYCLES).render(
         cycles=rows,
@@ -4856,7 +4970,7 @@ def render_cycles(
         },
     )
     body = body.replace(
-        "ROSTER_JSON", json.dumps(last.availability if last else {})
+        "ROSTER_JSON", _json(last.availability if last else {})
     )
     return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links)
 
@@ -5011,6 +5125,11 @@ def render_detail(
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
         groups=_by_status(rows),
+        # Every entity this page holds, not the one in the URL: the static export
+        # is all of them in one file, and the shell's banner has no other way to
+        # tell "somebody changed what you are reading" from "somebody changed
+        # something".
+        showing=[row["id"] for row in rows],
         single=only is not None,
         links=links,
         editable=base_commit is not None,
@@ -5041,7 +5160,7 @@ def _combobox_html(index: Index | None) -> str:
         if index
         else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
     )
-    return _COMBOBOX.replace("SUGGEST_JSON", json.dumps(data))
+    return _COMBOBOX.replace("SUGGEST_JSON", _json(data))
 
 
 def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> str:
@@ -5078,10 +5197,14 @@ def preview_html(body: str, links: Links = ROUTES) -> str:
 
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
     payload = _payload(index)
-    blockers = sum(1 for p in index.problems if p.severity == "blocker")
+    blocking = [p for p in index.problems if p.severity == "blocker"]
     body = _ENV.from_string(_TABLE).render(
         payload=payload,
-        blockers=blockers,
+        blockers=len(blocking),
+        # The population `?predicate=has_blocker` matches. One entity can carry
+        # three problems, so the count and the filter it links to were counting
+        # different things and the table opened shorter than the number promised.
+        blocked=len({p.entity_id for p in blocking}),
         editable=base_commit is not None,
         base_commit=base_commit or "",
         links=links,
@@ -5089,7 +5212,7 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
-    body = body.replace("PAYLOAD_JSON", json.dumps(payload)).replace("ENTITY_HREF", links.entity)
+    body = body.replace("PAYLOAD_JSON", _json(payload)).replace("ENTITY_HREF", links.entity)
     return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links)
 
 
@@ -5111,7 +5234,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         glyphs=STATUS_GLYPH,
         total=len(index.entities),
     )
-    body = body.replace("ELEMENTS_JSON", json.dumps(_elements(index)))
+    body = body.replace("ELEMENTS_JSON", _json(_elements(index)))
     wanted = {"cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"}
     body = re.sub(
         r"@@([\w.-]+)@@",
@@ -5157,7 +5280,7 @@ def render_timeline(
     # The rows the shared `matches()` reads, for the bars that were drawn. Not the
     # whole plan: a bar that is not on this window cannot be filtered onto it.
     payload = {"rows": timeline["rows"], "human": HUMAN}
-    body = body.replace("BARS_JSON", json.dumps(payload))
+    body = body.replace("BARS_JSON", _json(payload))
     return _page("openproj — timeline", body, _TIMELINE_STYLE + _status_paint_css(), links)
 
 

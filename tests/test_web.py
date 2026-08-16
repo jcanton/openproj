@@ -372,6 +372,63 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     assert not twice, f"{route} declares {twice} more than once"
 
 
+@pytest.mark.parametrize(
+    "route", ["/", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"]
+)
+def test_every_write_a_page_makes_is_announced_before_and_after_it(
+    client: TestClient, route: str
+):
+    """Otherwise the server's own news comes back as somebody else's.
+
+    Every commit is broadcast to every tab including the one that made it, and the
+    shell can only suppress its own by being told a write is in the air *before*
+    it starts — the server announces to the stream before it answers the request.
+    Two of five write paths did this; the other three, and the asset upload, did
+    not, so pasting an image popped "The plan changed." over your own paste and
+    nothing ever hid it again.
+
+    Counted rather than spot-checked: the defect was a path nobody had thought
+    about, so the assertion is about all of them at once.
+    """
+    body = client.get(route).text
+    scripts = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", body, re.S))
+
+    # A write is a POST, PATCH or PUT. `/api/preview` renders markdown and commits
+    # nothing, and `/api/index.json` is a GET.
+    writes = [
+        url
+        for url, _ in re.findall(
+            r"fetch\(\s*(`[^`]*`|'[^']*')[^)]*?method: '(POST|PATCH|PUT)'", scripts, re.S
+        )
+        if "/api/preview" not in url
+    ]
+    assert writes, route
+
+    assert scripts.count("dispatchEvent(new Event('openproj:writing'));") == len(writes), (
+        f"{route}: {writes}"
+    )
+    assert scripts.count("dispatchEvent(new CustomEvent('openproj:wrote'") == len(writes), (
+        f"{route}: {writes}"
+    )
+    # In a `finally`, or one refusal holds every later event back forever and the
+    # banner never appears again.
+    assert scripts.count("} finally {") >= len(writes), route
+
+
+def test_the_detail_page_says_which_entity_it_is_looking_at(client: TestClient):
+    """The shell falls back to the last segment of the URL. That is the id on
+    /detail/<id> and the word "detail" on the index view and on the static export,
+    which holds every entity in one file — so a write to any of them read as a
+    write to nothing and the banner said "The plan changed" about the very page
+    in front of you."""
+    one = client.get(f"/detail/{TASK}").text
+    assert f'window.SHOWING = ["{TASK}"];' in one
+
+    every = client.get("/detail").text
+    showing = json.loads(re.search(r"window\.SHOWING = (\[.*?\]);", every).group(1))
+    assert set(showing) == {PROJECT, PITCH, TASK, OTHER, DONE}
+
+
 def test_the_graph_still_carries_its_libraries_inline(client: TestClient):
     """Serving the pages must not turn them back into pages that fetch from a CDN.
 
@@ -1379,6 +1436,36 @@ def test_the_create_form_is_not_another_cycle_in_the_list(client: TestClient):
         "F15: the button follows the fields it commits"
 
 
+def test_the_proposal_ignores_a_cycle_that_only_an_entity_mentions(
+    client: TestClient, repo_path: Path
+):
+    """A cycle number on an entity is not a decision about when the next cycle
+    starts, and the listing above this form actively invites betting into one that
+    has no record.
+
+    Unioning `entity.cycle` into the proposal made one such bet push the number
+    past the last real cycle — and the number it landed on has no dates behind it,
+    so the last cycle's end date was thrown away and the form offered "starts
+    today". The listing still shows the bet cycle; only the proposal ignores it.
+    """
+    client.put(
+        "/api/cycle/12",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-01-04", "build_weeks": 4,
+                         "cooldown_weeks": 2, "availability": {"ann": 1.0}},
+              "body": None},
+    )
+    save(client, TASK, {"cycle": 40})      # bet into a cycle nobody has written down
+    page = client.get("/cycles").text
+
+    assert '<input id="number" type="number" value="13"' in page, "after the last real one"
+    # 2027-01-04 plus four build weeks and two of cool-down ends 2027-02-14.
+    assert '<input id="starts" type="date" value="2027-02-15"' in page, \
+        "the day the last recorded cycle ends, not today"
+
+    assert '<a href="/cycle/40">Cycle 40</a>' in page, "the listing still names it"
+
+
 def test_starting_a_cycle_asks_before_it_writes(client: TestClient):
     """F26. Starting a cycle writes a file and moves every date on every page
     that reads it, off one click beside four inputs somebody was just typing in."""
@@ -1448,6 +1535,30 @@ def test_the_cycle_page_says_what_is_unsaved_and_that_a_save_landed(client: Test
         "the two-minute autosave confirms in the same place as the button"
 
 
+def test_the_unsaved_count_and_the_receipt_count_the_same_thing(client: TestClient):
+    """"2 unsaved changes" and then "Saved 1 change" about the same two edits.
+
+    `mark()` counted fields and `flush()` counted commits, and two fields on one
+    row is one commit. F5 is about a save you can believe, and that number is the
+    whole of the claim: a receipt you have to reconcile against the counter that
+    preceded it is a receipt nobody reads twice.
+    """
+    page = client.get("/cycle/37").text
+    mark = re.search(r"function mark\(\) \{.*?\n\}", page, re.S).group(0)
+    flush = re.search(r"async function flush\(quiet\) \{.*?\n\}", page, re.S).group(0)
+
+    # Both sides count one edit per field, and the whole roster as one.
+    assert "for (const fields of PENDING.values()) edits += Object.keys(fields).length;" in mark
+    assert "saved += Object.keys(fields).length;" in flush
+    assert "saved += 1;" in flush and "let edits = ROSTER_DIRTY ? 1 : 0;" in mark
+    # The one thing that must never come back: a per-commit tally in the receipt.
+    assert flush.count("saved += 1;") == 1, "only the roster is worth exactly one"
+
+    # And the two sentences are built from the same unit either side of the save.
+    assert re.search(r"\$\{edits\} unsaved change\$\{edits === 1 \? '' : 's'\}", mark)
+    assert re.search(r"\$\{saved\} change\$\{saved === 1 \? '' : 's'\}", flush)
+
+
 def test_a_cycle_with_no_record_is_a_form_and_says_so(client: TestClient):
     """F25 links here for every cycle the plan names, so a cycle nobody has
     written down yet has to be worth arriving at: the team list seeds the roster,
@@ -1487,6 +1598,12 @@ def test_an_uploaded_image_is_named_by_its_contents(client: TestClient, repo_pat
     assert second.json()["path"] == first.json()["path"]
     assert second.json()["fresh"] is False
     assert git_head(repo_path) == before, "an identical upload writes nothing"
+
+    # The sha comes back to the uploader as well as going out to the stream. The
+    # shell's banner suppresses news of a commit this tab made, and it can only do
+    # that if the request that made it says which commit that was — an upload that
+    # only announced popped "The plan changed." over the paste that caused it.
+    assert first.json()["commit"] == git_head(repo_path)
 
 
 def test_an_uploaded_image_comes_back_byte_for_byte(client: TestClient):

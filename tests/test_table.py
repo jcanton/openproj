@@ -886,9 +886,9 @@ def test_a_status_is_a_chip_and_a_kind_rides_with_the_id(page: str):
     """
     body = script(page)
 
-    assert re.search(r'class="chip st-\$\{row\.status\}"', body), "a status is a chip"
-    assert re.search(r'class="chip kind-\$\{row\.kind\}"', body), "so is a kind"
-    assert "human(row.status)" in body and "human(row.kind)" in body, (
+    assert re.search(r'class="chip st-\$\{esc\(row\.status\)\}"', body), "a status is a chip"
+    assert re.search(r'class="chip kind-\$\{esc\(row\.kind\)\}"', body), "so is a kind"
+    assert "esc(human(row.status))" in body and "esc(human(row.kind))" in body, (
         "the chip carries the word, not the identifier"
     )
     for rule in (".chip.st-in_progress", ".chip.kind-project", ".chip.kind-task"):
@@ -921,10 +921,96 @@ def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: st
     assert re.search(r'id="blocker-count">\d+<', page), "the count is the element's own text"
 
     body = script(page)
-    assert "BLOCKERS === 1 ? 'blocking problem' : 'blocking problems'" in body
+    assert "blocking problem${BLOCKERS === 1 ? '' : 's'}" in body
     assert "classList.toggle('none', BLOCKERS === 0)" in body
     assert "#blockers.none { color: var(--muted); }" in page
     assert "#blockers { color: var(--sev-blocker);" in page
+
+
+def test_the_blocking_count_names_the_population_its_link_opens():
+    """"5 blocking problems" opening a table of 2 rows is the exact way a count
+    stops being trusted, and it is what this said.
+
+    The number counts *problems*; `?predicate=has_blocker` matches *entities*, and
+    one entity can carry three of them. So both numbers are on the label and the
+    second one is the promise the link has to keep.
+    """
+    from openproj.model import Config, Task
+    from openproj.render import render_table
+
+    # Two entities, five blockers between them: ready needs an owner, a reviewer
+    # and an effort, and one of the three is filled in on the second.
+    nameless = Task(id="task-000001", kind="task", title="Ready and nameless",
+                    status="ready")
+    fine = Task(id="task-000002", kind="task", title="Fine", status="ready",
+                owner="ann", reviewers=["bo"], effort_weeks=1)
+    half = Task(id="task-000003", kind="task", title="Half named", status="ready",
+                owner="ann")
+    index = build_index([nameless, fine, half], Config(), date(2026, 8, 17))
+
+    problems = [p for p in index.problems if p.severity == "blocker"]
+    entities = {p.entity_id for p in problems}
+    assert len(problems) == 5 and len(entities) == 2, "the two numbers must differ"
+
+    page = render_table(index)
+    payload = json.loads(re.search(r'id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
+    matched = {i for i, row in payload["rows"].items() if "has_blocker" in row["predicates"]}
+
+    assert matched == entities, "the filter is the population the label names"
+    assert f'id="blocker-count">{len(problems)}<' in page
+    assert f">blocking problems on {len(matched)} entities</span>" in page
+
+    # And the script rebuilds the same sentence after a save, off the same pass
+    # that decides the predicate.
+    body = script(page)
+    assert "BLOCKED = Object.values(TROUBLE).filter(severity => severity === 'blocker').length;" \
+        in body
+    assert "on ${BLOCKED} ` +" in body
+
+
+def test_a_title_somebody_typed_never_becomes_markup():
+    """`<`, `&` and a quote are ordinary characters in a title, and each of them
+    ends something in HTML.
+
+    Every cell is built by string concatenation out of the payload and every field
+    went in raw — sitting beside timeline code that escapes exactly the same data,
+    which is one plan and two levels of care. Two ways in, so two assertions: the
+    block the payload travels in, and the cell the script builds out of it.
+    """
+    from openproj.model import Config, Task
+    from openproj.render import render_table
+
+    hostile = 'Fix <b>&"the" </script><img src=x> equator'
+    entity = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
+                  effort_weeks=1, tags=["<i>one", "two&three"], prs=["C2SM/icon4py#1"])
+    index = build_index([entity], Config(), date(2026, 8, 17))
+    page = render_table(index, base_commit="0" * 40)      # the editor is a way in too
+
+    # The payload. `json.dumps` leaves `<` alone, so `</script>` in a title closed
+    # the block it was travelling in and everything after it became live markup.
+    raw = re.search(r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1)
+    assert json.loads(raw)["rows"]["task-000001"]["title"] == hostile, "and reads back whole"
+    assert "<" not in raw and ">" not in raw, "escaped as \\u003c, which is still JSON"
+
+    # The cells. Every interpolation of stored text goes through the one helper,
+    # which escapes the same four characters the timeline's does.
+    body = script(page)
+    assert "const esc = value => String(value ?? '').replace(/[&<>\"]/g," in body
+    assert "attr(" not in body, "one helper for cells and attributes, not two standards"
+    for interpolation in (
+        "${esc(row.title)}",            # the title cell, which is also a link
+        "${esc(row.id)}",               # and the href it is a link to
+        "return esc(stored(row, key));",  # owner, assignees, reviewers, dates
+        "${esc(human(row.status))}",
+        "${esc(human(row.kind))}",
+        "${esc(ref)}",                  # a PR reference, repo and number both
+        "${esc(was)}",                  # and the value the editor opens with
+    ):
+        assert interpolation in body, interpolation
+    assert "const tags = (list || []).map(esc);" in body
+
+    # Nothing typed reaches the page as markup by either route.
+    assert "<b>&" not in page and "<i>one" not in page
 
 
 def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
@@ -941,7 +1027,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     assert "sev-cell-' + SEV_CLASS[mark.severity]" in body
     glyph = r'class="sev-mark sev-mark-\$\{SEV_CLASS\[mark\.severity\]\}" role="img"'
     assert re.search(glyph, body)
-    assert 'aria-label="${attr(note)}"' in body, "the glyph's name is the message"
+    assert 'aria-label="${esc(note)}"' in body, "the glyph's name is the message"
     assert "const MARK_COLUMN = {effort_weeks: 'size'," in body
     assert "keys.includes(problem.field) ? problem.field : 'id'" in body
 
@@ -1083,7 +1169,7 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
     body = script(page)
     assert "'Double-click to edit ' + named" in body, "and a description, not only a colour"
     assert re.search(r"const WHY = \{\s*\n\s*size:", body)
-    assert "data-why=\"${attr(WHY[key])}\"" in body
+    assert "data-why=\"${esc(WHY[key])}\"" in body
     assert "document.getElementById('state').textContent = computed.dataset.why;" in body
 
 
@@ -1104,10 +1190,16 @@ def test_the_page_never_reports_its_own_write_to_itself(page: str, client: TestC
     # Announced even when refused, or one 409 holds every later event forever.
     assert re.search(r"\} finally \{.*?openproj:wrote", body, re.S)
 
+    assert "window.SHOWING = Object.keys(DATA.rows);" in body, (
+        "the table has no id in its URL, so it says what it is looking at"
+    )
+
     shell = script(client.get(f"/detail/{TASK}").text)
     assert "if (movedOurs.has(commit)) return;" in shell
     assert "if (movedWriting) movedHeld.push(message); else showMoved(message);" in shell
-    assert "window.SHOWING" in shell, "a page says what it is looking at"
+    # The shell's *reader*, which passed while nothing on the detail page ever set
+    # it. The writer is asserted where it lives, in test_web.
+    assert "const showing = window.SHOWING || (here ? [here] : []);" in shell
 
 
 def test_a_write_refreshes_the_count_and_the_markers_in_place(page: str):

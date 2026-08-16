@@ -426,6 +426,60 @@ def test_a_same_day_span_is_still_wide_enough_to_hit(tmp_path: Path):
     assert widths and all(float(width) >= 3 for width in widths)
 
 
+def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: Path):
+    """The geometry of a bar is the only thing the chart says.
+
+    Nothing pinned it, so a `.bar { width: 140px; height: 8px }` written for the
+    capacity meter drew every rect on the timeline at 140x8 — `width` and `height`
+    are CSS geometry properties on an SVG2 rect and an author rule beats the
+    presentation attribute. The chart still looked like a Gantt and had stopped
+    being about dates. Both directions, because one shared width is a chart where
+    a two-month build and a one-day task are the same picture.
+    """
+    from datetime import date
+
+    from openproj.model import Config, Task
+    from openproj.render import _MIN_BAR_PX, render_timeline
+
+    zoom = 2.0    # a drawn day width, so the arithmetic below is exact
+    slog = Task(id="task-000001", kind="task", title="A long one", owner="ann",
+                effort_weeks=8)
+    brief = Task(id="task-000002", kind="task", title="A day of it", owner="bob",
+                 effort_weeks=0.2)
+    index = build_index([slog, brief], Config(), date(2026, 8, 17))
+    body = render_timeline(index, zoom=zoom)
+
+    drawn = dict(re.findall(r'<rect data-id="([^"]+)"[^>]*width="([\d.]+)"', body))
+    assert set(drawn) == set(index.spans)
+
+    for entity_id, span in index.spans.items():
+        days = (span.end - span.start).days + 1        # inclusive of both ends
+        assert float(drawn[entity_id]) == max(_MIN_BAR_PX, zoom, days * zoom), entity_id
+
+    # Said again as two numbers rather than a formula: eight weeks and one day are
+    # not the same width, and neither of them is the meter's 140.
+    assert float(drawn["task-000001"]) == 108.0
+    assert float(drawn["task-000002"]) == 3.0
+
+    # The rect keeps its height too.
+    assert re.search(r'<rect data-id="task-000001"[^>]*height="14"', body)
+
+    # And the attribute is only half the story: the widths above were right all
+    # along and the chart was still wrong, because CSS geometry outranks a
+    # presentation attribute. So no selector on this page may reach a bar without
+    # naming what kind of element it is — `span.bar` for the meter, `rect.bar`
+    # for a bar, never a bare `.bar` that is both.
+    style = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
+    style = re.sub(r"/\*.*?\*/", " ", style, flags=re.S)   # a comment is not a selector
+    unqualified = [
+        selector.strip()
+        for rule in re.findall(r"([^{}]*)\{", style)
+        for selector in rule.split(",")
+        if re.search(r"(^|[\s>+~])\.bar\b", selector.strip())
+    ]
+    assert not unqualified, unqualified
+
+
 def test_the_timeline_draws_cycle_boundaries_and_today(rendered: Path):
     body = read(rendered, "timeline.html")
     assert 'class="today"' in body
@@ -774,7 +828,7 @@ def test_a_person_over_their_availability_says_so_in_the_group_row(
     for who in over:
         group = re.search(rf'<tbody class="person" data-login="{who}">.*?</tr>', body, re.S)
         assert '<tr class="group over">' in group.group(0), who
-    assert ".over .bar > span { background: var(--danger); }" in body
+    assert ".over span.bar > span { background: var(--danger); }" in body
     assert "tr.group.over .load b.held { color: var(--danger); }" in body
 
 

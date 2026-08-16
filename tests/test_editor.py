@@ -401,10 +401,11 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
     the request that made it."""
     page = client.get("/cycle/37").text
 
-    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 2, (
-        "the cycle record and each entity in the batch"
+    assert page.count("dispatchEvent(new Event('openproj:writing'));") == 3, (
+        "the cycle record, each entity in the batch, and the asset upload the "
+        "shared editor helpers carry onto this page"
     )
-    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 2
+    assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 3
     assert "window.SHOWING = ['cycle-' + NUMBER]" in page, (
         "so a write that lands here reads as landing here"
     )
