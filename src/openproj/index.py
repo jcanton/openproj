@@ -41,7 +41,12 @@ COMPUTED_PREDICATES = (
     "blocked",
     "unblocked",
     "overruns_cycle",
+    # Any problem at all, of any severity. `has_blocker` is the strict half: the
+    # table's headline counts blocking problems, and a link from that count to a
+    # filter that also returns warnings sends people to rows there is nothing
+    # wrong with — which is how a count stops being trusted.
     "missing_required_fields",
+    "has_blocker",
     "review_waived",
 )
 
@@ -200,6 +205,11 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
         return span is not None and span.overruns_cycle_weeks is not None
     if predicate == "missing_required_fields":
         return any(problem.entity_id == entity_id for problem in index.problems)
+    if predicate == "has_blocker":
+        return any(
+            problem.entity_id == entity_id and problem.severity == "blocker"
+            for problem in index.problems
+        )
     if predicate == "review_waived":
         return index.entities[entity_id].review_waived
     return False

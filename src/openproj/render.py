@@ -125,7 +125,6 @@ def _row(index: Index, entity_id: str) -> dict:
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
-        "problems": [p.message for p in index.problems if p.entity_id == entity_id],
         "predicates": [p for p in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, p)],
     }
 
@@ -141,11 +140,22 @@ def _payload(index: Index) -> dict:
         "rows": {i: _row(index, i) for i in index.entities},
         "facets": index.facets,
         "predicates": list(index.facets["predicate"]),
+        # Flat, exactly as the validator produced them, and grouped by the page.
+        # Grouped here as well, the table would have carried two copies of one
+        # aggregation — the one rendered into the rows and the one it has to
+        # rebuild after every save from /api/index.json, which returns this same
+        # flat list. Only the first would ever have been tested.
+        "problems": [p.model_dump() for p in index.problems],
         # One list of what a person may change, shared with the detail page. Two
         # lists drift the first time a field is added, and silently.
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
         "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
+        # The word a reader gets, shipped rather than baked into the cells: the
+        # rows are drawn by script, and a status the script renders has to reach
+        # the same map the server-rendered pages read.
+        "human": HUMAN,
+        "labels": LABELS,
     }
 
 
@@ -588,14 +598,39 @@ labelTheme();
 // editor would throw away work that is not in git yet, and the whole point of one
 // Save being one commit is that nothing moves under you until you ask.
 const moved = document.getElementById('moved');
+// Commits this tab produced. Every commit comes back down this stream including
+// your own, and being told "the plan changed" one keystroke after changing it is
+// how a banner becomes wallpaper.
+const movedOurs = new Set();
+// A write is announced to the stream before the request that made it is
+// answered, so the news of your own save can arrive before you know its sha.
+// Anything that lands mid-write waits until it does.
+let movedWriting = 0;
+const movedHeld = [];
+addEventListener('openproj:writing', () => { movedWriting++; });
+addEventListener('openproj:wrote', event => {
+  movedWriting = Math.max(0, movedWriting - 1);
+  if (event.detail) movedOurs.add(event.detail);
+  if (!movedWriting) while (movedHeld.length) showMoved(movedHeld.shift());
+});
+
+function showMoved({commit, changed}) {
+  if (movedOurs.has(commit)) return;
+  // What this page is looking at. A page showing one entity has it in its URL;
+  // the table shows all of them and has nothing in its URL, so it says so — and
+  // said nothing, every write anywhere read as unrelated to what was on screen.
+  const here = location.pathname.split('/').pop();
+  const showing = window.SHOWING || (here ? [here] : []);
+  const seen = changed.some(id => showing.includes(id));
+  moved.hidden = false;
+  moved.innerHTML = (seen ? 'This was just changed by somebody else. ' : 'The plan changed. ')
+    + `<a href="">reload</a> <span class="sha">${commit.slice(0, 7)}</span>`;
+}
+
 const source = new EventSource('/api/events');
 source.onmessage = event => {
-  const {commit, changed} = JSON.parse(event.data);
-  const here = location.pathname.split('/').pop();
-  const mine = changed.includes(here);
-  moved.hidden = false;
-  moved.innerHTML = (mine ? 'This was just changed by somebody else. ' : 'The plan changed. ')
-    + `<a href="">reload</a> <span class="sha">${commit.slice(0, 7)}</span>`;
+  const message = JSON.parse(event.data);
+  if (movedWriting) movedHeld.push(message); else showMoved(message);
 };
 </script>
 {% endif %}
@@ -607,7 +642,9 @@ _TABLE = """
    <span class="hint">double-click a cell to edit it</span>
    <span id="state"></span></p>
 <div id="summary">
-  <strong id="blocker-count">{{ blockers }}</strong> blocking problems ·
+  <a id="blockers" href="?predicate=has_blocker"><strong id="blocker-count">{{ blockers
+    }}</strong> <span id="blocker-word">blocking problem{{
+    "" if blockers == 1 else "s" }}</span></a> ·
   <span id="shown">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
 </div>
 <div id="controls">
@@ -615,27 +652,37 @@ _TABLE = """
   <div class="facets">
   {% for field in ['kind','priority','status','owner','assignees','reviewers',
                    'cycle','project','tags'] %}
-  <label class="facet">{{ field }}
+  <label class="facet">{{ label(field) }}
     <select data-field="{{ field }}"><option value="">all</option>
-      {% for value in payload.facets.get(field, []) %}<option>{{ value }}</option>{% endfor %}
+      {% for value in payload.facets.get(field, []) %}
+      <option value="{{ value }}">{{ value|human }}</option>{% endfor %}
     </select>
   </label>
   {% endfor %}
-  <label class="facet">state
+  <label class="facet">{{ label('predicate') }}
     <select data-field="predicate"><option value="">all</option>
-      {% for p in payload.predicates %}<option>{{ p }}</option>{% endfor %}
+      {% for p in payload.predicates %}<option value="{{ p }}">{{ p|human }}</option>{% endfor %}
     </select>
   </label>
   </div>
 </div>
 <div class="table-scroll"><table id="rows"><thead><tr>
-  <th data-sort="id">id</th><th data-sort="title">title</th>
-  <th data-sort="priority">priority</th><th data-sort="status">status</th>
-  <th data-sort="owner">owner</th><th data-sort="assignees">assignees</th>
-  <th data-sort="reviewers">reviewers</th><th data-sort="cycle">cycle</th>
-  <th data-sort="size">appetite</th>
-  <th data-sort="start">start</th><th data-sort="end">end</th>
-  <th data-sort="blocked_by">blockers</th><th>prs</th><th>tags</th>
+  {#- A real button inside every sortable header, not a click handler on the cell:
+      there is no way to tab to a table cell, so sorting was mouse-only. The
+      columns that cannot be sorted have no button, which is the difference said
+      out loud. data-col names the field the column stands for, so the narrow
+      breakpoint and the sticky rules pick columns by name rather than by
+      counting them. -#}
+  {% for column, header, sortable in [
+      ('id', 'id', true), ('title', 'title', true), ('priority', 'priority', true),
+      ('status', 'status', true), ('owner', 'owner', true), ('assignees', 'assignees', true),
+      ('reviewers', 'reviewers', true), ('cycle', 'cycle', true), ('size', 'appetite', true),
+      ('start', 'start', true), ('end', 'end', true), ('blocked_by', 'blockers', true),
+      ('prs', 'prs', false), ('tags', 'tags', false)] %}
+  {%- if sortable %}<th data-col="{{ column }}" data-sort="{{ column }}" aria-sort="none"
+    ><button type="button">{{ header }}<span class="dir" aria-hidden="true"></span></button></th>
+  {%- else %}<th data-col="{{ column }}">{{ header }}</th>{% endif %}
+  {%- endfor %}
 </tr></thead><tbody></tbody></table></div>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
@@ -644,19 +691,99 @@ _TABLE = """
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
 {% if editable %}{{ combobox|safe }}{% endif %}
 <script>
-const DATA = JSON.parse(document.getElementById('payload').textContent);
+// A payload that did not survive the trip is a third kind of empty, and it used
+// to look exactly like the other two: a header row over a void. A truncated
+// response is a different thing to do next from an empty plan, so the page has
+// to be able to tell them apart rather than rendering nothing three ways.
+let DATA = null;
+try {
+  DATA = JSON.parse(document.getElementById('payload').textContent);
+} catch (error) { DATA = null; }
+const LOADED = DATA !== null;
+if (!LOADED) DATA = {rows: {}, problems: [], choices: {}, suggests: {}, human: {},
+                     labels: {}, editable: null};
+
 const params = new URLSearchParams(location.search);
 const tbody = document.querySelector('#rows tbody');
+const HUMAN = DATA.human;
+const FIELD_LABELS = DATA.labels;
+
+// The reader's word for a stored identifier. Anything unknown comes back
+// unchanged, so a status added to the model still renders — badly, but it
+// renders, which beats a blank cell.
+const human = value => HUMAN[value] ?? (value ?? '');
+
+// Attribute text. A problem message quotes the field it is about, so a stored
+// value with a quote in it would close the attribute and let the rest become
+// markup on everybody else's screen.
+const attr = value => String(value)
+  .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+// Index-parallel with the header row above. Nothing enforces that at runtime,
+// so the two are edited together or every cell shifts one column left.
+const keys = ['id','title','priority','status','owner','assignees','reviewers','cycle',
+              'size','start','end','blocked_by','prs','tags'];
+// Every field the control bar offers. A field in one list and not the other is
+// a dropdown that changes the URL and filters nothing.
+const FILTERS = ['kind','status','owner','assignees','reviewers','priority',
+                 'cycle','project','tags'];
+
+// Which column carries a complaint about a field the table has no column for.
+// Anything still unplaced falls to the id cell, because a row that says
+// something is wrong and will not say what is worse than no marker at all.
+const MARK_COLUMN = {effort_weeks: 'size', appetite_weeks: 'size', depends_on: 'blocked_by'};
+const SEV_CLASS = {blocker: 'blocker', warning: 'warn'};
+
+let MARKS = {};     // entity id -> column -> {severity, messages}
+let TROUBLE = {};   // entity id -> the worst severity found on it
+let BLOCKERS = 0;
+
+// The problems arrive flat, exactly as the validator produced them, and are
+// grouped here rather than on the server: /api/index.json hands back the same
+// flat list after a save, so one grouping serves both and the after-a-save path
+// cannot drift from the at-load one.
+function regroup(problems) {
+  MARKS = {};
+  TROUBLE = {};
+  BLOCKERS = problems.filter(problem => problem.severity === 'blocker').length;
+  for (const problem of problems) {
+    const id = problem.entity_id;
+    if (problem.severity === 'blocker' || !TROUBLE[id]) TROUBLE[id] = problem.severity;
+    const column = MARK_COLUMN[problem.field]
+      || (keys.includes(problem.field) ? problem.field : 'id');
+    const columns = MARKS[id] || (MARKS[id] = {});
+    const mark = columns[column]
+      || (columns[column] = {severity: problem.severity, messages: []});
+    if (problem.severity === 'blocker') mark.severity = 'blocker';
+    mark.messages.push(problem.message);
+  }
+  // Two predicates are read straight off this list (index.py,
+  // `_matches_predicate`), so they are the two a save can change. Recomputed
+  // here, filling in a missing owner takes the row out of the filter that caught
+  // it instead of leaving it there until somebody reloads.
+  for (const [id, row] of Object.entries(DATA.rows)) {
+    row.predicates = row.predicates
+      .filter(name => name !== 'missing_required_fields' && name !== 'has_blocker');
+    if (MARKS[id]) row.predicates.push('missing_required_fields');
+    if (TROUBLE[id] === 'blocker') row.predicates.push('has_blocker');
+  }
+}
+
+function summarise() {
+  document.getElementById('blocker-count').textContent = BLOCKERS;
+  document.getElementById('blocker-word').textContent =
+    BLOCKERS === 1 ? 'blocking problem' : 'blocking problems';
+  // Danger at zero is danger nobody reads. A plan with nothing wrong with it was
+  // shouting in the same colour as one that is on fire.
+  document.getElementById('blockers').classList.toggle('none', BLOCKERS === 0);
+}
 
 function wanted(field) { return params.getAll(field).filter(Boolean); }
 
 function matches(row) {
   const q = (params.get('q') || '').trim().toLowerCase();
   if (q && !(row.title + ' ' + row.tags.join(' ')).toLowerCase().includes(q)) return false;
-  // Every field the control bar offers. A field in one list and not the other is
-  // a dropdown that changes the URL and filters nothing.
-  for (const field of ['kind','status','owner','assignees','reviewers','priority',
-                       'cycle','project','tags']) {
+  for (const field of FILTERS) {
     const values = wanted(field);
     if (!values.length) continue;
     const held = [].concat(row[field] ?? []).map(String);
@@ -667,20 +794,83 @@ function matches(row) {
   return true;
 }
 
-function cell(row, key) {
+// What the cell holds, as opposed to what it shows. A status cell shows a chip
+// reading "In progress" and a tags cell shows one tag and a count; both used to
+// be read back off the DOM when the editor opened, which would now save the
+// label in place of the value.
+function stored(row, key) {
   const value = row[key];
-  const derived = (key === 'start' || key === 'end') && row.derived;
-  const text = Array.isArray(value) ? value.join(', ') : (value ?? '');
+  return Array.isArray(value) ? value.join(', ') : (value ?? '');
+}
+
+// Why a computed column refuses a double-click. A cell that silently ignores one
+// is indistinguishable from a cell that is broken, and every one of these is the
+// scheduler's output: typing over a forecast is how a plan stops being believed.
+const WHY = {
+  size: 'Derived from the pitch appetite or the task effort, and from the default '
+    + 'when neither is set.',
+  start: 'Derived from assigned_on, from what blocks it, and from what the people '
+    + 'on it are already doing.',
+  end: 'Derived from the start and the appetite.',
+  blocked_by: 'Counted from depends_on.',
+};
+
+function tagsHtml(list) {
+  const tags = list || [];
+  if (tags.length < 2) return tags.join('');
+  // Five tags wrapped to five lines and every row on screen grew to match, so
+  // one line and a count. The count is exact: "+2" means two you cannot see, not
+  // two the browser might have fitted in anyway.
+  const [first, ...rest] = tags;
+  return `${first}<span class="rest">, ${rest.join(', ')}</span>` +
+    `<button type="button" class="more" aria-label="Show ${rest.length} more tag` +
+    `${rest.length === 1 ? '' : 's'}">+${rest.length}</button>`;
+}
+
+function shown(row, key) {
+  const value = row[key];
   // The title is the way into the shaping doc; the id is the way to cite it.
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
-  const shown = key === 'title'
-    ? `<a href="ENTITY_HREF${row.id}">${text}</a>`
-    : key === 'prs' ? (value || []).map(prLink).join(', ') : text;
-  if (EDITABLE && key in EDITABLE)
-    return `<td data-entity="${row.id}" data-field="${key}" class="edit">${shown}</td>`;
-  if (key === 'title' || key === 'prs') return `<td>${shown}</td>`;
-  return `<td class="${derived ? 'derived' : ''}">${text}</td>`;
+  if (key === 'title') return `<a href="ENTITY_HREF${row.id}">${row.title}</a>`;
+  if (key === 'prs') return (value || []).map(prLink).join(', ');
+  // Kind is filterable everywhere and visible nowhere. It rides with the id,
+  // which was already carrying it in a prefix nobody should have to decode.
+  if (key === 'id')
+    return `<span class="chip kind-${row.kind}">${human(row.kind)}</span>` +
+      ` <span class="eid">${row.id}</span>`;
+  if (key === 'status') return `<span class="chip st-${row.status}">${human(row.status)}</span>`;
+  if (key === 'priority') return human(row.priority);
+  if (key === 'tags') return tagsHtml(value);
+  return stored(row, key);
+}
+
+function cell(row, key) {
+  const mark = (MARKS[row.id] || {})[key];
+  const note = mark ? mark.messages.join(' · ') : '';
+  const ground = mark ? 'sev-cell-' + SEV_CLASS[mark.severity] : '';
+  // role="img" with a name, not a bare character: the message was reachable only
+  // by hovering the row, and a tooltip is not something a table gets hovered for.
+  const glyph = mark
+    ? ` <span class="sev-mark sev-mark-${SEV_CLASS[mark.severity]}" role="img"` +
+      ` aria-label="${attr(note)}" title="${attr(note)}">⚠</span>`
+    : '';
+  const body = shown(row, key) + glyph;
+  const editable = EDITABLE && key in EDITABLE;
+  // One class list rather than three returns. The tags clamp used to be written
+  // only into the editable branch, so on a rendered file the column kept the
+  // reveal button and showed every tag beside it anyway.
+  const classes = [
+    editable ? 'edit' : '',
+    !editable && key in WHY ? 'derived' : '',
+    key === 'tags' ? 'tags' : '',
+    ground,
+  ].filter(Boolean).join(' ');
+  const named = (FIELD_LABELS[key] || key).toLowerCase();
+  const tip = note || (editable ? 'Double-click to edit ' + named : WHY[key] || '');
+  return `<td data-col="${key}"${editable ? ` data-entity="${row.id}" data-field="${key}"` : ''}` +
+    `${!editable && key in WHY ? ` data-why="${attr(WHY[key])}"` : ''}` +
+    ` class="${classes}"${tip ? ` title="${attr(tip)}"` : ''}>${body}</td>`;
 }
 
 function prLink(ref) {
@@ -688,11 +878,38 @@ function prLink(ref) {
   return `<a href="https://github.com/${repo}/pull/${number}">${ref}</a>`;
 }
 
+function rowHtml(row) {
+  // The stripe says "something on this row is wrong" before a single cell is
+  // read; the glyph in the cell says which thing. The message used to live only
+  // in a native tooltip on the row, where it was found by accident or not at all.
+  const worst = TROUBLE[row.id];
+  return `<tr data-id="${row.id}"${worst ? ` class="sev-row-${SEV_CLASS[worst]}"` : ''}>` +
+    keys.map(key => cell(row, key)).join('') + '</tr>';
+}
+
+// Three ways for a table to be empty, and they rendered identically: a header
+// row over nothing, which reads as a broken app whichever one it is. Which one
+// it is decides what to do next, so the table says which one it is.
+function emptyRow() {
+  let headline = 'No entity matches these filters.';
+  let detail = 'Every row is filtered out by the controls above.';
+  let clearable = true;
+  if (!LOADED) {
+    headline = 'The plan could not be loaded.';
+    detail = 'This page arrived without its data, so there is nothing to filter or sort.';
+    clearable = false;
+  } else if (!Object.keys(DATA.rows).length) {
+    headline = 'This plan has no entities yet.';
+    detail = 'Nothing has been pitched, shaped or scheduled.';
+    clearable = false;
+  }
+  return `<tr class="nothing"><td colspan="${keys.length}">` +
+    `<p class="headline">${headline}</p><p class="hint">${detail}</p>` +
+    (clearable ? '<button type="button" id="clear-filters">Clear filters</button>' : '') +
+    '</td></tr>';
+}
+
 function draw() {
-  // Index-parallel with the header row above. Nothing enforces that at runtime,
-  // so the two are edited together or every cell shifts one column left.
-  const keys = ['id','title','priority','status','owner','assignees','reviewers','cycle',
-                'size','start','end','blocked_by','prs','tags'];
   const sort = params.get('sort') || 'id';
   const descending = params.get('desc') === '1';
   // A status and a priority are sequences, not words: sorted as text, `done`
@@ -705,14 +922,19 @@ function draw() {
   const rows = Object.values(DATA.rows).filter(matches)
     .sort((a, b) => key(a).localeCompare(key(b)));
   if (descending) rows.reverse();
-  tbody.innerHTML = rows.map(row =>
-    `<tr data-id="${row.id}" title="${(row.problems || []).join(' · ')}">` +
-    keys.map(k => cell(row, k)).join('') + '</tr>').join('');
+  tbody.innerHTML = rows.length ? rows.map(rowHtml).join('') : emptyRow();
   document.getElementById('shown').textContent = rows.length;
   // Sorting redraws without reloading, so the marker has to move with it. Set
   // once at load, it stayed on whatever the URL said when the page opened.
-  for (const th of headers)
+  for (const th of headers) {
     th.classList.toggle('sorted', th.dataset.sort === sort);
+    if (!th.dataset.sort) continue;
+    // The direction was invisible, so a column looked the same sorted either
+    // way. Announced as well as drawn: aria-sort is all a screen reader has.
+    const here = th.dataset.sort === sort;
+    th.setAttribute('aria-sort', here ? (descending ? 'descending' : 'ascending') : 'none');
+    th.querySelector('.dir').textContent = here ? (descending ? '▾' : '▴') : '';
+  }
   for (const select of document.querySelectorAll('select[data-field]'))
     select.value = params.get(select.dataset.field) || '';
   document.getElementById('q').value = params.get('q') || '';
@@ -720,6 +942,14 @@ function draw() {
 
 function update(field, value) {
   if (value) params.set(field, value); else params.delete(field);
+  history.replaceState(null, '', '?' + params.toString());
+  draw();
+}
+
+function clearFilters() {
+  // Not the sort order: clearing the filters and losing the column somebody
+  // sorted by is a second surprise on top of the one they were undoing.
+  for (const field of [...FILTERS, 'predicate', 'q']) params.delete(field);
   history.replaceState(null, '', '?' + params.toString());
   draw();
 }
@@ -749,6 +979,19 @@ function coerce(type, raw) {
   return raw === '' ? null : raw;
 }
 
+// The validator and the scheduler run on the server, so what a save did to the
+// problems is not something this page can work out for itself: it used to leave
+// the count and the row markers stale until somebody reloaded, which is exactly
+// when a count stops being read. Only the problems are re-read — dates are a
+// forecast, and re-forecasting under somebody who is mid-edit is worse than
+// being one reload behind.
+async function refreshProblems() {
+  const response = await fetch('/api/index.json');
+  if (!response.ok) return;
+  regroup((await response.json()).problems);
+  summarise();
+}
+
 async function saveCell(cell, value) {
   const field = cell.dataset.field;
   let coerced;
@@ -758,48 +1001,70 @@ async function saveCell(cell, value) {
     document.getElementById('state').textContent = `${field} ${error.message}`;
     return;
   }
-  // One key, taken from the cell. Sending the row would overwrite whatever
-  // somebody else changed while this tab was open, and would turn two people
-  // editing two different columns into a conflict field-level merge exists to
-  // make invisible. No body: an empty string is a replacement, not an omission,
-  // and would blank the shaping doc attached to the row.
-  const response = await fetch(`/api/entity/${cell.dataset.entity}`, {
-    method: 'PATCH', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
-  });
-  const answer = await response.json();
-  const box = document.getElementById('row-conflict');
-  if (response.status === 409) {
-    box.hidden = false;
-    box.textContent = answer.conflict;
-    return;
+  // The banner in the shell has to know a write is in the air before it starts:
+  // the server announces a commit to the event stream before it answers the
+  // request that made it, so the news of your own save can arrive before you
+  // know its sha.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    // One key, taken from the cell. Sending the row would overwrite whatever
+    // somebody else changed while this tab was open, and would turn two people
+    // editing two different columns into a conflict field-level merge exists to
+    // make invisible. No body: an empty string is a replacement, not an omission,
+    // and would blank the shaping doc attached to the row.
+    const response = await fetch(`/api/entity/${cell.dataset.entity}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
+    });
+    const answer = await response.json();
+    const box = document.getElementById('row-conflict');
+    if (response.status === 409) {
+      box.hidden = false;
+      box.textContent = answer.conflict;
+      return;
+    }
+    if (!response.ok) {
+      document.getElementById('state').textContent = answer.detail || 'refused';
+      return;
+    }
+    // The page moves forward with the repository, or its next save collides with
+    // the commit it just made.
+    committed = answer.commit;
+    BASE.value = answer.commit;
+    DATA.rows[cell.dataset.entity][field] = coerced;
+    // Twice: once to put the typed value back into the cell rather than leaving
+    // an open editor sitting there for the length of a second round trip, and
+    // once when the server has said what that value did to the problems.
+    draw();
+    await refreshProblems();
+    draw();
+  } finally {
+    // Announced even when the save was refused, or one 409 leaves every event
+    // after it held back and the banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
-  if (!response.ok) {
-    document.getElementById('state').textContent = answer.detail || 'refused';
-    return;
-  }
-  // The page moves forward with the repository, or its next save collides with
-  // the commit it just made.
-  BASE.value = answer.commit;
-  DATA.rows[cell.dataset.entity][field] = coerced;
-  draw();
 }
 
 if (EDITABLE) {
   tbody.addEventListener('dblclick', event => {
     const cell = event.target.closest('td.edit');
-    if (!cell || cell.querySelector('input')) return;
-    const was = cell.textContent;
+    // The tag reveal is a control inside an editable cell, so a double-click on
+    // it would both open the list and open the editor over it.
+    if (!cell || cell.querySelector('input') || event.target.closest('button.more')) return;
     const field = cell.dataset.field;
+    const was = stored(DATA.rows[cell.dataset.entity], field);
     const suggest = SUGGESTS[field];
     const closed = CHOICES[EDITABLE[field]];
     // A closed set is chosen, never typed. Free text over three options is a way
-    // to write `in progres` into the corpus.
+    // to write `in progres` into the corpus. The option's value is the stored
+    // identifier and its text is the word for it, so picking "In progress"
+    // still writes `in_progress`.
     cell.innerHTML = closed
       ? `<select data-type="text">${closed.map(o =>
-          `<option value="${o}" ${o === was ? 'selected' : ''}>${o}</option>`
+          `<option value="${o}" ${o === was ? 'selected' : ''}>${human(o)}</option>`
         ).join('')}</select>`
-      : `<input value="${was.replace(/"/g, '&quot;')}" data-type="${EDITABLE[field]}"` +
+      : `<input value="${attr(was)}" data-type="${EDITABLE[field]}"` +
         `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
     const input = cell.querySelector('select, input');
     // The table gets the autocomplete the detail page has. Suggestions that only
@@ -830,15 +1095,43 @@ if (EDITABLE) {
   });
 }
 {% endif %}
+tbody.addEventListener('click', event => {
+  if (event.target.id === 'clear-filters') { clearFilters(); return; }
+  const more = event.target.closest('button.more');
+  if (more) more.closest('td').classList.add('open');
+});
+// A derived cell that ignores a double-click looks exactly like a cell that is
+// broken. It answers instead, in the same place a refused save answers.
+tbody.addEventListener('dblclick', event => {
+  const computed = event.target.closest('td[data-why]');
+  if (!computed) return;
+  document.getElementById('state').textContent = computed.dataset.why;
+  computed.classList.add('refused');
+  setTimeout(() => computed.classList.remove('refused'), 1500);
+});
+document.getElementById('blockers').addEventListener('click', event => {
+  // A real href, so the count can be copied, shared and opened in a tab. Handled
+  // here as well so that following it keeps whatever else was already filtered.
+  event.preventDefault();
+  update('predicate', 'has_blocker');
+});
 document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
 for (const select of document.querySelectorAll('select[data-field]'))
   select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
+// The banner in the shell has no id in its URL to compare against on this page,
+// because the table shows every entity rather than one. So the table says what
+// it is looking at, and "somebody changed the thing in front of you" stays
+// distinguishable from "somebody changed something".
+window.SHOWING = Object.keys(DATA.rows);
 // Column widths, dragged and remembered. The defaults are whatever the browser
 // works out from the content, and are only frozen once somebody drags: measuring
 // them all at that moment is what keeps the other columns where they were.
 // Bumped when the columns changed: widths stored against the old positional
-// keys would land on the wrong columns rather than simply being ignored.
-const WIDTH_KEY = 'openproj:widths:2';
+// keys would land on the wrong columns rather than simply being ignored. Bumped
+// again when the cells did — id and status grew a chip and tags shrank to one
+// line, so a width dragged for the old contents clips the new ones, and a stored
+// width is exactly the thing the automatic fit is not allowed to overrule.
+const WIDTH_KEY = 'openproj:widths:3';
 const WIDTHS = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
 let dragging = false;
 const table = document.getElementById('rows');
@@ -912,6 +1205,10 @@ function applyWidths() {
   table.style.tableLayout = 'fixed';
   let total = 0;
   headers.forEach((th, i) => {
+    // A column the narrow breakpoint dropped is not part of the total. Counted
+    // in, the table is set wider than the columns it actually draws and the last
+    // one floats away from the right edge of nothing.
+    if (th.offsetParent === null) { th.style.width = ''; return; }
     const key = keyOf(th, i);
     if (WIDTHS[key]) { th.style.width = WIDTHS[key] + 'px'; total += WIDTHS[key]; }
   });
@@ -920,6 +1217,15 @@ function applyWidths() {
   // squeezes every other — which is precisely what freezing them was meant to
   // prevent. It scrolls sideways in its own container instead.
   table.style.width = total + 'px';
+  stickyOffset();
+}
+
+// The title column has to begin exactly where the id column ends, and that width
+// is dragged, remembered and re-fitted — so it is measured after layout rather
+// than written into the stylesheet, where it would be wrong the first time
+// somebody moved a grip.
+function stickyOffset() {
+  table.style.setProperty('--sticky-1', headers[0].getBoundingClientRect().width + 'px');
 }
 
 headers.forEach((th, i) => {
@@ -969,6 +1275,10 @@ headers.forEach((th, i) => {
 });
 
 for (const th of document.querySelectorAll('th[data-sort]')) {
+  // On the header, not on the button inside it: a click anywhere in the cell
+  // still sorts, and the button's own Enter and Space arrive here by bubbling —
+  // which is the whole reason it is a button and not a click handler on a cell
+  // nobody can tab to.
   th.addEventListener('click', () => {
     if (dragging) return;
     // Clicking the column you are already sorted by reverses it, which is what
@@ -978,17 +1288,37 @@ for (const th of document.querySelectorAll('th[data-sort]')) {
     update('desc', already && params.get('desc') !== '1' ? '1' : '');
   });
 }
+regroup(DATA.problems);
+summarise();
 draw();
 // After the first draw, because there is nothing to measure before the rows
 // exist. Stored widths win: they were set by hand, on purpose.
 if (Object.keys(WIDTHS).length) applyWidths(); else fitWidths();
+// The breakpoint drops columns as the window narrows, and the sticky title
+// column starts where the id column ends — both are facts about a layout that
+// only exists once it has been laid out.
+addEventListener('resize', () => { applyWidths(); stickyOffset(); });
 </script>
 """
 
 _TABLE_STYLE = """
+/* Where a refused save and a refused edit both answer. It stays on screen
+   because the rows scroll inside their own box rather than scrolling the page
+   out from under the bar that is talking to you. */
+#state { color: var(--muted); font-size: 12px; }
 #summary { color: var(--muted); }
-#blocker-count { color: var(--danger); }
-.table-scroll { overflow-x: auto; }
+/* The whole phrase, not the digit: "1 blocking problems" in danger red with the
+   count black beside it read as two separate facts. And the colour has to mean
+   something — at zero it is muted, because danger nobody can act on is danger
+   nobody reads. */
+#blockers { color: var(--sev-blocker); text-decoration: none; }
+#blockers:hover { text-decoration: underline; }
+#blockers.none { color: var(--muted); }
+/* The table body scrolls in here rather than in the page. `position: sticky` on
+   a header needs a scroll container to hold against, and a container the height
+   of its own content gives `top: 0` nothing to do. */
+.table-scroll { overflow: auto; max-height: calc(100vh - 13rem); min-height: 9rem;
+                overscroll-behavior: contain; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td {
   border-bottom: 1px solid var(--line); padding: .3rem .5rem; text-align: left;
@@ -1004,6 +1334,58 @@ th { color: var(--muted); font-weight: 400;
 th[data-sort] { cursor: pointer; user-select: none; }
 th.sorted { color: inherit; font-weight: 700; }
 th { position: relative; }
+/* The button is the header: it takes the cell's type so the column still reads
+   as a label, and only the focus ring says it is a control. */
+th button { font: inherit; color: inherit; letter-spacing: inherit;
+            text-transform: inherit; background: none; border: 0; padding: 0;
+            cursor: pointer; }
+/* Reserved whether or not this is the sorted column, so sorting does not shove
+   every header one glyph to the left. */
+th .dir { display: inline-block; width: .8em; color: var(--accent); }
+thead th {
+  position: sticky; top: 0; z-index: 3; background: var(--surface);
+  /* A collapsed border is not painted on a sticky cell — the first row scrolls
+     straight over the top of it — so the rule is drawn inside the box instead. */
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+/* The two columns that say which row you are looking at. Scrolled right without
+   them, fourteen columns of values belong to nobody. They need a ground of their
+   own and a layer above the cells passing underneath. */
+[data-col="id"] { position: sticky; left: 0; z-index: 1; background: var(--surface); }
+[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;
+                     background: var(--surface); box-shadow: 1px 0 0 var(--line); }
+thead [data-col="id"], thead [data-col="title"] { z-index: 4; }
+thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line); }
+/* After the sticky rules and at the same weight, or a problem in the id or the
+   title column loses its ground to the sticky one. */
+td.sev-cell-blocker { background: var(--sev-blocker-soft); }
+td.sev-cell-warn { background: var(--sev-warn-soft); }
+/* Editable and derived cells looked identical, and the only thing that said
+   otherwise was a 12px hint at the top of the page. */
+td.edit { cursor: cell; }
+td.edit:hover { background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--line-strong); }
+td.refused { background: var(--surface-2); }
+td.tags { white-space: nowrap; overflow: hidden; }
+td.tags .rest { display: none; }
+td.tags .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
+                padding: 0 .25rem; border: 1px solid var(--line-strong); border-radius: 2px;
+                background: none; color: var(--muted); cursor: pointer; }
+td.tags.open { white-space: normal; }
+td.tags.open .rest { display: inline; }
+td.tags.open .more { display: none; }
+td .sev-mark { margin-left: .25rem; }
+.eid { font-family: var(--font-mono); }
+td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
+td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
+/* Inside the body, not above it or beside it: an empty table with the message
+   somewhere else is still a header row over a void. */
+tr.nothing td { padding: 2.5rem .5rem; text-align: center; }
+tr.nothing .headline { margin: 0 0 .25rem; color: var(--fg); font-size: 15px; }
+tr.nothing .hint { margin: 0 0 .75rem; }
+#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
+                 border: 1px solid var(--line-strong); background: var(--surface);
+                 color: var(--fg); cursor: pointer; }
+#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
 th .grip {
   position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
 }
@@ -1013,6 +1395,13 @@ th .grip::before {
 }
 th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
 .measuring th, .measuring td { white-space: nowrap; }
+/* One screen is not one width. Fourteen columns below this and every one of them
+   is too narrow to read, so the three that are lookups rather than answers go —
+   they are all reachable on the detail page, and the filters above still see
+   them. */
+@media (max-width: 1100px) {
+  [data-col="reviewers"], [data-col="prs"], [data-col="tags"] { display: none; }
+}
 """
 
 _GRAPH = """
@@ -2088,6 +2477,10 @@ LABELS = {
     "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
     "tags": "Tags", "prs": "PRs", "appetite_weeks": "Appetite (weeks)",
     "shaped_by": "Shaped by", "effort_weeks": "Appetite (weeks)",
+    # Not stored fields: a facet and a derived column. They are read by the same
+    # people in the same control bar, so they take their words from here too.
+    "kind": "Kind", "project": "Project", "size": "Appetite", "blocked_by": "Blockers",
+    "start": "Start", "end": "End", "id": "Id", "predicate": "Flags",
 }
 
 # The reader's word for a value. `in_progress`, `missing_required_fields` and
@@ -2121,6 +2514,7 @@ HUMAN = {
     "unblocked": "Not blocked",
     "overruns_cycle": "Overruns its cycle",
     "missing_required_fields": "Has a problem",
+    "has_blocker": "Has a blocking problem",
     "review_waived": "Review waived",
 }
 

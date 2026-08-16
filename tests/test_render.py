@@ -99,6 +99,27 @@ def test_the_table_shows_a_persistent_blocker_count(rendered: Path, seed_index: 
     assert f'id="blocker-count">{blockers}<' in read(rendered, "index.html")
 
 
+def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Path):
+    """A rendered file has no server, so `EDITABLE` is null and every branch that
+    hangs off it is dead. The tag clamp was written into the editable branch
+    only, so an export kept the "+2" reveal and showed all five tags beside it —
+    caught in a browser, not here, which is why it is here now.
+
+    The chips, the severity marks and the empty states are all drawn from data
+    the export carries, so all of them have to survive the loss of the editor.
+    """
+    index = read(rendered, "index.html")
+
+    assert "base_commit" not in index, "this is the read-only build"
+    assert "key === 'tags' ? 'tags' : ''" in index, "the clamp is not behind the editor"
+    assert "td.tags .rest { display: none; }" in index
+    for rule in (".chip.st-done", ".chip.kind-pitch", ".sev-row-blocker", ".sev-mark-blocker"):
+        assert rule in index, rule
+    assert "'The plan could not be loaded.'" in index
+    assert '<label class="facet">Flags' in index
+    assert '<option value="has_blocker">Has a blocking problem</option>' in index
+
+
 def test_filter_state_lives_in_query_parameters(rendered: Path):
     """Every view is a shareable URL, and the back button has to work. This is
     also what deletes the entire saved-views feature request."""
@@ -701,7 +722,9 @@ def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
 
     assert LABELS["appetite_weeks"] == LABELS["effort_weeks"] == "Appetite (weeks)"
     assert "Effort" not in read(rendered, "detail.html")
-    assert '<th data-sort="size">appetite</th>' in read(rendered, "index.html")
+    index = read(rendered, "index.html")
+    header = re.search(r'<th data-col="size"[^>]*>(.*?)</th>', index, re.S).group(1)
+    assert "appetite" in header and "weeks" not in header
 
 
 def test_the_graph_repaints_rather_than_reloads_on_a_theme_change(rendered: Path):

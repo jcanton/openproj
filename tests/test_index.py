@@ -375,6 +375,26 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     assert apply_filters(index, {"predicate": ["missing_required_fields"]}, "") == ["task-c00002"]
 
 
+def test_the_has_blocker_predicate_is_the_strict_half_of_missing_required_fields(
+    seed_index: Index,
+):
+    """The table's headline counts blocking problems and now links to a filter.
+
+    Linked to `missing_required_fields` — the only predicate that read the
+    problem list before this one — the count would have sent people to rows whose
+    only complaint is a warning. A number that lands you on more rows than it
+    counted is a number that stops being clicked.
+    """
+    any_problem = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
+    blocking = set(apply_filters(seed_index, {"predicate": ["has_blocker"]}, ""))
+
+    assert blocking == {p.entity_id for p in seed_index.problems if p.severity == "blocker"}
+    assert blocking < any_problem, "a warning is a problem and is not a blocker"
+    assert any_problem - blocking == {
+        p.entity_id for p in seed_index.problems if p.severity == "warning"
+    } - blocking
+
+
 def test_the_review_waived_predicate_finds_deliberate_waivers_only():
     """`review_waived` is a recorded human decision; empty `reviewers` is nobody
     having decided yet. Collapsing the two would hide a team waiving everything."""

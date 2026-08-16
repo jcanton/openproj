@@ -137,14 +137,24 @@ def payload(html: str) -> dict:
 def columns(html: str) -> list[str]:
     """The field each column stands for, in order.
 
-    A label is written for a reader — `blockers`, `PRs`, `weeks` — and is not the
-    field name. Where the two differ the column says which field it stands for,
-    so this doubles as an assertion that every column declares itself.
+    A label is written for a reader — `blockers`, `PRs`, `appetite` — and is not
+    the field name. Where the two differ the column says which field it stands
+    for, so this doubles as an assertion that every column declares itself.
+
+    A sortable header now holds a `<button>`, and the two columns that are not
+    sortable hold bare text, so the label cannot be matched as "everything up to
+    the next tag" any more. Tags inside are stripped rather than forbidden: the
+    contents of a header are a design decision and what a column *is* is not.
+
+    `\\s` after the name, or `<thead>` is a `<th>` whose attributes are `ead` —
+    it matched, swallowed the first real header, and the count came out right
+    anyway because stripping the tags out of what it swallowed left that header's
+    own label behind.
     """
     found = []
-    for tag, label in re.findall(r"<th([^>]*)>([^<]*)</th>", html):
-        declared = re.search(r'data-(?:sort|field)="([^"]+)"', tag)
-        found.append(declared.group(1) if declared else label.strip())
+    for tag, inner in re.findall(r"<th(\s[^>]*)?>(.*?)</th>", html, re.S):
+        declared = re.search(r'data-(?:col|sort|field)="([^"]+)"', tag or "")
+        found.append(declared.group(1) if declared else re.sub(r"<[^>]*>", "", inner).strip())
     return found
 
 
@@ -758,7 +768,7 @@ def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestC
         r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
     row = next(iter(payload_json["rows"].values()))
     offered = re.findall(r'<select data-field="([^"]+)"', page)
-    filtered = re.search(r"for \(const field of \[(.*?)\]\)", page, re.S).group(1)
+    filtered = re.search(r"const FILTERS = \[(.*?)\];", page, re.S).group(1)
 
     assert "assignees" in columns(page)
     assert "assignees" in row
@@ -775,3 +785,277 @@ def test_a_status_column_sorts_the_way_work_moves(page: str):
 
     assert payload_json["choices"]["status"] == list(STATUSES)
     assert payload_json["choices"]["priority"] == list(PRIORITIES)
+
+
+# --------------------------------------------------------------------------- #
+# 4. What the table says about itself
+#
+# The rows are drawn by the page's own JavaScript, so most of what follows reads
+# the delivered stylesheet — which IS the design — or the shape of the code that
+# builds a cell. Where an assertion stands in for a browser decision its
+# docstring says so; every one of these was also driven in a real browser against
+# both the seed corpus and the frozen one before it was written down.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_status_is_a_chip_and_a_kind_rides_with_the_id(page: str):
+    """The `--st-*` tokens were used by the graph and the timeline only, so the
+    one view people live in was the one view with no colour language at all. Kind
+    was worse: filterable in the control bar, visible nowhere, and readable only
+    by decoding the id's prefix.
+
+    The word is always inside the chip, so the colour is redundant encoding.
+    """
+    body = script(page)
+
+    assert re.search(r'class="chip st-\$\{row\.status\}"', body), "a status is a chip"
+    assert re.search(r'class="chip kind-\$\{row\.kind\}"', body), "so is a kind"
+    assert "human(row.status)" in body and "human(row.kind)" in body, (
+        "the chip carries the word, not the identifier"
+    )
+    for rule in (".chip.st-in_progress", ".chip.kind-project", ".chip.kind-task"):
+        assert rule in page, rule
+
+
+def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
+    """`in_progress` and `missing_required_fields` are storage, not English, and
+    the filter holding the second was labelled STATE — a word from nowhere in the
+    domain. The option's value stays the identifier because that is what the
+    client-side filter compares against; only the text a person reads changes."""
+    assert '<option value="in_progress">In progress</option>' in page
+    assert '<option value="missing_required_fields">Has a problem</option>' in page
+    assert '<label class="facet">Flags' in page
+    assert '<label class="facet">state' not in page
+
+    # Including inside the editor a double-click opens, or picking "In progress"
+    # from a cell would write the label back into the corpus.
+    assert re.search(r'<option value="\$\{o\}"[^>]*>\$\{human\(o\)\}</option>', script(page))
+
+
+def test_the_blocking_count_is_a_link_that_pluralises_and_mutes_at_zero(page: str):
+    """"1 blocking problems" was not a link, never pluralised, and was drawn in
+    the danger colour at zero — a number that cannot be acted on, shouting.
+
+    It links at the predicate that means exactly what it counts, so the rows you
+    land on are the rows the number counted.
+    """
+    assert re.search(r'<a id="blockers" href="\?predicate=has_blocker"', page)
+    assert re.search(r'id="blocker-count">\d+<', page), "the count is the element's own text"
+
+    body = script(page)
+    assert "BLOCKERS === 1 ? 'blocking problem' : 'blocking problems'" in body
+    assert "classList.toggle('none', BLOCKERS === 0)" in body
+    assert "#blockers.none { color: var(--muted); }" in page
+    assert "#blockers { color: var(--sev-blocker);" in page
+
+
+def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
+    """The reason a row is a problem lived in a native `title` on the `<tr>`, and
+    a table is not a thing anybody hovers to find out.
+
+    A field the table has no column for — `shaped_by`, `effort_weeks` — still has
+    to be findable, so its complaint falls to the id cell. A glyph on a column
+    nobody can see is a row that says something is wrong and will not say what.
+    """
+    body = script(page)
+
+    assert "sev-row-${SEV_CLASS[worst]}" in body, "the row carries its worst severity"
+    assert "sev-cell-' + SEV_CLASS[mark.severity]" in body
+    glyph = r'class="sev-mark sev-mark-\$\{SEV_CLASS\[mark\.severity\]\}" role="img"'
+    assert re.search(glyph, body)
+    assert 'aria-label="${attr(note)}"' in body, "the glyph's name is the message"
+    assert "const MARK_COLUMN = {effort_weeks: 'size'," in body
+    assert "keys.includes(problem.field) ? problem.field : 'id'" in body
+
+
+def test_an_empty_table_says_which_of_the_three_empties_it_is(page: str):
+    """Filtered to nothing, an empty plan and a payload that did not survive the
+    trip all rendered as a header row over a void, which reads as a broken app
+    whichever one it is — and each wants something different done about it.
+
+    The message goes inside the tbody: an empty table with its explanation
+    somewhere else is still a header row over a void.
+    """
+    body = script(page)
+
+    assert "'No entity matches these filters.'" in body
+    assert "'This plan has no entities yet.'" in body
+    assert "'The plan could not be loaded.'" in body
+    assert re.search(r'<tr class="nothing"><td colspan=', body), "inside the body, not beside it"
+    # The load failure is a real state, not a comment: the payload is parsed
+    # defensively and the page keeps working with nothing in it.
+    assert re.search(r"try \{\s*DATA = JSON\.parse", body)
+    assert "const LOADED = DATA !== null;" in body
+
+
+def test_clearing_the_filters_is_a_button_and_never_a_form_field(page: str):
+    """`test_the_static_export_offers_no_editing_at_all` asserts a rendered file
+    has no named control at all, so a Clear that posted a `name=` would make the
+    export claim to be editable. It is also not a tenth dropdown: it appears only
+    where the emptiness it explains is."""
+    body = script(page)
+
+    assert 'id="clear-filters"' in body
+    bar = re.search(r'<div id="controls">.*?</div>\s*</div>', page, re.S).group(0)
+    assert "clear-filters" not in bar
+    assert 'name="clear' not in page
+    # The sort is not a filter: losing the column you sorted by would be a second
+    # surprise on top of the one you were undoing.
+    cleared = r"for \(const field of \[\.\.\.FILTERS, 'predicate', 'q'\]\) params\.delete"
+    assert re.search(cleared, body)
+
+
+def test_a_sortable_header_is_a_button_that_says_which_way_it_sorts(page: str):
+    """`th` had no role, no `aria-sort` and nothing to tab to, so sorting was
+    mouse-only and the direction was invisible — the same column looked identical
+    sorted either way.
+
+    The listener stays on the header so a click anywhere in the cell still sorts;
+    the button's Enter and Space arrive there by bubbling. Proxy for a browser
+    pressing Enter on a focused header.
+    """
+    headers = re.findall(r"<th(\s[^>]*)?>(.*?)</th>", page, re.S)
+    sortable = [(tag, inner) for tag, inner in headers if "data-sort" in (tag or "")]
+
+    assert len(sortable) == 12, "every column but prs and tags sorts"
+    for tag, inner in sortable:
+        assert 'aria-sort="none"' in tag, tag
+        assert "<button type=" in inner, inner
+        assert 'class="dir"' in inner, "somewhere to draw the direction"
+
+    body = script(page)
+    announced = "th.setAttribute('aria-sort', here ? (descending ? 'descending' : 'ascending')"
+    assert announced in body
+    assert re.search(r"\.dir'\)\.textContent = here \? \(descending \? '▾' : '▴'\) : ''", body)
+
+
+def test_the_header_and_the_two_identity_columns_stay_put(page: str):
+    """A ~1670px table scrolled right is fourteen columns of values belonging to
+    nobody, and scrolled down it is fourteen columns with no names.
+
+    Both need a ground of their own and a layer above the cells passing under
+    them, and the header needs a bounded container to be sticky inside at all —
+    a container the height of its own content gives `top: 0` nothing to hold
+    against.
+    """
+    assert "max-height: calc(100vh - 13rem)" in page, "the body scrolls in the container"
+    assert "thead th {\n  position: sticky; top: 0; z-index: 3; background: var(--surface);" in page
+    assert '[data-col="id"] { position: sticky; left: 0; z-index: 1;' in page
+    assert '[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;' in page
+    assert "thead [data-col=\"id\"], thead [data-col=\"title\"] { z-index: 4; }" in page
+    # A collapsed border is not painted on a sticky cell; the row scrolls over it.
+    assert "box-shadow: inset 0 -1px 0 var(--line);" in page
+
+    body = script(page)
+    assert "table.style.setProperty('--sticky-1'" in body, (
+        "the second column begins where the first ends, and that width is dragged"
+    )
+
+
+def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
+    """The only media query in the app was `prefers-color-scheme`. Fourteen
+    columns below 1100px means fourteen columns too narrow to read; the three
+    that go are reachable on the detail page and still filterable above."""
+    narrow = re.search(r"@media \(max-width: 1100px\) \{(.*?)\n\}", page, re.S).group(1)
+
+    for column in ("reviewers", "prs", "tags"):
+        assert f'[data-col="{column}"]' in narrow, column
+    assert "display: none" in narrow
+    # Every cell declares its column, or the rule above would have to count them.
+    assert 'return `<td data-col="${key}"' in script(page)
+    # A dropped column is not part of the table's width, or the table is set
+    # wider than the columns it draws.
+    assert "if (th.offsetParent === null) { th.style.width = ''; return; }" in script(page)
+
+
+def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
+    """Five tags wrapped to five lines and every row on screen grew to match, so
+    the column with the least in it set the height of the table.
+
+    The count is exact rather than "however many did not fit": one tag is shown
+    and `+N` is the number you cannot see. No row padding changes anywhere — this
+    is about removing height, not adding it.
+    """
+    assert "td.tags { white-space: nowrap; overflow: hidden; }" in page
+    assert "td.tags .rest { display: none; }" in page
+    assert "td.tags.open .rest { display: inline; }" in page
+    assert "td.tags.open .more { display: none; }" in page
+    assert "padding: .3rem .5rem" in page, "the row keeps the padding it had"
+
+    body = script(page)
+    assert re.search(r'aria-label="Show \$\{rest\.length\} more tag', body), (
+        "the reveal has a name, not only a plus sign"
+    )
+    assert "more.closest('td').classList.add('open')" in body
+    # It is a control inside an editable cell, so it must not also open the editor.
+    assert "event.target.closest('button.more')) return;" in body
+
+
+def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
+    """Editable and computed cells were identical, and the only affordance on the
+    page was a 12px hint at the top of it. A derived cell that silently swallows a
+    double-click is indistinguishable from a cell that is broken."""
+    assert "td.edit { cursor: cell; }" in page
+    assert "td.edit:hover { background: var(--surface-2);" in page
+
+    body = script(page)
+    assert "'Double-click to edit ' + named" in body, "and a description, not only a colour"
+    assert re.search(r"const WHY = \{\s*\n\s*size:", body)
+    assert "data-why=\"${attr(WHY[key])}\"" in body
+    assert "document.getElementById('state').textContent = computed.dataset.why;" in body
+
+
+def test_the_page_never_reports_its_own_write_to_itself(page: str, client: TestClient):
+    """`mine` was decided by the entity in the URL, which the table has none of,
+    so every save from this page came back as "The plan changed" one keystroke
+    after making it — and a banner that fires on your own typing is wallpaper.
+
+    The commit is the handshake: the sha the PATCH returned is the sha announced.
+    The write is declared *before* it is sent because the server announces to the
+    stream before it answers the request, so the news can arrive first.
+    """
+    body = script(page)
+
+    assert "dispatchEvent(new Event('openproj:writing'));" in body
+    assert "dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));" in body
+    assert "committed = answer.commit;" in body
+    # Announced even when refused, or one 409 holds every later event forever.
+    assert re.search(r"\} finally \{.*?openproj:wrote", body, re.S)
+
+    shell = script(client.get(f"/detail/{TASK}").text)
+    assert "if (movedOurs.has(commit)) return;" in shell
+    assert "if (movedWriting) movedHeld.push(message); else showMoved(message);" in shell
+    assert "window.SHOWING" in shell, "a page says what it is looking at"
+
+
+def test_a_write_refreshes_the_count_and_the_markers_in_place(page: str):
+    """The validator runs on the server, so what a save did to the problems is not
+    something the page can work out — it left the count and the row markers stale
+    until somebody reloaded, which is exactly when a count stops being read.
+
+    Only the problems are re-read. Dates are a forecast, and re-forecasting under
+    somebody who is mid-edit is worse than being one reload behind.
+    """
+    body = script(page)
+
+    assert "await fetch('/api/index.json')" in body
+    assert "regroup((await response.json()).problems);" in body
+    assert re.search(r"await refreshProblems\(\);\s*\n\s*draw\(\);", body)
+    assert "/healthz" not in body, "re-reading HEAD before a save discards the collision"
+
+
+def test_the_grouping_of_problems_is_written_once(page: str):
+    """The payload carries the flat list the validator produced, not a copy
+    stapled to every row. Grouped on the server as well, the table would have had
+    two aggregations — one rendered into the rows and one rebuilt after each save
+    — and only the first would ever have been tested."""
+    carried = payload(page)
+
+    assert isinstance(carried["problems"], list)
+    assert {"severity", "entity_id", "field", "message"} <= set(carried["problems"][0])
+    assert "problems" not in next(iter(carried["rows"].values())), (
+        "one list, not one per row"
+    )
+    # The two predicates that read the problem list are recomputed with it.
+    assert "row.predicates.push('missing_required_fields');" in script(page)
+    assert "row.predicates.push('has_blocker');" in script(page)
