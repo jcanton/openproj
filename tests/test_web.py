@@ -38,6 +38,7 @@ so that both suites agree on what a plan repository looks like.
 
 from __future__ import annotations
 
+import base64
 import json
 import queue
 import re
@@ -1252,3 +1253,68 @@ def test_the_bet_lists_what_to_pick_up_before_what_is_running(
     for status in ("ready", "in_progress"):
         ids = [i for i, _, s in rows if s == status]
         assert ids == sorted(ids)
+
+
+# --- images -----------------------------------------------------------------
+
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNk+M+AFzCOKhhVMKoA"
+    "AI5CA/8Ehl9pAAAAAElFTkSuQmCC"
+)
+
+
+def upload(client: TestClient, data: bytes, kind: str = "image/png"):
+    return client.post("/api/asset", content=data, headers={"content-type": kind})
+
+
+def test_an_uploaded_image_is_named_by_its_contents(client: TestClient, repo_path: Path):
+    """Content-addressed, so the same file twice is the same path and the second
+    upload writes nothing. It is also why an asset needs none of the write path's
+    machinery: it is never edited, so no conflict can exist."""
+    first = upload(client, PNG)
+    before = git_head(repo_path)
+    second = upload(client, PNG)
+
+    assert first.status_code == 200
+    assert first.json()["fresh"] is True
+    assert re.fullmatch(r"assets/[0-9a-f]{16}\.png", first.json()["path"])
+    assert second.json()["path"] == first.json()["path"]
+    assert second.json()["fresh"] is False
+    assert git_head(repo_path) == before, "an identical upload writes nothing"
+
+
+def test_an_uploaded_image_comes_back_byte_for_byte(client: TestClient):
+    path = upload(client, PNG).json()["path"]
+    served = client.get(f"/{path}")
+
+    assert served.status_code == 200
+    assert served.content == PNG
+    assert served.headers["content-type"] == "image/png"
+    assert "immutable" in served.headers["cache-control"], "the name is the hash"
+
+
+def test_the_upload_route_takes_images_and_nothing_else(client: TestClient):
+    """No SVG in particular: it is a document that can carry script, and these are
+    served from the same origin as the editor."""
+    assert upload(client, PNG, "image/svg+xml").status_code == 415
+    assert upload(client, b"#!/bin/sh\n", "text/x-shellscript").status_code == 415
+    assert upload(client, b"", "image/png").status_code == 422
+    assert upload(client, b"\x89PNG" + b"x" * (3 * 1024 * 1024)).status_code == 413
+
+
+def test_an_asset_name_that_is_not_a_hash_never_becomes_a_path(client: TestClient):
+    for name in ("../config/defaults.yaml", "..%2Fconfig", "nope.png", "abc.exe"):
+        assert client.get(f"/assets/{name}").status_code == 404, name
+
+
+def test_a_stored_image_is_drawn_and_a_remote_one_is_not(client: TestClient):
+    """A remote image would make the page fetch from the network, which is what
+    inlining every library was for. One in the repository travels with the clone
+    and is served from this origin."""
+    path = upload(client, PNG).json()["path"]
+    save(client, TASK, {}, body=f"![a]({path})\n\n![b](https://example.com/b.png)\n")
+    page = client.get(f"/detail/{TASK}").text
+
+    assert f'<img src="/{path}"' in page
+    assert "https://example.com/b.png" in page
+    assert '<img src="https://example.com' not in page

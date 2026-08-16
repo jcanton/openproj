@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -273,13 +274,14 @@ class Links(BaseModel):
     new: str = ""  # only the server can create; a rendered file has nowhere to post
     cycles: str = "cycles.html"
     cycle: str = "cycles.html#"  # prefix, then the cycle number
+    asset: str = "assets/"  # a rendered file sits beside the assets it names
 
 
 STATIC = Links()
 ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
-    cycles="/cycles", cycle="/cycle/",
+    cycles="/cycles", cycle="/cycle/", asset="/assets/",
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -293,19 +295,27 @@ def _pr_link(ref: str) -> str:
 
 
 _REMOTE_IMG = re.compile(r'<img\s+src="(https?://[^"]+)"(?:[^>]*?alt="([^"]*)")?[^>]*>')
+# Written as a repository-relative path so the markdown reads the same in git, on
+# GitHub and in the tool; only the prefix in front of it changes.
+_ASSET_IMG = re.compile(r'<img\s+src="assets/([0-9a-f]{16}\.(?:png|jpg|gif|webp))"')
 
 
-def _body_html(entity: Entity) -> str:
+def _body_html(entity: Entity, links: Links = STATIC) -> str:
     """The shaping document, rendered, with PR references made clickable.
 
-    A remote image in a shaping doc would make the page fetch from the network,
-    which is exactly what inlining every library was for. Remote images become
-    links instead: the reference survives, the dependency does not.
+    A remote image would make the page fetch from the network, which is exactly
+    what inlining every library was for. Remote images become links instead: the
+    reference survives, the dependency does not.
+
+    An image stored in the plan is a different thing — it is in the repository,
+    it travels with the clone, and it is served from the same origin as the page.
+    Those are drawn.
     """
     html = _MD.render(entity.body)
     html = _REMOTE_IMG.sub(
         lambda m: f'<a href="{m.group(1)}">{m.group(2) or "image"} (external image)</a>', html
     )
+    html = _ASSET_IMG.sub(lambda m: f'<img src="{links.asset}{m.group(1)}"', html)
     return _PR.sub(lambda m: _pr_link(m.group(0)), html)
 
 
@@ -1231,6 +1241,57 @@ rect.late { stroke: var(--danger); stroke-width: 1.5; }
 _COMBOBOX = """
 <script id="suggest" type="application/json">SUGGEST_JSON</script>
 <script>
+// Paste or drop an image and it goes into the plan repository, content-addressed,
+// and the markdown that names it is inserted where the cursor is. The path is
+// written repository-relative so the same text reads correctly in git, on GitHub
+// and here — only the prefix in front of it differs.
+function attachUploads(area, status) {
+  function insert(markdown) {
+    const at = area.selectionStart;
+    area.value = area.value.slice(0, at) + markdown + area.value.slice(area.selectionEnd);
+    area.selectionStart = area.selectionEnd = at + markdown.length;
+    area.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+
+  async function send(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    status.textContent = `uploading ${file.name || 'image'}…`;
+    // A placeholder first, so a slow upload does not look like nothing happened
+    // and the text cannot be typed over the spot it is going to land in.
+    const token = `![uploading ${file.name || 'image'}…]()`;
+    insert(token);
+    const response = await fetch('/api/asset', {
+      method: 'POST', headers: {'content-type': file.type}, body: file,
+    });
+    const answer = await response.json();
+    const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
+    area.value = area.value.replace(
+      token, response.ok ? `![${alt}](${answer.path})` : ''
+    );
+    area.dispatchEvent(new Event('input', {bubbles: true}));
+    status.textContent = response.ok
+      ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
+      : (answer.detail || 'that upload was refused');
+  }
+
+  area.addEventListener('paste', event => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    files.forEach(send);
+  });
+  area.addEventListener('dragover', event => {
+    event.preventDefault();
+    area.classList.add('dropping');
+  });
+  area.addEventListener('dragleave', () => area.classList.remove('dropping'));
+  area.addEventListener('drop', event => {
+    event.preventDefault();
+    area.classList.remove('dropping');
+    [...(event.dataTransfer?.files || [])].forEach(send);
+  });
+}
+
 // Type-to-filter, not a picker beside the field. A datalist only completes a whole
 // value, so on a comma-separated field it stops helping after the first name — and
 // a separate "add" control is a second place to look for one job.
@@ -1323,6 +1384,8 @@ _SUGGEST_STYLE = """
            box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px; }
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
 .suggest li.on { background: var(--accent); color: var(--on-accent); }
+textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.doc img { max-width: 100%; height: auto; }
 .suggest .dim { opacity: .6; }
 .suggest li.on .dim { opacity: .85; }
 dd, td.edit { position: relative; }
@@ -1407,7 +1470,8 @@ _NEW = """
     <ul id="problems" class="problems" hidden></ul>
     <p class="field bodybar">
       <button type="button" id="preview">Preview the body</button>
-      <span class="hint">the fields above are shown as you set them</span>
+      <span class="hint">paste or drop an image to put it in the plan</span>
+      <span class="hint" id="upload"></span>
     </p>
     <textarea name="body" class="field body-field" rows="14"
               placeholder="The shaping document."></textarea>
@@ -1449,6 +1513,7 @@ function read(control) {
 const PREVIEW = document.getElementById('preview');
 const DOC = document.querySelector('.doc');
 const BODY = FORM.querySelector('[name=body]');
+attachUploads(BODY, document.getElementById('upload'));
 
 PREVIEW.onclick = async () => {
   if (!DOC.hidden) {
@@ -1565,7 +1630,8 @@ _DETAIL = """
   {% if editable %}
     <p class="field bodybar">
       <button type="button" id="preview">Preview the body</button>
-      <span class="hint">the fields above are shown as you set them</span>
+      <span class="hint">paste or drop an image to put it in the plan</span>
+      <span class="hint" id="upload"></span>
     </p>
     <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
     <div id="body-preview" class="field doc" hidden></div>
@@ -1617,6 +1683,7 @@ const FORM = document.getElementById('edit');
 const ORIGINAL = {};
 const CONTROLS = [...FORM.querySelectorAll('[data-type]')];
 const BODY = FORM.querySelector('[name=body]');
+attachUploads(BODY, document.getElementById('upload'));
 const STATE = document.getElementById('state');
 const DRAFT = `openproj:${FORM.dataset.id}`;
 
@@ -2027,7 +2094,7 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
                 "prs": ", ".join(_pr_link(ref) for ref in entity.prs),
                 "tags": entity.tags,
                 "problems": [p.message for p in index.problems if p.entity_id == entity_id],
-                "body": _body_html(entity),
+                "body": _body_html(entity, links),
             }
         )
     return rows
@@ -3039,8 +3106,17 @@ def render_timeline(
     return _page("openproj — timeline", body, _TIMELINE_STYLE, links)
 
 
-def render_static(index: Index, out_dir: Path) -> None:
+def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> None:
+    """The pages, and the images they name.
+
+    Without the copy an exported plan renders every uploaded figure as a broken
+    image — the markdown points at `assets/…` relative to the page, which is
+    exactly right and exactly useless if the directory is not there.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
+    assets = (repo / "assets") if repo else None
+    if assets and assets.is_dir():
+        shutil.copytree(assets, out_dir / "assets", dirs_exist_ok=True)
     for name, html in (
         ("index.html", render_table(index)),
         ("detail.html", render_detail(index)),

@@ -71,6 +71,19 @@ PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 # A blob committed to git is permanent and branch protection blocks the force-push
 # that would take it back out, so the only place to stop it is before the commit.
 MAX_BODY_BYTES = 256 * 1024
+# A screenshot of a plot is well under this; a photograph pasted by accident is
+# not. Every byte here is a byte in the plan repository forever — git keeps it
+# after the markdown that referenced it is deleted.
+MAX_ASSET_BYTES = 2 * 1024 * 1024
+# No SVG: it is a document that can carry script, and these are served from the
+# same origin as the editor.
+IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+ASSET_PATTERN = re.compile(r"^[0-9a-f]{16}\.(png|jpg|gif|webp)$")
 
 _DEV_SECRETS = {"", "dev-secret", "change-me", "secret"}
 
@@ -462,6 +475,47 @@ def create_app(
         if written.commit:
             await announce(written.commit, [f"cycle-{number}"])
         return _result(written, base)
+
+    @app.post("/api/asset")
+    async def upload(request: Request) -> JSONResponse:
+        """Raw bytes with a content-type header, not a multipart form.
+
+        Multipart would mean another dependency for a request that carries one
+        file and nothing else, and `fetch` posts a File object as a raw body
+        without any help.
+        """
+        user = writer(request)
+        kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind not in IMAGE_TYPES:
+            raise HTTPException(415, f"images only: {', '.join(sorted(IMAGE_TYPES))}")
+        data = await request.body()
+        if not data:
+            raise HTTPException(422, "that file is empty")
+        if len(data) > MAX_ASSET_BYTES:
+            raise HTTPException(
+                413, f"that image is {len(data) // 1024} KB; the limit is "
+                     f"{MAX_ASSET_BYTES // 1024} KB"
+            )
+        path, fresh = store.put_asset(data, IMAGE_TYPES[kind], user.login)
+        if fresh:
+            await announce(store.head(), [])
+        return JSONResponse({"path": path, "url": f"/{path}", "fresh": fresh})
+
+    @app.get("/assets/{name}")
+    def asset(name: str) -> Response:
+        if not ASSET_PATTERN.match(name):
+            raise HTTPException(404, "no such asset")
+        data = store.read_asset(store.head(), f"assets/{name}")
+        if data is None:
+            raise HTTPException(404, "no such asset")
+        suffix = "." + name.rsplit(".", 1)[-1]
+        return Response(
+            data,
+            media_type=next(k for k, v in IMAGE_TYPES.items() if v == suffix),
+            # The name IS the hash of the contents, so this bytes-for-bytes
+            # cannot change under a cache.
+            headers={"cache-control": "public, max-age=31536000, immutable"},
+        )
 
     @app.post("/api/entity")
     async def create(request: Request) -> JSONResponse:

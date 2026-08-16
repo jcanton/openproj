@@ -67,7 +67,7 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     from .render import render_static
 
     entities, config = load_repo(repo)
-    render_static(build_index(entities, config, today or date.today()), out_dir)
+    render_static(build_index(entities, config, today or date.today()), out_dir, repo)
     print(f"wrote index.html, graph.html and timeline.html to {out_dir}")
     return 0
 

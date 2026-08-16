@@ -19,6 +19,7 @@ reasoned about when they do.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import io
 import os
 import threading
@@ -287,6 +288,32 @@ class Store:
         return True
 
     # -- writing ------------------------------------------------------------
+
+    def put_asset(self, data: bytes, suffix: str, author: str) -> tuple[str, bool]:
+        """Store bytes under a name derived from their content, and return it.
+
+        Content-addressed, so the same file uploaded twice is the same path and
+        the second upload writes nothing. That is also why this needs none of
+        `write`'s machinery: an asset is never edited, so there is no base to
+        compare against, nothing to merge, and no conflict that can exist.
+        """
+        name = f"assets/{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
+        if self.read_asset(self.head(), name) is not None:
+            return name, False
+        blob = self._repo.create_blob(data)
+        parent = self.head()
+        tree = self._insert(self._tree(parent), name.split("/"), blob)
+        who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+        self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
+        return name, True
+
+    def read_asset(self, commit: str, path: str) -> bytes | None:
+        """The raw bytes. `read` decodes as UTF-8, which an image is not."""
+        try:
+            entry = self._repo[commit].tree[path]
+        except KeyError:
+            return None
+        return entry.data if entry.type_str == "blob" else None
 
     def write(
         self, path: str, content: str, base_commit: str, author: str, message: str

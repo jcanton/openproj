@@ -325,3 +325,29 @@ def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_
     assert json.loads(carried) == {"cy": 0.5, "ann": 1.0}
     hint = re.search(r"(\d+) people carried from cycle\s+(\d+)", page)
     assert hint and (hint.group(1), hint.group(2)) == ("2", "50")
+
+
+def test_an_image_can_be_pasted_or_dropped_into_the_body(client: TestClient):
+    """This is a handler on the textarea, not an editor feature. CodeMirror would
+    not have brought it — paste and drop are DOM events, and a plain textarea
+    receives them exactly the same way."""
+    for path in (f"/detail/{TASK}", "/new"):
+        page = client.get(path).text
+        assert "function attachUploads(area, status)" in page, path
+        assert "attachUploads(BODY, document.getElementById('upload'));" in page, path
+        assert "addEventListener('paste'" in page, path
+        assert "addEventListener('drop'" in page, path
+        assert "fetch('/api/asset'" in page, path
+
+
+def test_a_slow_upload_holds_its_place_in_the_text(client: TestClient):
+    """Inserted before the request, replaced after. Without it a slow upload looks
+    like nothing happened, and whatever gets typed meanwhile lands in the spot the
+    image was going to."""
+    page = client.get(f"/detail/{TASK}").text
+    send = re.search(r"async function send\(file\) \{.*?\n  \}", page, re.S).group(0)
+
+    assert "const token = `![uploading" in send
+    assert "insert(token)" in send
+    assert "area.value.replace(" in send
+    assert "response.ok ? `![${alt}](${answer.path})` : ''" in send
