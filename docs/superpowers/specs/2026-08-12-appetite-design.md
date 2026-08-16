@@ -112,7 +112,10 @@ class Entity(BaseModel):
     kind: Literal["project", "pitch", "task"]
     title: str
     parent: str | None = None        # project for a pitch, pitch for a task
-    status: Literal["todo", "wip", "done", "shelved"] = "todo"
+    # A plain string, not a Literal: shaping | ready | in_progress | done | shelved.
+    # An unknown value has to parse and be REPORTED, or one file written before a
+    # vocabulary change takes every page down instead of showing one problem.
+    status: str = "shaping"
 
     owner: str | None = None         # single GitHub username, accountable
     assignees: list[str] = []        # additional people doing the work
@@ -120,19 +123,31 @@ class Entity(BaseModel):
     review_waived: bool = False      # deliberately no reviewer, recorded by a human
 
     assigned_on: date | None = None  # the ONLY date a human types
-    priority: int = 2                # 0 must, 1 should, 2 could, 3 someday
+    # Named, not numbered, and a plain string for the same reason as `status`.
+    # very_high | high | medium | low | very_low — five rungs, because three left
+    # the team writing `High+` in the margin of its own table.
+    priority: str = "medium"
     depends_on: list[str] = []       # m:n, cross-kind permitted
-    cycle: int | None = None
+    cycle: int | None = None         # where the bet was MADE; never re-stamped (D-C1)
     tags: list[str] = []
     prs: list[str] = []              # "C2SM/icon4py#1842"
 
+    body: str = ""                   # the shaping document
+    created_schema_version: int = 1
+
 class Pitch(Entity):
-    appetite_weeks: float | None = None   # elapsed weeks at nominal availability
-    shaped_by: str | None = None          # who shaped it; required from schema_version 2
+    appetite_weeks: float | None = None   # PERSON-weeks (D-C4); assignees divide it
+    # A list: two of the four shaped pitches in the team's own corpus name two or
+    # three people. A bare string still parses, and still writes back as one.
+    shaped_by: list[str] = []             # required from schema_version 2
 
 class Task(Entity):
-    effort_weeks: float | None = None
+    effort_weeks: float | None = None     # the same quantity, under the other name
 ```
+
+**Superseded by the code, recorded here so the two stop disagreeing:** this section originally
+gave `status` and `priority` as `Literal`s over `todo`/`wip` and over the integers `0..3`, and
+`shaped_by` as a single string. All three changed; the reasons are in the comments above.
 
 Every field is Optional at the type level. **That is deliberate and is explained in §5.4** — it is
 not laxity, it is what keeps a hand-edited file from taking the index down.
@@ -172,9 +187,9 @@ starts, strictest when it is claimed done.
 
 | Status | Additionally required | Severity |
 |---|---|---|
-| `todo` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `appetite_weeks` (pitch) or `effort_weeks` (task) | blocker |
-| `todo` | on a **pitch**, `shaped_by` set — *rule_version 2* | blocker |
-| `wip` | `assigned_on`, and **at least one reviewer who is not the owner** unless review is waived | blocker |
+| `ready` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `appetite_weeks` (pitch) or `effort_weeks` (task) | blocker |
+| `ready` | on a **pitch**, `shaped_by` non-empty — *rule_version 2* | blocker |
+| `in_progress` | `assigned_on`, and **at least one reviewer who is not the owner** unless review is waived | blocker |
 | `done` | at least one entry in `prs` | blocker |
 | any | `title` non-empty; `id` matches `^(proj\|pitch\|task)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
 | any | `parent` set for every task | **warning** |
@@ -350,18 +365,20 @@ Written first, before any server, with property tests. **This is the product.**
 4. **Duration resolution:**
 
    ```
-   size_weeks  = appetite_weeks (pitch) | effort_weeks (task)
-   duration    = size_weeks × (nominal_availability / availability(owner))
+   size_weeks  = appetite_weeks (pitch) | effort_weeks (task)     # PERSON-weeks
+   duration    = size_weeks / Σ availability(worker) for workers  # elapsed weeks
    ```
 
-   With a single global availability figure (D4) the ratio is 1 and **duration equals the stated
-   size**, which is exactly what D1 means by "elapsed weeks at nominal availability". The ratio only
-   does work later, if per-person availability is ever introduced.
+   **Rewritten 2026-08-16 for D-C4, which supersedes D1.** A size is the work one person would
+   need, so the people on it divide it, each at their own rate: three names on a six-week bet is
+   two elapsed weeks, and one person at 60% takes a three-week bet five weeks. The team's own
+   shaping template asks for `Appetite (FTEs, weeks)`, which is this and not elapsed time.
 
-   An earlier draft divided by availability unconditionally. That silently reinterprets appetite as
-   *person*-weeks and contradicts D1 — it stretched every three-week bet to five weeks. It also
-   applied to pitches but not tasks, so a three-week pitch and a three-week task scheduled to
-   different lengths.
+   This paragraph previously said the opposite — that duration equals the stated size and that
+   dividing by availability was a bug. That was true only under D1's reading. With exactly one
+   assignee at full availability the two agree, which is why the error survived a hand-check.
+   Availability comes from the cycle the entity was bet into (`cycles/<n>.md`), and anyone that
+   record does not name works at `nominal_availability`.
 
    - **A pitch with children takes no duration of its own**; its span is the union of its children's,
      computed after them.
@@ -409,14 +426,18 @@ Written first, before any server, with property tests. **This is the product.**
    delay propagates correctly.
 7. **Each worker is capacity 1, and only leaves consume it.** A parent's span is a rollup of work
    already accounted for by its children; booking the parent as well double-books its owner for the
-   same weeks. A multi-worker leaf consumes all of its workers for its whole span — pessimistic,
-   simple, right often enough. **Items with no owner schedule with infinite capacity and draw
+   same weeks. A multi-worker leaf consumes all of its workers for its whole span, and each is
+   charged `size / n_workers` against a cycle's capacity (D-C4, D-C2). **Items with no owner
+   schedule with infinite capacity and draw
    hatched**: they are forecasts, not commitments, and the visual difference matters. Reviewers do
    **not** consume capacity; review load is surfaced in the table (§9) instead, because modelling it
    here would double the model's complexity for a small correction.
 8. Roll up: parent span is `[min(child start), max(child end)]`.
-9. Cycles are drawn as vertical rules. An item finishing past its cycle end is flagged amber:
-   *"overruns cycle 38 by 1.4 weeks"*. The scheduler does not move it.
+9. Cycles are drawn as bands with two rules: a solid one where the cycle stops **building** and a
+   dashed one where its window closes, with the cool-down shaded between them. An item finishing
+   past the end of build is flagged amber — *"overruns cycle 38 by 1.4 weeks"* — and the scheduler
+   does not move it. The flag and the solid rule are the same date on purpose: measured against the
+   window instead, every overrun was understated by the length of the cool-down.
 
 Steps 3, 4, 5 and 7 all exist because a hand-run of an earlier draft against the real seed corpus
 produced an absurd schedule. That exercise is worth repeating whenever the algorithm changes: run it
@@ -462,7 +483,7 @@ flaky.
      time, and three actions: keep mine, keep theirs, edit merged. **No conflict markers ever reach
      the editor.**
 5. Commit: new blob, `TreeBuilder` from HEAD's tree, `author = <the signed-in user>`,
-   `committer = openproj-bot`, message `pitch-a3f81c: status todo → wip`. The author/committer split
+   `committer = openproj-bot`, message `pitch-a3f81c: status ready → in_progress`. The split
    makes `git log --format='%an'` a free per-person audit trail, while any future push credential
    stays a bot.
 6. When a remote exists: push inside the lock, 5 s timeout. **Invariant: local `main` is only ever
@@ -498,7 +519,9 @@ the back button work, and deletes the entire "saved views" feature request.
 ### 9.2 Table
 
 The primary view, and the one people will live in. Columns: id, title, kind, status, owner,
-reviewers, priority, cycle, appetite/effort, derived start and end, blocked-by count, PRs, tags.
+reviewers, priority, cycle, appetite/effort, derived start and end, blocked-by count, PRs, tags —
+and progress, counted from the body's own task list, which appears only once some body in the plan
+keeps one.
 
 - Sortable by any column; grouped by any field (status, owner, cycle, project).
 - **Inline editing of every editable field** — one field, one commit, per §8. This is the low-friction
@@ -584,7 +607,7 @@ Gantt. The purpose is to steal its scheduling semantics and to document an off-r
 **Phase 1 — 9 days.** `openproj.model` with the validation rules (3d), `openproj.schedule` with
 property tests (3d), static read-only table with filters and search, graph and timeline from a
 checkout, with no server, no auth and no writes (3d). Seed with the short projects from the HackMD
-table — a handful of small, self-contained items across `done`, `wip` and `todo`, converted by hand
+table — a handful of small, self-contained items across `done`, `in_progress` and `ready`, by hand
 with their shaping docs inlined as bodies. Do not import the rest of HackMD or the repo issues; the
 point of Phase 1 is to test the model against real work, not to migrate.
 

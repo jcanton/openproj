@@ -118,6 +118,20 @@ def test_serialise_writes_one_edited_key_and_leaves_its_neighbours_alone():
     assert output.split("---\n")[1].count("\n") == text.split("---\n")[1].count("\n")
 
 
+def test_one_shaper_keeps_the_spelling_the_corpus_is_written_in():
+    """`shaped_by` grew from a scalar to a list, because shaping is usually done in
+    pairs. Every existing file writes one name as a bare string, and rewriting all
+    of them to `[jcanton]` on an unrelated save is a diff nobody asked for in a
+    file somebody else is reading."""
+    text = "---\nid: pitch-abc123\nkind: pitch\ntitle: P\nshaped_by: jcanton\n---\n\nb\n"
+    pitch = parse_text(text, "p.md")
+    assert pitch.shaped_by == ["jcanton"]
+    assert serialise(pitch, text) == text
+
+    pitch.shaped_by = ["jcanton", "msimberg"]
+    assert "shaped_by:\n  - jcanton\n  - msimberg\n" in serialise(pitch, text)
+
+
 def test_serialise_appends_a_field_the_file_never_had():
     text = "---\nid: task-abc123\nkind: task\ntitle: T\n---\n\nbody\n"
     entity = parse_text(text, "sparse.md")

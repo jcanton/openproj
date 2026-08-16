@@ -95,7 +95,7 @@ from openproj.web import SESSION_COOKIE, create_app
 # The columns the table draws that nobody may type into. Kept as an expectation
 # rather than computed silently, so that adding a derived column and forgetting to
 # make it read-only fails here instead of in the corpus.
-DERIVED = {"size", "start", "end", "blocked_by"}
+DERIVED = {"size", "start", "end", "blocked_by", "progress"}
 
 
 @pytest.fixture
@@ -256,7 +256,7 @@ def test_no_derived_column_can_be_edited_at_all(page: str):
     what the column shows is `effort_weeks` *or an assumed default*, so a control
     on it would let somebody commit the assumption without meaning to.
     """
-    assert set(columns(page)) - set(EDITABLE) - {"id"} == DERIVED, (
+    assert set(columns(page)) - set(EDITABLE) - {"id"} <= DERIVED, (
         "a new column is neither editable nor known-derived"
     )
     declared = payload(page)["editable"]
@@ -1639,8 +1639,43 @@ def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str
     before realising it should be a pitch was a title typed twice."""
     assert '<select id="kind">' in new_page
     assert "make a" not in new_page, "the links this replaced"
-    assert re.search(r"KIND\.onchange = showKind", new_page)
+    assert re.search(r"KIND\.onchange = \(\) => \{\s*showKind\(\);", new_page)
     assert "location.href" not in re.search(r"function showKind.*?\n\}", new_page, re.S).group(0)
+
+
+def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
+    """The five ingredients plus the progress list, which is the template the team
+    already writes pitches against. Its three header lines — shaped by, appetite,
+    developers — are fields here, and a heading restating a field is the two
+    copies of one fact this tool exists to end."""
+    from openproj.render import TEMPLATES
+
+    pitch = TEMPLATES["pitch"]
+    for heading in ("## Problem", "## Appetite", "## Solution", "## Rabbit holes",
+                    "## No-gos", "## Progress", "## For later"):
+        assert heading in pitch, heading
+    assert "Shaped by:" not in pitch and "Developers:" not in pitch
+    # The guidance rides in HTML comments, exactly as it does in HackMD, and the
+    # renderer drops them rather than printing them at the reader.
+    assert "<!--" in pitch
+
+    assert '<select id="template">' in new_page
+    assert "const TEMPLATES = " in new_page
+    # Through `|tojson`, so the `<` opening every comment reaches the script block
+    # as `\\u003c` rather than as markup the page's own tokeniser can read.
+    assert "\\u003c!-- The raw idea" in new_page
+    assert "<!-- The raw idea" not in new_page
+
+
+def test_a_template_never_overwrites_something_somebody_typed(new_page: str):
+    """Switching kind switches template, because picking "pitch" and getting a
+    task's headings is the wrong default in the one place the tool can teach the
+    shape of a pitch. Once the box holds anything but a template, it is theirs."""
+    apply_fn = re.search(r"function applyTemplate\(name\) \{.*?\n\}", new_page, re.S).group(0)
+    assert "if (!untouched())" in apply_fn
+    assert "the body has been edited" in apply_fn
+    untouched = re.search(r"function untouched\(\) \{.*?\n\}", new_page, re.S).group(0)
+    assert "Object.values(TEMPLATES).some" in untouched
 
 
 def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_page: str):
@@ -1709,16 +1744,25 @@ def test_the_create_button_follows_the_form_it_commits(new_page: str):
 def test_the_columns_and_the_cells_agree_on_their_order(page: str):
     """They were two hand-maintained lists, index-parallel, with nothing enforcing
     it: edit one and every cell shifts a column left of where its header says it
-    is. Both are emitted from `_TABLE_COLUMNS` now, and this is what says so."""
+    is. Both are emitted from one list now, and this is what says so.
+
+    Compared with each other rather than with `_TABLE_COLUMNS`, because one column
+    is conditional: `progress` is drawn only for a plan whose bodies keep a
+    checklist, and this page's does not. The drift this test exists to catch is
+    still caught — the two rendered lists must be identical, and every name in
+    them must come from the constant in the constant's own order."""
     from openproj.render import _TABLE_COLUMNS, _TABLE_DERIVED
 
     headers = columns(page)
     listed = json.loads(re.search(r"const keys = (\[.*?\]);", page, re.S).group(1))
+    every = [name for name, _ in _TABLE_COLUMNS]
 
-    assert headers == listed == [name for name, _ in _TABLE_COLUMNS]
-    # And every column the payload withholds an editor for is one of them: a
-    # derived name that is not a drawn column withholds an editor from nothing.
-    assert set(_TABLE_DERIVED) <= set(listed)
+    assert headers == listed
+    assert [name for name in every if name in headers] == headers, "and in that order"
+    # And every column the payload withholds an editor for is either drawn or not
+    # drawn at all: a derived name that is neither withholds an editor from
+    # nothing.
+    assert set(_TABLE_DERIVED) - set(listed) <= {"progress"}
 
 
 def test_a_column_header_is_the_label_map_s_word_for_the_field(page: str):
@@ -1729,7 +1773,10 @@ def test_a_column_header_is_the_label_map_s_word_for_the_field(page: str):
     the assertion is the map compared with itself."""
     from openproj.render import _TABLE_COLUMNS
 
-    for name, _ in _TABLE_COLUMNS:
+    # Every column the table can draw has a word, including the conditional one
+    # this page does not happen to be drawing.
+    assert {name for name, _ in _TABLE_COLUMNS} <= set(LABELS)
+    for name in columns(page):
         header = re.search(rf'<th data-col="{name}"[^>]*>(.*?)</th>', page, re.S).group(1)
         assert LABELS[name] in re.sub(r"<[^>]*>", "", header), name
 

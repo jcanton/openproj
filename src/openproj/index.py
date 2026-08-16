@@ -27,6 +27,8 @@ from .model import (
     Problem,
     Unreadable,
     ancestors,
+    checklist,
+    sections,
     size_weeks,
     validate_all,
 )
@@ -50,10 +52,18 @@ COMPUTED_PREDICATES = (
     "missing_required_fields",
     "has_blocker",
     "review_waived",
+    # Live work whose body keeps no checklist. A warning nobody has to act on —
+    # the team's pitch template asks for one, and this is how you find the pitches
+    # where nobody did. It is deliberately not a Problem: the body is prose.
+    "untracked",
+    "for_later",
 )
 
 _SCALAR_FACETS = ("kind", "status", "owner", "priority", "cycle")
 _LIST_FACETS = ("assignees", "reviewers", "tags")
+# The heading a deferred-scope list is written under, lowercased as `sections`
+# returns it.
+_FOR_LATER = "for later"
 
 
 class Index(BaseModel):
@@ -77,9 +87,46 @@ class Index(BaseModel):
     today: date
     default_task_effort: float
     nominal_availability: float = 1.0
+    # Carried for the same reason the windows are: the timeline has to draw where
+    # a cycle stops building, and it is handed no Config to ask.
+    cooldown_weeks: float = 2.0
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
+    # Ticked and total task-list items in each body, counted once here rather than
+    # re-scanned by every column, predicate and page that wants to say "7/12".
+    progress: dict[str, tuple[int, int]] = {}
+    # Ids whose body keeps a "for later" list — deferred scope, which is the only
+    # record the plan has of a bet being trimmed to fit.
+    for_later: list[str] = []
+
+    def counts_in(self, entity: Entity, cycle: int) -> bool:
+        """Whether this entity's work lands inside this cycle's window.
+
+        Bet into it, or **carried into it**: work bet in an earlier cycle and still
+        running is doing so with this cycle's weeks. `cycle:` records where a bet
+        was made and is never re-stamped (D-C1), which is what keeps an overrun
+        accusing — but it also means a filter on `cycle == N` cannot see the
+        carryover, and the page that exists to add up load was missing it.
+
+        Carryover needs the cycle's dates to be answerable at all, so an undated
+        cycle counts only what was bet into it by name: a number nobody has given
+        a window to is a hypothetical, and letting it absorb every running item
+        would put the whole plan's load on a page for a cycle that may never run.
+        An entity with no span is the other way round — it is live work in a dated
+        window, and silence about it is the failure this method exists to fix.
+        """
+        if entity.status in ("done", "shelved"):
+            return False
+        if entity.cycle == cycle:
+            return True
+        if entity.status != "in_progress" or entity.cycle is None or entity.cycle >= cycle:
+            return False
+        window = self.cycles.get(cycle)
+        if window is None:
+            return False
+        span = self.spans.get(entity.id)
+        return span is None or (span.start <= window[1] and span.end >= window[0])
 
     def load(self, cycle: int) -> dict[str, float]:
         """Person-weeks each person is holding in this cycle.
@@ -87,10 +134,15 @@ class Index(BaseModel):
         Charged where the assignees are, and split evenly among them (D-C4): a
         pitch whose children carry the names charges nothing itself, because its
         appetite is a rollup and charging both counts the same work twice.
+
+        A carried item is charged its whole size, not the part of it that is left.
+        Nothing in the plan records how much of a bet is done — the checklist in
+        its body is a hint, not a measurement — and an invented percentage is a
+        worse answer than a known overcount that a person can see and argue with.
         """
         held: dict[str, float] = {}
         for entity in self.entities.values():
-            if entity.cycle != cycle or entity.status in ("done", "shelved"):
+            if not self.counts_in(entity, cycle):
                 continue
             people = _people_on(entity)
             if not people or self.children.get(entity.id):
@@ -99,6 +151,14 @@ class Index(BaseModel):
             for who in people:
                 held[who] = held.get(who, 0.0) + size / len(people)
         return held
+
+    def carried_into(self, cycle: int) -> list[str]:
+        """Ids counted against this cycle that were bet in an earlier one."""
+        return sorted(
+            entity.id
+            for entity in self.entities.values()
+            if entity.cycle != cycle and self.counts_in(entity, cycle)
+        )
 
 
 def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
@@ -183,12 +243,19 @@ def build_index(
 
     facets: dict[str, set[str]] = defaultdict(set)
     search_blob: dict[str, str] = {}
+    progress: dict[str, tuple[int, int]] = {}
+    for_later: list[str] = []
     for entity in entities:
         for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
             facets[field].update(_facet_values(entity, field, by_id))
         search_blob[entity.id] = " ".join(
             [entity.title, *entity.tags, entity.body]
         ).lower()
+        ticked, total = checklist(entity.body)
+        if total:
+            progress[entity.id] = (ticked, total)
+        if sections(entity.body).get(_FOR_LATER):
+            for_later.append(entity.id)
 
     return Index(
         entities=by_id,
@@ -208,6 +275,9 @@ def build_index(
         known_people=config.known_people,
         today=today,
         default_task_effort=config.default_task_effort,
+        cooldown_weeks=config.cooldown_weeks,
+        progress=progress,
+        for_later=for_later,
     )
 
 
@@ -240,6 +310,13 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
         )
     if predicate == "review_waived":
         return index.entities[entity_id].review_waived
+    if predicate == "untracked":
+        return (
+            index.entities[entity_id].status in ("ready", "in_progress")
+            and entity_id not in index.progress
+        )
+    if predicate == "for_later":
+        return entity_id in index.for_later
     return False
 
 

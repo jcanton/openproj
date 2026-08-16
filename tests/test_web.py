@@ -1753,12 +1753,16 @@ def test_the_unsaved_count_and_the_receipt_count_the_same_thing(client: TestClie
     mark = re.search(r"function mark\(\) \{.*?\n\}", page, re.S).group(0)
     flush = re.search(r"async function flush\(quiet\) \{.*?\n\}", page, re.S).group(0)
 
-    # Both sides count one edit per field, and the whole roster as one.
+    # Both sides count one edit per field, the roster as one, and the notes as one.
+    # The setup PUT carries the roster and the notes together, so a save that
+    # changed both is two edits before it and two after it.
     assert "for (const fields of PENDING.values()) edits += Object.keys(fields).length;" in mark
     assert "saved += Object.keys(fields).length;" in flush
-    assert "saved += 1;" in flush and "let edits = ROSTER_DIRTY ? 1 : 0;" in mark
+    assert "let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0);" in mark
+    assert "const edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0);" in flush
+    assert "saved += edits;" in flush
     # The one thing that must never come back: a per-commit tally in the receipt.
-    assert flush.count("saved += 1;") == 1, "only the roster is worth exactly one"
+    assert "saved += 1;" not in flush, "one write can still be two edits"
 
     # And the two sentences are built from the same unit either side of the save.
     assert re.search(r"\$\{edits\} unsaved change\$\{edits === 1 \? '' : 's'\}", mark)

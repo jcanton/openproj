@@ -252,7 +252,10 @@ def _ordering(
     order = nx.lexicographical_topological_sort(
         graph, # An unknown priority sorts as medium rather than raising: validate_all
         # has already said so, and the timeline should still draw.
-        key=lambda node: (PRIORITY_RANK.get(active[node].priority, 1), node)
+        key=lambda node: (
+            PRIORITY_RANK.get(active[node].priority, PRIORITY_RANK["medium"]),
+            node,
+        )
     )
     return list(order), contradictory
 

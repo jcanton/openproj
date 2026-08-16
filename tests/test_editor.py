@@ -406,12 +406,27 @@ def test_nothing_on_the_cycle_page_is_written_until_save(client: TestClient):
     assert re.search(r"SAVE\.onclick = async \(\) => \{\s*if \(await flush\(false\)\)", page)
 
 
+def test_a_cycle_has_a_box_for_what_came_up_at_the_betting_table(client: TestClient):
+    """A betting table produces decisions that are not fields on anything — why a
+    pitch was left out, what would make it a bet next time. The record already had
+    a body and the page rendered it read-only, so those decisions went to a HackMD
+    note nobody linked."""
+    page = client.get("/cycle/37").text
+
+    assert '<textarea id="notes"' in page
+    # Saved with the setup, in the write the roster already makes — and only when
+    # it changed, or every roster save would be a body edit too.
+    assert "put(fields, NOTES_DIRTY ? NOTES.value : null)" in page
+    assert "async function put(fields, body = null)" in page
+
+
 def test_work_is_autosaved_so_a_dropped_connection_costs_two_minutes(client: TestClient):
     page = client.get("/cycle/37").text
 
     assert re.search(
-        r"setInterval\(\(\) => \{ if \(PENDING\.size \|\| ROSTER_DIRTY\)"
-        r" flush\(true\); \}, 120000\);",
+        r"setInterval\(\(\) => \{\s*"
+        r"if \(PENDING\.size \|\| ROSTER_DIRTY \|\| NOTES_DIRTY\) flush\(true\);\s*"
+        r"\}, 120000\);",
         page,
     )
     # And the browser's own warning, which is the only thing that can stop a tab

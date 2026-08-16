@@ -638,6 +638,113 @@ def test_a_dangling_dependency_does_not_count_as_a_blocker():
     assert apply_filters(index, {"predicate": ["unblocked"]}, "") == ["task-c00001"]
 
 
+# --------------------------------------------------------------------------- #
+# Load, and the carryover it used to miss
+# --------------------------------------------------------------------------- #
+
+
+def _two_cycles() -> Config:
+    return CONFIG.model_copy(
+        update={
+            "cycles": {
+                36: (date(2026, 6, 22), date(2026, 8, 14)),
+                37: (date(2026, 8, 17), date(2026, 10, 9)),
+            }
+        }
+    )
+
+
+def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one():
+    """`cycle:` records where a bet was MADE and is never re-stamped (D-C1), which
+    is what keeps an overrun accusing. It also means a filter on `cycle == N`
+    cannot see carryover — and the cycle page exists to add up who is full."""
+    entities = [
+        a_task("task-c00001", owner="ann", effort_weeks=2.0, cycle=37, status="ready"),
+        a_task(
+            "task-c00002",
+            owner="ann",
+            effort_weeks=3.0,
+            cycle=36,
+            status="in_progress",
+            assigned_on=date(2026, 8, 3),
+        ),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+
+    assert index.load(37) == {"ann": 5.0}
+    assert index.carried_into(37) == ["task-c00002"]
+
+
+def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
+    entities = [
+        a_task("task-c00001", owner="ann", effort_weeks=3.0, cycle=36, status="done",
+               prs=["C2SM/icon4py#1"], assigned_on=date(2026, 7, 1)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+    assert index.load(37) == {}
+    assert index.carried_into(37) == []
+
+
+def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
+    """A number nobody has given a window to is a hypothetical. Letting it absorb
+    every running item would put the whole plan's load on the page for a cycle
+    that may never run."""
+    entities = [
+        a_task("task-c00001", owner="ann", effort_weeks=3.0, cycle=36, status="in_progress",
+               assigned_on=date(2026, 8, 3)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+    assert index.load(99) == {}
+
+
+def test_a_carried_parent_charges_nothing_because_its_children_already_did():
+    """The same rule `load` applies to anything else (D-C2). A rollup counted as
+    well as its children double-books the same weeks."""
+    entities = [
+        a_pitch("pitch-b00001", owner="ann", appetite_weeks=4.0, cycle=36, status="in_progress",
+                assigned_on=date(2026, 8, 3)),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", effort_weeks=1.0, cycle=36,
+               status="in_progress", assigned_on=date(2026, 8, 3)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+    assert index.load(37) == {"ann": 1.0}
+
+
+# --------------------------------------------------------------------------- #
+# What the body says
+# --------------------------------------------------------------------------- #
+
+
+def test_a_checklist_in_the_body_is_counted_once_into_the_index():
+    entities = [a_task("task-c00001", body="## Progress\n\n- [x] a\n- [ ] b\n")]
+    index = build_index(entities, CONFIG, TODAY)
+    assert index.progress == {"task-c00001": (1, 2)}
+
+
+def test_live_work_with_no_checklist_is_findable_and_shaping_work_is_not():
+    """A note, not a rule: the template asks for a checklist and this finds the
+    entities where nobody kept one. An idea nobody has bet on owes nothing."""
+    entities = [
+        a_task("task-c00001", status="in_progress", body="prose"),
+        a_task("task-c00002", status="in_progress", body="- [ ] a"),
+        a_task("task-c00003", status="shaping", body="prose"),
+    ]
+    index = build_index(entities, CONFIG, TODAY)
+    assert apply_filters(index, {"predicate": ["untracked"]}, "") == ["task-c00001"]
+
+
+def test_a_for_later_list_is_the_only_record_of_scope_being_cut():
+    entities = [
+        a_pitch("pitch-b00001", body="## Solution\n\nX\n\n## For later\n\n- the rest\n"),
+        a_pitch("pitch-b00002", body="## Solution\n\nX\n"),
+        # Present but empty is not a record of anything.
+        a_pitch("pitch-b00003", body="## For later\n"),
+    ]
+    index = build_index(entities, CONFIG, TODAY)
+    assert index.for_later == ["pitch-b00001"]
+    assert apply_filters(index, {"predicate": ["for_later"]}, "") == ["pitch-b00001"]
+
+
 def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(seed_index: Index):
     """Present-only, ordered by the sequence, and anything off the sequence lands
     at the end rather than being dropped — a menu that silently omits a value is

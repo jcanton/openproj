@@ -230,7 +230,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "appetite_weeks", "effort_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on")
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by")
 
 
 def _reject_bad_types(fields: dict) -> None:

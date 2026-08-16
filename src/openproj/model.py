@@ -416,7 +416,18 @@ class Project(Entity):
 
 class Pitch(Entity):
     appetite_weeks: float | None = None
-    shaped_by: str | None = None
+    # A list, because shaping is usually done in pairs — two of the four shaped
+    # pitches in the team's own corpus name two or three people. A bare string
+    # still parses and still writes back as a bare string, so no file has to
+    # change and `git blame` on the field survives.
+    shaped_by: list[str] = []
+
+    @field_validator("shaped_by", mode="before")
+    @classmethod
+    def _one_or_many(cls, value: object) -> object:
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else value
 
 
 class Task(Entity):
@@ -525,6 +536,12 @@ def _in_the_style_of(old: object, new: object) -> object:
         styled = CommentedSeq(new)
         styled.fa.set_flow_style()
         return styled
+    # A field that grew from a scalar to a list keeps its scalar spelling while it
+    # holds one value. `shaped_by: jcanton` is what the corpus is written in, and
+    # rewriting every one of them to `[jcanton]` on an unrelated save is a diff
+    # nobody asked for in a file somebody else is reading.
+    if isinstance(old, str) and isinstance(new, list) and len(new) == 1:
+        return new[0]
     return new
 
 
@@ -635,6 +652,70 @@ def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
 
 
 # --------------------------------------------------------------------------- #
+# Reading the shaping document
+#
+# The body is prose and stays prose: nothing here validates it, rewrites it or
+# requires it. These two functions only read what the team's own pitch template
+# already asks people to write, so that a checklist somebody is keeping by hand
+# can be counted instead of retyped as a second set of records.
+# --------------------------------------------------------------------------- #
+
+_FENCE = re.compile(r"^\s{0,3}(```|~~~)")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s")
+
+
+def _outside_code(body: str) -> Iterator[tuple[str, bool]]:
+    """Each line, and whether it is inside a fenced code block.
+
+    A pitch that quotes a markdown snippet would otherwise have its example
+    headings counted as its own.
+    """
+    fenced = False
+    for line in body.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+            yield line, True
+            continue
+        yield line, fenced
+
+
+def sections(body: str) -> dict[str, str]:
+    """The text under each heading, keyed by the heading itself, lowercased.
+
+    Flat, ignoring heading depth: the template is flat, and a reader asking for
+    "no-gos" does not care whether it was written as `##` or `###`.
+    """
+    found: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line, in_code in _outside_code(body):
+        heading = None if in_code else _HEADING.match(line)
+        if heading:
+            current = found.setdefault(heading.group(1).strip().lower(), [])
+        elif current is not None:
+            current.append(line)
+    return {name: "\n".join(lines).strip() for name, lines in found.items()}
+
+
+def checklist(body: str) -> tuple[int, int]:
+    """Ticked and total task-list items anywhere in the body.
+
+    Anywhere, not only under `## Progress`: the template puts them there, and
+    real notes also keep them under `## Solution`. Sub-items count as items,
+    which is what someone reading "7/12" means by it.
+    """
+    done = total = 0
+    for line, in_code in _outside_code(body):
+        if in_code:
+            continue
+        mark = _CHECKBOX.match(line)
+        if mark:
+            total += 1
+            done += mark.group(1) != " "
+    return done, total
+
+
+# --------------------------------------------------------------------------- #
 # Validation
 #
 # Rules are data, not branches: each carries the schema_version that introduced
@@ -652,7 +733,10 @@ _SIZE_FIELD = {"pitch": "appetite_weeks", "task": "effort_weeks"}
 # committed to yet, so it demands nothing — the same reason `shelved` does not.
 # The gates are cumulative from `ready` onwards.
 STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
-PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
+# Five levels, because three were not enough to say the thing the team was already
+# writing: the HackMD table escalates past its top value as `High+`. A scale whose
+# top is used for everything urgent stops ordering anything.
+PRIORITY_RANK = {"very_high": 0, "high": 1, "medium": 2, "low": 3, "very_low": 4}
 
 
 def _cyclic_members(edges: dict[str, list[str]]) -> set[str]:
@@ -718,7 +802,7 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
             # stores it as appetite_weeks and a task as effort_weeks, and the
             # reader is asked for an appetite either way.
             yield "blocker", field, f"a ready {entity.kind} needs an appetite", 1
-        if entity.kind == "pitch" and entity.shaped_by is None:
+        if entity.kind == "pitch" and not entity.shaped_by:
             yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
     elif entity.status == "in_progress":
         if entity.assigned_on is None:
@@ -776,7 +860,8 @@ def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str,
         yield (
             "blocker",
             "priority",
-            f"{entity.priority!r} is not a priority: expected high, medium or low",
+            f"{entity.priority!r} is not a priority: expected one of "
+            f"{', '.join(PRIORITY_RANK)}",
             1,
         )
 

@@ -3364,3 +3364,116 @@ def test_no_page_uses_one_id_for_more_than_one_element(rendered: Path):
         parser.feed(read(rendered, page))
         repeated = {one: n for one, n in parser.seen.items() if n > 1}
         assert not repeated, f"{page} uses one id for several elements: {repeated}"
+
+# --------------------------------------------------------------------------- #
+# Where a cycle stops building
+# --------------------------------------------------------------------------- #
+
+
+def test_the_solid_rule_is_the_end_of_build_and_the_dashed_one_the_end_of_the_window(
+    seed_index: Index,
+):
+    """An overrun is measured against the end of BUILD (`schedule._overrun`), and
+    the chart drew its only rule at the end of the window — two weeks of cool-down
+    further right. A bar could finish visibly before the line and still be amber,
+    which is how a timeline loses a room."""
+    from openproj.render import _timeline
+
+    drawn = {c["number"]: c for c in _timeline(seed_index)["cycles"]}
+    cycle = drawn[36]
+
+    assert cycle["build_x"] is not None and cycle["rule_x"] is not None
+    assert cycle["build_x"] < cycle["rule_x"], "build ends before the window does"
+    # And the cool-down is shaded from one to the other, rather than reading as
+    # two more weeks of building time.
+    assert cycle["cool_x"] == cycle["build_x"]
+    assert cycle["cool_width"] > 0
+
+
+def test_the_page_draws_both_rules(rendered: Path):
+    page = read(rendered, "timeline.html")
+    assert 'class="build-rule"' in page
+    assert 'class="cycle-rule"' in page
+    assert "stops building here" in page
+
+
+# --------------------------------------------------------------------------- #
+# The shaping document, read rather than required
+# --------------------------------------------------------------------------- #
+
+
+def test_a_templates_guidance_never_reaches_the_page(seed_index: Index):
+    """The team's pitch template carries its instructions in HTML comments, which
+    are invisible in HackMD. With `html: False` markdown-it prints them as text,
+    so every pitch drafted from the template would arrive with its own
+    instructions showing."""
+    from openproj.render import preview_html
+
+    body = "## Problem\n<!-- The raw idea. -->\n\nReal text.\n"
+    out = str(preview_html(body))
+    assert "The raw idea" not in out
+    assert "Real text." in out
+    # But an example inside a fence is the author's, and stays.
+    fenced = "```\n<!-- kept -->\n```\n"
+    assert "kept" in str(preview_html(fenced))
+
+
+def test_a_ready_pitch_missing_a_no_gos_section_is_told_so_on_its_own_page(rendered: Path):
+    """A printed note and nothing more: it never reaches `openproj check`, never
+    fails CI and never blocks a save.
+
+    Only live bets are told. Three corpus pitches are ready or in progress, one of
+    which was shaped with both sections and two of which are migration stubs with
+    neither — so the page carries exactly two of each note, and the two finished
+    pitches are left alone."""
+    page = read(rendered, "detail.html")
+    assert 'class="hints"' in page
+    assert page.count("No No-gos section") == 2
+    assert page.count("No Rabbit holes section") == 2
+
+
+def test_the_progress_column_counts_the_bodys_own_checklist():
+    """Counted, never written: nothing requires a checklist, and a body without
+    one shows an empty cell rather than 0/0."""
+    from openproj.model import Config, Task
+    from openproj.render import _payload, _row
+
+    index = build_index(
+        [
+            Task(id="task-000009", kind="task", title="With a list",
+                 body="## Progress\n\n- [x] a\n- [ ] b\n"),
+            Task(id="task-000010", kind="task", title="Without one", body="prose"),
+        ],
+        Config(),
+        date(2026, 8, 17),
+    )
+    assert _row(index, "task-000009")["progress_text"] == "1/2"
+    assert _row(index, "task-000009")["progress"] == 0.5
+    assert _row(index, "task-000010")["progress"] is None
+    # And it is derived, so no cell offers to edit it.
+    assert "progress" not in _payload(index)["editable"]
+
+
+def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index: Index):
+    """Counted out of the body rather than stored, so a plan where nobody keeps a
+    list would carry a permanently empty column across fourteen others — which
+    reads as broken, not as unused."""
+    from openproj.model import Config, Task
+    from openproj.render import _columns_for
+
+    def index_of(*bodies: str) -> Index:
+        return build_index(
+            [
+                Task(id=f"task-00000{n}", kind="task", title="T", body=body)
+                for n, body in enumerate(bodies)
+            ],
+            Config(),
+            date(2026, 8, 17),
+        )
+
+    assert "progress" not in dict(_columns_for(index_of("prose only")))
+    assert "progress" in dict(_columns_for(index_of("prose only", "- [ ] a\n")))
+    # The corpus does keep lists — its migration stubs carry them — so the column
+    # is there, which is what makes the two rendered pages differ.
+    assert seed_index.progress
+    assert "progress" in dict(_columns_for(seed_index))
