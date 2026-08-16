@@ -15,6 +15,7 @@ faked with an assertion that only looks like coverage.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -269,3 +270,58 @@ def test_picking_a_suggestion_counts_as_typing(client: TestClient):
     choose = re.search(r"function choose\(value\) \{.*?\n  \}", page, re.S).group(0)
 
     assert "dispatchEvent(new Event('input', {bubbles: true}))" in choose
+
+
+def test_nothing_on_the_cycle_page_is_written_until_save(client: TestClient):
+    """A betting table is a conversation — a row gets staffed, argued about and
+    restaffed inside a minute. One commit per keystroke turns that into a history
+    nobody can read and a plan that is briefly wrong in public between two halves
+    of one decision."""
+    page = client.get("/cycle/37").text
+
+    assert "const PENDING = new Map();" in page
+    for handler in ("input.onblur", "box.onchange"):
+        block = re.search(rf"{re.escape(handler)} = .*?\n  \}};", page, re.S).group(0)
+        assert "fetch(" not in block, f"{handler} must stage, not write"
+    assert re.search(r"SAVE\.onclick = async \(\) => \{\s*if \(await flush\(false\)\)", page)
+
+
+def test_work_is_autosaved_so_a_dropped_connection_costs_two_minutes(client: TestClient):
+    page = client.get("/cycle/37").text
+
+    assert re.search(r"setInterval\(\(\) => \{ if \(PENDING\.size \|\| ROSTER_DIRTY\)"
+                     r" flush\(true\); \}, 120000\);", page)
+    # And the browser's own warning, which is the only thing that can stop a tab
+    # closing on unsaved work.
+    assert "addEventListener('beforeunload'" in page
+    assert "event.returnValue = ''" in page
+
+
+def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
+    """Left to the next page load, the number somebody is setting is invisible at
+    the moment they are setting it — which is most of the moment that matters."""
+    page = client.get("/cycle/37").text
+
+    assert "function recount()" in page
+    assert re.search(r"if \(event\.target\.matches\('input\.rate, \[name=build_weeks\]'\)\)"
+                     r" recount\(\);", page)
+
+
+def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):
+    """A team changes slowly and availability changes every cycle, so the people
+    who worked the last one are a starting point to correct — which beats
+    retyping fifteen names to change three of them."""
+    from test_web import git_head
+
+    client.put(
+        "/api/cycle/50",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "2027-06-07", "build_weeks": 4,
+                         "availability": {"cy": 0.5, "ann": 1.0}}, "body": None},
+    )
+    page = client.get("/cycles").text
+    carried = re.search(r"const ROSTER = (\{.*?\});", page).group(1)
+
+    assert json.loads(carried) == {"cy": 0.5, "ann": 1.0}
+    hint = re.search(r"(\d+) people carried from cycle\s+(\d+)", page)
+    assert hint and (hint.group(1), hint.group(2)) == ("2", "50")

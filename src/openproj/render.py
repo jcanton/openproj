@@ -2143,7 +2143,7 @@ _CYCLE = """
 <p class="editbar">
   <a href="{{ links.cycles }}">← all cycles</a>
   {% if editable %}
-  <button type="button" id="save">Save the setup</button>
+  <button type="button" id="save" disabled>Save</button>
   <span id="state"></span>
   <input type="hidden" id="base" value="{{ base_commit }}">
   {% endif %}
@@ -2177,13 +2177,15 @@ _CYCLE = """
   <th>scheduled until</th></tr></thead>
 <tbody id="roster">
   {% for row in c.people %}
-  <tr data-login="{{ row.login }}" class="{{ 'over' if row.over else '' }}">
+  <tr data-login="{{ row.login }}" data-held="{{ row.held }}"
+      class="{{ 'over' if row.over else '' }}">
     {% if editable %}<td><button type="button" class="drop" title="Take out of this
       cycle">&#128465;</button></td>{% else %}<td></td>{% endif %}
     <td>{{ row.login }}</td>
     <td><span class="read">{{ (row.rate * 100)|round|int }}%</span>
-        <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"></td>
-    <td class="derived">{{ '%.1f'|format(row.capacity) }} wk</td>
+        <input class="field rate" data-login="{{ row.login }}" value="{{ row.rate }}"
+               autocomplete="off"></td>
+    <td class="derived capacity">{{ '%.1f'|format(row.capacity) }} wk</td>
     <td class="derived">{{ '%.1f'|format(row.held) }} wk</td>
     <td><span class="bar"><span style="width: {{ row.percent }}%"></span></span></td>
     <td class="derived">{{ row.until }}</td>
@@ -2201,10 +2203,9 @@ _CYCLE = """
   {{ c.strangers|join(', ') }}. Their work still counts against the plan; add them
   or take the work out.</p>
 {% endif %}
-{% if c.over %}
-<p class="problems" id="over">Over capacity: {{ c.over|join(', ') }}. The room can
-  still bet it — this is a number, not a refusal.</p>
-{% endif %}
+<p class="problems" id="over" {{ '' if c.over else 'hidden' }}>Over capacity:
+  {{ c.over|join(', ') }}. The room can still bet it — this is a number, not a
+  refusal.</p>
 
 <h2>The bet</h2>
 <p class="hint">Everything ready or in progress. Ticking one stamps it with cycle
@@ -2254,9 +2255,12 @@ async function put(fields) {
   return answer;
 }
 
+const SAVE = document.getElementById('save');
+let ROSTER_DIRTY = false;
+
 // The whole roster in one write. A name left out means somebody was taken off,
 // which per-field merging would silently undo.
-document.getElementById('save').onclick = async () => {
+async function saveSetup(quiet) {
   const setup = document.getElementById('setup');
   const availability = {};
   for (const input of document.querySelectorAll('input.rate')) {
@@ -2269,38 +2273,90 @@ document.getElementById('save').onclick = async () => {
     cooldown_weeks: Number(setup.querySelector('[name=cooldown_weeks]').value),
     availability,
   };
-  say('saving…');
-  if (await put(fields)) location.reload();
-};
+  if (!(await put(fields))) return false;
+  ROSTER_DIRTY = false;
+  if (!quiet) say('setup saved');
+  return true;
+}
 
 // Ticking is a write to the ENTITY, not to the cycle: `cycle` lives on the thing
 // being bet, and one row is one commit so a half-finished betting table is still
 // a readable history rather than one commit nobody can unpick.
 for (const box of document.querySelectorAll('input.bet')) {
-  box.onchange = async () => {
+  box.onchange = () => {
     const row = box.closest('tr');
-    const id = row.dataset.id;
-    box.disabled = true;
-    const response = await fetch(`/api/entity/${id}`, {
-      method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({
-        base_commit: BASE.value,
-        fields: {cycle: box.checked ? NUMBER : null},
-        body: null,
-      }),
-    });
-    const answer = await response.json();
-    box.disabled = false;
-    if (!response.ok) {
-      box.checked = !box.checked;
-      say(`${id}: ${answer.detail || 'refused'}`);
-      return;
-    }
-    BASE.value = answer.commit || BASE.value;
-    say(`${id} ${box.checked ? 'bet into' : 'taken out of'} cycle ${NUMBER}`);
+    pend(row.dataset.id, 'cycle', box.checked ? NUMBER : null);
     row.querySelector('td:last-child').textContent = box.checked ? NUMBER : '—';
+    say(`${PENDING.size} unsaved`);
   };
 }
+
+// Nothing is written until Save. A betting table is a conversation — a row gets
+// staffed, argued about and restaffed inside a minute — and one commit per
+// keystroke turns that into a git history nobody can read and a plan that is
+// briefly wrong in public between two halves of one decision.
+const PENDING = new Map();   // entity id -> {field: value}
+
+function pend(id, field, value) {
+  PENDING.set(id, {...(PENDING.get(id) || {}), [field]: value});
+  mark();
+}
+
+function mark() {
+  // Counted in edits rather than in commits: two fields on one row is two things
+  // somebody changed, even though it is one write.
+  let edits = ROSTER_DIRTY ? 1 : 0;
+  for (const fields of PENDING.values()) edits += Object.keys(fields).length;
+  SAVE.disabled = edits === 0;
+  SAVE.textContent = edits ? `Save ${edits} change${edits === 1 ? '' : 's'}` : 'Save';
+  for (const tr of document.querySelectorAll('#bets tbody tr'))
+    tr.classList.toggle('pending', PENDING.has(tr.dataset.id));
+}
+
+// The browser's own warning, which is the only one that can stop a tab closing.
+addEventListener('beforeunload', event => {
+  if (!PENDING.size && !ROSTER_DIRTY) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+
+async function flush(quiet) {
+  if (!PENDING.size && !ROSTER_DIRTY) return true;
+  SAVE.disabled = true;
+  if (ROSTER_DIRTY && !(await saveSetup(true))) { mark(); return false; }
+  // One entity per commit, each against the commit the last one returned: a
+  // batch that fails half way is still a readable history rather than one commit
+  // nobody can unpick.
+  let written = 0;
+  for (const [id, fields] of [...PENDING]) {
+    const response = await fetch(`/api/entity/${id}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      say(`${id}: ${answer.detail
+            || (answer.problems || []).map(p => p.message).join('; ') || 'refused'}`
+          + (written ? ` — ${written} already saved` : ''));
+      mark();
+      return false;
+    }
+    BASE.value = answer.commit || BASE.value;
+    PENDING.delete(id);
+    written += 1;
+  }
+  mark();
+  say(quiet ? `autosaved ${written}` : `saved ${written}`);
+  return true;
+}
+
+SAVE.onclick = async () => {
+  if (await flush(false)) location.reload();
+};
+
+// Every two minutes, so a dropped connection or a closed laptop costs the last
+// two minutes rather than the whole meeting. Quiet when there is nothing to say.
+setInterval(() => { if (PENDING.size || ROSTER_DIRTY) flush(true); }, 120000);
 
 // Every editable cell is an input already: a betting table is filled in, not
 // inspected, and a double-click to reach a field somebody is about to type in is
@@ -2308,55 +2364,80 @@ for (const box of document.querySelectorAll('input.bet')) {
 for (const input of document.querySelectorAll('#bets input.live')) {
   if (input.dataset.suggest) attachSuggest(input);
   let was = input.value;
-  let abandoned = false;
   // Saving on blur alone is not safe when the field is already an input: the
   // browser restores form values across a reload, autofills, and the picker
   // rewrites the field to add a separator — none of which is a person deciding
-  // something, and all of which used to reach git. A cell saves only if somebody
-  // typed in it or picked from it, which is what an `input` event means.
+  // something. A cell is only staged if somebody typed in it or picked from it,
+  // which is what an `input` event means.
   let edited = false;
   input.addEventListener('input', () => { edited = true; });
   input.onkeydown = event => {
-    if (event.key === 'Escape') { abandoned = true; input.value = was; input.blur(); }
+    if (event.key === 'Escape') { input.value = was; edited = false; input.blur(); }
     if (event.key === 'Enter') input.blur();
   };
-  input.onblur = async () => {
+  input.onblur = () => {
     const value = input.value.trim();
-    if (abandoned || !edited || value === was.trim()) { abandoned = false; return; }
+    if (!edited || value === was.trim()) { edited = false; return; }
     const id = input.closest('tr').dataset.id;
     const field = input.dataset.field;
-    let sent;
+    let staged;
     if (input.dataset.type === 'list') {
-      sent = value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
+      staged = value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
     } else if (value === '') {
-      sent = null;
+      staged = null;
     } else if (Number.isNaN(Number(value))) {
       say(`${field} must be a number, not "${value}"`);
       input.value = was;
+      edited = false;
       return;
     } else {
-      sent = Number(value);
+      staged = Number(value);
     }
-    const response = await fetch(`/api/entity/${id}`, {
-      method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, fields: {[field]: sent}, body: null}),
-    });
-    const answer = await response.json();
-    if (!response.ok) {
-      input.value = was;
-      say(`${id}: ${answer.detail || (answer.problems || []).map(p => p.message).join('; ')
-                    || 'refused'}`);
-      return;
-    }
-    BASE.value = answer.commit || BASE.value;
-    was = Array.isArray(sent) ? sent.join(', ') : input.value;
+    was = input.value;
     edited = false;
-    say(`${id}: ${field} saved — reload to see the load move`);
+    pend(id, field, staged);
+    say(`${PENDING.size} unsaved`);
   };
+}
+
+// Capacity is what a rate BUYS, so it has to move while the rate is being typed.
+// Left to the next page load, the number somebody is setting is invisible at the
+// moment they are setting it — which is most of the moment that matters.
+function recount() {
+  const build = Number(document.querySelector('[name=build_weeks]').value) || 0;
+  const over = [];
+  for (const row of document.querySelectorAll('#roster tr')) {
+    const rate = Number(row.querySelector('input.rate').value) || 0;
+    const held = Number(row.dataset.held) || 0;
+    const capacity = rate * build;
+    row.querySelector('.capacity').textContent = capacity.toFixed(1) + ' wk';
+    row.querySelector('.bar > span').style.width =
+      capacity ? Math.min(100, Math.round(100 * held / capacity)) + '%' : '0%';
+    row.classList.toggle('over', capacity > 0 && held > capacity);
+    if (capacity > 0 && held > capacity) over.push(row.dataset.login);
+  }
+  const line = document.getElementById('over');
+  if (line) {
+    line.hidden = !over.length;
+    line.textContent = over.length
+      ? `Over capacity: ${over.join(', ')}. The room can still bet it — this is a `
+        + 'number, not a refusal.'
+      : '';
+  }
+}
+document.addEventListener('input', event => {
+  if (event.target.matches('input.rate, [name=build_weeks]')) recount();
+  if (event.target.closest('#setup') || event.target.matches('input.rate')) dirty();
+});
+
+function dirty() {
+  ROSTER_DIRTY = true;
+  mark();
 }
 
 // The roster is edited in the page and written by Save, so adding somebody and
 // setting their availability is one decision and one commit rather than two.
+const HELD = HELD_JSON;
 const JOINING = document.getElementById('joining');
 if (JOINING) attachSuggest(JOINING);
 
@@ -2365,6 +2446,8 @@ function dropRow(button) {
     const row = button.closest('tr');
     say(`${row.dataset.login} taken out — press Save to commit it`);
     row.remove();
+    recount();
+    dirty();
   };
 }
 document.querySelectorAll('#roster .drop').forEach(dropRow);
@@ -2378,14 +2461,22 @@ document.getElementById('add').onclick = () => {
   }
   const row = document.createElement('tr');
   row.dataset.login = login;
+  // Somebody added to the cycle may already be bet into it — that is exactly why
+  // the page named them below the table. Their load comes with them.
+  row.dataset.held = (HELD[login] || 0);
   row.innerHTML =
     `<td><button type="button" class="drop" title="Take out of this cycle">&#128465;</button></td>`
     + `<td>${login}</td>`
     + `<td><input class="field rate" data-login="${login}" value="1.0"></td>`
-    + `<td class="derived">—</td><td class="derived">—</td><td></td><td class="derived">—</td>`;
+    + `<td class="derived capacity">—</td>`
+    + `<td class="derived">${(HELD[login] || 0).toFixed(1)} wk</td>`
+    + `<td><span class="bar"><span style="width: 0%"></span></span></td>`
+    + `<td class="derived">—</td>`;
   document.getElementById('roster').append(row);
   dropRow(row.querySelector('.drop'));
   JOINING.value = '';
+  recount();
+  dirty();
   say(`${login} added — press Save to commit it`);
 };
 </script>
@@ -2425,6 +2516,9 @@ button.drop:hover { color: var(--danger); }
 #bets th { color: var(--muted); font-weight: 400; font-size: 11px;
            text-transform: uppercase; letter-spacing: .04em; }
 tr.carried td { color: var(--muted); }
+#bets tr.pending td { box-shadow: inset 3px 0 0 -1px var(--accent); }
+#bets tr.pending td:first-child { box-shadow: inset 3px 0 0 0 var(--accent); }
+#save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 """
 
 _CYCLES = """
@@ -2449,12 +2543,16 @@ _CYCLES = """
   <label class="facet">cool-down
     <input id="cooldown" type="number" value="{{ next.cooldown_weeks }}" step="0.5"></label>
   <button type="button" id="start">Start it</button>
+  <span class="hint">{{ next.roster|length }} people carried from cycle
+    {{ next.number - 1 }}</span>
   <span id="state"></span>
   <input type="hidden" id="base" value="{{ base_commit }}">
 </p>
 <script>
-// Defaults carried from the last cycle: the length rarely changes, and the next
-// one starts when the last one ends. Both are still typed over before saving.
+const ROSTER = ROSTER_JSON;
+// Defaults carried from the last cycle: the length rarely changes, the next one
+// starts when the last one ends, and mostly the same people are in it at mostly
+// the same rates. All of it is corrected on the cycle's own page afterwards.
 document.getElementById('start').onclick = async () => {
   const number = Number(document.getElementById('number').value);
   const response = await fetch(`/api/cycle/${number}`, {
@@ -2465,6 +2563,7 @@ document.getElementById('start').onclick = async () => {
         starts_on: document.getElementById('starts').value,
         build_weeks: Number(document.getElementById('build').value),
         cooldown_weeks: Number(document.getElementById('cooldown').value),
+        availability: ROSTER,
       },
       body: null,
     }),
@@ -2673,6 +2772,7 @@ def _cycle_view(index: Index, number: int) -> dict:
         "cooldown_weeks": f"{plan.cooldown_weeks:g}" if plan else "—",
         "nominal": nominal,
         "people": people,
+        "held": held,
         "strangers": strangers,
         "over": [p["login"] for p in people if p["over"]],
         "candidates": candidates,
@@ -2683,13 +2783,15 @@ def _cycle_view(index: Index, number: int) -> dict:
 def render_cycle(
     index: Index, number: int, links: Links = ROUTES, base_commit: str | None = None
 ) -> str:
+    view = _cycle_view(index, number)
     body = _ENV.from_string(_CYCLE).render(
-        c=_cycle_view(index, number),
+        c=view,
         links=links,
         editable=base_commit is not None,
         base_commit=base_commit or "",
         combobox=_combobox_html(index),
     )
+    body = body.replace("HELD_JSON", json.dumps(view["held"]))
     return _page(
         f"openproj — cycle {number}",
         body,
@@ -2729,7 +2831,17 @@ def render_cycles(
             else index.today.isoformat(),
             "build_weeks": f"{last.build_weeks:g}" if last else "4",
             "cooldown_weeks": f"{last.cooldown_weeks:g}" if last else "2",
+            # The people who worked the last cycle, at the rates they worked it
+            # at. A team changes slowly and availability changes every cycle, so
+            # this is a starting point to correct rather than a claim — and it
+            # beats retyping fifteen names to change three of them.
+            "roster": dict(sorted(last.availability.items(), key=lambda kv: kv[0].lower()))
+            if last
+            else {},
         },
+    )
+    body = body.replace(
+        "ROSTER_JSON", json.dumps(last.availability if last else {})
     )
     return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links)
 
