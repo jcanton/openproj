@@ -353,6 +353,12 @@ function run(html, expression) {
     CSS: {escape: value => String(value).replace(/[^\w-]/g, c => '\\' + c)},
     innerWidth: 1280,
     innerHeight: 800,
+    // How far the page has been scrolled. The suggestion popup is parked on the
+    // body and positioned in page coordinates, so it reads these — and a bare
+    // identifier that is not on the sandbox is a ReferenceError, which would have
+    // stopped the script at the line the popup is built on.
+    scrollX: 0,
+    scrollY: 0,
     addEventListener(type, handler) { (listeners[type] ||= []).push(handler); },
     removeEventListener() {},
     dispatchEvent(event) {

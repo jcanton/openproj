@@ -904,6 +904,33 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 {% for s in statuses %}
 .legend .swatch.st-{{ s }} { background: var(--st-{{ s }}); color: var(--st-{{ s }}-ink); }
 {%- endfor %}
+/* The row a page's own controls stand in: the table's create link, the cycle
+   page's "back to all cycles" and its "add somebody", the two rows of the cycles
+   index's create form. Three pages draw one and the rule was in _DETAIL_STYLE —
+   which the cycle pages load and the table does not, so on the table it was a
+   `<p>` with the browser's default margin and the create action sat in it as a
+   bare inline link. */
+.editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
+/* A link that is a control. The only rule was `.tl-controls .button`, scoped to
+   the timeline's filter bar, so the table's create link — the one way to bring
+   an entity into existence from the UI — rendered as underlined blue text.
+   `:visited` as well as the base state, because the shell colours every visited
+   link with `a:visited`, which is (0,1,1) and would beat a bare `.button`: the
+   button turned back into a link the moment somebody had used it once. Written
+   in link-visited-hover order, so the states later in the list win the ties they
+   are supposed to. */
+.button, .button:visited { font: inherit; font-size: 13px; line-height: 1.4;
+                           padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
+                           border: 1px solid var(--line-strong); background: var(--surface);
+                           color: var(--fg); text-decoration: none; }
+.button:hover { border-color: var(--accent); color: var(--accent); }
+/* Apply and Reset on the timeline were a button and a bare link, which reads as
+   one control and one afterthought. They are the same pair of scissors pointed
+   two ways, so they are the same size and shape; only the fill says which one is
+   the verb. */
+.button.primary { background: var(--accent); border-color: var(--accent);
+                  color: var(--on-accent); }
+.button.primary:hover { color: var(--on-accent); opacity: .9; }
 /* The way out of a filter, on every page that has one. Three pages were drawing
    this button themselves, which is three chances for the way out of a filter to
    look like something else. */
@@ -2007,11 +2034,11 @@ _TABLE_STYLE = """
 /* The table body scrolls in here rather than in the page. `position: sticky` on
    a header needs a scroll container to hold against, and a container the height
    of its own content gives `top: 0` nothing to do.
-   This page and no other, which is why the rule is not in the shell: the cycle
-   page's bet table wore the class with no rule behind it, and sharing the
-   overflow with it would have clipped the suggestion popups its cells open —
-   `attachSuggest` inserts the list as the input's own next sibling, so an
-   `overflow` on any ancestor cuts it off. That table lost the class instead. */
+   This page and no other, which is why the rule is not in the shell: the height
+   is `100vh` minus this page's own stack of controls, which no other page has.
+   The overflow used to cut off the suggestion popups the cells open, on this
+   table and on any table that borrowed the class; `attachSuggest` parks its list
+   on the body now, so an ancestor's overflow no longer reaches it. */
 .table-scroll { overflow: auto; max-height: calc(100vh - var(--above-rows));
                 min-height: 9rem; overscroll-behavior: contain; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -2045,25 +2072,35 @@ thead th {
 }
 /* The two columns that say which row you are looking at. Scrolled right without
    them, fourteen columns of values belong to nobody. They need a ground of their
-   own and a layer above the cells passing underneath. */
-/* Qualified by the scroll container, which is only there to outrank
-   `dd, td.edit { position: relative }` in _SUGGEST_STYLE — a rule about anchoring
-   the suggestion popup inside its cell, appended after this stylesheet on the same
-   page. A bare attribute selector loses to an element and a class, so both of these
-   columns fell back to `relative`, kept the `left` meant for `sticky`, and shifted
-   187px right to sit on top of priority and status. Sticky establishes a containing
-   block too, so the popup still anchors. */
-.table-scroll [data-col="id"] { position: sticky; left: 0; z-index: 1;
-                                background: var(--surface); }
-.table-scroll [data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;
-                                   background: var(--surface); box-shadow: 1px 0 0 var(--line); }
+   own and a layer above the cells passing underneath.
+
+   One bare attribute selector each, which is (0,1,0) — deliberately the lightest
+   rule that can reach these cells, because these two lines state a *default*
+   ground and a *default* layer that three rules below exist to correct. Each of
+   those adds an element or a class, so each is (0,1,1) and each wins on weight
+   alone, whichever order the stylesheet ends up in.
+
+   These were briefly `.table-scroll [data-col=…]` — (0,2,0), written to outrank
+   `dd, td.edit { position: relative }` in _SUGGEST_STYLE, which was stealing
+   `position: sticky` from the title cell so that it kept the `left` meant for a
+   sticky box and shifted 187px right over priority and status. It fixed that and
+   silently outranked all three corrections: both frozen headers dropped to
+   z-index 1 and were painted over by their own rows, the title header lost its
+   bottom rule, and a problem on either column lost its ground. The suggestion
+   popup is parked on the body now and that rule is gone, so the weight these
+   need is the weight that loses to everything meant to correct them. */
+[data-col="id"] { position: sticky; left: 0; z-index: 1; background: var(--surface); }
+[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;
+                     background: var(--surface); box-shadow: 1px 0 0 var(--line); }
 thead [data-col="id"], thead [data-col="title"] { z-index: 4; }
 thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line); }
 /* One weight heavier than the sticky rules above — an element and a class beats
    a bare attribute selector — so a problem in the id or the title column keeps
    its ground. It is the specificity that does it and not the order: written the
    other way up these would still win, and the comment that said "after the
-   sticky rules" was describing a cascade nothing depends on. */
+   sticky rules" was describing a cascade nothing depends on. The `td` is not
+   decoration either: the shell already says `.sev-cell-blocker` at (0,1,0) and
+   the frozen columns' `background` above would tie it and win on order. */
 td.sev-cell-blocker { background: var(--sev-blocker-soft); }
 td.sev-cell-warn { background: var(--sev-warn-soft); }
 /* Editable and derived cells looked identical, and the only thing that said
@@ -2912,17 +2949,9 @@ _TIMELINE_STYLE = """
 .tl-controls input, .tl-controls select {
   display: block; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0;
 }
-/* Apply was a button and Reset was a bare link, which reads as one control and
-   one afterthought. They are the same pair of scissors pointed two ways, so they
-   are the same size and shape; only the fill says which one is the verb. */
-.tl-controls .button { font: inherit; font-size: 13px; line-height: 1.4;
-                       padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
-                       border: 1px solid var(--line-strong); background: var(--surface);
-                       color: var(--fg); text-decoration: none; }
-.tl-controls .button:hover { border-color: var(--accent); color: var(--accent); }
-.tl-controls .button.primary { background: var(--accent); border-color: var(--accent);
-                               color: var(--on-accent); }
-.tl-controls .button.primary:hover { color: var(--on-accent); opacity: .9; }
+/* `.button` and `.button.primary` are the shell's. They were written here, in a
+   rule scoped to this filter bar, and the table's create action wore the class
+   with nothing behind it. */
 /* The three markings, drawn the way the plot draws them: a hatch over a real
    status fill, an outline, a rule. A legend that redraws a mark in its own way
    is a legend that can be wrong about the picture beside it — which is how the
@@ -3118,6 +3147,44 @@ const SUGGEST = JSON.parse(document.getElementById('suggest').textContent);
 // these — every fact on the detail form, every cell of the betting table.
 let SUGGEST_N = 0;
 
+// Every list currently parked on the body, with the input it belongs to.
+//
+// A list used to be the input's own next sibling, which meant `overflow` on any
+// ancestor cut it off: the table's rows scroll inside `.table-scroll` and nine
+// of its fourteen columns carry one of these, so a list opened on a low row was
+// clipped against the bottom of the box — the normal case, not an edge. The
+// frozen columns made it worse: `position: sticky` with a z-index is a stacking
+// context, so a list opened in the title column was also painted under the
+// sticky header. The body has neither problem, and nothing has to be given
+// `position: relative` to anchor it any more.
+//
+// The price is that a list is no longer removed with the input it belongs to,
+// and the table replaces its whole tbody after every save. An input taken off
+// the page while it still holds focus never fires blur, so closing on blur is
+// not enough to clean up after it — every list parked here is swept the next
+// time one is. The scroll listener goes with it: it is what keeps the list under
+// a box that moves, and forty cell edits would otherwise leave forty of them
+// measuring inputs that are no longer on the page.
+const PARKED = [];
+
+function park(input, list, follow) {
+  for (let i = PARKED.length - 1; i >= 0; i--) {
+    const stale = PARKED[i];
+    if (stale.input.isConnected) continue;
+    stale.list.remove();
+    removeEventListener('scroll', stale.follow, true);
+    removeEventListener('resize', stale.follow);
+    PARKED.splice(i, 1);
+  }
+  PARKED.push({input, list, follow});
+  document.body.append(list);
+  // Anything that moves the input moves the list: the page scrolling, the table
+  // scrolling inside its own box, the window resizing. Capture, because a scroll
+  // event on an element does not bubble up to the window.
+  addEventListener('scroll', follow, true);
+  addEventListener('resize', follow);
+}
+
 function attachSuggest(input) {
   const source = SUGGEST[input.dataset.suggest] || [];
   const multi = input.dataset.type === 'list';
@@ -3137,7 +3204,26 @@ function attachSuggest(input) {
   input.setAttribute('aria-autocomplete', 'list');
   input.setAttribute('aria-controls', id);
   input.setAttribute('aria-expanded', 'false');
-  input.insertAdjacentElement('afterend', list);
+
+  // Where the input is, in the page's coordinates rather than the viewport's:
+  // the list hangs off the body now, so it is positioned against the document.
+  // Declared inside `attachSuggest` and not beside it, because the detail page
+  // already has a global `place` — the one that puts the width grip against the
+  // article — and two classic scripts on a page share one scope.
+  function place() {
+    const box = input.getBoundingClientRect();
+    const under = innerHeight - box.bottom;
+    // Above the box when there is no room under it. Parking the list on the body
+    // stops it being clipped, but a list hanging off the bottom of the window
+    // still has to be scrolled to, and the row somebody is editing is the row
+    // they are looking at.
+    const over = under < list.offsetHeight && box.top > under;
+    list.style.left = (box.left + scrollX) + 'px';
+    list.style.top = (over ? box.top + scrollY - list.offsetHeight
+                           : box.bottom + scrollY) + 'px';
+  }
+
+  park(input, list, () => { if (!list.hidden) place(); });
   let active = -1;
 
   // `aria-activedescendant` is how a combobox says which option is current
@@ -3199,6 +3285,9 @@ function attachSuggest(input) {
       .join('');
     active = matches.length ? 0 : -1;
     list.hidden = !matches.length;
+    // After it is shown and filled, because `place` measures how tall it is to
+    // decide whether it fits under the box.
+    if (!list.hidden) place();
     input.setAttribute('aria-expanded', String(!list.hidden));
     highlight();
   }
@@ -3239,6 +3328,13 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 """
 
 _SUGGEST_STYLE = """
+/* Absolute against the page, not against the cell it belongs to: `attachSuggest`
+   parks the list on the body and writes its `top` and `left` in page
+   coordinates. As a child of its own cell it was clipped by `overflow` on any
+   ancestor — the table's rows scroll inside `.table-scroll` — and trapped in the
+   stacking context of a sticky frozen column. Nothing on the page carries
+   `position: relative` for this any more; there was such a rule, `dd, td.edit`,
+   and it was also stealing `position: sticky` from the table's title column. */
 .suggest { position: absolute; z-index: 20; margin: 0; padding: 0; list-style: none;
            background: var(--surface); border: 1px solid var(--line-strong);
            border-radius: 3px; min-width: 14rem; max-height: 16rem; overflow-y: auto;
@@ -3249,7 +3345,6 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .doc img { max-width: 100%; height: auto; }
 .suggest .dim { opacity: .6; }
 .suggest li.on .dim { opacity: .85; }
-dd, td.edit { position: relative; }
 """
 
 # Every branch carries an `id`, and every `<dt>` that renders one of these carries
@@ -3932,7 +4027,9 @@ article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
         gap: .4rem; align-items: baseline; }
 .meta code { font-family: var(--font-mono); font-size: 12px; }
 .back { margin: 0 0 .5rem; font-size: 12px; }
-.editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
+/* `.editbar` is the shell's. It was written here, and the table — which wears the
+   class on the row holding its only create action — does not load this
+   stylesheet. */
 
 dl { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .45rem 1rem; margin: 1rem 0; }
 dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
@@ -4543,11 +4640,9 @@ _CYCLE = """
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
   was bet in, so its overrun keeps counting.</p>
 {#- No `table-scroll` wrapper. It wore one from the day it was written, against a
-    stylesheet that has never carried the rule, so the class did nothing; and
-    giving it the rule is worse than leaving it inert, because every appetite,
-    assignees and reviewers box in here opens a suggestion popup that is inserted
-    as the input's own next sibling — an `overflow` on an ancestor cuts the list
-    off against the bottom of the table on the last rows. -#}
+    stylesheet that has never carried the rule, so the class did nothing — and
+    the rule is the table page's own, sized against a stack of controls this page
+    does not have. Eight columns fit a screen; the page scrolls. -#}
 <table id="bets" autocomplete="off"><thead><tr>
   <th>in {{ c.number }}</th><th>title</th><th>kind</th><th>status</th>
   <th>appetite</th><th>assignees</th><th>reviewers</th><th>bet in</th>
@@ -4951,7 +5046,11 @@ input.rate { width: 4rem; }
    here left the only keyboard-reachable cell on the page with nothing to say it
    had focus; the shell's :focus-visible ring draws it now. */
 #bets input.live:focus { border-color: var(--accent); }
-#bets td { position: relative; }
+/* No `#bets td { position: relative }`. It was here to anchor the suggestion
+   popup the assignees and reviewers boxes open, and the popup is parked on the
+   body now. Left in, it is a rule with nothing to do and a trap for whoever
+   writes the next one: the identical rule on the table's cells is what stole
+   `position: sticky` from the frozen title column. */
 button.drop { border: none; background: none; cursor: pointer; padding: 0 .2rem;
               color: var(--muted); font-size: 13px; line-height: 1; }
 button.drop:hover { color: var(--danger); }

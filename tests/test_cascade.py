@@ -1,0 +1,271 @@
+"""What the served stylesheet actually resolves to, on the elements it is about.
+
+Every assertion anybody had written about these rules was a substring search for
+the rule's own text, and a rule being present says nothing about whether it wins.
+Three of them did not: qualifying the two frozen columns by `.table-scroll` took
+them from (0,1,0) to (0,2,0), which outranks the three rules written to correct
+them — so both frozen headers were painted over by their own rows, the title
+header lost the line along its bottom edge, and a blocking problem on the id
+column, which is the catch-all for any problem whose field has no column of its
+own, got no ground. The suite stayed green through all of it.
+
+So these ask a cascade engine instead: for this element and this property, which
+rule wins and what does it say. See `tests/cascade.py`.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+import pytest
+from cascade import El, Sheet, el, sheet_of
+
+from openproj.index import Index, build_index
+from openproj.model import load_repo
+from openproj.render import (
+    ROUTES,
+    render_cycle,
+    render_cycles,
+    render_detail,
+    render_table,
+    render_timeline,
+)
+
+HEAD = "0123456789abcdef0123456789abcdef01234567"
+
+
+@pytest.fixture
+def index(seed_root: Path) -> Index:
+    entities, config = load_repo(seed_root)
+    return build_index(entities, config, date(2026, 8, 17))
+
+
+@pytest.fixture
+def table(index: Index) -> Sheet:
+    """The editable table: `_TABLE_STYLE` and then `_SUGGEST_STYLE`, after the
+    shell — which is the order that decides every tie below."""
+    return sheet_of(render_table(index, ROUTES, base_commit=HEAD))
+
+
+# --------------------------------------------------------------------------- #
+# Where the cells are
+# --------------------------------------------------------------------------- #
+
+PAGE = [el("body"), el("main", id="main")]
+SCROLL = PAGE + [el("div", "table-scroll"), el("table", id="rows")]
+
+
+def header(column: str, classes: str = "") -> list[El]:
+    return SCROLL + [el("thead"), el("tr"), el("th", classes, data_col=column)]
+
+
+def cell(column: str, classes: str = "") -> list[El]:
+    return SCROLL + [el("tbody"), el("tr"), el("td", classes, data_col=column)]
+
+
+def says(sheet: Sheet, path: list[El], prop: str) -> str:
+    """The winning declaration, and every rule it beat, for a failure message."""
+    reaching = sheet.selectors_reaching(path, prop)
+    return "\n".join(f"  {r.specificity} {r.selector} {{ {prop}: {r.declarations[prop][0]} }}"
+                     for r in reaching) or "  (no rule sets it)"
+
+
+# --------------------------------------------------------------------------- #
+# B1: the two frozen columns and the three rules that correct them
+# --------------------------------------------------------------------------- #
+
+
+def test_the_frozen_columns_keep_the_position_their_left_offset_is_meant_for(table: Sheet):
+    """`left` means nothing to a static box and something else entirely to a
+    relative one.
+
+    `_SUGGEST_STYLE` used to say `dd, td.edit { position: relative }` so the
+    suggestion popup had something to anchor to, and the table appends that
+    stylesheet after its own. At (0,1,1) it beat the bare `[data-col="title"]`,
+    so the title column kept the `left` written for a sticky box and used it as a
+    relative offset instead: 187px to the right of its own header, on top of
+    priority and status.
+    """
+    for path, offset in ((cell("id"), "0"), (cell("title", "edit"), "var(--sticky-1, 0px)")):
+        assert table.value(path, "position") == "sticky", says(table, path, "position")
+        assert table.value(path, "left") == offset, says(table, path, "left")
+    # The header is sticky in both axes: `top` from `thead th`, `left` from the
+    # column. Losing either one is a frozen column that is frozen in one place.
+    assert table.value(header("title"), "position") == "sticky"
+    assert table.value(header("title"), "top") == "0"
+    assert table.value(header("title"), "left") == "var(--sticky-1, 0px)"
+
+
+def test_the_frozen_headers_are_drawn_over_the_rows_that_pass_under_them(table: Sheet):
+    """A frozen header cell is above two things at once: the rows scrolling up
+    under it and the columns scrolling sideways under it. Below either, the plan
+    scrolls its own header away."""
+    for column in ("id", "title"):
+        assert table.value(header(column), "z-index") == "4", says(
+            table, header(column), "z-index")
+    # Above the rest of the header, which is above the rest of the body.
+    assert table.value(header("owner"), "z-index") == "3"
+    assert table.value(cell("id"), "z-index") == "1"
+    assert table.value(cell("title", "edit"), "z-index") == "1"
+    assert table.value(cell("owner", "edit"), "z-index") is None
+
+
+def test_the_title_header_keeps_the_rule_along_its_bottom_edge(table: Sheet):
+    """A collapsed border is not painted on a sticky cell, so the header's bottom
+    rule is an inset shadow — and the title column overwrote it with the shadow
+    that draws the frozen pair's right edge. The cell needs both."""
+    drawn = table.value(header("title"), "box-shadow")
+    assert drawn == "inset 0 -1px 0 var(--line), 1px 0 0 var(--line)", says(
+        table, header("title"), "box-shadow")
+    # The id header has no right edge of its own — the title column carries it
+    # for the pair — so it keeps the plain bottom rule every other header has.
+    assert table.value(header("id"), "box-shadow") == "inset 0 -1px 0 var(--line)"
+    assert table.value(cell("title", "edit"), "box-shadow") == "1px 0 0 var(--line)"
+
+
+@pytest.mark.parametrize("column", ["id", "title", "owner"])
+@pytest.mark.parametrize("severity", ["blocker", "warn"])
+def test_a_problem_on_a_frozen_column_still_gets_its_ground(
+    table: Sheet, column: str, severity: str
+):
+    """`id` is the catch-all: a problem whose field has no column of its own is
+    marked there. A frozen column that paints `--surface` over its own severity
+    ground is a table where the marked cells are the ones nobody can see."""
+    path = cell(column, f"edit sev-cell-{severity}")
+    assert table.value(path, "background") == f"var(--sev-{severity}-soft)", says(
+        table, path, "background")
+
+
+@pytest.mark.parametrize("column", ["id", "title", "owner"])
+def test_a_refused_cell_says_so_on_a_frozen_column_too(table: Sheet, column: str):
+    """The fourth casualty of the same weight, and the one nobody listed: the
+    ground that says a save came back refused is a `td.` rule as well."""
+    path = cell(column, "edit refused")
+    assert table.value(path, "background") == "var(--surface-2)", says(
+        table, path, "background")
+
+
+def test_every_rule_that_corrects_a_frozen_column_outweighs_it(table: Sheet):
+    """The invariant behind the three tests above, said once.
+
+    The two frozen-column rules state a *default* ground and a *default* layer.
+    Three rules exist to correct them, and each has to be strictly heavier than
+    the rule it corrects — otherwise which one lands is decided by the order two
+    stylesheets happen to be concatenated in, and that order is set 4,000 lines
+    away from here by a `+`.
+    """
+    frozen = table.winner(cell("title", "edit"), "position")
+    assert frozen is not None
+    for path, prop in (
+        (header("id"), "z-index"),
+        (header("title"), "z-index"),
+        (header("title"), "box-shadow"),
+        (cell("id", "sev-cell-blocker"), "background"),
+        (cell("title", "edit sev-cell-warn"), "background"),
+        (cell("title", "edit refused"), "background"),
+    ):
+        correction = table.winner(path, prop)
+        assert correction is not None, says(table, path, prop)
+        assert correction.specificity > frozen.specificity, (
+            f"`{correction.selector}` corrects `{frozen.selector}` and is not "
+            f"heavier than it, so the order of the stylesheets decides {prop}:\n"
+            f"{says(table, path, prop)}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# B2: the popup and the box that used to clip it
+# --------------------------------------------------------------------------- #
+
+
+def test_the_table_body_scrolls_in_a_box_that_clips_what_is_inside_it(table: Sheet):
+    """The premise of the test below: this box really does clip. Fourteen columns
+    do not fit a screen and the rows scroll in here rather than in the page."""
+    box = PAGE + [el("div", "table-scroll")]
+    assert table.value(box, "overflow") == "auto"
+
+
+def test_the_suggestion_popup_hangs_off_the_body_where_nothing_clips_it(table: Sheet):
+    """`attachSuggest` parks the list on the body, so the only ancestor it has is
+    one with no overflow and no stacking context of its own.
+
+    As the input's next sibling it was inside `.table-scroll` — cut off against
+    the bottom of the box on the last rows — and, in the title column, inside the
+    stacking context a sticky cell with a z-index establishes, which put it under
+    the sticky header as well.
+    """
+    popup = [el("body"), el("ul", "suggest", id="suggest-1")]
+    assert table.value(popup[:1], "overflow") in (None, "visible"), says(
+        table, popup[:1], "overflow")
+    assert table.value(popup, "position") == "absolute"
+    # Above the commit bar (10) and below the banner that says the plan moved
+    # under you (40), which is the one thing that must never be behind anything.
+    assert table.value(popup, "z-index") == "20"
+    # And no rule anywhere gives anything a `position: relative` for it to anchor
+    # to — that rule is what was stealing `sticky` from the title column.
+    assert table.value(cell("title", "edit"), "position") == "sticky"
+
+
+# --------------------------------------------------------------------------- #
+# B3: the classes the page templates share
+# --------------------------------------------------------------------------- #
+
+
+def pages(index: Index) -> dict[str, str]:
+    number = max(e.cycle for e in index.entities.values() if e.cycle)
+    return {
+        "table": render_table(index, ROUTES, base_commit=HEAD),
+        "cycle": render_cycle(index, number, ROUTES, base_commit=HEAD),
+        "cycles": render_cycles(index, ROUTES, base_commit=HEAD),
+        "detail": render_detail(index, ROUTES, base_commit=HEAD),
+        "timeline": render_timeline(index, ROUTES),
+    }
+
+
+def test_the_row_a_pages_own_controls_stand_in_is_a_row_on_every_page(index: Index):
+    """`.editbar` was defined in `_DETAIL_STYLE`, which the table does not load,
+    so the table's editbar was a `<p>` with the browser's default margin."""
+    for name, page in pages(index).items():
+        sheet = sheet_of(page)
+        bar = PAGE + [el("p", "editbar")]
+        assert sheet.value(bar, "display") == "flex", f"{name}: {says(sheet, bar, 'display')}"
+        assert sheet.value(bar, "margin") == ".4rem 0 1rem", name
+
+
+def test_a_link_that_is_a_control_is_drawn_as_one_on_every_page(index: Index):
+    """The only `.button` rule was `.tl-controls .button`, scoped to the
+    timeline's filter bar. The table's create action — the one way to bring an
+    entity into existence from the UI — wore the class with nothing behind it and
+    rendered as underlined blue text in a default-margin paragraph."""
+    for name, page in pages(index).items():
+        sheet = sheet_of(page)
+        for states in ("", "visited"):
+            button = PAGE + [el("p", "editbar"), el("a", "button", states=states)]
+            assert sheet.value(button, "border") == "1px solid var(--line-strong)", (
+                f"{name} ({states or 'unvisited'}): {says(sheet, button, 'border')}"
+            )
+            assert sheet.value(button, "text-decoration") == "none", name
+            # `a:visited` in the shell is (0,1,1) and would beat a bare `.button`:
+            # the control turned back into a link the moment somebody used it.
+            assert sheet.value(button, "color") == "var(--fg)", (
+                f"{name} ({states or 'unvisited'}): {says(sheet, button, 'color')}"
+            )
+        hovered = PAGE + [el("p", "editbar"), el("a", "button", states="visited hover")]
+        assert sheet.value(hovered, "color") == "var(--accent)", (
+            f"{name}: {says(sheet, hovered, 'color')}"
+        )
+
+
+def test_the_timeline_still_says_which_of_its_two_controls_is_the_verb(index: Index):
+    """Apply and Reset are the same size and shape; only the fill separates them.
+    The variant moved to the shell with the rule it varies."""
+    sheet = sheet_of(render_timeline(index, ROUTES))
+    bar = PAGE + [el("form", "tl-controls")]
+    apply = bar + [el("button", "button primary")]
+    reset = bar + [el("a", "button reset")]
+
+    assert sheet.value(apply, "background") == "var(--accent)", says(sheet, apply, "background")
+    assert sheet.value(apply, "color") == "var(--on-accent)"
+    assert sheet.value(reset, "background") == "var(--surface)"
+    assert sheet.value(apply, "padding") == sheet.value(reset, "padding")

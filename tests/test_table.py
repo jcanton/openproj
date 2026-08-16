@@ -1417,6 +1417,40 @@ def test_the_suggestion_popup_announces_itself(page: str):
     assert "let SUGGEST_N = 0;" in body and "'suggest-' + (++SUGGEST_N)" in body
 
 
+def test_the_popup_a_cell_opens_hangs_off_the_body_and_not_off_the_cell(page: str):
+    """A popup is cut off by `overflow` on any ancestor, and this table's rows
+    scroll inside `.table-scroll`.
+
+    The list used to be the input's own next sibling, so on a low row it was
+    clipped against the bottom of the scroll box — and nine of the fourteen
+    columns carry a suggestion list, which makes that the normal case rather than
+    an edge. In the title column it was worse: a frozen cell is `position: sticky`
+    with a z-index, which is a stacking context, so the list was painted under the
+    sticky header too. Driven rather than grepped, because both the cell and the
+    list exist only after the editor has run.
+    """
+    from test_injection import run_js
+
+    answer = run_js(
+        page,
+        "(() => {"
+        "  const id = Object.keys(DATA.rows)[0];"
+        "  const row = document.createElement('tr'); row.dataset.id = id;"
+        "  const cell = document.createElement('td');"
+        "  cell.className = 'edit'; cell.dataset.col = 'owner';"
+        "  cell.dataset.entity = id; cell.dataset.field = 'owner';"
+        "  row.append(cell);"
+        "  openEditor(cell);"
+        "  const parked = document.body.querySelectorAll('ul.suggest');"
+        "  return [parked.length, parked.map(one => one.parentNode.tagName)];"
+        "})()",
+    )
+    count, parents = answer["value"]
+
+    assert count == 1, f"the editor opened no suggestion list at all: {answer['errors']}"
+    assert parents == ["BODY"], parents
+
+
 def test_every_control_on_the_create_form_has_a_name(new_page: str):
     """A `<dt>`/`<dd>` pair is a caption to a reader and two unrelated blocks of
     text to everything else, so not one control on this form had a name."""
