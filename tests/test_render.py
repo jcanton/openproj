@@ -605,3 +605,25 @@ def test_the_graph_explains_the_mode_only_inside_it(rendered: Path):
 
     assert "Double-click a node to open it" in graph
     assert editable is None, "the static build has no edit mode to explain"
+
+
+def test_the_parent_reads_as_a_title_and_edits_as_an_id(demo_rendered: tuple[Path, Index]):
+    """`blocked_by` already lists what it points at by title. `parent` showed a
+    bare id in two places — the facts list and the line under the heading — and an
+    id is what the field stores, not what somebody asking "what is this part of"
+    is looking for. The control underneath still holds the id: that is what gets
+    written, and the autocomplete offers ids with titles beside them."""
+    out, index = demo_rendered
+    body = read(out, "detail.html")
+    child = next(e for e in index.entities.values() if e.parent in index.entities)
+    parent = index.entities[child.parent]
+
+    assert f">{parent.title}</a>" in body
+    assert "· in <a" in body
+    # The entity's OWN id stays in its meta line — that one is wanted. It is the
+    # parent's id that was standing in for a title.
+    article = re.search(rf'<article id="{child.id}".*?</article>', body, re.S).group(0)
+    parent_row = re.search(r"<dt[^>]*>Parent</dt>\s*<dd.*?</dd>", article, re.S).group(0)
+
+    assert parent.title in parent_row
+    assert f">{child.parent}<" not in parent_row

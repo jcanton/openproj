@@ -1536,8 +1536,7 @@ _DETAIL = """
   {% endif %}
   <h1><span class="read">{{ e.title }}</span></h1>
   <p class="meta"><code>{{ e.id }}</code> · {{ e.kind }} · <b>{{ e.status }}</b>
-     {% if e.parent %}· in
-     <a href="{{ links.entity }}{{ e.parent }}">{{ e.parent }}</a>{% endif %}</p>
+     {% if e.parent %}· in {{ e.parent_link|safe }}{% endif %}</p>
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
@@ -1924,6 +1923,11 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             continue
         if name == "depends_on":
             display = _links(index.blocked_by[entity.id], index, links) or "nothing"
+        elif name == "parent":
+            # By title and linked, the way blockers already read. An id is what
+            # the field stores; it is not what anybody is looking for when they
+            # ask what this belongs to.
+            display = _links([entity.parent], index, links) if entity.parent else "nothing"
         elif name == "prs":
             display = ", ".join(_pr_link(ref) for ref in entity.prs) or "none"
         elif name == "review_waived":
@@ -1980,7 +1984,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     return rows
 
 
-def _detail_rows(index: Index) -> list[dict]:
+def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
     rows = []
     for entity_id, entity in sorted(index.entities.items()):
         span = index.spans.get(entity_id)
@@ -2009,6 +2013,7 @@ def _detail_rows(index: Index) -> list[dict]:
                 "why": why.text if why else "",
                 "blocked_by": _links(index.blocked_by[entity_id], index),
                 "blocks": _links(index.blocks[entity_id], index),
+                "parent_link": _links([entity.parent], index, links) if entity.parent else "",
                 "prs": ", ".join(_pr_link(ref) for ref in entity.prs),
                 "tags": entity.tags,
                 "problems": [p.message for p in index.problems if p.entity_id == entity_id],
@@ -2304,7 +2309,7 @@ def render_detail(
     The server serves one per route; the static build serves them all in a page
     that hides everything but the hash. Same markup, so the two cannot drift.
     """
-    rows = _detail_rows(index)
+    rows = _detail_rows(index, links)
     if only is not None:
         rows = [row for row in rows if row["id"] == only]
     # Every entity gets its facts, not only the one being served on its own route:

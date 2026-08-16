@@ -234,3 +234,14 @@ def test_the_editing_instructions_appear_with_the_mode(client: TestClient):
 
     assert re.search(r'<p class="hint" id="howto" hidden>', page)
     assert "getElementById('howto').hidden = !connecting" in page
+
+
+def test_the_parent_control_still_holds_the_id(client: TestClient):
+    """The facts list reads it as a linked title; the input underneath is what
+    gets written, and the file stores an id. Showing the title in the control
+    would write the title into the file on the next save."""
+    page = client.get(f"/detail/{TASK}").text
+    control = re.search(r'<input name="parent"[^>]*value="([^"]*)"', page)
+
+    assert control, "parent must still be editable"
+    assert control.group(1).startswith(("proj-", "pitch-", "task-")) or control.group(1) == ""
