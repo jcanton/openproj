@@ -8,14 +8,29 @@
 // is a network fetch and a node_modules in a repository whose whole premise is
 // that nothing is fetched — so this is a DOM shim that is exactly as big as the
 // four scripts need and no bigger. It is not a browser and does not pretend to
-// be one: it parses nothing on the page except the <script> blocks, and the
-// markup the scripts produce goes back to the caller as *text*, to be parsed
-// and judged by the same census the pages get. A shim that judged its own
-// output would be a shim that could be wrong in the direction that matters.
+// be one, and the markup the scripts produce goes back to the caller as *text*,
+// to be parsed and judged by the same census the pages get. A shim that judged
+// its own output would be a shim that could be wrong in the direction that
+// matters.
 //
-// Usage: node drive.js '<expression>'  < page.html
+// The same shim answers a second kind of question: what a write path *does*
+// when the server says no. Those defects — a conflict report printed as
+// "refused", a 500 that left Save disabled for ever, a typo that dropped
+// somebody from a cycle — are not in any markup either, and they need three
+// things a census does not: the page's own elements to query, a scripted
+// answer from `fetch`, and a clock the test controls. Hence the options below.
+// Without them the driver behaves exactly as it always did.
+//
+// Usage: node drive.js '<expression>' '<options json>'  < page.html
+// Options: {page: true}      the page's markup is parsed, so document queries
+//                            answer from it instead of from a phantom;
+//          {replies: [...]}  {status, json} or {status, text} per fetch, in
+//                            order — a `text` that is not JSON rejects
+//                            `response.json()`, exactly as a 500 does.
+// The expression may be async; its promise is awaited, and one that never
+// settles comes back as settled: false rather than as an empty answer.
 // Prints {written: [...innerHTML strings...], value: <expression result>,
-//         errors: [...]} as JSON.
+//         errors: [...], calls: [...requests...], settled: <bool>} as JSON.
 
 'use strict';
 
@@ -57,7 +72,16 @@ function parseFragment(html, owner) {
     top.children.push(element);
     if (!VOID.has(tag.toLowerCase()) && !whole.endsWith('/>')) stack.push(element);
   }
+  // The words between the tags. A browser has them, and a page mode that did
+  // not would make `#state` read as empty however much had been announced into
+  // it — which is the one thing several of these tests are about.
+  for (const element of root.children) settle(element);
   return root.children;
+}
+
+function settle(element) {
+  if (element.text) element.textContent = element.text;
+  for (const child of element.children) settle(child);
 }
 
 // --------------------------------------------------------------------------
@@ -82,8 +106,24 @@ function matchesOne(element, selector) {
   });
 }
 
+// A descendant combinator, checked against the ancestors rather than dropped.
+// With the page parsed, `#bets tbody tr` and `#roster tr` are two different sets
+// of rows on the same page, and a matcher that read only the last simple
+// selector answered with all of them.
+function matchesComplex(element, selector) {
+  const parts = selector.trim().split(/\s+/);
+  if (!matchesOne(element, parts.pop())) return false;
+  let want = parts.pop();
+  let at = element.parentNode;
+  while (want && at) {
+    if (at instanceof Element && matchesOne(at, want)) want = parts.pop();
+    at = at.parentNode;
+  }
+  return !want;
+}
+
 function selectorMatches(element, selector) {
-  return selector.split(',').some(one => matchesOne(element, one.trim().split(/\s+/).pop()));
+  return selector.split(',').some(one => matchesComplex(element, one));
 }
 
 // The one thing a real querySelector does that this shim must not skip: refuse a
@@ -130,7 +170,11 @@ class Element {
     this.children = [];
     this.attributes = {};
     this.dataset = {};
-    this.style = {};
+    // A plain object takes `style.width = …`, which is most of what these pages
+    // do, and not `style.setProperty('--sticky-1', …)` — which the table calls
+    // while it measures its frozen columns, halfway down a script whose second
+    // half is every write path on the page.
+    this.style = {setProperty() {}, removeProperty() {}, getPropertyValue: () => ''};
     this.parentNode = null;
     this.ownerDocument = owner;
     this.hidden = false;
@@ -178,6 +222,11 @@ class Element {
   setAttribute(name, value) {
     this.attributes[name] = String(value);
     if (name === 'class') this._classSet = null;
+    // The two attributes a browser reflects into a property that page scripts
+    // read: an `<input value="0.5">` in the roster answers 0.5 to `.value`, and
+    // the conflict box the table renders with `hidden` starts out hidden.
+    if (name === 'value') this.value = String(value);
+    if (name === 'hidden') this.hidden = value !== 'false';
     if (name.startsWith('data-')) {
       const key = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       this.dataset[key] = String(value);
@@ -242,6 +291,11 @@ class Element {
   setSelectionRange() {}
   scrollIntoView() {}
   getBoundingClientRect() { return {top: 0, left: 0, width: 100, height: 100, bottom: 0, right: 0}; }
+  // The graph measures its labels against a canvas before it draws anything, so
+  // without this the script stops above every line that saves a dependency.
+  getContext() {
+    return {font: '', measureText: text => ({width: String(text).length * 7})};
+  }
   get firstElementChild() { return this.children[0] || null; }
   get previousElementSibling() { return null; }
   get childNodes() { return [{textContent: this.textContent}, ...this.children]; }
@@ -252,17 +306,26 @@ class Element {
 }
 
 // --------------------------------------------------------------------------
-// The document, which knows nothing about the page except its script blocks.
-// getElementById hands back a fresh stub for anything it has not been told
-// about, and document.querySelector does the same: a script asking the document
-// for `#rows tbody` must get something it can write to, or nothing downstream
-// of it ever runs. An *element* asking its own children answers honestly from
-// what innerHTML put there, which is what the cell editor needs.
+// The document. By default it knows nothing about the page except its script
+// blocks: getElementById hands back a fresh stub for anything it has not been
+// told about, and document.querySelector does the same, because a script asking
+// the document for `#rows tbody` must get something it can write to or nothing
+// downstream of it ever runs. An *element* asking its own children answers
+// honestly from what innerHTML put there, which is what the cell editor needs.
+//
+// In page mode the markup is parsed and the document answers from it, honestly
+// and including with null — which is what a test about a roster, a banner or a
+// live region needs, since none of those is something a script wrote.
 // --------------------------------------------------------------------------
 
-function makeDocument(inlined) {
+function makeDocument(inlined, markup) {
   const byId = new Map();
   const bySelector = new Map();
+  // The page, when the caller asked for it. A question about what a script
+  // writes is answered by phantoms; a question about what it does to the page it
+  // is on is not — `document.querySelectorAll('input.rate')` IS the roster, and
+  // a shim that answers [] there tests nothing at all.
+  let root = null;
   const document = {
     documentElement: null,
     body: null,
@@ -272,7 +335,14 @@ function makeDocument(inlined) {
     createDocumentFragment() { return new Element('fragment', document); },
     getElementById(id) {
       if (!byId.has(id)) {
-        const element = new Element('div', document, true);
+        const real = root && root._descendants().find(element => element.id === id);
+        // In page mode a miss is a miss, the way it is in a browser: the pages
+        // ask for `#over` and `#strangers` and then check what came back. The
+        // exception is a `<script type=application/json>` payload — `#suggest`,
+        // `#payload` — which has been lifted out of the markup to be run and is
+        // still on the page as far as the page is concerned.
+        if (root && !real && !inlined.has(id)) return null;
+        const element = real || new Element('div', document, true);
         element.id = id;
         if (inlined.has(id)) element.textContent = inlined.get(id);
         byId.set(id, element);
@@ -281,6 +351,7 @@ function makeDocument(inlined) {
     },
     querySelector(selector) {
       checkSelector(selector);
+      if (root) return root.querySelector(selector);
       // A selector that both descends and filters on an attribute value is a
       // page asking whether one particular record is already on screen —
       // `#roster tr[data-login="ann"]`. The shim never parsed the page, so the
@@ -293,11 +364,22 @@ function makeDocument(inlined) {
       }
       return bySelector.get(selector);
     },
-    querySelectorAll() { return []; },
+    querySelectorAll(selector) {
+      if (!root) return [];
+      checkSelector(selector);
+      return root.querySelectorAll(selector);
+    },
     addEventListener() {},
     removeEventListener() {},
     dispatchEvent() { return true; },
   };
+  if (markup !== null) {
+    root = new Element('body', document);
+    // Not `innerHTML`: that is the very thing the census reads, and the page
+    // arriving in it would drown every string the scripts wrote.
+    root.children = parseFragment(markup, document);
+    for (const child of root.children) child.parentNode = root;
+  }
   document.documentElement = new Element('html', document, true);
   document.body = new Element('body', document, true);
   return document;
@@ -305,7 +387,7 @@ function makeDocument(inlined) {
 
 // --------------------------------------------------------------------------
 
-function run(html, expression) {
+async function run(html, expression, options) {
   const inlined = new Map();
   const scripts = [];
   for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
@@ -318,8 +400,50 @@ function run(html, expression) {
     scripts.push(source);
   }
 
-  const document = makeDocument(inlined);
+  const document = makeDocument(
+    inlined,
+    // Everything but the scripts: they have already been taken out to be run,
+    // and the parser would take a `</div>` inside a template literal for markup.
+    options.page ? html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ') : null,
+  );
   const listeners = {};
+
+  // What the server said, in order, and what was asked of it. A write path is
+  // mostly a set of answers to a refusal, and a `fetch` that always says yes can
+  // only test the half where nothing goes wrong.
+  const calls = [];
+  const replies = (options.replies || []).slice();
+
+  function answer(url, init) {
+    calls.push({
+      url: String(url),
+      method: (init && init.method) || 'GET',
+      body: init && init.body !== undefined ? String(init.body) : null,
+    });
+    const next = replies.shift() || {};
+    const status = next.status === undefined ? 200 : next.status;
+    const text = next.text !== undefined
+      ? String(next.text)
+      : JSON.stringify(next.json === undefined ? {} : next.json);
+    return Promise.resolve({
+      ok: status < 400,
+      status,
+      // Parsed from the body it was actually given, so a plain-text 500 rejects
+      // here exactly as it does in a browser. That rejection is the defect: it
+      // took the page's Save with it.
+      json: () => new Promise((resolve, reject) => {
+        try { resolve(JSON.parse(text)); } catch (error) { reject(error); }
+      }),
+      text: () => Promise.resolve(text),
+    });
+  }
+
+  // Queued, not run. A timer that fired by itself would set a page's autosave
+  // going against an answer nobody scripted; `__tick()` runs what is pending, so
+  // a test about a timer — the live region re-sets a repeated message on one —
+  // says when the clock moves.
+  const timers = new Map();
+  let ticket = 1;
 
   class DriverEvent {
     constructor(type, init) { this.type = type; Object.assign(this, init || {}); }
@@ -332,18 +456,29 @@ function run(html, expression) {
     console,
     JSON, Math, Date, Object, Array, String, Number, Boolean, RegExp, Map, Set,
     Promise, Error, URLSearchParams, URL, isNaN, parseInt, parseFloat, encodeURIComponent,
-    // Nothing is scheduled: a timer that fired would run a page's autosave
-    // against a fetch that resolves to nothing, and the markup under test is
-    // all written synchronously.
-    setTimeout: () => 0,
-    clearTimeout: () => {},
+    setTimeout: (fn, delay) => {
+      timers.set(ticket, {fn, delay: Number(delay) || 0});
+      return ticket++;
+    },
+    clearTimeout: id => { timers.delete(id); },
+    // Every pending timer, soonest first, and the count for a test that wants to
+    // say how many were left behind.
+    __tick: () => {
+      const due = [...timers.values()].sort((one, two) => one.delay - two.delay);
+      timers.clear();
+      for (const timer of due) timer.fn();
+      return due.length;
+    },
+    __pending: () => timers.size,
+    // Still nothing: the only interval on these pages is a two-minute autosave,
+    // which is never what a test is asking about.
     setInterval: () => 0,
     clearInterval: () => {},
     requestAnimationFrame: () => 0,
     Event: DriverEvent,
     CustomEvent: DriverEvent,
     EventSource: class { constructor() { this.onmessage = null; } close() {} },
-    fetch: () => Promise.resolve({ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve('') }),
+    fetch: answer,
     location: {search: '', pathname: '/', href: 'http://localhost/'},
     history: {replaceState() {}, pushState() {}},
     localStorage: {getItem: () => null, setItem() {}, removeItem() {}},
@@ -381,23 +516,48 @@ function run(html, expression) {
       // declaration is instantiated before any of that runs, so the thing under
       // test is defined either way. The caller asserts it got markup back,
       // which is what proves the run went far enough to matter.
-      errors.push(String(error && error.stack ? error.stack.split('\n')[0] : error));
+      // The message as well as the line: `evalmachine.<anonymous>:69` alone says
+      // nothing about which of the shim's gaps a page fell into.
+      const where = error && error.stack ? error.stack.split('\n')[0] : '';
+      errors.push(`${String(error)} at ${where}`);
     }
   }
 
   let value = null;
+  let settled = true;
   try {
     value = new vm.Script(`(${expression})`).runInContext(context, {timeout: 20000});
+    if (value && typeof value.then === 'function') {
+      // A write path that hangs is one of the defects, not a driver failure:
+      // `response.json()` on a plain-text 500 used to leave the cycle page's
+      // `flush()` unresolved for ever, with Save disabled behind it. Raced
+      // rather than awaited, so that comes back as an answer instead of as a
+      // process that produced no output at all.
+      const WAITING = {};
+      let alarm = null;
+      const raced = await Promise.race([value, new Promise(resolve => {
+        alarm = setTimeout(() => resolve(WAITING), 2000);
+      })]);
+      // Held open by the alarm until it fires — nothing else is pending when the
+      // page's promise is stuck, and a process that just ends prints nothing at
+      // all — then cleared, so a run that settled at once does not wait for it.
+      clearTimeout(alarm);
+      settled = raced !== WAITING;
+      value = settled ? raced : null;
+    }
   } catch (error) {
     errors.push('expression: ' + String(error && error.message ? error.message : error));
   }
-  return {written: WRITTEN, value, errors};
+  return {written: WRITTEN, value, errors, calls, settled};
 }
 
 let input = '';
 process.stdin.setEncoding('utf-8');
 process.stdin.on('data', chunk => { input += chunk; });
-process.stdin.on('end', () => {
-  const answer = run(input, process.argv[2] || 'null');
+process.stdin.on('end', async () => {
+  const options = JSON.parse(process.argv[3] || '{}');
+  const answer = await run(input, process.argv[2] || 'null', options);
+  // Written and then left to drain. `process.exit` here truncates the answer on
+  // a pipe, and the table's is a hundred kilobytes of markup.
   process.stdout.write(JSON.stringify(answer));
 });

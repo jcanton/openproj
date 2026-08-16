@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import secrets
 import threading
@@ -40,6 +41,7 @@ from typing import Literal
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 from . import render
@@ -136,13 +138,26 @@ def _entities_at(store: Store, commit: str) -> list[Entity]:
 
 
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
-# then breaks the scheduler on the next read. The client coerces; this is the
-# server refusing to take its word for it.
+# then breaks the scheduler on the next read.
 def _reject_bad_cycle(fields: dict) -> None:
-    """A form returns strings here too, and an availability of `"half"` is valid
-    YAML that parses and then divides a date by a word."""
+    """The one place that decides what a cycle field may hold.
+
+    A form returns strings here too, and an availability of `"half"` is valid
+    YAML that parses and then divides a date by a word. The boxes now send what
+    was typed rather than a coerced number, because a refusal is only useful if
+    it can quote the value — so this is where a word becomes a 422 instead of a
+    date the record cannot hold.
+    """
+    if "starts_on" in fields:
+        fields["starts_on"] = _as_iso_date(fields["starts_on"], "starts_on")
+    # `in fields`, not `is not None`. Skipping a null let it through to the file,
+    # and `build_weeks: null` is a ValidationError inside `parse_cycle_text` —
+    # an unhandled 500 whose body is not even JSON, so the page could not say
+    # what was wrong. Null still arrives from anything that coerces before it
+    # sends — `Number('six')` is NaN and `JSON.stringify` writes NaN as null —
+    # and this endpoint answers browsers it did not render.
     for name in ("build_weeks", "cooldown_weeks"):
-        if name in fields and fields[name] is not None:
+        if name in fields:
             fields[name] = _as_positive(fields[name], name)
     rates = fields.get("availability")
     if rates is not None:
@@ -153,11 +168,50 @@ def _reject_bad_cycle(fields: dict) -> None:
         }
 
 
+def _why(error: ValueError) -> str:
+    """A parse failure in one line of somebody's own words.
+
+    `str(ValidationError)` is four lines and a documentation URL; what a reader
+    needs is which field would not read back.
+    """
+    if isinstance(error, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(part) for part in one['loc']) or 'the record'}: {one['msg']}"
+            for one in error.errors()
+        )
+    return str(error)
+
+
+def _as_iso_date(value: object, name: str) -> str:
+    """A date the record can hold, spelled the way the corpus spells one.
+
+    An empty date box posts `""`, which is not a refusal anywhere on the way in
+    and is a ValidationError on the way back out — so clearing the date and
+    pressing Save was a 500.
+    """
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            pass
+    raise HTTPException(422, f"{name} must be a date like 2026-09-01, not {value!r}")
+
+
 def _as_positive(value: object, name: str) -> float:
+    # Said as "blank" rather than as `None`: null arrives here from a box
+    # somebody emptied or typed a word into, and `None` is a word from this
+    # language rather than from anything on their screen.
+    if value is None:
+        raise HTTPException(422, f"{name} must be a number, and this one is blank")
     try:
         number = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         raise HTTPException(422, f"{name} must be a number, not {value!r}") from None
+    # `float("inf")` is a number and passes every test below it, and a cycle
+    # `.inf` weeks long is every date on every page gone. `nan` fails the
+    # comparison, but says "not nan" rather than naming what was typed.
+    if not math.isfinite(number):
+        raise HTTPException(422, f"{name} must be an ordinary number, not {value!r}")
     if number <= 0:
         raise HTTPException(422, f"{name} must be greater than zero, not {number:g}")
     return number
@@ -475,7 +529,16 @@ def create_app(
         content = patch_text(original, fields, body)
         # Parse before writing, not after: a roster that fails to load would take
         # every date on every page with it, and the file would already be in git.
-        parse_cycle_text(content, path)
+        # Refused rather than raised — everything the checks above do not name
+        # reached here as an unhandled ValidationError, which is a 500 with a
+        # plain-text body, and a plain-text body is a client that cannot even
+        # report the failure.
+        try:
+            parse_cycle_text(content, path)
+        except ValueError as error:
+            raise HTTPException(
+                422, f"that would not read back as a cycle: {_why(error)}"
+            ) from None
         written = store.write(
             path=path,
             content=content,

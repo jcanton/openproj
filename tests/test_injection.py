@@ -360,7 +360,7 @@ def test_the_fixture_really_is_hostile(hostile_static):
 DRIVER = Path(__file__).parent / "js" / "drive.js"
 
 
-def run_js(html: str, expression: str = "null") -> dict:
+def run_js(html: str, expression: str = "null", **options: object) -> dict:
     """The page's own scripts, run, with everything they wrote reported back.
 
     node, not a substring search: `rowHtml`, `tipHtml`, the combobox's `<li>` and
@@ -368,11 +368,15 @@ def run_js(html: str, expression: str = "null") -> dict:
     the rendered file shows what they build. The harness runs the page's real
     script blocks against a minimal DOM and reports the raw strings; the parsing
     and the judgement stay here, in the same census the pages get.
+
+    `options` is the driver's — `page`, `replies` — and is what `test_writes`
+    drives a refusal with. One entry point, because two ways to start the same
+    shim is two shims a year from now.
     """
     if shutil.which("node") is None:  # pragma: no cover - depends on the machine
         pytest.skip("node is not installed, so the shipped JavaScript cannot be driven")
     result = subprocess.run(
-        ["node", str(DRIVER), expression],
+        ["node", str(DRIVER), expression, json.dumps(options)],
         input=html, capture_output=True, text=True, timeout=120,
     )
     assert result.returncode == 0, f"the driver failed:\n{result.stderr}"

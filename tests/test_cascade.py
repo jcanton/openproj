@@ -269,3 +269,29 @@ def test_the_timeline_still_says_which_of_its_two_controls_is_the_verb(index: In
     assert sheet.value(apply, "color") == "var(--on-accent)"
     assert sheet.value(reset, "background") == "var(--surface)"
     assert sheet.value(apply, "padding") == sheet.value(reset, "padding")
+
+
+# --------------------------------------------------------------------------- #
+# C3: the report a conflict comes back with
+# --------------------------------------------------------------------------- #
+
+
+def test_a_conflict_report_is_a_report_on_the_table_as_well_as_the_detail_page(index: Index):
+    """The same box, twice: `#conflict` beside the editor and `#row-conflict`
+    beside the row. The rule was written in `_DETAIL_STYLE`, which the table does
+    not load, so a report naming a file and every field that disagreed collapsed
+    into one run of unstyled text — on the page where it is the only thing saying
+    the save did not land."""
+    for name, page, box in (
+        ("detail", render_detail(index, ROUTES, base_commit=HEAD), el("div", id="conflict")),
+        ("table", render_table(index, ROUTES, base_commit=HEAD), el("div", id="row-conflict")),
+    ):
+        sheet = sheet_of(page)
+        path = PAGE + [box]
+        # The line breaks are the report: one field per line, and `pre-wrap` is
+        # what keeps them.
+        assert sheet.value(path, "white-space") == "pre-wrap", (
+            f"{name}: {says(sheet, path, 'white-space')}"
+        )
+        assert sheet.value(path, "border-left") == "3px solid var(--danger)", name
+        assert sheet.value(path, "padding") == ".5rem .8rem", name

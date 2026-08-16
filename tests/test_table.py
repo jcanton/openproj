@@ -572,7 +572,10 @@ def test_a_conflict_is_never_written_into_an_editable_cell(page: str):
     body = script(page)
 
     assert not re.search(r"\.value\s*=[^;\n]*conflict", body, re.I)
-    assert re.search(r"(textContent|innerText)\s*=[^;\n]*conflict", body, re.I), (
+    # `refusal(answer, 409)` as well as `answer.conflict`: the report is read out
+    # of the answer by the shell's one helper now, because three other write
+    # paths were reading a `detail` key a 409 does not carry.
+    assert re.search(r"(textContent|innerText)\s*=[^;\n]*(conflict|refusal)", body, re.I), (
         "the report must be shown as text, beside the row it belongs to"
     )
     assert re.search(r"[.#]conflict\b", page), (

@@ -522,7 +522,9 @@ def test_the_detail_page_announces_a_save_it_only_used_to_draw(page: str):
     assert "STATE.textContent" not in body, "the direct write this replaced"
     for message in ("'saving…'", "'not saved'", "'nothing changed'", "'unsaved draft restored'"):
         assert f"announce({message})" in body, message
-    assert "announce(answer.detail || 'refused')" in body
+    # Through the shell's `refusal`, which knows that a 409 carries the report
+    # rather than a `detail` — the key this line used to read on its own.
+    assert "announce(refusal(answer, response.status))" in body
     # And the region it lands in exists whether or not this page drew one.
     assert '<p id="announce" class="sr-only" role="status" aria-live="polite">' in page
     assert '<span id="state" role="status"></span>' in page
@@ -561,9 +563,9 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     """
     new = client.get("/new?kind=pitch").text
 
-    assert "function refusals(answer) {" in new
+    assert "function refusals(answer, status) {" in new
     assert "return control ? `${labelOf(control)}: ${problem.message}` : problem.message;" in new
-    assert "if (!problems.length) return [answer.detail || 'refused'];" in new
+    assert "if (!problems.length) return [refusal(answer, status)];" in new
     assert "CSS.escape(problem.field)" in new, "the field arrives over the wire"
     # Built, not interpolated.
     assert "item.textContent = text;" in new

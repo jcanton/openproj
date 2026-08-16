@@ -981,6 +981,13 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 tr.nothing td { padding: 2.5rem .5rem; text-align: center; }
 tr.nothing .headline { margin: 0 0 .25rem; color: var(--fg); font-size: 15px; }
 tr.nothing .hint { margin: 0 0 .75rem; }
+/* What a 409 comes back with: the file, and every field that disagreed, one per
+   line. `pre-wrap` because it is a report rather than a sentence, and the rule
+   down the side because it is the one answer that means the save did not land.
+   It was in _DETAIL_STYLE, which the table does not load — so the table's copy
+   of the same box collapsed into one run of unstyled text. */
+#conflict, #row-conflict { border-left: 3px solid var(--danger); padding: .5rem .8rem;
+                           margin-top: 1rem; white-space: pre-wrap; font-size: 13px; }
 /* Above everything a page can stick to its own edges — the cycle page's commit
    bar sits in exactly this corner — because news that the plan moved under you
    is the one thing on screen that must not be behind something else. */
@@ -1037,22 +1044,63 @@ const esc = value => String(value ?? '').replace(/[&<>"]/g,
 const STATUS_RUNGS = {{ statuses|tojson }};
 const stClass = status => STATUS_RUNGS.includes(status) ? `st-${status}` : 'st-ready';
 
+// The re-set a repeated message is waiting on. One variable and not one per
+// region, because `announce` picks the same region every time on a given page:
+// `#state` if the page has one, the hidden region otherwise.
+let repeating = 0;
+
 // `announce` and not `say`: two classic scripts on one page share one global
 // scope, and the graph and the cycle page each already own a `say`.
 function announce(message) {
   // The page's own place for a message where it has one, which is visible and is
   // already a live region — announcing into both would say everything twice.
   const where = document.getElementById('state') || ANNOUNCE;
+  // Whatever the last repeat was waiting to put back is no longer the message.
+  // Without this, the cycle page's `say('')` on every staged edit left one timer
+  // per edit, each of them holding an empty string, and they fired *after* the
+  // save that followed — so "Saved 2 changes" appeared and was then blanked by
+  // an edit made before it.
+  clearTimeout(repeating);
   if (where.textContent === message) {
+    // Nothing was said and nothing is being said: no region to change, and no
+    // timer to leave behind for a later message to trip over.
+    if (message === '') return;
     // A live region speaks when its contents CHANGE, so refusing the same cell
     // twice would have been announced once. Cleared and re-set on a timer rather
     // than a frame, because a frame never comes in a tab nobody is looking at —
     // and the two-minute autosave says its receipt into exactly that tab.
     where.textContent = '';
-    setTimeout(() => { where.textContent = message; }, 0);
+    repeating = setTimeout(() => { where.textContent = message; }, 0);
     return;
   }
   where.textContent = message;
+}
+
+// One reading of a write's answer, for every page that writes.
+//
+// A 500 answers in `text/plain`, and `response.json()` on one rejects — which
+// left `flush()` unresolved with Save disabled and the bar still claiming N
+// unsaved changes, and nothing said about any of it. An answer nobody can parse
+// is an answer with no keys in it, which every caller below already handles.
+async function answerOf(response) {
+  try {
+    return await response.json();
+  } catch (error) {
+    return {};
+  }
+}
+
+// What to say about a write the server would not do.
+//
+// There is no `detail` on a 409: the answer carries `conflict`, the report
+// naming the file and every field that disagreed. Three of the five write paths
+// read `answer.detail` there, so the one answer that means *somebody else moved
+// the plan* printed as "refused".
+function refusal(answer, status) {
+  if (status === 409) return answer.conflict || 'somebody else changed this first';
+  return answer.detail
+    || (answer.problems || []).map(problem => problem.message).join('; ')
+    || 'refused';
 }
 </script>
 <main id="main">
@@ -1622,6 +1670,12 @@ async function refreshProblems() {
 
 async function saveCell(cell, value) {
   const field = cell.dataset.field;
+  const box = document.getElementById('row-conflict');
+  // Cleared here and nowhere else. This page redraws instead of reloading, so
+  // nothing else ever took the banner down: one 409 left "somebody changed this
+  // before you" standing over every save that landed afterwards.
+  box.hidden = true;
+  box.textContent = '';
   let coerced;
   try {
     coerced = coerce(EDITABLE[field], value);
@@ -1645,15 +1699,14 @@ async function saveCell(cell, value) {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
     });
-    const answer = await response.json();
-    const box = document.getElementById('row-conflict');
+    const answer = await answerOf(response);
     if (response.status === 409) {
       box.hidden = false;
-      box.textContent = answer.conflict;
+      box.textContent = refusal(answer, 409);
       return;
     }
     if (!response.ok) {
-      announce(answer.detail || 'refused');
+      announce(refusal(answer, response.status));
       return;
     }
     // The page moves forward with the repository, or its next save collides with
@@ -2537,13 +2590,15 @@ if (CONNECT) {
           method: 'PATCH', headers: {'content-type': 'application/json'},
           body: JSON.stringify({base_commit: base.value, fields, body: null}),
         });
-        const answer = await response.json();
+        const answer = await answerOf(response);
         if (!response.ok) {
           // The validator refuses an edge onto an ancestor, and a cycle. Say which,
           // and say what did get written: stopping silently after three of five
-          // would leave the page disagreeing with the repository.
-          const why = answer.detail || (answer.problems || []).map(p => p.message).join('; ');
-          say(`${id}: ${why || 'refused'}${written ? ` — ${written} already saved` : ''}`);
+          // would leave the page disagreeing with the repository. The shell's
+          // `refusal` because an edge saved against a moved HEAD comes back 409,
+          // and this said "refused" where the answer held the whole report.
+          const why = refusal(answer, response.status);
+          say(`${id}: ${why}${written ? ` — ${written} already saved` : ''}`);
           SAVE.disabled = false;
           return;
         }
@@ -3102,7 +3157,7 @@ function attachUploads(area, status) {
       const response = await fetch('/api/asset', {
         method: 'POST', headers: {'content-type': file.type}, body: file,
       });
-      const answer = await response.json();
+      const answer = await answerOf(response);
       // Only a fresh upload made a commit. Claiming the sha of one that was
       // already in the plan would swallow a banner about somebody else's write.
       if (response.ok && answer.fresh) committed = answer.commit;
@@ -3390,9 +3445,12 @@ function labelOf(control) {
 // printing that identifier is how `appetite_weeks` ended up in a sentence under
 // a label reading "Appetite (weeks)". The field is named by the same `labelOf`
 // the form's own check uses, so the two refusals cannot drift apart.
-function refusals(answer) {
+function refusals(answer, status) {
   const problems = answer.problems || [];
-  if (!problems.length) return [answer.detail || 'refused'];
+  // The shell's `refusal`, which is the one place that knows a 409 answers with
+  // a report rather than with a `detail` — creating an entity against a moved
+  // HEAD is a conflict like any other, and this line printed "refused" for it.
+  if (!problems.length) return [refusal(answer, status)];
   return problems.map(problem => {
     // `CSS.escape` because the field arrives over the wire: an unescaped one
     // would be a malformed selector, and a DOMException here would swallow the
@@ -3614,7 +3672,7 @@ document.getElementById('save').onclick = async () => {
         body: BODY.value || '',
       }),
     });
-    const answer = await response.json();
+    const answer = await answerOf(response);
     if (!response.ok) {
       // The client check is a courtesy; this is the truth, and swallowing it leaves
       // somebody staring at a form that looks fine. Named by the same `labelOf`
@@ -3622,7 +3680,7 @@ document.getElementById('save').onclick = async () => {
       // field identically — and built as text nodes, because `answer.detail`
       // quotes back whatever key was posted.
       PROBLEMS.hidden = false;
-      PROBLEMS.replaceChildren(...refusals(answer).map(text => {
+      PROBLEMS.replaceChildren(...refusals(answer, response.status).map(text => {
         const item = document.createElement('li');
         item.textContent = text;
         return item;
@@ -3916,17 +3974,17 @@ async function save() {
         base_commit: FORM.querySelector('[name=base_commit]').value, fields, body,
       }),
     });
-    const answer = await response.json();
+    const answer = await answerOf(response);
     const box = document.getElementById('conflict');
     if (response.status === 409) {
       // Into its own box, never into the textarea: text pasted into the editing
       // surface is text somebody saves back.
       box.hidden = false;
-      box.textContent = answer.conflict;
+      box.textContent = refusal(answer, 409);
       announce('not saved');
       return;
     }
-    if (!response.ok) { announce(answer.detail || 'refused'); return; }
+    if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
     localStorage.removeItem(DRAFT);
     location.reload();
@@ -4078,8 +4136,9 @@ textarea.body-field {
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
-#conflict { border-left: 3px solid var(--danger); padding: .5rem .8rem; margin-top: 1rem;
-            white-space: pre-wrap; font-size: 13px; }
+/* `#conflict` is the shell's. It was written here, and the table draws the same
+   box — `#row-conflict` — without loading this stylesheet, so the same report
+   was a bordered block on one page and unstyled text on the other. */
 """
 
 
@@ -4706,8 +4765,12 @@ async function put(fields) {
       method: 'PUT', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
     });
-    const answer = await response.json();
-    if (!response.ok) { say(answer.detail || 'refused'); return null; }
+    // `answerOf` and not `response.json()`: a 500 answers in plain text, and the
+    // rejection took `flush()` with it — Save disabled, the bar still claiming
+    // unsaved changes, and nothing said. `refusal` because a cycle written
+    // against a moved HEAD answers with a report and no `detail` at all.
+    const answer = await answerOf(response);
+    if (!response.ok) { say(refusal(answer, response.status)); return null; }
     committed = answer.commit;
     BASE.value = answer.commit || BASE.value;
     return answer;
@@ -4739,13 +4802,30 @@ async function saveSetup() {
   const setup = document.getElementById('setup');
   const availability = {};
   for (const input of document.querySelectorAll('input.rate')) {
-    const rate = Number(input.value);
-    if (rate > 0) availability[input.dataset.login] = rate;
+    const typed = input.value.trim();
+    const rate = Number(typed);
+    // Refused, not skipped. A missing name means somebody was taken out of the
+    // cycle with their capacity, so `if (rate > 0)` turned an empty box, a zero
+    // or a `50%` into a removal nobody asked for and nothing reported. Taking
+    // somebody out is the button beside their name, which asks first. Said the
+    // way the bets table one screen away says it: the field, and the value.
+    if (!typed || Number.isNaN(rate) || rate <= 0) {
+      say(`${input.dataset.login}'s availability must be a number greater than `
+          + `zero, not "${input.value}"`);
+      input.focus();
+      return false;
+    }
+    availability[input.dataset.login] = rate;
   }
+  // The three boxes as they were typed. `Number('six')` is NaN and
+  // `JSON.stringify` sends NaN as null, so coercing here threw the typo away and
+  // left the server refusing "blank" about a box holding a word. The server is
+  // the one place that decides what a cycle field may hold, and it can only name
+  // the value if it is given the value.
   const fields = {
     starts_on: setup.querySelector('[name=starts_on]').value,
-    build_weeks: Number(setup.querySelector('[name=build_weeks]').value),
-    cooldown_weeks: Number(setup.querySelector('[name=cooldown_weeks]').value),
+    build_weeks: setup.querySelector('[name=build_weeks]').value.trim(),
+    cooldown_weeks: setup.querySelector('[name=cooldown_weeks]').value.trim(),
     availability,
   };
   if (!(await put(fields))) return false;
@@ -4824,10 +4904,9 @@ async function flush(quiet) {
         method: 'PATCH', headers: {'content-type': 'application/json'},
         body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
       });
-      const answer = await response.json();
+      const answer = await answerOf(response);
       if (!response.ok) {
-        say(`${id}: ${answer.detail
-              || (answer.problems || []).map(p => p.message).join('; ') || 'refused'}`
+        say(`${id}: ${refusal(answer, response.status)}`
             + (saved ? ` — ${saved} already saved` : ''));
         mark();
         return false;
@@ -5194,18 +5273,20 @@ document.getElementById('yes').onclick = async () => {
       method: 'PUT', headers: {'content-type': 'application/json'},
       body: JSON.stringify({
         base_commit: field('base').value,
+        // As typed, the way the cycle page sends them: a coerced NaN arrives as
+        // null and the refusal can only say "blank" about a box with a word in it.
         fields: {
           starts_on: field('starts').value,
-          build_weeks: Number(field('build').value),
-          cooldown_weeks: Number(field('cooldown').value),
+          build_weeks: field('build').value.trim(),
+          cooldown_weeks: field('cooldown').value.trim(),
           availability: ROSTER,
         },
         body: null,
       }),
     });
-    const answer = await response.json();
+    const answer = await answerOf(response);
     if (!response.ok) {
-      announce(answer.detail || 'refused');
+      announce(refusal(answer, response.status));
       CONFIRM.hidden = true;
       START.hidden = false;
       return;

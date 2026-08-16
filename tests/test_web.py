@@ -1248,6 +1248,64 @@ def test_a_cycle_the_server_could_not_read_back_is_never_committed(
     assert git_head(repo_path) == before
 
 
+# Every one of these is one gesture away in the browser: clear the date box, or
+# type a word into build weeks — `Number('six')` is NaN and `JSON.stringify`
+# sends NaN as null. All three reached `parse_cycle_text` and raised an
+# unhandled ValidationError, which is a 500 whose body is not even JSON: the
+# page could not report it, and its Save never came back.
+@pytest.mark.parametrize(
+    "fields, says",
+    [
+        ({"starts_on": "", "build_weeks": 4}, "starts_on"),
+        ({"starts_on": "17/08/2026"}, "starts_on"),
+        ({"starts_on": None}, "starts_on"),
+        ({"starts_on": "2026-08-17", "build_weeks": None}, "build_weeks"),
+        ({"starts_on": "2026-08-17", "cooldown_weeks": None}, "cooldown_weeks"),
+        # As the boxes send them: what was typed, so the refusal can quote it.
+        ({"starts_on": "2026-08-17", "build_weeks": "six"}, "'six'"),
+        ({"starts_on": "2026-08-17", "build_weeks": ""}, "build_weeks"),
+        # A cycle `.inf` weeks long is every date on every page gone, and `inf`
+        # is a number to `float()` and to YAML both.
+        ({"starts_on": "2026-08-17", "build_weeks": "inf"}, "'inf'"),
+        ({"starts_on": "2026-08-17", "availability": {"ann": "nan"}}, "'nan'"),
+        # Nothing names the missing field, so the catch-all around the parse is
+        # what has to answer: a new cycle written with a roster and no date.
+        ({"availability": {"ann": 0.5}}, "starts_on"),
+    ],
+)
+def test_a_cycle_field_the_record_cannot_hold_is_refused_not_raised(
+    client: TestClient, repo_path: Path, fields: dict, says: str
+):
+    before = git_head(repo_path)
+    refused = client.put(
+        "/api/cycle/62", json={"base_commit": before, "fields": fields, "body": None}
+    )
+
+    assert refused.status_code == 422, refused.text
+    detail = refused.json()["detail"]
+    assert says in detail, detail
+    # A refusal writes nothing, and a refusal a person can act on says which box.
+    assert git_head(repo_path) == before
+    assert "\n" not in detail and "pydantic" not in detail, "a sentence, not a stack trace"
+
+
+def test_a_date_the_record_can_hold_is_written_in_the_spelling_the_corpus_uses(
+    client: TestClient, repo_path: Path
+):
+    """The other half of the same check: what passes is normalised, so a date
+    that arrives in the compact ISO spelling is not stored in a second one.
+    Quoted, because ruamel quotes what would otherwise load as a date — which is
+    how every cycle this API has ever written is stored."""
+    made = client.put(
+        "/api/cycle/63",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"starts_on": "20260817", "build_weeks": 4}, "body": None},
+    )
+
+    assert made.status_code == 200, made.text
+    assert "starts_on: '2026-08-17'" in file_at(repo_path, made.json()["commit"], "cycles/0063.md")
+
+
 def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_path: Path):
     """The server loads `cycles/*.md` the same way the CLI does, so a record
     written through the API changes the dates the very next request."""
