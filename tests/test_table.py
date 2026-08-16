@@ -77,7 +77,7 @@ from test_web import (
 from openproj.auth import sign_session
 from openproj.index import build_index
 from openproj.model import load_repo
-from openproj.render import EDITABLE, PRIORITIES, STATUSES, render_static
+from openproj.render import EDITABLE, LABELS, PRIORITIES, STATUSES, render_static
 from openproj.web import SESSION_COOKIE, create_app
 
 # The columns the table draws that nobody may type into. Kept as an expectation
@@ -806,7 +806,14 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
     Marked on the label and re-marked when the status select moves, because what
     is required changes under you the moment it does."""
     facts = re.search(r'<dl id="facts">(.*?)</dl>', new_page, re.S).group(1)
-    marked = re.findall(r"<dt[^>]*>(\w[^<]*)\s*<span class=\"req\" hidden>required</span>", facts)
+    # The word is inside a `<label for>` now: a `<dt>`/`<dd>` pair is a caption to
+    # a reader and two unrelated blocks of text to everything else, so the name a
+    # control answers to is the label element and the mark follows it.
+    marked = re.findall(
+        r"<dt[^>]*><label for=\"[^\"]+\">([^<]+)</label>\s*"
+        r"<span class=\"req\" hidden>required</span>",
+        facts,
+    )
 
     assert {"Owner", "Reviewers", "Assigned on", "PRs"} <= set(m.strip() for m in marked)
     assert "Tags" not in marked, "a field no status demands carries no mark"
@@ -1106,7 +1113,7 @@ def test_the_header_and_the_two_identity_columns_stay_put(page: str):
     a container the height of its own content gives `top: 0` nothing to hold
     against.
     """
-    assert "max-height: calc(100vh - 13rem)" in page, "the body scrolls in the container"
+    assert "max-height: calc(100vh - 15rem)" in page, "the body scrolls in the container"
     assert "thead th {\n  position: sticky; top: 0; z-index: 3; background: var(--surface);" in page
     assert '[data-col="id"] { position: sticky; left: 0; z-index: 1;' in page
     assert '[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;' in page
@@ -1170,7 +1177,10 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
     assert "'Double-click to edit ' + named" in body, "and a description, not only a colour"
     assert re.search(r"const WHY = \{\s*\n\s*size:", body)
     assert "data-why=\"${esc(WHY[key])}\"" in body
-    assert "document.getElementById('state').textContent = computed.dataset.why;" in body
+    # Through `announce`, so the refusal reaches somebody who cannot see the bar
+    # it is drawn in — and from Enter as well as from a double-click.
+    assert "function refuse(cell) {\n  announce(cell.dataset.why);" in body
+    assert "if (computed) refuse(computed);" in body
 
 
 def test_the_page_never_reports_its_own_write_to_itself(page: str, client: TestClient):
@@ -1233,3 +1243,119 @@ def test_the_grouping_of_problems_is_written_once(page: str):
     # The two predicates that read the problem list are recomputed with it.
     assert "row.predicates.push('missing_required_fields');" in script(page)
     assert "row.predicates.push('has_blocker');" in script(page)
+
+
+# --------------------------------------------------------------------------- #
+# Reaching the grid without a mouse
+# --------------------------------------------------------------------------- #
+
+
+def test_a_cell_can_be_edited_without_a_mouse(page: str):
+    """The app's primary editing surface was double-click-only, so half the room
+    could not change a single field on it.
+
+    One tab stop for the whole grid and the arrows moving inside it, because
+    fourteen columns times forty rows is 560 stops if every cell takes one —
+    which is not a keyboard path, it is a maze.
+    """
+    body = script(page)
+
+    assert '<table id="rows" role="grid">' in page, "the arrows belong to the page in a grid"
+    assert "const reachable = EDITABLE && (editable || key in WHY);" in body
+    assert "${reachable ? ' tabindex=\"-1\"' : ''}" in body
+    assert "for (const td of all) td.tabIndex = td === at ? 0 : -1;" in body
+
+    keys = re.search(r"tbody\.addEventListener\('keydown'.*?\n  \}\);", body, re.S).group(0)
+    assert "event.key === 'Enter' || event.key === 'F2'" in keys, "both, because both are tried"
+    assert "openEditor(cell)" in keys
+    assert "ArrowLeft" in keys and "ArrowRight" in keys
+    assert "ArrowUp" in keys and "ArrowDown" in keys
+    # The mouse path is untouched: it opens the same editor.
+    mouse = re.search(r"tbody\.addEventListener\('dblclick'.*?\n  \}\);", body, re.S).group(0)
+    assert "event.target.closest('td.edit')" in mouse and "openEditor(cell)" in mouse
+
+
+def test_the_editor_discards_on_escape_and_commits_on_tab(page: str):
+    """Escape is discard and Tab is commit-and-move, the way every grid behaves.
+
+    Both have to survive the redraw a save causes: `saveCell` rebuilds every row,
+    so the cell that had focus no longer exists by the time the keyboard needs to
+    go back to it.
+    """
+    body = script(page)
+    editor = re.search(r"input\.onkeydown = e => \{.*?\n  \};", body, re.S).group(0)
+
+    assert "if (e.key === 'Enter') { RETURN = true; input.blur(); }" in editor
+    assert "abandoned = true;" in editor, "Escape discards rather than saving the partial value"
+    assert "if (e.key === 'Tab')" in editor and "e.preventDefault();" in editor
+    assert "e.shiftKey ? -1 : 1" in editor, "and backwards"
+    # The place is a row id and a column, not an element: the element is gone.
+    assert re.search(r"AT = \{id: cell\.parentNode\.dataset\.id,\s*\n\s*col:", editor)
+    assert "const held = EDITABLE && (RETURN || !!focused);" in body
+    assert "if (focused && !RETURN) rove(focused);" in body, "back to where it is, not where it was"
+    assert "if (EDITABLE) { rove(null, held); RETURN = false; }" in body
+
+
+def test_the_editor_a_cell_opens_says_what_it_is_editing(page: str):
+    """A box conjured inside a cell inherits nothing from the header above it. It
+    was an unnamed input on top of the one thing that said which column it was."""
+    body = script(page)
+
+    assert "const named = esc(FIELD_LABELS[field] || field);" in body
+    assert '<select data-type="text" aria-label="${named}">' in body
+    assert 'data-type="${EDITABLE[field]}" aria-label="${named}"' in body
+
+
+def test_the_suggestion_popup_announces_itself(page: str):
+    """The keyboard already worked — arrows moved a highlight, Enter picked it —
+    and none of it reached a screen reader: a highlight drawn with a class is a
+    highlight only a sighted reader can follow, and the popup was a bare `<ul>`
+    nobody was told had opened."""
+    body = script(page)
+
+    assert "input.setAttribute('role', 'combobox');" in body
+    assert "input.setAttribute('aria-autocomplete', 'list');" in body
+    assert "input.setAttribute('aria-controls', id);" in body
+    assert "list.setAttribute('role', 'listbox');" in body
+    assert '<li id="${id}-${i}" role="option"' in body
+    # Open and shut, said out loud both ways.
+    assert "input.setAttribute('aria-expanded', String(!list.hidden));" in body
+    assert "input.setAttribute('aria-expanded', 'false');" in body
+
+    # Which option is current, without moving focus off the box being typed in.
+    highlight = re.search(r"function highlight\(\) \{.*?\n  \}", body, re.S).group(0)
+    assert "item.setAttribute('aria-selected', String(i === active));" in highlight
+    assert "input.setAttribute('aria-activedescendant', items[active].id);" in highlight
+    assert "input.removeAttribute('aria-activedescendant');" in highlight
+    # The arrows go through it rather than toggling the class themselves, or the
+    # announcement and the highlight are two things that can disagree.
+    arrows = re.search(r"if \(event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'\).*?\n"
+                       r"    \} else", body, re.S).group(0)
+    assert "highlight();" in arrows and "classList" not in arrows
+    # One counter for the page: `aria-controls` is a reference by id, and the
+    # detail form carries a dozen of these.
+    assert "let SUGGEST_N = 0;" in body and "'suggest-' + (++SUGGEST_N)" in body
+
+
+def test_every_control_on_the_create_form_has_a_name(new_page: str):
+    """A `<dt>`/`<dd>` pair is a caption to a reader and two unrelated blocks of
+    text to everything else, so not one control on this form had a name."""
+    facts = re.search(r'<dl id="facts">(.*?)</dl>', new_page, re.S).group(1)
+    named = dict(re.findall(r'<label for="([^"]+)">([^<]+)</label>', facts))
+
+    assert named, "the labels are the whole of the fix"
+    for control_id, word in named.items():
+        # A label points at a control that is on the page, or it is a name the
+        # reader is told about and cannot reach.
+        assert re.search(rf'<(?:input|select|textarea)[^>]*\bid="{control_id}"', new_page), word
+    for field in ("status", "owner", "assignees", "reviewers", "cycle", "priority"):
+        assert f"new-{field}" in named, field
+        assert named[f"new-{field}"] == LABELS[field]
+
+    # The two boxes that are not facts: the title is the page's own heading and
+    # the body is the document, so neither has a `<dt>` to hang a label on.
+    assert re.search(r'<input name="title"[^>]*aria-label="Title"', new_page)
+    assert re.search(r'<textarea name="body"[^>]*aria-label="Shaping document"', new_page, re.S)
+    # And the page says what it is, which it did not: its `<h1>` was an empty
+    # input.
+    assert "<h1>New entity</h1>" in new_page

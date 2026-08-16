@@ -474,3 +474,73 @@ def test_a_slow_upload_holds_its_place_in_the_text(client: TestClient):
     assert "insert(token)" in send
     assert "area.value.replace(" in send
     assert "response.ok ? `![${alt}](${answer.path})` : ''" in send
+
+
+def test_every_control_on_the_form_has_a_name(page: str):
+    """A `<dt>` beside a `<dd>` is a caption to somebody reading the page and two
+    unrelated blocks of text to everything else, so before this not one control
+    on the detail form had a name at all.
+
+    The label carries the id of the control it names, and the ids are prefixed
+    with the entity's — the static export puts every entity in one file, and
+    `owner` alone would be the same id sixteen times over.
+    """
+    from openproj.render import LABELS
+
+    facts = re.search(r'<dl id="facts">(.*?)</dl>', page, re.S).group(1)
+    named = dict(re.findall(r'<label for="([^"]+)">([^<]+)</label>', facts))
+
+    assert named, "the labels are the whole of the fix"
+    for control_id, word in named.items():
+        assert control_id.startswith(f"{TASK}-"), control_id
+        assert re.search(rf'<(?:input|select|textarea)[^>]*\bid="{control_id}"', page), word
+    for field in ("status", "owner", "assignees", "reviewers", "priority", "cycle"):
+        assert named[f"{TASK}-{field}"] == LABELS[field], field
+
+    # The two boxes with no fact row to hang a label on: the title is the page's
+    # heading and the body is the document.
+    assert re.search(r'<input name="title"[^>]*aria-label="Title"', page)
+    assert re.search(r'<textarea name="body"[^>]*aria-label="Shaping document"', page, re.S)
+
+
+def test_a_derived_row_carries_no_label_because_it_carries_no_control(page: str):
+    """`for` pointing at nothing is a name the reader is told about and cannot
+    reach, which is worse than the caption it replaced."""
+    facts = re.search(r'<dl id="facts">(.*?)</dl>', page, re.S).group(1)
+    derived = re.findall(r'<dt class="[^"]*derived[^"]*">(.*?)</dt>', facts, re.S)
+
+    assert derived, "the page draws no derived fact"
+    for row in derived:
+        assert "<label" not in row, row
+
+
+def test_the_detail_page_announces_a_save_it_only_used_to_draw(page: str):
+    """`#state` was written to directly, and on every page that has no `#state` —
+    which is every page you can only read — the same message went nowhere."""
+    body = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", page, re.S))
+
+    assert "STATE.textContent" not in body, "the direct write this replaced"
+    for message in ("'saving…'", "'not saved'", "'nothing changed'", "'unsaved draft restored'"):
+        assert f"announce({message})" in body, message
+    assert "announce(answer.detail || 'refused')" in body
+    # And the region it lands in exists whether or not this page drew one.
+    assert '<p id="announce" class="sr-only" role="status" aria-live="polite">' in page
+    assert '<span id="state" role="status"></span>' in page
+
+
+def test_every_answer_a_write_gives_lands_in_a_live_region(client: TestClient, page: str):
+    """A refusal, a conflict and an upload are all answers to a write, and each of
+    them was a box that appeared with nothing said about it.
+
+    They keep their own places on the page — a conflict belongs beside the editor
+    it refused, not in a status bar — so each one is a region of its own rather
+    than being routed through `announce`.
+    """
+    new = client.get("/new?kind=pitch").text
+
+    assert '<div id="conflict" role="status" aria-live="polite" hidden>' in page
+    assert '<span class="hint" id="upload" role="status" aria-live="polite">' in page
+    assert '<span class="hint" id="upload" role="status" aria-live="polite">' in new
+    assert '<ul id="problems" class="problems" role="status" aria-live="polite" hidden>' in new
+    # And the table's, which writes the conflict into the box and returns.
+    assert '<div id="row-conflict" role="status" aria-live="polite" hidden>' in client.get("/").text

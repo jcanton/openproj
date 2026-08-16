@@ -1672,3 +1672,54 @@ def test_the_preview_still_refuses_html(client: TestClient):
 
     assert "<script>" not in smuggled
     assert "<img" not in smuggled
+
+
+def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
+    """The three boxes that decide when a cycle runs sat under `<dt>`s, and the
+    betting table is four hundred boxes named by a column header a reader who
+    lands on one of them never passed through.
+
+    A row's controls are named after the row, not the column: "appetite" without
+    "for what" is not a name.
+    """
+    page = client.get("/cycle/37").text
+    setup = re.search(r'<form id="setup".*?</form>', page, re.S).group(0)
+
+    for field, word in (("starts_on", "Starts on"), ("build_weeks", "Build weeks"),
+                        ("cooldown_weeks", "Cool-down weeks")):
+        assert f'<label for="{field}">{word}</label>' in setup, field
+        assert re.search(rf'<input[^>]*\bid="{field}"', setup), field
+    assert '<label for="joining"' in page and 'id="joining"' in page
+
+    rows = re.findall(r'<tr data-id="([^"]+)".*?</tr>', page, re.S)
+    assert rows, "the corpus offers nothing to bet"
+    for row in re.findall(r'<tr data-id="[^"]+".*?</tr>', page, re.S):
+        title = re.search(r'<a href="[^"]*">([^<]+)</a>', row).group(1)
+        assert f'aria-label="Bet {title} into cycle 37"' in row, title
+        assert f'aria-label="{title} appetite in weeks"' in row, title
+        assert f'aria-label="{title} assignees"' in row, title
+        assert f'aria-label="{title} reviewers"' in row, title
+
+    # Every control on the page is named one way or the other. A checkbox with no
+    # label and no aria-label is a checkbox announced as "checkbox". The style and
+    # script blocks come out first: both of them talk *about* `<input type=date>`.
+    markup = re.sub(r"<(style|script)\b.*?</\1>", "", page, flags=re.S)
+    for tag in re.findall(r"<(?:input|select|textarea)[^>]*>", markup):
+        if 'type="hidden"' in tag:
+            continue
+        named = "aria-label=" in tag or re.search(r'\bid="([^"]+)"', tag)
+        assert named, tag
+        if "aria-label=" not in tag:
+            control_id = re.search(r'\bid="([^"]+)"', tag).group(1)
+            assert f'<label for="{control_id}"' in page, tag
+
+
+def test_a_receipt_the_cycle_page_draws_is_a_receipt_it_announces(client: TestClient):
+    """The bar said "Saved 3 changes" and nothing said it out loud. `say` goes
+    through the shell's region, which puts it in `#state` as well — so the
+    sentence is drawn in the same place and announced for the first time."""
+    page = client.get("/cycle/37").text
+
+    assert "function say(message) { announce(message); }" in page
+    assert "STATE.textContent" not in page, "the direct write this replaced"
+    assert 'id="state" role="status"' in page

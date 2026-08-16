@@ -8,9 +8,11 @@ guesses, and which work is late.
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 import pytest
+from markupsafe import escape
 
 from openproj.index import Index, build_index
 from openproj.model import load_repo
@@ -376,7 +378,7 @@ def test_the_timeline_orders_its_rows_by_containment(tmp_path: Path):
     out = tmp_path / "tree"
     render_static(index, out)
 
-    rows = re.findall(r'<div class="row" data-id="([^"]+)" data-depth="(\d+)"',
+    rows = re.findall(r'<div class="row" role="listitem" data-id="([^"]+)" data-depth="(\d+)"',
                       read(out, "timeline.html"))
 
     assert rows[:3] == [("proj-000001", "0"), ("pitch-000001", "1"), ("task-000001", "2")]
@@ -1452,7 +1454,9 @@ def test_a_bar_says_its_status_without_using_colour(rendered: Path):
     plot = body[body.index("<svg width="):]
     # One anchor per row, so a glyph is checked against the bar it is inside
     # rather than against whichever bar happens to share its x.
-    rows = re.findall(r"<a href=\"[^\"]*\" aria-label=\"[^\"]*\"\s*>(.*?)</a>", plot, re.S)
+    rows = re.findall(
+        r"<a href=\"[^\"]*\" tabindex=\"-1\" aria-label=\"[^\"]*\"\s*>(.*?)</a>", plot, re.S
+    )
     assert rows, "the seed corpus draws no bars"
 
     marked = 0
@@ -1808,7 +1812,11 @@ def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[
     the index left out, because it iterated the records."""
     out, index = demo_rendered
     body = read(out, "cycles.html")
-    cards = [int(n) for n in re.findall(r'<h2><a href="[^"]*?(\d+)">Cycle \d+</a></h2>', body)]
+    # Named, not linked: a rendered plan is six files and none of them is a
+    # cycle, so the card says which cycle it is and stops there. The server's
+    # copy of this page does link — `test_a_rendered_plan_offers_no_dead_control`
+    # is what pins the difference.
+    cards = [int(n) for n in re.findall(r"<h2>Cycle (\d+)</h2>", body)]
     named = set(index.plans) | set(index.cycles) | {
         e.cycle for e in index.entities.values() if e.cycle is not None
     }
@@ -1827,7 +1835,7 @@ def test_a_cycle_card_carries_the_meter_the_cycle_page_draws(
 
     out, index = demo_rendered
     totals = _cycle_totals(index, 37)
-    card = re.search(r'<li class="card[^"]*">\s*<h2><a href="[^"]*?37">.*?</li>',
+    card = re.search(r'<li class="card[^"]*">\s*<h2>Cycle 37</h2>.*?</li>',
                      read(out, "cycles.html"), re.S).group(0)
 
     assert totals["capacity"] > 0 and totals["bet"] > 0
@@ -1892,3 +1900,165 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
     assert len(people) > 1
     for who in people:
         assert held[who] >= size / len(people) - 1e-9
+
+
+# --------------------------------------------------------------------------- #
+# The page as a document: a name, a landmark, and a way past the furniture
+# --------------------------------------------------------------------------- #
+
+# What each page calls itself, in the words the nav uses for it — a heading that
+# disagrees with the link that got you there is a heading that has to be read
+# twice. The detail page is not here: it is a bundle of documents rather than one
+# page, and `test_the_detail_page_names_each_document_it_holds` covers it.
+PAGE_NAMES = {
+    "index.html": "Table",
+    "graph.html": "Graph",
+    "timeline.html": "Timeline",
+    "cycles.html": "Cycles",
+    "people.html": "People",
+}
+
+
+def test_every_page_names_itself_and_holds_exactly_one_main(rendered: Path):
+    """Four of the six pages had no heading and none of them had a `<main>`.
+
+    A page with no `<h1>` cannot be announced by name, cannot be found by a
+    heading list, and gives a skip link nowhere to land — which is why the skip
+    link came second. One `<main>` and one only, or "the content" is ambiguous.
+    """
+    for page in PAGES:
+        body = read(rendered, page)
+        assert body.count('<main id="main">') == 1, page
+        assert body.count("</main>") == 1, page
+
+    for page, name in PAGE_NAMES.items():
+        body = read(rendered, page)
+        assert f"<h1>{name}</h1>" in body, page
+        # These five draw no stored markdown, so every heading on them is the
+        # page's own. The detail and cycle pages render shaping documents, and a
+        # `# Heading` somebody wrote is not the page failing to have one.
+        assert body.count("<h1") == 1, page
+
+
+def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index: Index):
+    """It is a hash router over every entity: with no hash it is an index, with
+    one it is exactly that document. Each of those views needs a name of its own,
+    and only ever one of them is displayed."""
+    body = read(rendered, "detail.html")
+
+    assert "<h1>Every entity in this plan</h1>" in body
+    for entity in seed_index.entities.values():
+        article = re.search(rf'<article id="{entity.id}".*?</article>', body, re.S).group(0)
+        named = escape(entity.title)
+        assert f'<h1><span class="read">{named}</span></h1>' in article, entity.id
+    # And the router shows one or the other, never both.
+    assert "article.style.display = match ? '' : 'none';" in body
+    assert "document.querySelector('.toc').style.display = found ? 'none' : '';" in body
+
+
+def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
+    """Two shell obligations, because a page cannot opt out of either.
+
+    Every `role="status"` on this app used to be inside `{% if editable %}`, so a
+    rendered plan announced nothing at all — including the sentence a computed
+    column answers a double-click with.
+    """
+    for page in PAGES:
+        body = read(rendered, page)
+        assert '<a class="skip" href="#main">' in body, page
+        assert body.index('class="skip"') < body.index("<nav>"), f"{page}: first in the order"
+        assert '<p id="announce" class="sr-only" role="status" aria-live="polite">' in body, page
+        # Clipped, not hidden: display:none and visibility:hidden both take an
+        # element out of the accessibility tree, which is the one place this
+        # element exists to be in.
+        assert ".sr-only { position: absolute;" in body, page
+        assert "clip-path: inset(50%)" in body, page
+
+    # And the table's own place for a message is a live region on the rendered
+    # file too, where the refusal a derived column gives is the only thing that
+    # ever writes to it.
+    assert '<span id="state" role="status"></span>' in read(rendered, "index.html")
+
+
+def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Index):
+    """A read-only export must not draw a control that cannot work.
+
+    `links.new` is the empty string on a rendered file, so "New entity" was a
+    button back to the page you were already on; the hint beside it promised an
+    editor with no server to save to; and every cycle card linked to a per-cycle
+    page that `render_static` does not write.
+    """
+    table = read(rendered, "index.html")
+    cycles = read(rendered, "cycles.html")
+
+    assert "New entity" not in table
+    assert "double-click a cell" not in table
+    assert '<a class="button" href="">' not in table
+    for number in sorted(set(seed_index.plans) | set(seed_index.cycles)):
+        assert f"<h2>Cycle {number}</h2>" in cycles, number
+    # No anchor anywhere in the export points at a file that was not written.
+    written = {path.name for path in rendered.iterdir()}
+    for page in PAGES:
+        for href in re.findall(r'href="([^"#?]+)[^"]*"', read(rendered, page)):
+            if href.startswith(("http://", "https://", "assets/")):
+                continue
+            assert href in written, f"{page} links to {href}, which is not in the export"
+
+
+def test_the_timeline_lists_beside_the_chart_what_the_chart_draws(rendered: Path):
+    """`role="img"` prunes the whole SVG, seventeen bar links included — which is
+    right only once what it prunes exists somewhere else.
+
+    The column of labels beside the plot is that somewhere else: it already
+    carried a link per row, and now carries the status the fill means, the dates
+    the width means, the marks the hatching means and the sentence the tooltip
+    holds.
+    """
+    body = read(rendered, "timeline.html")
+    labels = re.search(r'<div class="labels" role="list".*?\n</div>', body, re.S).group(0)
+    rows = re.findall(r'<div class="row" role="listitem" data-id="([^"]+)".*?</div>',
+                      labels, re.S)
+    bars = re.findall(r'<rect data-id="([^"]+)" class="bar', body)
+
+    assert bars, "the corpus draws no bars"
+    assert [row for row in rows] == bars, "one row beside the plot per bar on it"
+    assert 'aria-label="Every bar on the chart, with its status and its dates"' in labels
+    for row in re.findall(r'<div class="row" role="listitem".*?</div>', labels, re.S):
+        entity_id = re.search(r'data-id="([^"]+)"', row).group(1)
+        says = re.search(r'<span class="sr-only">(.*?)</span>', row, re.S).group(1)
+        assert entity_id in says, entity_id
+        # A status word and a pair of dates, which the fill and the width are the
+        # only channels for on the chart itself.
+        assert re.search(r"\d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d\.", says), says
+        assert f'<a href="detail.html#{entity_id}"' in row
+    # And the anchors the role prunes are out of the tab order, or Firefox stops
+    # on seventeen links that announce nothing.
+    assert body.count('tabindex="-1" aria-label=') == len(bars)
+
+
+def test_the_hatching_says_in_words_what_it_says_in_texture(demo_rendered: tuple[Path, Index]):
+    """An assumed appetite, work nobody is on and a bet that overruns its cycle
+    are a texture and a stroke over a bar, and neither reaches anybody who is not
+    looking at the plot."""
+    from openproj.model import Config, Task
+    from openproj.render import _MARK_WORDS, _timeline
+
+    # A task with no effort and nobody on it: both marks at once, which the
+    # shipped corpora do not happen to contain.
+    bare = build_index(
+        [Task(id="task-000009", kind="task", title="Nobody has this", status="ready")],
+        Config(),
+        date(2026, 8, 17),
+    )
+    guessed = _timeline(bare)["bars"][0]
+
+    assert guessed["marks"] == ["estimated", "unowned"]
+    for mark in guessed["marks"]:
+        assert _MARK_WORDS[mark] in guessed["reads"].lower(), mark
+
+    # And the outline that means a bet does not fit the cycle it was made in.
+    _, index = demo_rendered
+    late = [bar for bar in _timeline(index)["bars"] if "late" in bar["classes"]]
+    assert late, "the demo corpus overruns nothing"
+    for bar in late:
+        assert "overruns its cycle" in bar["reads"].lower(), bar["id"]

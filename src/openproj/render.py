@@ -81,6 +81,10 @@ _GLYPH_DY = 10.5
 # beside it are what is left, and both still say the status in words.
 _GLYPH_MIN_PX = 11
 _LABEL_CHARS = 40
+# What the hatching over a bar means, in the words the legend uses for it. The
+# hatch is a texture and the outline is a stroke, so neither reaches a reader who
+# is not looking at the plot — the row beside it has to say them.
+_MARK_WORDS = {"estimated": "appetite assumed", "unowned": "nobody on it"}
 # Per level of containment. Enough to read as a step at 11px, small enough that a
 # task three deep still has most of the 250px label column to write its name in.
 _INDENT_PX = 12
@@ -363,11 +367,31 @@ def _timeline(
             max(_MIN_BAR_PX, day_px, x(visible_end + timedelta(days=1)) - x(visible_start)),
             1,
         )
+        explanation = index.explanations.get(entity_id)
+        why = explanation.text if explanation else "Starts as soon as it can."
+        # Everything the drawing says, in words, for the list beside the plot.
+        # A fill, a width, a hatch and an outline are four channels a screen
+        # reader has none of, and the dates are the entity's own rather than the
+        # clipped ones: a window narrower than the plan does not move a deadline.
+        notes = [_MARK_WORDS[name] for name in marks]
+        if span.overruns_cycle_weeks:
+            notes.append("overruns its cycle")
         bars.append(
             {
                 "id": entity_id,
                 "label": _clip(entity.title),
                 "full": f"{entity.title} ({entity_id})",
+                "reads": " ".join(
+                    part
+                    for part in (
+                        f"{entity.title} ({entity_id}).",
+                        f"{_human(entity.status)}.",
+                        f"{span.start} to {span.end}.",
+                        f"{', '.join(notes).capitalize()}." if notes else "",
+                        why,
+                    )
+                    if part
+                ),
                 "depth": depth,
                 "indent": depth * _INDENT_PX,
                 "classes": " ".join(classes),
@@ -383,14 +407,10 @@ def _timeline(
             }
         )
         size, _ = size_weeks(entity, config)
-        explanation = index.explanations.get(entity_id)
         # The table's own row, so the shared `matches()` reads the same fields on
         # this page as on the other two, plus the two things only a bar wants to
         # say: what it is holding, and why it starts when it does.
-        rows[entity_id] = _row(index, entity_id) | {
-            "weeks": round(size, 2),
-            "tip": explanation.text if explanation else "Starts as soon as it can.",
-        }
+        rows[entity_id] = _row(index, entity_id) | {"weeks": round(size, 2), "tip": why}
     cycles = []
     for number, (opens, closes) in sorted(index.cycles.items()):
         if closes < origin or opens > last:
@@ -686,6 +706,27 @@ nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; align-item
    purple are both close to unreadable on a dark ground, and a link is the most
    clicked thing on every one of these pages. */
 a, a:visited { color: var(--accent); }
+/* The page's own name. Four of the six pages had no heading at all, which leaves
+   a screen reader with nothing to say the page IS and a skip link with nowhere
+   to land. Sized down from the browser's 2em: these are dense pages and the
+   heading is a signpost, not a banner. */
+h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
+/* The first stop in the tab order, drawn only once it is reached. Between the
+   nav and the content of the table page sit fourteen sort buttons and ten
+   dropdowns, and walking them on every visit is what a skip link exists to
+   spare. `<main>` carries no tabindex: following a fragment moves the sequential
+   focus starting point to the target on its own, and a tabindex there would put
+   `main` in the focus-ring rule below — a 2px outline round the whole page. */
+.skip { position: absolute; left: .5rem; top: -3rem; z-index: 50;
+        background: var(--surface); color: var(--fg); font-size: 13px;
+        border: 1px solid var(--line-strong); border-radius: 3px;
+        padding: .35rem .6rem; text-decoration: none; }
+.skip:focus { top: .5rem; }
+/* Announced, not drawn. `display: none` and `visibility: hidden` both take an
+   element out of the accessibility tree, so a live region that must stay
+   readable to a screen reader and invisible to everybody else is clipped. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+           overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 #theme {
   margin-left: auto; width: 28px; height: 28px; border-radius: 50%;
   border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
@@ -838,12 +879,47 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 #moved .sha { font-family: var(--font-mono); opacity: .7; }
 {{ style }}
 </style></head><body>
+<a class="skip" href="#main">Skip to the content</a>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
 <a href="{{ links.timeline }}">Timeline</a><a href="{{ links.cycles }}">Cycles</a>
 <a href="{{ links.people }}">People</a>
 <a href="{{ links.detail }}">Detail</a>
 <button type="button" id="theme"></button></nav>
+{#- The home for a message on the pages that have nowhere to put one. Every page
+    that announces anything had a `#state` of its own and every one of those was
+    inside `{% if editable %}`, so a page you can only read carried no live
+    region at all — and a save, a refusal or an explanation that is only drawn is
+    one nobody is told about. -#}
+<p id="announce" class="sr-only" role="status" aria-live="polite"></p>
+<script>
+// Declared before the content, because the pages' own scripts are inside it and
+// some of them announce while loading — the cycle page's receipt, the detail
+// page's restored draft. A function in a later <script> is not hoisted into an
+// earlier one, so defining this alongside the theme toggle below would have made
+// those two messages a ReferenceError instead.
+const ANNOUNCE = document.getElementById('announce');
+
+// `announce` and not `say`: two classic scripts on one page share one global
+// scope, and the graph and the cycle page each already own a `say`.
+function announce(message) {
+  // The page's own place for a message where it has one, which is visible and is
+  // already a live region — announcing into both would say everything twice.
+  const where = document.getElementById('state') || ANNOUNCE;
+  if (where.textContent === message) {
+    // A live region speaks when its contents CHANGE, so refusing the same cell
+    // twice would have been announced once. Cleared and re-set on a timer rather
+    // than a frame, because a frame never comes in a tab nobody is looking at —
+    // and the two-minute autosave says its receipt into exactly that tab.
+    where.textContent = '';
+    setTimeout(() => { where.textContent = message; }, 0);
+    return;
+  }
+  where.textContent = message;
+}
+</script>
+<main id="main">
 {{ content }}
+</main>
 <script>
 // No third state to cycle through: with nothing stored the page follows the
 // system, and the first click stores the opposite of whatever is on screen.
@@ -892,7 +968,11 @@ for (const box of document.querySelectorAll('input[type=date]')) {
 }
 </script>
 {% if live %}
-<div id="moved" hidden></div>
+{#- role="status" and not a bare div: news that somebody else moved the plan
+    under you is the one thing on screen that must reach a reader who is not
+    looking at that corner. Polite, because it is not an emergency — the banner
+    deliberately does nothing until you press reload. -#}
+<div id="moved" role="status" aria-live="polite" hidden></div>
 <script>
 // Somebody else committed. Say so and get out of the way: reloading over an open
 // editor would throw away work that is not in git yet, and the whole point of one
@@ -939,7 +1019,12 @@ source.onmessage = event => {
 
 _FACETS = """
 <div id="controls">
-  <input id="q" type="search" placeholder="Search title, tags, body">
+  {#- A placeholder is not a name: it is gone the moment anything is typed, and
+      it never reaches the accessibility tree as one. Every dropdown beside this
+      box is wrapped in its `<label>`; the search box was the one control in the
+      bar that had nothing to say what it searches. -#}
+  <input id="q" type="search" aria-label="Search title, tags, body"
+         placeholder="Search title, tags, body">
   <div class="facets">
   {% for field in ['kind','priority','status','owner','assignees','reviewers',
                    'cycle','project','tags'] %}
@@ -1035,9 +1120,15 @@ syncFilters();
 """
 
 _TABLE = """
-<p class="editbar"><a class="button" href="{{ links.new }}">New entity</a>
-   <span class="hint">double-click a cell to edit it</span>
-   <span id="state"></span></p>
+<h1>Table</h1>
+{#- Both of these used to be on the rendered files too, where `links.new` is the
+    empty string — so the button was a link back to the page you were already on,
+    and the hint promised an editor that has no server to save to. A read-only
+    export must not offer a control that cannot work: the first time one of them
+    does nothing is the moment the rest of the page stops being believed. -#}
+<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New entity</a>
+   <span class="hint">double-click a cell, or press Enter on it, to edit it</span>
+   {% endif %}<span id="state" role="status"></span></p>
 <div id="summary">
   {#- Two numbers, because the count is of problems and the link filters
       entities: "3 blocking problems" opening a table of 2 rows is the exact way
@@ -1050,7 +1141,11 @@ _TABLE = """
   <span id="shown">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
 </div>
 {{ facets|safe }}
-<div class="table-scroll"><table id="rows"><thead><tr>
+{#- role="grid" only where the cells are editable. It is a claim about who owns
+    the arrow keys — a screen reader hands them to the page inside a grid and
+    keeps them for its own cursor inside a table — and on a rendered file there
+    is no editor for them to reach. -#}
+<div class="table-scroll"><table id="rows"{% if editable %} role="grid"{% endif %}><thead><tr>
   {#- A real button inside every sortable header, not a click handler on the cell:
       there is no way to tab to a table cell, so sorting was mouse-only. The
       columns that cannot be sorted have no button, which is the difference said
@@ -1070,7 +1165,9 @@ _TABLE = """
 </tr></thead><tbody></tbody></table></div>
 {% if editable %}
 <input type="hidden" name="base_commit" id="base" value="{{ base_commit }}">
-<div id="row-conflict" hidden></div>
+{#- A conflict is the one answer that means the save did not land. It was a
+    box that appeared, and nothing more. -#}
+<div id="row-conflict" role="status" aria-live="polite" hidden></div>
 {% endif %}
 <script id="payload" type="application/json">PAYLOAD_JSON</script>
 {% if editable %}{{ combobox|safe }}{% endif %}
@@ -1245,8 +1342,16 @@ function cell(row, key) {
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
   const tip = note || (editable ? 'Double-click to edit ' + named : WHY[key] || '');
+  // Reachable without a mouse. This table is the app's primary editing surface
+  // and it was double-click-only, so half the room could not change a single
+  // field on it. `-1` rather than `0`: `rove()` promotes exactly one cell, so
+  // the grid is one tab stop with the arrows moving inside it — fourteen columns
+  // times forty rows is 560 stops if every cell takes one, which is not a
+  // keyboard path, it is a maze.
+  const reachable = EDITABLE && (editable || key in WHY);
   return `<td data-col="${key}"${editable ? ` data-entity="${row.id}" data-field="${key}"` : ''}` +
     `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
+    `${reachable ? ' tabindex="-1"' : ''}` +
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
 }
 
@@ -1299,7 +1404,18 @@ function draw() {
   const rows = Object.values(DATA.rows).filter(matches)
     .sort((a, b) => key(a).localeCompare(key(b)));
   if (descending) rows.reverse();
+  // Where the keyboard is, asked before `innerHTML` detaches the cell holding
+  // it. A save redraws twice, so without this every commit dropped a keyboard
+  // reader at the top of the page. Asked of the document rather than assumed:
+  // the cell somebody has moved to since is where they are, and pulling them
+  // back to the one that was edited is a second surprise on top of the redraw.
+  // Except when a key closed the editor — Tab already said where to go.
+  const focused = EDITABLE && tbody.contains(document.activeElement)
+    ? document.activeElement.closest('td[tabindex]') : null;
+  const held = EDITABLE && (RETURN || !!focused);
+  if (focused && !RETURN) rove(focused);
   tbody.innerHTML = rows.length ? rows.map(rowHtml).join('') : emptyRow();
+  if (EDITABLE) { rove(null, held); RETURN = false; }
   document.getElementById('shown').textContent = rows.length;
   // Sorting redraws without reloading, so the marker has to move with it. Set
   // once at load, it stayed on whatever the URL said when the page opened.
@@ -1361,7 +1477,7 @@ async function saveCell(cell, value) {
   try {
     coerced = coerce(EDITABLE[field], value);
   } catch (error) {
-    document.getElementById('state').textContent = `${field} ${error.message}`;
+    announce(`${field} ${error.message}`);
     return;
   }
   // The banner in the shell has to know a write is in the air before it starts:
@@ -1388,7 +1504,7 @@ async function saveCell(cell, value) {
       return;
     }
     if (!response.ok) {
-      document.getElementById('state').textContent = answer.detail || 'refused';
+      announce(answer.detail || 'refused');
       return;
     }
     // The page moves forward with the repository, or its next save collides with
@@ -1409,52 +1525,133 @@ async function saveCell(cell, value) {
   }
 }
 
+// Where the keyboard is in the grid, kept across the redraw a save triggers.
+// `AT` is a row id and a column rather than an element, because `draw()` replaces
+// every cell and the element that had focus no longer exists by the time the
+// keyboard needs to go back to it.
+let AT = null;
+// Whether it should go back. `blur()` moves focus to <body> before the save it
+// causes has even started, so this cannot be read off the document at redraw
+// time — it is decided by the key that closed the editor.
+let RETURN = false;
+
+function stops() { return [...tbody.querySelectorAll('td[tabindex]')]; }
+
+// One tab stop for the whole grid: exactly one cell is tabbable and the arrows
+// move it. `rove` is the only thing that writes tabIndex, so the invariant
+// cannot come apart across a redraw.
+function rove(cell, focus) {
+  const all = stops();
+  if (!all.length) { AT = null; return; }
+  const at = cell
+    || (AT && all.find(td => td.dataset.col === AT.col
+                             && td.parentNode.dataset.id === AT.id))
+    || all[0];
+  for (const td of all) td.tabIndex = td === at ? 0 : -1;
+  AT = {id: at.parentNode.dataset.id, col: at.dataset.col};
+  if (focus) at.focus();
+}
+
+function openEditor(cell) {
+  // A computed column answers rather than swallowing the key, exactly as it
+  // answers a double-click: a cell that ignores Enter is indistinguishable from
+  // a cell that is broken.
+  if (!cell.classList.contains('edit')) { refuse(cell); return; }
+  if (cell.querySelector('input, select')) return;
+  rove(cell);
+  const field = cell.dataset.field;
+  const was = stored(DATA.rows[cell.dataset.entity], field);
+  const suggest = SUGGESTS[field];
+  const closed = CHOICES[EDITABLE[field]];
+  // The name the editor answers to. The cell it replaces carries its column in
+  // a header a screen reader reads on the way in; a box conjured inside that
+  // cell carries nothing at all unless it is told what it is editing.
+  const named = esc(FIELD_LABELS[field] || field);
+  // A closed set is chosen, never typed. Free text over three options is a way
+  // to write `in progres` into the corpus. The option's value is the stored
+  // identifier and its text is the word for it, so picking "In progress"
+  // still writes `in_progress`.
+  cell.innerHTML = closed
+    ? `<select data-type="text" aria-label="${named}">${closed.map(o =>
+        `<option value="${o}" ${o === was ? 'selected' : ''}>${human(o)}</option>`
+      ).join('')}</select>`
+    : `<input value="${esc(was)}" data-type="${EDITABLE[field]}" aria-label="${named}"` +
+      `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
+  const input = cell.querySelector('select, input');
+  // The table gets the autocomplete the detail page has. Suggestions that only
+  // appear in one of the two places are suggestions nobody relies on.
+  if (suggest) attachSuggest(input);
+  input.focus();
+  // A single-value cell selects everything, because a double-click leaves the
+  // caret where it landed and typing would interleave. A list must NOT: typing
+  // over a selected "jcanton, halungge" deletes both reviewers to write one.
+  if (EDITABLE[field] !== 'list' && input.select) input.select();
+  else if (input.setSelectionRange)
+    input.setSelectionRange(input.value.length, input.value.length);
+
+  let abandoned = false;
+  input.onblur = () => {
+    if (abandoned || input.value === was) draw();
+    else saveCell(cell, input.value);
+  };
+  input.onkeydown = e => {
+    if (e.key === 'Enter') { RETURN = true; input.blur(); }
+    if (e.key === 'Escape') {
+      // Escape means discard. Redrawing first would fire blur with the partial
+      // value still in the box, and the edit somebody just abandoned gets saved.
+      abandoned = true;
+      RETURN = true;
+      draw();
+    }
+    if (e.key === 'Tab') {
+      // Commit and move, the way every grid does. Left to the browser, Tab
+      // blurs — which saves — and the redraw the save causes throws the focus
+      // away, so the cell to land on is chosen here and `draw()` puts the
+      // keyboard on it once the rows exist again.
+      e.preventDefault();
+      const line = [...cell.parentNode.cells].filter(td => td.hasAttribute('tabindex'));
+      const wanted = line.indexOf(cell) + (e.shiftKey ? -1 : 1);
+      AT = {id: cell.parentNode.dataset.id,
+            col: line[Math.max(0, Math.min(line.length - 1, wanted))].dataset.col};
+      RETURN = true;
+      input.blur();
+    }
+  };
+}
+
 if (EDITABLE) {
   tbody.addEventListener('dblclick', event => {
     const cell = event.target.closest('td.edit');
     // The tag reveal is a control inside an editable cell, so a double-click on
     // it would both open the list and open the editor over it.
-    if (!cell || cell.querySelector('input') || event.target.closest('button.more')) return;
-    const field = cell.dataset.field;
-    const was = stored(DATA.rows[cell.dataset.entity], field);
-    const suggest = SUGGESTS[field];
-    const closed = CHOICES[EDITABLE[field]];
-    // A closed set is chosen, never typed. Free text over three options is a way
-    // to write `in progres` into the corpus. The option's value is the stored
-    // identifier and its text is the word for it, so picking "In progress"
-    // still writes `in_progress`.
-    cell.innerHTML = closed
-      ? `<select data-type="text">${closed.map(o =>
-          `<option value="${o}" ${o === was ? 'selected' : ''}>${human(o)}</option>`
-        ).join('')}</select>`
-      : `<input value="${esc(was)}" data-type="${EDITABLE[field]}"` +
-        `${suggest ? ` data-suggest="${suggest}"` : ''} autocomplete="off">`;
-    const input = cell.querySelector('select, input');
-    // The table gets the autocomplete the detail page has. Suggestions that only
-    // appear in one of the two places are suggestions nobody relies on.
-    if (suggest) attachSuggest(input);
-    input.focus();
-    // A single-value cell selects everything, because a double-click leaves the
-    // caret where it landed and typing would interleave. A list must NOT: typing
-    // over a selected "jcanton, halungge" deletes both reviewers to write one.
-    if (EDITABLE[field] !== 'list' && input.select) input.select();
-    else if (input.setSelectionRange)
-      input.setSelectionRange(input.value.length, input.value.length);
+    if (!cell || event.target.closest('button.more')) return;
+    openEditor(cell);
+  });
 
-    let abandoned = false;
-    input.onblur = () => {
-      if (abandoned || input.value === was) draw();
-      else saveCell(cell, input.value);
-    };
-    input.onkeydown = e => {
-      if (e.key === 'Enter') input.blur();
-      if (e.key === 'Escape') {
-        // Escape means discard. Redrawing first would fire blur with the partial
-        // value still in the box, and the edit somebody just abandoned gets saved.
-        abandoned = true;
-        draw();
-      }
-    };
+  tbody.addEventListener('keydown', event => {
+    const cell = event.target.closest('td[tabindex]');
+    // Only a cell's own keys. Once an editor is open the keys belong to it — its
+    // Escape discards and its Tab commits — and the grid must not act as well.
+    if (!cell || event.target !== cell) return;
+    if (event.key === 'Enter' || event.key === 'F2') {
+      // F2 as well as Enter, because that is the key every spreadsheet uses and
+      // Enter is the one everybody tries first.
+      event.preventDefault();
+      openEditor(cell);
+      return;
+    }
+    const step = {ArrowLeft: [0, -1], ArrowRight: [0, 1],
+                  ArrowUp: [-1, 0], ArrowDown: [1, 0]}[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const rows = [...tbody.rows].filter(tr => tr.dataset.id);
+    const line = tr => [...tr.cells].filter(td => td.hasAttribute('tabindex'));
+    const clamp = (i, n) => Math.max(0, Math.min(n - 1, i));
+    // Clamped rather than wrapped: an arrow at the edge of a plan should stop,
+    // not jump to the far corner of it.
+    const row = rows[clamp(rows.indexOf(cell.parentNode) + step[0], rows.length)];
+    const across = line(row);
+    rove(across[clamp(line(cell.parentNode).indexOf(cell) + step[1], across.length)], true);
   });
 }
 {% endif %}
@@ -1464,13 +1661,16 @@ tbody.addEventListener('click', event => {
   if (more) more.closest('td').classList.add('open');
 });
 // A derived cell that ignores a double-click looks exactly like a cell that is
-// broken. It answers instead, in the same place a refused save answers.
+// broken. It answers instead, in the same place a refused save answers — and
+// through `announce`, so the answer reaches a reader who cannot see that place.
+function refuse(cell) {
+  announce(cell.dataset.why);
+  cell.classList.add('refused');
+  setTimeout(() => cell.classList.remove('refused'), 1500);
+}
 tbody.addEventListener('dblclick', event => {
   const computed = event.target.closest('td[data-why]');
-  if (!computed) return;
-  document.getElementById('state').textContent = computed.dataset.why;
-  computed.classList.add('refused');
-  setTimeout(() => computed.classList.remove('refused'), 1500);
+  if (computed) refuse(computed);
 });
 document.getElementById('blockers').addEventListener('click', event => {
   // A real href, so the count can be copied, shared and opened in a tab. Handled
@@ -1677,7 +1877,10 @@ _TABLE_STYLE = """
 /* The table body scrolls in here rather than in the page. `position: sticky` on
    a header needs a scroll container to hold against, and a container the height
    of its own content gives `top: 0` nothing to do. */
-.table-scroll { overflow: auto; max-height: calc(100vh - 13rem); min-height: 9rem;
+/* The stack above the rows: nav, heading, edit bar, summary, facets. Grown by
+   the heading the page did not use to have — left at 13rem the box ran past the
+   bottom of the window, and the page scrolled the sticky header out of reach. */
+.table-scroll { overflow: auto; max-height: calc(100vh - 15rem); min-height: 9rem;
                 overscroll-behavior: contain; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td {
@@ -1756,12 +1959,13 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 """
 
 _GRAPH = """
+<h1>Graph</h1>
 {% if editable %}
 <p class="editbar">
   <button type="button" id="connect">Edit dependencies</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
-  <span id="state"></span>
+  <span id="state" role="status"></span>
   <input type="hidden" id="base" value="{{ base_commit }}">
 </p>
 {% endif %}
@@ -2031,10 +2235,11 @@ let connecting = false;
 // this page and nowhere else.
 let blocker = null;
 
-function say(message) {
-  const state = document.getElementById('state');
-  if (state) state.textContent = message;
-}
+// The shell's live region does the placing: `#state` where the page has one — a
+// rendered file has no edit mode and so no bar to put it in — and the hidden
+// region on every page otherwise. Drawing it without announcing it is how a
+// refused dependency became a sentence only half the room could read.
+function say(message) { announce(message); }
 
 function pending() {
   return cy.edges('.pending');
@@ -2183,6 +2388,7 @@ _GRAPH_STYLE = """
 """
 
 _TIMELINE = """
+<h1>Timeline</h1>
 {{ facets|safe }}
 <form class="tl-controls" method="get" action="{{ links.timeline }}">
   {#- Prefilled with the window on screen, not the one that was asked for. Two
@@ -2233,20 +2439,28 @@ _TIMELINE = """
   drawn{% if t.offscreen %} · {{ t.offscreen }} with no dates in this
   window{% endif %}</div>
 <div class="tl"{% if not t.bars %} hidden{% endif %}>
-<div class="labels">
-  <div class="spacer" style="height: {{ t.header }}px"></div>
+{#- The column beside the plot is the plot's accessible half, not a caption for
+    it: `role="img"` on the SVG prunes everything inside it, which is right —
+    seventeen bar links announced twice is worse than none — but only once what
+    it prunes exists somewhere else. So every row carries what its bar draws:
+    the status the fill means, the dates the width means, the marks the hatching
+    means, and the sentence the tooltip holds. -#}
+<div class="labels" role="list"
+     aria-label="Every bar on the chart, with its status and its dates">
+  <div class="spacer" aria-hidden="true" style="height: {{ t.header }}px"></div>
   {#- Indented by containment, so a project's work reads as a block. The clipped
       label is what fits in 250px; the whole title is on the anchor. -#}
   {% for bar in t.bars %}
-  <div class="row" data-id="{{ bar.id }}" data-depth="{{ bar.depth }}"
+  <div class="row" role="listitem" data-id="{{ bar.id }}" data-depth="{{ bar.depth }}"
        style="padding-left: {{ 8 + bar.indent }}px">
-    <a href="{{ links.entity }}{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a></div>
+    <a href="{{ links.entity }}{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a
+    ><span class="sr-only">{{ bar.reads }}</span></div>
   {% endfor %}
 </div>
 <div class="scroll">
 <svg width="{{ t.width }}" height="{{ t.height }}"
      viewBox="0 0 {{ t.width }} {{ t.height }}" role="img"
-     aria-label="Every scheduled entity as a bar, earliest first within its parent">
+     aria-label="Every scheduled entity as a bar. The same rows are listed beside it.">
   {#- One pair of patterns per status, not one pair in all. A pattern resolves
       its own custom properties against the tree it is declared in, never against
       the shape that references it, so a single --hatch could only ever be right
@@ -2292,8 +2506,12 @@ _TIMELINE = """
       left edge. It is dropped on a bar too narrow to hold it rather than left to
       spill onto the page, where it would be a mark in a status colour sitting on
       no status colour at all. -#}
+  {#- tabindex="-1" because the anchor is inside a `role="img"` subtree: Chrome
+      does not focus an SVG anchor and Firefox does, so without it the keyboard
+      stopped on seventeen links that the accessibility tree had already pruned
+      and announced nothing at each one. The mouse keeps the href. -#}
   {% for bar in t.bars %}
-  <a href="{{ links.entity }}{{ bar.id }}" aria-label="{{ bar.full }}"
+  <a href="{{ links.entity }}{{ bar.id }}" tabindex="-1" aria-label="{{ bar.full }}"
      ><rect data-id="{{ bar.id }}" class="{{ bar.classes }} {{ bar.colour }}"
         x="{{ bar.x }}" y="{{ bar.y }}"
         width="{{ bar.width }}" height="{{ bar_px }}"
@@ -2534,6 +2752,9 @@ _TIMELINE_STYLE = """
 .tl[hidden] { display: none; }
 .labels { flex: 0 0 250px; border-right: 1px solid var(--line); }
 .labels .row {
+  /* Fixed, not min: the row carries a clipped title and a clipped-off sentence
+     of what the bar draws, and the second one must not add a pixel of height —
+     every row here lines up with a bar 22px down the plot beside it. */
   height: 22px; line-height: 22px; font-size: 11px; color: var(--muted);
   padding: 0 .5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -2690,14 +2911,45 @@ function attachUploads(area, status) {
 // a separate "add" control is a second place to look for one job.
 const SUGGEST = JSON.parse(document.getElementById('suggest').textContent);
 
+// One counter for the whole page, because `aria-controls` and
+// `aria-activedescendant` are references by id and a page can carry a dozen of
+// these — every fact on the detail form, every cell of the betting table.
+let SUGGEST_N = 0;
+
 function attachSuggest(input) {
   const source = SUGGEST[input.dataset.suggest] || [];
   const multi = input.dataset.type === 'list';
   const list = document.createElement('ul');
+  const id = 'suggest-' + (++SUGGEST_N);
   list.className = 'suggest';
   list.hidden = true;
+  // The combobox contract, none of which this widget had. The keyboard already
+  // worked — arrows moved a highlight, Enter picked it — but a highlight drawn
+  // with a class is a highlight only a sighted reader can follow, and a popup
+  // that is a bare <ul> is a popup nobody is told opened. The four attributes
+  // below are the whole of the difference: what this control is, whether its
+  // list is open, which list, and which option is current.
+  list.id = id;
+  list.setAttribute('role', 'listbox');
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-controls', id);
+  input.setAttribute('aria-expanded', 'false');
   input.insertAdjacentElement('afterend', list);
   let active = -1;
+
+  // `aria-activedescendant` is how a combobox says which option is current
+  // without moving focus off the input — which it must not do, because the
+  // input is still being typed into.
+  function highlight() {
+    const items = [...list.children];
+    items.forEach((item, i) => {
+      item.classList.toggle('on', i === active);
+      item.setAttribute('aria-selected', String(i === active));
+    });
+    if (active >= 0) input.setAttribute('aria-activedescendant', items[active].id);
+    else input.removeAttribute('aria-activedescendant');
+  }
 
   const tokens = () => input.value.split(',').map(s => s.trim());
   const typed = () => (multi ? tokens()[tokens().length - 1] : input.value).trim().toLowerCase();
@@ -2719,7 +2971,13 @@ function attachSuggest(input) {
     close();
   }
 
-  function close() { list.hidden = true; list.innerHTML = ''; active = -1; }
+  function close() {
+    list.hidden = true;
+    list.innerHTML = '';
+    active = -1;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
 
   function open() {
     const needle = typed();
@@ -2728,10 +2986,12 @@ function attachSuggest(input) {
       .filter(item => !multi || !tokens().slice(0, -1).includes(item.value))
       .slice(0, 8);
     list.innerHTML = matches
-      .map((m, i) => `<li data-value="${m.value}" class="${i === 0 ? 'on' : ''}">` +
+      .map((m, i) => `<li id="${id}-${i}" role="option" data-value="${m.value}">` +
         `${m.value}${m.label ? ` <span class="dim">${m.label}</span>` : ''}</li>`).join('');
     active = matches.length ? 0 : -1;
     list.hidden = !matches.length;
+    input.setAttribute('aria-expanded', String(!list.hidden));
+    highlight();
   }
 
   input.addEventListener('input', open);
@@ -2754,9 +3014,8 @@ function attachSuggest(input) {
     const items = [...list.children];
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      items[active]?.classList.remove('on');
       active = (active + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
-      items[active].classList.add('on');
+      highlight();
     } else if (event.key === 'Enter' && active >= 0) {
       event.preventDefault();
       choose(items[active].dataset.value);
@@ -2784,23 +3043,28 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
 dd, td.edit { position: relative; }
 """
 
+# Every branch carries an `id`, and every `<dt>` that renders one of these carries
+# a `<label for>` pointing at it. A `<dt>`/`<dd>` pair is a name and a value to a
+# reader and nothing at all to the accessibility tree, so before this not one
+# control on the detail page or the create page had a name.
 _CONTROL = """
 {% if f.type in ("status", "priority") %}
-<select name="{{ f.name }}" data-type="text" class="field"
+<select name="{{ f.name }}" id="{{ f.id }}" data-type="text" class="field"
         {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
   {% for s in (statuses if f.type == "status" else priorities) %}
   <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ s|human }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
-<input type="checkbox" name="{{ f.name }}" data-type="bool" class="field"
+<input type="checkbox" name="{{ f.name }}" id="{{ f.id }}" data-type="bool" class="field"
        {% if f.value %}checked{% endif %}>
 {% elif f.type == "date" %}
-<input type="date" name="{{ f.name }}" data-type="date" value="{{ f.text }}" class="field"
+<input type="date" name="{{ f.name }}" id="{{ f.id }}" data-type="date" value="{{ f.text }}"
+       class="field"
        {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% else %}
-<input name="{{ f.name }}" data-type="{{ f.type }}" value="{{ f.text }}" class="field"
-       autocomplete="off"
+<input name="{{ f.name }}" id="{{ f.id }}" data-type="{{ f.type }}" value="{{ f.text }}"
+       class="field" autocomplete="off"
        {% if f.list %}data-suggest="{{ f.list }}"{% endif %}
        {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% endif %}
@@ -2861,8 +3125,14 @@ def _control_html(field: dict) -> str:
 _NEW = """
 <article class="entity editing">
   <p class="back"><a href="{{ links.table }}">← table</a></p>
-  <h1><input name="title" data-type="text" form="edit" value=""
-             class="field title-field" placeholder="Title"></h1>
+  {#- The heading names the page; the title box below it is a control. It used to
+      BE the heading — an `<h1>` whose only content was an empty input, which is
+      a page with no name at all and a box with no name either. `aria-label`
+      rather than a `<label for>` because the visible word is the placeholder,
+      and a placeholder disappears the moment anything is typed. -#}
+  <h1>New entity</h1>
+  <input name="title" data-type="text" form="edit" value="" aria-label="Title"
+         class="field title-field" placeholder="Title">
   <p class="meta">
     <label class="kindpick">kind
       <select id="kind">
@@ -2877,20 +3147,24 @@ _NEW = """
       <aside class="facts">
         <dl id="facts">
           {% for row in rows %}
-          <dt data-kinds="{{ row.kinds }}">{{ row.label }}{% if row.gates %}
+          <dt data-kinds="{{ row.kinds }}"><label for="{{ row.for
+            }}">{{ row.label }}</label>{% if row.gates %}
             <span class="req" hidden>required</span>{% endif %}</dt>
           <dd data-kinds="{{ row.kinds }}">{{ row.control|safe }}</dd>
           {% endfor %}
         </dl>
       </aside>
       <div class="main">
-        <ul id="problems" class="problems" hidden></ul>
+        {#- What the form or the server refused this with. Filled by script, so
+            it is news arriving on a page that is already open. -#}
+        <ul id="problems" class="problems" role="status" aria-live="polite" hidden></ul>
         <p class="field bodybar">
           <button type="button" id="preview">Preview the body</button>
           <span class="hint">paste or drop an image to put it in the plan</span>
-          <span class="hint" id="upload"></span>
+          <span class="hint" id="upload" role="status" aria-live="polite"></span>
         </p>
         <textarea name="body" class="field body-field" rows="14"
+                  aria-label="Shaping document"
                   placeholder="The shaping document."></textarea>
         <div class="doc" hidden></div>
       </div>
@@ -2906,7 +3180,6 @@ _NEW = """
 <script>{{ required|safe }}</script>
 <script>
 const FORM = document.getElementById('edit');
-const STATE = document.getElementById('state');
 const PROBLEMS = document.getElementById('problems');
 const KIND = document.getElementById('kind');
 
@@ -2968,7 +3241,7 @@ document.getElementById('save').onclick = async () => {
     // would ask the server to set an attribute the model does not define.
     if (control.closest('[data-kinds]')?.hidden) continue;
     let value;
-    try { value = read(control); } catch (error) { STATE.textContent = error.message; return; }
+    try { value = read(control); } catch (error) { announce(error.message); return; }
     const empty = value === null || (Array.isArray(value) && !value.length);
     const waived = control.name === 'reviewers' &&
       FORM.querySelector('[name=review_waived]')?.checked;
@@ -3028,7 +3301,12 @@ document.getElementById('save').onclick = async () => {
 """
 
 _DETAIL = """
+{#- The index view is one of the views this page routes between, and it had no
+    heading of its own — so with no hash in the URL the page was a list of links
+    under nothing. Each `<article>` below carries its own `<h1>`, because each of
+    them is a document and exactly one of them is ever displayed. -#}
 {% if not single %}<div class="toc">
+  <h1>Every entity in this plan</h1>
   {% for group in groups %}
   <h2 class="tocgroup">{{ group.status|human }}
     <span class="tally">{{ group.entities|length }}</span></h2>
@@ -3052,14 +3330,22 @@ _DETAIL = """
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <input name="title" data-type="text" value="{{ e.title }}" class="field title-field">
+    <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
+           class="field title-field">
   {% endif %}
   <div class="panes">
     <aside class="facts">
       <dl id="facts">
+        {#- The label only where the control it names is on the page. In read
+            mode there is no control and a `<label for>` would point at nothing;
+            in edit mode it is the only thing giving the box a name, because a
+            `<dt>`/`<dd>` pair reads as a caption to a person and as two
+            unrelated blocks of text to everything else. -#}
         {% for row in e.rows %}
         <dt class="{% if row.derived %}derived{% endif %}
-                   {% if row.editing_only %}editing-only{% endif %}">{{ row.label }}{% if
+                   {% if row.editing_only %}editing-only{% endif %}">{% if
+          editable and row.control %}<label for="{{ row.for }}">{{ row.label }}</label>{%
+          else %}{{ row.label }}{% endif %}{% if
           editable and row.gates %} <span class="req" hidden>required</span>{% endif %}</dt>
         <dd class="{% if row.derived %}derived{% endif %}
                    {% if row.editing_only %}editing-only{% endif %}">
@@ -3077,11 +3363,12 @@ _DETAIL = """
       <p class="field bodybar">
         <button type="button" id="preview">Preview the body</button>
         <span class="hint">paste or drop an image to put it in the plan</span>
-        <span class="hint" id="upload"></span>
+        <span class="hint" id="upload" role="status" aria-live="polite"></span>
       </p>
-      <textarea name="body" class="field body-field">{{ e.raw_body }}</textarea>
+      <textarea name="body" class="field body-field"
+                aria-label="Shaping document">{{ e.raw_body }}</textarea>
       <div id="body-preview" class="field doc" hidden></div>
-      <div id="conflict" hidden></div>
+      <div id="conflict" role="status" aria-live="polite" hidden></div>
       {% endif %}
     </div>
   </div>
@@ -3155,7 +3442,6 @@ const ORIGINAL = {};
 const CONTROLS = [...FORM.querySelectorAll('[data-type]')];
 const BODY = FORM.querySelector('[name=body]');
 attachUploads(BODY, document.getElementById('upload'));
-const STATE = document.getElementById('state');
 const DRAFT = `openproj:${FORM.dataset.id}`;
 
 function read(control) {
@@ -3257,16 +3543,16 @@ async function save() {
   try {
     fields = changed();
   } catch (error) {
-    STATE.textContent = error.message;
+    announce(error.message);
     return;
   }
   const body = BODY.value === ORIGINAL_BODY ? null : BODY.value;
   if (!Object.keys(fields).length && body === null) {
-    STATE.textContent = 'nothing changed';
+    announce('nothing changed');
     return;
   }
 
-  STATE.textContent = 'saving…';
+  announce('saving…');
   // The shell's banner has to know a write is in the air before it starts: the
   // server announces a commit to the event stream before it answers the request
   // that made it, so the news of your own save can arrive before you know its
@@ -3288,10 +3574,10 @@ async function save() {
       // surface is text somebody saves back.
       box.hidden = false;
       box.textContent = answer.conflict;
-      STATE.textContent = 'not saved';
+      announce('not saved');
       return;
     }
-    if (!response.ok) { STATE.textContent = answer.detail || 'refused'; return; }
+    if (!response.ok) { announce(answer.detail || 'refused'); return; }
     committed = answer.commit;
     localStorage.removeItem(DRAFT);
     location.reload();
@@ -3314,7 +3600,7 @@ addEventListener('keydown', event => {
 BODY.addEventListener('input', () => localStorage.setItem(DRAFT, BODY.value));
 const draft = localStorage.getItem(DRAFT);
 if (draft !== null && draft !== BODY.value) {
-  STATE.textContent = 'unsaved draft restored';
+  announce('unsaved draft restored');
   BODY.value = draft;
   show(true);
 }
@@ -3421,6 +3707,10 @@ article.entity:not(.editing) .req { display: none; }
 .entity.editing .read { display: none; }
 .entity.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
+/* Except in a fact list, where the label is one word in a line that also carries
+   the REQUIRED mark. Block, the mark dropped onto a line of its own beside every
+   gated field — an instruction shouting from its own row. */
+dt > label { display: inline; }
 /* The kind picker sits in the meta line, so it is a word in a sentence rather
    than a block that pushes the rest of the sentence onto its own row. */
 .kindpick { display: inline; }
@@ -3617,11 +3907,18 @@ SUGGESTS = {
 }
 
 
-def _editable_for(entity: Entity) -> list[dict]:
-    """The fields this kind actually has, with the type a form must coerce back to."""
+def _editable_for(entity: Entity, prefix: str = "field") -> list[dict]:
+    """The fields this kind actually has, with the type a form must coerce back to.
+
+    The prefix is what makes a control's id unique on the page it lands on: the
+    static detail export holds every entity in one file, so `owner` alone would
+    be the same id sixteen times over and every `<label for>` on the page would
+    point at the first of them.
+    """
     return [
         {
             "name": name,
+            "id": f"{prefix}-{name}",
             "type": kind,
             "value": getattr(entity, name),
             "gates": REQUIRED_AT.get(name, ()),
@@ -3657,7 +3954,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     # `nothing`, `none`, `no` — sit at the same weight as a real value and have
     # to be read before you know the row is empty; a dash is empty at a glance.
     empty = '<span class="empty">—</span>'
-    for field in _editable_for(entity):
+    for field in _editable_for(entity, entity.id):
         name = field["name"]
         if name == "title":
             continue
@@ -3685,6 +3982,10 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
         rows.append(
             {
                 "label": LABELS.get(name, name),
+                # What the `<dt>`'s label points at. The derived rows below have
+                # no control, so they get no label — a `for` naming nothing is a
+                # label the reader is told about and cannot reach.
+                "for": field["id"],
                 "display": display,
                 "control": _control_html(field),
                 "gates": field["gates"],
@@ -3710,6 +4011,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     rows.append(
         {
             "label": "Scheduled",
+            "for": "",
             "display": (f"{span.start} → {span.end}{overrun}" if span else empty),
             "control": "",
             "gates": (),
@@ -3721,6 +4023,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
         rows.append(
             {
                 "label": "Why then",
+                "for": "",
                 "display": why.text,
                 "control": "",
                 "gates": (),
@@ -3731,6 +4034,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     rows.append(
         {
             "label": "Blocks",
+            "for": "",
             "display": _links(index.blocks[entity.id], index, links) or empty,
             "control": "",
             "gates": (),
@@ -3800,12 +4104,14 @@ def _new_rows() -> list[dict]:
             # somebody leaves empty. This is a blank; nothing is overwritten.
             assigned_on=date.today(),
         )
-        for field in _editable_for(blank):
+        # One form on the page, so one prefix. The detail page's is the entity's
+        # id, because that page can hold sixteen of them at once.
+        for field in _editable_for(blank, "new"):
             if field["name"] == "title":
                 continue          # the title is the heading, not a row
             row = rows.setdefault(
                 field["name"],
-                {"label": LABELS.get(field["name"], field["name"]),
+                {"label": LABELS.get(field["name"], field["name"]), "for": field["id"],
                  "control": _control_html(field), "gates": field["gates"], "kinds": []},
             )
             row["kinds"].append(kind)
@@ -3914,20 +4220,23 @@ _CYCLE = """
    below is the record Save would write.</p>
 {% endif %}
 
+{#- Three boxes that decide when the cycle runs and how long for, and not one of
+    them had a name: the word beside each is a `<dt>`, which is a caption to a
+    reader and nothing to the accessibility tree. -#}
 <form id="setup" onsubmit="return false">
   <dl id="facts">
-    <dt>Starts on</dt>
+    <dt><label for="starts_on">Starts on</label></dt>
     <dd><span class="read">{{ c.starts_on }}</span>
-        <input type="date" name="starts_on" data-type="date" value="{{ c.starts_on }}"
-               class="field"></dd>
-    <dt>Build weeks</dt>
+        <input type="date" id="starts_on" name="starts_on" data-type="date"
+               value="{{ c.starts_on }}" class="field"></dd>
+    <dt><label for="build_weeks">Build weeks</label></dt>
     <dd><span class="read">{{ c.build_weeks }}</span>
-        <input name="build_weeks" data-type="number" value="{{ c.build_weeks }}"
-               class="field"></dd>
-    <dt>Cool-down weeks</dt>
+        <input id="build_weeks" name="build_weeks" data-type="number"
+               value="{{ c.build_weeks }}" class="field"></dd>
+    <dt><label for="cooldown_weeks">Cool-down weeks</label></dt>
     <dd><span class="read">{{ c.cooldown_weeks }}</span>
-        <input name="cooldown_weeks" data-type="number" value="{{ c.cooldown_weeks }}"
-               class="field"></dd>
+        <input id="cooldown_weeks" name="cooldown_weeks" data-type="number"
+               value="{{ c.cooldown_weeks }}" class="field"></dd>
   </dl>
 </form>
 
@@ -3958,8 +4267,8 @@ _CYCLE = """
   {% endfor %}
 </tbody></table>
 {% if editable %}
-<p class="editbar"><input id="joining" placeholder="login" data-suggest="people"
-     autocomplete="off">
+<p class="editbar"><label for="joining" class="hint">add somebody</label>
+   <input id="joining" placeholder="login" data-suggest="people" autocomplete="off">
    <button type="button" id="add">+ add to the cycle</button>
    <span class="hint">added here, saved with the setup</span></p>
 {% endif %}
@@ -3980,20 +4289,28 @@ _CYCLE = """
   <th>in {{ c.number }}</th><th>title</th><th>kind</th><th>status</th>
   <th>appetite</th><th>assignees</th><th>reviewers</th><th>bet in</th>
 </tr></thead><tbody>
+  {#- Every box in this table is named after the row it is in, not after its
+      column. A column header names a cell to somebody reading down the page; to
+      a reader who arrives at one control out of four hundred, "appetite" without
+      "for what" is not a name. -#}
   {% for row in c.candidates %}
   <tr data-id="{{ row.id }}" class="{{ 'carried' if row.carried else '' }}">
     <td><input type="checkbox" class="bet" autocomplete="off"
+               aria-label="Bet {{ row.title }} into cycle {{ c.number }}"
                {{ 'checked' if row.in_cycle else '' }}
                {{ 'disabled' if row.carried else '' }}></td>
     <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
     <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
     <td><span class="chip st-{{ row.status }}">{{ row.status|human }}</span></td>
     <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
+               aria-label="{{ row.title }} appetite in weeks"
                autocomplete="off" value="{{ row.size }}"
                placeholder="{{ row.size_hint }}"></td>
     <td><input class="live wide" data-field="assignees" data-type="list"
+               aria-label="{{ row.title }} assignees"
                data-suggest="people" autocomplete="off" value="{{ row.assignees }}"></td>
     <td><input class="live wide" data-field="reviewers" data-type="list"
+               aria-label="{{ row.title }} reviewers"
                data-suggest="people" autocomplete="off" value="{{ row.reviewers }}"></td>
     <td class="derived">{{ row.cycle }}</td>
   </tr>
@@ -4010,7 +4327,6 @@ _CYCLE = """
 {{ combobox|safe }}
 <script>
 const BASE = document.getElementById('base');
-const STATE = document.getElementById('state');
 const BAR = document.getElementById('commitbar');
 const UNSAVED = document.getElementById('unsaved');
 const NUMBER = {{ c.number }};
@@ -4020,7 +4336,9 @@ const NUMBER = {{ c.number }};
 window.SHOWING = ['cycle-' + NUMBER].concat(
   [...document.querySelectorAll('#bets tbody tr')].map(tr => tr.dataset.id));
 
-function say(message) { STATE.textContent = message; }
+// Through the shell's live region, which is what puts it in `#state` as well.
+// A receipt that is only drawn is a save nobody is told landed.
+function say(message) { announce(message); }
 
 async function put(fields) {
   dispatchEvent(new Event('openproj:writing'));
@@ -4404,9 +4722,14 @@ _CYCLES = """
   the build and cool-down weeks and who is available for it.</p>
 {% if cycles %}
 <ul class="cards">
+  {#- A link only where the page it opens exists. `render_static` writes six
+      files and none of them is a cycle, so on a rendered plan every one of these
+      headings was an anchor to a fragment that is not on the page — a control
+      that does nothing, which is how a reader learns to stop pressing them. -#}
   {% for c in cycles %}
   <li class="card{{ ' over' if c.over else '' }}">
-    <h2><a href="{{ links.cycle }}{{ c.number }}">Cycle {{ c.number }}</a></h2>
+    <h2>{% if per_cycle_page %}<a href="{{ links.cycle }}{{ c.number }}">Cycle {{ c.number
+      }}</a>{% else %}Cycle {{ c.number }}{% endif %}</h2>
     <p class="window">{% if c.recorded %}{{ c.starts_on }} → builds until
       {{ c.builds_until }}{% elif c.starts_on %}{{ c.starts_on }} → {{ c.ends_on }}
       {% else %}no dates{% endif %}
@@ -4464,7 +4787,6 @@ _CYCLES = """
 const ROSTER = ROSTER_JSON;
 const START = document.getElementById('start');
 const CONFIRM = document.getElementById('confirm');
-const STATE = document.getElementById('state');
 const field = id => document.getElementById(id);
 
 // Starting a cycle writes a file and moves every date on every page that reads
@@ -4480,7 +4802,7 @@ START.onclick = () => {
     `${people} ${people === 1 ? 'person' : 'people'} carried over`;
   CONFIRM.hidden = false;
   START.hidden = true;
-  STATE.textContent = '';
+  announce('');
 };
 
 document.getElementById('no').onclick = () => {
@@ -4511,7 +4833,7 @@ document.getElementById('yes').onclick = async () => {
     });
     const answer = await response.json();
     if (!response.ok) {
-      STATE.textContent = answer.detail || 'refused';
+      announce(answer.detail || 'refused');
       CONFIRM.hidden = true;
       START.hidden = false;
       return;
@@ -4527,6 +4849,7 @@ document.getElementById('yes').onclick = async () => {
 """
 
 _PEOPLE = """
+<h1>People</h1>
 <p class="hint">Everyone named anywhere in the plan, and what they are on the hook
   for.
   {%- if load.cycle is none %}
@@ -4538,7 +4861,8 @@ _PEOPLE = """
   That cycle has no record, so there is no availability to bet it against.
   {%- endif %}</p>
 <div id="controls">
-  <input id="q" type="search" placeholder="Search person, entity, id">
+  <input id="q" type="search" aria-label="Search person, entity, id"
+         placeholder="Search person, entity, id">
   <div class="facets">
   {% for field in ['role', 'kind', 'status'] %}
   <label class="facet">{{ label(field) }}
@@ -4948,6 +5272,10 @@ def render_cycles(
         links=links,
         editable=base_commit is not None,
         base_commit=base_commit or "",
+        # Whether there is a page per cycle to link a card to. Only the server
+        # serves one; `render_static` writes six files and no cycle is among
+        # them, so on a rendered plan the card names its cycle and stops there.
+        per_cycle_page=links.cycle.startswith("/"),
         # The next cycle starts when the last one ends and is the same length,
         # because both are true far more often than not.
         next={
