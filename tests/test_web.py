@@ -1318,3 +1318,34 @@ def test_a_stored_image_is_drawn_and_a_remote_one_is_not(client: TestClient):
     assert f'<img src="/{path}"' in page
     assert "https://example.com/b.png" in page
     assert '<img src="https://example.com' not in page
+
+
+def test_the_preview_shows_what_the_page_will_show(client: TestClient):
+    """One transform, used by both. Written twice, the preview drew an uploaded
+    image against the current URL — so a figure that renders on `/detail/task-x`
+    was a broken image in the preview of that same document, which is the one
+    place somebody checks it before saving. PR references were missing there too.
+    """
+    path = upload(client, PNG).json()["path"]
+    body = f"![a]({path})\n\n![b](https://example.com/b.png)\n\nSee C2SM/icon4py#1364.\n"
+
+    save(client, TASK, {}, body=body)
+    previewed = client.post("/api/preview", json={"body": body}).json()["html"]
+    stored = client.get(f"/detail/{TASK}").text
+
+    assert f'<img src="/{path}"' in previewed
+    assert f'<img src="/{path}"' in stored
+    assert '<a href="https://example.com/b.png">b (external image)</a>' in previewed
+    assert "https://github.com/C2SM/icon4py/pull/1364" in previewed
+
+
+def test_the_preview_still_refuses_html(client: TestClient):
+    """The rewrite runs after markdown, on markdown's own output — it must not
+    become a way to get a tag past the renderer."""
+    smuggled = client.post(
+        "/api/preview",
+        json={"body": '<script>alert(1)</script>\n\n<img src="assets/deadbeefdeadbeef.png">\n'},
+    ).json()["html"]
+
+    assert "<script>" not in smuggled
+    assert "<img" not in smuggled

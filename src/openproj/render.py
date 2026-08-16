@@ -311,7 +311,17 @@ def _body_html(entity: Entity, links: Links = STATIC) -> str:
     it travels with the clone, and it is served from the same origin as the page.
     Those are drawn.
     """
-    html = _MD.render(entity.body)
+    return _after_markdown(_MD.render(entity.body), links)
+
+
+def _after_markdown(html: str, links: Links) -> str:
+    """What every renderer does to markdown once it is HTML.
+
+    One function because the preview has to show what the page will show. Written
+    twice, the preview drew an uploaded image against the current URL — so a
+    figure that renders fine on `/detail/task-x` was a broken image in the preview
+    of that same document, which is the one place somebody checks it.
+    """
     html = _REMOTE_IMG.sub(
         lambda m: f'<a href="{m.group(1)}">{m.group(2) or "image"} (external image)</a>', html
     )
@@ -3033,14 +3043,16 @@ def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> s
     )
 
 
-def preview_html(body: str) -> str:
+def preview_html(body: str, links: Links = ROUTES) -> str:
     """Markdown rendered for the preview pane, with HTML disabled.
 
     markdown-it-py leaves raw HTML alone by default. The body is written by
     signed-in members and rendered back to every reader, so a script tag in a
     shaping doc would run in everybody's browser.
+
+    Routes by default: the only thing that asks for a preview is the server.
     """
-    return MarkdownIt("commonmark", {"html": False}).render(body)
+    return _after_markdown(MarkdownIt("commonmark", {"html": False}).render(body), links)
 
 
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
