@@ -1068,7 +1068,7 @@ def test_a_title_somebody_typed_never_becomes_markup():
         "${esc(was)}",                  # and the value the editor opens with
     ):
         assert interpolation in body, interpolation
-    assert "const tags = (list || []).map(esc);" in body
+    assert "clamped((value || []).map(esc), 'tag')" in body
 
     # Nothing typed reaches the page as markup by either route.
     assert "<b>&" not in page and "<i>one" not in page
@@ -1211,16 +1211,21 @@ def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
     and `+N` is the number you cannot see. No row padding changes anywhere — this
     is about removing height, not adding it.
     """
-    assert "td.tags { white-space: nowrap; overflow: hidden; }" in page
-    assert "td.tags .rest { display: none; }" in page
-    assert "td.tags.open .rest { display: inline; }" in page
-    assert "td.tags.open .more { display: none; }" in page
+    assert "td.clamp { white-space: nowrap; overflow: hidden; }" in page
+    assert "td.clamp .rest { display: none; }" in page
+    assert "td.clamp.open .rest { display: inline; }" in page
+    assert "td.clamp.open .more { display: none; }" in page
     assert "padding: .3rem .5rem" in page, "the row keeps the padding it had"
 
     body = script(page)
-    assert re.search(r'aria-label="Show \$\{rest\.length\} more tag', body), (
+    assert re.search(r'aria-label="Show \$\{rest\.length\} more \$\{noun\}', body), (
         "the reveal has a name, not only a plus sign"
     )
+    # Both list columns, because fixing tags alone only moved the problem one
+    # column left: a task with three merged PRs stood 128px tall beside a 50px row.
+    assert "clamped((value || []).map(esc), 'tag')" in body
+    assert "clamped((value || []).map(prLink), 'pull request')" in body
+    assert "key === 'tags' || key === 'prs' ? 'clamp' : ''" in body
     assert "more.closest('td').classList.add('open')" in body
     # It is a control inside an editable cell, so it must not also open the editor.
     assert "event.target.closest('button.more')) return;" in body

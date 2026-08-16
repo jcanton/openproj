@@ -154,8 +154,10 @@ def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Pat
     index = read(rendered, "index.html")
 
     assert "base_commit" not in index, "this is the read-only build"
-    assert "key === 'tags' ? 'tags' : ''" in index, "the clamp is not behind the editor"
-    assert "td.tags .rest { display: none; }" in index
+    assert "key === 'tags' || key === 'prs' ? 'clamp' : ''" in index, (
+        "the clamp is not behind the editor"
+    )
+    assert "td.clamp .rest { display: none; }" in index
     for rule in (".chip.st-done", ".chip.kind-pitch", ".sev-row-blocker", ".sev-mark-blocker"):
         assert rule in index, rule
     assert "'The plan could not be loaded.'" in index

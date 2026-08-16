@@ -1334,15 +1334,19 @@ function stored(row, key) {
 // have arrived with no class and no sentence.
 const WHY = {{ why|tojson }};
 
-function tagsHtml(list) {
-  const tags = (list || []).map(esc);
-  if (tags.length < 2) return tags.join('');
-  // Five tags wrapped to five lines and every row on screen grew to match, so
-  // one line and a count. The count is exact: "+2" means two you cannot see, not
-  // two the browser might have fitted in anyway.
-  const [first, ...rest] = tags;
+// Five tags wrapped to five lines and every row on screen grew to match, so one
+// line and a count. The count is exact: "+2" means two you cannot see, not two
+// the browser might have fitted in anyway.
+//
+// Written for tags, then needed again the moment tags were fixed: a task with
+// three merged PRs is 128px tall against a 50px row, so the column that sets the
+// height of the plan had simply moved one to the left. Any list in a cell has
+// this shape, so the clamp takes rendered pieces and the noun to count them by.
+function clamped(pieces, noun) {
+  if (pieces.length < 2) return pieces.join('');
+  const [first, ...rest] = pieces;
   return `${first}<span class="rest">, ${rest.join(', ')}</span>` +
-    `<button type="button" class="more" aria-label="Show ${rest.length} more tag` +
+    `<button type="button" class="more" aria-label="Show ${rest.length} more ${noun}` +
     `${rest.length === 1 ? '' : 's'}">+${rest.length}</button>`;
 }
 
@@ -1352,7 +1356,7 @@ function shown(row, key) {
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
   if (key === 'title') return `<a href="ENTITY_HREF${esc(row.id)}">${esc(row.title)}</a>`;
-  if (key === 'prs') return (value || []).map(prLink).join(', ');
+  if (key === 'prs') return clamped((value || []).map(prLink), 'pull request');
   // Kind is filterable everywhere and visible nowhere. It rides with the id,
   // which was already carrying it in a prefix nobody should have to decode.
   if (key === 'id')
@@ -1361,7 +1365,7 @@ function shown(row, key) {
   if (key === 'status')
     return `<span class="chip st-${esc(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
-  if (key === 'tags') return tagsHtml(value);
+  if (key === 'tags') return clamped((value || []).map(esc), 'tag');
   return esc(stored(row, key));
 }
 
@@ -1383,7 +1387,7 @@ function cell(row, key) {
   const classes = [
     editable ? 'edit' : '',
     !editable && key in WHY ? 'derived' : '',
-    key === 'tags' ? 'tags' : '',
+    key === 'tags' || key === 'prs' ? 'clamp' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -1743,9 +1747,10 @@ let dragging = false;
 const table = document.getElementById('rows');
 const headers = [...table.querySelectorAll('th')];
 
-// Columns that may wrap. Everything else is sized so that it never has to: a
-// column one character narrower than its widest value costs a second line on
-// every row that holds that value.
+// The two columns allowed to be narrower than their content, because they are
+// the two that clamp to one line and hide the remainder behind a count. Every
+// other column is sized so it never has to wrap: one character narrower than its
+// widest value costs a second line on every row that holds that value.
 const WRAPS = new Set(['prs', 'tags']);
 
 // A column's identity is the field it stands for. It used to be the column's
@@ -1967,9 +1972,17 @@ thead th {
 /* The two columns that say which row you are looking at. Scrolled right without
    them, fourteen columns of values belong to nobody. They need a ground of their
    own and a layer above the cells passing underneath. */
-[data-col="id"] { position: sticky; left: 0; z-index: 1; background: var(--surface); }
-[data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;
-                     background: var(--surface); box-shadow: 1px 0 0 var(--line); }
+/* Qualified by the scroll container, which is only there to outrank
+   `dd, td.edit { position: relative }` in _SUGGEST_STYLE — a rule about anchoring
+   the suggestion popup inside its cell, appended after this stylesheet on the same
+   page. A bare attribute selector loses to an element and a class, so both of these
+   columns fell back to `relative`, kept the `left` meant for `sticky`, and shifted
+   187px right to sit on top of priority and status. Sticky establishes a containing
+   block too, so the popup still anchors. */
+.table-scroll [data-col="id"] { position: sticky; left: 0; z-index: 1;
+                                background: var(--surface); }
+.table-scroll [data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;
+                                   background: var(--surface); box-shadow: 1px 0 0 var(--line); }
 thead [data-col="id"], thead [data-col="title"] { z-index: 4; }
 thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line); }
 /* One weight heavier than the sticky rules above — an element and a class beats
@@ -1984,14 +1997,14 @@ td.sev-cell-warn { background: var(--sev-warn-soft); }
 td.edit { cursor: cell; }
 td.edit:hover { background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--line-strong); }
 td.refused { background: var(--surface-2); }
-td.tags { white-space: nowrap; overflow: hidden; }
-td.tags .rest { display: none; }
-td.tags .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
+td.clamp { white-space: nowrap; overflow: hidden; }
+td.clamp .rest { display: none; }
+td.clamp .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
                 padding: 0 .25rem; border: 1px solid var(--line-strong); border-radius: 2px;
                 background: none; color: var(--muted); cursor: pointer; }
-td.tags.open { white-space: normal; }
-td.tags.open .rest { display: inline; }
-td.tags.open .more { display: none; }
+td.clamp.open { white-space: normal; }
+td.clamp.open .rest { display: inline; }
+td.clamp.open .more { display: none; }
 td .sev-mark { margin-left: .25rem; }
 .eid { font-family: var(--font-mono); }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
