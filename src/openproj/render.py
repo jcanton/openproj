@@ -62,13 +62,11 @@ _LABEL_CHARS = 40
 
 def _clip(text: str) -> str:
     return text if len(text) <= _LABEL_CHARS else text[: _LABEL_CHARS - 1] + "\u2026"
-_STATUS_COLOUR = {
-    "shaping": "#b9a6c9",
-    "ready": "#8a93a5",
-    "in_progress": "#1f6f8b",
-    "done": "#3f7d58",
-    "shelved": "#b0b4bd",
-}
+# A status is a class, not a colour baked into the markup: the same rect has to
+# be one colour on a white ground and another on a dark one, and a `fill`
+# attribute written at render time cannot change when somebody flips the toggle.
+def _status_class(status: str) -> str:
+    return f"st-{status}" if status in STATUSES else "st-ready"
 
 
 def _inline(name: str) -> str:
@@ -218,7 +216,7 @@ def _timeline(
                 "width": max(
                     day_px, x(visible_end + timedelta(days=1)) - x(visible_start)
                 ),
-                "colour": _STATUS_COLOUR.get(entity.status, "#8a93a5"),
+                "colour": _status_class(entity.status),
                 "owner": entity.owner or "unowned",
                 "tip": explanation.text if explanation else "Starts as soon as it can.",
             }
@@ -310,14 +308,65 @@ _SHELL = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
+<script>
+// Before the first paint, or the page renders light and then turns dark in front
+// of whoever chose dark — which is worse than not having the choice.
+try {
+  const stored = localStorage.getItem('openproj:theme');
+  if (stored) document.documentElement.dataset.theme = stored;
+} catch (e) { /* a browser with storage denied still gets the system theme */ }
+</script>
 <style>
-:root { color-scheme: light dark; --line: #d7dfe1; --muted: #6a7a80; --accent: #0f5c6b; }
-@media (prefers-color-scheme: dark) {
-  :root { --line: #253339; --muted: #7e9098; --accent: #5cb9ca; }
+/* Three states, not two: an explicit choice stamps data-theme, and the default
+   is no stamp at all, where only the media query separates one from the other.
+   Every colour is a token so that nothing has its only definition inside a
+   block that half the readers never match. */
+:root {
+  /* Named, not `light dark`: that means "follow the system", so a page stamped
+     dark against a light system kept rendering its buttons, scrollbars and date
+     pickers light — the parts of the page the stylesheet does not draw. */
+  color-scheme: light;
+  --bg: #ffffff; --fg: #1a2226; --surface: #ffffff;
+  --line: #d7dfe1; --line-strong: #b7c5c9; --muted: #6a7a80;
+  --accent: #0f5c6b; --on-accent: #ffffff;
+  --danger: #9a3327; --warn: #8f5c07;
+  --st-shaping: #b9a6c9; --st-ready: #8a93a5; --st-in_progress: #1f6f8b;
+  --st-done: #3f7d58; --st-shelved: #b0b4bd;
+  --on-status: #ffffff; --hatch: #ffffff;
 }
-body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3rem; }
-nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; }
-nav a { color: var(--accent); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #11181b; --fg: #dbe4e7; --surface: #182126;
+    --line: #263539; --line-strong: #3a4d53; --muted: #8da0a8;
+    --accent: #5cb9ca; --on-accent: #0b1214;
+    --danger: #e0796a; --warn: #d6a33f;
+    --st-shaping: #9b86ad; --st-ready: #717b8c; --st-in_progress: #2b7f9c;
+    --st-done: #418062; --st-shelved: #7d828b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #11181b; --fg: #dbe4e7; --surface: #182126;
+  --line: #263539; --line-strong: #3a4d53; --muted: #8da0a8;
+  --accent: #5cb9ca; --on-accent: #0b1214;
+  --danger: #e0796a; --warn: #d6a33f;
+  --st-shaping: #9b86ad; --st-ready: #717b8c; --st-in_progress: #2b7f9c;
+  --st-done: #418062; --st-shelved: #7d828b;
+}
+body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3rem;
+       background: var(--bg); color: var(--fg); }
+nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; align-items: center; }
+/* Every link, not only the nav. The browser's default blue and its visited
+   purple are both close to unreadable on a dark ground, and a link is the most
+   clicked thing on every one of these pages. */
+a, a:visited { color: var(--accent); }
+#theme {
+  margin-left: auto; width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
+  font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+}
+#theme:hover { border-color: var(--accent); color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
 #controls { margin: .75rem 0; }
 #controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
@@ -327,16 +376,50 @@ nav a { color: var(--accent); }
                 letter-spacing: 0; color: inherit; }
 #q { font: inherit; font-size: 13px; padding: .15rem .3rem; min-width: 16rem; }
 .hint { color: var(--muted); font-size: 12px; }
-#moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent); color: #fff;
+#moved { position: fixed; right: 1rem; bottom: 1rem; background: var(--accent);
+         color: var(--on-accent);
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
-#moved a { color: #fff; }
+#moved a { color: var(--on-accent); }
 #moved .sha { font-family: ui-monospace, monospace; opacity: .7; }
 {{ style }}
 </style></head><body>
 <nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
 <a href="{{ links.timeline }}">Timeline</a><a href="{{ links.people }}">People</a>
-<a href="{{ links.detail }}">Detail</a></nav>
+<a href="{{ links.detail }}">Detail</a>
+<button type="button" id="theme"></button></nav>
 {{ content }}
+<script>
+// No third state to cycle through: with nothing stored the page follows the
+// system, and the first click stores the opposite of whatever is on screen.
+const THEME = document.getElementById('theme');
+
+function theme() {
+  return document.documentElement.dataset.theme
+    || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+
+function labelTheme() {
+  const dark = theme() === 'dark';
+  THEME.textContent = dark ? '\u2600' : '\u263e';
+  THEME.title = dark ? 'Light mode' : 'Dark mode';
+  THEME.setAttribute('aria-label', THEME.title);
+}
+
+THEME.onclick = () => {
+  const next = theme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('openproj:theme', next); } catch (e) { /* still switches */ }
+  labelTheme();
+  // Anything painted by script rather than by the stylesheet — the graph — has
+  // to be told, because its colours were read once when it was built.
+  dispatchEvent(new Event('themechange'));
+};
+
+// A page opened while the system is dark and never clicked has no stored value,
+// so it follows the system as it changes.
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', labelTheme);
+labelTheme();
+</script>
 {% if live %}
 <div id="moved" hidden></div>
 <script>
@@ -701,7 +784,7 @@ if (Object.keys(WIDTHS).length) applyWidths(); else fitWidths();
 
 _TABLE_STYLE = """
 #summary { color: var(--muted); }
-#blocker-count { color: #9a3327; }
+#blocker-count { color: var(--danger); }
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td {
@@ -722,7 +805,7 @@ th .grip {
 }
 th .grip::before {
   content: ""; position: absolute; top: 20%; bottom: 20%; right: 3px; width: 1px;
-  background: var(--line-strong, #b7c5c9);
+  background: var(--line-strong);
 }
 th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
 .measuring th, .measuring td { white-space: nowrap; }
@@ -739,10 +822,12 @@ _GRAPH = """
 </p>
 {% endif %}
 <p class="hint">Double-click a node to open it. Drag to pan, scroll to zoom, drag a node
-  to move it.{% if editable %} In <strong>Edit dependencies</strong>, click what must
-  finish first and then what waits for it. Draw as many as you like; nothing is written
-  until you press Save. <strong>Reset</strong> clears what you have drawn and stays in
-  edit mode.{% endif %}</p>
+  to move it.</p>
+{% if editable %}
+<p class="hint" id="howto" hidden>Click what must finish first and then what waits for
+  it. Draw as many as you like; nothing is written until you press Save.
+  <strong>Reset</strong> clears what you have drawn and stays in edit mode.</p>
+{% endif %}
 <div id="cy"></div>
 <script id="elements" type="application/json">ELEMENTS_JSON</script>
 <script>@@cytoscape.min.js@@</script>
@@ -750,8 +835,17 @@ _GRAPH = """
 <script>@@cytoscape-dagre.js@@</script>
 <script>
 cytoscape.use(cytoscapeDagre);
-const COLOUR = {shaping:'#b9a6c9', ready:'#8a93a5', in_progress:'#1f6f8b',
-                done:'#3f7d58', shelved:'#b0b4bd'};
+
+// Read from the stylesheet rather than repeated here, so one token set decides
+// what a status looks like on the timeline, in the table and on this canvas.
+const token = name => getComputedStyle(document.documentElement)
+  .getPropertyValue(name).trim();
+const COLOUR = () => ({
+  shaping: token('--st-shaping'), ready: token('--st-ready'),
+  in_progress: token('--st-in_progress'), done: token('--st-done'),
+  shelved: token('--st-shelved'),
+});
+
 const cy = cytoscape({
   container: document.getElementById('cy'),
   elements: JSON.parse(document.getElementById('elements').textContent),
@@ -762,16 +856,17 @@ const cy = cytoscape({
         // text-wrap alone does nothing: without a max width the label just
         // overflows the box it is supposed to sit inside.
         'text-wrap': 'wrap', 'text-max-width': 136,
-        'background-color': e => COLOUR[e.data('status')],
+        'background-color': e => COLOUR()[e.data('status')],
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
         'border-width': e => ({high: 4, medium: 2, low: 1})[e.data('priority')] ?? 2,
-        'border-color': '#0f5c6b',
-        'color': '#fff', 'text-valign': 'center', 'width': 150, 'height': 44 } },
+        'border-color': token('--accent'),
+        'color': token('--on-status'), 'text-valign': 'center',
+        'width': 150, 'height': 44 } },
     { selector: '.picked', style: {
-        'border-color': '#9a3327', 'border-width': 5 } },
+        'border-color': token('--danger'), 'border-width': 5 } },
     { selector: ':parent', style: {
-        'background-opacity': .08, 'text-valign': 'top', 'color': '#6a7a80' } },
+        'background-opacity': .08, 'text-valign': 'top', 'color': token('--muted') } },
     { selector: 'edge', style: {
         // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
         // so an edge that leaves horizontally and turns once reads as a route
@@ -787,9 +882,9 @@ const cy = cytoscape({
         // orthogonal edge and one that only looks orthogonal in the middle.
         'source-endpoint': 'outside-to-node', 'target-endpoint': 'outside-to-node',
         'target-arrow-shape': 'triangle',
-        'line-color': '#8a93a5', 'target-arrow-color': '#8a93a5' } },
+        'line-color': token('--st-ready'), 'target-arrow-color': token('--st-ready') } },
     { selector: 'edge.pending', style: {
-        'line-color': '#9a3327', 'target-arrow-color': '#9a3327',
+        'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
         'line-style': 'dashed', 'width': 2 } },
   ],
 });
@@ -808,6 +903,23 @@ function route() {
     edge.style('taxi-direction', overlapsInX ? 'vertical' : 'horizontal');
   });
 }
+// The style above was resolved from tokens once, at build time. Flipping the
+// theme changes the tokens, not the resolved values, so they are re-read.
+addEventListener('themechange', () => {
+  cy.style()
+    .selector('node').style({'background-color': e => COLOUR()[e.data('status')],
+                             'border-color': token('--accent'),
+                             'color': token('--on-status')})
+    .selector('.picked').style({'border-color': token('--danger')})
+    .selector(':parent').style({'color': token('--muted')})
+    .selector('edge').style({'line-color': token('--st-ready'),
+                             'target-arrow-color': token('--st-ready')})
+    .selector('edge.pending').style({'line-color': token('--danger'),
+                                     'target-arrow-color': token('--danger')})
+    .update();
+  route();
+});
+
 cy.on('layoutstop', route);
 cy.on('position', 'node', route);
 route();
@@ -851,6 +963,8 @@ if (CONNECT) {
     source = null;
     cy.nodes().removeClass('picked');
     CONNECT.textContent = connecting ? 'Discard and exit' : 'Edit dependencies';
+    // Instructions for a mode you are not in are noise on every other visit.
+    document.getElementById('howto').hidden = !connecting;
     tally(connecting ? 'click what must finish first, then what waits for it'
                      : dropped ? `discarded ${dropped}` : '');
   };
@@ -968,11 +1082,11 @@ _TIMELINE = """
   <defs>
     <pattern id="hatch-estimated" width="6" height="6" patternTransform="rotate(45)"
              patternUnits="userSpaceOnUse">
-      <line x1="0" y="0" x2="0" y2="6" stroke="#fff" stroke-opacity=".55" stroke-width="3"/>
+      <line x1="0" y="0" x2="0" y2="6" stroke="var(--hatch)" stroke-opacity=".55" stroke-width="3"/>
     </pattern>
     <pattern id="hatch-unowned" width="8" height="8" patternTransform="rotate(-45)"
              patternUnits="userSpaceOnUse">
-      <line x1="0" y="0" x2="0" y2="8" stroke="#fff" stroke-opacity=".7" stroke-width="4"/>
+      <line x1="0" y="0" x2="0" y2="8" stroke="var(--hatch)" stroke-opacity=".7" stroke-width="4"/>
     </pattern>
   </defs>
   {% for rule in t.rules %}
@@ -984,8 +1098,9 @@ _TIMELINE = """
   {% endif %}
   {% for bar in t.bars %}
   <a href="{{ links.entity }}{{ bar.id }}"
-     ><rect data-id="{{ bar.id }}" class="{{ bar.classes }}" x="{{ bar.x }}" y="{{ bar.y }}"
-        width="{{ bar.width }}" height="14" fill="{{ bar.colour }}"
+     ><rect data-id="{{ bar.id }}" class="{{ bar.classes }} {{ bar.colour }}"
+        x="{{ bar.x }}" y="{{ bar.y }}"
+        width="{{ bar.width }}" height="14"
         ><title>{{ bar.tip }} — click to open</title></rect></a>
   {% endfor %}
   {% for month in t.months %}
@@ -1046,10 +1161,15 @@ svg { display: block; }
 .month-label { font-size: 9px; fill: var(--muted); }
 .cycle-rule { stroke: var(--line); stroke-dasharray: 3 3; }
 .cycle-label { font-size: 9px; fill: var(--accent); font-weight: 600; }
-.today { stroke: #9a3327; stroke-width: 1.5; }
+.today { stroke: var(--danger); stroke-width: 1.5; }
 rect.bar { rx: 3; }
-rect.estimated { stroke: #8f5c07; stroke-width: 1; }
-rect.late { stroke: #9a3327; stroke-width: 1.5; }
+rect.st-shaping { fill: var(--st-shaping); }
+rect.st-ready { fill: var(--st-ready); }
+rect.st-in_progress { fill: var(--st-in_progress); }
+rect.st-done { fill: var(--st-done); }
+rect.st-shelved { fill: var(--st-shelved); }
+rect.estimated { stroke: var(--warn); stroke-width: 1; }
+rect.late { stroke: var(--danger); stroke-width: 1.5; }
 """
 
 
@@ -1142,11 +1262,11 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 
 _SUGGEST_STYLE = """
 .suggest { position: absolute; z-index: 20; margin: 0; padding: 0; list-style: none;
-           background: var(--surface, #fff); border: 1px solid var(--line-strong, #b7c5c9);
+           background: var(--surface); border: 1px solid var(--line-strong);
            border-radius: 3px; min-width: 14rem; max-height: 16rem; overflow-y: auto;
            box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px; }
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
-.suggest li.on { background: var(--accent, #0f5c6b); color: #fff; }
+.suggest li.on { background: var(--accent); color: var(--on-accent); }
 .suggest .dim { opacity: .6; }
 .suggest li.on .dim { opacity: .85; }
 dd, td.edit { position: relative; }
@@ -1614,7 +1734,7 @@ dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
      padding-top: .35rem; }
 dd { margin: 0; }
 dt.derived, dd.derived { font-style: italic; }
-.problems { color: #8f5c07; padding-left: 1.1rem; }
+.problems { color: var(--warn); padding-left: 1.1rem; }
 
 /* The two modes of the same rows. Controls are hidden until the article is
    editing, and the values they replace are hidden once it is. */
@@ -1634,8 +1754,8 @@ label { display: block; }
 .kindpick select { font: inherit; }
 input.field, select.field, textarea.field {
   width: 100%; box-sizing: border-box; font: inherit; padding: .25rem .4rem;
-  border: 1px solid var(--line-strong, #b7c5c9); border-radius: 3px;
-  background: var(--surface, #fff); color: inherit;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: var(--surface); color: inherit;
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
 textarea.body-field {
@@ -1645,7 +1765,7 @@ textarea.body-field {
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2, rgba(127,127,127,.12)); padding: 0 .25em; }
-#conflict { border-left: 3px solid #9a3327; padding: .5rem .8rem; margin-top: 1rem;
+#conflict { border-left: 3px solid var(--danger); padding: .5rem .8rem; margin-top: 1rem;
             white-space: pre-wrap; font-size: 13px; }
 """
 
@@ -2051,6 +2171,11 @@ td.role { color: var(--accent); font-size: 12px; text-transform: uppercase;
 _ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"),
           ("shaped_by", "shaper"))
 
+# Most answerable first. Grouped by entity — which is what building the rows one
+# entity at a time gave you — a person with twenty rows had their four ownerships
+# scattered through it, and ownership is the thing being on the page is for.
+_ROLE_ORDER = ("owner", "assignee", "shaper", "reviewer")
+
 
 def render_people(index: Index, links: Links = STATIC) -> str:
     """Everyone in the plan, and what they are on the hook for.
@@ -2076,6 +2201,9 @@ def render_people(index: Index, links: Links = STATIC) -> str:
                         "search": f"{entity_id} {entity.title}".lower(),
                     }
                 )
+
+    for rows_for_person in held.values():
+        rows_for_person.sort(key=lambda r: (_ROLE_ORDER.index(r["role"]), r["title"]))
 
     people = []
     # Case-folded, or every capitalised login sorts ahead of the lowercase ones and

@@ -530,3 +530,78 @@ def test_choosing_a_repository_does_not_end_the_entry(seed_index: Index):
 
     assert "const partial = value.endsWith('#');" in html
     assert "(partial ? '' : ', ')" in html
+
+
+# --- theme ------------------------------------------------------------------
+
+
+def test_the_theme_is_chosen_before_the_first_paint(rendered: Path):
+    """A stored choice applied from the bottom of the page renders light first and
+    then turns dark in front of whoever chose dark, which is worse than not
+    offering the choice."""
+    body = read(rendered, "index.html")
+    head = body[: body.index("</head>")]
+
+    assert "localStorage.getItem('openproj:theme')" in head
+    assert "documentElement.dataset.theme" in head
+
+
+def test_every_page_carries_the_toggle(rendered: Path):
+    for page in PAGES:
+        assert '<button type="button" id="theme">' in read(rendered, page), page
+
+
+def test_no_colour_is_defined_only_in_the_dark_block(rendered: Path):
+    """The default is no stamp at all, where only the media query separates one
+    theme from the other. A token whose only definition sits behind
+    `[data-theme]` never applies in that state, and the page renders one theme's
+    text on the other theme's ground."""
+    style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
+    light = re.search(r":root \{(.*?)\}", style, re.S).group(1)
+    dark = re.search(r':root\[data-theme="dark"\] \{(.*?)\}', style, re.S).group(1)
+
+    defined = set(re.findall(r"(--[\w-]+):", light))
+    assert set(re.findall(r"(--[\w-]+):", dark)) <= defined
+    assert {"--bg", "--fg", "--surface", "--accent", "--danger"} <= defined
+    assert "background: var(--bg)" in style, "a transparent body borrows the host's ground"
+
+
+def test_a_status_colour_is_a_token_and_not_baked_into_a_bar(rendered: Path):
+    """A `fill` written at render time cannot change when the toggle is flipped."""
+    timeline = read(rendered, "timeline.html")
+
+    assert not re.search(r'<rect data-id="[^"]*"[^>]*fill="#', timeline)
+    assert re.search(r'<rect data-id="[^"]*" class="[^"]*st-\w+', timeline)
+    assert "rect.st-done { fill: var(--st-done); }" in timeline
+
+
+def test_the_graph_repaints_rather_than_reloads_on_a_theme_change(rendered: Path):
+    """Cytoscape resolved those colours once, when it was built: the tokens
+    change, the values it already computed do not."""
+    graph = read(rendered, "graph.html")
+
+    assert "addEventListener('themechange'" in graph
+    assert "getPropertyValue" in graph
+    assert not re.search(r"'background-color':\s*e => \{?\s*['\"]#", graph)
+
+
+def test_a_persons_rows_lead_with_what_they_own(rendered: Path):
+    """Built one entity at a time, a person with twenty rows had their four
+    ownerships scattered through it — and ownership is what being on the page is
+    for. Ordered by answerability, then by title within a role."""
+    from openproj.render import _ROLE_ORDER
+
+    body = read(rendered, "people.html")
+    for section in re.findall(r'<section class="person".*?</section>', body, re.S):
+        roles = re.findall(r'<tr data-role="(\w+)"', section)
+        assert roles == sorted(roles, key=_ROLE_ORDER.index), section[:60]
+    assert _ROLE_ORDER[0] == "owner"
+
+
+def test_the_graph_explains_the_mode_only_inside_it(rendered: Path):
+    """Instructions for a mode you are not in are noise on every other visit."""
+    graph = read(rendered, "graph.html")
+    editable = re.search(r'<p class="hint" id="howto"[^>]*>', graph)
+
+    assert "Double-click a node to open it" in graph
+    assert editable is None, "the static build has no edit mode to explain"

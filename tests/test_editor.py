@@ -225,3 +225,12 @@ def test_a_static_page_opens_no_event_stream(tmp_path: Path):
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
 
     assert "EventSource" not in (tmp_path / "index.html").read_text()
+
+
+def test_the_editing_instructions_appear_with_the_mode(client: TestClient):
+    """Hidden until Edit dependencies is pressed, and hidden again on the way
+    out — an instruction for a mode you are not in is noise on every visit."""
+    page = client.get("/graph").text
+
+    assert re.search(r'<p class="hint" id="howto" hidden>', page)
+    assert "getElementById('howto').hidden = !connecting" in page
