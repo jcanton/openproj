@@ -19,6 +19,7 @@ import pytest
 
 from openproj.index import (
     COMPUTED_PREDICATES,
+    NO_VALUE,
     Index,
     _matches_predicate,
     apply_filters,
@@ -156,7 +157,10 @@ def test_a_parent_that_names_nothing_does_not_take_the_whole_index_down():
 
     index = build_index(entities, CONFIG, TODAY)
 
-    assert index.facets["project"] == []
+    # Unresolvable means "no project" — the same answer as no parent at all, and
+    # since that is now askable from the menu it is `[NO_VALUE]` rather than the
+    # empty list.
+    assert index.facets["project"] == [NO_VALUE]
     assert set(index.entities) == {"task-c00001"}
 
 
@@ -172,7 +176,10 @@ def test_a_parent_chain_that_ends_outside_the_plan_still_finds_the_project_it_na
 
     index = build_index(entities, CONFIG, TODAY)
 
-    assert index.facets["project"] == ["proj-a00001"]
+    # `task-c00002` names a pitch that does not exist, so it is in no project and
+    # contributes the `(none)` option; the chain that does resolve still reports
+    # the project it reaches.
+    assert index.facets["project"] == [NO_VALUE, "proj-a00001"]
 
 
 def test_entities_are_keyed_by_id(family_index: Index):
@@ -240,19 +247,31 @@ def test_facets_are_sorted_distinct_values_as_strings():
 
     assert facets["owner"] == ["alice", "bob"]
     assert facets["priority"] == ["high", "low"]
-    assert facets["cycle"] == ["36"]
-    assert facets["tags"] == ["ci", "gpu"]
+    # Two of the three name a cycle and one does not, so the menu offers both the
+    # number and the question. `tags` likewise: `task-c00003` carries none.
+    assert facets["cycle"] == [NO_VALUE, "36"]
+    assert facets["tags"] == [NO_VALUE, "ci", "gpu"]
     assert facets["kind"] == ["task"]
 
 
-def test_facets_omit_absent_values():
-    """An unset field is not a facet value; "unowned" is a question for the
-    predicate list, not a fake owner name."""
+def test_an_absent_value_is_a_question_and_not_a_fake_name():
+    """An unset field is still not a facet VALUE — there is no owner called
+    "unowned" in the menu. What there is now is one option that is not a value at
+    all: `(none)`, which selects the entities where the field is empty.
+
+    It had to be added because emptiness was otherwise unaskable. An unset field
+    yields nothing to select, and the blank option every menu already had means
+    "no constraint" rather than "empty" — so "which pitches are not in a cycle
+    yet" and "what has no reviewer", the two questions a betting table actually
+    asks, had no answer anywhere in the UI.
+    """
     facets = build_index([a_task("task-c00001")], CONFIG, TODAY).facets
 
-    assert facets["owner"] == []
-    assert facets["cycle"] == []
-    assert facets["reviewers"] == []
+    assert facets["owner"] == [NO_VALUE]
+    assert facets["cycle"] == [NO_VALUE]
+    assert facets["reviewers"] == [NO_VALUE]
+    # And it is the only thing there: no invented name sits beside it.
+    assert all(values == [NO_VALUE] for values in (facets["owner"], facets["cycle"]))
 
 
 def test_the_project_facet_follows_the_parent_closure(family_index: Index):
@@ -271,8 +290,11 @@ def test_an_entity_outside_any_project_matches_no_project_filter():
     entities = [a_task("task-c00001", "Orphan")]
     index = build_index(entities, CONFIG, TODAY)
 
-    assert index.facets["project"] == []
+    # The menu offers the question — an orphan is exactly what `(none)` is for —
+    # and naming a project it is not in still matches nothing.
+    assert index.facets["project"] == [NO_VALUE]
     assert apply_filters(index, {"project": ["proj-a00001"]}, "") == []
+    assert apply_filters(index, {"project": [NO_VALUE]}, "") == ["task-c00001"]
 
 
 def test_search_blob_is_lowercased_title_tags_and_body():
@@ -546,9 +568,16 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
     # anybody means by priority. Everything else is genuinely alphabetical.
     assert seed_index.facets["status"] == ["ready", "in_progress", "done", "shelved"]
     assert seed_index.facets["priority"] == ["high", "medium", "low"]
-    assert seed_index.facets["cycle"] == ["28", "34", "35", "36"]
-    assert seed_index.facets["project"] == ["proj-7e57a0"]
+    # `(none)` leads the menus where something is actually missing — it is not a
+    # value, it is the question "which of these has nobody in it", and it is the
+    # only way to ask it: an unset field yields no facet value at all, so before
+    # this it could never be selected. Status does not grow one, because every
+    # entity has a status; cycle does, because a pitch that is not bet yet is
+    # the ordinary case rather than an error.
+    assert seed_index.facets["cycle"] == ["(none)", "28", "34", "35", "36"]
+    assert seed_index.facets["project"] == ["(none)", "proj-7e57a0"]
     assert seed_index.facets["owner"] == [
+        "(none)",
         "OngChia",
         "egparedes",
         "halungge",
@@ -558,6 +587,7 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "samkellerhals",
     ]
     assert seed_index.facets["assignees"] == [
+        "(none)",
         "DropD",
         "OngChia",
         "jcanton",
@@ -566,6 +596,7 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "yiluchen1066",
     ]
     assert seed_index.facets["reviewers"] == [
+        "(none)",
         "abishekg7",
         "edopao",
         "havogt",
@@ -912,3 +943,47 @@ def test_an_entity_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed
         for problem in validate_all([loose], Config())
         if problem.field == "prs"
     )
+
+
+# --- filtering for what is not there ----------------------------------------
+
+
+def test_a_field_nobody_filled_in_can_be_asked_for():
+    """"Which pitches are not in a cycle yet" and "what has no reviewer" are the
+    two questions a betting table actually asks, and neither could be asked at
+    all: an unset field yields no facet value, so it could never appear in the
+    menu, and the blank option at the top means "no constraint" rather than
+    "empty"."""
+    bet = Pitch(id="pitch-000001", kind="pitch", title="Bet", status="ready", cycle=37)
+    loose = Pitch(id="pitch-000002", kind="pitch", title="Loose", status="ready")
+    index = build_index([bet, loose], Config(), TODAY)
+
+    assert NO_VALUE in index.facets["cycle"]
+    assert apply_filters(index, {"cycle": [NO_VALUE]}, "") == ["pitch-000002"]
+    assert apply_filters(index, {"cycle": ["37"]}, "") == ["pitch-000001"]
+    # OR within a field still holds: empty is one more thing to be, not a mode.
+    assert apply_filters(index, {"cycle": [NO_VALUE, "37"]}, "") == [
+        "pitch-000001",
+        "pitch-000002",
+    ]
+
+
+def test_a_menu_never_offers_an_option_that_can_select_nothing():
+    """Every entity has a status, so Status must not grow an empty option; the
+    day a pitch is written and not bet, Cycle must."""
+    bet = Pitch(id="pitch-000001", kind="pitch", title="Bet", status="ready", cycle=37)
+    index = build_index([bet], Config(), TODAY)
+
+    assert NO_VALUE not in index.facets["status"]
+    assert NO_VALUE not in index.facets["cycle"]
+    assert NO_VALUE in index.facets["owner"], "nobody owns it, so the question is askable"
+
+
+def test_empty_is_spelled_the_same_on_both_sides_of_the_wire():
+    """The browser filters and the server filters, and they must agree. The
+    client's copy is a literal in a constant script block rather than a template
+    variable, so nothing but this test stops the two drifting — and a drift would
+    filter differently in the two places with neither one erroring."""
+    from openproj.render import _FILTER_JS
+
+    assert f"const NO_VALUE = '{NO_VALUE}';" in _FILTER_JS

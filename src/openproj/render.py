@@ -2058,6 +2058,13 @@ const params = new URLSearchParams(location.search);
 const FILTERS = ['kind','status','owner','assignees','reviewers','priority',
                  'cycle','project','tags'];
 
+// The menu option that means "this field is empty". Spelled here as a literal
+// and in `index.NO_VALUE` in Python, because this block is a constant rather
+// than a template — `test_empty_is_spelled_the_same_on_both_sides_of_the_wire`
+// is what stops the two drifting, and a drift would filter differently in the
+// browser than on the server with neither one erroring.
+const NO_VALUE = '(none)';
+
 function wanted(field) { return params.getAll(field).filter(Boolean); }
 
 // AND between fields, OR inside one: two owners means either of them, an owner
@@ -2069,8 +2076,14 @@ function matches(row) {
   for (const field of FILTERS) {
     const values = wanted(field);
     if (!values.length) continue;
-    const held = [].concat(row[field] ?? []).map(String);
-    if (!values.some(v => held.includes(v))) return false;
+    // `held` is empty for a field nobody has filled in, which no value in the
+    // menu can ever match — so emptiness gets its own option, and it asks about
+    // the list rather than looking inside it. Server-side `apply_filters` in
+    // index.py answers the same question the same way; the sentinel is spelled
+    // once, in `NO_VALUE` there, and reaches here through the template.
+    const held = [].concat(row[field] ?? []).map(String).filter(v => v !== '');
+    const empty = values.includes(NO_VALUE) && !held.length;
+    if (!empty && !values.some(v => held.includes(v))) return false;
   }
   const preds = wanted('predicate');
   if (preds.length && !preds.some(p => row.predicates.includes(p))) return false;
@@ -5421,15 +5434,20 @@ _DETAIL = """
     under nothing. Each `<article>` below carries its own `<h1>`, because each of
     them is a document and exactly one of them is ever displayed. -#}
 {% if not single %}<div class="toc">
-  <h1>Every entity in this plan</h1>
+  <h1>Every entity in this plan except for issues</h1>
   {% for group in groups %}
   <h2 class="tocgroup">{{ group.status|human }}
     <span class="tally">{{ group.entities|length }}</span></h2>
   <ul>
     {% for e in group.entities %}
-    <li><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a>
-        <span class="tocmeta"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>
-          {{ e.owner or "unowned" }}</span></li>
+    {#- The kind first, because it is the thing every row in this list has and
+        the thing a reader is scanning for; a chip trailing the title arrived
+        after the answer and moved with the title's length. The owner is gone
+        from here: this index exists to get you to a record, and the owner is on
+        the record, one click away, next to the four other fields you actually
+        came for. -#}
+    <li><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span
+      ><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a></li>
     {% endfor %}
   </ul>
   {% endfor %}
@@ -5841,6 +5859,15 @@ _DETAIL_STYLE = """
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
 .tocgroup .tally { font-weight: 400; letter-spacing: 0; }
 .toc ul { margin: 0; }
+/* The kind chip leads each row, so the titles have to start at one x — a chip
+   is as wide as the word inside it and "Project", "Pitch" and "Task" are three
+   widths, which ragged the whole column. A fixed inline-block wide enough for
+   the longest of the three, with the gap inside it rather than as a margin, so
+   a row that wraps wraps its title and not its marker. */
+.toc li .chip.kind-project, .toc li .chip.kind-pitch, .toc li .chip.kind-task {
+  display: inline-block; min-width: 4.2rem; text-align: center;
+  margin-right: .5rem; vertical-align: baseline;
+}
 /* Centred, and a container so the panes below can ask how wide the column
    actually is. It sat flush left with a full-height rule down its right edge,
    which on a wide screen is not a document — it is the left half of a two-pane
@@ -6010,12 +6037,19 @@ PRIORITIES = ("very_high", "high", "medium", "low", "very_low")
 # Chosen to be different SHAPES, not different weights of one shape: a small dot
 # and a large dot are two glyphs a reader has to compare, which is the failure
 # the ladder was already meant to fix.
+# Five shapes, one per status, and the only place any of them is written.
+#
+# Text glyphs and not emoji, and that is a constraint rather than a taste: an
+# emoji is drawn by the platform's colour font, so it ignores `currentColor` and
+# arrives at a different weight on every machine — and these sit inside a 14px
+# timeline bar in the bar's own ink. A chequered flag exists only as one (U+1F3C1),
+# which is why `ready` is an arrow instead.
 STATUS_GLYPH = {
-    "shaping": "?",              # still a question
-    "ready": "»",           # queued at the gate
-    "in_progress": "↑",     # under way
-    "done": "•",            # solid, settled
-    "shelved": "−",         # parked, nothing moving
+    "shaping": "?",         # still a question
+    "ready": "↑",           # queued at the gate, pointing at the off
+    "in_progress": "»",     # under way
+    "done": "✓",            # finished
+    "shelved": "✕",         # struck out, not failed
 }
 
 # Fields only one kind has, so the create form can hide the rest.
@@ -6486,9 +6520,6 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
             # names a parent and `_links` renders it as itself.
             "parent": entity.parent,
             "parent_link": _links([entity.parent], index, links) if entity.parent else "",
-            # The index groups by status and names the owner beside each title, so
-            # those two are read before any one entity is opened.
-            "owner": entity.owner,
             "problems": [p.message for p in index.problems if p.entity_id == entity_id],
             # Not problems: notes about the shaping document, printed here and
             # nowhere else. See `_shaping_hints`.
@@ -6813,6 +6844,23 @@ _CYCLE = """
   }}</a> (bet in {{ row.cycle }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
 {% endif %}
 
+<h2>Goal</h2>
+{#- Above the betting table, because it is what the betting table is FOR: the
+    question the room is answering while it ticks rows, not a note somebody adds
+    afterwards. It sat under the table for as long as it was called Notes, which
+    is a fair name for the second half of what goes in here — why a pitch was
+    left out, what would make it a bet next time — and the wrong name for the
+    first line, which is the cycle's whole point.
+
+    One field either way: this is the cycle record's own markdown body. -#}
+<div class="doc read">{{ c.body }}</div>
+{% if editable %}
+<p class="hint">What this cycle is for, and what came up at the betting table.
+  Saved with the setup.</p>
+<textarea id="notes" class="notes" rows="8"
+          aria-label="Cycle goal">{{ c.raw_body }}</textarea>
+{% endif %}
+
 <h2>The bet</h2>
 <p class="hint">Everything ready or in progress. Ticking one stamps it with cycle
   {{ c.number }}; an item already in progress from an earlier cycle keeps the cycle it
@@ -6852,18 +6900,6 @@ _CYCLE = """
   </tr>
   {% endfor %}
 </tbody></table>
-<h2>Notes</h2>
-{#- The cycle's own body: the goal, and whatever the room said while betting.
-    The betting table produces decisions that are not fields on anything — why a
-    pitch was left out, what would make it a bet next time — and they were going
-    into a HackMD note nobody linked. -#}
-<div class="doc read">{{ c.body }}</div>
-{% if editable %}
-<p class="hint">The goal of this cycle, and what came up at the betting table.
-  Saved with the setup.</p>
-<textarea id="notes" class="notes" rows="8"
-          aria-label="Cycle notes">{{ c.raw_body }}</textarea>
-{% endif %}
 {% if editable %}
 <div class="commitbar" id="commitbar">
   <span id="unsaved">Nothing to save</span>
@@ -7379,8 +7415,6 @@ _CYCLES = """
 {% if editable %}
 <section id="create">
   <h2>Start a cycle</h2>
-  <p class="hint">This writes a cycle record. The dates and the roster are carried
-    from the last cycle and corrected on the new cycle's own page.</p>
   <p class="editbar">
     <label class="facet">number
       <input id="number" type="number" value="{{ next.number }}" min="0" max="9999"></label>
@@ -7388,6 +7422,17 @@ _CYCLES = """
       <input id="starts" type="date" value="{{ next.starts_on }}"></label>
     <label class="facet">review meeting
       <input id="reviews" type="date" value="{{ next.reviews_on }}"></label>
+  </p>
+  {#- The goal, asked here rather than only afterwards. A cycle was created with
+      `body: null` and the goal could only be written by finding the new cycle's
+      own page, which is the one moment the goal is actually in somebody's head:
+      the betting table has just finished. Optional, because a cycle with dates
+      and no goal is still a cycle, and refusing to start one over a paragraph
+      would send people back to editing YAML. -#}
+  <p class="editbar goalbar">
+    <label class="facet" for="goal">goal</label>
+    <textarea id="goal" rows="3"
+      placeholder="What this cycle is for. Markdown; editable afterwards."></textarea>
   </p>
   <p class="editbar">
     <button type="button" id="start">Start it</button>
@@ -7420,8 +7465,19 @@ START.onclick = () => {
   const people = Object.keys(ROSTER).length;
   field('confirm-number').textContent = field('number').value;
   field('confirm-starts').textContent = field('starts').value;
-  field('confirm-length').textContent =
-    `${field('build').value} build weeks + ${field('cooldown').value} cool-down`;
+  // Measured from the two dates in front of you, and not from `#build` and
+  // `#cooldown` — two inputs this form stopped having when it started asking for
+  // the review date instead. `field()` answered null for both, reading `.value`
+  // off null threw, and the throw happened before `CONFIRM.hidden = false`: so
+  // "Start it" did nothing at all, silently, and no cycle could be started from
+  // the page at all. The confirmation is the only thing between a click and a
+  // commit, which is why it is computed from what is on screen.
+  const weeks = Math.round(
+    (Date.parse(field('reviews').value) - Date.parse(field('starts').value))
+    / (7 * 24 * 60 * 60 * 1000));
+  field('confirm-length').textContent = Number.isFinite(weeks) && weeks > 0
+    ? `${weeks} week${weeks === 1 ? '' : 's'} to the review meeting`
+    : 'dates not set';
   field('confirm-people').textContent =
     `${people} ${people === 1 ? 'person' : 'people'} carried over`;
   CONFIRM.hidden = false;
@@ -7453,7 +7509,11 @@ document.getElementById('yes').onclick = async () => {
           reviews_on: field('reviews').value,
           availability: ROSTER,
         },
-        body: null,
+        // The goal as typed, or null for a cycle started without one — null and
+        // not "", because the write path treats a null body as "leave it alone"
+        // and an empty string as "set it to empty", and those differ the day
+        // somebody starts a cycle whose record already exists.
+        body: field('goal').value.trim() || null,
       }),
     });
     const answer = await answerOf(response);

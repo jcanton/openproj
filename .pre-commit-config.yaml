@@ -1,0 +1,40 @@
+# `uvx pre-commit install` turns these on. Deliberately not run from CI: CI runs
+# ruff out of the locked dev group, and two ruffs on two versions disagreeing
+# about one file is a worse failure than either check missing.
+#
+# There is no hook here that runs the test suite. It takes four and a half
+# minutes, and a pre-commit hook that slow does not get waited for — it gets
+# `--no-verify`d, and then uninstalled, by exactly the person it was written to
+# help. The suite is the merge gate's job; this file is only for what is cheap
+# enough to never think about.
+repos:
+  # Same version as the ruff resolved in `uv.lock` for the dev group. Bump the
+  # two together: a hook that formats a file the way CI's ruff then rejects is
+  # the whole problem this is supposed to prevent.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      # This repo is not format-clean yet (32 files of 103), and the hook only
+      # touches what you staged — so the first commit to an old file carries
+      # that file's reformat into an unrelated diff. `uv run ruff format .` as
+      # its own commit gets the noise out of everybody's review at once, and is
+      # the same commit that lets CI start checking format.
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      # Conflict markers reach a branch that two other worktrees are cut from,
+      # and history here does not move — so a marker committed is a marker
+      # fixed forward, in public, forever.
+      - id: check-merge-conflict
+      # 1000, not the default 500. Vendoring libraries is policy here rather
+      # than an accident (`static/VENDOR.md`), and `static/cytoscape.min.js` is
+      # already 365K; a guard that fires on the documented practice is a guard
+      # people learn to skip. This is for the stray screenshot or database dump.
+      - id: check-added-large-files
+        args: [--maxkb=1000]

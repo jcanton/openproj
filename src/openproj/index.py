@@ -287,6 +287,18 @@ def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
     return None
 
 
+# The one option in a facet menu that is not a value out of the data: it selects
+# the entities where the field is empty.
+#
+# "Which pitches are not in a cycle yet" and "what has no reviewer" are the two
+# questions a betting table actually asks, and neither could be asked at all —
+# an unset field produces no facet value, so it could never be selected, and the
+# blank option at the top of every menu means "no constraint" rather than
+# "empty". Spelled in brackets, because a facet value is a login, a tag, a cycle
+# number or a status, and none of those is ever written like this.
+NO_VALUE = "(none)"
+
+
 def _ordered(field: str, values: set[str]) -> list[str]:
     """Alphabetical, except where the values are a sequence rather than a set.
 
@@ -295,18 +307,24 @@ def _ordered(field: str, values: set[str]) -> list[str]:
     in, for the first four of five. Priority reads `high, low, medium`, which is
     not an order anybody means by priority.
     """
+    # `(none)` first wherever it appears, because it is not one of the values —
+    # it is the question "which of these has nobody in it", and sorted with the
+    # rest it lands under the bracket's ASCII position, above every login, where
+    # it reads as somebody's name.
+    rest = values - {NO_VALUE}
+    head = [NO_VALUE] if NO_VALUE in values else []
     ranked = {"status": STATUS_ORDER, "priority": tuple(PRIORITY_RANK)}.get(field)
     if ranked is None:
-        return sorted(values)
-    known = [v for v in ranked if v in values]
-    return known + sorted(v for v in values if v not in ranked)
+        return head + sorted(rest)
+    known = [v for v in ranked if v in rest]
+    return head + known + sorted(v for v in rest if v not in ranked)
 
 
 def _facet_values(entity: Entity, field: str, by_id: dict[str, Entity]) -> list[str]:
     """Every value of `field` on this entity, as strings. Absent values yield none.
 
-    An unset field is not a facet value: "unowned" is a question for the predicate
-    list, not a fake owner name in the menu.
+    An unset field is not a facet value: emptiness is selected with `NO_VALUE`,
+    which is a menu option rather than a fake owner named "unowned".
     """
     if field == "project":
         project = _project_of(entity, by_id)
@@ -343,7 +361,12 @@ def build_index(
     for_later: list[str] = []
     for entity in entities:
         for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
-            facets[field].update(_facet_values(entity, field, by_id))
+            values = _facet_values(entity, field, by_id)
+            # `NO_VALUE` is offered only where something is actually missing, so
+            # a menu never carries an option that can select nothing. Every
+            # status has a value, so Status never grows one; Cycle grows one the
+            # moment a pitch is written and not yet bet.
+            facets[field].update(values or [NO_VALUE])
         # PR references too. "Which entity is #1364?" is a question people ask
         # in front of a screen, and the answer was only findable if the number
         # also happened to appear in the prose.
@@ -456,7 +479,11 @@ def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> li
             if field == "predicate":
                 found = any(_matches_predicate(index, entity_id, value) for value in wanted)
             elif field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
-                found = bool(set(_facet_values(entity, field, index.entities)) & set(wanted))
+                # Empty is selectable, and it is the absence of every value
+                # rather than one more of them — so it is asked of the list
+                # itself, not looked up in it.
+                values = _facet_values(entity, field, index.entities)
+                found = bool(set(values) & set(wanted)) or (NO_VALUE in wanted and not values)
             else:
                 found = False
             if not found:
