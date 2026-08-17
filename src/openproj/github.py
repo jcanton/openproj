@@ -75,16 +75,30 @@ class GitHubApp:
     _token: str = field(default="", repr=False)
     _expires: float = 0.0
 
+    NEEDS = ("OPENPROJ_APP_ID", "OPENPROJ_INSTALLATION_ID", "OPENPROJ_APP_KEY")
+
+    @classmethod
+    def missing(cls, environ: dict[str, str]) -> list[str]:
+        """Which of the three are absent, so a caller can say so.
+
+        Returning None from `from_environment` is right — two of three is a
+        deployment somebody stopped half way through — but on its own it produces
+        `'NoneType' object has no attribute 'token'` several frames later, which
+        names neither the variable nor the mistake.
+        """
+        return [name for name in cls.NEEDS if not environ.get(name, "").strip()]
+
     @classmethod
     def from_environment(cls, environ: dict[str, str]) -> GitHubApp | None:
         """Built only when all three are present. Two of three is a deployment
         half-configured, and pushing anonymously would look like it worked."""
-        app_id = environ.get("OPENPROJ_APP_ID", "").strip()
-        installation = environ.get("OPENPROJ_INSTALLATION_ID", "").strip()
-        key_path = environ.get("OPENPROJ_APP_KEY", "").strip()
-        if not (app_id and installation and key_path):
+        if cls.missing(environ):
             return None
-        return cls(app_id, installation, Path(key_path).read_text(encoding="utf-8"))
+        return cls(
+            environ["OPENPROJ_APP_ID"].strip(),
+            environ["OPENPROJ_INSTALLATION_ID"].strip(),
+            Path(environ["OPENPROJ_APP_KEY"].strip()).read_text(encoding="utf-8"),
+        )
 
     def token(self, now: float | None = None) -> str:
         moment = now if now is not None else time.time()

@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import re
 import secrets
 import threading
@@ -488,10 +489,15 @@ def create_app(
         # GitHub refuses — and `_finish` swallows that into `pushed: False`. The
         # tool would look like it was working while every commit stayed on one
         # container's disk until it was replaced.
+        from .github import GitHubApp
+
+        absent = GitHubApp.missing(dict(os.environ)) or list(GitHubApp.NEEDS)
         raise ValueError(
             f"refusing to start: a remote at {remote} needs a credential and none is "
-            "configured. Set OPENPROJ_APP_ID, OPENPROJ_INSTALLATION_ID and "
-            "OPENPROJ_APP_KEY, or drop OPENPROJ_REMOTE to run against the local repo."
+            f"configured. {', '.join(absent)} "
+            f"{'is' if len(absent) == 1 else 'are'} unset — set "
+            f"{'it' if len(absent) == 1 else 'them'}, or drop OPENPROJ_REMOTE to run "
+            "against the local repository."
         )
     store = Store(Path(repo), remote=remote or None, credentials=credentials)
     app = FastAPI(title="openproj")

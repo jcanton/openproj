@@ -135,3 +135,39 @@ def test_the_credential_is_asked_for_every_push_not_held_from_startup(tmp_path: 
     assert "callbacks=self._callbacks()" in source
     assert source.count("callbacks=self._callbacks()") == 2, "push and fetch both"
     assert "callbacks=None" not in source
+
+
+def test_a_half_set_environment_names_the_variable_it_wants(tmp_path: Path, pem: str):
+    """`from_environment` returning None is right, but on its own it surfaces as
+    `'NoneType' object has no attribute 'token'` several frames later — which
+    names neither the variable nor the mistake. This is what the runbook's check
+    and the startup refusal both read."""
+    key = tmp_path / "app.pem"
+    key.write_text(pem)
+
+    assert GitHubApp.missing({}) == list(GitHubApp.NEEDS)
+    assert GitHubApp.missing(
+        {"OPENPROJ_INSTALLATION_ID": "154481476", "OPENPROJ_APP_KEY": str(key)}
+    ) == ["OPENPROJ_APP_ID"]
+    assert GitHubApp.missing(
+        {"OPENPROJ_APP_ID": "1", "OPENPROJ_INSTALLATION_ID": "2", "OPENPROJ_APP_KEY": str(key)}
+    ) == []
+
+
+def test_the_startup_refusal_says_which_variable_is_unset(tmp_path: Path, monkeypatch):
+    import pygit2
+
+    from openproj.web import create_app
+
+    repo = tmp_path / "plan.git"
+    pygit2.init_repository(str(repo), bare=True, initial_head="main")
+    for name in GitHubApp.NEEDS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENPROJ_APP_ID", "123456")
+
+    with pytest.raises(ValueError) as refusal:
+        create_app(repo, remote="https://github.com/jcanton/icon4py-plan.git")
+
+    assert "OPENPROJ_INSTALLATION_ID" in str(refusal.value)
+    assert "OPENPROJ_APP_KEY" in str(refusal.value)
+    assert "OPENPROJ_APP_ID" not in str(refusal.value), "that one is set"

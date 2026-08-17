@@ -112,7 +112,8 @@ gh api /app/installations --jq '.[] | "\(.id)  \(.account.login)"'   # needs the
 # https://github.com/settings/installations/<INSTALLATION_ID>
 ```
 
-**Check it works before deploying anything** — this uses the code that ships:
+**Check it works before deploying anything** — this uses the code that ships, and
+names any variable you left out rather than failing several frames later:
 
 ```bash
 cd ~/projects/openproj
@@ -120,15 +121,27 @@ OPENPROJ_APP_ID=<app id> \
 OPENPROJ_INSTALLATION_ID=<installation id> \
 OPENPROJ_APP_KEY=/path/to/app-key.pem \
 uv run python -c "
-from openproj.github import GitHubApp
 import os
-app = GitHubApp.from_environment(dict(os.environ))
-print('token minted, first 8:', app.token()[:8])
+from openproj.github import GitHubApp
+absent = GitHubApp.missing(dict(os.environ))
+if absent:
+    raise SystemExit('not set: ' + ', '.join(absent))
+print('token minted, first 8:', GitHubApp.from_environment(dict(os.environ)).token()[:8])
 "
 ```
 
-A token printed means the App, the key and the installation all line up. A 401
-means the key does not match the App; a 404 means the installation id is wrong.
+All three are required. The **App ID** is on the App's own settings page
+(`https://github.com/settings/apps/<name>`), a six- or seven-digit number near the
+top — it is *not* the Client ID beside it, and it is not the installation id.
+
+A token printed means the App, the key and the installation all line up:
+
+| what you see | what it means |
+|---|---|
+| `token minted, first 8: ghs_...` | all three agree; go to step 3 |
+| `not set: OPENPROJ_APP_ID` | that variable is missing from the command |
+| `401 Unauthorized` | the key does not belong to that App, or the App ID is wrong |
+| `404 Not Found` | the installation id is wrong, or the App is not installed there |
 
 ---
 
