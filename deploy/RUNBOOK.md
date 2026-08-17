@@ -254,7 +254,7 @@ It is safe to run again: everything it creates is checked for first, so a second
 run redeploys the current commit and leaves the secrets, the service account and
 the registry alone. It asks for the OAuth client secret at the prompt rather than
 reading it from the file, so that one value is never on disk or in your history.
-It builds `deploy/Dockerfile`, deploys, runs the four checks below, and prints
+It builds `./Dockerfile`, deploys, runs the four checks below, and prints
 the callback URI to add to the OAuth App.
 
 What it is doing, and why the flags are what they are:

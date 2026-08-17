@@ -1,15 +1,20 @@
-# syntax=docker/dockerfile:1.7
-
 FROM python:3.12-slim-bookworm AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 # Dependencies in their own layer: pyproject and the lock change far less often
 # than src/, so editing a renderer must not re-resolve the world.
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-install-project --no-dev
+#
+# COPY and not the tidier `--mount=type=bind`, and no `--mount=type=cache` for
+# uv's downloads, because both need BuildKit and `gcloud builds submit` runs the
+# legacy docker builder — where a mount is not ignored, it is a hard error:
+#
+#     the --mount option requires BuildKit
+#
+# The layer split above is what actually keeps rebuilds cheap; the uv cache bought
+# nothing on Cloud Build anyway, which starts every build on a fresh machine.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-install-project --no-dev
 
 FROM python:3.12-slim-bookworm
 # ca-certificates is not optional and is the classic slim trap: without it every

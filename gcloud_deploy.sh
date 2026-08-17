@@ -92,8 +92,8 @@ if [[ ! -r "$APP_KEY_FILE" ]]; then
   echo "Cannot read APP_KEY_FILE: $APP_KEY_FILE" >&2
   exit 2
 fi
-if [[ ! -f deploy/Dockerfile ]]; then
-  echo "Run this from the openproj repository root (deploy/Dockerfile not found)." >&2
+if [[ ! -f Dockerfile ]]; then
+  echo "Run this from the openproj repository root (Dockerfile not found)." >&2
   exit 2
 fi
 
@@ -248,7 +248,7 @@ done
 note "artifactregistry.writer, logging.logWriter, storage.admin"
 
 say "Building ${IMAGE}"
-note "uploads this directory minus .gcloudignore, then builds deploy/Dockerfile"
+note "uploads this directory minus .gcloudignore, then builds ./Dockerfile"
 # --default-buckets-behavior is not optional once --service-account is given:
 # Cloud Build refuses a build that names a service account without also saying
 # where its logs go, and a project-owned regional bucket is the answer that needs
