@@ -37,16 +37,37 @@ the Free plan gets 2,000 a month, which a nightly check will not come close to.
 
 Already created: **`jcanton/icon4py-plan`**, private, skeleton only.
 
-**Turn on branch protection for `main`** before the service can write to it: block
-force-push and deletion. The server only ever fast-forwards, so this costs
-nothing and converts "history destroyed" into "revert three commits".
+**Branch protection is already on**, applied and checked: an ordinary fast-forward
+is accepted — which is all the server ever does — and a force-push is refused with
+`GH006: Protected branch update failed`. It blocks force-push and deletion, and it
+applies to admins too, so it converts "history destroyed" into "revert three
+commits" for everybody including you.
+
+To re-apply it, or to apply it to another plan repository, pass the body as JSON:
 
 ```bash
-gh api -X PUT repos/jcanton/icon4py-plan/branches/main/protection \
-  -H "Accept: application/vnd.github+json" \
-  -f 'required_status_checks=null' -F 'enforce_admins=true' \
-  -f 'required_pull_request_reviews=null' -f 'restrictions=null' \
-  -F 'allow_force_pushes=false' -F 'allow_deletions=false'
+gh api -X PUT repos/jcanton/icon4py-plan/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": null,
+  "enforce_admins": true,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+JSON
+```
+
+Not with `-f key=null`: `-f` sends the *string* `"null"` and the endpoint answers
+422 with three screens of `No subschema in "anyOf" matched`. `-F` would parse the
+literal, but four of these six fields have to be JSON null or false and one wrong
+flag gives the same wall of text — a JSON body has one obvious reading.
+
+Check it:
+
+```bash
+gh api repos/jcanton/icon4py-plan/branches/main/protection \
+  -q '"force pushes: \(.allow_force_pushes.enabled)  deletions: \(.allow_deletions.enabled)"'
 ```
 
 ---
