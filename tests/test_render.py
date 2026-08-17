@@ -1153,7 +1153,7 @@ def test_an_empty_timeline_says_which_kind_of_empty_it_is(tmp_path: Path):
     render_static(build_index([parked], Config(), date(2026, 8, 17)), tmp_path / "parked")
     parked_body = read(tmp_path / "parked", "timeline.html")
     assert "Nothing in this plan has dates." in parked_body
-    assert '<div class="tl" hidden>' in parked_body
+    assert '<div class="tl" data-fills hidden>' in parked_body
 
     live = Task(id="task-000002", kind="task", title="Live", owner="ann", effort_weeks=1.0)
     index = build_index([live], Config(), date(2026, 8, 17))
@@ -1498,8 +1498,11 @@ def test_the_furniture_every_page_shares_is_written_once(rendered: Path):
     """
     for name in PAGES:
         style = re.search(r"<style>(.*?)</style>", read(rendered, name), re.S).group(1)
-        assert style.count("#summary {") == 1, name
-        assert style.count("#state {") == 1, name
+        # The selector on its own, anchored: `.keyrow > #summary` and
+        # `.editbar #summary` place the line on a row it shares, which is a
+        # modifier and not a second answer to what the line looks like.
+        assert len(re.findall(r"(?m)^#summary \{", style)) == 1, name
+        assert len(re.findall(r"(?m)^#state \{", style)) == 1, name
         assert "#shown {" not in style, name
 
     for name in ("index.html", "graph.html", "timeline.html", "people.html"):
@@ -1517,8 +1520,8 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
     of an entity, it is which field their name is in.
     """
     people, index = read(rendered, "people.html"), read(rendered, "index.html")
-    shape = (r'<div id="controls"><input id="q" type="search" aria-label="([^"]+)"'
-             r' placeholder="\1">\s*<div class="facets">')
+    shape = (r'<div id="controls">\s*<div class="searching">\s*'
+             r'<input id="q" type="search" aria-label="([^"]+)" placeholder="\1">')
 
     for name, page in (("people", people), ("index", index)):
         assert re.search(shape, page), name
@@ -2608,3 +2611,309 @@ def test_a_window_typed_into_the_url_cannot_run_off_the_calendar(seed_index: Ind
         html = render_timeline(seed_index, window=window)
         assert '<svg width=' in html, window
         assert len(html) < 1_000_000, (window, len(html))
+
+
+# --------------------------------------------------------------------------- #
+# The room the window has left, measured in a browser
+# --------------------------------------------------------------------------- #
+
+# Three views, three boxes, one measurement. The graph's canvas is the only one
+# with a `height` — a canvas has no size of its own, so it IS the room — while the
+# table's rows and the timeline's plot are capped at it and stay as tall as their
+# own contents when those are shorter.
+_ROOM = """
+const box = document.querySelector('[data-fills]');
+const bar = document.querySelector('.commitbar');
+const root = document.documentElement;
+const rect = box.getBoundingClientRect();
+const bars = bar && bar.getBoundingClientRect();
+// Cytoscape draws into a canvas, so where a node ended up is a question only it
+// can answer. Rendered coordinates are relative to the container's own origin.
+const graph = (typeof cy !== 'undefined' && cy.nodes) ? cy : null;
+const nodes = graph ? graph.nodes(':visible').map(node => {
+  const seen = node.renderedBoundingBox();
+  return {id: node.id(), top: rect.top + seen.y1, bottom: rect.top + seen.y2,
+          left: rect.left + seen.x1, right: rect.left + seen.x2};
+}) : [];
+const span = what => nodes.length
+  ? {top: Math.min(...nodes.map(n => n.top)), bottom: Math.max(...nodes.map(n => n.bottom)),
+     left: Math.min(...nodes.map(n => n.left)), right: Math.max(...nodes.map(n => n.right))}
+  : null;
+const drawn = span();
+return {
+  window: innerHeight,
+  scrolls: root.scrollHeight - root.clientHeight,
+  boxTop: Math.round(rect.top), boxBottom: Math.round(rect.bottom),
+  // Positive is clear air between the bottom of the box and the top of the bar.
+  clearance: bars ? Math.round(bars.top - rect.bottom) : null,
+  drawnCount: nodes.length,
+  underBar: bars ? nodes.filter(n => n.bottom > bars.top + 0.5).map(n => n.id) : [],
+  offCanvas: nodes.filter(n => n.bottom > rect.bottom + 1 || n.top < rect.top - 1).map(n => n.id),
+  // How far the drawing sits from each edge of the box it was fitted into. Equal
+  // means centred in the room it got; unequal by hundreds means centred in the
+  // room it thought it had.
+  fitted: drawn ? {above: Math.round(drawn.top - rect.top),
+                   below: Math.round(rect.bottom - drawn.bottom),
+                   left: Math.round(drawn.left - rect.left),
+                   right: Math.round(rect.right - drawn.right)} : null,
+};
+"""
+
+# Six windows from a tall desktop down to the short one the notes asked for, and
+# one below anything usable. The floor the shell reports engages somewhere near
+# the bottom of this range, and where it does the page is supposed to scroll —
+# that is the honest answer at a window with no room in it, and it is why the
+# short end is a separate expectation rather than the same one again.
+_WINDOWS = (1200, 900, 806, 700, 620)
+
+
+@pytest.fixture
+def views(seed_index: Index) -> dict[str, str]:
+    """The three pages that size a box to the window, served rather than exported:
+    the graph's commit bar is the thing the canvas has to clear and a static
+    export has no server to commit to, so it has no bar at all."""
+    from openproj.render import STATIC, render_graph, render_table, render_timeline
+
+    return {
+        "graph": render_graph(seed_index, STATIC, base_commit="deadbee"),
+        "table": render_table(seed_index, STATIC, base_commit="deadbee"),
+        "timeline": render_timeline(seed_index, STATIC),
+    }
+
+
+@pytest.mark.parametrize("view", ("graph", "table", "timeline"))
+def test_the_box_each_view_fills_stops_where_the_window_does(
+    views: dict[str, str], view: str, tmp_path: Path
+):
+    """`#cy` was `height: 78vh` — a fraction of the window that knows nothing
+    about the six rows above the canvas or the sticky commit bar below it. At an
+    806px window the canvas ran from 268 to 899 while the bar sat across 759–806,
+    so 140px of it was underneath the bar, two nodes loaded hidden there, and the
+    page scrolled as well.
+
+    A fraction was always going to be wrong; only the amount was in question. So
+    the number is measured, and this asks the browser what the measurement
+    produced — at five windows, because one window is the one thing that cannot
+    show a fraction is wrong.
+
+    Nothing here reads the stylesheet. `height: var(--room)` resolving is not the
+    claim; where the bottom of the box ends up is.
+    """
+    from browser import chrome, measured_in
+
+    browser = chrome()
+    for height in _WINDOWS:
+        got = measured_in(
+            browser, views[view], tmp_path / f"{view}-{height}.html", 1400, _ROOM, height
+        )
+        where = f"{view} at a {got['window']}px window"
+        assert got["scrolls"] == 0, f"{where}: the page scrolls {got['scrolls']}px"
+        if got["clearance"] is not None:
+            assert got["clearance"] >= 0, (
+                f"{where}: {-got['clearance']}px of the box is underneath the commit bar"
+            )
+        assert not got["underBar"], f"{where}: {got['underBar']} are drawn under the bar"
+
+        if view != "graph":
+            continue
+        # The other half of the note: the fit has to centre the plan in the space
+        # the canvas actually gets. Cytoscape measures its container when it is
+        # built and never looks again, so a canvas that is resized afterwards and
+        # not told keeps drawing at the size it was given — the plan centred for a
+        # box it no longer has, with nodes off the edge of the one it does.
+        assert got["drawnCount"] == 17, f"{where}: {got['drawnCount']} nodes drawn"
+        assert not got["offCanvas"], f"{where}: {got['offCanvas']} are outside the canvas"
+        fitted = got["fitted"]
+        for axis, (near, far) in (("vertically", ("above", "below")),
+                                  ("horizontally", ("left", "right"))):
+            assert abs(fitted[near] - fitted[far]) <= 2, (
+                f"{where}: the plan sits {fitted[near]}px from the {near} edge and "
+                f"{fitted[far]}px from the {far} one, so it is not centred {axis} "
+                f"in the canvas it was given"
+            )
+
+
+# Where the two lines that describe a view — the instruction and the count — end
+# up. Both used to be rows of their own; both are now the far end of a row that
+# already existed.
+_ROWS = """
+const line = el => el && {
+  top: Math.round(el.getBoundingClientRect().top),
+  bottom: Math.round(el.getBoundingClientRect().bottom),
+  right: Math.round(el.getBoundingClientRect().right),
+};
+const controls = document.getElementById('controls');
+// Every top-level block between the heading and the box the view fills. This is
+// the count the notes were about: six of them left 268px of an 806px window for
+// the graph.
+const box = document.querySelector('[data-fills]');
+const rows = [...document.querySelector('main').children]
+  .filter(el => el.getClientRects().length && el.getBoundingClientRect().height > 0
+                && el.getBoundingClientRect().top < box.getBoundingClientRect().top)
+  .map(el => el.tagName.toLowerCase()
+       + (el.id ? '#' + el.id : '')
+       + (typeof el.className === 'string' && el.className.trim()
+          ? '.' + el.className.trim().split(/\\s+/).join('.') : ''));
+return {
+  rows,
+  boxTop: Math.round(box.getBoundingClientRect().top),
+  search: line(document.getElementById('q')),
+  aside: line(document.querySelector('#controls .aside')),
+  key: line(document.querySelector('.keyrow .legend')),
+  count: line(document.getElementById('summary')),
+  editbar: line(document.querySelector('.editbar')),
+  controlsRight: Math.round(controls.getBoundingClientRect().right),
+};
+"""
+
+
+def _shares_a_line(one: dict, other: dict) -> bool:
+    """Two boxes are on the same row of the page when their vertical extents
+    overlap. Not "same top": a 12px sentence beside a 29px input has a different
+    top by design, and comparing tops would pass for a sentence sitting one line
+    below as well."""
+    return one["top"] < other["bottom"] and other["top"] < one["bottom"]
+
+
+@pytest.mark.parametrize("view", ("graph", "table", "timeline"))
+def test_a_sentence_about_the_view_never_costs_the_view_a_row(
+    views: dict[str, str], view: str, tmp_path: Path
+):
+    """The graph stacked six rows before the canvas started: heading, pan/zoom
+    hint, search box, filters, key, count. Two of the six were not controls at
+    all — a sentence about how to move the drawing, and a count of what is in it —
+    and each was a full row wide to hold twelve words.
+
+    One pattern on all three views. The instruction rides at the far end of the
+    search box's line, which is the row that exists on every view that filters
+    anything. The count rides at the far end of the last row before the thing it
+    counts: the key's row where there is a key, and the page's own control row
+    where there is not.
+
+    The table keeps its instruction where it is, and that is the pattern rather
+    than an exception to it: the rule is about rows, and "double-click a cell to
+    edit it" is already inline beside New entity — the control it shares a subject
+    with — so it costs no row to move and no row to leave.
+    """
+    from browser import chrome, measured_in
+
+    got = measured_in(chrome(), views[view], tmp_path / f"{view}-rows.html", 1400, _ROWS)
+
+    # Nothing between the heading and the box is a bare paragraph or a lone count.
+    # Named, because the next thing anybody adds here is the row this is guarding
+    # against.
+    assert got["rows"] == {
+        "graph": ["h1", "div#controls", "div.keyrow"],
+        "table": ["h1", "p.editbar", "div#controls"],
+        "timeline": ["h1", "div#controls", "form.tl-controls", "ul.legend", "div.keyrow"],
+    }[view], got["rows"]
+
+    if view == "table":
+        # No key to hang it on, so the count goes to the far end of the row the
+        # page's own controls stand in.
+        assert _shares_a_line(got["count"], got["editbar"])
+    else:
+        assert got["aside"], "the view says nothing about itself"
+        assert _shares_a_line(got["aside"], got["search"]), (
+            f"the instruction is at {got['aside']} and the search box at {got['search']}"
+        )
+        assert _shares_a_line(got["count"], got["key"]), (
+            f"the count is at {got['count']} and the key at {got['key']}"
+        )
+        assert got["aside"]["right"] == got["controlsRight"], "right-aligned, as asked"
+
+    # Flush with the right edge of the bar above it, on every view.
+    assert got["count"]["right"] == got["controlsRight"], (
+        f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
+    )
+
+
+# The window changes under a page that is already open, and the graph's commit bar
+# grows a line of buttons under a canvas that is already drawn. Both are answered
+# by re-measuring, and both are events rather than rendering frames — which is the
+# whole reason they are the two the shell listens for.
+_AFTER = """
+const box = document.querySelector('[data-fills]');
+const bar = document.querySelector('.commitbar');
+const state = () => ({
+  room: document.documentElement.style.getPropertyValue('--room'),
+  barHeight: Math.round(bar.getBoundingClientRect().height),
+  scrolls: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  clearance: Math.round(bar.getBoundingClientRect().top
+                        - box.getBoundingClientRect().bottom),
+});
+const settled = state();
+// A row of furniture appears above the canvas — a heading a future page adds, or
+// a filter bar that rewrapped. Followed by a resize, because that is the event
+// the shell is listening for and the point is that it answers a page that has
+// already changed shape under it.
+const spacer = document.createElement('p');
+spacer.style.margin = '0';
+spacer.style.height = '120px';
+spacer.textContent = 'one more row';
+document.querySelector('.canvas').before(spacer);
+const stale = state();
+dispatchEvent(new Event('resize'));
+const remeasured = state();
+spacer.remove();
+dispatchEvent(new Event('resize'));
+
+// And edit mode, which puts Save and Reset into the bar the canvas has to clear.
+const before = state();
+document.getElementById('connect').click();
+const editing = state();
+return {settled, stale, remeasured, before, editing};
+"""
+
+
+def test_a_window_that_changes_under_an_open_page_is_measured_again(
+    views: dict[str, str], tmp_path: Path
+):
+    """The measurement is only as good as the moments it is taken at.
+
+    A `ResizeObserver` on the body was the first version of this and is
+    deliberately not what shipped: an observer is delivered on a rendering frame,
+    and neither of the places this can be run produces them — a headless Chrome
+    under a virtual clock manages two frames in three seconds, a background tab
+    manages none. A test of it would have passed against an observer that had been
+    deleted, which is the shape of every defect the audits before this one found.
+
+    So the two triggers are events. This fires both and reads back what they did:
+    a page whose furniture changed is wrong until the resize, and right after it.
+    """
+    from browser import chrome, measured_in
+
+    # 700px wide, because the second half of this needs a window narrow enough
+    # that Save and Reset put the commit bar onto a second line. At 1400 they fit
+    # beside the button that reveals them, the bar does not grow, and the edit-mode
+    # assertion below would hold against a `tally` that measured nothing.
+    got = measured_in(chrome(), views["graph"], tmp_path / "after.html", 700, _AFTER, 900)
+
+    assert got["settled"]["scrolls"] == 0 and got["settled"]["clearance"] >= 0
+
+    # A row appeared and nothing has been told yet: this is the state `78vh` was
+    # in permanently, and it is what the resize has to undo.
+    assert got["stale"]["clearance"] < 0, (
+        "120px of furniture appeared above the canvas and it still cleared the bar, "
+        "so this proves nothing about the measurement that follows"
+    )
+    assert got["stale"]["scrolls"] > 0
+
+    assert got["remeasured"]["clearance"] >= 0, (
+        f"after the resize the canvas still runs {-got['remeasured']['clearance']}px "
+        f"under the commit bar"
+    )
+    assert got["remeasured"]["scrolls"] == 0
+    assert got["remeasured"]["room"] != got["stale"]["room"], "nothing was measured again"
+
+    # Edit mode is the one thing that changes the height *below* the box without
+    # the window moving, so `tally` asks for the measurement itself.
+    assert got["editing"]["barHeight"] > got["before"]["barHeight"], (
+        "the bar did not grow, so nothing here is a test of what happens when it does"
+    )
+    assert got["editing"]["room"] != got["before"]["room"], (
+        f"the bar grew from {got['before']['barHeight']} to "
+        f"{got['editing']['barHeight']}px and the canvas kept all "
+        f"{got['before']['room']} of its room"
+    )
+    assert got["editing"]["clearance"] >= 0 and got["editing"]["scrolls"] == 0

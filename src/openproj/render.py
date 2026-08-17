@@ -87,6 +87,12 @@ _MAX_PLOT_DAYS = 40 * 366
 # first of a month wrote one word on top of the other.
 _BAND_PX = 18
 _HEADER_PX = _BAND_PX + 22
+# Room under the last bar, so the today rule's label has somewhere to sit and the
+# last row is not flush against the frame. Named because three places have to
+# agree on it: the plot's height here, the height the filter script recomputes
+# after hiding rows, and the label column beside the plot — which is a separate
+# element and would otherwise end 20px short of the bars it names.
+_PLOT_FOOT_PX = 20
 # A one-day span at the fitted day width is 1.6px of target. Nobody hovers that,
 # and nobody clicks it either, so the shortest bar is still a thing you can hit.
 _MIN_BAR_PX = 3
@@ -574,7 +580,7 @@ def _timeline(
         "header": _HEADER_PX,
         "band": _BAND_PX,
         "width": x(last) + 24,
-        "height": len(bars) * _ROW_PX + _HEADER_PX + 20,
+        "height": len(bars) * _ROW_PX + _HEADER_PX + _PLOT_FOOT_PX,
         "total": total,
         "offscreen": total - len(bars),
         # Which emptiness this page can arrive at. With bars on it the only way to
@@ -1094,7 +1100,38 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
 }
 #theme:hover { border-color: var(--accent); color: var(--accent); }
 .derived { color: var(--muted); font-variant-numeric: tabular-nums; font-style: italic; }
+/* How much window is left for the one box on a page that is meant to fill it —
+   the graph's canvas, the table's rows, the timeline's plot. The number itself is
+   measured in JS, because it is a fact about the rows above the box and the bar
+   below it and a stylesheet can see neither: `#cy` asked for `78vh`, a fraction
+   of the window that knows about neither, and at an 806px window 140px of the
+   canvas ran under the sticky commit bar with two nodes loading hidden. The
+   declaration here is only what stands until the measurement lands — the same
+   guess `.table-scroll` used to carry, with the same floor under it that
+   `measureRoom` applies, so the page before the measurement looks like the page
+   after it. */
+:root { --room: max(9rem, calc(100vh - 15rem)); }
+/* 3rem of quiet under the last line of a document. A page whose one box is
+   measured to the window has no last line — the box ends where the window does —
+   so that 48px is not breathing room, it is drawing that never happens. */
+body:has([data-fills]) { padding-bottom: 1rem; }
+/* The measurement is of the room the box gets, so the box has to be that size
+   including its own frame. On content-box a 1px border makes it 2px taller than
+   the room it was handed, which is exactly enough to put the page into the
+   scrollbar it was sized to avoid — and the graph's canvas and the timeline's
+   plot are both bordered. */
+[data-fills] { box-sizing: border-box; }
 #controls { margin: .75rem 0; }
+/* The search box, and at the far end of the same line whatever the page has to
+   say ABOUT the view rather than to it. The graph put its pan/zoom sentence on a
+   row of its own and its count on another: six rows of furniture left 268px of an
+   806px window for the graph. A sentence beside the search box costs no rows. */
+#controls .searching { display: flex; flex-wrap: wrap; align-items: baseline;
+                       gap: .35rem 1.5rem; }
+#controls .aside { margin-left: auto; text-align: right; }
+/* The slot holds a `<p>`, which arrives with the browser's own margin and would
+   make the search row a line taller than the box in it. */
+#controls .aside > * { margin: 0; }
 #controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
                     margin-top: .5rem; }
 .facet { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -1196,6 +1233,19 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 .legend .swatch.st-{{ s }} { background: var(--st-{{ s }}); color: var(--st-{{ s }}-ink);
                              border: 1px solid var(--st-{{ s }}-line); }
 {%- endfor %}
+/* The key to a drawing and the count of what is in it, on one row. Both describe
+   the picture below rather than control it, and the count is the short one, so it
+   goes to the far end of the key's row instead of taking a row of its own — which
+   on the graph and the timeline is the last row before the drawing starts.
+   It wraps, because the timeline's markings key is six items wide: a count
+   squeezed into the last 40px of a row is a count nobody reads. */
+.keyrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1.5rem;
+          margin: .75rem 0 .25rem; }
+/* Both children carry their own vertical margin for the rows they used to be.
+   Inside a flex row those do not collapse, so the row would be as tall as the
+   two of them stacked. */
+.keyrow > .legend, .keyrow > #summary { margin: 0; }
+.keyrow > #summary { margin-left: auto; text-align: right; }
 /* The row a page's own controls stand in: the table's create link, the cycle
    page's "back to all cycles" and its "add somebody", the two rows of the cycles
    index's create form. Three pages draw one and the rule was in _DETAIL_STYLE —
@@ -1394,6 +1444,80 @@ function refusal(answer, status) {
     || (answer.problems || []).map(problem => problem.message).join('; ')
     || 'refused';
 }
+
+// How much window is left for the one box on a page that is meant to fill it,
+// answered the same way by the three views that have one: the graph's canvas, the
+// table's rows, the timeline's plot. The box says which it is with `data-fills`.
+//
+// Both previous answers were guesses at the same measurement. `#cy` asked for
+// `78vh`, a fraction of the window that knows nothing about the rows above the
+// canvas or the sticky commit bar below it — at an 806px window the canvas ran
+// from 268 to 899 while the bar sat across 759–806, so 140px of it was underneath
+// the bar and two nodes loaded hidden there. `.table-scroll` asked for
+// `100vh - 15rem`, which is the same guess with the stack counted by hand, and it
+// had already been wrong once: the page gained a heading and the box ran off the
+// bottom of the window.
+//
+// So nothing below enumerates what is above the box or below it. `above` is where
+// the box begins and `below` is everything after it as far as the end of the
+// body — commit bar, its margin, the page's own bottom padding — which means a
+// row added, moved or dropped is measured rather than re-counted. Being
+// re-counted by hand is how both of those guesses went wrong.
+const ROOT = document.documentElement;
+// Under this the window has nothing left to give and the page scrolls instead —
+// which is the honest answer at a window that short, and better than a canvas
+// sized to a sliver. It is a floor on the number REPORTED, not a height the box
+// is padded to: the table and the timeline take it as a cap, so a plan of two
+// bars is still two bars tall and only the graph, which has no size of its own,
+// is actually this tall.
+// 9rem, resolved against the root's own font size rather than assumed to be
+// 144px: a reader who has asked for larger text has taller rows to fit as well.
+const ROOM_FLOOR = 9 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+let roomIs = '';
+function measureRoom() {
+  const box = document.querySelector('[data-fills]');
+  // The timeline hides its plot when there are no bars, and a box with no layout
+  // reports zeros — which would hand every page with an empty view a room of one
+  // window minus nothing.
+  if (!box || !box.getClientRects().length) return false;
+  const rect = box.getBoundingClientRect();
+  // From the top of the document, so a page that happens to be scrolled when this
+  // runs measures the same as one that is not.
+  const above = rect.top + scrollY;
+  // Both in viewport coordinates, so the scroll cancels out of the subtraction.
+  // `document.body` and not `ROOT.scrollHeight`, which is clamped upwards to the
+  // window height: on a page shorter than its window that clamp reads as content
+  // nobody has, and the box would be capped below the room it is being given.
+  const below = document.body.getBoundingClientRect().bottom - rect.bottom;
+  // Floor, not round. These are sub-pixel measurements and the whole point of the
+  // number is that the page does not scroll: half a pixel rounded up is a
+  // scrollbar, and half a pixel rounded down is invisible.
+  const value = Math.max(ROOM_FLOOR, Math.floor(innerHeight - above - below)) + 'px';
+  if (value === roomIs) return false;
+  roomIs = value;
+  ROOT.style.setProperty('--room', value);
+  // For anything that has to be told in its own language rather than in CSS:
+  // cytoscape measures its container when it is built and never looks again.
+  dispatchEvent(new Event('openproj:room'));
+  return true;
+}
+
+// Measured again until the answer stops moving, and at most a few times.
+//
+// Giving the box its height can take the page's own scrollbar away, and on a
+// platform whose scrollbar has width that widens the page and rewraps the filter
+// bar above the box — so the first answer was measured against a layout that the
+// answer itself replaced. Where scrollbars are overlays it settles on the first
+// pass and the second is one subtraction; the bound is what says a layout that
+// has not settled in four frames is not going to.
+//
+// `fitRoom` takes no arguments on purpose: it is handed straight to
+// `addEventListener`, and a counter as a default parameter would have been
+// re-seeded with an Event on every resize.
+function settleRoom(passes) {
+  if (measureRoom() && passes > 1) requestAnimationFrame(() => settleRoom(passes - 1));
+}
+function fitRoom() { settleRoom(4); }
 </script>
 <main id="main">
 {{ content }}
@@ -1444,6 +1568,30 @@ for (const box of document.querySelectorAll('input[type=date]')) {
   box.addEventListener('change', show);
   box.insertAdjacentElement('afterend', echo);
 }
+
+// The box is measured once the page around it exists, and again on each of the
+// two things that move the answer.
+//
+// A `ResizeObserver` on the body was the first version of this and it is not
+// here, because it could not be tested: an observer is delivered on a rendering
+// frame, and a headless run under a virtual clock produces two frames in three
+// seconds while a background tab produces none — so a run that reported "it
+// works" and a run of an observer that had been deleted were the same run. A
+// mechanism whose absence no test can see is the shape of every defect the six
+// audits before this one turned up. These two are events, and an event fires
+// whether or not anybody is looking at the page.
+//
+// What that costs is the case neither event covers: a row that appears below the
+// box after load without the window changing. There is one — the graph's commit
+// bar, which grows a line of buttons on entering edit mode — and it calls
+// `fitRoom` itself.
+fitRoom();
+addEventListener('resize', fitRoom);
+// The inlined face swaps in after the first layout, and every row above the box
+// changes height with it. Same hook the graph repaints its own tokens on, and for
+// the same reason: a measurement taken before the face lands is a measurement of
+// the fallback's metrics.
+if (document.fonts) document.fonts.ready.then(() => fitRoom());
 </script>
 {% if live %}
 {#- role="status" and not a bare div: news that somebody else moved the plan
@@ -1504,11 +1652,19 @@ source.onmessage = event => {
 # on one page and not on the next.
 _FACETS = """
 <div id="controls">
+  <div class="searching">
   {#- A placeholder is not a name: it is gone the moment anything is typed, and
       it never reaches the accessibility tree as one. Every dropdown beside this
       box is wrapped in its `<label>`; the search box was the one control in the
       bar that had nothing to say what it searches. -#}
   <input id="q" type="search" aria-label="{{ search }}" placeholder="{{ search }}">
+  {#- The far end of the search box's line, for what a page has to say about the
+      view it draws. A slot rather than a sentence, because the three views say
+      different things there — how to pan the graph, which window the timeline is
+      showing — and not one of them is worth a row of its own on a page whose
+      whole point is the drawing underneath. -#}
+  {% if aside %}<div class="aside">{{ aside }}</div>{% endif %}
+  </div>
   <div class="facets">
   {% for field in fields %}
   <label class="facet">{{ label(field) }}
@@ -1612,10 +1768,15 @@ _TABLE = """
     and the hint promised an editor that has no server to save to. A read-only
     export must not offer a control that cannot work: the first time one of them
     does nothing is the moment the rest of the page stops being believed. -#}
+{#- The count rides at the far end of this row rather than owning one below it,
+    which is the same move the graph and the timeline make — there it is the key's
+    row, here it is the page's own controls, because the table has no key and this
+    is the last row it has to offer. The instruction beside New entity was already
+    inline and already costs nothing, so it stays where it is: it belongs next to
+    the control it shares a subject with. -#}
 <p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New entity</a>
    <span class="hint">double-click a cell, or press Enter on it, to edit it</span>
-   {% endif %}<span id="state" role="status"></span></p>
-<div id="summary">
+   {% endif %}<span id="state" role="status"></span><span id="summary">
   {#- Two numbers, because the count is of problems and the link filters
       entities: "3 blocking problems" opening a table of 2 rows is the exact way
       a count stops being believed. The second number is the one the link keeps
@@ -1624,14 +1785,15 @@ _TABLE = """
     }}</strong> <span id="blocker-word">blocking problem{{
     "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
     "entity" if blocked == 1 else "entities" }}{% endif %}</span></a> ·
-  <span id="shown" class="num">{{ payload.rows|length }}</span> of {{ payload.rows|length }} shown
-</div>
+  <span id="shown" class="num">{{ payload.rows|length }}</span> of {{ payload.rows|length
+  }} shown</span></p>
 {{ facets }}
 {#- role="grid" only where the cells are editable. It is a claim about who owns
     the arrow keys — a screen reader hands them to the page inside a grid and
     keeps them for its own cursor inside a table — and on a rendered file there
     is no editor for them to reach. -#}
-<div class="table-scroll"><table id="rows"{% if editable %} role="grid"{% endif %}><thead><tr>
+<div class="table-scroll" data-fills><table id="rows"{% if editable %} role="grid"{%
+  endif %}><thead><tr>
   {#- A real button inside every sortable header, not a click handler on the cell:
       there is no way to tab to a table cell, so sorting was mouse-only. The
       columns that cannot be sorted have no button, which is the difference said
@@ -1825,6 +1987,41 @@ function shown(row, key) {
   return esc(stored(row, key));
 }
 
+// What a clamped cell is not showing, in words, for the cell's own tooltip.
+//
+// Four columns draw one value and a `+N`, and the only way to read the rest was
+// to click the badge — while hovering the cell answered a question nobody had
+// asked, "Double-click to edit assignees". So the answer to the question they did
+// ask goes first. The badge is untouched: this adds a way to *read* the hidden
+// values, it does not replace the way to reveal them.
+//
+// Capped, because a native tooltip has no scrollbar and cannot be scrolled: sixty
+// tags in one is a wall of text with the instruction lost at the bottom of it. The
+// cap is on characters rather than on a count, because the values differ by an
+// order of magnitude in width — `ci` and `C2SM/icon4py#1223` are both one item —
+// and what has to fit is a line, not a number of things. At least one always
+// prints, however long it is, or a single very long value would come back as
+// nothing but a count of itself.
+const TIP_CHARS = 160;
+function hiddenBy(row, key) {
+  if (!CLAMPED.has(key)) return '';
+  // The stored values, not the rendered ones: a PR cell draws `#1223` because the
+  // repository never varies, but a tooltip has room to say which one it is.
+  const rest = [].concat(row[key] ?? []).map(String).slice(1);
+  if (!rest.length) return '';
+  const fits = [];
+  let length = 0;
+  for (const value of rest) {
+    if (fits.length && length + value.length + 2 > TIP_CHARS) break;
+    fits.push(value);
+    length += value.length + 2;
+  }
+  const over = rest.length - fits.length;
+  // `+2 more`, in the badge's own words, so the line reads as the answer to the
+  // badge the reader is looking at rather than as a list from nowhere.
+  return `+${rest.length} more: ${fits.join(', ')}${over ? ` … and ${over} not shown` : ''}`;
+}
+
 function cell(row, key) {
   const mark = (MARKS[row.id] || {})[key];
   const note = mark ? mark.messages.join(' · ') : '';
@@ -1855,7 +2052,20 @@ function cell(row, key) {
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
-  const tip = note || (editable ? 'Double-click to edit ' + named : WHY[key] || '');
+  // Three lines at most, in the order of what a reader wants: what is wrong here,
+  // what is hidden here, what can be done here. A native `title` takes newlines,
+  // so they are three lines and not a run-on sentence.
+  //
+  // The problem no longer *replaces* the rest, it goes first. It used to be the
+  // whole tooltip, which meant that a cell with a blocker on it and a `+2` beside
+  // it answered neither "who are the other two" nor "how do I fix this" — and the
+  // fix for most of these problems is to edit the cell the sentence is on.
+  //
+  // A cell hiding nothing gets no second line: every tooltip in the table growing
+  // a redundant sentence is how a tooltip stops being read at all.
+  const tip = [note, hiddenBy(row, key),
+               editable ? 'Double-click to edit ' + named : WHY[key] || '']
+    .filter(Boolean).join('\\n');
   // Reachable without a mouse. This table is the app's primary editing surface
   // and it was double-click-only, so half the room could not change a single
   // field on it. `-1` rather than `0`: `rove()` promotes exactly one cell, so
@@ -2560,14 +2770,10 @@ frozenEdge();
 """
 
 _TABLE_STYLE = """
-:root {
-  /* Everything stacked above the rows: the nav, the heading, the edit bar, the
-     summary line and the facet bar. Named, because the number is a measurement
-     of that stack and not a taste — it grew from 13rem when the page gained a
-     heading, and at 13rem the box ran past the bottom of the window and the page
-     scrolled the sticky header out of reach. */
-  --above-rows: 15rem;
-}
+/* The far end of the edit bar. `margin-left: auto` and not `space-between`,
+   because on a rendered file the bar holds nothing else — the count stays at the
+   right rather than sliding to the left when the controls beside it are gone. */
+.editbar #summary { margin: 0 0 0 auto; text-align: right; }
 /* The whole phrase, not the digit: "1 blocking problems" in danger red with the
    count black beside it read as two separate facts. And the colour has to mean
    something — at zero it is muted, because danger nobody can act on is danger
@@ -2578,12 +2784,19 @@ _TABLE_STYLE = """
 /* The table body scrolls in here rather than in the page. `position: sticky` on
    a header needs a scroll container to hold against, and a container the height
    of its own content gives `top: 0` nothing to do.
-   This page and no other, which is why the rule is not in the shell: the height
-   is `100vh` minus this page's own stack of controls, which no other page has.
+   `max-height` and not `height`: three rows are three rows, and a table stretched
+   to the window with 400px of nothing under the last one is a table that looks
+   like it failed to load the rest. The graph's canvas is the other case — it has
+   no size of its own — and it takes the same measurement as a `height`.
+   That measurement used to be `100vh - 15rem`, a hand-count of the stack above
+   the rows written down as a constant, and it had already been wrong once: the
+   page gained a heading and the box ran past the bottom of the window. It is
+   measured now, in the shell, and the same number answers the graph and the
+   timeline.
    The overflow used to cut off the suggestion popups the cells open, on this
    table and on any table that borrowed the class; `attachSuggest` parks its list
    on the body now, so an ancestor's overflow no longer reaches it. */
-.table-scroll { overflow: auto; max-height: calc(100vh - var(--above-rows));
+.table-scroll { overflow: auto; max-height: var(--room);
                 min-height: 9rem; overscroll-behavior: contain; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td {
@@ -2727,20 +2940,29 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 .shed-tags [data-col="tags"] { display: none; }
 """
 
+# One hint, in both modes, and at the far end of the search box's line rather
+# than on a row of its own. There used to be a second paragraph that swapped in
+# on entering edit mode, saying what edit mode is for — but the status text
+# beside the button already says it, in the place you are looking when you press
+# the button, so the page explained one mode twice and moved the whole canvas
+# down a line to do it. The remaining one was still a row, and a row here is
+# canvas: it stood between the heading and the filters with nothing beside it.
+_GRAPH_HINT = Markup(
+    '<p class="hint" id="panhint">Double-click a node to open it. Drag to pan, '
+    "scroll to zoom, drag a node to move it.</p>"
+)
+
 _GRAPH = """
 <h1>Graph</h1>
-{#- One hint, in both modes. There used to be a second paragraph that swapped in
-    here on entering edit mode, saying what edit mode is for — but the status
-    text beside the button already says it, in the place you are looking when you
-    press the button, so the page explained one mode twice and moved the whole
-    canvas down a line to do it. -#}
-<p class="hint" id="panhint">Double-click a node to open it. Drag to pan, scroll to zoom,
-  drag a node to move it.</p>
 {{ facets }}
-{#- The one thing on this canvas that is not a word. Every swatch is the token
-    the node is actually filled with and carries the glyph the node's title is
-    prefixed with, so the legend cannot drift from the graph and it keys both
-    channels rather than only the one a dichromat cannot use. -#}
+{#- The key and the count are one row. The key is the one thing on this canvas
+    that is not a word — every swatch is the token the node is actually filled
+    with and carries the glyph the node's title is prefixed with, so it cannot
+    drift from the graph and it keys both channels rather than only the one a
+    dichromat cannot use. The count says how much of the plan survived the
+    filters. Neither is a control, and between them they were two of the six rows
+    that left 268px of an 806px window for the drawing. -#}
+<div class="keyrow">
 <ul class="legend" aria-label="What a node's colour and mark mean">
   {% for status in statuses %}
   <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
@@ -2749,8 +2971,12 @@ _GRAPH = """
 </ul>
 <div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
   id="context"></span></div>
+</div>
 <div class="canvas">
-  <div id="cy"></div>
+  {#- `data-fills`: this is the box the shell measures the window into. A canvas
+      has no size of its own — whatever it is told, it draws — so it is the one
+      box on these three pages that takes a `height` rather than a cap. -#}
+  <div id="cy" data-fills></div>
   {#- Written by the script, because which emptiness this is is not known until
       the payload has been parsed and the filter has run. -#}
   <div id="nothing" hidden>
@@ -2763,8 +2989,11 @@ _GRAPH = """
 {#- Under the canvas it writes to, like every other page's primary action: Create,
     Edit and Save the setup all moved below their forms and the graph was the
     fourth page with one. Sticky as well as last, because the drawing you are
-    committing is 78vh tall and a Save at the far end of it is a Save you go
-    looking for while holding an unsaved decision in your head. -#}
+    committing fills the window and a Save at the far end of it is a Save you go
+    looking for while holding an unsaved decision in your head. Sticky is also why
+    the canvas above is measured rather than assumed: a bar that is always on
+    screen is always in front of something, and for two rounds that something was
+    140px of graph. -#}
 <div class="commitbar" id="commitbar">
   <button type="button" id="connect">Edit dependencies</button>
   <button type="button" id="save" hidden>Save</button>
@@ -2846,6 +3075,14 @@ function groupWidth(node) {
 // Named once: filtering re-runs it, and a second copy of the options is how the
 // graph comes to lay itself out one way at load and another way afterwards.
 const LAYOUT = {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70};
+
+// Before the canvas is built, not after. Cytoscape measures its container once,
+// here, and the first layout fits the plan into whatever it measured — so a
+// canvas that gets its real height a frame later has already centred the plan in
+// a box it no longer has. Everything this reads is above or below in the same
+// document and has already been parsed: the heading, the filter bar, the key row
+// and the commit bar are all written out before this script tag.
+fitRoom();
 
 const cy = cytoscape({
   container: document.getElementById('cy'),
@@ -3057,6 +3294,23 @@ addEventListener('openproj:filter', applyFilter);
 CLEAR.onclick = clearFilters;
 applyFilter();
 
+// The canvas changed shape. Cytoscape holds the size it measured when it was
+// built and goes on drawing at it, so the box and the drawing disagree until it
+// is told — a wider window drew the same picture in the same corner with a white
+// margin beside it, and a shorter one kept nodes below the fold of a canvas that
+// no longer reaches there.
+//
+// Re-fitted as well as re-measured: a window that changed size is a new answer to
+// "how much of this fits", and keeping the old zoom against a smaller box is how
+// nodes end up outside the canvas with nothing on screen to say they exist. The
+// same padding the layout fits with, so a resize and a filter leave the plan in
+// the same place.
+addEventListener('openproj:room', () => {
+  cy.resize();
+  const drawn = cy.elements(':visible');
+  if (drawn.length) cy.fit(drawn, 30);
+});
+
 const CONNECT = document.getElementById('connect');
 const SAVE = document.getElementById('save');
 const DISCARD = document.getElementById('discard');
@@ -3085,6 +3339,11 @@ function tally(extra) {
                 n === 1 ? '1 dependency drawn — press Save to commit it' :
                 `${n} dependencies drawn — press Save to commit them`;
   say(connecting ? (extra ? extra + ' · ' + drawn : drawn) : (extra || ''));
+  // Save and Reset appear here, and at a narrow window that is a second line of
+  // commit bar. The bar is what the canvas has to clear, so a bar that grew is a
+  // canvas that has to give the row back — this is the one thing on any of these
+  // pages that changes the height below the box without the window changing.
+  fitRoom();
 }
 
 // Opening is on double-click: a single tap is also the first half of drawing an
@@ -3206,7 +3465,17 @@ cy.on('tap', 'node', evt => {
 
 _GRAPH_STYLE = """
 .canvas { position: relative; }
-#cy { height: 78vh; border: 1px solid var(--line); }
+/* The room the window actually has left, not 78vh of it. A fraction of the window
+   knows nothing about the rows above the canvas or the sticky commit bar below,
+   and at an 806px window this ran 140px past the top of that bar with two nodes
+   drawn underneath it — and scrolled the page as well, so the bar the canvas had
+   to clear moved every time you scrolled to look at what it was covering.
+   `height` and not `max-height`: a canvas has no size of its own to be capped at,
+   so this is the one of the three boxes that is actually the size of the room.
+   Under the floor the shell reports, the page scrolls and the sticky bar goes
+   back to floating over what it covers — at a window that short there is no
+   arrangement that fits. */
+#cy { height: var(--room); border: 1px solid var(--line); }
 /* Over the canvas rather than instead of it: cytoscape measures its container
    when it is built, and a container that was display:none at that moment comes
    back sized zero. */
@@ -3217,6 +3486,17 @@ _GRAPH_STYLE = """
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
 """
+
+# What this chart is showing and how to move through it — at the far end of the
+# search box's line, the same slot the graph's pan/zoom sentence sits in. It was a
+# row of its own between the window controls and the key, and the timeline stacked
+# eight rows before the first bar. What it says is not a control of the view, it
+# is a description of it, and a description does not earn a row.
+_TIMELINE_HINT = """<p class="hint">{% if windowed %}Showing {{ t.origin }} to {{ t.last }},
+  a window of the plan — Reset goes back to all of it.{% else %}Showing the whole plan{%
+  if t.origin %}, {{ t.origin }} to {{ t.last }}{% endif %}.{% endif %}
+  Drag sideways or scroll to move through it. Bars reaching past the window are
+  clipped to it, never dropped.</p>"""
 
 _TIMELINE = """
 <h1>Timeline</h1>
@@ -3245,11 +3525,6 @@ _TIMELINE = """
   <span class="acts"><button type="submit" class="button primary">Apply</button>
     <a class="button reset" href="{{ links.timeline }}">Reset</a></span>
 </form>
-<p class="hint">{% if windowed %}Showing {{ t.origin }} to {{ t.last }}, a window of the
-  plan — Reset goes back to all of it.{% else %}Showing the whole plan{% if t.origin %},
-  {{ t.origin }} to {{ t.last }}{% endif %}.{% endif %}
-  Drag sideways or scroll to move through it. Bars reaching past the window are
-  clipped to it, never dropped.</p>
 {#- Statuses first and marks second, because they are two questions: what state
     is this in, and how much of this bar is a guess. Every swatch is drawn from
     the same token or the same pattern the plot uses — including the glyph, which
@@ -3260,10 +3535,14 @@ _TIMELINE = """
     >{{ status|human }}</li>
   {% endfor %}
 </ul>
-{#- `bar`, and inset by half a pixel: these two keys are bars, so they carry the
+{#- The second key and the count, on one row — the same arrangement as the graph,
+    where there is one key and it carries the count. This is the last row before
+    the plot, which is where the count of what is in the plot belongs.
+    `bar`, and inset by half a pixel: these two keys are bars, so they carry the
     stroke every bar carries — and an SVG stroke is centred on the edge, so a
     rect filling its own viewBox would have had half of its border clipped
     away. -#}
+<div class="keyrow">
 <ul class="legend" aria-label="What a bar marking means">
   <li><svg class="swatch" viewBox="0 0 20 11" aria-hidden="true"
       ><rect class="bar st-ready" x=".5" y=".5" width="19" height="10"/><rect
@@ -3281,7 +3560,10 @@ _TIMELINE = """
 <div id="summary"><span id="shown" class="num">{{ t.bars|length }}</span> of {{ t.bars|length }}
   drawn{% if t.offscreen %} · {{ t.offscreen }} with no dates in this
   window{% endif %}</div>
-<div class="tl"{% if not t.bars %} hidden{% endif %}>
+</div>
+{#- `data-fills`: the box the shell measures the window into, capped rather than
+    filled — a plan with three bars is three bars tall. -#}
+<div class="tl" data-fills{% if not t.bars %} hidden{% endif %}>
 {#- The column beside the plot is the plot's accessible half, not a caption for
     it: `role="img"` on the SVG prunes everything inside it, which is right —
     seventeen bar links announced twice is worse than none — but only once what
@@ -3388,6 +3670,7 @@ const svg = scroller.querySelector('svg');
 const plot = document.querySelector('.tl');
 const nothing = document.getElementById('nothing');
 const ROW_PX = {{ row_px }}, HEADER = {{ t.header }}, WIDTH = {{ t.width }};
+const FOOT = {{ foot_px }};
 const BAR_TOP = {{ bar_top }}, GLYPH_DY = {{ glyph_dy }};
 const RECTS = [...svg.querySelectorAll('rect[data-id]')];
 const LABELS = new Map([...document.querySelectorAll('.labels .row')]
@@ -3546,7 +3829,7 @@ function applyFilter() {
     if (glyph) glyph.setAttribute('y', y + GLYPH_DY);
     row++;
   }
-  const height = row * ROW_PX + HEADER + 20;
+  const height = row * ROW_PX + HEADER + FOOT;
   svg.setAttribute('height', height);
   svg.setAttribute('viewBox', `0 0 ${WIDTH} ${height}`);
   for (const line of FULL_HEIGHT) line.setAttribute('y2', height);
@@ -3610,10 +3893,43 @@ _TIMELINE_STYLE = """
 .legend .swatch.today { background: var(--danger); }
 .legend .swatch.boundary { background: none; border-left: 2px dashed var(--line-strong); }
 .legend .swatch.band { background: var(--band); }
-.tl { display: flex; border: 1px solid var(--line); align-items: stretch; }
+/* Capped at the room the window has left, and scrolling inside that cap. The same
+   measurement the table's rows and the graph's canvas take, for the same reason:
+   a plan of two hundred bars used to push the filters, the window controls and
+   both keys off the top of the window, so the only way to change what you were
+   looking at was to scroll back up past the chart to the controls that change it.
+   `max-height` like the table and not `height` like the graph — the plot has a
+   height of its own, one row per bar, and stretching seventeen bars over a
+   thousand pixels of white is an answer to a question nobody asked. No floor
+   either: an empty plan draws `#nothing` outside this box, so there is nothing
+   here for a floor to leave room for.
+   The scroll is on `.tl` and not on the plot inside it, or the labels would hold
+   still while the bars they name scrolled away.
+   `flex-start`, and this is the part that is not cosmetic: under `stretch` both
+   columns take the *clamped* height of this box and their contents spill out of
+   it — visibly clipped, and still counted, so the page grew a scrollbar for rows
+   that were already scrollable here. At `flex-start` each column is as tall as
+   its own content, the cap has something taller than itself to scroll, and the
+   two move together. */
+.tl { display: flex; border: 1px solid var(--line); align-items: flex-start;
+      max-height: var(--room); overflow: auto; }
 .tl[hidden] { display: none; }
-.labels { flex: 0 0 250px; border-right: 1px solid var(--line); }
+/* The plot leaves `_PLOT_FOOT_PX` under the last bar; the label column is a
+   separate element and has to leave the same, or its dividing rule stops short of
+   the bars it is dividing. Rendered from the constant rather than typed, because
+   a fourth copy of that number is a rule that ends 20px early on a chart nobody
+   is measuring. */
+.labels { flex: 0 0 250px; border-right: 1px solid var(--line);
+          padding-bottom: {{ foot_px }}px; }
 .labels .row {
+  /* Positioned, so that the `.sr-only` sentence inside it is positioned against
+     the row. `.sr-only` is `position: absolute`, and with no positioned ancestor
+     its containing block is the page itself — which means the plot's scroll
+     container does not clip it, seventeen of them landed wherever the rows would
+     have been if nothing had been capped, and the page grew a scrollbar for
+     content that was already scrollable inside the chart. Nothing moves visually:
+     the span is clipped to nothing either way. */
+  position: relative;
   /* Fixed, not min: the row carries a clipped title and a clipped-off sentence
      of what the bar draws, and the second one must not add a pixel of height —
      every row here lines up with the bar the scheduler placed beside it. Written
@@ -3688,12 +4004,15 @@ text.bar-glyph { font-family: var(--font-sans); font-size: 9px; font-weight: 700
 def _timeline_css() -> str:
     """The timeline's whole stylesheet: the written half and the two derived ones.
 
-    Rendered rather than concatenated because one rule in it is geometry the
+    Rendered rather than concatenated because two rules in it are geometry the
     server already decided — the label column's row height has to be `_ROW_PX` or
-    the names walk out of step with the bars they name, one pixel per row.
+    the names walk out of step with the bars they name, one pixel per row, and its
+    foot has to be `_PLOT_FOOT_PX` or the rule between labels and bars stops short
+    of the last of them.
     """
     return (
-        _ENV.from_string(_TIMELINE_STYLE).render(row_px=_ROW_PX) + _status_paint_css()
+        _ENV.from_string(_TIMELINE_STYLE).render(row_px=_ROW_PX, foot_px=_PLOT_FOOT_PX)
+        + _status_paint_css()
     )
 
 
@@ -6617,10 +6936,14 @@ def render_detail(
     return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
 
 
+_NO_ASIDE = Markup("")
+
+
 def _facets_html(
     facets: dict,
     fields: tuple[str, ...] = _PLAN_FACETS,
     search: str = "Search title, tags, body",
+    aside: Markup = _NO_ASIDE,
 ) -> Markup:
     """The control bar, for any view that filters anything.
 
@@ -6629,8 +6952,13 @@ def _facets_html(
     somebody pasted filters differently depending on which view it opens in. The
     people page had written its own, over its own three fields, and had already
     drifted — same markup, a different search box.
+
+    `aside` rides at the far end of the search box's line. It is here rather than
+    on each page because the sentence a view writes about itself was a full row on
+    every one of them, and a row above the drawing is the most expensive place on
+    these pages to put twelve words.
     """
-    return _fragment(_FACETS, facets=facets, fields=fields, search=search)
+    return _fragment(_FACETS, facets=facets, fields=fields, search=search, aside=aside)
 
 
 def _combobox_html(index: Index | None) -> Markup:
@@ -6721,7 +7049,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     body = _ENV.from_string(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        facets=_facets_html(index.facets),
+        facets=_facets_html(index.facets, aside=_GRAPH_HINT),
         filters=_FILTER_JS,
         statuses=STATUSES,
         glyphs=STATUS_GLYPH,
@@ -6761,8 +7089,14 @@ def render_timeline(
         row_px=_ROW_PX,
         bar_px=_BAR_PX,
         bar_top=_BAR_TOP,
+        foot_px=_PLOT_FOOT_PX,
         glyph_dy=_GLYPH_DY,
-        facets=_facets_html(index.facets),
+        facets=_facets_html(
+            index.facets,
+            aside=_fragment(
+                _TIMELINE_HINT, t=timeline, windowed=bool(window[0] or window[1])
+            ),
+        ),
         filters=_FILTER_JS,
         # The rows the shared `matches()` reads, for the bars that were drawn. Not
         # the whole plan: a bar that is not on this window cannot be filtered onto it.

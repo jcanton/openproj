@@ -298,6 +298,12 @@ class Element {
   setSelectionRange() {}
   scrollIntoView() {}
   getBoundingClientRect() { return {top: 0, left: 0, width: 100, height: 100, bottom: 0, right: 0}; }
+  // Empty, and that is the honest answer: this shim has no layout, so nothing in
+  // it has a box. The shell asks before measuring the window into a page's one
+  // sized box, and takes an empty list to mean "not laid out" — which is exactly
+  // the state a run in here is in. Without the method at all the shell's script
+  // stopped on a TypeError instead, taking the two lines after it with it.
+  getClientRects() { return []; }
   // The graph measures its labels against a canvas before it draws anything, so
   // without this the script stops above every line that saves a dependency.
   getContext() {

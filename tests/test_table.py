@@ -58,6 +58,7 @@ from pathlib import Path
 
 import pygit2
 import pytest
+from browser import chrome, measured_in, screenshot
 from fastapi.testclient import TestClient
 from test_store import commit_directly
 from test_web import (
@@ -776,8 +777,14 @@ def test_the_bold_column_is_the_one_being_sorted_by(page: str):
 
 
 def test_the_search_box_is_not_the_tenth_filter(page: str):
-    """One search box beside nine dropdowns reads as the first dropdown."""
-    assert re.search(r'<input id="q"[^>]*>\s*<div class="facets">', page)
+    """One search box beside nine dropdowns reads as the first dropdown.
+
+    It is on a line of its own above them — a line it now shares with whatever the
+    view has to say about itself, which is the far end of the same row and not the
+    next dropdown along.
+    """
+    assert re.search(r'<div class="searching">\s*<input id="q"[^>]*>', page)
+    assert re.search(r'</div>\s*<div class="facets">', page)
 
 
 def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
@@ -1032,59 +1039,9 @@ def test_the_frozen_edge_is_painted_from_the_scroll_position(page: str):
     assert re.search(r"scroller\.addEventListener\('scroll', frozenEdge\);\nfrozenEdge\(\);", page)
 
 
-# The browsers this will drive if one of them is installed. Named rather than
-# searched for, because a headless run of *something* is not evidence about the
-# browser the plan is read in.
-CHROMES = (
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "google-chrome",
-    "chromium",
-)
-
-
-def _chrome() -> str:
-    chrome = next((found for name in CHROMES if (found := shutil.which(name))), None)
-    if chrome is None:  # pragma: no cover - depends on the machine, not on the code
-        pytest.skip("no Chrome on this machine, so nothing here can be said about pixels")
-    return chrome
-
-
-def _screenshot(chrome: str, html: Path, png: Path) -> bytes:
-    """One page, one window, one PNG. 700px wide so the table has more columns
-    than room and can actually be scrolled sideways."""
-    subprocess.run(
-        [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-         "--force-device-scale-factor=1", "--window-size=700,600",
-         f"--screenshot={png}", "--virtual-time-budget=2500", str(html)],
-        capture_output=True, check=True,
-    )
-    return png.read_bytes()
-
-
-def _measured_in(chrome: str, page: str, where: Path, width: int, script: str) -> dict:
-    """Lay the page out in Chrome at this width, run `script` over the result and
-    bring back what it found.
-
-    The DOM is the only channel out of a headless run, so the script writes its
-    answer onto the body and `--dump-dom` carries it back. After a delay, because
-    the fit runs again when the inlined typeface lands and a measurement taken
-    before that is a measurement of the fallback's metrics.
-    """
-    where.write_text(page.replace(
-        "</body>",
-        "<script>setTimeout(() => { document.body.dataset.report = JSON.stringify("
-        f"(() => {{ {script} }})()); }}, 1200);</script></body>",
-    ))
-    done = subprocess.run(
-        [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-         "--force-device-scale-factor=1", f"--window-size={width},900",
-         "--virtual-time-budget=2500", "--dump-dom", str(where)],
-        capture_output=True, text=True, check=True,
-    )
-    found = re.search(r'data-report="([^"]*)"', done.stdout)
-    assert found, "the page reported nothing: it did not lay out, or the script threw"
-    return json.loads(unescape(found.group(1)))
+# `tests/browser.py` holds these now. They were written here, where the table's
+# pixel tests could reach them and the graph's could not — and the graph, the
+# timeline and the table now answer one question about geometry the same way.
 
 
 # What a clamped cell promises, measured in the three states it is kept or broken
@@ -1140,7 +1097,7 @@ def test_the_badge_is_never_the_part_of_a_clamped_cell_that_gets_cut(
     meant to produce it: this is a claim about where a box ends up, and a
     stylesheet saying `flex: none` somewhere is not that claim.
     """
-    got = _measured_in(_chrome(), page, tmp_path / "clamped.html", 1280, _BADGES)
+    got = measured_in(chrome(), page, tmp_path / "clamped.html", 1280, _BADGES)
     assert got["badges"], "no clamped cell on the page had a badge to check"
 
     for state, where in (
@@ -1189,7 +1146,7 @@ def test_the_frozen_edge_is_a_pixel_a_browser_draws(page: str, tmp_path: Path):
     once passes on either one of them alone: the header would carry the whole
     proof while every row under it drew nothing, which is most of the defect.
     """
-    chrome = _chrome()
+    browser = chrome()
 
     # Sideways, by the page's own scroll handler rather than by adding the class:
     # scrolling is what is supposed to produce the edge, so scrolling is what the
@@ -1205,7 +1162,7 @@ def test_the_frozen_edge_is_a_pixel_a_browser_draws(page: str, tmp_path: Path):
     def shot(name: str, extra: str) -> bytes:
         html = tmp_path / f"{name}.html"
         html.write_text(page.replace("</body>", extra + "</body>"))
-        return _screenshot(chrome, html, tmp_path / f"{name}.png")
+        return screenshot(browser, html, tmp_path / f"{name}.png")
 
     rest, rest_without = shot("rest", ""), shot("rest_without", no_rows + no_header)
     assert rest == rest_without, (
@@ -1632,12 +1589,15 @@ def test_the_header_and_the_two_identity_columns_stay_put(page: str):
     a container the height of its own content gives `top: 0` nothing to hold
     against.
     """
-    # Named, not a bare number: 15rem is a measurement of the stack above the rows
-    # — nav, heading, edit bar, summary, facets — and it has already been wrong
-    # once, when the page gained a heading and the box ran off the bottom.
-    assert "--above-rows: 15rem;" in page
-    assert "max-height: calc(100vh - var(--above-rows))" in page, (
-        "the body scrolls in the container"
+    # The container is bounded by the room the window has left, which the shell
+    # measures. It used to be `100vh - 15rem`, a hand-count of the stack above the
+    # rows written down as a constant — and the count had already been wrong once,
+    # when the page gained a heading and the box ran off the bottom of the window.
+    # What that bound actually produces is checked in a browser, by
+    # `test_render.test_the_box_each_view_fills_stops_where_the_window_does`.
+    assert "max-height: var(--room)" in page, "the body scrolls in the container"
+    assert '<div class="table-scroll" data-fills>' in page, (
+        "and the shell is told which box that is"
     )
     assert "thead th {\n  position: sticky; top: 0; z-index: 3; background: var(--surface);" in page
     assert '[data-col="id"] { position: sticky; left: 0; z-index: 1;' in page
@@ -1773,6 +1733,146 @@ def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
     assert "more.closest('td').classList.add('open')" in body
     # It is a control inside an editable cell, so it must not also open the editor.
     assert "event.target.closest('button.more')) return;" in body
+
+
+# One cell, drawn by the page's own `cell()` against a row the test hands it, with
+# the title attribute read back off the markup it produced.
+#
+# The tooltip is assembled from three sources — a validation problem, the hidden
+# values, the editor's instruction — and only the last of them is a literal
+# anywhere in the file. Greping for a string would say nothing about what the
+# other two do to it, or about which order they come out in, which is the whole of
+# what was asked for.
+_TIP = """
+(() => {
+  const rows = ROWS;
+  MARKS = MARKED;
+  return rows.map(row => {
+    const html = cell(row, KEY);
+    const found = /title="([^"]*)"/.exec(html);
+    return found ? found[1] : null;
+  });
+})()
+"""
+
+
+def _tips(page: str, rows: list[dict], key: str, marks: dict | None = None) -> list[str]:
+    from test_injection import run_js
+
+    answer = run_js(
+        page,
+        _TIP.replace("ROWS", json.dumps(rows))
+        .replace("MARKED", json.dumps(marks or {}))
+        .replace("KEY", json.dumps(key)),
+    )
+    # The shim is not a browser and some of the page's script does not survive it,
+    # so `errors` is never empty and asserting on it would be asserting on the
+    # shim. What is checked instead is that `cell()` itself ran to the end for
+    # every row: an expression that threw comes back with no value at all, and a
+    # test reading tooltips out of `None` is a test that cannot fail.
+    assert isinstance(answer["value"], list) and len(answer["value"]) == len(rows), answer
+    # The `title` came out of markup, so it is escaped: it is compared here as the
+    # browser would read it, which is also the only way `&amp;` in a tag is
+    # distinguishable from a tooltip that escaped twice.
+    return [None if tip is None else unescape(tip) for tip in answer["value"]]
+
+
+def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(page: str):
+    """Four columns draw one value and a `+N`, and the only way to read the rest
+    was to click the badge — while hovering the cell answered a question nobody
+    had asked: "Double-click to edit assignees".
+
+    So the hidden values go first and the instruction under them, and a cell that
+    is hiding nothing gets no extra line at all — every tooltip in the table
+    growing a redundant sentence is how a tooltip stops being read.
+    """
+    one, two, none = _tips(
+        page,
+        [{"id": "task-000001", "assignees": ["msimberg", "nfarabullini"]},
+         {"id": "task-000002", "assignees": ["OngChia", "nfarabullini", "jcanton"]},
+         {"id": "task-000003", "assignees": ["samkellerhals"]}],
+        "assignees",
+    )
+    assert one == "+1 more: nfarabullini\nDouble-click to edit assignees"
+    assert two == "+2 more: nfarabullini, jcanton\nDouble-click to edit assignees"
+    assert none == "Double-click to edit assignees", "nothing is hidden, so nothing is revealed"
+
+    # A `title` takes newlines and this is two lines, not a run-on sentence: the
+    # answer and the instruction are different kinds of thing.
+    assert one.count("\n") == 1
+
+    # Every clamped column, not the one it was reported on. `prs` reveals the whole
+    # reference and not the `#1223` the cell draws — the cell drops the repository
+    # because it never varies, and a tooltip has room to say which one it is.
+    tags, prs, reviewers = (
+        _tips(page, [{"id": "task-000001", "tags": ["ci", "gt4py", "port"]}], "tags")[0],
+        _tips(page, [{"id": "task-000001", "prs": ["C2SM/icon4py#1", "C2SM/icon4py#2"]}], "prs")[0],
+        _tips(page, [{"id": "task-000001", "reviewers": ["a", "b"]}], "reviewers")[0],
+    )
+    assert tags.startswith("+2 more: gt4py, port\n")
+    assert prs.startswith("+1 more: C2SM/icon4py#2\n")
+    assert reviewers.startswith("+1 more: b\n")
+
+    # And a column that clamps nothing is untouched, or the change is not "reveal
+    # what is hidden", it is "put a sentence on every cell".
+    plain = _tips(page, [{"id": "task-000001", "owner": "jcanton"}], "owner")[0]
+    assert plain == "Double-click to edit owner"
+
+
+def test_a_problem_still_comes_first_and_a_long_list_is_capped(page: str):
+    """Two things the reveal line must not break.
+
+    A validation problem is the most important thing a cell can say, so it stays
+    first — but it no longer *replaces* what is under it, which used to leave a
+    cell carrying both a blocker and a `+2` answering neither "who are the other
+    two" nor "how do I fix this". The fix for most of these is to edit the cell the
+    sentence is sitting on.
+
+    And a native tooltip has no scrollbar. Sixty tags in one is a wall of text with
+    the instruction lost at the bottom of it, so the line is capped at what reads
+    as a line and says how many it did not print.
+    """
+    marks = {"task-000001": {"assignees": {"severity": "blocker",
+                                           "messages": ["nobody is on this"]}}}
+    tip = _tips(page, [{"id": "task-000001", "assignees": ["a", "b"]}], "assignees", marks)[0]
+    assert tip == "nobody is on this\n+1 more: b\nDouble-click to edit assignees"
+
+    many = [f"tag-{n:02d}" for n in range(60)]
+    capped = _tips(page, [{"id": "task-000001", "tags": many}], "tags")[0]
+    reveal = capped.split("\n")[0]
+    assert reveal.startswith("+59 more: tag-01, tag-02, "), reveal
+    assert len(reveal) < 220, f"{len(reveal)} characters is a paragraph, not a line: {reveal}"
+    # The count is of everything hidden and the tail is of what would not fit, so
+    # the two together account for every value: 59 hidden, 22 printed, 37 not.
+    printed = reveal.split(": ", 1)[1].split(" … and ")[0].split(", ")
+    assert reveal.endswith(f"… and {59 - len(printed)} not shown"), reveal
+    # One value, however long, always prints: a lone sixty-character login coming
+    # back as "+1 more: … and 1 not shown" would be a cell hiding its own answer.
+    single = _tips(page, [{"id": "task-000001", "tags": ["x", "y" * 400]}], "tags")[0]
+    assert single.startswith("+1 more: " + "y" * 400 + "\n")
+
+
+def test_the_reveal_line_cannot_smuggle_markup_into_the_cell(page: str):
+    """The tooltip is a second seam over stored text — a tag, a login and a PR
+    reference are all sentences somebody typed — and it is built by string
+    concatenation into an attribute. `"` ends the attribute it sits in.
+    """
+    from test_injection import assert_clean, run_js
+
+    hostile = ["ok", '" onmouseover="alert(1)', "<img src=x onerror=alert(1)>"]
+    written = run_js(
+        page, f"cell({{id: 'task-000001', tags: {json.dumps(hostile)}}}, 'tags')"
+    )["value"]
+    # The raw markup, judged by the same census every other seam on the page gets:
+    # what matters is what a browser parses, not what the string looks like here.
+    assert_clean(written, f"the clamped cell's tooltip: {written[:200]}")
+    # And the values are in there rather than dropped. Escaping that lost them
+    # would pass the census above while answering nothing — which is the failure
+    # mode a census cannot see.
+    assert unescape(re.search(r'title="([^"]*)"', written).group(1)) == (
+        '+2 more: " onmouseover="alert(1), <img src=x onerror=alert(1)>\n'
+        "Double-click to edit tags"
+    )
 
 
 def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):

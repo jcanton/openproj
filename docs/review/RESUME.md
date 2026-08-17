@@ -13,7 +13,7 @@ no amend, no force-push, no squash, ever. Corrections are new commits.
 
 - Branch `review_design`, based on `main` at `fe8b817`.
 - Roughly 25 commits, +11,700/−1,060 across 27 files.
-- Test suite 402 → ~700, `ruff check` clean.
+- Test suite 402 → 749, `ruff check` clean.
 - `main` is untouched and clean.
 
 ## What is done
@@ -26,6 +26,12 @@ no amend, no force-push, no squash, ever. Corrections are new commits.
   invert the light theme so its hues are not muddy (`PALETTE_V3.md`). Every ratio
   in those files was measured, not estimated.
 - **Five of the owner's six notes** in `FEEDBACK.md`.
+- **All three of the owner's second set**, `FEEDBACK2.md`: a clamped cell says what
+  it is hiding before it says how to edit it; the sentence and the count each view
+  writes about itself moved onto rows that already existed; and the one box on each
+  of the three views is measured to the room the window has left instead of a
+  fraction of it (`--room`), which is what put 140px of the graph under the sticky
+  commit bar with two nodes loading hidden.
 - **Six rounds of adversarial audit**, and the defects they found: `FIXES.md`,
   `FIXES2.md`, `FIXES3.md`, `FIXES4.md`. Sections A and B of `FIXES4.md` — the two
   date-overflow blockers and the two localStorage defects — are committed.
@@ -57,7 +63,7 @@ no amend, no force-push, no squash, ever. Corrections are new commits.
 ```bash
 cd .worktrees/review_design
 uv sync
-uv run pytest -q -p no:warnings          # expect ~700 passing
+uv run pytest -q -p no:warnings          # expect 749 passing
 uv run ruff check .
 ```
 
