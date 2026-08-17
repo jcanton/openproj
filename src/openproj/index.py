@@ -28,6 +28,7 @@ from .model import (
     Unreadable,
     ancestors,
     checklist,
+    cycle_of,
     sections,
     size_weeks,
     validate_all,
@@ -66,6 +67,54 @@ _LIST_FACETS = ("assignees", "reviewers", "tags")
 _FOR_LATER = "for later"
 
 
+class Progress(BaseModel):
+    """How far along one entity is, and what that was counted from.
+
+    Two sources, never both. A pitch with tasks is as far along as its tasks are,
+    weighted by their sizes — half a bet is half its weeks, not half its rows, and
+    a four-week task beside a half-week one is not two equal halves of anything.
+    A leaf counts the task list in its own body instead.
+
+    Derived, never stored. Completion is `status: done` on a child, and a stored
+    checkbox mirroring it is a second copy of one fact — stale the first time
+    somebody closes a task from the table, for the same reason `blocks` is
+    derived and not written.
+    """
+
+    done: float
+    total: float
+    # "weeks" when it came from child tasks, "items" from a body checklist.
+    unit: str
+    # The children it was counted from, in the order they are drawn. Empty for a
+    # body checklist, whose items are in the body and stay there.
+    of: list[str] = []
+
+    @property
+    def fraction(self) -> float:
+        return self.done / self.total if self.total else 0.0
+
+    @property
+    def text(self) -> str:
+        suffix = " wk" if self.unit == "weeks" else ""
+        return f"{self.done:g}/{self.total:g}{suffix}"
+
+
+def _progress_of(
+    entity: Entity, children: list[Entity], config: Config
+) -> Progress | None:
+    """A pitch's progress from its tasks, a leaf's from its own checklist."""
+    if children:
+        sized = [(kid, size_weeks(kid, config)[0]) for kid in children]
+        return Progress(
+            done=sum(size for kid, size in sized if kid.status == "done"),
+            total=sum(size for _, size in sized),
+            unit="weeks",
+            of=[kid.id for kid, _ in sized],
+        )
+    ticked, items = checklist(entity.body)
+    return Progress(done=ticked, total=items, unit="items") if items else None
+
+
 class Index(BaseModel):
     entities: dict[str, Entity]
     children: dict[str, list[str]]
@@ -93,9 +142,9 @@ class Index(BaseModel):
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
-    # Ticked and total task-list items in each body, counted once here rather than
-    # re-scanned by every column, predicate and page that wants to say "7/12".
-    progress: dict[str, tuple[int, int]] = {}
+    # How far along each entity is, counted once here rather than re-derived by
+    # every column, panel and predicate that wants to say it. See `Progress`.
+    progress: dict[str, Progress] = {}
     # Ids whose body keeps a "for later" list — deferred scope, which is the only
     # record the plan has of a bet being trimmed to fit.
     for_later: list[str] = []
@@ -115,12 +164,23 @@ class Index(BaseModel):
         would put the whole plan's load on a page for a cycle that may never run.
         An entity with no span is the other way round — it is live work in a dated
         window, and silence about it is the failure this method exists to fix.
+
+        Carryover is decided by the dates and not by the status. It asked for
+        `in_progress`, which dropped a `ready` task sitting under a carried pitch
+        even where its own span ran through the middle of this cycle — work
+        somebody is about to do, in weeks this page is adding up, missing from the
+        total. What has not started yet is still what a person's next weeks are
+        spent on; whether it has begun is a different question from when it lands.
         """
         if entity.status in ("done", "shelved"):
             return False
-        if entity.cycle == cycle:
+        # The cycle of the BET this work is part of, which for a task under a
+        # pitch is the pitch's. A task does not carry its own — the bet is made
+        # once, on the thing the room named.
+        mine = cycle_of(entity, self.entities)
+        if mine == cycle:
             return True
-        if entity.status != "in_progress" or entity.cycle is None or entity.cycle >= cycle:
+        if mine is None or mine >= cycle:
             return False
         window = self.cycles.get(cycle)
         if window is None:
@@ -157,7 +217,7 @@ class Index(BaseModel):
         return sorted(
             entity.id
             for entity in self.entities.values()
-            if entity.cycle != cycle and self.counts_in(entity, cycle)
+            if cycle_of(entity, self.entities) != cycle and self.counts_in(entity, cycle)
         )
 
 
@@ -243,7 +303,7 @@ def build_index(
 
     facets: dict[str, set[str]] = defaultdict(set)
     search_blob: dict[str, str] = {}
-    progress: dict[str, tuple[int, int]] = {}
+    progress: dict[str, Progress] = {}
     for_later: list[str] = []
     for entity in entities:
         for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
@@ -251,9 +311,13 @@ def build_index(
         search_blob[entity.id] = " ".join(
             [entity.title, *entity.tags, entity.body]
         ).lower()
-        ticked, total = checklist(entity.body)
-        if total:
-            progress[entity.id] = (ticked, total)
+        # A shelved child is not work anybody is waiting for, so it counts in
+        # neither half of the fraction — otherwise parking a task makes a pitch
+        # look less finished than it was the day before.
+        kids = [by_id[k] for k in children[entity.id] if by_id[k].status != "shelved"]
+        counted = _progress_of(entity, kids, config)
+        if counted is not None:
+            progress[entity.id] = counted
         if sections(entity.body).get(_FOR_LATER):
             for_later.append(entity.id)
 
@@ -311,6 +375,8 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
     if predicate == "review_waived":
         return index.entities[entity_id].review_waived
     if predicate == "untracked":
+        # Live work that says nothing about how far along it is: no tasks under
+        # it and no checklist in it. A pitch with tasks is tracked by them.
         return (
             index.entities[entity_id].status in ("ready", "in_progress")
             and entity_id not in index.progress

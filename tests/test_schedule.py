@@ -43,13 +43,13 @@ HALF_TIME = CONFIG.model_copy(update={"nominal_availability": 0.6})
 
 def task(suffix: str, *, owner: str | None = "ann", size: float | None = 1.0, **fields) -> Task:
     return Task(
-        id=f"task-{suffix}", kind="task", title=suffix, owner=owner, effort_weeks=size, **fields
+        id=f"task-{suffix}", kind="task", title=suffix, owner=owner, person_weeks=size, **fields
     )
 
 
 def pitch(suffix: str, *, owner: str | None = "ann", size: float | None = None, **fields) -> Pitch:
     return Pitch(
-        id=f"pitch-{suffix}", kind="pitch", title=suffix, owner=owner, appetite_weeks=size, **fields
+        id=f"pitch-{suffix}", kind="pitch", title=suffix, owner=owner, person_weeks=size, **fields
     )
 
 
@@ -102,7 +102,7 @@ def test_configured_holidays_do_not_count(seed_root: Path):
 
 
 def test_a_size_too_large_for_the_calendar_stops_at_the_last_day_it_can_name():
-    """`effort_weeks: 1000000` is one PATCH, and it used to be a 500 on every page.
+    """`person_weeks: 1000000` is one PATCH, and it used to be a 500 on every page.
 
     The walk added a day at a time until `timedelta` ran past year 9999 and
     raised OverflowError — out of `build_index`, so `/`, `/graph`, `/timeline`,
@@ -441,7 +441,7 @@ def dags(draw: st.DrawFn) -> list[Entity]:
                 title=f"generated {i}",
                 owner=draw(st.sampled_from([*WORKERS, None])),
                 assignees=draw(st.lists(st.sampled_from(WORKERS), max_size=1, unique=True)),
-                effort_weeks=draw(st.sampled_from([None, 0.1, 0.5, 1.0, 2.0])),
+                person_weeks=draw(st.sampled_from([None, 0.1, 0.5, 1.0, 2.0])),
                 priority=draw(st.sampled_from(["high", "medium", "low"])),
                 parent=PARENT_ID if draw(st.booleans()) else None,
                 assigned_on=draw(st.sampled_from([None, MONDAY, MONDAY + timedelta(days=10)])),
@@ -485,7 +485,7 @@ def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_mov
     entities: list[Entity],
 ):
     before, _ = run(entities)
-    stranger = Task(id="task-ffffff", kind="task", title="stranger", owner="zed", effort_weeks=2.0)
+    stranger = Task(id="task-ffffff", kind="task", title="stranger", owner="zed", person_weeks=2.0)
     after, _ = run([*entities, stranger])
     assert {i: after[i] for i in before} == before
 
@@ -641,7 +641,7 @@ def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
 
 @pytest.mark.parametrize("size", [float("inf"), float("nan")])
 def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
-    """`Infinity` and `NaN` are valid JSON to Python's parser, so `effort_weeks:
+    """`Infinity` and `NaN` are valid JSON to Python's parser, so `person_weeks:
     Infinity` was one PATCH away — and `math.ceil(inf)` raised inside
     `_runs_past_the_calendar` itself. The guard was the thing that fell over, so
     every page 500'd on a committed value that no rule refuses.

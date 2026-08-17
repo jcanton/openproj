@@ -29,7 +29,15 @@ from datetime import date
 import networkx as nx
 from pydantic import BaseModel
 
-from .model import PRIORITY_RANK, Config, Entity, days_after, size_weeks, within_the_calendar
+from .model import (
+    PRIORITY_RANK,
+    Config,
+    Entity,
+    cycle_of,
+    days_after,
+    size_weeks,
+    within_the_calendar,
+)
 
 _WORKING_DAYS_PER_WEEK = 5
 
@@ -83,7 +91,7 @@ def _working_days(weeks: float) -> int:
 
     Rounded to six decimals first: 1.2 * 5 is 6.000000000000001 in binary
     floating point, and a naive ceil would buy a seventh day. Bounded before the
-    ceil, because `math.ceil` raises on infinity: `effort_weeks: Infinity` is
+    ceil, because `math.ceil` raises on infinity: `person_weeks: Infinity` is
     valid JSON to Python's parser and one PATCH away, and it raised here —
     inside `_runs_past_the_calendar`, so the guard was the thing that fell over
     and every page 500'd on a value already committed.
@@ -94,7 +102,7 @@ def _working_days(weeks: float) -> int:
 def _runs_past_the_calendar(start: date, weeks: float, config: Config) -> bool:
     """Whether `weeks` of work beginning at `start` outruns the end of `date`.
 
-    `effort_weeks: 1000000` is one PATCH away and no rule refuses it. The day
+    `person_weeks: 1000000` is one PATCH away and no rule refuses it. The day
     walk below used to keep adding days until `timedelta` went past year 9999
     and raised OverflowError — out of `build_index`, so `/`, `/graph`,
     `/timeline`, `/people` and `/api/index.json` all answered 500 to every
@@ -129,7 +137,9 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
     return day
 
 
-def _duration_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
+def _duration_weeks(
+    entity: Entity, config: Config, by_id: dict[str, Entity]
+) -> tuple[float, bool]:
     """Elapsed weeks, and whether the size was defaulted rather than stated.
 
     A size is PERSON-weeks — the work one person would need — so the people on it
@@ -146,11 +156,13 @@ def _duration_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
     a division by zero, and infinity is not a useful forecast for unowned work.
     """
     size, defaulted = size_weeks(entity, config)
-    rates = [_availability_of(who, entity, config) for who in _workers(entity)]
+    rates = [_availability_of(who, entity, config, by_id) for who in _workers(entity)]
     return size / (sum(rates) or config.nominal_availability or 1.0), defaulted
 
 
-def _availability_of(who: str, entity: Entity, config: Config) -> float:
+def _availability_of(
+    who: str, entity: Entity, config: Config, by_id: dict[str, Entity]
+) -> float:
     """One person's rate in the cycle this entity was bet into.
 
     Read from the entity's own cycle rather than passed in, so there is one
@@ -163,7 +175,11 @@ def _availability_of(who: str, entity: Entity, config: Config) -> float:
     the cycle page names them, which is where a person can act on it. A rate of
     zero reads the same way rather than as a bet nobody can ever finish.
     """
-    plan = config.plans.get(entity.cycle) if entity.cycle is not None else None
+    # The cycle of the BET, so a task reads the rates of the cycle its pitch was
+    # bet into. A task carries no cycle of its own any more, and falling back to
+    # nominal here would have quietly undone every per-person rate on the page.
+    number = cycle_of(entity, by_id)
+    plan = config.plans.get(number) if number is not None else None
     stated = plan.availability.get(who) if plan else None
     return stated if stated else config.nominal_availability or 1.0
 
@@ -179,21 +195,31 @@ def _workers(entity: Entity) -> list[str]:
     return list(dict.fromkeys(named))
 
 
-def _overrun(entity: Entity, end: date, config: Config) -> float | None:
-    """Weeks past the end of the cycle's BUILD, or None.
+def _overrun(
+    entity: Entity, end: date, config: Config, by_id: dict[str, Entity]
+) -> float | None:
+    """Weeks past the end of the BUILD of the cycle this was bet into, or None.
 
     Cool-down is not build time — Shape Up's whole point is that work lands
     inside the build weeks and the cool-down is for the mess afterwards. Measured
     against the end of the window instead, every overrun was understated by the
     cool-down length and some were hidden completely.
 
+    The cycle is the one the BET was made in, which for a task under a pitch is
+    the pitch's. A project is measured against nothing: it holds bets rather than
+    being one, and its span is the rollup of pitches bet in different cycles — so
+    judging it against any single cycle produced the demo's `warm_bubble`,
+    "overruns cycle 36 by 17 weeks", a milestone accused of missing a box nobody
+    ever put it in.
+
     A cycle nobody has dated yet is not an overrun. Indexing `config.cycles`
     directly would turn one unconfigured number into a KeyError for every span.
     """
-    window = config.cycles.get(entity.cycle) if entity.cycle is not None else None
+    number = cycle_of(entity, by_id)
+    window = config.cycles.get(number) if number is not None else None
     if window is None:
         return None
-    builds_until = build_end(entity.cycle, window, config)
+    builds_until = build_end(number, window, config)
     if end <= builds_until:
         return None
     return (end - builds_until).days / 7
@@ -315,11 +341,11 @@ def schedule(
                 start=min(k.start for k in kids),
                 end=max(k.end for k in kids),
                 estimated=any(k.estimated for k in kids),
-                overruns_cycle_weeks=_overrun(entity, max(k.end for k in kids), config),
+                overruns_cycle_weeks=_overrun(entity, max(k.end for k in kids), config, live),
             )
             continue
 
-        duration, estimated = _duration_weeks(entity, config)
+        duration, estimated = _duration_weeks(entity, config, live)
         workers = _workers(entity)
         placed = _place(entity, duration, workers, booked, spans, floor, config)
         if placed is None:
@@ -347,7 +373,7 @@ def schedule(
             update={
                 "estimated": estimated,
                 "unowned": not workers,
-                "overruns_cycle_weeks": _overrun(entity, span.end, config),
+                "overruns_cycle_weeks": _overrun(entity, span.end, config, live),
             }
         )
         if explanation is not None:

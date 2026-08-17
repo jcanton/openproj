@@ -32,7 +32,7 @@ from markdown_it.token import Token
 from markupsafe import Markup, escape
 from pydantic import BaseModel
 
-from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
+from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
 from .model import (
     Config,
     Cycle,
@@ -41,11 +41,14 @@ from .model import (
     Project,
     Task,
     Unreadable,
+    checklist,
     days_after,
+    is_bettable,
     required_at,
     sections,
     size_weeks,
     what_json_can_carry,
+    without_comments,
 )
 from .schedule import build_end
 
@@ -258,7 +261,7 @@ def _row(index: Index, entity_id: str) -> dict:
     entity = index.entities[entity_id]
     span = index.spans.get(entity_id)
     size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
-    ticked, total = index.progress.get(entity_id, (0, 0))
+    counted = index.progress.get(entity_id)
     return {
         "id": entity.id,
         "title": entity.title,
@@ -282,8 +285,8 @@ def _row(index: Index, entity_id: str) -> dict:
         "blocked_by": len(index.blocked_by[entity_id]),
         # Two keys for one fact: the ratio is what a column sorts by, the text is
         # what it prints. Sorting on "7/12" as a string puts 10/12 before 7/12.
-        "progress": round(ticked / total, 4) if total else None,
-        "progress_text": f"{ticked}/{total}" if total else "",
+        "progress": round(counted.fraction, 4) if counted else None,
+        "progress_text": counted.text if counted else "",
         "prs": entity.prs,
         "tags": entity.tags,
         # Not a column, but the control bar offers it: a dropdown whose value the
@@ -295,7 +298,7 @@ def _row(index: Index, entity_id: str) -> dict:
 
 # Columns the table shows that are computed rather than owned, each with what the
 # cell answers when somebody tries to edit it. `size` is the least obvious: it
-# shows effort_weeks *or an assumed default*, so a control on it would let
+# shows person_weeks *or an assumed default*, so a control on it would let
 # somebody commit the assumption without meaning to.
 #
 # The names and the sentences are one map because they were two: the script
@@ -702,28 +705,6 @@ ROUTES = Links(
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
-# Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
-_FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
-_COMMENT = re.compile(r"<!--.*?-->", re.S)
-
-
-def _without_comments(body: str) -> str:
-    """Markdown with its HTML comments taken out before it is rendered.
-
-    The team's pitch template carries its guidance in `<!-- … -->`, which is
-    invisible in HackMD and, with `html: False`, would print as literal text
-    here — so every pitch pasted across would arrive with its instructions
-    showing. Stripped rather than rendered: turning HTML on to hide four comments
-    would put every hand-edited body's markup into the page.
-    """
-    if "<!--" not in body:
-        return body
-    return "".join(
-        part if part.lstrip("\n").startswith(("```", "~~~")) else _COMMENT.sub("", part)
-        for part in _FENCED.split(body)
-    )
-
-
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
 
@@ -893,7 +874,7 @@ def _drop_repeated_title(body: str, title: str) -> str:
 
 def _body_html(entity: Entity, links: Links = STATIC) -> Markup:
     return _markdown(
-        _without_comments(_drop_repeated_title(entity.body, entity.title)), links
+        without_comments(_drop_repeated_title(entity.body, entity.title)), links
     )
 
 
@@ -2059,7 +2040,7 @@ const keys = {{ columns|map(attribute=0)|list|tojson }};
 // Which column carries a complaint about a field the table has no column for.
 // Anything still unplaced falls to the id cell, because a row that says
 // something is wrong and will not say what is worse than no marker at all.
-const MARK_COLUMN = {effort_weeks: 'size', appetite_weeks: 'size', depends_on: 'blocked_by'};
+const MARK_COLUMN = {person_weeks: 'size', depends_on: 'blocked_by'};
 const SEV_CLASS = {blocker: 'blocker', warning: 'warn'};
 
 let MARKS = {};     // entity id -> column -> {severity, messages}
@@ -2199,9 +2180,6 @@ function shown(row, key) {
   if (key === 'status')
     return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
-<<<<<<< HEAD
-  if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
-=======
   // Counted out of the body's own checklist. Empty where there is no checklist,
   // rather than "0/0" — a body nobody has written a list in has no progress to
   // report, which is not the same as no progress.
@@ -2209,8 +2187,7 @@ function shown(row, key) {
     return row.progress === null ? '' :
       `${esc(row.progress_text)}<span class="meter"><span style="width: ` +
       `${Math.round(row.progress * 100)}%"></span></span>`;
-  if (key === 'tags') return clamped((value || []).map(esc), 'tag');
->>>>>>> f67d0b9 (The tool records what the team already writes down)
+  if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
   // Every list in the table clamps, for the same reason and by the same badge.
   // These two were the last that did not, and they were most of the wrapping
   // left: `OngChia, nfarabullini, jcanton` took three lines in a 159px column and
@@ -2747,13 +2724,16 @@ const SPARE_COLUMN = 'tags';
 const CLAMPED = new Set(['tags', 'prs', 'assignees', 'reviewers']);
 const SQUEEZABLE = new Set(['title', 'owner']);
 // What the table gives up when it runs out of room, in the order it gives them
-// up. All three are lookups rather than answers — each is on the detail page and
+// up. All four are lookups rather than answers — each is on the detail page and
 // each stays filterable in the facets above — so they are what it can lose and
 // still answer the question it is open for.
-// `tags` is last because it is the column that absorbs whatever is left over:
-// while it is drawn the table fills its container exactly, and once it is gone
-// the fit can only leave a gap at the right.
-const SHED = ['reviewers', 'prs', 'tags'];
+// `progress` goes first: it is counted from a body that may not keep a list at
+// all, the entity page draws it in full beside the tasks it is counted from, and
+// `?predicate=untracked` finds the rows that have none. `tags` is last because it
+// is the column that absorbs whatever is left over: while it is drawn the table
+// fills its container exactly, and once it is gone the fit can only leave a gap
+// at the right.
+const SHED = ['progress', 'reviewers', 'prs', 'tags'];
 // One class per column and not one for the set, because they go one at a time.
 const shedClass = key => 'shed-' + key;
 
@@ -3320,6 +3300,7 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
    every window between them scrolled sideways with all fourteen columns.
    `fitWidths` sets these classes from its own arithmetic now, so there is one
    number and the browser measures it. */
+.shed-progress [data-col="progress"],
 .shed-reviewers [data-col="reviewers"],
 .shed-prs [data-col="prs"],
 .shed-tags [data-col="tags"] { display: none; }
@@ -4777,7 +4758,7 @@ function labelOf(control) {
 
 // What the server refused a write with, in the words on this page. A Problem
 // carries its field as an identifier because that is what marks the control;
-// printing that identifier is how `appetite_weeks` ended up in a sentence under
+// printing that identifier is how `person_weeks` ended up in a sentence under
 // a label reading "Appetite (weeks)". The field is named by the same `labelOf`
 // the form's own check uses, so the two refusals cannot drift apart.
 function refusals(answer, status) {
@@ -5027,7 +5008,7 @@ document.getElementById('save').onclick = async () => {
   const title = document.querySelector('.title-field');
   if (title.value.trim()) fields.title = title.value.trim(); else missing.push('Title');
   if (missing.length) {
-    // The words on the page, not the words in the file: `appetite_weeks` and
+    // The words on the page, not the words in the file: `person_weeks` and
     // `in_progress` are what git holds, and a refusal that names them sends
     // somebody looking for a field with that label.
     const chosen = FORM.querySelector('[name=status]');
@@ -5160,6 +5141,29 @@ _DETAIL = """
         {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
       {% if e.hints %}<ul class="hints">
         {% for h in e.hints %}<li>{{ h }}</li>{% endfor %}</ul>{% endif %}
+      {#- The tasks this is made of, above the document rather than inside it: a
+          pitch is read to find out where it has got to, and that was a checklist
+          somebody had to scroll a shaping document to find. Every tick is the
+          task's own status, so there is nothing here to keep in step by hand. -#}
+      {% if e.progress %}
+      <section class="progress read">
+        <h2>Progress <span class="tally">{{ e.progress.text }}</span>
+          <span class="meter" role="img"
+                aria-label="{{ e.progress.percent }} per cent of this bet is done"
+            ><span style="width: {{ e.progress.percent }}%"></span></span></h2>
+        <ul>
+          {% for item in e.progress.tasks %}
+          <li class="{{ 'ticked' if item.done else '' }}">
+            <span class="box" aria-hidden="true">{{ '☑' if item.done else '☐' }}</span>
+            <a href="{{ links.entity }}{{ item.id }}">{{ item.title }}</a>
+            <span class="chip {{ item.status_class }}">{{ item.status|human }}</span>
+            <span class="tally">{{ item.size }} wk{% if item.people %}
+              · {{ item.people }}{% endif %}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
       <div class="doc read">{{ e.body }}</div>
       {% if editable %}
       <p class="field bodybar">
@@ -5546,6 +5550,10 @@ dt.derived, dd.derived { font-style: italic; }
 /* Still italic, because it is still computed and typing over it would change
    nothing. Coloured, because it is the one computed line that is a problem. */
 .overrun { color: var(--sev-warn); font-weight: 600; }
+/* The same sentence when the tasks still fit: said, but not shouted. A number
+   that only appears when something is wrong is a number people learn to fear
+   rather than to read. */
+.quiet { color: var(--muted); }
 /* The marks belong to the form, so they are not on the page when there is no
    form on it — in read mode a row saying REQUIRED beside a filled-in value is
    an instruction with nothing to do. */
@@ -5555,6 +5563,18 @@ article.entity:not(.editing) .req { display: none; }
    sits at the weight of the muted text around it, below anything the validator
    actually refused. */
 .hints { color: var(--muted); padding-left: 1.1rem; font-size: 13px; }
+/* The tasks a pitch is made of. Its own block above the document, because
+   "where has this got to" is the question a pitch page is opened for and the
+   answer was a checklist somewhere in the middle of the prose. */
+.progress { border-top: 1px solid var(--line); padding-top: .6rem; margin-bottom: 1rem; }
+.progress h2 { font-size: 1rem; margin: 0 0 .4rem; display: flex; align-items: center;
+               gap: .5rem; }
+.progress .tally { color: var(--muted); font-weight: 400; font-size: 12px; }
+.progress ul { list-style: none; margin: 0; padding: 0; }
+.progress li { display: flex; align-items: baseline; gap: .4rem; padding: .15rem 0;
+               font-size: 13px; }
+.progress li.ticked a { color: var(--muted); text-decoration: line-through; }
+.progress .box { color: var(--muted); }
 
 /* The two modes of the same rows. Controls are hidden until the article is
    editing, and the values they replace are hidden once it is. */
@@ -5617,9 +5637,8 @@ EDITABLE: dict[str, str] = {
     "depends_on": "list",
     "tags": "list",
     "prs": "list",
-    "appetite_weeks": "number",
+    "person_weeks": "number",
     "shaped_by": "list",
-    "effort_weeks": "number",
 }
 STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
 # Highest first, which is the order a picker is read in and the order the table
@@ -5647,7 +5666,10 @@ STATUS_GLYPH = {
 }
 
 # Fields only one kind has, so the create form can hide the rest.
-KIND_ONLY = {"appetite_weeks": "pitch", "shaped_by": "pitch", "effort_weeks": "task"}
+# A project is a container and has no size of its own; `shaped_by` is asked of
+# the kind that gets shaped. `person_weeks` is on both of the others, so it is
+# not kind-only any more.
+KIND_ONLY = {"shaped_by": "pitch"}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 # The validator's own gate, asked rather than copied — and asked through the front
 # door. This module used to import `model._status_problems` at import time and run
@@ -5656,17 +5678,18 @@ PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 # validator_s_own_and_not_a_second_copy` is what keeps it honest.
 REQUIRED_AT = required_at()
 
-# The reader's name for a field. `effort_weeks` and `appetite_weeks` are two
+# The reader's name for a field. `appetite_weeks` and `effort_weeks` were two
 # storage fields holding one quantity, and calling it Effort here, Appetite on the
 # detail page and weeks in the table made it look like three different numbers
-# nobody could reconcile. Appetite is the domain's word and the spec's; the field
-# names stay as they are, because those are what git holds.
+# nobody could reconcile. They are one field now — `person_weeks`, named for the
+# unit that D1 got wrong — and Appetite is still the word a reader gets, because
+# it is the domain's and the team's own template's.
 LABELS = {
     "title": "Title", "status": "Status", "owner": "Owner", "assignees": "Assignees",
     "reviewers": "Reviewers", "review_waived": "Review waived", "assigned_on": "Assigned on",
     "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
-    "tags": "Tags", "prs": "PRs", "appetite_weeks": "Appetite (weeks)",
-    "shaped_by": "Shaped by", "effort_weeks": "Appetite (weeks)",
+    "tags": "Tags", "prs": "PRs", "person_weeks": "Appetite (person-weeks)",
+    "shaped_by": "Shaped by",
     # Not stored fields: a facet and a derived column. They are read by the same
     # people in the same control bar, so they take their words from here too.
     "kind": "Kind", "project": "Project", "size": "Appetite", "blocked_by": "Blockers",
@@ -5853,6 +5876,22 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             )
         elif name == "priority":
             display = escape(_human(entity.priority))
+        elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, entity) is not None:
+            # The bet, and what its tasks propose to put inside it. Two numbers on
+            # one line because they are one question: an appetite read on its own
+            # says nothing about whether the work still fits, and the answer was
+            # only ever visible by adding the tasks up by hand.
+            #
+            # Warned about only against a bet somebody actually made. A pitch with
+            # no appetite yet is not over it, and `_rollup_problems` says nothing
+            # about that case either — a page that shouts where the validator is
+            # silent teaches people that one of the two is lying.
+            total = _tasks_add_up_to(index, entity)
+            stated = field["text"]
+            over = bool(stated) and total > float(stated)
+            display = Markup('{} · <span class="{}">{} in tasks</span>').format(
+                stated or "—", "overrun" if over else "quiet", f"{total:g}"
+            )
         elif field["type"] == "list":
             display = escape(field["text"]) if field["text"] else empty
         else:
@@ -5927,21 +5966,26 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             "editing_only": False,
         }
     )
-    # Counted from the body, never written to it. The team's pitch template asks
-    # for a `## Progress` checklist and people keep one; this reads what is there
-    # and adds up. Nothing requires it, nothing rewrites it, and a body without
-    # one simply has no row — a checklist that becomes a mandatory field is a
-    # checklist people stop keeping honestly.
-    ticked, total = index.progress.get(entity.id, (0, 0))
-    if total:
+    # Derived, never written: from the tasks under it where there are any, and
+    # from the body's own checklist where there are none. The full list is a panel
+    # of its own beside the document (`_progress_view`); this line is the number,
+    # in the column of facts where every other number about this entity is.
+    counted = index.progress.get(entity.id)
+    if counted is not None:
         rows.append(
             {
                 "label": "Progress",
                 "for": "",
                 "display": Markup(
-                    '{} of {} <span class="meter" role="img" aria-label="{} of {} items'
-                    ' ticked"><span style="width: {}%"></span></span>'
-                ).format(ticked, total, ticked, total, round(100 * ticked / total)),
+                    '{} <span class="meter" role="img" aria-label="{} of {} {} done">'
+                    '<span style="width: {}%"></span></span>'
+                ).format(
+                    counted.text,
+                    f"{counted.done:g}",
+                    f"{counted.total:g}",
+                    counted.unit,
+                    round(100 * counted.fraction),
+                ),
                 "control": "",
                 "gates": (),
                 "derived": True,
@@ -5971,6 +6015,61 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     return rows
 
 
+_SIZE_FIELD_NAME = "person_weeks"
+
+
+def _tasks_add_up_to(index: Index, entity: Entity) -> float | None:
+    """What the tasks under this one propose to spend, or None if it has none.
+
+    The same number `_rollup_problems` compares against the appetite, read from
+    the same place, so the sentence on the page and the sentence in `check`
+    cannot disagree about the arithmetic.
+    """
+    counted = index.progress.get(entity.id)
+    return counted.total if counted is not None and counted.unit == "weeks" else None
+
+
+def _progress_view(index: Index, entity: Entity) -> dict | None:
+    """The tasks a pitch is made of, and how much of it they have finished.
+
+    Only where there are tasks. A leaf's checklist is already in its body, drawn
+    where its author put it, and lifting it into a panel above would print the
+    same list on the page twice — the fact row carries its count instead.
+
+    Every line is derived from the task it names: the tick is that task's
+    `status`, so closing one from the table moves this the next time the index is
+    built, and there is no checkbox here for the two to disagree about.
+    """
+    counted = index.progress.get(entity.id)
+    if counted is None or not counted.of:
+        return None
+    config = Config(default_task_effort=index.default_task_effort)
+    items = []
+    for child_id in counted.of:
+        child = index.entities[child_id]
+        size, defaulted = size_weeks(child, config)
+        items.append(
+            {
+                "id": child_id,
+                "title": child.title,
+                "done": child.status == "done",
+                "status": child.status,
+                "status_class": _status_class(child.status),
+                "size": f"{size:g}" + ("*" if defaulted else ""),
+                "people": ", ".join(_people_on(child)),
+            }
+        )
+    return {
+        "text": counted.text,
+        "percent": round(100 * counted.fraction),
+        # `tasks` and not `items`: a Jinja lookup finds `dict.items` first, so
+        # `progress.items` was the built-in method and the template raised
+        # `'builtin_function_or_method' object is not iterable` on every page
+        # that draws an entity.
+        "tasks": items,
+    }
+
+
 _FOR_LATER_HEADING = "for later"
 # The two sections the team's own pitch template asks for and the corpus most
 # often leaves empty. Both spellings of each, because both are in use.
@@ -5980,7 +6079,7 @@ _WANTED_SECTIONS = {
 }
 
 
-def _shaping_hints(entity: Entity) -> list[str]:
+def _shaping_hints(entity: Entity, has_tasks: bool = False) -> list[str]:
     """Sections the pitch template asks for that this body does not have.
 
     A printed note on one page, deliberately not a `Problem`: it never reaches
@@ -5994,12 +6093,21 @@ def _shaping_hints(entity: Entity) -> list[str]:
     if entity.kind != "pitch" or entity.status not in ("ready", "in_progress"):
         return []
     written = sections(entity.body)
-    return [
+    notes = [
         f"No {label} section. The pitch template asks for one — it is what keeps "
         f"the appetite honest."
         for label, spellings in _WANTED_SECTIONS.items()
         if not any(written.get(spelling) for spelling in spellings)
     ]
+    # Said rather than silently resolved. A pitch with tasks is measured by them,
+    # so a checklist in its body counts for nothing — and a list somebody is
+    # ticking that moves no number on the page is worse than no list at all.
+    if has_tasks and checklist(entity.body)[1]:
+        notes.append(
+            "This pitch keeps a checklist in its body and has tasks under it. The "
+            "tasks are what its progress is counted from; the checklist is not."
+        )
+    return notes
 
 
 def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
@@ -6029,7 +6137,9 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
             "problems": [p.message for p in index.problems if p.entity_id == entity_id],
             # Not problems: notes about the shaping document, printed here and
             # nowhere else. See `_shaping_hints`.
-            "hints": _shaping_hints(entity),
+            "hints": _shaping_hints(entity, bool(index.children.get(entity_id))),
+            # The tasks this pitch is made of, ticked from their own statuses.
+            "progress": _progress_view(index, entity),
             "body": _body_html(entity, links),
         }
         for entity_id, entity in sorted(index.entities.items())
@@ -6045,8 +6155,14 @@ KINDS = ("project", "pitch", "task")
 # `Appetite` and `Developers` are fields here, and a heading restating a field is
 # the two-copies-of-one-fact problem this tool exists to end. The guidance stays
 # in HTML comments exactly as it is written there — invisible on the page, see
-# `_without_comments` — so a pitch drafted in HackMD and one drafted here are the
+# `without_comments` — so a pitch drafted in HackMD and one drafted here are the
 # same document.
+#
+# It is also missing that template's `## Progress`, and that is the one real
+# departure: a pitch's progress is its TASKS, each one a record with an owner, a
+# size and a status of its own. The HackMD list becomes those tasks, its
+# sub-items stay as checkboxes inside them — which is what the task template
+# below keeps a `## Progress` for — and the pitch page draws the roll-up.
 #
 # A template is a starting point and nothing else: no heading here is required,
 # validated, or read by anything but `_shaping_hints`, which only prints a note.
@@ -6067,12 +6183,6 @@ _PITCH_TEMPLATE = """## Problem
 ## No-gos
 <!-- What is deliberately excluded, to fit the appetite or to keep the problem
      tractable. -->
-
-## Progress
-<!-- Not filled in during shaping. When building starts, put a coarse list here
-     and refine it as the work discovers what is really in it. -->
-
-- [ ]
 
 ## For later
 <!-- Anything cut to fit the appetite, kept where the next shaping will find it. -->
@@ -7268,7 +7378,12 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                                                 if kv[1].status in order else len(order),
                                                 kv[0])
     ):
-        if entity.status not in order:
+        # A bet is made on a pitch, or on a chore nobody pitched. A task under a
+        # pitch is part of that bet and comes with it; a project is a container
+        # for bets and is not one. Listing all three put a milestone and eleven
+        # of its own tasks on the table beside the five pitches they belong to,
+        # and ticking any of them stamped a second cycle onto one decision.
+        if entity.status not in order or not is_bettable(entity):
             continue
         size, defaulted = size_weeks(
             entity, Config(default_task_effort=index.default_task_effort)
@@ -7280,7 +7395,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
                 "kind": entity.kind,
                 "status": entity.status,
                 "size": "" if defaulted else f"{size:g}",
-                "size_field": "appetite_weeks" if entity.kind == "pitch" else "effort_weeks",
+                "size_field": "person_weeks",
                 "size_hint": f"{size:g} assumed" if defaulted else "",
                 "assignees": ", ".join(entity.assignees),
                 "reviewers": ", ".join(entity.reviewers),
@@ -7315,7 +7430,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # document like any other, and rendered its own way it was the one body
         # on the site whose uploaded figures pointed at the wrong prefix and
         # whose remote images still went to the network.
-        "body": _markdown(_without_comments(plan.body), links) if plan else Markup(""),
+        "body": _markdown(without_comments(plan.body), links) if plan else Markup(""),
         # The source, for the box somebody types in. Rendered above it, edited
         # below it — the same two views of one field the detail page has.
         "raw_body": plan.body if plan else "",
@@ -7778,7 +7893,7 @@ def preview_html(body: str, links: Links = ROUTES, title: str = "") -> str:
 
     Routes by default: the only thing that asks for a preview is the server.
     """
-    return _markdown(_without_comments(_drop_repeated_title(body, title)), links)
+    return _markdown(without_comments(_drop_repeated_title(body, title)), links)
 
 
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:

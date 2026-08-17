@@ -6,7 +6,7 @@ parent: pitch-5e7b1c
 status: ready
 owner: halungge
 reviewers: [iomaganaris]
-effort_weeks: 1
+person_weeks: 1
 assignees: []
 assigned_on: null
 cycle: 36
@@ -27,4 +27,4 @@ diverge is the fallback result if full bit-identity is not reachable. The cycle-
 
 Migration notes:
 
-- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source.
+- `person_weeks: null`, `priority: medium` (default): neither is stated in the source.

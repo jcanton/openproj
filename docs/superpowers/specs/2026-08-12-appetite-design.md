@@ -75,7 +75,7 @@ burndown charts, per-project permissions.
 | D2 | Shape Up cycles are **soft walls** — the scheduler ignores them, the timeline flags overruns | The circuit breaker is a human decision; silently reflowing a bet misrepresents the process |
 | D3 | Project and repository name: **`openproj`**. Local-only while it is just jcanton and Claude; **pushed to the C2SM GitHub organisation at the same moment it goes to Cloud Run** | Nothing is shared yet, so nothing needs to be pushed. Going online and gaining an org-owned remote are the same event, which is also when backups start existing (§12) |
 | D4 | The plan data lives in **its own repository**, separate from `openproj`'s source | A plan commit must not trigger CI on tool code, and the write credential must be structurally incapable of touching source repos. While local, this is a second directory |
-| D5 | Effort is **appetite** for pitches, **`effort_weeks`** for tasks, both mandatory | The team fills appetite on 145 of 153 pitches. Making task effort mandatory is a deliberate change of habit, and §5.4 is how it is made to stick |
+| ~~D5~~ | ~~Effort is **appetite** for pitches, **`effort_weeks`** for tasks~~ **SUPERSEDED 2026-08-17:** one field, `person_weeks`, on both — two names for one quantity that `size_weeks` already read as one, and the unit is in the name because the unit is what D1 got wrong. Still mandatory at `ready`. | The team fills appetite on 145 of 153 pitches. Making task effort mandatory is a deliberate change of habit, and §5.4 is how it is made to stick |
 | D6 | **No `hackmd` field.** Content moves in; nothing links back | A link to the old system is how two sources of truth survive. The shaping doc becomes the entity body |
 | D7 | Required fields are enforced at **three points**, and requiredness is a validation rule, never a parse constraint | §5.4 |
 | D8 | Hosting is **local now, Cloud Run when shared**. No NAS, no personal hardware | §12 |
@@ -136,18 +136,54 @@ class Entity(BaseModel):
     created_schema_version: int = 1
 
 class Pitch(Entity):
-    appetite_weeks: float | None = None   # PERSON-weeks (D-C4); assignees divide it
+    person_weeks: float | None = None     # PERSON-weeks (D-C4); assignees divide it
     # A list: two of the four shaped pitches in the team's own corpus name two or
     # three people. A bare string still parses, and still writes back as one.
     shaped_by: list[str] = []             # required from schema_version 2
 
 class Task(Entity):
-    effort_weeks: float | None = None     # the same quantity, under the other name
+    person_weeks: float | None = None     # the same field, not a second one
 ```
 
 **Superseded by the code, recorded here so the two stop disagreeing:** this section originally
 gave `status` and `priority` as `Literal`s over `todo`/`wip` and over the integers `0..3`, and
 `shaped_by` as a single string. All three changed; the reasons are in the comments above.
+
+### 4.2.1 What each kind is, and what it may contain
+
+`project ← pitch ← task`, enforced from rule_version 4 rather than only described here — the
+frozen corpus already hangs a task straight off a project, which is what an unenforced rule buys.
+
+| | project | pitch | task |
+|---|---|---|---|
+| may belong to | nothing | a project, or nothing | a pitch, or nothing |
+| size | **none** — it is a container | `person_weeks`, the bet | `person_weeks`, the work |
+| bettable | no | **yes** | only when it has no parent |
+| `cycle:` | never | its own | its pitch's, or its own when it has no pitch |
+| consumes capacity | no | only when it has no tasks | yes |
+
+**A bet is made once, on the thing the room named.** A task inside a pitch came with that pitch, so
+it carries no cycle of its own; a `cycle:` on one is a warning and is ignored. A task with no
+parent is a chore nobody pitched — it appears on the betting table in its own right and counts
+against a person's weeks like anything else.
+
+**A project holds bets rather than being one.** No size, no capacity, no cycle, and no overrun
+flag: its span is the rollup of pitches bet in different cycles, so judging it against any single
+one produced `warm_bubble`, *"overruns cycle 36 by 17 weeks"* — a milestone accused of missing a
+box nobody had put it in.
+
+**A pitch's progress is its tasks.** Each is a record with an owner, a size and a status, so the
+roll-up is derived — ticked from `status`, weighted by `person_weeks` — and there is no checkbox
+stored anywhere for the two to disagree about. The pitch template therefore omits the `## Progress`
+the team's HackMD original carries: that coarse list becomes the tasks, and its sub-items become
+the checklists inside them, which is what the task template keeps one for. A pitch with no tasks
+yet still has its own body list counted; a pitch that keeps both is told which one the page reads.
+
+**A pitch's appetite is the bet, and its tasks are what somebody proposes to put in it.** The
+scheduler already takes a parent's dates and capacity from its children (§7.1 steps 4 and 7), so
+the appetite is not a second forecast — it is the number the room agreed to. Where the tasks add up
+to more, that is a **warning** naming both figures, because the answer is to cut scope or re-bet
+and both are decisions for a person.
 
 Every field is Optional at the type level. **That is deliberate and is explained in §5.4** — it is
 not laxity, it is what keeps a hand-edited file from taking the index down.
@@ -187,8 +223,11 @@ starts, strictest when it is claimed done.
 
 | Status | Additionally required | Severity |
 |---|---|---|
-| `ready` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `appetite_weeks` (pitch) or `effort_weeks` (task) | blocker |
+| `ready` | `owner`; `reviewers` (≥1) **or** `review_waived: true`; and `person_weeks` on a pitch or a task | blocker |
 | `ready` | on a **pitch**, `shaped_by` non-empty — *rule_version 2* | blocker |
+| any | a parent of the kind §4.2.1 allows — *rule_version 4* | blocker |
+| any | `cycle` only on what is bet: a pitch, or a task with no parent — *rule_version 4* | warning |
+| any | children summing to more than the appetite they sit inside — *rule_version 4* | warning |
 | `in_progress` | `assigned_on`, and **at least one reviewer who is not the owner** unless review is waived | blocker |
 | `done` | at least one entry in `prs` | blocker |
 | any | `title` non-empty; `id` matches `^(proj\|pitch\|task)-[0-9a-f]{6}$` with the prefix matching `kind` | blocker |
@@ -365,7 +404,7 @@ Written first, before any server, with property tests. **This is the product.**
 4. **Duration resolution:**
 
    ```
-   size_weeks  = appetite_weeks (pitch) | effort_weeks (task)     # PERSON-weeks
+   size_weeks  = person_weeks                                     # PERSON-weeks
    duration    = size_weeks / Σ availability(worker) for workers  # elapsed weeks
    ```
 

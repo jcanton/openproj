@@ -56,7 +56,7 @@ The GitHub usernames are all real `C2SM/icon4py` contributors.
 |---|---|
 | The `warm_bubble` project itself | **Invented.** No such milestone has been declared. |
 | Every `owner`, `assignees`, `reviewers`, `shaped_by` | **Invented.** Names are real people; the assignments are not. Nobody agreed to any of this. |
-| Every `appetite_weeks` / `effort_weeks` | **Invented.** Chosen to make the timeline interesting, not measured or estimated by anyone. |
+| Every `person_weeks` | **Invented.** Chosen to make the timeline interesting, not measured or estimated by anyone. |
 | Every `cycle` and `assigned_on` | **Invented.** The cycle *dates* in `config/cycles.yaml` are a plausible 2026 calendar, not the team's. |
 | Every `depends_on` edge | **Invented.** Deliberately sparse so the graph stays readable. |
 | Every entry in `prs` | **Invented.** These PR numbers are plausible-looking and should not be dereferenced. |
@@ -70,9 +70,18 @@ The GitHub usernames are all real `C2SM/icon4py` contributors.
 `Config` by `openproj.model.load_config`. The holidays are genuine Zurich cantonal holidays
 plus the ETH year-end closure; the cycle calendar is synthetic.
 
-Every entity is `created_schema_version: 2`, which means every validation rule applies to
-all of them as a blocker. The corpus is expected to pass `uv run openproj check seed` with
-zero blockers. If it does not, the corpus is wrong, not the checker.
+Every entity is `created_schema_version: 2`, so the rules introduced at version 4 —
+containment, where a `cycle` may live, and tasks adding up to more than the bet they sit
+inside — report as warnings here rather than as blockers.
+
+The corpus is expected to pass `uv run openproj check seed` with **zero blockers and exactly
+one warning**: `pitch-0d0001` is bet at six weeks and its three tasks propose seven and a
+half. That one is left in on purpose. It is the only check on this list whose output is a
+conversation rather than a correction, and a demo where nothing ever exceeds its appetite
+teaches that the number cannot be exceeded.
+
+Only what is bet carries a `cycle:` — the five pitches. Their tasks take the cycle of the
+pitch they belong to, and the project has none at all.
 
 ## If you fork this
 

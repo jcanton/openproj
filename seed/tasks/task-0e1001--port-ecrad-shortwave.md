@@ -9,13 +9,12 @@ assignees: [kotsaloscv]
 reviewers: [halungge, tehrengruber]
 review_waived: false
 assigned_on: 2026-08-17
-cycle: 37
 priority: high
 depends_on: []
 tags: [radiation, shortwave, two-stream, gt4py]
 prs: []
 created_schema_version: 2
-effort_weeks: 3.5
+person_weeks: 3.5
 ---
 
 # Port ecRad shortwave

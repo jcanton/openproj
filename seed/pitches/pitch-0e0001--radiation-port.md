@@ -15,7 +15,7 @@ depends_on: [pitch-0a0001]
 tags: [radiation, rte-rrtmgp, aes-physics, gt4py, port]
 prs: []
 created_schema_version: 2
-appetite_weeks: 6.0
+person_weeks: 6.0
 shaped_by: jcanton
 ---
 

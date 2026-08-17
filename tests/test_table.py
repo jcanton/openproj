@@ -253,7 +253,7 @@ def test_no_derived_column_can_be_edited_at_all(page: str):
     A start date typed by hand is a lie the next reschedule contradicts, and the
     contradiction surfaces as "the tool is wrong" rather than as "somebody typed
     over a forecast". `size` belongs here too and is the least obvious of the four:
-    what the column shows is `effort_weeks` *or an assumed default*, so a control
+    what the column shows is `person_weeks` *or an assumed default*, so a control
     on it would let somebody commit the assumption without meaning to.
     """
     assert set(columns(page)) - set(EDITABLE) - {"id"} <= DERIVED, (
@@ -315,7 +315,7 @@ def test_the_create_form_writes_only_fields_a_person_owns(new_page: str):
         assert field in named, field
     # Every kind's fields are on the page; which of them apply is `data-kinds`,
     # checked by test_a_field_only_one_kind_has_is_absent_from_the_others.
-    for field in ("appetite_weeks", "shaped_by", "effort_weeks"):
+    for field in ("person_weeks", "shaped_by", "person_weeks"):
         assert field in named, f"{field} is status-gated at creation and must be fillable"
 
 
@@ -390,7 +390,7 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
     for field, gates in (
         ("owner", "ready"),
         ("reviewers", "ready in_progress"),
-        ("appetite_weeks", "ready"),
+        ("person_weeks", "ready"),
         ("shaped_by", "ready"),
         ("assigned_on", "in_progress"),
         ("prs", "done"),
@@ -431,9 +431,10 @@ def test_the_gates_are_the_validator_s_own_and_not_a_second_copy(new_page: str):
 
 
 def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient):
-    """A pitch has an appetite and a task has an effort, and asking for both makes
-    the form a schema dump rather than a question. `shaped_by` is a pitch rule too,
-    so a task blocked on a missing `shaped_by` would be nonsense.
+    """Asking every kind for every field makes the form a schema dump rather than
+    a question. `shaped_by` is the pitch's alone — shaping is what a pitch gets,
+    and a task blocked on a missing `shaped_by` would be nonsense — while a size
+    belongs to a pitch and a task alike and a project has none, being a container.
 
     The page carries all three kinds and hides what does not apply, so that
     switching kind does not throw away a title somebody just typed. Each row says
@@ -443,9 +444,8 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     found = re.findall(r'<dd data-kinds="([^"]*)">\s*<[^>]*name="([^"]+)"', page)
     owners = {field: kinds.split() for kinds, field in found}
 
-    assert owners["appetite_weeks"] == ["pitch"]
+    assert owners["person_weeks"] == ["pitch", "task"]
     assert owners["shaped_by"] == ["pitch"]
-    assert owners["effort_weeks"] == ["task"]
     assert owners["status"] == ["project", "pitch", "task"]
 
 
@@ -453,16 +453,16 @@ def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
     """The page hides them; this is what stops them.
 
     `patch_text` writes every field into the frontmatter before the model parses
-    it, so an `effort_weeks` on a pitch would sit in the file unread — present in
-    git, invisible to the tool, and wrong the day somebody greps for it.
+    it, so a `shaped_by` on a task would sit in the file unread — present in git,
+    invisible to the tool, and wrong the day somebody greps for it.
     """
     response = client.post(
         "/api/entity",
-        json={"fields": {"kind": "pitch", "title": "x", "effort_weeks": 3}, "body": ""},
+        json={"fields": {"kind": "task", "title": "x", "shaped_by": ["ann"]}, "body": ""},
     )
 
     assert response.status_code == 422
-    assert "effort_weeks" in response.json()["detail"]
+    assert "shaped_by" in response.json()["detail"]
 
 
 def test_the_create_form_has_somewhere_to_put_the_server_refusal(new_page: str):
@@ -698,7 +698,7 @@ NEW_TASK = {
     "status": "ready",
     "owner": "ann",
     "reviewers": ["bo"],
-    "effort_weeks": 1.0,
+    "person_weeks": 1.0,
 }
 
 
@@ -746,7 +746,7 @@ def test_a_create_missing_its_gated_fields_comes_back_as_problems(
     assert {p["field"] for p in response.json()["problems"]} >= {
         "owner",
         "reviewers",
-        "effort_weeks",
+        "person_weeks",
     }
     assert {p["severity"] for p in response.json()["problems"]} == {"blocker"}
     assert git_head(repo_path) == base
@@ -765,7 +765,7 @@ def test_a_create_that_waives_review_is_accepted(client: TestClient):
             "status": "ready",
             "owner": "cy",
             "review_waived": True,
-            "effort_weeks": 0.5,
+            "person_weeks": 0.5,
         },
     )
 
@@ -906,7 +906,7 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 MEASURED = {
     "id": 110, "title": 304, "priority": 79, "status": 107, "owner": 100,
     "assignees": 124, "reviewers": 116, "cycle": 63, "size": 81, "start": 101,
-    "end": 101, "blocked_by": 87, "prs": 80, "tags": 128,
+    "end": 101, "blocked_by": 87, "progress": 96, "prs": 80, "tags": 128,
 }
 # The window the owner reported the sideways scroll from: a 1460px scroll
 # container inside it.
@@ -1651,8 +1651,11 @@ def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
     from openproj.render import TEMPLATES
 
     pitch = TEMPLATES["pitch"]
+    # The five ingredients and the deferred-scope list. `## Progress` is the one
+    # heading of the HackMD original this leaves out: a pitch's progress is its
+    # tasks, and `test_the_pitch_template_leaves_progress_to_its_tasks` says so.
     for heading in ("## Problem", "## Appetite", "## Solution", "## Rabbit holes",
-                    "## No-gos", "## Progress", "## For later"):
+                    "## No-gos", "## For later"):
         assert heading in pitch, heading
     assert "Shaped by:" not in pitch and "Developers:" not in pitch
     # The guidance rides in HTML comments, exactly as it does in HackMD, and the
@@ -1911,7 +1914,7 @@ def test_the_blocking_count_names_the_population_its_link_opens():
     nameless = Task(id="task-000001", kind="task", title="Ready and nameless",
                     status="ready")
     fine = Task(id="task-000002", kind="task", title="Fine", status="ready",
-                owner="ann", reviewers=["bo"], effort_weeks=1)
+                owner="ann", reviewers=["bo"], person_weeks=1)
     half = Task(id="task-000003", kind="task", title="Half named", status="ready",
                 owner="ann")
     index = build_index([nameless, fine, half], Config(), date(2026, 8, 17))
@@ -1950,7 +1953,7 @@ def test_a_title_somebody_typed_never_becomes_markup():
 
     hostile = 'Fix <b>&"the" </script><img src=x> equator'
     entity = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
-                  effort_weeks=1, tags=["<i>one", "two&three"], prs=["C2SM/icon4py#1"])
+                  person_weeks=1, tags=["<i>one", "two&three"], prs=["C2SM/icon4py#1"])
     index = build_index([entity], Config(), date(2026, 8, 17))
     page = render_table(index, base_commit="0" * 40)      # the editor is a way in too
 
@@ -1984,7 +1987,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """The reason a row is a problem lived in a native `title` on the `<tr>`, and
     a table is not a thing anybody hovers to find out.
 
-    A field the table has no column for — `shaped_by`, `effort_weeks` — still has
+    A field the table has no column for — `shaped_by`, `person_weeks` — still has
     to be findable, so its complaint falls to the id cell. A glyph on a column
     nobody can see is a row that says something is wrong and will not say what.
     """
@@ -1995,7 +1998,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     glyph = r'class="sev-mark sev-mark-\$\{SEV_CLASS\[mark\.severity\]\}" role="img"'
     assert re.search(glyph, body)
     assert 'aria-label="${esc(note)}"' in body, "the glyph's name is the message"
-    assert "const MARK_COLUMN = {effort_weeks: 'size'," in body
+    assert "const MARK_COLUMN = {person_weeks: 'size'," in body
     assert "keys.includes(problem.field) ? problem.field : 'id'" in body
 
 
@@ -2052,7 +2055,10 @@ def test_a_sortable_header_is_a_button_that_says_which_way_it_sorts(page: str):
     headers = re.findall(r"<th(\s[^>]*)?>(.*?)</th>", page, re.S)
     sortable = [(tag, inner) for tag, inner in headers if "data-sort" in (tag or "")]
 
-    assert len(sortable) == 12, "every column but prs and tags sorts"
+    # Thirteen: the fixture's pitch has tasks under it, so it has progress to
+    # report and the column is drawn. A plan with neither tasks nor a checklist
+    # anywhere would have twelve — see `_columns_for`.
+    assert len(sortable) == 13, "every column but prs and tags sorts"
     for tag, inner in sortable:
         assert 'aria-sort="none"' in tag, tag
         assert "<button type=" in inner, inner

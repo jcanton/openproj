@@ -342,7 +342,7 @@ STAGE_TWO_EDITS_THEN_SAY = f"""
 (() => {{
   const rows = [...document.querySelectorAll('#bets tbody tr')];
   pend(rows[0].dataset.id, 'cycle', 41);
-  pend(rows[0].dataset.id, 'appetite_weeks', 2);
+  pend(rows[0].dataset.id, 'person_weeks', 2);
   announce('Saved 2 changes');
   const said = document.getElementById('state').textContent;
   const ran = __tick();
@@ -367,8 +367,8 @@ def test_a_receipt_is_not_blanked_by_an_edit_made_before_it(pages):
 REPEAT_A_REFUSAL = """
 (() => {
   const where = document.getElementById('state');
-  announce('appetite_weeks must be a number, not "two"');
-  announce('appetite_weeks must be a number, not "two"');
+  announce('person_weeks must be a number, not "two"');
+  announce('person_weeks must be a number, not "two"');
   const between = where.textContent;
   __tick();
   return {between, state: where.textContent};
@@ -383,7 +383,7 @@ def test_the_same_refusal_twice_is_still_read_out(pages):
     answer = drive(pages["cycle"], REPEAT_A_REFUSAL)
 
     assert answer["value"]["between"] == "", "the region has to change to be read again"
-    assert answer["value"]["state"] == 'appetite_weeks must be a number, not "two"'
+    assert answer["value"]["state"] == 'person_weeks must be a number, not "two"'
 
 
 # --------------------------------------------------------------------------- #
@@ -402,7 +402,7 @@ BROKEN_ID_PLAN = {
     "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
     "tasks/one.md": (
         f"---\nid: '{BROKEN_ID}'\nkind: task\ntitle: A task whose id never validated\n"
-        "status: ready\nowner: ann\nreviewers: [bo]\neffort_weeks: 1\npriority: medium\n"
+        "status: ready\nowner: ann\nreviewers: [bo]\nperson_weeks: 1\npriority: medium\n"
         "---\n\nA shaping document.\n"
     ),
 }

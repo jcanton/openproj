@@ -36,7 +36,7 @@ def within_the_calendar(days: float) -> float:
     """`days`, bounded by the length of the calendar so that rounding it cannot raise.
 
     `round()` and `math.ceil()` both raise on infinity, and a length in weeks is
-    a float that a hand-edited file may write as `.inf` — `effort_weeks: .inf`
+    a float that a hand-edited file may write as `.inf` — `person_weeks: .inf`
     reached `math.ceil` inside the scheduler's own calendar guard and took every
     page down, which is the guard falling over rather than guarding. So the
     bound goes before the rounding, never after it.
@@ -415,7 +415,12 @@ class Project(Entity):
 
 
 class Pitch(Entity):
-    appetite_weeks: float | None = None
+    # PERSON-weeks: the work one person would need, which the people on it divide
+    # (D-C4). Named for its unit because the unit is what went wrong — D1 read the
+    # same number as elapsed weeks and the scheduler was wrong for as long as that
+    # stood. One field on both kinds, because a pitch's appetite and a task's
+    # effort were two names for one quantity that `size_weeks` already read as one.
+    person_weeks: float | None = None
     # A list, because shaping is usually done in pairs — two of the four shaped
     # pitches in the team's own corpus name two or three people. A bare string
     # still parses and still writes back as a bare string, so no file has to
@@ -431,7 +436,7 @@ class Pitch(Entity):
 
 
 class Task(Entity):
-    effort_weeks: float | None = None
+    person_weeks: float | None = None
 
 
 _MODELS: dict[str, type[Entity]] = {"project": Project, "pitch": Pitch, "task": Task}
@@ -640,14 +645,13 @@ def ancestors(entity_id: str, by_id: dict[str, Entity]) -> list[str]:
 def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
     """Weeks of work, and whether that number had to be invented.
 
-    A pitch's appetite and a task's effort are the same quantity to everything
-    downstream, so they are read in one place; the scheduler and the index both
-    call this rather than reaching for either field.
+    One field on a pitch and a task, and none on a project — a container has no
+    size of its own. Read here rather than reached for directly, so the scheduler,
+    the index and the pages cannot disagree about what a missing one means.
     """
-    for field in ("appetite_weeks", "effort_weeks"):
-        stated = getattr(entity, field, None)
-        if stated is not None:
-            return float(stated), False
+    stated = getattr(entity, "person_weeks", None)
+    if stated is not None:
+        return float(stated), False
     return config.default_task_effort, True
 
 
@@ -663,6 +667,33 @@ def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
 _FENCE = re.compile(r"^\s{0,3}(```|~~~)")
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 _CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s")
+# Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
+_FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
+
+
+def without_comments(body: str) -> str:
+    """A shaping document with its HTML comments taken out.
+
+    The team's pitch template carries its guidance in `<!-- … -->`, which is
+    invisible in HackMD and, with markdown-it's `html: false`, would print as
+    literal text — so every pitch pasted across would arrive with its own
+    instructions showing. Stripped rather than rendered: turning HTML on to hide
+    four comments would put every hand-edited body's markup into the page.
+
+    Here rather than in the renderer for two reasons. It reads a shaping document,
+    which is what this section of the module is for; and `render.py` is held to a
+    rule — `test_no_page_is_assembled_by_substitution` — that no page is assembled
+    by `replace` or `sub`. This runs on the source before the tokeniser sees it,
+    which is not that defect, but the rule is enforced as syntax on purpose and
+    the function was in the wrong module anyway.
+    """
+    if "<!--" not in body:
+        return body
+    return "".join(
+        part if part.lstrip("\n").startswith(("```", "~~~")) else _COMMENT.sub("", part)
+        for part in _FENCED.split(body)
+    )
 
 
 def _outside_code(body: str) -> Iterator[tuple[str, bool]]:
@@ -727,7 +758,7 @@ def checklist(body: str) -> tuple[int, int]:
 
 _ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
 _PREFIX_FOR_KIND = {"project": "proj", "pitch": "pitch", "task": "task"}
-_SIZE_FIELD = {"pitch": "appetite_weeks", "task": "effort_weeks"}
+_SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
 
 # Statuses in the order work moves through them. `shaping` is an idea nobody has
 # committed to yet, so it demands nothing — the same reason `shelved` does not.
@@ -798,9 +829,9 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
             yield "blocker", "reviewers", "a ready entity needs a reviewer, or review waived", 1
         field = _SIZE_FIELD.get(entity.kind)
         if field is not None and getattr(entity, field) is None:
-            # One word for both fields, because they are one quantity: a pitch
-            # stores it as appetite_weeks and a task as effort_weeks, and the
-            # reader is asked for an appetite either way.
+            # One field and one word now. It was `appetite_weeks` on a pitch and
+            # `effort_weeks` on a task — one quantity under two names, which
+            # `size_weeks` had to paper over on every read.
             yield "blocker", field, f"a ready {entity.kind} needs an appetite", 1
         if entity.kind == "pitch" and not entity.shaped_by:
             yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
@@ -883,10 +914,149 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
                 yield "warning", field, f"{login} is not in config/people.yaml", 1
 
 
+# Which kind may contain which. A project is the top of the tree and holds
+# pitches; a pitch holds tasks and belongs to a project or to nothing; a task
+# belongs to a pitch, or to nothing when it is a chore nobody pitched.
+#
+# The spec claimed this from the first day and nothing enforced it, so the frozen
+# corpus already hangs a task straight off a project. Introduced at rule_version
+# 4, which means every record written before it warns rather than breaks.
+_PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch",)}
+
+
+def is_bettable(entity: Entity) -> bool:
+    """Whether a cycle can be bet on this record.
+
+    A pitch, or a task nobody pitched. Those are the two things a betting table
+    puts a name against: everything else either contains bets (a project) or is
+    part of one (a task under a pitch), and takes its cycle from what holds it.
+    """
+    return entity.kind == "pitch" or (entity.kind == "task" and entity.parent is None)
+
+
+def bet_of(entity: Entity, by_id: dict[str, Entity]) -> Entity | None:
+    """The record whose bet this one is part of — itself, or its pitch.
+
+    One place, because the cycle page, the scheduler's overrun and the capacity
+    sum all have to agree about which cycle a task is being done in, and three
+    walks up the parent chain are three chances to disagree.
+
+    A `parent` naming a file nobody wrote is deliberately allowed — a plan
+    half-way through an import has them — and such a task falls back to its own
+    `cycle`. There is no pitch to inherit from, and dropping the number it does
+    carry would take the work out of every capacity sum on the site over a
+    reference somebody has not written yet.
+    """
+    if is_bettable(entity):
+        return entity
+    if entity.parent is None:
+        return None
+    parent = by_id.get(entity.parent)
+    if parent is None:
+        return entity
+    return parent if is_bettable(parent) else None
+
+
+def cycle_of(entity: Entity, by_id: dict[str, Entity]) -> int | None:
+    """The cycle this entity's work belongs to: its own, or its pitch's."""
+    bet = bet_of(entity, by_id)
+    return bet.cycle if bet is not None else None
+
+
+def _containment_problems(
+    entity: Entity, by_id: dict[str, Entity]
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """A parent of the wrong kind.
+
+    Only when the parent resolves: a `parent` naming a file nobody wrote is
+    deliberately not a problem, so that a plan half-way through an import still
+    loads and still says what it can.
+    """
+    parent = by_id.get(entity.parent) if entity.parent else None
+    if parent is None:
+        return
+    allowed = _PARENT_KINDS.get(entity.kind, ())
+    if parent.kind not in allowed:
+        belongs = " or ".join(f"a {kind}" for kind in allowed) or "nothing"
+        yield (
+            "blocker",
+            "parent",
+            f"a {entity.kind} belongs to {belongs}, not to a {parent.kind}",
+            4,
+        )
+
+
+def _bet_problems(
+    entity: Entity, by_id: dict[str, Entity]
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """A cycle stamped on something nobody bets.
+
+    A bet is made on a pitch, or on a chore nobody pitched. A task under a pitch
+    is part of that bet and takes its cycle from it; a project is a container for
+    bets and is not one. Stored on both, the two are one fact in two files and
+    the copy is stale the first time somebody re-bets the pitch — which is the
+    same argument that keeps `blocks` derived.
+    """
+    if entity.cycle is None or is_bettable(entity):
+        return
+    # Nothing to inherit from: an unresolved parent leaves this record's own
+    # number the only one there is, and `bet_of` keeps it for that reason.
+    if entity.parent is not None and entity.parent not in by_id:
+        return
+    if entity.kind == "project":
+        yield (
+            "warning",
+            "cycle",
+            "a project is not bet — its pitches are, and its span is their rollup",
+            4,
+        )
+        return
+    parent = by_id.get(entity.parent) if entity.parent else None
+    named = f" from {parent.id}" if parent is not None else ""
+    yield (
+        "warning",
+        "cycle",
+        f"the bet is on the pitch, so this task takes its cycle{named}; "
+        "the number here is ignored",
+        4,
+    )
+
+
+def _rollup_problems(
+    entity: Entity, children: dict[str, list[Entity]], config: Config
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """Children that add up to more than the bet they sit inside.
+
+    The appetite is the box, and its tasks are what somebody proposes to put in
+    it. Nothing compared the two, so a six-week bet holding seven and a half
+    weeks of tasks read as a six-week bet everywhere on the site — and the span,
+    which is the rollup of the children, quietly ran past it anyway.
+
+    A warning, never a blocker: the answer is to cut scope or to re-bet, and both
+    are decisions for a person. Only stated sizes are compared — a pitch whose
+    tasks are not written yet is under its appetite by definition, which is not
+    worth saying.
+    """
+    kids = children.get(entity.id, [])
+    stated, defaulted = size_weeks(entity, config)
+    if not kids or defaulted:
+        return
+    total = sum(size_weeks(kid, config)[0] for kid in kids)
+    if total > stated:
+        yield (
+            "warning",
+            _SIZE_FIELD.get(entity.kind),
+            f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
+            f"{stated:g} it was bet at — cut scope, or re-bet it",
+            4,
+        )
+
+
 def _problems_for(
     entity: Entity,
     config: Config,
     by_id: dict[str, Entity],
+    children: dict[str, list[Entity]],
     parent_cycles: set[str],
     dep_cycles: set[str],
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -902,6 +1072,15 @@ def _problems_for(
         yield "blocker", "parent", "part of a parent cycle", 1
     elif entity.kind == "task" and entity.parent is None:
         yield "warning", "parent", "a task should have a parent", 1
+
+    # Not while the chain is a loop: "part of a parent cycle" already says this
+    # record's containment is broken, and adding that its parent is the wrong
+    # kind is a second sentence about the same thing — in a set of records where
+    # every one of them is going to say it.
+    if entity.id not in parent_cycles:
+        yield from _containment_problems(entity, by_id)
+        yield from _bet_problems(entity, by_id)
+        yield from _rollup_problems(entity, children, config)
 
     if entity.cycle is not None and entity.cycle not in config.cycles:
         # `_overrun` looks the window up with `.get`, so a number nobody has dated
@@ -930,13 +1109,17 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     by_id = {entity.id: entity for entity in entities}
     parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in entities})
     dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in entities})
+    children: dict[str, list[Entity]] = {}
+    for entity in entities:
+        if entity.parent in by_id and entity.status != "shelved":
+            children.setdefault(entity.parent, []).append(entity)
 
     problems: list[Problem] = []
     for entity in entities:
         if entity.status == "shelved":
             continue
         for severity, field, message, rule_version in _problems_for(
-            entity, config, by_id, parent_cycles, dep_cycles
+            entity, config, by_id, children, parent_cycles, dep_cycles
         ):
             grandfathered = rule_version > entity.created_schema_version
             problems.append(

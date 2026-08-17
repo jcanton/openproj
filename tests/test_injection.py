@@ -129,16 +129,16 @@ def corpus(text: str) -> dict[str, str]:
         "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
         "pitches/p.md": (
             f"---\nid: '{text_yaml(pitch_id)}'\nkind: pitch\n{common}"
-            f"shaped_by: '{quoted}'\nappetite_weeks: 2\n---\n{body}"
+            f"shaped_by: '{quoted}'\nperson_weeks: 2\n---\n{body}"
         ),
         "tasks/one.md": (
             f"---\nid: '{text_yaml(first_id)}'\nkind: task\n{common}"
-            f"parent: '{text_yaml(pitch_id)}'\neffort_weeks: 1\n---\n{body}"
+            f"parent: '{text_yaml(pitch_id)}'\nperson_weeks: 1\n---\n{body}"
         ),
         "tasks/two.md": (
             f"---\nid: '{text_yaml(second_id)}'\nkind: task\n{common}"
             f"parent: '{text_yaml(pitch_id)}'\n"
-            f"depends_on: ['{text_yaml(first_id)}']\neffort_weeks: 1\n---\n{body}"
+            f"depends_on: ['{text_yaml(first_id)}']\nperson_weeks: 1\n---\n{body}"
         ),
         "cycles/41.md": (
             f"---\ncycle: 41\nstarts_on: 2026-08-17\nbuild_weeks: 4\ncooldown_weeks: 2\n"
@@ -576,7 +576,7 @@ def marker_plan(values: tuple[str, ...]) -> dict[str, str]:
         plan[f"tasks/{n:03d}.md"] = (
             f"---\nid: task-c{n:05x}\nkind: task\ntitle: '{quoted}'\n"
             f"status: ready\nowner: '{quoted}'\nreviewers: ['{quoted}']\n"
-            f"tags: ['{quoted}']\ncycle: 41\neffort_weeks: 0.5\npriority: medium\n"
+            f"tags: ['{quoted}']\ncycle: 41\nperson_weeks: 0.5\npriority: medium\n"
             "---\n\nA shaping document.\n"
         )
     return plan

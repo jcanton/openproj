@@ -620,7 +620,7 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     in a comment — while the server's refusal ten lines below printed `p.field`.
 
     So one rejected save read "still needed at status Ready: Appetite (weeks)" and
-    the next read "appetite_weeks: a ready pitch needs an appetite", from the same
+    the next read "person_weeks: a ready pitch needs an appetite", from the same
     `<ul>`, about the same box. Both go through `labelOf` now.
 
     The list is built from text nodes rather than interpolated into `innerHTML`,

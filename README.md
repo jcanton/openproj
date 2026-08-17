@@ -26,6 +26,27 @@ every view is a shareable URL, the back button works, and there are no saved vie
 One markdown file per entity: YAML frontmatter, then the shaping document as the body. Three kinds —
 `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree with the kind.
 
+Each kind is one thing and says so:
+
+- A **pitch** is the unit of the bet. It is what the betting table offers, what carries an appetite
+  and a `shaped_by`, and the only kind whose body the shaping hints read.
+- A **task** is a piece of a pitch. It carries its own size and its own people, and it takes its
+  cycle from the pitch it belongs to — a bet is made once, on the thing the room named. A task with
+  **no** parent is a chore nobody pitched: it is bettable in its own right, and then the cycle is
+  its own.
+- A **project** is a container for grouping pitches. It has no size, holds no capacity, is never
+  bet, and its span is the rollup of the pitches inside it.
+
+`project ← pitch ← task` is enforced, not just documented: a parent of the wrong kind is a blocker
+for anything written since the rule existed, and a warning for everything older.
+
+A size is **person-weeks** on both a pitch and a task — the work one person would need — and the
+people on it divide it, each at their own availability. Adding a second name halves the elapsed
+time. A pitch that has tasks takes its dates and its capacity from them, so its own appetite is the
+**bet**: what the room agreed to spend, kept as written. Where the tasks add up to more than it, the
+pitch says so on its own page and `openproj check` warns — cutting scope or re-betting is a decision
+for a person, so nothing here refuses the save.
+
 Two invariants are load-bearing:
 
 - **Only `depends_on` is stored, on the dependent.** `blocks` is derived by reversing it. A stored
@@ -68,8 +89,11 @@ A cycle is `cycles/<n>.md` — a record, not an entity. It carries `starts_on`, 
 `cooldown_weeks`, an `availability` fraction per person, and a body for the goal and for whatever
 came up at the betting table.
 
-`cycle:` on an entity records **where a bet was made** and is never re-stamped, so an overrun keeps
-accusing (D-C1). Load is charged where the assignees are and split evenly among them (D-C2), and it
+`cycle:` records **where a bet was made** and is never re-stamped, so an overrun keeps accusing
+(D-C1). It lives on the thing that was bet — a pitch, or a chore nobody pitched — and everything
+under a pitch takes the pitch's. A project therefore has no cycle at all, which is why a milestone
+spanning two of them is no longer accused of overrunning either. Load is charged where the
+assignees are and split evenly among them (D-C2), and it
 counts **carryover**: work bet in an earlier cycle and still running is being done with this cycle's
 weeks, so the page that adds up who is full says so and names what it counted. An overrun is
 measured against the end of *build*, never the end of the window — the cool-down is for the mess
@@ -80,10 +104,15 @@ afterwards, and the timeline draws both rules so the flag and the line agree.
 The body of a pitch is prose and stays prose. Nothing here validates it, rewrites it, or requires a
 word of it — but two things read it, because the team's own pitch template already asks for them:
 
-- **`## Progress`** — a task list. openproj counts the ticked and total items and shows `7/12` on
-  the entity page and in a table column. It is counted, never written: the column appears only once
-  some body in the plan has a list, a body without one shows an empty cell rather than `0/12`, and
-  `predicate=untracked` finds live work where nobody kept one.
+- **`## Progress`** — a task list, which is a **task's** business. A pitch's progress is its tasks:
+  a panel above the document, one line per task, each ticked from that task's own `status` and
+  weighted by its size, so `4/7.5 wk` is four weeks of a seven-and-a-half-week bet rather than a
+  count of rows. That is why the pitch template has no `## Progress` and the task template does —
+  the coarse list in a HackMD pitch becomes the tasks, and its sub-items become their checklists.
+  A pitch with no tasks yet still has its own list counted, and one that keeps both is told which
+  of the two the page is reading. Either way it is counted, never written: a checkbox stored beside
+  a task's status is the same stale copy `blocks` would be. `predicate=untracked` finds live work
+  that says nothing about how far along it is.
 - **`## For later`** — deferred scope. The only record the plan keeps of a bet trimmed to fit its
   appetite, and it was invisible until it had a name.
 
@@ -103,7 +132,7 @@ two-copies-of-one-fact problem this tool exists to end.
 |---|---|
 | A pitch note | a `pitch` entity — frontmatter, and the shaping doc as the body |
 | `Shaped by: @a and @b` in the header | `shaped_by: [a, b]` |
-| `Appetite (FTEs, weeks)` | `appetite_weeks`, in person-weeks — the people on it divide it |
+| `Appetite (FTEs, weeks)` | `person_weeks` — the work one person would need; the people on it divide it |
 | The cycle sheet's `Available people` | `availability:` in `cycles/<n>.md`, a fraction of the build weeks |
 | The cycle sheet's task table | the betting table on `/cycle/<n>` |
 | The sheet's `## Goal`, and what was said while betting | the cycle record's body, editable on that page |

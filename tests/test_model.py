@@ -21,19 +21,25 @@ def test_an_entity_needs_only_id_kind_and_title():
 
 
 def test_sizes_are_optional_on_both_subclasses():
-    assert Pitch(id="pitch-abc123", kind="pitch", title="P").appetite_weeks is None
+    assert Pitch(id="pitch-abc123", kind="pitch", title="P").person_weeks is None
     # A list, and empty rather than None: shaping is often done in pairs, and a
     # bare string in a file still parses (and still writes back) as one name.
     assert Pitch(id="pitch-abc123", kind="pitch", title="P").shaped_by == []
     assert Pitch(id="pitch-abc123", kind="pitch", title="P", shaped_by="jcanton").shaped_by == [
         "jcanton"
     ]
-    assert Task(id="task-abc123", kind="task", title="T").effort_weeks is None
+    assert Task(id="task-abc123", kind="task", title="T").person_weeks is None
 
 
-def test_the_subclasses_carry_only_their_own_size_field():
-    assert "effort_weeks" not in Pitch.model_fields
-    assert "appetite_weeks" not in Task.model_fields
+def test_a_pitch_and_a_task_share_one_size_field_and_a_project_has_none():
+    """`appetite_weeks` and `effort_weeks` were one quantity under two names that
+    `size_weeks` read as one on every call. A project is a container for pitches
+    and has no size of its own to state."""
+    assert "person_weeks" in Pitch.model_fields
+    assert "person_weeks" in Task.model_fields
+    assert "person_weeks" not in Project.model_fields
+    # `shaped_by` is the field that really is one kind's: shaping is what a pitch
+    # gets, and it is asked for at `ready`.
     assert "shaped_by" not in Task.model_fields
     assert Project.model_fields.keys() == Entity.model_fields.keys()
 
@@ -43,14 +49,14 @@ def test_optional_fields_still_accept_real_values():
         id="pitch-1b3f9a",
         kind="pitch",
         title="MPI on CI verify with serial",
-        appetite_weeks=1.0,
+        person_weeks=1.0,
         shaped_by="jcanton",
         owner="msimberg",
         reviewers=["jcanton"],
         assigned_on=date(2026, 8, 13),
         depends_on=["task-5a4e39"],
     )
-    assert pitch.appetite_weeks == 1.0
+    assert pitch.person_weeks == 1.0
     assert pitch.assigned_on == date(2026, 8, 13)
 
 

@@ -6,7 +6,7 @@ parent: pitch-2a7f3e
 status: ready
 owner: OngChia
 reviewers: [edopao]
-effort_weeks: 0.5
+person_weeks: 0.5
 assignees: []
 assigned_on: null
 cycle: 34
@@ -29,7 +29,7 @@ The seven other Progress items are checked off, and table row 16 is marked **Don
 
 ## Migration notes
 
-- `effort_weeks` is null: the source states no effort for this item (effort is filled on 0 of the 38 table rows).
+- `person_weeks` is null: the source states no effort for this item (effort is filled on 0 of the 38 table rows).
 - `assignees` is empty: the checklist item names nobody. The parent pitch's Who string is "N+Rico" (`nfarabullini`, `DropD`); attributing this specific item to either would be a guess.
 - `priority: medium` is the schema default, not a sourced value — the "High" in the table applies to row 16 as a whole, which is already recorded on the parent pitch.
 - `cycle: 34` is inherited from the source note's tag (`cycle 34 02/26`); the item itself carries no cycle of its own and may well have slipped past cycle 34.

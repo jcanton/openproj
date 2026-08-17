@@ -229,7 +229,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
     return number
 
 
-_NUMERIC = ("cycle", "appetite_weeks", "effort_weeks")
+_NUMERIC = ("cycle", "person_weeks")
 _LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by")
 
 
@@ -240,7 +240,7 @@ def _reject_bad_types(fields: dict) -> None:
             if name in fields and fields[name] is not None:
                 raise HTTPException(422, f"{name} must be a number, not {fields[name]!r}")
         # `Infinity` and `NaN` are valid JSON to Python's parser, so both arrive
-        # here as ordinary floats and pass every check above. `effort_weeks:
+        # here as ordinary floats and pass every check above. `person_weeks:
         # Infinity` committed, and then `math.ceil` raised inside the
         # scheduler's own end-of-calendar guard: every page 500, permanently.
         # The guard no longer raises; this stops the value at the door, the way

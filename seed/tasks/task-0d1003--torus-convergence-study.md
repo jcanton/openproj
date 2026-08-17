@@ -9,13 +9,12 @@ assignees: [jcanton, OngChia]
 reviewers: [OngChia, ajocksch]
 review_waived: false
 assigned_on: 2026-08-17
-cycle: 37
 priority: high
 depends_on: [task-0d1002]
 tags: [greenline, tracer-advection, convergence, torus, testing]
 prs: []
 created_schema_version: 2
-effort_weeks: 2.5
+person_weeks: 2.5
 ---
 
 # Convergence study on the torus grid

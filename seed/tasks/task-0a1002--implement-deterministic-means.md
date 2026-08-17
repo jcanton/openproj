@@ -9,13 +9,12 @@ assignees: [samkellerhals]
 reviewers: [msimberg, egparedes]
 review_waived: false
 assigned_on: 2026-08-17
-cycle: 37
 priority: medium
 depends_on: []
 tags: [icon4py, distributed, reductions, numpy, bitwise-reproducibility]
 prs: []
 created_schema_version: 2
-effort_weeks: 2.5
+person_weeks: 2.5
 ---
 
 ## Problem

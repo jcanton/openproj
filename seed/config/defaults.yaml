@@ -11,7 +11,7 @@
 # currently defined — including the version-2 rule that a todo pitch must name
 # a shaped_by — applies to all of them as a blocker. There is no grandfathered
 # entity here to exercise the warning path.
-schema_version: 3
+schema_version: 4
 # The rate one person works at when nobody has said otherwise. A size is
 # PERSON-weeks (D-C4), so the people on a bet divide it, each at their own rate;
 # per-cycle figures override this one.

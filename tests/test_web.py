@@ -94,7 +94,7 @@ HAND_FORMATTED = """---
 title: Reproduce the 2-GPU equator artefact
 kind: task
 status: in_progress
-effort_weeks: 1.5          # measured on daint, not guessed
+person_weeks: 1.5          # measured on daint, not guessed
 
 id: task-c00001
 parent: pitch-b20000
@@ -139,7 +139,7 @@ SEED = {
         "status: ready\n"
         "owner: ann\n"
         "reviewers: [bo]\n"
-        "appetite_weeks: 3\n"
+        "person_weeks: 3\n"
         "priority: high\n"
         "---\n"
         "\nPort the least-squares coefficients and check them against serialbox.\n"
@@ -154,7 +154,7 @@ SEED = {
         "status: ready\n"
         "owner: bo\n"
         "reviewers: [ann]\n"
-        "effort_weeks: 0.5\n"
+        "person_weeks: 0.5\n"
         "priority: low\n"
         "---\n"
         "\nGlobal sums stopped being reproducible at numpy 2.1.\n"
@@ -169,7 +169,7 @@ SEED = {
         "status: done\n"
         "owner: cy\n"
         "review_waived: true\n"
-        "effort_weeks: 0.5\n"
+        "person_weeks: 0.5\n"
         "---\n"
         "\nAnurag's paper on halo exchange.\n"
     ),
@@ -511,14 +511,14 @@ def test_the_index_json_keeps_the_fields_only_a_pitch_or_a_task_has(client: Test
     """A size that is `null` on every row is the whole timeline, silently gone.
 
     `Index.entities` is annotated `dict[str, Entity]`, and pydantic serialises by
-    the declared type, so a plain `model_dump` drops `appetite_weeks` and
-    `effort_weeks` — it warns rather than raises, which is the worst of both. The
+    the declared type, so a plain `model_dump` drops `person_weeks` and
+    `person_weeks` — it warns rather than raises, which is the worst of both. The
     payload has to carry the subclasses as they actually are.
     """
     entities = index_of(client)["entities"]
 
-    assert entities[TASK]["effort_weeks"] == 1.5
-    assert entities[PITCH]["appetite_weeks"] == 3
+    assert entities[TASK]["person_weeks"] == 1.5
+    assert entities[PITCH]["person_weeks"] == 3
 
 
 def test_a_rule_newer_than_the_entity_reaches_the_client_as_a_warning(client: TestClient):
@@ -735,7 +735,7 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
     commit = save(client, TASK, {"status": "done", "prs": ["C2SM/icon4py#412"]}).json()["commit"]
     stored = file_at(repo_path, commit, PATH)
 
-    assert "effort_weeks: 1.5          # measured on daint, not guessed" in stored
+    assert "person_weeks: 1.5          # measured on daint, not guessed" in stored
     assert "owner: ann                 # ann has the DWD contacts" in stored
     assert "reviewers: [bo, cy]" in stored  # still one line, still flow style
     assert "assignees" not in stored  # an untouched default is not materialised
@@ -757,7 +757,7 @@ VALID_TASK = {
     "status": "ready",
     "owner": "ann",
     "reviewers": ["bo"],
-    "effort_weeks": 1.0,
+    "person_weeks": 1.0,
 }
 
 
@@ -804,7 +804,7 @@ def test_a_create_missing_its_status_gated_fields_is_refused(
     assert {p["field"] for p in response.json()["problems"]} >= {
         "owner",
         "reviewers",
-        "effort_weeks",
+        "person_weeks",
     }
     assert {p["severity"] for p in response.json()["problems"]} == {"blocker"}
     assert git_head(repo_path) == base  # nothing was written
@@ -837,7 +837,7 @@ def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path
             "status": "ready",
             "owner": "ann",
             "reviewers": ["bo"],
-            "appetite_weeks": 6,
+            "person_weeks": 6,
         },
     )
 
@@ -1451,7 +1451,7 @@ def test_a_cycle_record_reaches_the_pages_it_is_for(client: TestClient, repo_pat
 def test_the_cycle_page_shows_load_against_capacity(client: TestClient, repo_path: Path):
     """The number the team's own sheet does not have. Their HackMD records
     availability and staffing and never adds them up."""
-    save(client, TASK, {"cycle": 37, "assignees": ["ann"], "effort_weeks": 3.0})
+    save(client, TASK, {"cycle": 37, "assignees": ["ann"], "person_weeks": 3.0})
     client.put(
         "/api/cycle/37",
         json={"base_commit": git_head(repo_path), "fields": {
@@ -1472,8 +1472,11 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
     """D-C1: `cycle` says where a thing was BET. Re-stamping an in-progress item
     into the current cycle moves the deadline its overrun is measured against and
     silently forgives the slip — at exactly the moment the slip is happening."""
-    save(client, TASK, {"cycle": 36, "status": "in_progress",
-                        "assigned_on": "2026-07-01"})
+    # On the pitch, because that is where a bet is made: the task under it is
+    # part of that bet and takes the cycle from it.
+    save(client, PITCH, {"cycle": 36, "status": "in_progress",
+                         "assigned_on": "2026-07-01"})
+    save(client, TASK, {"status": "in_progress", "assigned_on": "2026-07-01"})
     client.put(
         "/api/cycle/40",
         json={"base_commit": git_head(repo_path),
@@ -1525,8 +1528,8 @@ def test_only_the_named_are_in_a_cycle(client: TestClient, repo_path: Path):
     """Being on the roster is what being in the cycle means, so a name is added
     deliberately rather than appearing because somebody was assigned something —
     which would make the roster a report instead of a decision."""
-    save(client, TASK, {"cycle": 44, "owner": "cy", "assignees": ["cy"],
-                        "effort_weeks": 1.0})
+    save(client, PITCH, {"cycle": 44})
+    save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 1.0})
     client.put(
         "/api/cycle/44",
         json={"base_commit": git_head(repo_path),
@@ -1596,13 +1599,16 @@ def test_every_cycle_the_plan_names_is_on_the_index(client: TestClient, repo_pat
               "fields": {"starts_on": "2027-03-08", "build_weeks": 4,
                          "availability": {"ann": 1.0}}, "body": None},
     )
-    save(client, TASK, {"cycle": 48, "owner": "bo", "assignees": ["bo"],
-                        "effort_weeks": 2.0})
+    save(client, PITCH, {"cycle": 48})
+    save(client, TASK, {"owner": "bo", "assignees": ["bo"], "person_weeks": 2.0})
     page = client.get("/cycles").text
     cards = re.findall(r'<h2><a href="/cycle/(\d+)">Cycle \d+</a></h2>', page)
 
     assert cards == ["48", "47"], "newest first, record or not"
-    assert re.search(r'>2\.0</b> weeks bet against\s+no roster', page), "48 holds work"
+    # 2.5: bo's two weeks plus the half-week sibling task under the same pitch.
+    # A cycle with no record still says what it is holding, which is the whole
+    # reason it is on this list.
+    assert re.search(r'>2\.5</b> weeks bet against\s+no roster', page), "48 holds work"
 
 
 def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo_path: Path):
@@ -1616,12 +1622,15 @@ def test_a_cycle_card_says_the_bet_against_the_capacity(client: TestClient, repo
               "fields": {"starts_on": "2027-04-05", "build_weeks": 4,
                          "availability": {"ann": 0.5}}, "body": None},
     )
-    save(client, TASK, {"cycle": 49, "owner": "cy", "assignees": ["cy"],
-                        "effort_weeks": 3.0})
+    save(client, PITCH, {"cycle": 49})
+    save(client, TASK, {"owner": "cy", "assignees": ["cy"], "person_weeks": 3.0})
     card = re.search(r'<li class="card([^"]*)">\s*<h2><a href="/cycle/49".*?</li>',
                      client.get("/cycles").text, re.S).group(0)
 
-    assert "<b class=\"num\">3.0</b> of" in card, "cy is not on the roster and still counts"
+    # 3.5, not 3.0: betting the pitch bets everything under it, so cy's three
+    # weeks and bo's half-week sibling task both land in the cycle. That is what
+    # "the pitch is the unit of the bet" means for a capacity sum.
+    assert "<b class=\"num\">3.5</b> of" in card, "cy is not on the roster and still counts"
     assert "<b class=\"num\">2.0</b> weeks bet" in card, "ann at half of four weeks"
     assert re.search(r'<span class="bar"><span style="width: 100%">', card)
     assert card.startswith('<li class="card over">'), "3.0 bet against 2.0 of capacity"
@@ -2039,7 +2048,7 @@ def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(
 ):
     """The same shape, through the scheduler instead of the index.
 
-    `effort_weeks: 1000000` parses, commits, and then `working_days_after` walked
+    `person_weeks: 1000000` parses, commits, and then `working_days_after` walked
     a day at a time until `timedelta` went past year 9999 and raised. Same blast
     radius as the dangling parent, same permanence, and no rule refuses the value.
     """
@@ -2047,7 +2056,7 @@ def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(
 
     saved = client.patch(
         f"/api/entity/{TASK}",
-        json={"base_commit": head, "fields": {"effort_weeks": 1_000_000.0}},
+        json={"base_commit": head, "fields": {"person_weeks": 1_000_000.0}},
     )
     assert saved.status_code == 200, saved.text
 
@@ -2133,7 +2142,7 @@ def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(
 @pytest.mark.parametrize("size", [float("inf"), float("nan")])
 def test_a_size_that_is_not_a_number_is_refused_at_both_doors(client: TestClient, size: float):
     """`Infinity` and `NaN` are valid JSON to Python's parser, so they arrive as
-    ordinary floats and passed every type check on the way in. `effort_weeks:
+    ordinary floats and passed every type check on the way in. `person_weeks:
     Infinity` committed, and then `math.ceil` raised inside the scheduler's own
     end-of-calendar guard — the guard was the thing that fell over.
 
@@ -2149,20 +2158,20 @@ def test_a_size_that_is_not_a_number_is_refused_at_both_doors(client: TestClient
 
     saved = client.patch(
         f"/api/entity/{TASK}",
-        content=f'{{"base_commit": "{base}", "fields": {{"effort_weeks": {literal}}}}}',
+        content=f'{{"base_commit": "{base}", "fields": {{"person_weeks": {literal}}}}}',
         headers=headers,
     )
     created = client.post(
         "/api/entity",
         content=(
             '{"fields": {"kind": "task", "title": "Big", "owner": "ann", '
-            f'"reviewers": ["bo"], "status": "ready", "effort_weeks": {literal}}}}}'
+            f'"reviewers": ["bo"], "status": "ready", "person_weeks": {literal}}}}}'
         ),
         headers=headers,
     )
 
     assert saved.status_code == 422, saved.text
-    assert "effort_weeks" in saved.json()["detail"]
+    assert "person_weeks" in saved.json()["detail"]
     assert created.status_code == 422, created.text
     assert head(client) == base, "a refused write leaves HEAD where it was"
 
