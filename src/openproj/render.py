@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from datetime import date
 from functools import cache, lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 from jinja2 import Environment
 from markdown_it import MarkdownIt
@@ -257,6 +258,36 @@ def _inline_font(name: str) -> str:
 def _font_uri() -> str:
     """Cached, because every served page carries it and the encode is not free."""
     return _inline_font("inter-latin-wght-normal.woff2")
+
+
+# Three staggered bars: a schedule, which is what this whole application draws.
+# Sized on a 16-unit grid because 16px is where a favicon is actually judged, and
+# one mid teal rather than the theme's two — the tab strip is painted by the
+# browser in a theme this page is not told about, so a colour that survives both
+# grounds beats a colour that is right on one of them.
+_ICON = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>"
+    "<rect x='1' y='2' width='10' height='3.2' rx='1.6' fill='#27899e'/>"
+    "<rect x='4' y='6.4' width='11' height='3.2' rx='1.6' fill='#27899e'/>"
+    "<rect x='2' y='10.8' width='7' height='3.2' rx='1.6' fill='#27899e'/>"
+    "</svg>"
+)
+
+
+@lru_cache(maxsize=1)
+def _icon_uri() -> str:
+    """The mark as a data: URI, so the tab has an icon and nothing is fetched.
+
+    Without a `<link rel="icon">` a browser goes and asks for `/favicon.ico` on
+    its own, which is a 404 in the log of every page load — and over `file://`,
+    where the static export lives, it is a console error against a path that
+    could never exist. An inline SVG answers the question before it is asked.
+
+    A served route would fix the first and not the second, and would be one more
+    thing the export has to carry as a separate file. Percent-encoded rather than
+    base64 so the source above stays a picture somebody can read and edit.
+    """
+    return "data:image/svg+xml," + quote(_ICON, safe="")
 
 
 def _row(index: Index, entity_id: str) -> dict:
@@ -961,6 +992,7 @@ _SHELL = """<!doctype html>
     reads as covered. It is sent as a header instead, where it works. -#}
 <meta http-equiv="Content-Security-Policy" content="{{ csp }}">
 <title>{{ title }}</title>
+<link rel="icon" href="{{ icon }}">
 <script>
 // The only way in and out of localStorage, for every script on every page.
 //
@@ -8744,6 +8776,7 @@ def _page(
         style=Markup(style),
         csp=Markup(CSP),
         font=_font_uri(),
+        icon=_icon_uri(),
         links=links,
         unreadable=list(unreadable),
         # The sentence is built here rather than in the template, because English

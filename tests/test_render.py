@@ -1402,6 +1402,28 @@ def test_a_status_colour_is_a_token_and_not_baked_into_a_bar(rendered: Path):
     assert "rect.st-done { fill: var(--st-done); }" in timeline
 
 
+# --- the tab icon -----------------------------------------------------------
+
+
+def test_every_page_carries_its_own_icon(rendered: Path):
+    """Without a link element the browser goes and asks for `/favicon.ico` by
+    itself: a 404 in the log of every served page load, and over file:// — where
+    this export lives — a console error against a path that cannot exist."""
+    for page in PAGES:
+        body = read(rendered, page)
+        assert re.search(r'<link rel="icon" href="data:image/svg\+xml,%3Csvg', body), page
+
+
+def test_the_icon_needs_no_escaping_to_sit_in_an_attribute(rendered: Path):
+    """Percent-encoded with nothing safe, so the URI cannot contain a quote, an
+    angle bracket or an ampersand — the four ways a data: URI ends an attribute
+    early and turns a picture into markup."""
+    for page in PAGES:
+        href = re.search(r'<link rel="icon" href="([^"]*)"', read(rendered, page))
+        assert href, page
+        assert not set(href.group(1)) & set("<>&\"'"), page
+
+
 # --- typeface ---------------------------------------------------------------
 
 
@@ -2541,10 +2563,12 @@ def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Inde
     for number in sorted(set(seed_index.plans) | set(seed_index.cycles)):
         assert f"<h2>Cycle {number}</h2>" in cycles, number
     # No anchor anywhere in the export points at a file that was not written.
+    # `data:` is the page carrying the thing rather than pointing at it — the tab
+    # icon — so it is the one href that cannot be a dead file by construction.
     written = {path.name for path in rendered.iterdir()}
     for page in PAGES:
         for href in re.findall(r'href="([^"#?]+)[^"]*"', read(rendered, page)):
-            if href.startswith(("http://", "https://", "assets/")):
+            if href.startswith(("http://", "https://", "assets/", "data:")):
                 continue
             assert href in written, f"{page} links to {href}, which is not in the export"
 
