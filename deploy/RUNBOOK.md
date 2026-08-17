@@ -152,10 +152,50 @@ one repository, this lets a *person* prove who they are.
 
 At **https://github.com/settings/developers → New OAuth App**:
 
-- **Homepage URL:** the service URL.
-- **Authorization callback URL:** `<service URL>/auth/callback`, exactly,
-  including the scheme.
+- **Application name:** anything, e.g. `openproj`.
+- **Homepage URL:** `https://github.com/jcanton/openproj`. Cosmetic, like the
+  App's in step 2.
+- **Authorization callback URL:** **a URL on YOUR service, not on github.com.**
+  This one is load-bearing: it is where GitHub sends the browser after somebody
+  signs in, and it must reach openproj. Pointed at a github.com address, sign-in
+  lands on a 404 and no session is ever created.
+
+  ```
+  https://<service>.<region>.run.app/auth/callback     for the deployment
+  http://127.0.0.1:8000/auth/callback                  for a local test
+  ```
+
+  GitHub matches host and port exactly and requires the path to be at or under
+  what you registered. It special-cases loopback, so any port matches a
+  registered `127.0.0.1` callback.
+
 - Record the **client ID** and generate a **client secret**.
+
+**The chicken and egg, and how to get out of it.** The callback needs the service
+URL and the service URL exists only after the first deploy. An OAuth App has one
+callback field, so one app cannot serve both localhost and Cloud Run. Two ways
+round it, and they are not exclusive:
+
+**A — test sign-in locally first, today.** Register the app with the loopback
+callback above, then:
+
+```bash
+cd ~/projects/openproj
+OPENPROJ_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(48))") \
+OPENPROJ_CLIENT_ID=<client id> \
+OPENPROJ_CLIENT_SECRET=<client secret> \
+uv run openproj serve --repo /tmp/plan.git --auth github --org C2SM --port 8000
+```
+
+Open http://127.0.0.1:8000/ and sign in. This exercises the whole path — the
+redirect, the code exchange, the `read:org` membership check — against real
+GitHub, with nothing deployed. Worth doing before the meeting: it is the one part
+of the stack that cannot be checked any other way.
+
+**B — deploy first with `OPENPROJ_AUTH=dev`**, read the `*.run.app` URL off the
+deploy output, then register a second OAuth App against it and redeploy with
+`OPENPROJ_AUTH=github`. The hostname is stable across revisions, so this is a
+one-time dance.
 
 **The scope is `read:org` and nothing else.** Never `repo`: that would put a
 write-capable GitHub token in every session. The token here establishes identity
@@ -165,16 +205,6 @@ once and is discarded.
 and it is not where the repo lives. Keep `C2SM` even though the repository is
 under your account: the question is "is this person on the team", and the answer
 still comes from C2SM.
-
-**The circularity:** the callback needs the service URL, and the URL exists only
-after the first deploy. So deploy once with `OPENPROJ_AUTH=dev`, read the
-`*.run.app` URL, register the app against it, redeploy with
-`OPENPROJ_AUTH=github`. The hostname is stable across revisions, so this is a
-one-time dance.
-
-For local testing register a second OAuth app with callback
-`http://127.0.0.1:8000/auth/callback` — GitHub special-cases loopback, so any port
-matches.
 
 ---
 
