@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
 from .model import (
+    ISSUE_STATUS,
     Config,
     Cycle,
     Entity,
@@ -652,6 +653,7 @@ class Links(BaseModel):
     new: str = ""  # only the server can create; a rendered file has nowhere to post
     cycles: str = "cycles.html"
     cycle: str = "cycles.html#"  # prefix, then the cycle number
+    issues: str = "issues.html"
     asset: str = "assets/"  # a rendered file sits beside the assets it names
 
 
@@ -659,7 +661,7 @@ STATIC = Links()
 ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
-    cycles="/cycles", cycle="/cycle/", asset="/assets/",
+    cycles="/cycles", cycle="/cycle/", issues="/issues", asset="/assets/",
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -6987,6 +6989,61 @@ def _cycle_totals(index: Index, number: int) -> dict:
     }
 
 
+def render_issues(
+    index: Index, links: Links = STATIC, base_commit: str | None = None
+) -> str:
+    """The one page issues live on.
+
+    They are not entities, so they are not on the table, the graph, the people
+    page or the timeline — not by an exclusion in each of those, which somebody
+    would eventually forget, but because nothing there ever sees one.
+    """
+    problems: dict[str, list[str]] = {}
+    for problem in index.issue_problems:
+        problems.setdefault(problem.entity_id, []).append(problem.message)
+
+    rows = []
+    for issue in sorted(
+        index.issues.values(), key=lambda i: (i.opened_on or date.min, i.id), reverse=True
+    ):
+        state = issue.state(index.entities)
+        rows.append(
+            {
+                "id": issue.id,
+                "title": issue.title,
+                "status": issue.status,
+                "state": state,
+                # An issue whose links decide its state cannot also be set by
+                # hand: two ways to say one thing disagree the moment one is used.
+                "derived": bool(issue.pitched_into) and issue.status != "shelved",
+                "reported_by": issue.reported_by,
+                "opened": issue.opened_on.isoformat() if issue.opened_on else "",
+                "tags": ", ".join(issue.tags),
+                "pitched_into": ", ".join(issue.pitched_into),
+                "pitched": _links(issue.pitched_into, index, links),
+                "body": issue.body,
+                # `_markdown` and not a bare render: an issue body is a shaping
+                # note like any other, and it gets the same image and PR handling.
+                "rendered": _markdown(issue.body, links) if issue.body else "",
+                "problems": problems.get(issue.id, []),
+                "search": f"{issue.id} {issue.title} {' '.join(issue.tags)} "
+                f"{issue.reported_by or ''} {issue.body}".lower(),
+            }
+        )
+
+    body = _fragment(
+        _ISSUES,
+        issues=rows,
+        statuses=ISSUE_STATUS,
+        human=_human,
+        links=links,
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        combobox=_combobox_html(index) if base_commit is not None else "",
+    )
+    return _page("Issues", body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues")
+
+
 def render_cycles(
     index: Index, links: Links = STATIC, base_commit: str | None = None
 ) -> str:
@@ -7258,9 +7315,199 @@ def _combobox_html(index: Index | None) -> Markup:
 # list, because the mark for "you are here" has to be decided once: six links
 # written out by hand were six places for a seventh page to be added and marked
 # nowhere.
+_ISSUES = """
+<h1 class="sr-only">Issues</h1>
+<p class="hint">Something somebody noticed. Most of these will never be worked on,
+  which is the point of having somewhere to put them — at the betting table
+  somebody reads what is open and writes a pitch for what matters.</p>
+{% if editable %}
+<form id="open" class="editbar" onsubmit="return false">
+  <input id="what" placeholder="What did you notice?" autocomplete="off"
+         aria-label="What did you notice?">
+  <button type="button" id="add">Open an issue</button>
+  <span id="state" role="status" aria-live="polite"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</form>
+{% endif %}
+<div id="controls">
+  <input id="q" type="search" placeholder="Search issues" aria-label="Search issues">
+  <div class="facets">
+    <label class="facet">state
+      <select id="state-filter"><option value="">all open</option>
+        {% for value in statuses %}<option value="{{ value }}">{{ human(value) }}</option>
+        {% endfor %}
+        <option value="*">everything</option>
+      </select>
+    </label>
+  </div>
+</div>
+<div id="summary"><span id="shown">{{ issues|length }}</span> of {{ issues|length }}</div>
+{% for issue in issues %}
+<details class="issue" data-id="{{ issue.id }}" data-state="{{ issue.state }}"
+         data-text="{{ issue.search }}">
+  <summary>
+    <span class="badge state-{{ issue.state }}">{{ human(issue.state) }}</span>
+    <span class="what">{{ issue.title }}</span>
+    <span class="tocmeta">{{ issue.opened }}{% if issue.reported_by %} ·
+      {{ issue.reported_by }}{% endif %}{% if issue.pitched %} · in
+      {{ issue.pitched }}{% endif %}</span>
+  </summary>
+  <dl class="facts">
+    <dt>Title</dt>
+    <dd>{% if editable %}<input data-field="title" value="{{ issue.title }}"
+        autocomplete="off">{% else %}{{ issue.title }}{% endif %}</dd>
+    <dt>State</dt>
+    <dd>
+      {% if editable %}
+      <select data-field="status" {{ 'disabled' if issue.derived else '' }}>
+        {% for value in statuses %}<option value="{{ value }}"
+          {{ 'selected' if value == issue.status else '' }}>{{ human(value) }}</option>
+        {% endfor %}
+      </select>
+      {% else %}{{ human(issue.status) }}{% endif %}
+      {% if issue.derived %}<span class="hint">from the work it was pitched
+        into</span>{% endif %}
+    </dd>
+    <dt>Pitched into</dt>
+    <dd>{% if editable %}<input data-field="pitched_into" data-type="list"
+        data-suggest="entities" autocomplete="off"
+        value="{{ issue.pitched_into }}">{% else %}{{ issue.pitched_into or '—' }}{% endif %}</dd>
+    <dt>Tags</dt>
+    <dd>{% if editable %}<input data-field="tags" data-type="list" data-suggest="tags"
+        autocomplete="off" value="{{ issue.tags }}">{% else %}{{ issue.tags or '—' }}
+        {% endif %}</dd>
+  </dl>
+  {% if editable %}
+  <p class="bodybar"><span class="hint">paste or drop an image to put it in the
+    plan</span></p>
+  <textarea data-field="body" class="body-field" rows="8">{{ issue.body }}</textarea>
+  {% elif issue.rendered %}<div class="doc">{{ issue.rendered }}</div>{% endif %}
+  {% if issue.problems %}<ul class="problems">
+    {% for problem in issue.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
+</details>
+{% endfor %}
+{{ combobox }}
+<script>
+const OPEN = document.getElementById('add');
+const BASE = document.getElementById('base');
+const SAY = document.getElementById('state');
+
+function say(message) { if (SAY) SAY.textContent = message; }
+
+if (OPEN) {
+  // The shortest write in the tool. Somebody noticed something while doing
+  // something else; anything asked for beyond a title is a reason not to write
+  // it down at all.
+  const WHAT = document.getElementById('what');
+  const open = async () => {
+    const title = WHAT.value.trim();
+    if (!title) return;
+    OPEN.disabled = true;
+    const response = await fetch('/api/issue', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, title}),
+    });
+    const answer = await response.json();
+    OPEN.disabled = false;
+    if (!response.ok) { say(refusal(answer, response.status)); return; }
+    location.reload();
+  };
+  OPEN.onclick = open;
+  WHAT.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); open(); } };
+
+  for (const control of document.querySelectorAll('.issue [data-field]')) {
+    if (control.dataset.suggest) attachSuggest(control);
+    // No formatting toolbar here yet: `attachEditing` is on the two_feats
+    // branch, and a `typeof` check to pick it up if it happens to be there is a
+    // worse thing to leave behind than one line to add when that merges.
+    if (control.tagName === 'TEXTAREA') attachUploads(control, SAY);
+    let was = control.value;
+    let edited = control.tagName === 'SELECT';
+    control.addEventListener('input', () => { edited = true; });
+    control.onblur = control.onchange = async () => {
+      if (!edited || control.value === was) return;
+      const id = control.closest('.issue').dataset.id;
+      const value = control.dataset.type === 'list'
+        ? [...new Set(control.value.split(',').map(s => s.trim()).filter(Boolean))]
+        : control.value;
+      const response = await fetch(`/api/issue/${id}`, {
+        method: 'PATCH', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({
+          base_commit: BASE.value,
+          fields: control.dataset.field === 'body' ? {} : {[control.dataset.field]: value},
+          body: control.dataset.field === 'body' ? control.value : null,
+        }),
+      });
+      const answer = await response.json();
+      if (!response.ok) {
+        control.value = was;
+        say(refusal(answer, response.status));
+        return;
+      }
+      BASE.value = answer.commit || BASE.value;
+      was = control.value;
+      edited = control.tagName === 'SELECT';
+      say(`${id} saved`);
+    };
+  }
+}
+
+// Open issues are the question the page exists to answer, so they are what it
+// shows until somebody asks for more.
+const ROWS = [...document.querySelectorAll('details.issue')];
+const QUERY = document.getElementById('q');
+const STATE = document.getElementById('state-filter');
+
+function apply() {
+  const text = QUERY.value.trim().toLowerCase();
+  const wanted = STATE.value;
+  let shown = 0;
+  for (const row of ROWS) {
+    const state = row.dataset.state;
+    const open = state !== 'done' && state !== 'shelved';
+    const matches =
+      (wanted === '*' ? true : wanted ? state === wanted : open) &&
+      (!text || row.dataset.text.includes(text));
+    row.hidden = !matches;
+    shown += matches ? 1 : 0;
+  }
+  document.getElementById('shown').textContent = shown;
+}
+QUERY.oninput = apply;
+STATE.onchange = apply;
+apply();
+</script>
+"""
+
+_ISSUES_STYLE = """
+details.issue { border-bottom: 1px solid var(--line); padding: .5rem 0; }
+details.issue summary { cursor: pointer; display: flex; gap: .6rem; align-items: baseline; }
+details.issue .what { font-weight: 600; }
+details.issue dl.facts { display: grid; grid-template-columns: 9rem 1fr; gap: .3rem .8rem;
+                         margin: .8rem 0 .4rem 1.2rem; align-items: baseline; }
+details.issue dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                   letter-spacing: .04em; }
+details.issue input, details.issue select { font: inherit; font-size: 13px; width: 100%;
+                                            max-width: 32rem; }
+details.issue textarea { width: 100%; max-width: 40rem; margin-left: 1.2rem; }
+#open { display: flex; gap: .5rem; align-items: baseline; margin: .75rem 0; }
+#what { font: inherit; font-size: 13px; min-width: 22rem; }
+/* The few rules this page shares with the detail page, copied rather than
+   inherited. `_DETAIL_STYLE` carries the width grip and its transition, which is
+   a control this page does not have — and the motion inventory is right to say
+   that a page should not ship animation for an element it never renders. */
+.problems { color: var(--warn); padding-left: 1.1rem; }
+.doc { border-top: 1px solid var(--line); padding-top: 1rem; }
+.doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
+.doc code { background: var(--surface-2); padding: 0 .25em; }
+.bodybar { display: flex; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem 1.2rem; }
+"""
+
+
 _NAV = (
     ("table", "Table"), ("graph", "Graph"), ("timeline", "Timeline"),
-    ("cycles", "Cycles"), ("people", "People"), ("detail", "Detail"),
+    ("cycles", "Cycles"), ("people", "People"), ("issues", "Issues"),
+    ("detail", "Detail"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
 
@@ -7444,6 +7691,7 @@ def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tupl
         ("detail.html", render_detail(index)),
         ("people.html", render_people(index)),
         ("cycles.html", render_cycles(index)),
+        ("issues.html", render_issues(index)),
         ("graph.html", render_graph(index)),
         ("timeline.html", render_timeline(index)),
     ):

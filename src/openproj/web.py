@@ -49,13 +49,16 @@ from .auth import User, exchange_code, identify, login_url, read_session, sign_s
 from .index import build_index
 from .model import (
     CONFIG_FILES,
+    ISSUE_STATUS,
     Config,
     Cycle,
     Entity,
+    Issue,
     Pitch,
     Project,
     Task,
     parse_cycle_text,
+    parse_issue_text,
     parse_text,
     patch_text,
     validate_all,
@@ -98,6 +101,8 @@ CYCLE_DIR = "cycles"
 # writable surface closed by construction, and widening it to admit a fourth
 # shape is how that property gets lost by degrees.
 CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
+ISSUE_DIR = "issues"
+ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 # The longest a build or a cool-down may be. Shape Up's cycle is six weeks and
 # the box beside it had no bound at all, so `build_weeks: 500000` — three
 # keystrokes and a confirmation — committed a cycle whose end date is past the
@@ -121,6 +126,26 @@ def _cycle_path(number: int) -> str:
     return f"{CYCLE_DIR}/{number:04d}.md"
 
 
+def _issues_at(store: Store, commit: str) -> list[Issue]:
+    return [
+        parse_issue_text(store.read(commit, path), path)
+        for path in store.paths(commit)
+        if path.endswith(".md") and path.split("/")[0] == ISSUE_DIR
+    ]
+
+
+def _issue_path(issue_id: str) -> str:
+    """The one place an issue id becomes part of a path.
+
+    Checked against its own pattern rather than against the entity one: entity
+    ids decide `projects|pitches|tasks/<id>.md`, and admitting a fourth shape
+    there would widen the surface that regex exists to keep closed.
+    """
+    if not ISSUE_ID_PATTERN.match(issue_id):
+        raise HTTPException(400, f"{issue_id!r} is not an issue id")
+    return f"{ISSUE_DIR}/{issue_id}.md"
+
+
 def _config_at(store: Store, commit: str) -> Config:
     yaml = YAML(typ="safe")
     data: dict = {}
@@ -136,7 +161,11 @@ def _config_at(store: Store, commit: str) -> Config:
             data.update({k: v for k, v in loaded.items() if k in Config.model_fields})
     # The cycle records last, so a record supersedes the dates in cycles.yaml the
     # same way it does under the CLI.
-    return Config.model_validate(data).with_plans(_cycles_at(store, commit))
+    return (
+        Config.model_validate(data)
+        .with_plans(_cycles_at(store, commit))
+        .with_issues(_issues_at(store, commit))
+    )
 
 
 def _entities_at(store: Store, commit: str) -> list[Entity]:
@@ -231,6 +260,19 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 _NUMERIC = ("cycle", "appetite_weeks", "effort_weeks")
 _LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on")
+
+
+def _reject_bad_issue(fields: dict) -> None:
+    """A form returns strings, and an issue's fields are few enough to name."""
+    unknown = sorted(set(fields) - set(Issue.model_fields))
+    if unknown:
+        raise HTTPException(422, f"an issue has no {', '.join(unknown)}")
+    for name in ("tags", "pitched_into"):
+        if name in fields and not isinstance(fields[name], list):
+            raise HTTPException(422, f"{name} must be a list")
+    status = fields.get("status")
+    if status is not None and status not in ISSUE_STATUS:
+        raise HTTPException(422, f"{status!r} is not a status for an issue")
 
 
 def _reject_bad_types(fields: dict) -> None:
@@ -465,6 +507,78 @@ def create_app(
         """
         window = (_as_date(from_), _as_date(to))
         return page(render.render_timeline(index_now()[1], render.ROUTES, window, _as_zoom(zoom)))
+
+    @app.get("/issues", response_class=HTMLResponse)
+    def issues() -> HTMLResponse:
+        commit, index = index_now()
+        return page(render.render_issues(index, render.ROUTES, commit))
+
+    @app.post("/api/issue")
+    async def open_issue(request: Request) -> JSONResponse:
+        """Deliberately the shortest write path in the tool.
+
+        Somebody has just noticed something while doing something else. Anything
+        this asks for beyond a title is a reason not to write it down at all, so
+        the id and the date are the server's and everything else can be filled in
+        later or never.
+        """
+        user = writer(request)
+        payload = await request.json()
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            raise HTTPException(422, "an issue needs a title")
+
+        issue_id = f"issue-{secrets.token_hex(3)}"
+        fields = {
+            "id": issue_id,
+            "title": title,
+            "status": "ready",
+            "reported_by": user.login,
+            "opened_on": date.today().isoformat(),
+        }
+        content = patch_text("---\n---\n", fields, payload.get("body") or "")
+        parse_issue_text(content, issue_id)
+        written = store.write(
+            path=_issue_path(issue_id),
+            content=content,
+            base_commit=payload.get("base_commit") or store.head(),
+            author=user.login,
+            message=f"{issue_id}: open",
+        )
+        if written.commit:
+            await announce(written.commit, [issue_id])
+        return JSONResponse({"id": issue_id, "commit": written.commit})
+
+    @app.patch("/api/issue/{issue_id}")
+    async def save_issue(issue_id: str, request: Request) -> JSONResponse:
+        user = writer(request)
+        payload = await request.json()
+        body = payload.get("body")
+        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
+            raise HTTPException(413, "that body is too large to commit")
+
+        base = payload["base_commit"]
+        path = _issue_path(issue_id)
+        original = store.read(base, path)
+        if original is None:
+            raise HTTPException(404, f"no issue {issue_id!r}")
+
+        fields = {k: v for k, v in (payload.get("fields") or {}).items() if k != "id"}
+        _reject_bad_issue(fields)
+        content = patch_text(original, fields, body)
+        # Read back before it is written: a file the loader cannot parse would
+        # take the issues page with it, and it would already be in git.
+        parse_issue_text(content, path)
+        written = store.write(
+            path=path,
+            content=content,
+            base_commit=base,
+            author=user.login,
+            message=f"{issue_id}: {', '.join(fields) or 'body'}",
+        )
+        if written.commit:
+            await announce(written.commit, [issue_id])
+        return _result(written, base)
 
     @app.get("/cycles", response_class=HTMLResponse)
     def cycles() -> HTMLResponse:

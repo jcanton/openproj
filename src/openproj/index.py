@@ -23,8 +23,10 @@ from .model import (
     Config,
     Cycle,
     Entity,
+    Issue,
     Problem,
     ancestors,
+    issue_problems,
     size_weeks,
     validate_all,
 )
@@ -74,6 +76,10 @@ class Index(BaseModel):
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
+    # Issues, and the problems they have. Carried here so the one page that shows
+    # them needs nothing but the index, the same way every other page does.
+    issues: dict[str, Issue] = {}
+    issue_problems: list[Problem] = []
 
     def load(self, cycle: int) -> dict[str, float]:
         """Person-weeks each person is holding in this cycle.
@@ -194,6 +200,8 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
         plans=config.plans,
         nominal_availability=config.nominal_availability,
         known_people=config.known_people,
+        issues=config.issues,
+        issue_problems=issue_problems(config, entities),
         today=today,
         default_task_effort=config.default_task_effort,
     )
