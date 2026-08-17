@@ -88,8 +88,14 @@ human's token, which is what the author/committer split exists to avoid.
 **Once, at https://github.com/settings/apps/new** (a personal App, since the repo
 is under your account; move it to the C2SM org if the tool is adopted):
 
-1. **Name** anything free, e.g. `openproj-icon4py`. **Homepage** the service URL
-   or the repo. **Uncheck Webhook → Active.**
+1. **GitHub App name:** anything not already taken, e.g. `openproj-icon4py`. This
+   is a name, not a repository — there is no repo behind it.
+   **Homepage URL:** `https://github.com/jcanton/openproj`. The field is required
+   and entirely cosmetic: GitHub shows it on the App's page and nothing reads it.
+   Unlike the OAuth callback in step 3 it does not have to match anything, so it
+   does not have to wait for the service URL to exist, and it can be edited later
+   without touching the installation or the key.
+   **Uncheck Webhook → Active.**
 2. **Repository permissions → Contents: Read and write.** Nothing else. No
    account permissions, no org permissions.
 3. Create it, then **Install App** → *Only select repositories* →
