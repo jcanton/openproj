@@ -25,6 +25,7 @@ from ruamel.yaml.error import MarkedYAMLError
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 _CYCLE_DIR = "cycles"
+_ISSUE_DIR = "issues"
 _WORKING_DAYS_PER_WEEK = 5
 # Calendar days from a betting table to the review meeting when a record does not
 # say. Four weeks is what the team runs; the point of storing the date is that
@@ -132,6 +133,69 @@ class Problem(BaseModel):
     rule_version: int
 
 
+ISSUE_STATUS = ("ready", "in_progress", "done", "shelved")
+
+
+class Issue(BaseModel):
+    """Something somebody noticed, before anybody has decided to do it.
+
+    Stored as `issues/<id>.md`, and deliberately NOT an Entity. An entity is a
+    bet: it carries an appetite, takes a place on the timeline and charges
+    somebody's cycle. An issue is the opposite — most of them will never be
+    worked on, which is the point of having somewhere to put them. Making it a
+    separate type is what keeps it off the table, the graph, the people page and
+    the timeline by construction, rather than by an exclusion in each of them
+    that somebody later forgets.
+
+    There is no `shaping`: a shaped issue is a pitch, and that is the whole
+    lifecycle — somebody reads the open issues at the betting table and writes a
+    pitch for what matters.
+    """
+
+    id: str
+    title: str
+    status: str = "ready"
+    reported_by: str | None = None
+    opened_on: date | None = None
+    tags: list[str] = []
+    # The pitches and tasks this was pitched into. One direction only: an entity
+    # does not list its issues, because two directions for one edge disagree the
+    # first time somebody edits the wrong end.
+    pitched_into: list[str] = []
+    body: str = ""
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _as_written(cls, value: object) -> object:
+        """Parse permissively, validate strictly — the same bargain entities make.
+        A word nobody defined is a validation problem, not a page that 500s."""
+        return value if value is None else str(value)
+
+    def state(self, entities: dict[str, Entity]) -> str:
+        """What this issue actually is, given what it was pitched into.
+
+        Derived rather than copied. An issue that has been pitched has been picked
+        up, and one whose work is finished is finished — writing that into the
+        file as well would be a second copy of a fact the link already carries,
+        and the two disagree the moment somebody closes the pitch.
+
+        Deriving is right HERE and was wrong for pull requests, on the same test:
+        a link is local, typed by a person, and readable without a credential or a
+        network call, and an issue carries no appetite, no capacity and no place
+        on the timeline — so being wrong costs one row on one page rather than
+        every date for twenty people.
+
+        `shelved` is never overridden. "We are not doing this" is a decision, and
+        a link somebody adds afterwards does not reverse it.
+        """
+        if self.status == "shelved":
+            return "shelved"
+        linked = [entities[i] for i in self.pitched_into if i in entities]
+        if not linked:
+            return self.status
+        if all(entity.status in ("done", "shelved") for entity in linked):
+            return "done"
+        return "in_progress"
 class Unreadable(BaseModel):
     """A file in the plan that is not a record, and the reason in one line.
 
@@ -295,6 +359,13 @@ class Config(BaseModel):
     known_people: list[str] = []
     # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
     plans: dict[int, Cycle] = {}
+    issues: dict[str, Issue] = {}
+
+    def with_issues(self, issues: list[Issue]) -> Config:
+        """Carried on the config for the same reason cycles are: nothing iterates
+        issues except the one page that is about them, and every other caller
+        would have had to thread a third value through and then drop it."""
+        return self.model_copy(update={"issues": {i.id: i for i in issues}})
 
     def with_plans(self, plans: list[Cycle]) -> Config:
         """A cycle record supersedes `config/cycles.yaml` for its own number.
@@ -631,6 +702,17 @@ def parse_cycle_file(path: Path) -> Cycle:
     return parse_cycle_text(path.read_text(encoding="utf-8"), str(path))
 
 
+def parse_issue_text(text: str, source: str) -> Issue:
+    frontmatter, body = _split(text, source)
+    data = _round_trip_yaml().load(frontmatter) or {}
+    fields = {k: v for k, v in data.items() if k in Issue.model_fields}
+    return Issue.model_validate({"id": "", "title": "", **fields, "body": body})
+
+
+def parse_issue_file(path: Path) -> Issue:
+    return parse_issue_text(path.read_text(encoding="utf-8"), str(path))
+
+
 def _in_the_style_of(old: object, new: object) -> object:
     """Keep a hand-written `tags: [a, b]` from becoming a three-line block list
     the moment somebody adds a tag from the web.
@@ -716,14 +798,26 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
             (root / relative).read_text(encoding="utf-8"), relative
         ),
     )
+    # Issues through the same door: a file somebody hand-edited in git is how
+    # every one of these fails, and an issue file is no different from a cycle
+    # file in that respect.
+    issues, unreadable_issues = readable(
+        [f"{_ISSUE_DIR}/{path.name}" for path in sorted((root / _ISSUE_DIR).glob("*.md"))],
+        lambda relative: parse_issue_text(
+            (root / relative).read_text(encoding="utf-8"), relative
+        ),
+    )
     config, unreadable_config = read_config(*_config_on_disk(root))
     return (
         entities,
-        config.with_plans(plans),
+        config.with_plans(plans).with_issues(issues),
         # Sorted by path, so the banner and `openproj check` list them in the
         # order somebody would open them rather than in the order three separate
         # walks happened to finish.
-        sorted([*unreadable, *unreadable_plans, *unreadable_config], key=lambda one: one.path),
+        sorted(
+            [*unreadable, *unreadable_plans, *unreadable_issues, *unreadable_config],
+            key=lambda one: one.path,
+        ),
     )
 
 
@@ -858,6 +952,11 @@ def checklist(body: str) -> tuple[int, int]:
 # --------------------------------------------------------------------------- #
 
 _ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
+# Its own pattern, not a fourth alternative in the one above: that regex is what
+# keeps `projects|pitches|tasks/<id>.md` the whole writable surface for entities,
+# and widening it to admit a record that is not an entity is how that property
+# gets lost by degrees.
+_ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 _PREFIX_FOR_KIND = {"project": "proj", "pitch": "pitch", "task": "task"}
 _SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
 
@@ -1201,6 +1300,51 @@ def _problems_for(
     yield from _people_problems(entity, config)
 
 
+def issue_problems(config: Config, entities: list[Entity]) -> list[Problem]:
+    """The rules an issue is held to, which are few on purpose.
+
+    An issue is somewhere to put a half-formed thing. A tracker that argues with
+    you while you are writing down what you just noticed is a tracker people stop
+    writing things down in — so an issue needs a title and a status that is a
+    word, and everything else is a warning at most.
+    """
+    by_id = {entity.id: entity for entity in entities}
+    problems: list[Problem] = []
+
+    def note(issue: Issue, severity: str, field: str | None, message: str) -> None:
+        problems.append(
+            Problem(
+                severity=severity,
+                entity_id=issue.id,
+                field=field,
+                message=message,
+                rule_version=1,
+            )
+        )
+
+    for issue in config.issues.values():
+        if not _ISSUE_ID_PATTERN.match(issue.id):
+            note(issue, "blocker", "id", "id must match ^issue-[0-9a-f]{6}$")
+        if not issue.title.strip():
+            note(issue, "blocker", "title", "title must not be empty")
+        if issue.status not in ISSUE_STATUS:
+            note(
+                issue,
+                "blocker",
+                "status",
+                f"{issue.status!r} is not a status for an issue: expected one of "
+                f"{', '.join(ISSUE_STATUS)}",
+            )
+        for target in issue.pitched_into:
+            if target not in by_id:
+                # A warning, not a blocker: an issue outlives the pitch it fed,
+                # and a shelved pitch deleted later should not break the page the
+                # issue is read on.
+                note(issue, "warning", "pitched_into", f"pitched into {target}, which is missing")
+        if issue.reported_by and config.known_people:
+            if issue.reported_by not in config.known_people:
+                note(issue, "warning", "reported_by", f"{issue.reported_by} is not in the roster")
+    return problems
 def named_for(entity: Entity) -> bool:
     """Whether the file this record was read from is named for the id it declares.
 

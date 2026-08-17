@@ -20,7 +20,7 @@ from openproj.model import Config, load_repo
 from openproj.render import STATUS_GLYPH, STATUSES, render_static
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
-         "graph.html", "timeline.html")
+         "issues.html", "graph.html", "timeline.html")
 
 
 @pytest.fixture

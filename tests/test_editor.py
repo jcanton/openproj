@@ -534,7 +534,7 @@ def test_a_slow_upload_holds_its_place_in_the_text(client: TestClient):
 
     assert "const token = `![uploading" in send
     assert "insert(token)" in send
-    assert "area.value.replace(" in send
+    assert "replaceRange(area," in send
     assert "response.ok ? `![${alt}](${answer.path})` : ''" in send
 
 
@@ -765,3 +765,76 @@ def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
     assert key not in after["stored"], "cancelling left the draft in storage"
     assert body == draft["text"], "the text a cancel leaves in the box"
     assert base == first, "cancelling put the page's own commit back under older text"
+# --- writing in the body ----------------------------------------------------
+
+
+def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
+    """`textarea.value = …` wipes the browser's native undo stack. Paste a diagram
+    into a four-hundred-line pitch, press ctrl-Z, and the last ten minutes are
+    gone. Every programmatic edit goes through `replaceRange`, which uses
+    `execCommand('insertText')` — deprecated, and still the only API in any
+    shipping browser that edits a textarea as though a person had typed."""
+    page = client.get(f"/detail/{TASK}").text
+    helpers = re.search(r"function replaceRange.*?\n\}", page, re.S).group(0)
+    # Everything that edits the body while somebody is working in it. A draft
+    # restored at page load is not in scope: there is no history to protect yet,
+    # and it replaces the whole field rather than part of it.
+    editing = re.search(r"const FORMATS = \[.*?\n\}\n", page, re.S).group(0)
+    editing += re.search(r"function attachUploads.*?\n\}\n", page, re.S).group(0)
+
+    assert "document.execCommand('insertText', false, text)" in helpers
+    assert "area.value =" not in editing, "only the fallback inside replaceRange may assign"
+    assert "replaceRange(area" in editing, "and it is what the editing code calls"
+
+
+def test_the_toolbar_carries_what_this_team_writes(client: TestClient):
+    """Counted across the seed and migrated corpora: 485 lines carry an inline
+    code span, 161 a bullet, 124 a heading, 83 bold — and eight a markdown link,
+    which is why there is no link button: people write `C2SM/icon4py#1364` bare
+    and the renderer already links it.
+
+    The two code buttons are here for a better reason than frequency. The team
+    types on a mix of US and Swiss-German layouts, and on CH a backtick is a dead
+    key, so a fence is three of them in a row — the two fenced blocks in the whole
+    corpus measure how awkward that is, not how little code people would paste."""
+    page = client.get(f"/detail/{TASK}").text
+    marks = re.search(r"const FORMATS = \[(.*?)\];", page, re.S).group(1)
+
+    assert marks.count("{key:") == 7
+    for wanted in ("Bold", "Italic", "Code  ", "Code block", "Heading", "Bullet", "Quote"):
+        assert wanted in marks, wanted
+    assert "](" not in marks, "bare PR references are already linked by the renderer"
+
+
+def test_a_fence_takes_whole_lines_of_its_own(client: TestClient):
+    """A fence only opens a block if nothing shares its line, so wrapping a
+    selection in place would produce three paragraphs of literal backticks."""
+    page = client.get(f"/detail/{TASK}").text
+    fence = re.search(r"if \(mark\.fence\) \{.*?\n    return;\n  \}", page, re.S).group(0)
+
+    assert "const [from, to] = lineRange(area);" in fence
+    assert "'```\\n' + chosen + '\\n```'" in fence
+    assert "area.setSelectionRange(from + 3, from + 3)" in fence, "the caret lands on the language"
+    assert "fenced" in fence, "and pressing it again unwraps"
+
+
+def test_a_list_continues_and_an_empty_item_ends_it(client: TestClient):
+    """The one thing everybody misses from HackMD inside a minute. 161 bullet
+    lines across the two corpora."""
+    page = client.get(f"/detail/{TASK}").text
+    handler = re.search(r"area\.addEventListener\('keydown'.*?\n  \}\);", page, re.S).group(0)
+
+    assert "if (event.key !== 'Enter' || event.shiftKey) return;" in handler
+    assert "LIST_ITEM.exec(line)" in handler
+    assert "if (!text.trim())" in handler, "an empty item ends the list"
+    assert "parseInt(bullet, 10) + 1" in handler, "a numbered list counts on"
+
+
+def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
+    """`click` runs after the textarea has lost focus, and with it the selection
+    the mark is supposed to wrap."""
+    page = client.get(f"/detail/{TASK}").text
+
+    bound = "button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };"
+    assert bound in page
+    assert "button.onclick" not in page.split("const FORMATS")[1][:2000]
