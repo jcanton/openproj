@@ -472,15 +472,18 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
 
 def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
     """Left to the next page load, the number somebody is setting is invisible at
-    the moment they are setting it — which is most of the moment that matters."""
+    the moment they are setting it — which is most of the moment that matters.
+
+    A rate only. The other half of `rate × build weeks` is working days between
+    two meetings with the holidays taken out, and this page does not have the
+    holidays — so a date change says the column is stale instead of showing a
+    number computed by a rule that is only nearly the server's."""
     page = client.get("/cycle/37").text
 
     assert "function recount()" in page
-    assert re.search(
-        r"if \(event\.target\.matches\('input\.rate, \[name=build_weeks\]'\)\)"
-        r" recount\(\);",
-        page,
-    )
+    assert re.search(r"if \(event\.target\.matches\('input\.rate'\)\) recount\(\);", page)
+    assert re.search(r"const BUILD_WEEKS = [0-9.]+;", page), "the server's own answer"
+    assert "#setup input[type=date]" in page and 'getElementById(\'stale\')' in page
 
 
 def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):

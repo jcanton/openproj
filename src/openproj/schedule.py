@@ -234,7 +234,10 @@ def build_end(number: int | None, window: tuple[date, date], config: Config) -> 
     """
     plan = config.plans.get(number) if number is not None else None
     ends = (
-        plan.builds_until
+        # Resolved by `Config.with_plans`, which is the only thing that builds a
+        # `plans` map — but a `Cycle` handed straight to a Config would carry
+        # None, and a date is wanted here rather than a raise.
+        plan.builds_until or window[0]
         if plan is not None
         # Backwards through `days_after` for the same reason as everything else:
         # a cool-down of `.inf` weeks in one config file is `round()` raising,

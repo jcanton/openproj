@@ -1315,17 +1315,16 @@ def test_a_cycle_the_server_could_not_read_back_is_never_committed(
 @pytest.mark.parametrize(
     "fields, says",
     [
-        ({"starts_on": "", "build_weeks": 4}, "starts_on"),
+        ({"starts_on": "", "reviews_on": "2026-09-14"}, "starts_on"),
         ({"starts_on": "17/08/2026"}, "starts_on"),
         ({"starts_on": None}, "starts_on"),
-        ({"starts_on": "2026-08-17", "build_weeks": None}, "build_weeks"),
-        ({"starts_on": "2026-08-17", "cooldown_weeks": None}, "cooldown_weeks"),
+        ({"starts_on": "2026-08-17", "reviews_on": None}, "reviews_on"),
+        ({"starts_on": "2026-08-17", "reviews_on": ""}, "reviews_on"),
         # As the boxes send them: what was typed, so the refusal can quote it.
-        ({"starts_on": "2026-08-17", "build_weeks": "six"}, "'six'"),
-        ({"starts_on": "2026-08-17", "build_weeks": ""}, "build_weeks"),
-        # A cycle `.inf` weeks long is every date on every page gone, and `inf`
-        # is a number to `float()` and to YAML both.
-        ({"starts_on": "2026-08-17", "build_weeks": "inf"}, "'inf'"),
+        ({"starts_on": "2026-08-17", "reviews_on": "the 4th"}, "'the 4th'"),
+        # A review meeting before its own betting table is a cycle with no build
+        # in it: every bet in it overruns by definition and its capacity is zero.
+        ({"starts_on": "2026-08-17", "reviews_on": "2026-08-10"}, "not after"),
         ({"starts_on": "2026-08-17", "availability": {"ann": "nan"}}, "'nan'"),
         # Nothing names the missing field, so the catch-all around the parse is
         # what has to answer: a new cycle written with a roster and no date.
@@ -1644,7 +1643,7 @@ def test_the_create_form_is_not_another_cycle_in_the_list(client: TestClient):
     assert '<section id="create">' in page
     assert "<h2>Start a cycle</h2>" in page
     assert "#create { border-top: 1px solid var(--line);" in page
-    assert page.index('id="start"') > page.index('id="cooldown"'), \
+    assert page.index('id="start"') > page.index('id="reviews"'), \
         "F15: the button follows the fields it commits"
 
 
@@ -1967,10 +1966,15 @@ def test_every_control_on_the_cycle_page_has_a_name(client: TestClient):
     page = client.get("/cycle/37").text
     setup = re.search(r'<form id="setup".*?</form>', page, re.S).group(0)
 
-    for field, word in (("starts_on", "Starts on"), ("build_weeks", "Build weeks"),
-                        ("cooldown_weeks", "Cool-down weeks")):
+    for field, word in (("starts_on", "Starts on"), ("reviews_on", "Review meeting")):
         assert f'<label for="{field}">{word}</label>' in setup, field
         assert re.search(rf'<input[^>]*\bid="{field}"', setup), field
+    # And the two dates below them are worked out rather than typed, so they have
+    # no control to name — a `<label for>` pointing at nothing is a name a reader
+    # is promised and cannot reach.
+    for derived in ("Builds until", "Cool-down ends"):
+        assert f'<dt class="derived">{derived}</dt>' in setup, derived
+    assert "<label" not in setup.split("Builds until")[1]
     assert '<label for="joining"' in page and 'id="joining"' in page
 
     rows = re.findall(r'<tr data-id="([^"]+)".*?</tr>', page, re.S)
@@ -2074,20 +2078,22 @@ def test_a_cycle_longer_than_the_calendar_is_refused_and_writes_nothing(
     alone survived, permanently, on a branch whose protection means the commit
     cannot be force-pushed away.
 
-    Refused where the route already refuses a word for a number, and the refusal
-    quotes the value: a 422 that will not say what was wrong is a form nobody
-    can correct.
+    The length is a pair of dates now and the same hazard arrives through them, so
+    the bound moved with them. Refused where the route already refuses a word for
+    a number, and the refusal quotes the value: a 422 that will not say what was
+    wrong is a form nobody can correct.
     """
     base = head(client)
 
     refused = client.put(
         "/api/cycle/38",
-        json={"base_commit": base, "fields": {"starts_on": "2026-09-01", "build_weeks": 500_000}},
+        json={"base_commit": base,
+              "fields": {"starts_on": "2026-09-01", "reviews_on": "9999-12-31"}},
     )
 
     assert refused.status_code == 422
-    assert "build_weeks" in refused.json()["detail"]
-    assert "500000" in refused.json()["detail"]
+    assert "not a cycle" in refused.json()["detail"]
+    assert "520" in refused.json()["detail"], "and says what it will hold"
     assert head(client) == base, "a refused write leaves HEAD where it was"
     # In git, not in the answer: a 422 that still wrote the file is the failure.
     tree = pygit2.Repository(str(repo_path)).revparse_single("HEAD^{tree}")

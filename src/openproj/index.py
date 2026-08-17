@@ -139,6 +139,10 @@ class Index(BaseModel):
     # Carried for the same reason the windows are: the timeline has to draw where
     # a cycle stops building, and it is handed no Config to ask.
     cooldown_weeks: float = 2.0
+    # And the holidays, because a cycle's length is working days between two
+    # meetings — the cycle page resolves an unsaved cycle through the same
+    # `with_plans` a stored one goes through, and that needs them.
+    holidays: list[date] = []
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
@@ -340,6 +344,7 @@ def build_index(
         today=today,
         default_task_effort=config.default_task_effort,
         cooldown_weeks=config.cooldown_weeks,
+        holidays=config.holidays,
         progress=progress,
         for_later=for_later,
     )

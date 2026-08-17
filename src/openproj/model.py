@@ -25,6 +25,11 @@ from ruamel.yaml.error import MarkedYAMLError
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 _CYCLE_DIR = "cycles"
+_WORKING_DAYS_PER_WEEK = 5
+# Calendar days from a betting table to the review meeting when a record does not
+# say. Four weeks is what the team runs; the point of storing the date is that
+# this number is only ever a guess, so it is used and then said out loud.
+_DEFAULT_BUILD_DAYS = 28
 
 # Python's `date` spans years 1 to 9999 and every way of leaving that range
 # raises instead of saturating, so this is the widest move any of the two
@@ -225,38 +230,43 @@ class Cycle(BaseModel):
     existing write path — per-key frontmatter merge, three-way body merge, scoped
     compare-and-swap. The body is where the cycle's goal goes.
 
-    Only `starts_on` is stored. An end date stored beside a length is a second
-    copy of one fact, and the two disagree the first time somebody moves a date.
+    **Two dates are stored, and both are meetings.** `starts_on` is the betting
+    table and the first day of build; `reviews_on` is the review meeting, which is
+    also the brainstorm for the next cycle — build ended the working day before
+    it. Everything else about the calendar is worked out from those two.
+
+    Lengths were stored instead, and a length is a prediction of a date somebody
+    picks: `starts_on + 4 weeks` cannot know that the review was moved for a
+    conference, that the team leaves a month between two cycles, or that a cycle
+    over the year-end closure holds a fortnight of building and not four weeks.
+    Capacity is `availability × build weeks`, so that last one was the betting
+    table's own number being wrong.
+
+    `builds_until`, `ends_on` and `build_weeks` are filled in by
+    `Config.with_plans`, which is where the holidays and the neighbouring cycles
+    can be seen. They are derived, never parsed and never written.
     """
 
     cycle: int
     starts_on: date
-    build_weeks: float = 4.0
-    cooldown_weeks: float = 2.0
+    # Optional at the type level like everything else: a record written before
+    # this field existed still loads, and the resolver assumes a length rather
+    # than taking the page down. See `_resolve`.
+    reviews_on: date | None = None
     # Fraction of the BUILD weeks, per person. Absent means nobody said
     # otherwise, which is not the same as unavailable — see `_availability_of`.
     availability: dict[str, float] = {}
     body: str = ""
 
-    def _last_day(self, weeks: float) -> date:
-        """The inclusive last day of `weeks` weeks beginning at `starts_on`.
-
-        Clamped, because these two properties are read while the config is being
-        assembled — before any rule has looked at the record — so raising here is
-        `openproj check`, `openproj render` and nine of the ten routes gone at
-        once. `build_weeks: 500000` typed into the Cycles form did exactly that.
-        The route refuses that number now; a file somebody edited in git never
-        passed the route, and this is what keeps the site up for that one.
-        """
-        return days_after(self.starts_on, round(within_the_calendar(weeks * 7)) - 1)
-
-    @property
-    def builds_until(self) -> date:
-        return self._last_day(self.build_weeks)
-
-    @property
-    def ends_on(self) -> date:
-        return self._last_day(self.build_weeks + self.cooldown_weeks)
+    # --- derived by Config.with_plans ---------------------------------------
+    builds_until: date | None = None
+    ends_on: date | None = None
+    build_weeks: float = 0.0
+    # Whether the two above were assumed rather than read: no `reviews_on` in the
+    # file, or no next cycle to end the cool-down. The page says so rather than
+    # printing a date it invented as though somebody had chosen it.
+    assumed_review: bool = False
+    assumed_end: bool = False
 
     def capacity(self, who: str, nominal: float = 1.0) -> float:
         """Weeks of work this person can hold in this cycle."""
@@ -291,11 +301,84 @@ class Config(BaseModel):
 
         Both exist on purpose: the YAML is how the dates were kept before there
         were records, and a repository part-way through will have some of each.
+
+        This is also where each record's derived dates are worked out, because it
+        is the only place that can see all three things they need: the holidays,
+        the record itself, and the cycle after it.
         """
-        windows = dict(self.cycles) | {c.cycle: (c.starts_on, c.ends_on) for c in plans}
+        resolved = [self._resolve(c, plans) for c in plans]
+        windows = dict(self.cycles) | {c.cycle: (c.starts_on, c.ends_on) for c in resolved}
         return self.model_copy(
-            update={"cycles": windows, "plans": {c.cycle: c for c in plans}}
+            update={"cycles": windows, "plans": {c.cycle: c for c in resolved}}
         )
+
+    def _resolve(self, plan: Cycle, plans: list[Cycle]) -> Cycle:
+        """One record's derived dates and its length in working weeks.
+
+        The cool-down runs from the review meeting to the next cycle's betting
+        table, and that date is stored once — on the next cycle. Two copies of one
+        date disagree the first time somebody moves a betting table, which is the
+        argument that keeps `blocks` derived too. With no next record it falls
+        back to a fortnight and says the date was assumed.
+        """
+        assumed_review = plan.reviews_on is None
+        # Build ends the working day BEFORE the review: you review what was
+        # finished before you walked in.
+        reviews_on = plan.reviews_on or days_after(plan.starts_on, _DEFAULT_BUILD_DAYS)
+        builds_until = max(plan.starts_on, self.previous_working_day(reviews_on))
+
+        after = sorted(c.starts_on for c in plans if c.starts_on > plan.starts_on)
+        assumed_end = not after
+        ends_on = (
+            days_after(after[0], -1)
+            if after
+            else days_after(reviews_on, round(self.cooldown_weeks * 7) - 1)
+        )
+        return plan.model_copy(
+            update={
+                "builds_until": builds_until,
+                # A cool-down cannot end before the build it follows: a next cycle
+                # starting inside this one is a planning mistake, and it must cost
+                # that date rather than every span drawn against the window.
+                "ends_on": max(builds_until, ends_on),
+                "build_weeks": self.working_weeks(plan.starts_on, builds_until),
+                "assumed_review": assumed_review,
+                "assumed_end": assumed_end,
+            }
+        )
+
+    def is_working_day(self, day: date) -> bool:
+        return day.weekday() < 5 and day not in self.holidays
+
+    def previous_working_day(self, day: date) -> date:
+        """The last working day strictly before `day`, floored at the calendar."""
+        day = days_after(day, -1)
+        while day > date.min and not self.is_working_day(day):
+            day = days_after(day, -1)
+        return day
+
+    def working_weeks(self, first: date, last: date) -> float:
+        """Working days in an inclusive span, in weeks of five.
+
+        This is what capacity is charged against, so it is the one number that
+        has to know about Christmas: a cycle over the ETH closure holds less work
+        than one in March, and a length in weeks could not say so.
+
+        Counted a week at a time rather than a day at a time, because the walk is
+        over dates a person typed: `reviews_on: 9999-12-31` is one save away and
+        a day loop over it is 2.9 million iterations inside `load_config`, on the
+        read path of every page. Whole weeks contribute five days each whatever
+        they contain, so only the remainder and the holidays are looked at.
+        """
+        if last < first:
+            return 0.0
+        weeks, rest = divmod((last - first).days + 1, 7)
+        days = weeks * _WORKING_DAYS_PER_WEEK
+        days += sum(
+            days_after(first, weeks * 7 + offset).weekday() < 5 for offset in range(rest)
+        )
+        days -= sum(1 for one in self.holidays if first <= one <= last and one.weekday() < 5)
+        return round(max(0, days) / _WORKING_DAYS_PER_WEEK, 3)
 
 
 def _config_mapping(path: str, text: str) -> tuple[str, dict]:

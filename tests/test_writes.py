@@ -63,7 +63,7 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         client.put(
             "/api/cycle/41",
             json={"base_commit": bet.json()["commit"],
-                  "fields": {"starts_on": "2026-08-17", "build_weeks": 4, "cooldown_weeks": 2,
+                  "fields": {"starts_on": "2026-08-17", "reviews_on": "2026-09-14",
                              "availability": {"ann": 0.5, "bo": 1.0}},
                   "body": "## Goal\n\nShip it.\n"},
         )
@@ -141,9 +141,9 @@ def test_the_words_the_server_refused_with_are_the_words_on_the_page(pages):
     assert state(answer) == detail
 
 
-TYPE_A_WORD_INTO_BUILD_WEEKS = f"""
+TYPE_A_WORD_INTO_A_DATE = f"""
 (async () => {{
-  document.querySelector('#setup [name=build_weeks]').value = 'six';
+  document.querySelector('#setup [name=reviews_on]').value = 'the 4th';
   ROSTER_DIRTY = true;
   const saved = await flush(false);
   return {{saved, {SAY}}};
@@ -151,16 +151,19 @@ TYPE_A_WORD_INTO_BUILD_WEEKS = f"""
 """
 
 
-def test_a_word_typed_into_a_length_box_reaches_the_server_as_the_word(pages):
-    """`Number('six')` is NaN, and `JSON.stringify` sends NaN as null: the typo
-    was thrown away on the way out, so the best refusal the server could give
-    was about something blank — beside a box with `six` still in it."""
-    detail = "build_weeks must be a number, not 'six'"
+def test_a_word_typed_into_a_date_box_reaches_the_server_as_the_word(pages):
+    """`Number('six')` was NaN and `JSON.stringify` sent NaN as null: the typo was
+    thrown away on the way out, so the best refusal the server could give was
+    about something blank — beside a box with the word still in it.
+
+    The lengths are dates now and the hazard is the same shape, so the boxes still
+    send what was typed and the refusal still quotes it."""
+    detail = "reviews_on must be a date like 2026-09-01, not 'the 4th'"
     answer = drive(
-        pages["cycle"], TYPE_A_WORD_INTO_BUILD_WEEKS, [{"status": 422, "json": {"detail": detail}}]
+        pages["cycle"], TYPE_A_WORD_INTO_A_DATE, [{"status": 422, "json": {"detail": detail}}]
     )
 
-    assert json.loads(answer["calls"][0]["body"])["fields"]["build_weeks"] == "six"
+    assert json.loads(answer["calls"][0]["body"])["fields"]["reviews_on"] == "the 4th"
     assert state(answer) == detail
     assert answer["value"]["saved"] is False
 

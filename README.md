@@ -92,9 +92,23 @@ than adopted. `shaped_by` is the live example: a version 2 rule warning against 
 
 ## What a cycle holds
 
-A cycle is `cycles/<n>.md` — a record, not an entity. It carries `starts_on`, `build_weeks`,
-`cooldown_weeks`, an `availability` fraction per person, and a body for the goal and for whatever
-came up at the betting table.
+A cycle is `cycles/<n>.md` — a record, not an entity. It stores **two dates, and both are
+meetings**: `starts_on` is the betting table and the first day of build, `reviews_on` is the review
+meeting, which is also the brainstorm for the next cycle. Build ended the working day before it.
+Beside them sit an `availability` fraction per person and a body for the goal and for whatever came
+up at the betting table.
+
+Everything else about the calendar is worked out from those two: where the build ends, how many
+**working** weeks it holds with the holidays taken out, and where the cool-down ends — which is the
+next cycle's betting table, stored once, on the next cycle. A date the tool had to assume, because
+a record names no review or because there is no next cycle yet, is marked as assumed on the page
+rather than printed as though somebody had chosen it.
+
+Lengths were stored instead, and a length is a prediction of a date somebody picks. It could not
+know that a review moved for a conference, that the team leaves a month between two cycles, or that
+a cycle over the ETH year-end closure holds a fortnight of building rather than four weeks — and
+since `capacity = availability × build weeks`, that last one was the betting table's own number
+being wrong.
 
 `cycle:` records **where a bet was made** and is never re-stamped, so an overrun keeps accusing
 (D-C1). It lives on the thing that was bet — a pitch, or a chore nobody pitched — and everything

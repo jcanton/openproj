@@ -100,13 +100,14 @@ CYCLE_DIR = "cycles"
 # writable surface closed by construction, and widening it to admit a fourth
 # shape is how that property gets lost by degrees.
 CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
-# The longest a build or a cool-down may be. Shape Up's cycle is six weeks and
-# the box beside it had no bound at all, so `build_weeks: 500000` — three
-# keystrokes and a confirmation — committed a cycle whose end date is past the
-# end of the calendar, and every page that reads a cycle answered 500 to
-# everybody, permanently, on a branch whose protection means the commit cannot
-# be force-pushed away. Ten years is not a cycle by any reading; the number is
-# refused here so it never reaches a file, and `Cycle._last_day` clamps anyway
+# The longest a cycle may be, betting table to review meeting. It was a length in
+# weeks with no bound at all, so `build_weeks: 500000` — three keystrokes and a
+# confirmation — committed a cycle whose end date is past the end of the
+# calendar, and every page that reads a cycle answered 500 to everybody,
+# permanently, on a branch whose protection means the commit cannot be
+# force-pushed away. The dates that replaced it can say the same thing with
+# `reviews_on: 9999-12-31`, so the bound moved with them. Ten years is not a
+# cycle by any reading; `Config.working_weeks` counts a week at a time anyway,
 # for the file somebody writes by hand.
 MAX_CYCLE_WEEKS = 520.0
 
@@ -172,17 +173,31 @@ def _reject_bad_cycle(fields: dict) -> None:
     it can quote the value — so this is where a word becomes a 422 instead of a
     date the record cannot hold.
     """
-    if "starts_on" in fields:
-        fields["starts_on"] = _as_iso_date(fields["starts_on"], "starts_on")
     # `in fields`, not `is not None`. Skipping a null let it through to the file,
-    # and `build_weeks: null` is a ValidationError inside `parse_cycle_text` —
-    # an unhandled 500 whose body is not even JSON, so the page could not say
-    # what was wrong. Null still arrives from anything that coerces before it
-    # sends — `Number('six')` is NaN and `JSON.stringify` writes NaN as null —
+    # and a null date is a ValidationError inside `parse_cycle_text` — an
+    # unhandled 500 whose body is not even JSON, so the page could not say what
+    # was wrong. Null still arrives from anything that coerces before it sends,
     # and this endpoint answers browsers it did not render.
-    for name in ("build_weeks", "cooldown_weeks"):
+    for name in ("starts_on", "reviews_on"):
         if name in fields:
-            fields[name] = _as_positive(fields[name], name, most=MAX_CYCLE_WEEKS)
+            fields[name] = _as_iso_date(fields[name], name)
+    # The review meeting is the day after the last day of build, so a cycle whose
+    # review is on or before its betting table has no build in it at all — every
+    # bet in it would overrun by definition, and its capacity would be zero.
+    both = fields.get("starts_on"), fields.get("reviews_on")
+    if all(both):
+        opens, reviews = (date.fromisoformat(one) for one in both)
+        if reviews <= opens:
+            raise HTTPException(
+                422, f"the review meeting is {reviews}, which is not after the betting "
+                f"table on {opens} — a cycle needs at least one day of build"
+            )
+        if (reviews - opens).days > MAX_CYCLE_WEEKS * 7:
+            raise HTTPException(
+                422, f"{(reviews - opens).days // 7} weeks from the betting table to the "
+                f"review meeting is not a cycle; the most this will hold is "
+                f"{MAX_CYCLE_WEEKS:g} weeks"
+            )
     rates = fields.get("availability")
     if rates is not None:
         if not isinstance(rates, dict):

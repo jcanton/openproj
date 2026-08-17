@@ -6146,6 +6146,11 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
     ]
 
 
+# Betting table to review meeting for a plan with nothing to copy from. Four
+# weeks is the team's cadence; every cycle written after the first one carries
+# its predecessor's length instead.
+_DEFAULT_CYCLE_DAYS = 28
+
 KINDS = ("project", "pitch", "task")
 
 # The body a new entity starts from, per kind.
@@ -6383,20 +6388,30 @@ _CYCLE = """
     <dd><span class="read">{{ c.starts_on }}</span>
         <input type="date" id="starts_on" name="starts_on" data-type="date"
                value="{{ c.starts_on }}" class="field"></dd>
-    <dt><label for="build_weeks">Build weeks</label></dt>
-    <dd><span class="read">{{ c.build_weeks }}</span>
-        <input id="build_weeks" name="build_weeks" data-type="number"
-               value="{{ c.build_weeks }}" class="field"></dd>
-    <dt><label for="cooldown_weeks">Cool-down weeks</label></dt>
-    <dd><span class="read">{{ c.cooldown_weeks }}</span>
-        <input id="cooldown_weeks" name="cooldown_weeks" data-type="number"
-               value="{{ c.cooldown_weeks }}" class="field"></dd>
+    <dt><label for="reviews_on">Review meeting</label></dt>
+    <dd><span class="read">{{ c.reviews_on }}</span>
+        <input type="date" id="reviews_on" name="reviews_on" data-type="date"
+               value="{{ c.reviews_on }}" class="field"></dd>
+    {#- Both of the above are meetings somebody put in a calendar. Everything
+        below is worked out from them and from the holidays, so it is written in
+        the derived style and has no box. -#}
+    <dt class="derived">Builds until</dt>
+    <dd class="derived">{{ c.builds_until }} · {{ c.build_weeks }} working weeks
+      {% if c.assumed_review %}<span class="warnish">— assumed: this cycle names
+        no review meeting</span>{% endif %}</dd>
+    <dt class="derived">Cool-down ends</dt>
+    <dd class="derived">{{ c.ends_on }}
+      {% if c.assumed_end %}<span class="warnish">— assumed: the next cycle's
+        betting table is what ends it, and there is no record after this
+        one</span>{% endif %}</dd>
   </dl>
 </form>
 
 <h2>Who is in this cycle</h2>
-<p class="hint">Availability is a fraction of the {{ c.build_weeks }} build weeks.
-  Only the people named here are in the cycle.</p>
+<p class="hint">Availability is a fraction of the {{ c.build_weeks }} working weeks
+  this cycle builds for. Only the people named here are in the cycle.
+  <span id="stale" class="warnish" hidden>The dates changed — capacity is
+    recounted when you save.</span></p>
 <table class="load"><thead><tr>
   <th></th><th>person</th><th>available</th><th>capacity</th><th>bet</th><th>load</th>
   <th>scheduled until</th></tr></thead>
@@ -6507,6 +6522,9 @@ const BASE = document.getElementById('base');
 const BAR = document.getElementById('commitbar');
 const UNSAVED = document.getElementById('unsaved');
 const NUMBER = {{ c.number }};
+// Working weeks between the two meetings, holidays taken out — the server's
+// answer, shipped rather than recomputed. See the input listener below.
+const BUILD_WEEKS = {{ c.build_weeks }};
 // What is on this page, so the shell's banner can tell a write that lands here
 // from one that lands somewhere else. The cycle record and every entity that can
 // be bet into it: those are the ids the server announces.
@@ -6587,8 +6605,7 @@ async function saveSetup() {
   // the value if it is given the value.
   const fields = {
     starts_on: setup.querySelector('[name=starts_on]').value,
-    build_weeks: setup.querySelector('[name=build_weeks]').value.trim(),
-    cooldown_weeks: setup.querySelector('[name=cooldown_weeks]').value.trim(),
+    reviews_on: setup.querySelector('[name=reviews_on]').value.trim(),
     availability,
   };
   // `null` and not the unchanged text: the write path merges a body three ways,
@@ -6761,7 +6778,7 @@ for (const input of document.querySelectorAll('#bets input.live')) {
 // Left to the next page load, the number somebody is setting is invisible at the
 // moment they are setting it — which is most of the moment that matters.
 function recount() {
-  const build = Number(document.querySelector('[name=build_weeks]').value) || 0;
+  const build = BUILD_WEEKS;
   const over = [];
   for (const row of document.querySelectorAll('#roster tr')) {
     const rate = Number(row.querySelector('input.rate').value) || 0;
@@ -6783,8 +6800,16 @@ function recount() {
   }
 }
 document.addEventListener('input', event => {
-  if (event.target.matches('input.rate, [name=build_weeks]')) recount();
+  if (event.target.matches('input.rate')) recount();
   if (event.target.closest('#setup') || event.target.matches('input.rate')) dirty();
+  // A date changes how many working weeks the cycle builds for, and that answer
+  // needs the holidays — which this page does not have and should not grow a
+  // second copy of. The column says it is out of date rather than showing a
+  // number computed by a rule that is only nearly the server's.
+  if (event.target.matches('#setup input[type=date]')) {
+    const note = document.getElementById('stale');
+    if (note) note.hidden = false;
+  }
 });
 
 function dirty() {
@@ -7004,12 +7029,10 @@ _CYCLES = """
   <p class="editbar">
     <label class="facet">number
       <input id="number" type="number" value="{{ next.number }}" min="0" max="9999"></label>
-    <label class="facet">starts
+    <label class="facet">betting table
       <input id="starts" type="date" value="{{ next.starts_on }}"></label>
-    <label class="facet">build weeks
-      <input id="build" type="number" value="{{ next.build_weeks }}" step="0.5"></label>
-    <label class="facet">cool-down
-      <input id="cooldown" type="number" value="{{ next.cooldown_weeks }}" step="0.5"></label>
+    <label class="facet">review meeting
+      <input id="reviews" type="date" value="{{ next.reviews_on }}"></label>
   </p>
   <p class="editbar">
     <button type="button" id="start">Start it</button>
@@ -7072,8 +7095,7 @@ document.getElementById('yes').onclick = async () => {
         // null and the refusal can only say "blank" about a box with a word in it.
         fields: {
           starts_on: field('starts').value,
-          build_weeks: field('build').value.trim(),
-          cooldown_weeks: field('cooldown').value.trim(),
+          reviews_on: field('reviews').value,
           availability: ROSTER,
         },
         body: null,
@@ -7293,6 +7315,18 @@ _ROLE_FILTER = {
 }
 
 
+def _resolved(plan: Cycle, index: Index) -> Cycle:
+    """One unsaved cycle, put through the same resolver a stored one goes through.
+
+    `Config.with_plans` is the only thing that turns two meetings into a build
+    end, a cool-down end and a length in working weeks. A page that did that
+    arithmetic itself would be a second implementation of the calendar, and the
+    two would disagree about a holiday the day one of them was corrected.
+    """
+    config = Config(holidays=index.holidays, cooldown_weeks=index.cooldown_weeks)
+    return config.with_plans([*index.plans.values(), plan]).plans[plan.cycle]
+
+
 def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     """Everything the cycle page shows, computed once so the markup only lays out.
 
@@ -7311,9 +7345,20 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     # model's own default length, the config window's start if there is one, and
     # the team list as a roster to correct. An empty table with an add box next
     # to it is a form nobody can tell is working.
-    proposed = plan or Cycle(cycle=number, starts_on=window[0] if window else index.today)
+    # A cycle with no record is shown as the record Save would write, resolved
+    # the same way a real one is: `with_plans` is what turns two meetings into
+    # dates and a length, and doing that arithmetic a second time here is how the
+    # form and the page start disagreeing about the same cycle.
+    proposed = plan or _resolved(
+        Cycle(
+            cycle=number,
+            starts_on=window[0] if window else index.today,
+            reviews_on=window[1] if window else None,
+        ),
+        index,
+    )
     listed = list(plan.availability) if plan else list(index.known_people)
-    ends_on = plan.ends_on.isoformat() if plan else (window[1].isoformat() if window else "")
+    ends_on = proposed.ends_on.isoformat() if proposed.ends_on else ""
 
     # Exactly who was named. Being on the roster IS being in the cycle, so a name
     # is added deliberately rather than appearing because somebody was assigned
@@ -7415,10 +7460,12 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         "recorded": plan is not None,
         "dated": window is not None,
         "starts_on": proposed.starts_on.isoformat(),
-        "builds_until": plan.builds_until.isoformat() if plan else "",
+        "reviews_on": proposed.reviews_on.isoformat() if proposed.reviews_on else "",
+        "builds_until": proposed.builds_until.isoformat() if proposed.builds_until else "",
         "ends_on": ends_on,
         "build_weeks": f"{proposed.build_weeks:g}",
-        "cooldown_weeks": f"{proposed.cooldown_weeks:g}",
+        "assumed_review": proposed.assumed_review,
+        "assumed_end": proposed.assumed_end,
         "nominal": nominal,
         "people": people,
         "held": held,
@@ -7560,18 +7607,24 @@ def render_cycles(
         # serves one; `render_static` writes six files and no cycle is among
         # them, so on a rendered plan the card names its cycle and stops there.
         per_cycle_page=links.cycle.startswith("/"),
-        # The next cycle starts when the last one ends and is the same length,
-        # because both are true far more often than not.
+        # The next cycle's betting table is the day the last one's cool-down
+        # ends, and its review meeting is as far from it as the last one's was:
+        # both are true far more often than not, and both are corrected on the
+        # new cycle's own page.
         next={
             "number": top + 1,
             # `days_after`, because the cycle this reads from may be the one
-            # somebody gave 500000 build weeks: its end is clamped to the end of
-            # the calendar, and a day past that would be `/cycles` gone too.
+            # somebody dated at the end of the calendar: a day past that would be
+            # `/cycles` gone too.
             "starts_on": days_after(ends[1], 1).isoformat()
             if ends
             else index.today.isoformat(),
-            "build_weeks": f"{last.build_weeks:g}" if last else "4",
-            "cooldown_weeks": f"{last.cooldown_weeks:g}" if last else "2",
+            "reviews_on": days_after(
+                days_after(ends[1], 1) if ends else index.today,
+                _DEFAULT_CYCLE_DAYS
+                if last is None or last.reviews_on is None
+                else (last.reviews_on - last.starts_on).days,
+            ).isoformat(),
             # Which cycle the roster below was taken from, which is the last one
             # with a record and not necessarily the last one that exists.
             "from_cycle": max(index.plans) if index.plans else top,
