@@ -3601,3 +3601,36 @@ def test_a_cycle_with_no_record_says_what_every_other_view_says_about_it(seed_in
         assert view["builds_until"] == build_end(number, window, config).isoformat(), number
         assert view["ends_on"] == window[1].isoformat(), number
         assert float(view["build_weeks"]) <= config.working_weeks(*window), number
+
+
+def test_the_page_is_allowed_to_talk_to_its_own_server(rendered: Path):
+    """Every save is a `fetch` and the live update is an `EventSource`, and both
+    are `connect-src`. It was never listed, so both fell back to
+    `default-src 'none'`: the whole app was readable and could write nothing.
+    A save reported "Failed to fetch" and the stream closed the moment it opened,
+    on every page, in every browser that enforces the policy — which is all of
+    them."""
+    from openproj.render import CSP
+
+    assert "connect-src 'self'" in CSP
+    # `'self'`, not a host: the same string has to be right on localhost and
+    # behind the service URL.
+    assert "connect-src http" not in CSP
+    assert "connect-src 'self'" in read(rendered, "index.html")
+
+
+def test_a_remembered_width_of_nothing_is_thrown_away(rendered: Path):
+    """Half-trusting one is worse than ignoring the lot. Skipped at apply time
+    the column still drew, so the table was set narrower than the columns it
+    contains and every one of them squeezed until the text wrapped; measured
+    instead, it measures the squeeze it is already in and stays there. A stored
+    `"progress":0` made the header and the first six rows up to five times their
+    height, at every window width, until the entry was deleted by hand."""
+    page = read(rendered, "index.html")
+    guard = re.search(r"function trustworthy\(stored\) \{.*?\n\}", page, re.S).group(0)
+
+    assert "some(width => !(width > 0))" in guard
+    assert "remembered.forget(WIDTH_KEY)" in guard, "cleared, not re-rejected every load"
+    assert "trustworthy(remembered.map(WIDTH_KEY))" in page
+    # And the fit that writes them never writes a nothing in the first place.
+    assert "WIDTHS[key] = Math.max(1, Math.round(width[i]))" in page

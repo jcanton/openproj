@@ -715,6 +715,13 @@ class Links(BaseModel):
 CSP = (
     "default-src 'none'; img-src 'self' data:; font-src data:; "
     "style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+    # Every save is a `fetch` and the live update is an `EventSource`, and both
+    # are `connect-src` — which was never listed, so both fell back to
+    # `default-src 'none'`. The whole app was readable and could write nothing:
+    # a save reported "Failed to fetch", the stream closed on open, and the
+    # console said so in a line about a directive nobody had typed. `'self'` and
+    # not a host, so it is right on localhost and behind the service URL both.
+    "connect-src 'self'; "
     "base-uri 'none'; form-action 'self'"
 )
 assert not set(CSP) & set('<>&"'), "a policy needing escaping cannot be written verbatim"
@@ -2736,7 +2743,26 @@ window.SHOWING = Object.keys(DATA.rows);
 // Bumped a third time when the kind chip left the id cell: a width dragged for
 // `PITCH pitch-0c0001` is 60px of empty column beside `pitch-0c0001`.
 const WIDTH_KEY = 'openproj:widths:4';
-const WIDTHS = remembered.map(WIDTH_KEY);
+const WIDTHS = trustworthy(remembered.map(WIDTH_KEY));
+
+// A remembered width of zero is not a narrow column, it is a corrupt entry — and
+// half-trusting one is worse than ignoring the lot. Skipped at apply time the
+// column still DREW, so the table was set narrower than the columns it contains
+// and every one of them squeezed until the text wrapped; measured instead, it
+// measures the squeeze it is already in and stays there. A stored
+// `"progress":0` made the header and the first six rows up to five times their
+// height, on one machine, at every window width, until that entry was deleted by
+// hand. So a map with a nothing in it is thrown away and the fit runs, which
+// heals a browser that already holds one without anybody being told to clear it.
+function trustworthy(stored) {
+  if (!Object.values(stored).some(width => !(width > 0))) return stored;
+  // Cleared, not merely ignored: left in place it is re-read and re-rejected on
+  // every load forever, and it is the first thing somebody debugging this would
+  // find and have to reason about.
+  remembered.forget(WIDTH_KEY);
+  return {};
+}
+
 // Whether the columns are still the fit's to decide. It goes false the moment a
 // grip is let go, and never comes back: after that the widths are a decision
 // somebody made, and a refit — on a resize, or when the real face lands — would
@@ -2935,7 +2961,9 @@ function fitWidths() {
     const kept = new Set(drawn.map(one => one[0]));
     SHED.forEach(key => table.classList.toggle(shedClass(key), !kept.has(key)));
     const width = fitted(drawn.map(one => one[1]), drawn.map(one => one[0]), room);
-    drawn.forEach(([key], i) => { WIDTHS[key] = width[i]; });
+    // Floored, because a fit that squeezes a column to nothing writes a nothing
+    // into storage that outlives the window it was measured in.
+    drawn.forEach(([key], i) => { WIDTHS[key] = Math.max(1, Math.round(width[i])); });
     applyWidths();
   };
   fit(scroller.clientWidth);
