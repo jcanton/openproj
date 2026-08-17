@@ -1,71 +1,59 @@
 # Deploying openproj
 
-Four steps, in this order. Step 3 depends on the URL that step 4 creates, so the
-last two are done twice — that circularity is real and is called out where it bites.
+Four steps. Everything that could be done without your credentials is done: the
+push credential is implemented and proven against a private repository, the
+container clones with it, and a half-configured deployment is refused at startup
+rather than silently failing to push.
 
-**One gap before any of this is useful:** the push credential is not wired into the
-code yet. `Store.push()` calls libgit2 with no callbacks, which works for a
-`file://` remote and for anonymous fetch, and fails against an authenticated
-GitHub remote. See [§0](#0-the-remaining-code-gap). Everything else below is ready.
+What is left needs your GitHub org and your Google account, and is below.
 
----
-
-## 0. The remaining code gap
-
-`src/openproj/store.py` pushes with `callbacks=None`. For GitHub it needs a
-`pygit2.RemoteCallbacks` supplying `UserPass("x-access-token", <installation token>)`,
-and something to mint that token. The place is `Store._finish`, and the shape is:
-
-```python
-def _credentials(self) -> pygit2.RemoteCallbacks | None:
-    """A GitHub App installation token, minted per push.
-
-    Never held long enough to expire: one is minted per push and cached only
-    inside a safety margin, so "the token expired mid-write" cannot happen.
-    """
-```
-
-Minting is two API calls (~300–400 ms): sign a short-lived RS256 JWT with the App's
-private key, then `POST /app/installations/{id}/access_tokens`. The token lives one
-hour and is scoped to whatever the *installation* covers — which is the whole point
-of step 2.
-
-Until that lands, run against a local bare repo (`--repo /srv/plan.git` with no
-remote) and the tool works exactly as it does now, minus durability.
+**Does it work with private repositories?** Yes, and it is now the tested path.
+An installation token authenticates a clone, a fetch and a push regardless of
+visibility. Verified end to end against `jcanton/icon4py-plan` while it was
+private: cloned, wrote a record, pushed, `pushed: True`, the commit appeared on
+GitHub authored by a person. Private also costs nothing here — the only thing the
+old note claimed for public was unlimited Actions minutes, and a private repo on
+the Free plan gets 2,000 a month, which a nightly check will not come close to.
 
 ---
 
-## 1. Create the plan repository
+## What is already done
 
-The plan is a **different repository from this one**. See the README's "Two
-repositories" — a plan commit must not run the tool's CI, and the write credential
-must be structurally incapable of touching source.
+- `Store` takes a credential and asks it for callbacks **per push**, not once at
+  startup — an installation token lives under an hour and a server lives for
+  weeks.
+- `GitHubApp` signs the RS256 assertion, exchanges it for an installation token,
+  and caches that token until five minutes before it expires.
+- `deploy/boot.py` clones with the same credential.
+- `create_app` **refuses to start** if `OPENPROJ_REMOTE` names an https remote and
+  no credential is configured. Without that check the tool looks like it is
+  working while every commit stays on one container's disk until it is replaced.
+- `GitHubApp.from_environment` returns `None` unless all three variables are set:
+  two of three is a deployment somebody stopped half way through.
+
+---
+
+## 1. The plan repository
+
+Already created: **`jcanton/icon4py-plan`**, private, skeleton only.
+
+**Turn on branch protection for `main`** before the service can write to it: block
+force-push and deletion. The server only ever fast-forwards, so this costs
+nothing and converts "history destroyed" into "revert three commits".
 
 ```bash
-gh repo create C2SM/icon4py-plan --public \
-  --description "openproj plan data for icon4py. Edited at <service URL>."
-
-# Seed it from the demo corpus, or from nothing and create entities in the UI.
-git init -b main /tmp/plan && cp -R seed/. /tmp/plan/
-cd /tmp/plan && rm -f README.md
-git add -A && git commit -m "Seed the plan" && \
-  git remote add origin git@github.com:C2SM/icon4py-plan.git && git push -u origin main
+gh api -X PUT repos/jcanton/icon4py-plan/branches/main/protection \
+  -H "Accept: application/vnd.github+json" \
+  -f 'required_status_checks=null' -F 'enforce_admins=true' \
+  -f 'required_pull_request_reviews=null' -f 'restrictions=null' \
+  -F 'allow_force_pushes=false' -F 'allow_deletions=false'
 ```
-
-**Public**, unless you decide otherwise: reads are public by design, `derived/` renders
-on GitHub as a fallback UI when the service is down, and a public repo gets unlimited
-free Actions minutes. The only thing that argued for private was a per-person
-availability roster, and the design uses a single global figure instead.
-
-**Then turn on branch protection** for `main`: block force-push and deletion. The
-server only ever fast-forwards, so this costs nothing and converts "history
-destroyed" into "revert three commits". Do it before the service can write, not after.
 
 ---
 
-## 2. Mint a push credential scoped to that repo alone
+## 2. The GitHub App — the credential the server writes with
 
-Use a **GitHub App**, not a PAT and not a deploy key. The ranking is not close:
+A **GitHub App**, not a PAT and not a deploy key:
 
 | | scope | tied to a person | if it leaks |
 |---|---|---|---|
@@ -73,77 +61,80 @@ Use a **GitHub App**, not a PAT and not a deploy key. The ranking is not close:
 | Deploy key | one repo | no | **valid forever**, until a human notices |
 | **App installation token** | **one repo** | no | **expires in under an hour** |
 
-The PAT also breaks the audit story: every commit's *committer* would trace to a
-human's token, which is exactly what the author/committer split exists to avoid.
+A PAT also breaks the audit story: every commit's *committer* would trace to a
+human's token, which is what the author/committer split exists to avoid.
 
-**Once, in the C2SM org:**
+**Once, at https://github.com/settings/apps/new** (a personal App, since the repo
+is under your account; move it to the C2SM org if the tool is adopted):
 
-1. Create a GitHub App. Repository permission **Contents: Read and write**, and
-   nothing else. No org permissions, no account permissions, no webhook.
-2. Install it on **exactly one repository** — `C2SM/icon4py-plan`. Not "all
-   repositories". This installation scope *is* the guarantee: the credential cannot
-   name `icon4py` or `gt4py`, because the installation does not include them.
-3. Generate a private key (PEM). Note the App's **client ID**, and get the
-   **installation ID** from `gh api /app/installations`.
-4. Store the PEM in Secret Manager. The client ID and installation ID are not
-   secret and go in plain env vars.
-
-```bash
-gcloud secrets create openproj-app-key   --data-file=app-key.pem
-gcloud secrets create openproj-session-secret        # python -c "import secrets;print(secrets.token_urlsafe(48))"
-gcloud secrets create openproj-oauth-client-secret   # from step 3
-```
-
-**Why Secret Manager and not `--set-env-vars`:** a plain env var is stored in the
-revision's metadata, so it is readable by anyone with `roles/run.viewer`, appears in
-`gcloud run services describe`, lands in shell history, and persists in every past
-revision forever.
-
-**A dedicated runtime service account**, because the Compute Engine default one may
-carry Editor:
+1. **Name** anything free, e.g. `openproj-icon4py`. **Homepage** the service URL
+   or the repo. **Uncheck Webhook → Active.**
+2. **Repository permissions → Contents: Read and write.** Nothing else. No
+   account permissions, no org permissions.
+3. Create it, then **Install App** → *Only select repositories* →
+   **`icon4py-plan`** alone. This installation scope *is* the guarantee: the
+   credential cannot name `icon4py` or `gt4py`, because the installation does not
+   include them.
+4. On the App's page, note the **App ID**. Generate a **private key** and keep the
+   downloaded `.pem`.
+5. Get the **installation id**:
 
 ```bash
-gcloud iam service-accounts create openproj-run --display-name "openproj Cloud Run runtime"
-for S in openproj-session-secret openproj-oauth-client-secret openproj-app-key; do
-  gcloud secrets add-iam-policy-binding "$S" \
-    --member "serviceAccount:openproj-run@${PROJECT}.iam.gserviceaccount.com" \
-    --role roles/secretmanager.secretAccessor
-done
+gh api /app/installations --jq '.[] | "\(.id)  \(.account.login)"'   # needs the App JWT
+# easier: open the installation's settings page, the id is the last path segment of
+# https://github.com/settings/installations/<INSTALLATION_ID>
 ```
 
-That account needs **no other GCP permission**. It reads three secrets and talks to
-github.com. That is the entire surface.
+**Check it works before deploying anything** — this uses the code that ships:
+
+```bash
+cd ~/projects/openproj
+OPENPROJ_APP_ID=<app id> \
+OPENPROJ_INSTALLATION_ID=<installation id> \
+OPENPROJ_APP_KEY=/path/to/app-key.pem \
+uv run python -c "
+from openproj.github import GitHubApp
+import os
+app = GitHubApp.from_environment(dict(os.environ))
+print('token minted, first 8:', app.token()[:8])
+"
+```
+
+A token printed means the App, the key and the installation all line up. A 401
+means the key does not match the App; a 404 means the installation id is wrong.
 
 ---
 
-## 3. Register the OAuth app for sign-in
+## 3. The OAuth app — how a person signs in
 
-Separate from the GitHub App in step 2, and doing a different job: step 2 lets the
-*server* write to one repository; this lets a *person* prove who they are.
+Separate from step 2 and doing a different job: step 2 lets the *server* write to
+one repository, this lets a *person* prove who they are.
 
-In the C2SM org, create an **OAuth App**:
+At **https://github.com/settings/developers → New OAuth App**:
 
 - **Homepage URL:** the service URL.
-- **Authorization callback URL:** `<service URL>/auth/callback` — exactly, including
-  the scheme. GitHub matches the host (excluding subdomains) and port exactly, and
-  requires the path to be a subdirectory of the registered callback.
-- Record the **client ID** (not secret) and generate a **client secret**
-  (`gcloud secrets versions add openproj-oauth-client-secret --data-file=-`).
+- **Authorization callback URL:** `<service URL>/auth/callback`, exactly,
+  including the scheme.
+- Record the **client ID** and generate a **client secret**.
 
-**The scope is `read:org` and nothing else.** Never `repo`: a `repo`-scoped login
-would put ~30 write-capable GitHub tokens in the session store. The token here
-establishes identity once and is discarded — it is never stored in the session and
-never used to push.
+**The scope is `read:org` and nothing else.** Never `repo`: that would put a
+write-capable GitHub token in every session. The token here establishes identity
+once and is discarded.
 
-**The circularity:** the callback needs the service URL, and the service URL exists
-only after the first deploy. So: deploy once (step 4) with `OPENPROJ_AUTH=dev` and no
-OAuth values, read the `*.run.app` URL off the deploy output, register the app
-against it, then redeploy with `OPENPROJ_AUTH=github`. The `*.run.app` hostname is
-stable across revisions, so this is a one-time dance.
+**`OPENPROJ_ORG` decides who may write** — it is checked against org membership,
+and it is not where the repo lives. Keep `C2SM` even though the repository is
+under your account: the question is "is this person on the team", and the answer
+still comes from C2SM.
 
-**For local testing**, register a second OAuth app with callback
+**The circularity:** the callback needs the service URL, and the URL exists only
+after the first deploy. So deploy once with `OPENPROJ_AUTH=dev`, read the
+`*.run.app` URL, register the app against it, redeploy with
+`OPENPROJ_AUTH=github`. The hostname is stable across revisions, so this is a
+one-time dance.
+
+For local testing register a second OAuth app with callback
 `http://127.0.0.1:8000/auth/callback` — GitHub special-cases loopback, so any port
-matches a registered `127.0.0.1` callback.
+matches.
 
 ---
 
@@ -152,9 +143,28 @@ matches a registered `127.0.0.1` callback.
 ```bash
 PROJECT=<your gcp project>
 REGION=europe-west1
-SHA=$(git rev-parse --short HEAD)
 
-gcloud artifacts repositories create openproj --repository-format=docker --location=$REGION
+gcloud auth login
+gcloud config set project $PROJECT
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com secretmanager.googleapis.com
+
+gcloud secrets create openproj-app-key --data-file=/path/to/app-key.pem
+python -c "import secrets;print(secrets.token_urlsafe(48))" \
+  | gcloud secrets create openproj-session-secret --data-file=-
+printf '%s' '<oauth client secret>' \
+  | gcloud secrets create openproj-oauth-client-secret --data-file=-
+
+gcloud iam service-accounts create openproj-run --display-name "openproj Cloud Run runtime"
+for S in openproj-session-secret openproj-oauth-client-secret openproj-app-key; do
+  gcloud secrets add-iam-policy-binding "$S" \
+    --member "serviceAccount:openproj-run@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/secretmanager.secretAccessor
+done
+
+gcloud artifacts repositories create openproj \
+  --repository-format=docker --location=$REGION
+SHA=$(git rev-parse --short HEAD)
 gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/openproj/openproj:$SHA
 
 gcloud run deploy openproj \
@@ -162,58 +172,66 @@ gcloud run deploy openproj \
   --region $REGION \
   --allow-unauthenticated \
   --service-account openproj-run@$PROJECT.iam.gserviceaccount.com \
-  --cpu 1 --memory 512Mi \
-  --cpu-throttling --cpu-boost \
-  --concurrency 80 \
-  --min-instances 0 --max-instances 1 \
-  --timeout 300 \
+  --cpu 1 --memory 512Mi --cpu-boost \
+  --concurrency 80 --min-instances 0 --max-instances 1 --timeout 300 \
   --set-env-vars OPENPROJ_AUTH=github,OPENPROJ_ORG=C2SM \
-  --set-env-vars OPENPROJ_REMOTE=https://github.com/C2SM/icon4py-plan.git \
+  --set-env-vars OPENPROJ_REMOTE=https://github.com/jcanton/icon4py-plan.git \
   --set-env-vars OPENPROJ_CLIENT_ID=<oauth client id> \
+  --set-env-vars OPENPROJ_APP_ID=<app id> \
+  --set-env-vars OPENPROJ_INSTALLATION_ID=<installation id> \
+  --set-env-vars OPENPROJ_APP_KEY=/secrets/app-key.pem \
   --set-secrets OPENPROJ_SECRET=openproj-session-secret:1 \
   --set-secrets OPENPROJ_CLIENT_SECRET=openproj-oauth-client-secret:1 \
   --set-secrets /secrets/app-key.pem=openproj-app-key:latest
 ```
 
+**Secrets go in Secret Manager, not `--set-env-vars`.** A plain env var is in the
+revision's metadata: readable by anyone with `roles/run.viewer`, printed by
+`gcloud run services describe`, in your shell history, and in every past revision
+forever. The App ID and installation id are *not* secret and are fine as env vars.
+
 **The flags that are not decoration:**
 
-- **`--max-instances 1` and `--concurrency 80`.** High concurrency is deliberate and
-  is the opposite of the usual instinct for a single-writer app. One instance is what
-  makes the `flock` mean anything; high concurrency is what keeps the instance count
-  at one. Lowering concurrency here does not increase safety — it destroys it.
-  Note that max-instances *"can be exceeded for a brief period"*, so the `flock` is
-  the real guard and this only makes the second instance unlikely.
-- **`--min-instances 0`.** One instance running for a month is 2,592,000
-  instance-seconds against a 180,000 vCPU-second grant — **14× the free tier**. State
-  the zero explicitly so nobody "optimises" it later.
-- **Never `--no-cpu-throttling`.** It is a two-to-three-order-of-magnitude cost
-  increase from a flag whose name mentions neither billing nor instances. Google's
-  Recommender will periodically suggest it. For a scale-to-zero service it is wrong.
-- **`--cpu 1`, not less.** Below 1 vCPU, Cloud Run forces concurrency to 1, which
-  would mean one instance per in-flight request — catastrophic for a single-writer app.
-- **Pin secret versions** for the two env-var secrets. With `:latest`, two concurrent
-  instances can hold different session keys, and a cookie minted by one is rejected
-  by the other. The PEM is a volume mount instead, so rotation lands without a
-  redeploy.
+- **`--max-instances 1` with `--concurrency 80`.** High concurrency is deliberate
+  and is the opposite of the usual instinct. One instance is what makes the
+  `flock` mean anything; high concurrency is what keeps the count at one.
+  Lowering concurrency here does not increase safety, it destroys it. Note
+  max-instances *can* be briefly exceeded, so the `flock` is the real guard.
+- **`--min-instances 0`.** One instance for a month is 2,592,000 instance-seconds
+  against a 180,000 vCPU-second grant — **14× the free tier**.
+- **Never `--no-cpu-throttling`.** Two to three orders of magnitude more expensive,
+  from a flag whose name mentions neither billing nor instances. Google's
+  Recommender will suggest it periodically. For a scale-to-zero service it is wrong.
+- **`--cpu 1`, not less.** Below 1 vCPU Cloud Run forces concurrency to 1, which
+  means one instance per in-flight request — catastrophic for a single-writer app.
+- **Pin the two env-var secret versions.** With `:latest`, two instances can hold
+  different session keys and a cookie minted by one is rejected by the other. The
+  PEM is a file mount instead, so rotating it needs no redeploy.
 
 **Verify, in this order:**
 
 ```bash
-curl -s $URL/healthz                     # {"ok":true,"head":"..."}
-curl -s -o /dev/null -w '%{http_code}\n' $URL/graph   # 200, not 500 — proves static/ resolved
-curl -s -X PATCH $URL/api/entity/<id> -d '{}'         # 401 — writes are gated
+URL=$(gcloud run services describe openproj --region $REGION --format='value(status.url)')
+curl -s $URL/healthz                                  # {"ok":true,"head":"..."}
+curl -s -o /dev/null -w '%{http_code}\n' $URL/graph   # 200, not 500 — static/ resolved
+curl -s -X PATCH $URL/api/entity/x -d '{}'            # 401 — writes are gated
+gcloud run services logs read openproj --region $REGION --limit 20 | grep cloning
 ```
 
-`/graph` is the one worth checking explicitly: `static/` is not in the wheel, and a
-container that resolved it wrongly serves every other page fine and 500s only there.
+`/graph` is the one worth checking explicitly: `static/` is not in the wheel, and
+a container that resolved it wrongly serves every other page fine and 500s only
+there. The `cloning` line proves the credential worked on a cold start — if it is
+missing and the service is up, it is serving an empty plan it made itself.
 
 ---
 
 ## Day one, before anybody else uses it
 
-- Three org owners on `C2SM`, across at least two institutions.
-- Branch protection on the plan repo's `main`.
+- Branch protection on `icon4py-plan`'s `main` (step 1).
 - A nightly `git clone --mirror` of the plan somewhere off GitHub.
-- The runtime service account holding `secretAccessor` on three secrets and nothing else.
-- This file updated with the real service URL, so the next person does not have to
-  reconstruct it.
+- The runtime service account holding `secretAccessor` on three secrets and
+  nothing else.
+- This file updated with the real service URL, so the next person does not have
+  to reconstruct it.
+- If the tool is adopted: move both repositories to `C2SM`, reinstall the App
+  there, and change `OPENPROJ_REMOTE`. Nothing else changes.

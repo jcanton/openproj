@@ -173,10 +173,19 @@ def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, st
 class Store:
     """One writer over one bare repository."""
 
-    def __init__(self, repo_path: Path, remote: str | None = None) -> None:
+    def __init__(
+        self,
+        repo_path: Path,
+        remote: str | None = None,
+        credentials: object | None = None,
+    ) -> None:
+        """`credentials` is anything with a `callbacks()` returning pygit2's, or
+        None for a remote that needs none — a `file://` path, or no remote at all,
+        which is every test and every development run."""
         self._path = Path(repo_path)
         self._repo = pygit2.Repository(str(repo_path))
         self._remote = remote
+        self._credentials = credentials
         if remote:
             existing = {r.name for r in self._repo.remotes}
             if _ORIGIN in existing:
@@ -280,7 +289,7 @@ class Store:
         if not self._remote:
             return None
         before = self._remote_head()
-        self._repo.remotes[_ORIGIN].fetch(callbacks=None)
+        self._repo.remotes[_ORIGIN].fetch(callbacks=self._callbacks())
         after = self._remote_head()
         return after if after != before else None
 
@@ -301,8 +310,18 @@ class Store:
                 f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
                 "refusing to guess which commits to discard"
             )
-        self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=None)
+        self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks())
         return True
+
+    def _callbacks(self):
+        """Credentials for the remote, minted per call.
+
+        Per call and not per Store: an installation token lives under an hour and
+        a server lives for weeks, so a credential fetched once at startup is a
+        credential that stops working on a Tuesday afternoon with no deploy to
+        blame. The token itself is cached behind this — see `GitHubApp.token`.
+        """
+        return self._credentials.callbacks() if self._credentials else None
 
     # -- writing ------------------------------------------------------------
 

@@ -99,6 +99,7 @@ def _serve(args) -> int:
     it long after the process is gone.
     """
 
+    from .github import GitHubApp
     from .web import create_app
 
     app = create_app(
@@ -108,6 +109,10 @@ def _serve(args) -> int:
         secret=os.environ.get("OPENPROJ_SECRET", "dev-secret"),
         client_id=os.environ.get("OPENPROJ_CLIENT_ID", ""),
         client_secret=os.environ.get("OPENPROJ_CLIENT_SECRET", ""),
+        # A remote and its credential both come from the environment, so a
+        # development run needs neither and a deployment sets both or is refused.
+        remote=os.environ.get("OPENPROJ_REMOTE", ""),
+        credentials=GitHubApp.from_environment(dict(os.environ)),
     )
     # proxy_headers matters behind Cloud Run: TLS is terminated upstream, and
     # without it the app believes it is serving plain HTTP and stops marking the

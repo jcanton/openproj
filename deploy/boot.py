@@ -18,17 +18,26 @@ from pathlib import Path
 
 import pygit2
 
+from openproj.github import GitHubApp
+
 
 def main() -> int:
     repo = Path(os.environ.get("OPENPROJ_REPO", "/srv/plan.git"))
     remote = os.environ.get("OPENPROJ_REMOTE", "")
+    # The same credential the server pushes with. The clone needs it too, and a
+    # private plan repository is the ordinary case rather than the exception —
+    # without this the first boot fails with libgit2's "unexpected HTTP status
+    # code: 404", which reads like a wrong URL and is a missing token.
+    app = GitHubApp.from_environment(dict(os.environ))
 
     if not repo.exists():
         if not remote:
             print("OPENPROJ_REMOTE is unset and there is no local plan repository", file=sys.stderr)
             return 2
         print(f"cloning {remote.split('@')[-1]} into {repo}", flush=True)
-        pygit2.clone_repository(remote, str(repo), bare=True)
+        pygit2.clone_repository(
+            remote, str(repo), bare=True, callbacks=app.callbacks() if app else None
+        )
 
     return subprocess.call(
         [

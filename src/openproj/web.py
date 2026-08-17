@@ -468,6 +468,8 @@ def create_app(
     secret: str = "dev-secret",
     client_id: str = "",
     client_secret: str = "",
+    remote: str = "",
+    credentials: object | None = None,
 ) -> FastAPI:
     if auth == "github":
         if secret in _DEV_SECRETS:
@@ -481,7 +483,17 @@ def create_app(
                 "complete a sign-in, so nobody could ever write."
             )
 
-    store = Store(Path(repo))
+    if remote and credentials is None and not remote.startswith("file:"):
+        # A remote that needs a credential and has none pushes anonymously, which
+        # GitHub refuses — and `_finish` swallows that into `pushed: False`. The
+        # tool would look like it was working while every commit stayed on one
+        # container's disk until it was replaced.
+        raise ValueError(
+            f"refusing to start: a remote at {remote} needs a credential and none is "
+            "configured. Set OPENPROJ_APP_ID, OPENPROJ_INSTALLATION_ID and "
+            "OPENPROJ_APP_KEY, or drop OPENPROJ_REMOTE to run against the local repo."
+        )
+    store = Store(Path(repo), remote=remote or None, credentials=credentials)
     app = FastAPI(title="openproj")
 
     @app.middleware("http")
