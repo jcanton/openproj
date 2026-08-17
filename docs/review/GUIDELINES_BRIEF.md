@@ -101,6 +101,50 @@ Say plainly that a hostile-versus-benign comparison cannot see a defect that
 affects both, and that a corpus which does not contain the one string that matters
 proves nothing.
 
+### 4b. Design rules worth stating, and one job to do while stating them
+
+These came from reading the `frontend-design` plugin, which we decided **not** to
+install: it is written for greenfield work with an open visual brief, where the
+risk is looking templated, and this is a dense internal tool with an identity
+already. Four of its points survive that translation and belong here, because each
+one names something this branch got wrong or nearly did.
+
+- **Watch selector specificity.** The plugin's warning — it is easy to write CSS
+  classes that cancel each other out — is exactly the two worst regressions on this
+  branch: `dd, td.edit { position: relative }` in one page's stylesheet stole
+  `position: sticky` from the table's title column and shifted it 187px over two
+  other columns, and the `.table-scroll` qualifier added to fix *that* then
+  outranked three rules written to override it. Twice, in one file, in one week.
+  When you qualify a selector to win a fight, check what else it now beats.
+- **Structure is information.** A structural device should encode something true,
+  not decorate. The status ladder is the example: the order means "how far this is
+  from the page's ground", which is why it survives colour blindness instead of
+  merely looking tidy. A device that encodes nothing is a device to cut.
+- **Copy is design material, not decoration.** Name things by what a person
+  controls, never by how the system is built — `missing_required_fields` was on
+  screen for months. A control says exactly what happens and keeps the same word
+  through the flow. Errors say what went wrong and how to fix it, without
+  apologising and without vagueness. An empty screen is an invitation to act, which
+  is finding F1 stated as a rule.
+- **There is a quality floor, and you meet it without announcing it**: responsive,
+  visible keyboard focus, reduced motion respected.
+
+**The job.** That last one is not yet true here. There is exactly one `transition`
+in the whole application — the detail page's drag grip at `render.py:5063`,
+`opacity .15s, background .15s` — and no `prefers-reduced-motion` block anywhere.
+It is a small thing and the fix is a few lines, but the rule is only worth writing
+down if the code obeys it: add the `@media (prefers-reduced-motion: reduce)` block,
+confirm it is the only motion in the app, and then state the floor in AGENTS.md as
+something the code actually meets. If you find other motion, handle it too and say
+what you found.
+
+**And the practice worth stealing outright:** take a screenshot. The plugin puts it
+as "a picture is worth 1000 tokens", and this branch is the proof — the defects
+that survived longest were the ones no agent could see, because none of them had a
+browser. The frozen-column edge resolved to the correct value in the stylesheet and
+painted no pixel; the Gantt drew every bar 140px wide for a whole round. If a claim
+is about pixels, look at the pixels.
+
 ### 5. How to test here
 
 - Test the behaviour in the medium where it happens.
