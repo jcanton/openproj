@@ -17,7 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from openproj.index import COMPUTED_PREDICATES, Index, apply_filters, build_index
+from openproj.index import (
+    COMPUTED_PREDICATES,
+    Index,
+    _matches_predicate,
+    apply_filters,
+    build_index,
+)
 from openproj.model import Config, Entity, Pitch, Project, Task, load_repo, parse_text, validate_all
 from openproj.schedule import schedule
 
@@ -648,3 +654,70 @@ def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(s
     assert _ordered("status", {"done", "wip"}) == ["done", "wip"]
     assert _ordered("priority", {"low", "high"}) == ["high", "low"]
     assert _ordered("owner", {"bo", "ann"}) == ["ann", "bo"]
+
+
+# --- automations that cannot be wrong ---------------------------------------
+
+
+def test_a_pr_reference_is_searchable(demo_root: Path):
+    """"Which entity is #1364?" is asked in front of a screen, and the answer was
+    findable only if the number also happened to appear in the prose."""
+    entities, config = load_repo(demo_root)
+    index = build_index(entities, config, TODAY)
+    cited = {ref for e in index.entities.values() for ref in e.prs}
+    assert cited, "the demo corpus cites PRs"
+
+    for ref in cited:
+        number = ref.split("#")[1]
+        assert [i for i, blob in index.search_blob.items() if number in blob], ref
+
+
+def test_work_running_past_its_cycles_build_is_a_filter(demo_root: Path):
+    """Shape Up's circuit breaker. Derived from dates the tool already has, rather
+    than from anything a person remembers to set."""
+    entities, config = load_repo(demo_root)
+    index = build_index(entities, config, TODAY)
+    caught = [i for i in index.entities if _matches_predicate(index, i, "past_cycle_build")]
+
+    assert caught, "the demo corpus has work running past its build"
+    for entity_id in caught:
+        entity = index.entities[entity_id]
+        assert entity.status == "in_progress"
+        assert index.spans[entity_id].end > index.build_end(entity.cycle)
+
+
+def test_the_build_end_a_predicate_uses_is_the_one_the_timeline_uses(seed_index: Index):
+    """Rebuilding a Config to ask would substitute the default cool-down for the
+    repository's own, and a filter that quietly disagrees with the timeline it
+    explains is worse than no filter."""
+    from openproj.model import Config, Cycle
+    from openproj.schedule import build_end
+
+    config = Config(
+        cycles=seed_index.cycles,
+        plans=seed_index.plans,
+        cooldown_weeks=seed_index.cooldown_weeks,
+    )
+    for number, window in seed_index.cycles.items():
+        assert seed_index.build_end(number) == build_end(number, window, config)
+
+    # And the carried figure is the repository's, not the default.
+    odd = Config(cycles={9: (date(2026, 1, 5), date(2026, 3, 1))}, cooldown_weeks=1.0)
+    assert build_index([], odd, date(2026, 1, 5)).cooldown_weeks == 1.0
+    assert isinstance(seed_index.plans.get(37), (Cycle, type(None)))
+
+
+def test_an_entity_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):
+    """Opening a PR early to get CI machine time is a good habit; a validation
+    rule against it would teach people to stop listing PRs. It is a filter."""
+    from openproj.model import Task, validate_all
+
+    loose = Task(id="task-ff0001", kind="task", title="x", status="in_progress")
+    index = build_index([loose], Config(), date(2026, 8, 17))
+
+    assert _matches_predicate(index, "task-ff0001", "in_progress_without_prs")
+    assert not any(
+        "pr" in problem.message.lower() and problem.severity == "blocker"
+        for problem in validate_all([loose], Config())
+        if problem.field == "prs"
+    )

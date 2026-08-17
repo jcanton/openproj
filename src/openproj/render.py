@@ -4330,17 +4330,166 @@ def _status_paint_css() -> str:
 _COMBOBOX = r"""
 <script id="suggest" type="application/json">{{ suggest|tojson }}</script>
 <script>
+// Every programmatic edit to a textarea goes through here.
+//
+// `textarea.value = ...` wipes the browser's native undo stack: paste a diagram
+// into a four-hundred-line pitch, press ctrl-Z, and the last ten minutes are
+// gone with no way back. `execCommand('insertText')` is deprecated and is also
+// the only API in any shipping browser that edits a textarea as though a person
+// had typed — one undo step, selection handled, `input` fired for free. The
+// fallback keeps the feature working if it is ever removed; it loses undo, which
+// is the least bad of the things that can be lost.
+function replaceRange(area, text) {
+  area.focus();
+  if (document.execCommand && document.execCommand('insertText', false, text)) return;
+  const {selectionStart: from, selectionEnd: to} = area;
+  area.value = area.value.slice(0, from) + text + area.value.slice(to);
+  area.selectionStart = area.selectionEnd = from + text.length;
+  area.dispatchEvent(new Event('input', {bubbles: true}));
+}
+
+
+// A small toolbar, sized to what this team writes rather than to what an editor
+// usually offers. Counted across the seed and the migrated HackMD corpus: 485
+// lines carry an inline code span, 161 a bullet, 124 a heading, 83 bold — and
+// eight carry a markdown link, which is why there is no link button: people write
+// `C2SM/icon4py#1364` bare and the renderer already turns it into a link.
+//
+// The two code buttons are here for a different reason than frequency, and it is
+// the better reason. The team types on a mix of US and Swiss-German layouts, and
+// on CH a backtick is a dead key — so a fence is three of them in a row, and the
+// two fenced blocks in the whole corpus are a measure of how awkward that is
+// rather than of how little code people would paste. A button is worth more than
+// a count here.
+const FORMATS = [
+  {key: 'b', label: 'B', title: 'Bold  ⌘B', wrap: '**'},
+  {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
+  {key: 'e', label: '<>', title: 'Code  ⌘E', wrap: '`'},
+  {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
+  {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
+  {key: '8', label: '•', title: 'Bullet  ⌘8', prefix: '- '},
+  {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
+];
+
+function lineRange(area) {
+  const from = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1;
+  let to = area.value.indexOf('\n', area.selectionEnd);
+  return [from, to === -1 ? area.value.length : to];
+}
+
+function applyMark(area, mark) {
+  if (mark.fence) {
+    // Whole lines, and on their own lines: a fence only opens a block if nothing
+    // shares its line, so wrapping a selection in place would produce three
+    // paragraphs of literal backticks.
+    const [from, to] = lineRange(area);
+    const chosen = area.value.slice(from, to);
+    const fenced = /^```/.test(chosen) && /```$/.test(chosen);
+    area.setSelectionRange(from, to);
+    if (fenced) {
+      const inner = chosen.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
+      replaceRange(area, inner);
+      area.setSelectionRange(from, from + inner.length);
+      return;
+    }
+    replaceRange(area, '```\n' + chosen + '\n```');
+    // The caret lands on the language, which is the one word you type before the
+    // code and cannot paste from anywhere.
+    area.setSelectionRange(from + 3, from + 3);
+    return;
+  }
+  if (mark.prefix) {
+    // Whole lines, and a toggle: pressing bullet twice is how somebody undoes a
+    // bullet, and it costs one `startsWith`.
+    const [from, to] = lineRange(area);
+    const lines = area.value.slice(from, to).split('\n');
+    const on = lines.every(line => line.startsWith(mark.prefix));
+    const next = lines
+      .map(line => (on ? line.slice(mark.prefix.length) : mark.prefix + line))
+      .join('\n');
+    area.setSelectionRange(from, to);
+    replaceRange(area, next);
+    area.setSelectionRange(from, from + next.length);
+    return;
+  }
+  const {selectionStart: from, selectionEnd: to} = area;
+  const chosen = area.value.slice(from, to);
+  const width = mark.wrap.length;
+  const wrapped =
+    area.value.slice(from - width, from) === mark.wrap &&
+    area.value.slice(to, to + width) === mark.wrap;
+  if (wrapped) {
+    // Already marked: unwrap, taking the marks with it rather than leaving a
+    // stray pair behind for somebody to delete by hand.
+    area.setSelectionRange(from - width, to + width);
+    replaceRange(area, chosen);
+    area.setSelectionRange(from - width, to + width - 2 * width);
+    return;
+  }
+  replaceRange(area, mark.wrap + chosen + mark.wrap);
+  // An empty selection leaves the caret between the marks, ready to type. A
+  // selection stays selected, so a second press undoes it.
+  if (chosen) area.setSelectionRange(from + width, to + width);
+  else area.setSelectionRange(from + width, from + width);
+}
+
+const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
+
+function attachEditing(area, bar) {
+  if (bar) {
+    for (const mark of FORMATS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'mark';
+      button.textContent = mark.label;
+      button.title = mark.title;
+      if (mark.style) button.setAttribute('style', mark.style);
+      // mousedown, not click: click runs after the textarea has lost focus and
+      // with it the selection the mark is supposed to apply to.
+      button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };
+      bar.append(button);
+    }
+  }
+
+  area.addEventListener('keydown', event => {
+    if (event.metaKey || event.ctrlKey) {
+      const mark = FORMATS.find(
+        m => m.key === event.key.toLowerCase() && !!m.shift === event.shiftKey
+      );
+      if (mark && !event.altKey) {
+        event.preventDefault();
+        applyMark(area, mark);
+      }
+      return;
+    }
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    // Enter continues a list, which is the one thing everybody misses from
+    // HackMD within a minute. An empty item ends the list instead of making
+    // another empty one, which is how every editor that does this behaves.
+    const [from] = lineRange(area);
+    const line = area.value.slice(from, area.selectionStart);
+    const parts = LIST_ITEM.exec(line);
+    if (!parts) return;
+    event.preventDefault();
+    const [, indent, bullet, gap, box, text] = parts;
+    if (!text.trim()) {
+      area.setSelectionRange(from, area.selectionEnd);
+      replaceRange(area, '');
+      return;
+    }
+    const next = /^\d+\./.test(bullet)
+      ? `${parseInt(bullet, 10) + 1}.`
+      : bullet;
+    replaceRange(area, `\n${indent}${next}${gap}${box ? '[ ] ' : ''}`);
+  });
+}
+
 // Paste or drop an image and it goes into the plan repository, content-addressed,
 // and the markdown that names it is inserted where the cursor is. The path is
 // written repository-relative so the same text reads correctly in git, on GitHub
 // and here — only the prefix in front of it differs.
 function attachUploads(area, status) {
-  function insert(markdown) {
-    const at = area.selectionStart;
-    area.value = area.value.slice(0, at) + markdown + area.value.slice(area.selectionEnd);
-    area.selectionStart = area.selectionEnd = at + markdown.length;
-    area.dispatchEvent(new Event('input', {bubbles: true}));
-  }
+  const insert = markdown => replaceRange(area, markdown);
 
   async function send(file) {
     if (!file || !file.type.startsWith('image/')) return;
@@ -4364,10 +4513,11 @@ function attachUploads(area, status) {
       // already in the plan would swallow a banner about somebody else's write.
       if (response.ok && answer.fresh) committed = answer.commit;
       const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
-      area.value = area.value.replace(
-        token, response.ok ? `![${alt}](${answer.path})` : ''
-      );
-      area.dispatchEvent(new Event('input', {bubbles: true}));
+      const at = area.value.indexOf(token);
+      if (at >= 0) {
+        area.setSelectionRange(at, at + token.length);
+        replaceRange(area, response.ok ? `![${alt}](${answer.path})` : '');
+      }
       status.textContent = response.ok
         ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
         : (answer.detail || 'that upload was refused');
@@ -4599,6 +4749,13 @@ _SUGGEST_STYLE = """
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
 .suggest li.on { background: var(--accent); color: var(--on-accent); }
 textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.marks { display: inline-flex; gap: .15rem; }
+button.mark {
+  font: inherit; font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--surface); color: var(--muted); cursor: pointer;
+}
+button.mark:hover { border-color: var(--accent); color: var(--accent); }
 .doc img { max-width: 100%; height: auto; }
 .suggest .dim { opacity: .6; }
 .suggest li.on .dim { opacity: .85; }
@@ -4743,6 +4900,7 @@ _NEW = """
             it is news arriving on a page that is already open. -#}
         <ul id="problems" class="problems" role="status" aria-live="polite" hidden></ul>
         <p class="field bodybar">
+          <span id="marks" class="marks"></span>
           <button type="button" id="preview">Preview the body</button>
           <span class="hint">paste or drop an image to put it in the plan</span>
           <span class="hint" id="upload" role="status" aria-live="polite"></span>
@@ -4804,6 +4962,7 @@ const BODY = FORM.querySelector('[name=body]');
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
+attachEditing(BODY, document.getElementById('marks'));
 
 PREVIEW.onclick = async () => {
   if (!DOC.hidden) {
@@ -4973,6 +5132,7 @@ _DETAIL = """
       <div class="doc read">{{ e.body }}</div>
       {% if editable %}
       <p class="field bodybar">
+        <span id="marks" class="marks"></span>
         <button type="button" id="preview">Preview the body</button>
         <span class="hint">paste or drop an image to put it in the plan</span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
@@ -5060,6 +5220,7 @@ const BODY = FORM.querySelector('[name=body]');
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
+attachEditing(BODY, document.getElementById('marks'));
 // The commit this page was rendered at, and what every save is compared against.
 // Read through this one box rather than looked up at each write, because a
 // restored draft moves it back to the commit that draft was written on top of.
@@ -5510,6 +5671,8 @@ HUMAN = {
     "missing_required_fields": "Has a problem",
     "has_blocker": "Has a blocking problem",
     "review_waived": "Review waived",
+    "past_cycle_build": "Still running past its cycle",
+    "in_progress_without_prs": "In progress, nothing linked",
     # roles, which the people page filters by. Already English, but a dropdown
     # reading "owner, Pitch, Ready" is three labelling conventions in one bar.
     "owner": "Owner",

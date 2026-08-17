@@ -13,7 +13,7 @@ the same twice.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 from pydantic import BaseModel
 
@@ -50,6 +50,15 @@ COMPUTED_PREDICATES = (
     "missing_required_fields",
     "has_blocker",
     "review_waived",
+    # Shape Up's circuit breaker, as a filter. Work still running past the end of
+    # its cycle's build is the one list a betting table has to see, and it is
+    # derived from dates the tool already has rather than from anything a person
+    # remembers to set.
+    "past_cycle_build",
+    # In progress with nothing linked. Not a rule — opening a PR early to get CI
+    # machine time is a good habit and a rule against it teaches people to stop
+    # listing PRs — but it is a fair question to be able to ask of a whole cycle.
+    "in_progress_without_prs",
 )
 
 _SCALAR_FACETS = ("kind", "status", "owner", "priority", "cycle")
@@ -73,6 +82,11 @@ class Index(BaseModel):
     today: date
     default_task_effort: float
     nominal_availability: float = 1.0
+    # Carried so a predicate can ask where build ends without rebuilding a
+    # Config: doing that substitutes the default cool-down for the repository's
+    # own, and a filter that quietly disagrees with the timeline it explains is
+    # worse than no filter.
+    cooldown_weeks: float = 2.0
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
@@ -80,6 +94,16 @@ class Index(BaseModel):
     # them needs nothing but the index, the same way every other page does.
     issues: dict[str, Issue] = {}
     issue_problems: list[Problem] = []
+
+    def build_end(self, cycle: int | None) -> date | None:
+        """The last day of a cycle's build, from its record or its cool-down."""
+        window = self.cycles.get(cycle) if cycle is not None else None
+        if window is None:
+            return None
+        plan = self.plans.get(cycle)
+        if plan is not None:
+            return plan.builds_until
+        return window[1] - timedelta(days=round(self.cooldown_weeks * 7))
 
     def load(self, cycle: int) -> dict[str, float]:
         """Person-weeks each person is holding in this cycle.
@@ -181,8 +205,11 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
     for entity in entities:
         for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
             facets[field].update(_facet_values(entity, field, by_id))
+        # PR references too. "Which entity is #1364?" is a question people ask
+        # in front of a screen, and the answer was only findable if the number
+        # also happened to appear in the prose.
         search_blob[entity.id] = " ".join(
-            [entity.title, *entity.tags, entity.body]
+            [entity.title, *entity.tags, *entity.prs, entity.body]
         ).lower()
 
     return Index(
@@ -199,6 +226,7 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
         cycles=config.cycles,
         plans=config.plans,
         nominal_availability=config.nominal_availability,
+        cooldown_weeks=config.cooldown_weeks,
         known_people=config.known_people,
         issues=config.issues,
         issue_problems=issue_problems(config, entities),
@@ -236,6 +264,16 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
         )
     if predicate == "review_waived":
         return index.entities[entity_id].review_waived
+    if predicate == "past_cycle_build":
+        entity = index.entities[entity_id]
+        span = index.spans.get(entity_id)
+        window = index.cycles.get(entity.cycle) if entity.cycle is not None else None
+        if entity.status != "in_progress" or span is None or window is None:
+            return False
+        return span.end > index.build_end(entity.cycle)
+    if predicate == "in_progress_without_prs":
+        entity = index.entities[entity_id]
+        return entity.status == "in_progress" and not entity.prs
     return False
 
 
