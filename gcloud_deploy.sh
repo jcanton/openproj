@@ -58,12 +58,12 @@ APP_KEY_FILE="/Users/jcanton/projects/openproj-icon4py.2026-08-17.private-key.pe
 # From the GitHub App's settings page (step 2). Neither is secret: the App ID is
 # on the App's page, the installation ID is the number at the end of the URL
 # when you click Configure on the installation.
-APP_ID=""
-INSTALLATION_ID=""
+APP_ID="4627892"
+INSTALLATION_ID="154481476"
 
 # From the OAuth App (step 3). The client ID is not secret and lives here; the
 # client secret is asked for at the prompt.
-OAUTH_CLIENT_ID=""
+OAUTH_CLIENT_ID="Ov23lisLaSCAwwru7ih3"
 
 # The plan repository the service serves and pushes to, and the GitHub org whose
 # membership decides who may write. These are already right.
@@ -199,9 +199,52 @@ SHA="$(git rev-parse --short HEAD)"
 git diff --quiet && git diff --cached --quiet || SHA="${SHA}-dirty"
 IMAGE="${IMAGE_REPO}/${SERVICE}:${SHA}"
 
+# The identity the BUILD runs as, which is not the identity the service runs as.
+#
+# `gcloud builds submit` with no --service-account defaults to the legacy
+# `<project-number>@cloudbuild.gserviceaccount.com`, and since 2025 Google no
+# longer creates that account for new projects. The binding is still seeded into
+# the IAM policy, so the project looks correctly configured; the account behind it
+# does not exist, and even the project owner gets PERMISSION_DENIED asking about
+# it. The build then fails with
+#
+#     ERROR: (gcloud.builds.submit) PERMISSION_DENIED: The caller does not have
+#     permission ... authenticated as <you>
+#
+# which points at you, the one identity in the picture that does have permission.
+#
+# So the build gets its own account, named, with three roles and no more: push the
+# image, write the logs, read the uploaded source out of the staging bucket.
+BUILD_SA="${SERVICE}-build@${PROJECT}.iam.gserviceaccount.com"
+
+say "Build service account"
+if gcloud iam service-accounts describe "$BUILD_SA" >/dev/null 2>&1; then
+  note "$BUILD_SA exists"
+else
+  gcloud iam service-accounts create "${SERVICE}-build" \
+    --display-name "openproj Cloud Build" >/dev/null
+  note "$BUILD_SA created"
+fi
+
+for role in roles/artifactregistry.writer roles/logging.logWriter roles/storage.objectAdmin; do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:${BUILD_SA}" --role "$role" \
+    --condition=None >/dev/null
+done
+note "artifactregistry.writer, logging.logWriter, storage.objectAdmin"
+
 say "Building ${IMAGE}"
 note "uploads this directory minus .gcloudignore, then builds deploy/Dockerfile"
-gcloud builds submit --tag "$IMAGE" --region "$REGION" .
+# --default-buckets-behavior is not optional once --service-account is given:
+# Cloud Build refuses a build that names a service account without also saying
+# where its logs go, and a project-owned regional bucket is the answer that needs
+# no further configuration.
+gcloud builds submit \
+  --tag "$IMAGE" \
+  --region "$REGION" \
+  --service-account "projects/${PROJECT}/serviceAccounts/${BUILD_SA}" \
+  --default-buckets-behavior=regional-user-owned-bucket \
+  .
 
 # --- deploy -----------------------------------------------------------------
 #
