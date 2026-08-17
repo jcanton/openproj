@@ -46,8 +46,12 @@ set -euo pipefail
 # format it wanted.
 PROJECT="icon4py-plan-gcloud"
 
-# Zurich. europe-west1 (Belgium) is the alternative and is marginally cheaper;
-# both are fine for a service that scales to zero.
+# Zurich. Worth knowing before picking it: Cloud Run's always-free monthly
+# allowance is documented as applying to Tier 1 pricing regions, and this is a
+# Tier 2 one, so a deployment here may bill from the first request rather than
+# after the free allowance. Small either way — it scales to zero — but
+# `europe-west1` (Belgium) is Tier 1 and otherwise equivalent. Changing this
+# changes the service URL, so the OAuth App's redirect URIs change with it.
 REGION="europe-west6"
 
 # The GitHub App's private key, downloaded when you generated it in step 2. Read

@@ -324,11 +324,21 @@ App — otherwise sign-in would work or 404 depending on which link somebody had
 - A nightly `git clone --mirror` of the plan somewhere off GitHub.
 - The runtime service account holding `secretAccessor` on three secrets and
   nothing else.
-- **The trial ends.** The CHF 246 of credit expires 16 November 2026, and Google
-  marks the project's resources for deletion when a trial lapses rather than
-  charging the card. The plan itself is safe — it lives in git on GitHub and the
-  container is a cache — but the service disappears, so activate the full account
-  before then or plan the move.
+- **Activate the full account before 16 November 2026.** The CHF 246 of trial
+  credit expires then, and Google deletes a lapsed trial's resources rather than
+  charging the card. Activating means pay-as-you-go with a card on file — and
+  then the always-free tier applies, which is a separate and permanent thing from
+  the trial credit. The plan survives either way, since it is in git and the
+  container is a cache, but the service does not.
+- **Check what this region actually costs.** Cloud Run's always-free monthly
+  allowance is documented as applying to Tier 1 pricing regions, and
+  `europe-west6` (Zurich) is Tier 2 — so this deployment may sit outside it. The
+  exposure is small either way: scale-to-zero means nothing bills while nobody is
+  looking, and the largest line would be egress, because every page inlines
+  ~650 KB of vendored cytoscape and typeface that no browser cache can help with.
+  Expect single-digit CHF a month at worst. `europe-west1` (Belgium) is Tier 1
+  and one variable away in `gcloud_deploy.sh` — redeploying there changes the
+  service URL, so the two redirect URIs would need updating with it.
 - `config/people.yaml` in the plan is `known_people: []`. An unlisted login is a
   warning rather than a refusal, so nothing breaks, but nothing autocompletes
   either.
