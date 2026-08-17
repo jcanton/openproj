@@ -2130,3 +2130,178 @@ def test_a_size_that_is_not_a_number_is_refused_at_both_doors(client: TestClient
     assert "effort_weeks" in saved.json()["detail"]
     assert created.status_code == 422, created.text
     assert head(client) == base, "a refused write leaves HEAD where it was"
+
+
+# --------------------------------------------------------------------------- #
+# 12. The envelope
+#
+# Every check above is about a *value* inside the request. The request itself —
+# a JSON object with a `base_commit`, a `fields` map and a `body` string — was
+# assumed by all four write routes and checked by none of them, so the first
+# unguarded line in each handler turned a malformed body into an AttributeError
+# under the router. That is a 500 in `text/plain`, which is the one answer these
+# pages cannot read back to say what happened; it is the whole reason the value
+# checks exist, and the envelope those checks live inside had none.
+#
+# Reachable without a browser, which is the point: `/api/preview` answers an
+# anonymous visitor, and the other three answer any member with curl. Nothing
+# here can corrupt the plan — every fault was before the commit — so what is at
+# stake is whether a person is told what was wrong.
+# --------------------------------------------------------------------------- #
+
+JSON_HEADERS = {"content-type": "application/json"}
+WRITE_ROUTES = (
+    ("PATCH", f"/api/entity/{TASK}"),
+    ("PUT", "/api/cycle/3"),
+    ("POST", "/api/entity"),
+    ("POST", "/api/preview"),
+)
+
+
+@pytest.mark.parametrize("method,route", WRITE_ROUTES)
+def test_a_request_body_that_is_not_json_is_refused_rather_than_raised(
+    client: TestClient, repo_path: Path, method: str, route: str
+):
+    """A truncated POST is the ordinary way this happens, and it happens to the
+    person on the worst connection in the room."""
+    was = git_head(repo_path)
+
+    response = client.request(method, route, content=b"{not json", headers=JSON_HEADERS)
+
+    assert response.status_code == 400, response.text
+    assert "not JSON" in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
+@pytest.mark.parametrize("method,route", WRITE_ROUTES)
+@pytest.mark.parametrize("payload", ("[]", '"a string"', "5", "null"))
+def test_a_request_that_is_not_an_object_is_refused_rather_than_raised(
+    client: TestClient, repo_path: Path, method: str, route: str, payload: str
+):
+    """All four routes read keys off whatever came back. `JSON.stringify` over
+    the wrong variable sends a list, and a list has no `.get`."""
+    was = git_head(repo_path)
+
+    response = client.request(method, route, content=payload, headers=JSON_HEADERS)
+
+    assert response.status_code == 422, response.text
+    assert git_head(repo_path) == was
+
+
+@pytest.mark.parametrize("method,route", (("PATCH", f"/api/entity/{TASK}"),
+                                          ("PUT", "/api/cycle/3")))
+@pytest.mark.parametrize(
+    "base", ("__MISSING__", "null", '""', "7", '"' + "z" * 40 + '"', '"' + "0" * 40 + '"')
+)
+def test_a_save_without_a_real_base_commit_is_refused_at_both_doors(
+    client: TestClient, repo_path: Path, method: str, route: str, base: str
+):
+    """The entity save learned this from a restored draft carrying a commit that
+    a re-clone of the plan had taken away. The cycle save beside it had the same
+    four ways to fault — absent, null, not a string, and a sha nothing has — and
+    none of the guard, so the same stale tab was a 500 there.
+
+    Parametrised over both routes rather than written twice, because "the guard
+    is on one of the two identical routes" is exactly the shape of the defect.
+    """
+    was = git_head(repo_path)
+    carried = "" if base == "__MISSING__" else f'"base_commit": {base}, '
+
+    response = client.request(
+        method, route, content=f'{{{carried}"fields": {{}}}}', headers=JSON_HEADERS
+    )
+
+    assert response.status_code == 422, response.text
+    assert "copy anything unsaved" in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
+@pytest.mark.parametrize("method,route", (("PATCH", f"/api/entity/{TASK}"),
+                                          ("PUT", "/api/cycle/3"),
+                                          ("POST", "/api/entity")))
+def test_fields_that_are_not_a_map_are_refused_rather_than_raised(
+    client: TestClient, repo_path: Path, method: str, route: str
+):
+    was = git_head(repo_path)
+
+    response = client.request(
+        method, route,
+        content=json.dumps({"base_commit": was, "fields": ["priority", "high"]}),
+        headers=JSON_HEADERS,
+    )
+
+    assert response.status_code == 422, response.text
+    assert git_head(repo_path) == was
+
+
+@pytest.mark.parametrize("method,route", (("PATCH", f"/api/entity/{TASK}"),
+                                          ("PUT", "/api/cycle/3"),
+                                          ("POST", "/api/entity")))
+def test_a_body_that_is_not_text_is_refused_rather_than_raised(
+    client: TestClient, repo_path: Path, method: str, route: str
+):
+    """`len(body.encode(...))` is the size check, and it was also where a body
+    that is not text stopped being a save and became an AttributeError."""
+    was = git_head(repo_path)
+
+    response = client.request(
+        method, route,
+        content=json.dumps({"base_commit": was, "fields": {}, "body": 5}),
+        headers=JSON_HEADERS,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "a body is text" in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
+def test_a_preview_of_something_that_is_not_text_still_answers(client: TestClient):
+    """This one renders and does not write, so it shows what was typed rather
+    than refusing it. It is also the only write-adjacent route an anonymous
+    visitor can reach, and the markdown parser took a number as a TypeError."""
+    response = client.post("/api/preview", json={"body": 5, "title": 7})
+
+    assert response.status_code == 200, response.text
+    assert "5" in response.json()["html"]
+
+
+@pytest.mark.parametrize(
+    "fields,expected",
+    (
+        ({"title": 12345}, "title"),
+        ({"title": ["a", "b"]}, "title"),
+        ({"assigned_on": "not-a-date"}, "assigned_on"),
+        ({"reviewers": [1, 2]}, "reviewers"),
+        ({"tags": [None]}, "tags"),
+        ({"created_schema_version": "two"}, "created_schema_version"),
+    ),
+)
+def test_a_create_the_server_could_not_read_back_says_which_field(
+    client: TestClient, repo_path: Path, fields: dict, expected: str
+):
+    """The save route has parsed before writing since the round that found it.
+    The create route beside it called the same `parse_text` with no guard at all,
+    so every value `_reject_bad_types` does not name — a title that is a number,
+    a date that is a word, a reviewer that is an integer — came out as a bare
+    ValidationError, which is a 500 in `text/plain` on a form that has to be able
+    to say which box was wrong. Nothing was committed either way; what changes is
+    whether the person is told.
+    """
+    was = git_head(repo_path)
+
+    response = create(client, {**VALID_TASK, **fields})
+
+    assert response.status_code == 422, response.text
+    assert "would not read back" in response.json()["detail"]
+    assert expected in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
+@pytest.mark.parametrize("number", (-1, 10000, 99999))
+def test_a_cycle_number_no_save_would_accept_is_not_a_page(client: TestClient, number: int):
+    """`int` in the path admits every integer; `CYCLE_PATTERN` on the save admits
+    0 to 9999. So `/cycle/-1` rendered a whole editable page whose every Save was
+    a 422 — the read path and the write path disagreeing about which cycles
+    exist, and a dead end a person can only find by filling the form in first."""
+    assert client.get(f"/cycle/{number}").status_code == 404
+    assert client.get("/cycle/9999").status_code == 200, "a real cycle number still is one"

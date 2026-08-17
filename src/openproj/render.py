@@ -43,6 +43,7 @@ from .model import (
     days_after,
     required_at,
     size_weeks,
+    what_json_can_carry,
 )
 
 
@@ -180,8 +181,19 @@ def _json(data: object) -> str:
     U+2028 and U+2029 need no handling here: they are line terminators in
     JavaScript source and legal inside a JSON string, and `json.dumps` escapes
     them already because it escapes everything outside ASCII.
+
+    `allow_nan=False`, which is how a non-finite number gets caught rather than
+    written out as `Infinity` — a JavaScript literal that `json.dumps` emits by
+    default and `JSON.parse` refuses. Every block on every page is read back
+    with `JSON.parse`, so one `effort_weeks: .inf` in one file emptied the table
+    and the graph for everybody. Tried first and repaired second because the
+    check is inside the C encoder and costs nothing, where the walk is a Python
+    pass over the whole payload and no ordinary plan needs it.
     """
-    dumped = json.dumps(data)
+    try:
+        dumped = json.dumps(data, allow_nan=False)
+    except ValueError:
+        dumped = json.dumps(what_json_can_carry(data), allow_nan=False)
     # The quote cannot be translated with the other three: the same character
     # both delimits every string in the document and appears inside them as
     # `\\"`, and only the second kind may be respelled. `\\` is the only place a

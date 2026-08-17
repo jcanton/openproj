@@ -59,6 +59,7 @@ from .model import (
     parse_text,
     patch_text,
     validate_all,
+    what_json_can_carry,
 )
 from .store import Store
 
@@ -253,6 +254,73 @@ def _reject_bad_types(fields: dict) -> None:
         raise HTTPException(422, "review_waived must be true or false")
 
 
+async def _sent(request: Request) -> dict:
+    """The JSON object a request carried, or a refusal that says so.
+
+    Every route below reads keys off whatever `request.json()` hands back, and
+    for four of them that was the first unguarded line in the handler. A
+    truncated POST, a proxy that rewrote the body, `JSON.stringify` over the
+    wrong variable — the first arrives as a JSONDecodeError and the others as a
+    list or a string, and all three were an `AttributeError` under the router,
+    which is a 500 with a `text/plain` body. That is the one answer the page
+    cannot read back to say what happened, which is the whole reason the field
+    checks below exist; the envelope those checks live inside had none.
+    """
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(400, "that request body is not JSON") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "a request here is a JSON object, and this one is not")
+    return payload
+
+
+def _base_in(store: Store, payload: dict) -> str:
+    """The commit the page was rendered at, checked before anything reads at it.
+
+    Missing, not a string, and a sha this repository never had are one situation
+    from the route's side: there is nothing to compare the save against. The
+    entity save learned it when a restored draft began carrying the commit it
+    was drafted against — older than HEAD by design, and gone entirely after a
+    re-clone of the plan. The cycle save beside it had the same four ways to
+    fault and none of the guard, so the same stale tab was a 500 there.
+    """
+    base = payload.get("base_commit")
+    if not isinstance(base, str) or not store.has(base):
+        raise HTTPException(
+            422,
+            "this page was written against a commit that is not in the plan "
+            "repository; copy anything unsaved, reload, and paste it back",
+        )
+    return base
+
+
+def _body_in(payload: dict) -> str | None:
+    """The body a save carries: text, absent, or a refusal — never a number.
+
+    `len(body.encode(...))` is the size check, and it is also where a body that
+    is not text stopped being a save and became an AttributeError.
+    """
+    body = payload.get("body")
+    if body is None:
+        return None
+    if not isinstance(body, str):
+        raise HTTPException(422, f"a body is text, not {body!r}")
+    if len(body.encode("utf-8")) > MAX_BODY_BYTES:
+        raise HTTPException(413, "that body is too large to commit")
+    return body
+
+
+def _fields_in(payload: dict) -> dict:
+    """The touched fields, as a map. `.items()` on anything else was a 500."""
+    fields = payload.get("fields")
+    if fields is None:
+        return {}
+    if not isinstance(fields, dict):
+        raise HTTPException(422, f"fields is a map of name to value, not {fields!r}")
+    return dict(fields)
+
+
 def _directory_for(entity_id: str) -> str:
     """The directory an id belongs in, or a refusal. The one place an id becomes
     part of a path — everything else must come through here."""
@@ -410,7 +478,15 @@ def create_app(
         Stronger than a pattern: FastAPI refuses a non-integral value before the
         handler body runs, so `..` and `%2F` cannot get as far as being rejected
         by a regex somebody might later relax.
+
+        Bounded to the same numbers the save accepts. `int` admits -1 and 99999,
+        which rendered a whole editable cycle page whose every Save was a 422
+        from `CYCLE_PATTERN` — the read path and the write path disagreeing about
+        which cycles exist, which is a dead end a person can only find by filling
+        the form in first.
         """
+        if not CYCLE_PATTERN.match(str(number)):
+            raise HTTPException(404, "a cycle is numbered 0 to 9999")
         commit, index = index_now()
         return page(render.render_cycle(index, number, render.ROUTES, commit))
 
@@ -454,11 +530,15 @@ def create_app(
         form — not the one in the repository, which the same Save is about to
         change.
         """
-        payload = await request.json()
+        payload = await _sent(request)
+        # `str()` rather than a refusal: this route renders, it does not write, and
+        # a preview is worth showing for whatever was typed. But the markdown
+        # parser takes text and a number reached it as a TypeError — a 500 on the
+        # only write-adjacent route that answers an anonymous visitor.
         return JSONResponse(
             {
                 "html": render.preview_html(
-                    payload.get("body") or "", title=payload.get("title") or ""
+                    str(payload.get("body") or ""), title=str(payload.get("title") or "")
                 )
             }
         )
@@ -470,14 +550,20 @@ def create_app(
     @app.get("/api/index.json")
     def index_json() -> JSONResponse:
         commit, index = index_now()
+        # Through the same door the pages' data blocks go through. `JSONResponse`
+        # encodes with `allow_nan=False`, so a size somebody hand-edited to
+        # `.inf` raised inside the encoder — after the response object existed,
+        # which is a 500 in plain text on a route whose readers are scripts.
         return JSONResponse(
-            {
-                "head": commit,
-                "entities": {i: e.model_dump(mode="json") for i, e in index.entities.items()},
-                "spans": {i: s.model_dump(mode="json") for i, s in index.spans.items()},
-                "explanations": {i: e.text for i, e in index.explanations.items()},
-                "problems": [p.model_dump(mode="json") for p in index.problems],
-            }
+            what_json_can_carry(
+                {
+                    "head": commit,
+                    "entities": {i: e.model_dump(mode="json") for i, e in index.entities.items()},
+                    "spans": {i: s.model_dump(mode="json") for i, s in index.spans.items()},
+                    "explanations": {i: e.text for i, e in index.explanations.items()},
+                    "problems": [p.model_dump(mode="json") for p in index.problems],
+                }
+            )
         )
 
     # -- writing ------------------------------------------------------------
@@ -496,31 +582,20 @@ def create_app(
     @app.patch("/api/entity/{entity_id}")
     async def save(entity_id: str, request: Request) -> JSONResponse:
         user = writer(request)
-        payload = await request.json()
-        body = payload.get("body")
-        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
-            raise HTTPException(413, "that body is too large to commit")
-
-        base = payload["base_commit"]
+        payload = await _sent(request)
+        body = _body_in(payload)
         # A commit this repository does not have is a refusal, not a crash. This
         # is the one route that is handed a base older than HEAD by design — a
         # restored draft carries the commit it was drafted against — so a draft
         # that has sat in a browser through a re-clone of the plan arrives with a
-        # sha `store.paths` throws on, and a 500 answers in plain text that the
-        # page cannot even read back. The draft is still in the browser; say what
-        # to do with it.
-        if not store.has(base):
-            raise HTTPException(
-                422,
-                "this page was written against a commit that is not in the plan "
-                "repository; copy anything unsaved, reload, and paste it back",
-            )
+        # sha `store.paths` throws on.
+        base = _base_in(store, payload)
         path = _path_for(store, base, entity_id)
         if path is None:
             raise HTTPException(404, f"no entity {entity_id!r}")
         original = store.read(base, path)
 
-        fields = {k: v for k, v in (payload.get("fields") or {}).items() if k != "id"}
+        fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         _reject_bad_types(fields)
         content = patch_text(original, fields, body)
         # Parse before writing, the same refusal the cycle route beside this one
@@ -559,17 +634,15 @@ def create_app(
         merge, and conflating the two would make removing a person impossible.
         """
         user = writer(request)
-        payload = await request.json()
-        body = payload.get("body")
-        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
-            raise HTTPException(413, "that body is too large to commit")
+        payload = await _sent(request)
+        body = _body_in(payload)
         if not CYCLE_PATTERN.match(str(number)):
             raise HTTPException(422, "a cycle is numbered 0 to 9999")
 
-        base = payload["base_commit"]
+        base = _base_in(store, payload)
         path = _cycle_path(number)
         original = store.read(base, path) or "---\n---\n"
-        fields = {k: v for k, v in (payload.get("fields") or {}).items()}
+        fields = _fields_in(payload)
         fields["cycle"] = number
         _reject_bad_cycle(fields)
 
@@ -648,11 +721,9 @@ def create_app(
     @app.post("/api/entity")
     async def create(request: Request) -> JSONResponse:
         user = writer(request)
-        payload = await request.json()
-        fields = dict(payload.get("fields") or {})
-        body = payload.get("body") or ""
-        if len(body.encode("utf-8")) > MAX_BODY_BYTES:
-            raise HTTPException(413, "that body is too large to commit")
+        payload = await _sent(request)
+        fields = _fields_in(payload)
+        body = _body_in(payload) or ""
 
         kind = fields.get("kind")
         if kind not in DIRECTORY:
@@ -682,7 +753,19 @@ def create_app(
         # being written right now: something created today is held to today's rules.
         fields.setdefault("created_schema_version", config.schema_version)
         content = patch_text("---\n---\n", fields, body)
-        candidate = parse_text(content, entity_id)
+        # The same refusal the save route makes, on the other door. `_reject_bad_types`
+        # names numbers, lists and one bool; a title that is a number, a date that is
+        # a word, a tag that is null and a reviewer that is an integer all passed it
+        # and raised here as a bare ValidationError — a 500 whose body is plain text,
+        # which is the one answer the create form cannot read back to say what was
+        # wrong. Nothing was committed either way, so what this changes is whether the
+        # person is told which field it was.
+        try:
+            candidate = parse_text(content, entity_id)
+        except ValueError as error:
+            raise HTTPException(
+                422, f"that would not read back as an entity: {_why(error)}"
+            ) from None
         problems = [
             p
             for p in validate_all([*_entities_at(store, commit), candidate], config)
@@ -696,7 +779,11 @@ def create_app(
         written = store.write(
             path=f"{DIRECTORY[kind]}/{entity_id}.md",
             content=content,
-            base_commit=payload.get("base_commit") or commit,
+            # A base is optional here — a create has nothing to be stale against
+            # — but one that was sent has to be real, because `store.write` reads
+            # at it the moment HEAD has moved, which is exactly when a person
+            # with an old tab open presses New.
+            base_commit=_base_in(store, payload) if payload.get("base_commit") else commit,
             author=user.login,
             message=f"{entity_id}: create",
         )

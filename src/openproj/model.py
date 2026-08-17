@@ -8,6 +8,7 @@ lives in `validate_all`, never in the parse types — see spec section 5.2.
 from __future__ import annotations
 
 import io
+import math
 import re
 from collections.abc import Iterator
 from datetime import date, timedelta
@@ -39,11 +40,48 @@ def within_the_calendar(days: float) -> float:
     page down, which is the guard falling over rather than guarding. So the
     bound goes before the rounding, never after it.
 
-    The constant comes first in the `min` because NaN loses every comparison:
-    `min(CALENDAR_DAYS, nan)` is the constant, `min(nan, CALENDAR_DAYS)` is the
-    NaN. A size of `inf - inf` is one subtraction away and rounds no better.
+    Both ends, because a range has two of them and this bounded one. `.inf` was
+    the value that was found, so `.inf` was the value that was fixed;
+    `effort_weeks: -.inf` is one character away in the same hand-edited file, it
+    walked straight through the `min` below, and `math.ceil(-inf)` is the same
+    OverflowError out of the same guard — every page 500, off a file already
+    committed. The upper bound alone was never the property this function
+    claimed; it was the half of it the crash happened to arrive from.
+
+    The constant comes first in both comparisons because NaN loses every one of
+    them: `min(CALENDAR_DAYS, nan)` is the constant, `min(nan, CALENDAR_DAYS)` is
+    the NaN. A size of `inf - inf` is one subtraction away and rounds no better.
     """
-    return min(CALENDAR_DAYS, days)
+    return max(-CALENDAR_DAYS, min(CALENDAR_DAYS, days))
+
+
+def what_json_can_carry(data: object) -> object:
+    """`data` with every non-finite float replaced by null.
+
+    JSON has no infinity and no NaN. Python's encoder papers over that by
+    writing the JavaScript literals `Infinity`, `-Infinity` and `NaN` — which
+    `json.dumps` accepts and `JSON.parse` rejects, so the two ends of every page
+    disagreed about what a payload even was. One `effort_weeks: .inf` edited
+    into a file by hand and the whole plan vanished from the table behind "This
+    page arrived without its data", which blames the network for a number, and
+    `/api/index.json` answered 500 to every reader. The pages themselves render:
+    `within_the_calendar` above already keeps the arithmetic on its feet. It is
+    only the trip out that has no way to say it.
+
+    Null rather than the calendar bound, and null rather than a refusal. Null is
+    the true statement — JSON cannot carry this number — and it is what every
+    page already draws as a dash. Clamping would put a number nobody wrote into
+    a cell, and refusing would take down the page for a file that is already
+    committed, which is the failure this whole path exists to avoid. NaN has no
+    nearest representable value at all, so it settles the question for both.
+    """
+    if isinstance(data, float) and not math.isfinite(data):
+        return None
+    if isinstance(data, dict):
+        return {key: what_json_can_carry(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [what_json_can_carry(value) for value in data]
+    return data
 
 
 def days_after(day: date, days: float) -> date:
