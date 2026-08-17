@@ -16,7 +16,7 @@ tags:
   - icon4py
   - unit-tests
 prs: []
-effort_weeks: 1
+person_weeks: 1
 ---
 
 > **Shaping doc not located during migration.** This body is a stub written from the task-table
@@ -97,5 +97,5 @@ that the math-module reorganisation should precede writing tests against those f
 ## Appetite
 
 Not stated. No shaping doc exists, and the task table has no appetite or effort column, so there is
-no figure to carry over or convert. `appetite_weeks` is left null rather than guessed; see
+no figure to carry over or convert. `person_weeks` is left null rather than guessed; see
 `unresolved`.

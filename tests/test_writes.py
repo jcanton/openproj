@@ -63,7 +63,7 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         client.put(
             "/api/cycle/41",
             json={"base_commit": bet.json()["commit"],
-                  "fields": {"starts_on": "2026-08-17", "build_weeks": 4, "cooldown_weeks": 2,
+                  "fields": {"starts_on": "2026-08-17", "reviews_on": "2026-09-14",
                              "availability": {"ann": 0.5, "bo": 1.0}},
                   "body": "## Goal\n\nShip it.\n"},
         )
@@ -141,9 +141,9 @@ def test_the_words_the_server_refused_with_are_the_words_on_the_page(pages):
     assert state(answer) == detail
 
 
-TYPE_A_WORD_INTO_BUILD_WEEKS = f"""
+TYPE_A_WORD_INTO_A_DATE = f"""
 (async () => {{
-  document.querySelector('#setup [name=build_weeks]').value = 'six';
+  document.querySelector('#setup [name=reviews_on]').value = 'the 4th';
   ROSTER_DIRTY = true;
   const saved = await flush(false);
   return {{saved, {SAY}}};
@@ -151,16 +151,19 @@ TYPE_A_WORD_INTO_BUILD_WEEKS = f"""
 """
 
 
-def test_a_word_typed_into_a_length_box_reaches_the_server_as_the_word(pages):
-    """`Number('six')` is NaN, and `JSON.stringify` sends NaN as null: the typo
-    was thrown away on the way out, so the best refusal the server could give
-    was about something blank — beside a box with `six` still in it."""
-    detail = "build_weeks must be a number, not 'six'"
+def test_a_word_typed_into_a_date_box_reaches_the_server_as_the_word(pages):
+    """`Number('six')` was NaN and `JSON.stringify` sent NaN as null: the typo was
+    thrown away on the way out, so the best refusal the server could give was
+    about something blank — beside a box with the word still in it.
+
+    The lengths are dates now and the hazard is the same shape, so the boxes still
+    send what was typed and the refusal still quotes it."""
+    detail = "reviews_on must be a date like 2026-09-01, not 'the 4th'"
     answer = drive(
-        pages["cycle"], TYPE_A_WORD_INTO_BUILD_WEEKS, [{"status": 422, "json": {"detail": detail}}]
+        pages["cycle"], TYPE_A_WORD_INTO_A_DATE, [{"status": 422, "json": {"detail": detail}}]
     )
 
-    assert json.loads(answer["calls"][0]["body"])["fields"]["build_weeks"] == "six"
+    assert json.loads(answer["calls"][0]["body"])["fields"]["reviews_on"] == "the 4th"
     assert state(answer) == detail
     assert answer["value"]["saved"] is False
 
@@ -342,7 +345,7 @@ STAGE_TWO_EDITS_THEN_SAY = f"""
 (() => {{
   const rows = [...document.querySelectorAll('#bets tbody tr')];
   pend(rows[0].dataset.id, 'cycle', 41);
-  pend(rows[0].dataset.id, 'appetite_weeks', 2);
+  pend(rows[0].dataset.id, 'person_weeks', 2);
   announce('Saved 2 changes');
   const said = document.getElementById('state').textContent;
   const ran = __tick();
@@ -367,8 +370,8 @@ def test_a_receipt_is_not_blanked_by_an_edit_made_before_it(pages):
 REPEAT_A_REFUSAL = """
 (() => {
   const where = document.getElementById('state');
-  announce('appetite_weeks must be a number, not "two"');
-  announce('appetite_weeks must be a number, not "two"');
+  announce('person_weeks must be a number, not "two"');
+  announce('person_weeks must be a number, not "two"');
   const between = where.textContent;
   __tick();
   return {between, state: where.textContent};
@@ -383,7 +386,7 @@ def test_the_same_refusal_twice_is_still_read_out(pages):
     answer = drive(pages["cycle"], REPEAT_A_REFUSAL)
 
     assert answer["value"]["between"] == "", "the region has to change to be read again"
-    assert answer["value"]["state"] == 'appetite_weeks must be a number, not "two"'
+    assert answer["value"]["state"] == 'person_weeks must be a number, not "two"'
 
 
 # --------------------------------------------------------------------------- #
@@ -402,7 +405,7 @@ BROKEN_ID_PLAN = {
     "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
     "tasks/one.md": (
         f"---\nid: '{BROKEN_ID}'\nkind: task\ntitle: A task whose id never validated\n"
-        "status: ready\nowner: ann\nreviewers: [bo]\neffort_weeks: 1\npriority: medium\n"
+        "status: ready\nowner: ann\nreviewers: [bo]\nperson_weeks: 1\npriority: medium\n"
         "---\n\nA shaping document.\n"
     ),
 }

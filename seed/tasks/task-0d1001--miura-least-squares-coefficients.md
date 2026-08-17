@@ -9,13 +9,12 @@ assignees: [nfarabullini, DropD]
 reviewers: [OngChia, halungge]
 review_waived: false
 assigned_on: 2026-02-02
-cycle: 34
 priority: high
 depends_on: []
 tags: [greenline, tracer-advection, least-squares, interpolation, torus]
 prs: ["C2SM/icon4py#1379", "C2SM/icon4py#1410"]
 created_schema_version: 2
-effort_weeks: 3.0
+person_weeks: 3.0
 ---
 
 # Second-order Miura least-squares coefficients

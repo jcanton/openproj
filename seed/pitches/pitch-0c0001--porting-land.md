@@ -15,7 +15,7 @@ depends_on: [pitch-0b0001]
 tags: [jsbach, icon-land, land-surface, gt4py, tmx-coupling, icon4py]
 prs: []
 created_schema_version: 2
-appetite_weeks: 5.0
+person_weeks: 5.0
 shaped_by: muellch
 ---
 

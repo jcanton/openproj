@@ -15,7 +15,7 @@ depends_on: []
 tags: [icon4py, standalone-driver, distributed, bitwise-reproducibility, ci]
 prs: ["C2SM/icon4py#1368"]
 created_schema_version: 2
-appetite_weeks: 6.0
+person_weeks: 6.0
 shaped_by: jcanton
 ---
 

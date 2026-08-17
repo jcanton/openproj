@@ -16,7 +16,7 @@ from markupsafe import escape
 from pages import headings, lit
 
 from openproj.index import Index, build_index
-from openproj.model import load_repo
+from openproj.model import Config, load_repo
 from openproj.render import STATUS_GLYPH, STATUSES, render_static
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
@@ -388,7 +388,7 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
     assert 'id="hatch-unowned-st-ready"' in read(rendered, "timeline.html")
 
     guessed = Task(id="task-000001", kind="task", title="No size given", owner="ann")
-    nobodys = Task(id="task-000002", kind="task", title="Nobody owns this", effort_weeks=1.0)
+    nobodys = Task(id="task-000002", kind="task", title="Nobody owns this", person_weeks=1.0)
     index = build_index([guessed, nobodys], Config(), date(2026, 8, 17))
     out = tmp_path / "guesses"
     render_static(index, out)
@@ -441,11 +441,11 @@ def test_the_timeline_orders_its_rows_by_containment(tmp_path: Path):
 
     project = Project(id="proj-000001", kind="project", title="A project")
     pitch = Pitch(id="pitch-000001", kind="pitch", title="A pitch", owner="ann",
-                  appetite_weeks=3.0, parent="proj-000001")
+                  person_weeks=3.0, parent="proj-000001")
     task = Task(id="task-000001", kind="task", title="A task", owner="bo",
-                effort_weeks=1.0, parent="pitch-000001")
+                person_weeks=1.0, parent="pitch-000001")
     other = Task(id="task-000002", kind="task", title="An unparented task", owner="cy",
-                 effort_weeks=1.0)
+                 person_weeks=1.0)
     index = build_index([task, other, pitch, project], Config(), date(2026, 8, 17))
     out = tmp_path / "tree"
     render_static(index, out)
@@ -469,9 +469,9 @@ def test_a_child_stays_indented_when_its_parent_is_not_drawn(tmp_path: Path):
 
     # A shelved pitch has no span at all, so it is never a row.
     parent = Pitch(id="pitch-000001", kind="pitch", title="Parked", status="shelved",
-                   owner="ann", appetite_weeks=2.0)
+                   owner="ann", person_weeks=2.0)
     child = Task(id="task-000001", kind="task", title="Still live", owner="bo",
-                 effort_weeks=1.0, parent="pitch-000001")
+                 person_weeks=1.0, parent="pitch-000001")
     index = build_index([parent, child], Config(), date(2026, 8, 17))
     out = tmp_path / "orphaned"
     render_static(index, out)
@@ -489,7 +489,7 @@ def test_a_same_day_span_is_still_wide_enough_to_hit(tmp_path: Path):
     from openproj.model import Config, Task
 
     brief = Task(id="task-000001", kind="task", title="A day of it", owner="ann",
-                 effort_weeks=0.2)
+                 person_weeks=0.2)
     index = build_index([brief], Config(), date(2026, 8, 17))
     out = tmp_path / "brief"
     render_static(index, out)
@@ -517,9 +517,9 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
 
     zoom = 2.0    # a drawn day width, so the arithmetic below is exact
     slog = Task(id="task-000001", kind="task", title="A long one", owner="ann",
-                effort_weeks=8)
+                person_weeks=8)
     brief = Task(id="task-000002", kind="task", title="A day of it", owner="bob",
-                 effort_weeks=0.2)
+                 person_weeks=0.2)
     index = build_index([slog, brief], Config(), date(2026, 8, 17))
     body = render_timeline(index, zoom=zoom)
 
@@ -1099,8 +1099,9 @@ def test_a_window_that_excludes_today_draws_no_today_line(seed_index: Index):
 
 def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     """They rendered empty under a sentence naming the dates being drawn, so the
-    controls disagreed with the picture. What is lost by filling them in — "am I
-    looking at everything?" — is answered by the sentence instead."""
+    controls disagreed with the picture. The boxes are what answer "am I looking
+    at everything?" now — the sentence used to say the same dates a third time,
+    after the boxes and the axis had both already said them."""
     from datetime import date
 
     from openproj.render import render_timeline
@@ -1109,7 +1110,11 @@ def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     origin = re.search(r'name="from" value="([\d-]+)"', whole).group(1)
     last = re.search(r'name="to" value="([\d-]+)"', whole).group(1)
 
-    assert f"Showing the whole plan, {origin} to {last}." in " ".join(whole.split())
+    assert origin and last, "the boxes hold the window the chart is drawing"
+    assert "Showing the whole plan" not in " ".join(whole.split()), (
+        "the axis and the boxes say the dates; the sentence says how to move"
+    )
+    assert "Drag sideways or scroll" in " ".join(whole.split())
 
     windowed = render_timeline(seed_index, window=(date(2026, 9, 1), date(2026, 9, 30)))
     assert 'name="from" value="2026-09-01"' in windowed
@@ -1156,7 +1161,7 @@ def test_an_empty_timeline_says_which_kind_of_empty_it_is(tmp_path: Path):
     assert "Nothing in this plan has dates." in parked_body
     assert '<div class="tl" data-fills hidden>' in parked_body
 
-    live = Task(id="task-000002", kind="task", title="Live", owner="ann", effort_weeks=1.0)
+    live = Task(id="task-000002", kind="task", title="Live", owner="ann", person_weeks=1.0)
     index = build_index([live], Config(), date(2026, 8, 17))
     render_static(index, tmp_path / "live")
     live_body = read(tmp_path / "live", "timeline.html")
@@ -1965,10 +1970,12 @@ def test_every_identifier_a_reader_could_meet_has_a_word_for_it():
 
 def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
     """APPETITE (WEEKS) on detail, EFFORT (WEEKS) on the create form and WEEKS in
-    the table were one number under three names. The stored fields keep theirs."""
+    the table were one number under three names — over two storage fields that are
+    one field now. Appetite is still the reader's word; the unit is in the field
+    name because the unit is what D1 got wrong."""
     from openproj.render import LABELS
 
-    assert LABELS["appetite_weeks"] == LABELS["effort_weeks"] == "Appetite (weeks)"
+    assert LABELS["person_weeks"] == "Appetite (person-weeks)"
     assert "Effort" not in read(rendered, "detail.html")
     index = read(rendered, "index.html")
     header = re.search(r'<th data-col="size"[^>]*>(.*?)</th>', index, re.S).group(1)
@@ -2310,9 +2317,11 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
     from openproj.model import Config, size_weeks
 
     _, index = demo_rendered
+    # `counts_in` and not `e.cycle == 37`: a task takes its cycle from the pitch
+    # it is part of, so the demo's tasks no longer carry one of their own.
     shared = next(
         e for e in index.entities.values()
-        if e.cycle == 37 and len(e.assignees) > 1 and not index.children.get(e.id)
+        if index.counts_in(e, 37) and len(e.assignees) > 1 and not index.children.get(e.id)
     )
     size, _ = size_weeks(shared, Config(default_task_effort=index.default_task_effort))
     held = index.load(37)
@@ -2620,7 +2629,7 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
     from openproj.render import _body_html
 
     def _entity(body: str) -> Task:
-        return Task(id="task-000001", kind="task", title="t", effort_weeks=1, body=body)
+        return Task(id="task-000001", kind="task", title="t", person_weeks=1, body=body)
 
     stored = "assets/0123456789abcdef.png"
     assert f'<img src="{stored}"' in _body_html(_entity(f"![ok]({stored})"))
@@ -2944,7 +2953,15 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         assert _shares_a_line(got["count"], got["key"]), (
             f"the count is at {got['count']} and the key at {got['key']}"
         )
-        assert got["aside"]["right"] == got["controlsRight"], "right-aligned, as asked"
+        # It keeps the search box's line — that is what stops it costing a row
+        # above the drawing — but it reads left to right like the sentence on
+        # every other page, rather than being pushed to the far end and set
+        # right-aligned. Asked for on 2026-08-17, having been the one thing about
+        # these two views that did not match the rest of the site.
+        assert got["aside"]["right"] < got["controlsRight"], (
+            f"the instruction ends at {got['aside']['right']} and the bar at "
+            f"{got['controlsRight']}: it is still pinned to the right edge"
+        )
 
     # Flush with the right edge of the bar above it, on every view.
     assert got["count"]["right"] == got["controlsRight"], (
@@ -3364,3 +3381,223 @@ def test_no_page_uses_one_id_for_more_than_one_element(rendered: Path):
         parser.feed(read(rendered, page))
         repeated = {one: n for one, n in parser.seen.items() if n > 1}
         assert not repeated, f"{page} uses one id for several elements: {repeated}"
+
+# --------------------------------------------------------------------------- #
+# Where a cycle stops building
+# --------------------------------------------------------------------------- #
+
+
+def test_the_solid_rule_is_the_end_of_build_and_the_dashed_one_the_end_of_the_window(
+    seed_index: Index,
+):
+    """An overrun is measured against the end of BUILD (`schedule._overrun`), and
+    the chart drew its only rule at the end of the window — two weeks of cool-down
+    further right. A bar could finish visibly before the line and still be amber,
+    which is how a timeline loses a room."""
+    from openproj.render import _timeline
+
+    drawn = {c["number"]: c for c in _timeline(seed_index)["cycles"]}
+    cycle = drawn[36]
+
+    assert cycle["build_x"] is not None and cycle["rule_x"] is not None
+    assert cycle["build_x"] < cycle["rule_x"], "build ends before the window does"
+    # And the cool-down is shaded from one to the other, rather than reading as
+    # two more weeks of building time.
+    assert cycle["cool_x"] == cycle["build_x"]
+    assert cycle["cool_width"] > 0
+
+
+def test_the_page_draws_both_rules(rendered: Path):
+    page = read(rendered, "timeline.html")
+    assert 'class="build-rule"' in page
+    assert 'class="cycle-rule"' in page
+    assert "stops building here" in page
+
+
+# --------------------------------------------------------------------------- #
+# The shaping document, read rather than required
+# --------------------------------------------------------------------------- #
+
+
+def test_a_templates_guidance_never_reaches_the_page(seed_index: Index):
+    """The team's pitch template carries its instructions in HTML comments, which
+    are invisible in HackMD. With `html: False` markdown-it prints them as text,
+    so every pitch drafted from the template would arrive with its own
+    instructions showing."""
+    from openproj.render import preview_html
+
+    body = "## Problem\n<!-- The raw idea. -->\n\nReal text.\n"
+    out = str(preview_html(body))
+    assert "The raw idea" not in out
+    assert "Real text." in out
+    # But an example inside a fence is the author's, and stays.
+    fenced = "```\n<!-- kept -->\n```\n"
+    assert "kept" in str(preview_html(fenced))
+
+
+def test_a_ready_pitch_missing_a_no_gos_section_is_told_so_on_its_own_page(rendered: Path):
+    """A printed note and nothing more: it never reaches `openproj check`, never
+    fails CI and never blocks a save.
+
+    Only live bets are told. Three corpus pitches are ready or in progress, one of
+    which was shaped with both sections and two of which are migration stubs with
+    neither — so the page carries exactly two of each note, and the two finished
+    pitches are left alone."""
+    page = read(rendered, "detail.html")
+    assert 'class="hints"' in page
+    assert page.count("No No-gos section") == 2
+    assert page.count("No Rabbit holes section") == 2
+
+
+def test_the_progress_column_counts_the_bodys_own_checklist():
+    """Counted, never written: nothing requires a checklist, and a body without
+    one shows an empty cell rather than 0/0."""
+    from openproj.model import Config, Task
+    from openproj.render import _payload, _row
+
+    index = build_index(
+        [
+            Task(id="task-000009", kind="task", title="With a list",
+                 body="## Progress\n\n- [x] a\n- [ ] b\n"),
+            Task(id="task-000010", kind="task", title="Without one", body="prose"),
+        ],
+        Config(),
+        date(2026, 8, 17),
+    )
+    assert _row(index, "task-000009")["progress_text"] == "1/2"
+    assert _row(index, "task-000009")["progress"] == 0.5
+    assert _row(index, "task-000010")["progress"] is None
+    # And it is derived, so no cell offers to edit it.
+    assert "progress" not in _payload(index)["editable"]
+
+
+def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path):
+    """The question a pitch page is opened for is where the work has got to, and
+    the answer was a checklist somewhere in the middle of the prose — or, for a
+    pitch whose work is tracked as tasks, nowhere at all. Every tick is a task's
+    own status, so there is no checkbox here to keep in step by hand."""
+    page = read(rendered, "detail.html")
+    panels = re.findall(r'<section class="progress read">.*?</section>', page, re.S)
+
+    assert panels, "the corpus has pitches with tasks under them"
+    # Ticked from status, both ways round somewhere on the page: the corpus holds
+    # finished tasks and unfinished ones under the same pitches.
+    assert any("☑" in panel for panel in panels)
+    assert any("☐" in panel for panel in panels)
+    # And every line is a link to the task it counts, which is the other half of
+    # moving this out of the prose.
+    for panel in panels:
+        assert re.search(r'<a href="[^"]*task-[0-9a-f]{6}">', panel), panel[:120]
+
+
+def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendered: Path):
+    """An appetite read on its own says nothing about whether the work still fits.
+    The corpus's pitch-5e7b1c was bet at four weeks and holds 8.1 of tasks."""
+    page = read(rendered, "detail.html")
+    assert "8.1 in tasks" in page
+    assert 'class="overrun">8.1 in tasks' in page, "over the bet, and said so"
+
+
+def test_a_pitch_that_keeps_a_checklist_as_well_as_tasks_is_told_which_one_counts():
+    """A list somebody is ticking that moves no number on the page is worse than
+    no list at all, so the one being ignored says so instead of being silently
+    ignored."""
+    from openproj.model import Pitch
+    from openproj.render import _shaping_hints
+
+    live = Pitch(id="pitch-000001", kind="pitch", title="Q", status="in_progress",
+                 body="## Progress\n\n- [x] a\n- [ ] b\n")
+    both = _shaping_hints(live, has_tasks=True)
+    alone = _shaping_hints(live, has_tasks=False)
+
+    assert any("the checklist is not" in note for note in both)
+    assert not any("the checklist is not" in note for note in alone), (
+        "with no tasks under it, the checklist is what there is"
+    )
+
+
+def test_the_pitch_template_leaves_progress_to_its_tasks():
+    """The one place the template departs from the team's HackMD original: a
+    pitch's progress is its tasks, each a record with an owner and a size, and
+    the sub-items of the HackMD list are what a task's own checklist is for."""
+    from openproj.render import TEMPLATES
+
+    assert "## Progress" not in TEMPLATES["pitch"]
+    assert "## Progress" in TEMPLATES["task"]
+    assert "## For later" in TEMPLATES["pitch"]
+
+
+def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
+    """`_rollup_problems` says nothing where no bet was made, and the page has to
+    agree: a number shouted in warning colour where `check` is silent teaches a
+    reader that one of the two is lying."""
+    from openproj.model import Config, Pitch, Task
+    from openproj.render import _fact_rows
+
+    index = build_index(
+        [
+            Pitch(id="pitch-000001", kind="pitch", title="Q"),
+            Task(id="task-000001", kind="task", title="T", parent="pitch-000001",
+                 person_weeks=3.0),
+        ],
+        Config(),
+        date(2026, 8, 17),
+    )
+    from openproj.render import STATIC
+
+    row = next(
+        r for r in _fact_rows(index, index.entities["pitch-000001"], STATIC)
+        if r["label"].startswith("Appetite")
+    )
+
+    assert "3 in tasks" in row["display"]
+    assert 'class="quiet"' in row["display"], "no bet to be over"
+
+
+def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index: Index):
+    """Counted out of the body rather than stored, so a plan where nobody keeps a
+    list would carry a permanently empty column across fourteen others — which
+    reads as broken, not as unused."""
+    from openproj.model import Config, Task
+    from openproj.render import _columns_for
+
+    def index_of(*bodies: str) -> Index:
+        return build_index(
+            [
+                Task(id=f"task-00000{n}", kind="task", title="T", body=body)
+                for n, body in enumerate(bodies)
+            ],
+            Config(),
+            date(2026, 8, 17),
+        )
+
+    assert "progress" not in dict(_columns_for(index_of("prose only")))
+    assert "progress" in dict(_columns_for(index_of("prose only", "- [ ] a\n")))
+    # The corpus does keep lists — its migration stubs carry them — so the column
+    # is there, which is what makes the two rendered pages differ.
+    assert seed_index.progress
+    assert "progress" in dict(_columns_for(seed_index))
+
+
+def test_a_cycle_with_no_record_says_what_every_other_view_says_about_it(seed_index: Index):
+    """Cool-down is inside a window, so taking the window's last day for the
+    review meeting made the page offer 7.8 weeks of capacity against a build the
+    scheduler ends seven weeks in. Three answers about one cycle, and a betting
+    table would have bet against the largest.
+
+    The corpus dates cycles 28 and 34–36 in `config/cycles.yaml` and writes a
+    record for none of them, which is the state every plan passes through."""
+    from openproj.render import _cycle_view
+    from openproj.schedule import build_end
+
+    config = Config(holidays=seed_index.holidays, cooldown_weeks=seed_index.cooldown_weeks)
+    unrecorded = [n for n in seed_index.cycles if n not in seed_index.plans]
+    assert unrecorded, "the corpus dates cycles it has written no record for"
+
+    for number in unrecorded:
+        view = _cycle_view(seed_index, number)
+        window = seed_index.cycles[number]
+
+        assert view["builds_until"] == build_end(number, window, config).isoformat(), number
+        assert view["ends_on"] == window[1].isoformat(), number
+        assert float(view["build_weeks"]) <= config.working_weeks(*window), number

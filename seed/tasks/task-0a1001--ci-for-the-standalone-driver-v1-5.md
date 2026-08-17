@@ -9,13 +9,12 @@ assignees: [jcanton, nfarabullini]
 reviewers: [msimberg, iomaganaris]
 review_waived: false
 assigned_on: 2026-06-29
-cycle: 37
 priority: high
 depends_on: []
 tags: [icon4py, standalone-driver, distributed, ci, gpu]
 prs: ["C2SM/icon4py#1223"]
 created_schema_version: 2
-effort_weeks: 3.5
+person_weeks: 3.5
 ---
 
 ## Problem

@@ -47,15 +47,15 @@ def a_family() -> list[Entity]:
     """One project, one pitch under it, two tasks under the pitch, one dependency."""
     return [
         a_project("proj-a00001", "Greenline", owner="alice", reviewers=["bob"]),
-        a_pitch("pitch-b00001", "Halo exchange", parent="proj-a00001", appetite_weeks=2.0,
+        a_pitch("pitch-b00001", "Halo exchange", parent="proj-a00001", person_weeks=2.0,
                 status="ready"),
-        a_task("task-c00001", "First", parent="pitch-b00001", owner="alice", effort_weeks=1.0),
+        a_task("task-c00001", "First", parent="pitch-b00001", owner="alice", person_weeks=1.0),
         a_task(
             "task-c00002",
             "Second",
             parent="pitch-b00001",
             owner="bob",
-            effort_weeks=1.0,
+            person_weeks=1.0,
             depends_on=["task-c00001"],
         ),
     ]
@@ -146,7 +146,7 @@ def test_a_parent_that_names_nothing_does_not_take_the_whole_index_down():
     helper in `test_validate` — so it has to be a plan the index can render.
     Unresolvable means "no project", the same answer as no parent at all.
     """
-    entities = [a_task("task-c00001", parent="proj-ffffff", owner="alice", effort_weeks=1.0)]
+    entities = [a_task("task-c00001", parent="proj-ffffff", owner="alice", person_weeks=1.0)]
 
     index = build_index(entities, CONFIG, TODAY)
 
@@ -382,8 +382,8 @@ def test_the_unblocked_predicate_is_the_complement_of_blocked():
 
 def test_the_overruns_cycle_predicate_reads_the_span():
     entities = [
-        a_task("task-c00001", owner="alice", effort_weeks=6.0, cycle=36),
-        a_task("task-c00002", owner="bob", effort_weeks=0.2, cycle=None),
+        a_task("task-c00001", owner="alice", person_weeks=6.0, cycle=36),
+        a_task("task-c00002", owner="bob", person_weeks=0.2, cycle=None),
     ]
     index = build_index(entities, CONFIG, TODAY)
 
@@ -397,15 +397,17 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     entities = [
         a_project("proj-a00001", owner="alice", reviewers=["bob"], status="in_progress",
             assigned_on=TODAY),
+        a_pitch("pitch-b00001", parent="proj-a00001", owner="alice", reviewers=["bob"],
+                shaped_by=["alice"], person_weeks=2.0, status="ready"),
         a_task(
             "task-c00001",
-            parent="proj-a00001",
+            parent="pitch-b00001",
             status="ready",
             owner="alice",
             reviewers=["bob"],
-            effort_weeks=1.0,
+            person_weeks=1.0,
         ),
-        a_task("task-c00002", parent="proj-a00001", status="ready"),
+        a_task("task-c00002", parent="pitch-b00001", status="ready"),
     ]
     index = build_index(entities, CONFIG, TODAY)
 
@@ -598,11 +600,16 @@ def test_the_seed_review_waiver_is_the_only_one(seed_index: Index):
 
 def test_the_seed_incomplete_entities_are_the_ones_missing_fields(seed_index: Index):
     """pitch-1b3f9a is missing only the grandfathered `shaped_by`, so it has to
-    show up here despite reporting as a warning."""
+    show up here despite reporting as a warning.
+
+    The corpus's tasks carry a `cycle` their pitch now owns, which is a v4
+    warning apiece — and this predicate is severity-agnostic on purpose, so they
+    are all in here. `task-3d84e9` is the one task left out: it is shelved, and
+    shelved records are exempt from every rule."""
     incomplete = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
 
     assert {"pitch-1b3f9a", "pitch-48ea9e", "task-3e07b2"} <= incomplete
-    assert incomplete.isdisjoint({"task-2b6c94", "task-53a9f0", "task-5a4e39", "task-0e4b7a"})
+    assert "task-3d84e9" not in incomplete
 
 
 def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Path):
@@ -636,6 +643,190 @@ def test_a_dangling_dependency_does_not_count_as_a_blocker():
     index = build_index(entities, CONFIG, TODAY)
     assert apply_filters(index, {"predicate": ["blocked"]}, "") == []
     assert apply_filters(index, {"predicate": ["unblocked"]}, "") == ["task-c00001"]
+
+
+# --------------------------------------------------------------------------- #
+# Load, and the carryover it used to miss
+# --------------------------------------------------------------------------- #
+
+
+def _two_cycles() -> Config:
+    return CONFIG.model_copy(
+        update={
+            "cycles": {
+                36: (date(2026, 6, 22), date(2026, 8, 14)),
+                37: (date(2026, 8, 17), date(2026, 10, 9)),
+            }
+        }
+    )
+
+
+def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one():
+    """`cycle:` records where a bet was MADE and is never re-stamped (D-C1), which
+    is what keeps an overrun accusing. It also means a filter on `cycle == N`
+    cannot see carryover — and the cycle page exists to add up who is full."""
+    entities = [
+        a_task("task-c00001", owner="ann", person_weeks=2.0, cycle=37, status="ready"),
+        a_task(
+            "task-c00002",
+            owner="ann",
+            person_weeks=3.0,
+            cycle=36,
+            status="in_progress",
+            assigned_on=date(2026, 8, 3),
+        ),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+
+    assert index.load(37) == {"ann": 5.0}
+    assert index.carried_into(37) == ["task-c00002"]
+
+
+def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
+    entities = [
+        a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="done",
+               prs=["C2SM/icon4py#1"], assigned_on=date(2026, 7, 1)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+    assert index.load(37) == {}
+    assert index.carried_into(37) == []
+
+
+def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
+    """A number nobody has given a window to is a hypothetical. Letting it absorb
+    every running item would put the whole plan's load on the page for a cycle
+    that may never run."""
+    entities = [
+        a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="in_progress",
+               assigned_on=date(2026, 8, 3)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+    assert index.load(99) == {}
+
+
+def test_a_carried_parent_charges_nothing_because_its_children_already_did():
+    """The same rule `load` applies to anything else (D-C2). A rollup counted as
+    well as its children double-books the same weeks."""
+    entities = [
+        a_pitch("pitch-b00001", owner="ann", person_weeks=4.0, cycle=36, status="in_progress",
+                assigned_on=date(2026, 8, 3)),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=1.0, cycle=36,
+               status="in_progress", assigned_on=date(2026, 8, 3)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+    assert index.load(37) == {"ann": 1.0}
+
+
+# --------------------------------------------------------------------------- #
+# What the body says
+# --------------------------------------------------------------------------- #
+
+
+def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
+    """Half a bet is half its weeks, not half its rows: a four-week task beside a
+    half-week one is not two equal halves of anything. Ticked from each task's own
+    `status`, so closing one from the table moves this and there is no checkbox
+    for the two to disagree about."""
+    entities = [
+        a_pitch("pitch-b00001", person_weeks=6.0),
+        a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
+               prs=["C2SM/icon4py#1"]),
+        a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0),
+    ]
+    counted = build_index(entities, CONFIG, TODAY).progress["pitch-b00001"]
+
+    assert (counted.done, counted.total, counted.unit) == (4.0, 6.0, "weeks")
+    assert counted.text == "4/6 wk"
+    assert counted.of == ["task-c00001", "task-c00002"]
+
+
+def test_a_shelved_task_is_in_neither_half_of_its_pitchs_progress():
+    """Otherwise parking a task makes a pitch look less finished than it was the
+    day before."""
+    entities = [
+        a_pitch("pitch-b00001", person_weeks=6.0),
+        a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
+               prs=["C2SM/icon4py#1"]),
+        a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0, status="shelved"),
+    ]
+    counted = build_index(entities, CONFIG, TODAY).progress["pitch-b00001"]
+    assert (counted.done, counted.total) == (4.0, 4.0)
+
+
+def test_a_pitch_with_tasks_ignores_its_own_body_checklist():
+    """Two answers to one question is one answer too many, and the tasks are the
+    ones anybody else can see."""
+    entities = [
+        a_pitch("pitch-b00001", person_weeks=6.0, body="- [x] a\n- [x] b\n- [x] c\n"),
+        a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0),
+    ]
+    counted = build_index(entities, CONFIG, TODAY).progress["pitch-b00001"]
+    assert (counted.done, counted.unit) == (0.0, "weeks")
+
+
+def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
+    """The bet is made once, on the thing the room named. A task carries no cycle
+    of its own, and the capacity sum has to find it anyway."""
+    entities = [
+        a_pitch("pitch-b00001", cycle=36, person_weeks=4.0, status="in_progress",
+                assigned_on=date(2026, 7, 1)),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0,
+               status="in_progress", assigned_on=date(2026, 7, 1)),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+
+    assert index.load(36) == {"ann": 2.0}
+    assert index.counts_in(index.entities["task-c00001"], 36)
+
+
+def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
+    """Carryover is decided by the dates, not by the status: a task that has not
+    started is still what somebody's next weeks are spent on, and it was dropped
+    from the total for not having begun."""
+    entities = [
+        a_pitch("pitch-b00001", cycle=36, person_weeks=4.0, status="in_progress",
+                assigned_on=date(2026, 7, 1)),
+        a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0,
+               status="ready"),
+    ]
+    index = build_index(entities, _two_cycles(), TODAY)
+
+    span = index.spans["task-c00001"]
+    assert span.start <= date(2026, 10, 9) and span.end >= date(2026, 8, 17), "it lands in 37"
+    assert index.load(37) == {"ann": 2.0}
+    assert index.carried_into(37) == ["pitch-b00001", "task-c00001"]
+
+
+def test_a_checklist_in_the_body_is_counted_once_into_the_index():
+    entities = [a_task("task-c00001", body="## Progress\n\n- [x] a\n- [ ] b\n")]
+    index = build_index(entities, CONFIG, TODAY)
+    counted = index.progress["task-c00001"]
+    assert (counted.done, counted.total, counted.unit) == (1, 2, "items")
+    assert counted.text == "1/2"
+
+
+def test_live_work_with_no_checklist_is_findable_and_shaping_work_is_not():
+    """A note, not a rule: the template asks for a checklist and this finds the
+    entities where nobody kept one. An idea nobody has bet on owes nothing."""
+    entities = [
+        a_task("task-c00001", status="in_progress", body="prose"),
+        a_task("task-c00002", status="in_progress", body="- [ ] a"),
+        a_task("task-c00003", status="shaping", body="prose"),
+    ]
+    index = build_index(entities, CONFIG, TODAY)
+    assert apply_filters(index, {"predicate": ["untracked"]}, "") == ["task-c00001"]
+
+
+def test_a_for_later_list_is_the_only_record_of_scope_being_cut():
+    entities = [
+        a_pitch("pitch-b00001", body="## Solution\n\nX\n\n## For later\n\n- the rest\n"),
+        a_pitch("pitch-b00002", body="## Solution\n\nX\n"),
+        # Present but empty is not a record of anything.
+        a_pitch("pitch-b00003", body="## For later\n"),
+    ]
+    index = build_index(entities, CONFIG, TODAY)
+    assert index.for_later == ["pitch-b00001"]
+    assert apply_filters(index, {"predicate": ["for_later"]}, "") == ["pitch-b00001"]
 
 
 def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(seed_index: Index):

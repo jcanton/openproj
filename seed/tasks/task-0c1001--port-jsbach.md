@@ -9,13 +9,12 @@ assignees: [jcanton]
 reviewers: [muellch, halungge]
 review_waived: false
 assigned_on: 2026-08-17
-cycle: 37
 priority: high
 depends_on: []
 tags: [jsbach, soil-snow-energy, scan-operator, savepoints, gt4py, icon4py]
 prs: []
 created_schema_version: 2
-effort_weeks: 4.0
+person_weeks: 4.0
 ---
 
 # Port JSBACH

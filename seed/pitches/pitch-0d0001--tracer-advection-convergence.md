@@ -15,7 +15,7 @@ depends_on: []
 tags: [greenline, warm-bubble, tracer-advection, miura, torus, convergence]
 prs: ["C2SM/icon4py#1399"]
 created_schema_version: 2
-appetite_weeks: 6.0
+person_weeks: 6.0
 shaped_by: nfarabullini
 ---
 

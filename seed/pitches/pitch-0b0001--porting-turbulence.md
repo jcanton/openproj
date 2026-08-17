@@ -15,7 +15,7 @@ depends_on: []
 tags: [tmx, turbulence, aes, gt4py, port, serialbox]
 prs: ["C2SM/icon4py#1364"]
 created_schema_version: 2
-appetite_weeks: 7.5
+person_weeks: 7.5
 shaped_by: jcanton
 ---
 

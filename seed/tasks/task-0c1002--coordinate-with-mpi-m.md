@@ -9,13 +9,12 @@ assignees: [muellch]
 reviewers: []
 review_waived: true
 assigned_on: 2026-08-17
-cycle: 37
 priority: medium
 depends_on: []
 tags: [jsbach, icon-land, coordination, upstream, mpi-m]
 prs: []
 created_schema_version: 2
-effort_weeks: 1.0
+person_weeks: 1.0
 ---
 
 # Coordinate with MPI-M

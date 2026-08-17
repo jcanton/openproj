@@ -9,13 +9,12 @@ assignees: [jcanton]
 reviewers: [halungge, tehrengruber]
 review_waived: false
 assigned_on: 2026-06-22
-cycle: 36
 priority: high
 depends_on: []
 tags: [tmx, turbulence, gt4py, granule, verification]
 prs: ["C2SM/icon4py#835", "C2SM/icon4py#943", "C2SM/icon4py#1329"]
 created_schema_version: 2
-effort_weeks: 4.0
+person_weeks: 4.0
 ---
 
 # Port turbulence atmosphere

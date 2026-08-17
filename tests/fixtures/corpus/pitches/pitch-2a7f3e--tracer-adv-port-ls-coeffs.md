@@ -6,7 +6,7 @@ parent: null
 status: done
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
-appetite_weeks: null
+person_weeks: null
 shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees:
   - nfarabullini
@@ -49,7 +49,7 @@ We only use the linear polynomial for the reconstruction in icon4py because only
 
 ## Appetite
 
-*(Section empty in the source note; the header line reads `- Appetite (FTEs, weeks):` with no value. See the migration notes below — `appetite_weeks` is deliberately null, not guessed.)*
+*(Section empty in the source note; the header line reads `- Appetite (FTEs, weeks):` with no value. See the migration notes below — `person_weeks` is deliberately null, not guessed.)*
 
 ## Solution
 

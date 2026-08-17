@@ -406,12 +406,27 @@ def test_nothing_on_the_cycle_page_is_written_until_save(client: TestClient):
     assert re.search(r"SAVE\.onclick = async \(\) => \{\s*if \(await flush\(false\)\)", page)
 
 
+def test_a_cycle_has_a_box_for_what_came_up_at_the_betting_table(client: TestClient):
+    """A betting table produces decisions that are not fields on anything — why a
+    pitch was left out, what would make it a bet next time. The record already had
+    a body and the page rendered it read-only, so those decisions went to a HackMD
+    note nobody linked."""
+    page = client.get("/cycle/37").text
+
+    assert '<textarea id="notes"' in page
+    # Saved with the setup, in the write the roster already makes — and only when
+    # it changed, or every roster save would be a body edit too.
+    assert "put(fields, NOTES_DIRTY ? NOTES.value : null)" in page
+    assert "async function put(fields, body = null)" in page
+
+
 def test_work_is_autosaved_so_a_dropped_connection_costs_two_minutes(client: TestClient):
     page = client.get("/cycle/37").text
 
     assert re.search(
-        r"setInterval\(\(\) => \{ if \(PENDING\.size \|\| ROSTER_DIRTY\)"
-        r" flush\(true\); \}, 120000\);",
+        r"setInterval\(\(\) => \{\s*"
+        r"if \(PENDING\.size \|\| ROSTER_DIRTY \|\| NOTES_DIRTY\) flush\(true\);\s*"
+        r"\}, 120000\);",
         page,
     )
     # And the browser's own warning, which is the only thing that can stop a tab
@@ -457,15 +472,18 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
 
 def test_capacity_moves_while_the_rate_is_being_typed(client: TestClient):
     """Left to the next page load, the number somebody is setting is invisible at
-    the moment they are setting it — which is most of the moment that matters."""
+    the moment they are setting it — which is most of the moment that matters.
+
+    A rate only. The other half of `rate × build weeks` is working days between
+    two meetings with the holidays taken out, and this page does not have the
+    holidays — so a date change says the column is stale instead of showing a
+    number computed by a rule that is only nearly the server's."""
     page = client.get("/cycle/37").text
 
     assert "function recount()" in page
-    assert re.search(
-        r"if \(event\.target\.matches\('input\.rate, \[name=build_weeks\]'\)\)"
-        r" recount\(\);",
-        page,
-    )
+    assert re.search(r"if \(event\.target\.matches\('input\.rate'\)\) recount\(\);", page)
+    assert re.search(r"const BUILD_WEEKS = [0-9.]+;", page), "the server's own answer"
+    assert "#setup input[type=date]" in page and 'getElementById(\'stale\')' in page
 
 
 def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_path: Path):
@@ -605,7 +623,7 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     in a comment — while the server's refusal ten lines below printed `p.field`.
 
     So one rejected save read "still needed at status Ready: Appetite (weeks)" and
-    the next read "appetite_weeks: a ready pitch needs an appetite", from the same
+    the next read "person_weeks: a ready pitch needs an appetite", from the same
     `<ul>`, about the same box. Both go through `labelOf` now.
 
     The list is built from text nodes rather than interpolated into `innerHTML`,

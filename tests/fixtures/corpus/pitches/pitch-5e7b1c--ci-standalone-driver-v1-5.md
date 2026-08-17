@@ -6,7 +6,7 @@ parent: null
 status: in_progress
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
-appetite_weeks: 4.0
+person_weeks: 4.0
 shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees: [jcanton, msimberg]
 assigned_on: 2026-05-26
@@ -35,7 +35,7 @@ Decisions taken during the import, all of them reversible:
   *[Greenline] Distributed driver* → <https://hackmd.io/nHBlhnlfRCeAbwQRBLDydA> with developers
   Jacopo and Mikael, and that note's Problem statement is precisely this row's subject and status
   (the standalone driver is not bit-identical between single- and multi-rank runs). That note is
-  reproduced below and is the basis for `appetite_weeks` and `cycle`. Confidence: medium-high, by
+  reproduced below and is the basis for `person_weeks` and `cycle`. Confidence: medium-high, by
   content and personnel match, not by declaration.
 - **`Buggy` is not in the Appetite status enum.** Mapped to `wip` — the distributed standalone
   driver test exists and runs but does not give bit-identical results. The original word is
@@ -87,7 +87,7 @@ own H1 says *[ICON4Py] Distributed driver*.
 > Up to the whole cycle.
 
 Cycle 36 is stated as "Length: 4 weeks" in its overview, and its betting table (26.05.2026) and
-review meeting (23.06.2026) are exactly 4.0 weeks apart. Hence `appetite_weeks: 4.0` elapsed weeks.
+review meeting (23.06.2026) are exactly 4.0 weeks apart. Hence `person_weeks: 4.0` elapsed weeks.
 The source phrases this as an upper bound ("up to"), so treat 4.0 as a ceiling.
 
 ### Solution

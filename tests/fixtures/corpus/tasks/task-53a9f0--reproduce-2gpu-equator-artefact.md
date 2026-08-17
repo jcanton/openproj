@@ -6,7 +6,7 @@ parent: pitch-5e7b1c
 status: in_progress
 owner: msimberg
 reviewers: [jcanton]
-effort_weeks: 2
+person_weeks: 2
 assignees: []
 assigned_on: 2026-08-13
 cycle: 36
@@ -33,6 +33,6 @@ Migration notes:
 - `status: in_progress` because the parent bullet is unchecked while its first sub-item is checked.
 - `assignees: []` — the note attributes the completed sub-item to Mikael (`msimberg`) but never
   assigns the task itself; not promoted to the field.
-- `effort_weeks: null` — no per-task effort is stated anywhere in the source (the task table fills
+- `person_weeks: null` — no per-task effort is stated anywhere in the source (the task table fills
   effort on 0 of 38 rows).
 - `priority: medium` is the schema default; the source states no per-task priority.
