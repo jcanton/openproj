@@ -8615,6 +8615,19 @@ _ISSUES_STYLE = """
              box-shadow: inset 0 -1px 0 var(--line); }
 /* The grip is positioned against this. */
 #issues th { position: relative; }
+/* And the grip itself, which the entity table carries in ITS stylesheet — so
+   the span was rendered here with no width, no cursor and nothing to see: a
+   control that existed, worked when a script poked it, and could not be reached
+   by a hand. */
+#issues th .grip {
+  position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
+}
+#issues th .grip::before {
+  content: ""; position: absolute; top: 20%; bottom: 20%; right: 3px; width: 1px;
+  background: var(--line-strong);
+}
+#issues th .grip:hover::before,
+#issues th .grip.dragging::before { background: var(--accent); width: 2px; }
 #issues th button { font: inherit; color: inherit; letter-spacing: inherit;
                     text-transform: inherit; background: none; border: 0; padding: 0;
                     cursor: pointer; }

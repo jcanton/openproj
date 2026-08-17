@@ -358,3 +358,21 @@ def test_an_issue_cell_is_border_box(client: TestClient):
     style = re.search(r"#issues th, #issues td \{(.*?)\}", client.get("/issues").text, re.S)
 
     assert style and "box-sizing: border-box;" in style.group(1)
+
+
+def test_the_grip_is_a_thing_a_hand_can_reach(client: TestClient):
+    """The handler existing is not the control existing.
+
+    `th .grip` is styled in the entity table's own stylesheet, which this page
+    does not get — so the span rendered here with no width, no cursor and nothing
+    to see. Every scripted test passed, because a dispatched PointerEvent lands on
+    a zero-size element exactly as well as on a real one. What was missing was the
+    only part a person uses.
+    """
+    style = client.get("/issues").text
+
+    for rule in ("#issues th .grip {", "position: absolute;", "cursor: col-resize;",
+                 "#issues th .grip::before {"):
+        assert rule in style, rule
+    # Positioned against the header cell, or `right: 0` is the page's right edge.
+    assert "#issues th { position: relative; }" in style
