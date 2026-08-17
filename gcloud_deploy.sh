@@ -46,13 +46,17 @@ set -euo pipefail
 # format it wanted.
 PROJECT="icon4py-plan-gcloud"
 
-# Zurich. Worth knowing before picking it: Cloud Run's always-free monthly
-# allowance is documented as applying to Tier 1 pricing regions, and this is a
-# Tier 2 one, so a deployment here may bill from the first request rather than
-# after the free allowance. Small either way — it scales to zero — but
-# `europe-west1` (Belgium) is Tier 1 and otherwise equivalent. Changing this
-# changes the service URL, so the OAuth App's redirect URIs change with it.
-REGION="europe-west6"
+# Belgium, and Tier 1 — which is the reason it is not Zurich. Cloud Run's
+# always-free monthly allowance is documented as applying to Tier 1 pricing
+# regions, and europe-west6 is Tier 2, so the first deployment may have been
+# billing from its first request rather than after an allowance. Nothing else
+# distinguishes them for a service that scales to zero and holds no data: the
+# plan lives on GitHub, not here.
+#
+# Changing this changes the service URL, so the OAuth App's redirect URIs change
+# with it — and it leaves the old region's service running, because deleting one
+# is not something a deploy script should do behind you. The runbook says how.
+REGION="europe-west1"
 
 # The GitHub App's private key, downloaded when you generated it in step 2. Read
 # once, put in Secret Manager, and never referenced again — the file on your

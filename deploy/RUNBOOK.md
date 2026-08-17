@@ -307,16 +307,15 @@ missing and the service is up, it is serving an empty plan it made itself.
 
 ## The service, as deployed
 
-**<https://openproj-392761827400.europe-west6.run.app>** — project
-`icon4py-plan-gcloud`, region `europe-west6`, serving
+**<https://openproj-392761827400.europe-west1.run.app>** — project
+`icon4py-plan-gcloud`, region `europe-west1`, serving
 `github.com/jcanton/icon4py-plan`.
 
-Cloud Run answers on a second hostname too,
-`https://openproj-perontl7xq-oa.a.run.app`. Both are permanent and both reach the
-same service; the project-number one above is the one the deploy prints and the
-one to hand round, because the other is a generated token nobody can retype.
-GitHub matches a redirect URI exactly, so **both** are registered on the OAuth
-App — otherwise sign-in would work or 404 depending on which link somebody had.
+Cloud Run answers on a second, generated hostname as well, which the deploy
+prints. Both are permanent and both reach the same service; the project-number
+one above is the one to hand round, because the other is a token nobody can
+retype. GitHub matches a redirect URI exactly, so **both** belong on the OAuth
+App — otherwise sign-in works or 404s depending on which link somebody followed.
 
 ## Day one, before anybody else uses it
 
@@ -330,15 +329,20 @@ App — otherwise sign-in would work or 404 depending on which link somebody had
   then the always-free tier applies, which is a separate and permanent thing from
   the trial credit. The plan survives either way, since it is in git and the
   container is a cache, but the service does not.
-- **Check what this region actually costs.** Cloud Run's always-free monthly
-  allowance is documented as applying to Tier 1 pricing regions, and
-  `europe-west6` (Zurich) is Tier 2 — so this deployment may sit outside it. The
-  exposure is small either way: scale-to-zero means nothing bills while nobody is
-  looking, and the largest line would be egress, because every page inlines
-  ~650 KB of vendored cytoscape and typeface that no browser cache can help with.
-  Expect single-digit CHF a month at worst. `europe-west1` (Belgium) is Tier 1
-  and one variable away in `gcloud_deploy.sh` — redeploying there changes the
-  service URL, so the two redirect URIs would need updating with it.
+- **Tear down what is left in `europe-west6`.** The first deployment went to
+  Zurich, which is a Tier 2 pricing region and therefore possibly outside Cloud
+  Run's always-free allowance; the service now runs in `europe-west1`. A deploy
+  script does not delete a service behind you, so the old one is still there,
+  still serving, and still on the OAuth App:
+
+  ```bash
+  gcloud run services delete openproj --region europe-west6
+  gcloud artifacts repositories delete openproj --location europe-west6
+  gcloud storage rm -r gs://icon4py-plan-gcloud_europe-west6_cloudbuild
+  ```
+
+  Then remove its two redirect URIs from the OAuth App, so a stale bookmark fails
+  visibly rather than signing somebody into a service nobody is watching.
 - `config/people.yaml` in the plan is `known_people: []`. An unlisted login is a
   warning rather than a refusal, so nothing breaks, but nothing autocompletes
   either.
