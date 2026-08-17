@@ -139,3 +139,39 @@ def test_the_vendored_static_directory_is_found_by_an_env_var(monkeypatch, tmp_p
     monkeypatch.setenv("OPENPROJ_STATIC", str(tmp_path))
 
     assert _static_dir() == tmp_path
+
+
+def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Path, capsys):
+    """The half of A2 that made it worse than the cycle blocker.
+
+    A `done` task dated 9999-12-31 and a cycle nobody could mean are both one
+    keystroke too many in a form box, and neither is a validation problem — so
+    `check` said "0 blockers, 0 warnings" while `/timeline` answered 500. And
+    `render` wrote *no files at all*, not five of six: every page is rendered
+    before any is written, so the one that raised took the other five with it.
+    Both of the tools you would reach for to diagnose it were silent or dead.
+    """
+    for directory in ("tasks", "cycles"):
+        (tmp_path / directory).mkdir()
+    (tmp_path / "tasks" / "task-000001--done.md").write_text(
+        "---\nid: task-000001\nkind: task\ntitle: Long done\nstatus: done\n"
+        "owner: jcanton\nreviewers: [msimberg]\nassigned_on: 9999-12-31\n"
+        "prs: [\"C2SM/icon4py#1\"]\neffort_weeks: 1.0\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cycles" / "0038.md").write_text(
+        "---\ncycle: 38\nstarts_on: 2026-09-01\nbuild_weeks: 500000\n---\n\nGoal.\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    assert main(["check", str(tmp_path)]) == 0
+    assert "0 blockers" in capsys.readouterr().out
+    assert main(["render", str(tmp_path), str(out)]) == 0
+
+    for name in ("index.html", "detail.html", "people.html",
+                 "cycles.html", "graph.html", "timeline.html"):
+        assert (out / name).is_file(), name
+        assert len(read_bytes := (out / name).read_bytes()) > 1000, (name, len(read_bytes))
+    # And the one that used to raise is a drawing, not fourteen megabytes of it.
+    assert len((out / "timeline.html").read_bytes()) < 1_000_000

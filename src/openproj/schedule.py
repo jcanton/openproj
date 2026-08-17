@@ -24,12 +24,12 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date
 
 import networkx as nx
 from pydantic import BaseModel
 
-from .model import PRIORITY_RANK, Config, Entity, size_weeks
+from .model import PRIORITY_RANK, Config, Entity, days_after, size_weeks, within_the_calendar
 
 _WORKING_DAYS_PER_WEEK = 5
 
@@ -56,15 +56,25 @@ def _is_working_day(day: date, config: Config) -> bool:
 
 
 def _next_working_day(day: date, config: Config) -> date:
-    day += timedelta(days=1)
-    while not _is_working_day(day, config):
-        day += timedelta(days=1)
+    """The first working day after `day`, or the end of the calendar if there is none.
+
+    This walk and `_first_working_day`'s stop at `date.max` rather than stepping
+    past it. `_place` calls this on a blocker's last day, and a `done` entity
+    carries whatever `assigned_on` says — so `assigned_on: 9999-12-31`, typed
+    into the detail page, walked one day off the end of the calendar and
+    answered 500 on every page that reads the index. Saturating is the same
+    answer `working_days_after` already gives, and `_place` asks about the
+    calendar before it uses either.
+    """
+    day = days_after(day, 1)
+    while day < date.max and not _is_working_day(day, config):
+        day = days_after(day, 1)
     return day
 
 
 def _first_working_day(day: date, config: Config) -> date:
-    while not _is_working_day(day, config):
-        day += timedelta(days=1)
+    while day < date.max and not _is_working_day(day, config):
+        day = days_after(day, 1)
     return day
 
 
@@ -72,9 +82,13 @@ def _working_days(weeks: float) -> int:
     """Whole working days in `weeks`.
 
     Rounded to six decimals first: 1.2 * 5 is 6.000000000000001 in binary
-    floating point, and a naive ceil would buy a seventh day.
+    floating point, and a naive ceil would buy a seventh day. Bounded before the
+    ceil, because `math.ceil` raises on infinity: `effort_weeks: Infinity` is
+    valid JSON to Python's parser and one PATCH away, and it raised here —
+    inside `_runs_past_the_calendar`, so the guard was the thing that fell over
+    and every page 500'd on a value already committed.
     """
-    return max(1, math.ceil(round(weeks * _WORKING_DAYS_PER_WEEK, 6)))
+    return max(1, math.ceil(within_the_calendar(round(weeks * _WORKING_DAYS_PER_WEEK, 6))))
 
 
 def _runs_past_the_calendar(start: date, weeks: float, config: Config) -> bool:
@@ -195,7 +209,10 @@ def build_end(number: int | None, window: tuple[date, date], config: Config) -> 
     ends = (
         plan.builds_until
         if plan is not None
-        else window[1] - timedelta(days=round(config.cooldown_weeks * 7))
+        # Backwards through `days_after` for the same reason as everything else:
+        # a cool-down of `.inf` weeks in one config file is `round()` raising,
+        # and one absurd number in `defaults.yaml` is not worth every page.
+        else days_after(window[1], -(config.cooldown_weeks * 7))
     )
     # A cool-down longer than the window would put the end of build before the
     # cycle began, and then every entity in it overruns by definition. Clamped
@@ -301,7 +318,8 @@ def schedule(
 
         duration, estimated = _duration_weeks(entity, config)
         workers = _workers(entity)
-        if _runs_past_the_calendar(floor, duration, config):
+        placed = _place(entity, duration, workers, booked, spans, floor, config)
+        if placed is None:
             # Unscheduled, exactly as a dependency cycle is: the scheduler has no
             # answer, and saying so is better than inventing one. Clamping the end
             # to `date.max` instead was worse in every direction — the timeline
@@ -310,6 +328,8 @@ def schedule(
             # producing megabytes of ticks nobody asked for. `render` drops an
             # unscheduled span from the plot entirely, so this keeps one absurd
             # number from setting the scale for every other bar on the page.
+            # Nothing is booked either: work with no dates on it holds nobody's
+            # capacity.
             spans[entity_id] = Span(
                 start=floor, end=floor, unscheduled=True, estimated=estimated,
                 unowned=not workers,
@@ -319,9 +339,7 @@ def schedule(
                 text=f"Not placed: {duration:g} weeks of work runs past the end of the calendar.",
             )
             continue
-        span, explanation = _place(
-            entity, duration, workers, booked, spans, floor, config
-        )
+        span, explanation = placed
         spans[entity_id] = span.model_copy(
             update={
                 "estimated": estimated,
@@ -345,8 +363,16 @@ def _place(
     spans: dict[str, Span],
     floor: date,
     config: Config,
-) -> tuple[Span, Explanation | None]:
-    """Earliest slot at or after the entity is ready, respecting capacity 1."""
+) -> tuple[Span, Explanation | None] | None:
+    """Earliest slot at or after the entity is ready, respecting capacity 1.
+
+    `None` when no slot fits inside the calendar. The question used to be asked
+    once, in `schedule`, against today — but the start is not today: a blocker
+    dated at the end of time, or a worker booked until it, pushes it there, and
+    then the walks below stepped off the calendar and raised. Asked against the
+    start each time round the loop it is also what terminates the loop, since
+    `start` only ever moves forward.
+    """
     blocker_id, blocker_ready = None, floor
     for target in entity.depends_on:
         if target in spans and spans[target].end >= blocker_ready:
@@ -356,6 +382,8 @@ def _place(
     start = _first_working_day(ready, config)
     busy_worker, busy_until = None, None
     while True:
+        if _runs_past_the_calendar(start, duration, config):
+            return None
         end = working_days_after(start, duration, config)
         clash = [
             (worker, booked_end)

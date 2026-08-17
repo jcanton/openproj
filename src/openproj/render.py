@@ -20,7 +20,7 @@ import os
 import re
 import shutil
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date
 from functools import cache, lru_cache
 from pathlib import Path
 
@@ -33,7 +33,17 @@ from markupsafe import Markup, escape
 from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _project_of
-from .model import Config, Cycle, Entity, Pitch, Project, Task, required_at, size_weeks
+from .model import (
+    Config,
+    Cycle,
+    Entity,
+    Pitch,
+    Project,
+    Task,
+    days_after,
+    required_at,
+    size_weeks,
+)
 
 
 def _static_dir() -> Path:
@@ -63,6 +73,15 @@ _DAY_PX = 6
 _ROW_PX = 22
 _LEFT_PX = 250
 _PLOT_PX = 1100
+# The widest window the plot will draw over. Past the day-width floor below the
+# SVG simply gets wider, so a window reaching the end of the calendar — one
+# `done` entity dated 9999-12-31, or a `?to=` anybody can type — came out as
+# 4.7 million pixels of drawing and 95,686 month ticks, fourteen megabytes that
+# is a hung tab rather than a page. Forty years is longer than any plan this
+# tool will hold and still twenty screens of scrolling at the default scale;
+# bars outside it are dropped the way any bar outside the window is, and the
+# page already reports how many it is not showing.
+_MAX_PLOT_DAYS = 40 * 366
 # The header is two bands, not one. Cycle labels used to be drawn at y=10 and month
 # labels at y=18 inside the same 26px strip, so a cycle boundary landing near the
 # first of a month wrote one word on top of the other.
@@ -435,7 +454,11 @@ def _timeline(
     origin, last = min(*starts, index.today), max(*ends, index.today)
     origin, last = window[0] or origin, window[1] or last
     if last <= origin:                      # a backwards window would invert every bar
-        last = origin + timedelta(days=1)
+        # `days_after`, because `from` is a query parameter: `?from=9999-12-31`
+        # is a link anybody can send and it walked one day off the calendar,
+        # which was a 500 on `/timeline` with nothing committed at all.
+        last = days_after(origin, 1)
+    last = min(last, days_after(origin, _MAX_PLOT_DAYS))
     drawn = {i: s for i, s in drawn.items() if s.end >= origin and s.start <= last}
 
     # A corpus can span ten months. At a fixed day width that is 1800px of
@@ -573,12 +596,23 @@ def _month_ticks(origin: date, last: date, x) -> list[dict]:
 
     The year only where it changes: "Aug 2026" on every tick spends a third of a
     narrow month restating what the tick before it already said.
+
+    December 9999 has no month after it, and building one raised ValueError —
+    twelve lines after the `x()` helper that was fixed for this exact failure.
+    `assigned_on: 9999-12-31` on a done entity, typed into the detail page,
+    committed and then answered 500 on `/timeline` for good, with `openproj
+    check` reporting nothing wrong and `openproj render` writing no files at
+    all, so neither tool you would reach for could tell you why. The walk stops
+    at the last month the calendar has instead; the loop would end there anyway,
+    since the month after it is past `last` by construction.
     """
     ticks, cursor = [], date(origin.year, origin.month, 1)
     while cursor <= last:
         if cursor >= origin:
             year = not ticks or cursor.month == 1
             ticks.append({"x": x(cursor), "label": cursor.strftime("%b %Y" if year else "%b")})
+        if (cursor.year, cursor.month) == (date.max.year, date.max.month):
+            break
         cursor = date(cursor.year + cursor.month // 12, cursor.month % 12 + 1, 1)
     return ticks
 
@@ -6173,7 +6207,10 @@ def render_cycles(
         # because both are true far more often than not.
         next={
             "number": top + 1,
-            "starts_on": (ends[1] + timedelta(days=1)).isoformat()
+            # `days_after`, because the cycle this reads from may be the one
+            # somebody gave 500000 build weeks: its end is clamped to the end of
+            # the calendar, and a day past that would be `/cycles` gone too.
+            "starts_on": days_after(ends[1], 1).isoformat()
             if ends
             else index.today.isoformat(),
             "build_weeks": f"{last.build_weeks:g}" if last else "4",

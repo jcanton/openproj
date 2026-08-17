@@ -24,6 +24,55 @@ CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 _CYCLE_DIR = "cycles"
 
+# Python's `date` spans years 1 to 9999 and every way of leaving that range
+# raises instead of saturating, so this is the widest move any of the two
+# functions below can be asked for.
+CALENDAR_DAYS = (date.max - date.min).days
+
+
+def within_the_calendar(days: float) -> float:
+    """`days`, bounded by the length of the calendar so that rounding it cannot raise.
+
+    `round()` and `math.ceil()` both raise on infinity, and a length in weeks is
+    a float that a hand-edited file may write as `.inf` — `effort_weeks: .inf`
+    reached `math.ceil` inside the scheduler's own calendar guard and took every
+    page down, which is the guard falling over rather than guarding. So the
+    bound goes before the rounding, never after it.
+
+    The constant comes first in the `min` because NaN loses every comparison:
+    `min(CALENDAR_DAYS, nan)` is the constant, `min(nan, CALENDAR_DAYS)` is the
+    NaN. A size of `inf - inf` is one subtraction away and rounds no better.
+    """
+    return min(CALENDAR_DAYS, days)
+
+
+def days_after(day: date, days: float) -> date:
+    """`day` moved `days` calendar days, stopping at the ends of the calendar.
+
+    The one place a date moves, and the reason it is one place: `day +
+    timedelta(days=n)` raises OverflowError the moment the answer leaves years
+    1 to 9999, every page is built from one index, so a single committed number
+    that walks off the calendar answers 500 on all of them at once — on a
+    protected branch, so the commit cannot be force-pushed away and the repair
+    has to be crafted against a sha the 500ing pages will not hand over.
+    `schedule.py` learned that and guarded its own copy; the three other places
+    that added days to a date did not, so the question is answered here for all
+    of them.
+
+    `date.max` rather than an exception, and `days` rounded rather than
+    refused: this is a drawing and scheduling primitive, and a primitive that
+    raises is the 500. `date.max` is not a date anybody plans against, so a
+    caller can read it as "as far as the calendar goes" with no second return
+    value — which is what `working_days_after` already returns for work that
+    does not fit.
+    """
+    days = within_the_calendar(days)
+    if days > (date.max - day).days:
+        return date.max
+    if days < -(day - date.min).days:
+        return date.min
+    return day + timedelta(days=round(days))
+
 
 class Problem(BaseModel):
     """One validation finding, carrying the rule version that introduced it.
@@ -59,14 +108,25 @@ class Cycle(BaseModel):
     availability: dict[str, float] = {}
     body: str = ""
 
+    def _last_day(self, weeks: float) -> date:
+        """The inclusive last day of `weeks` weeks beginning at `starts_on`.
+
+        Clamped, because these two properties are read while the config is being
+        assembled — before any rule has looked at the record — so raising here is
+        `openproj check`, `openproj render` and nine of the ten routes gone at
+        once. `build_weeks: 500000` typed into the Cycles form did exactly that.
+        The route refuses that number now; a file somebody edited in git never
+        passed the route, and this is what keeps the site up for that one.
+        """
+        return days_after(self.starts_on, round(within_the_calendar(weeks * 7)) - 1)
+
     @property
     def builds_until(self) -> date:
-        return self.starts_on + timedelta(days=round(self.build_weeks * 7) - 1)
+        return self._last_day(self.build_weeks)
 
     @property
     def ends_on(self) -> date:
-        weeks = self.build_weeks + self.cooldown_weeks
-        return self.starts_on + timedelta(days=round(weeks * 7) - 1)
+        return self._last_day(self.build_weeks + self.cooldown_weeks)
 
     def capacity(self, who: str, nominal: float = 1.0) -> float:
         """Weeks of work this person can hold in this cycle."""

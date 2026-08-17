@@ -2476,3 +2476,85 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
         # answer than the link this would otherwise have made of it.
         assert "<img" not in drawn, source
         assert "(external image)" in drawn or source in str(drawn), source
+
+
+# --------------------------------------------------------------------------- #
+# The end of the calendar
+# --------------------------------------------------------------------------- #
+
+
+def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
+    """The seed corpus with one `done` task dated at the end of the calendar.
+
+    A `done` span is whatever `assigned_on` says and no rule refuses a date, so
+    this is what one keystroke too many in the detail page's date box leaves in
+    the repository — permanently, on a protected branch.
+    """
+    entities, config = load_repo(seed_root)
+    # Already `done`, and nothing depends on it — the narrowest possible blast
+    # radius, which is what the audit hit: every other page stayed up and only
+    # `/timeline` broke.
+    marked = [e for e in entities if e.id == "task-3e07b2"]
+    assert marked, "the fixture corpus no longer holds the entity this test edits"
+    marked[0].assigned_on = date.max
+    return build_index(entities, config, date(2026, 8, 17))
+
+
+def test_the_timeline_survives_a_date_at_the_end_of_the_calendar(seed_root: Path):
+    """`_month_ticks` built the month after December 9999 to find out it was too
+    far, and `date(10000, 1, 1)` is a ValueError — twelve lines after the `x()`
+    helper that was fixed for this exact failure and carries a comment saying so.
+
+    `/timeline` answered 500 for good, and both tools you would reach for to
+    diagnose it were no use: `openproj check` reported nothing wrong and
+    `openproj render` wrote no files at all, because every page is rendered
+    before any is written.
+    """
+    from openproj.render import render_timeline
+
+    html = render_timeline(_index_reaching_the_end_of_the_calendar(seed_root))
+
+    assert '<svg width=' in html
+
+
+def test_a_bar_at_the_end_of_time_does_not_make_a_page_nobody_can_open(seed_root: Path):
+    """Not raising is half the fix. Left to its own devices the plot draws every
+    day between here and the year 9999 at the 1.6px/day floor: 4.7 million pixels
+    of SVG, 95,686 month ticks and fourteen megabytes of markup — which is a hung
+    tab, not a page, and is the outcome the scheduler already refuses elsewhere.
+
+    Measured off the drawing rather than off the source: a stylesheet or a
+    constant can say the right number while the SVG says another one, and it is
+    the SVG the browser lays out.
+    """
+    from openproj.render import render_timeline
+
+    html = render_timeline(_index_reaching_the_end_of_the_calendar(seed_root))
+    width = float(re.search(r'<svg width="([\d.]+)"', html).group(1))
+    ticks = re.findall(r'<text class="month-label"', html)
+
+    assert width < 30_000, f"{width}px of plot is not a page anybody scrolls"
+    assert len(ticks) < 600, f"{len(ticks)} month labels"
+    assert len(html) < 1_000_000, f"{len(html)} bytes"
+    # And it is still a drawing of the plan, not an empty frame: the bars that
+    # fit the window are all there, and the page says what it is not showing.
+    assert len(re.findall(r'<rect data-id="', html)) == 11, "every bar the plan had"
+
+
+def test_a_window_typed_into_the_url_cannot_run_off_the_calendar(seed_index: Index):
+    """No commit needed for this one: `from` and `to` are query parameters, so
+    `?from=9999-12-31` is a link anybody can send. It walked one day past
+    `date.max` deciding a backwards window was backwards, and `?to=9999-12-31`
+    walked the months instead — both 500 on a repository with nothing wrong in
+    it at all."""
+    from openproj.render import render_timeline
+
+    for window in (
+        (date.max, None),
+        (None, date.max),
+        (date.min, date.max),
+        (date(9999, 12, 1), None),
+    ):
+        html = render_timeline(seed_index, window=window)
+        assert '<svg width=' in html, window
+        assert len(html) < 1_000_000, (window, len(html))

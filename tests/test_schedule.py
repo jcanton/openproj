@@ -589,3 +589,66 @@ def test_an_entity_too_large_for_the_calendar_is_unscheduled_and_says_why():
     assert "runs past the end of the calendar" in explanations["task-aaa001"].text
     # The plan around it is untouched: one absurd number is one absurd row.
     assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 21))
+
+
+def test_a_done_date_at_the_end_of_the_calendar_costs_its_dependent_and_nothing_else():
+    """A `done` span is whatever `assigned_on` says, and no rule refuses a date.
+
+    `assigned_on: 9999-12-31` typed into the detail page committed, and then
+    `_next_working_day` — walking from the blocker's last day to the day after
+    it — stepped one day off the calendar and raised OverflowError out of
+    `build_index`. Every page that reads the index answered 500 to every reader,
+    for good.
+
+    The dependent is unscheduled and says so, which is the same answer the
+    scheduler already gives work that does not fit. The done row keeps the date
+    somebody typed: it is history as recorded, and rewriting it here would make
+    the timeline disagree with the field on the detail page.
+    """
+    spans, explanations = run(
+        [
+            task("aaa001", status="done", assigned_on=date.max, prs=["o/r#1"]),
+            task("aaa002", owner="bo", depends_on=["task-aaa001"]),
+            task("aaa003", owner="cy"),
+        ]
+    )
+
+    assert spans["task-aaa001"] == Span(start=date.max, end=date.max, historical=True)
+    assert spans["task-aaa002"].unscheduled
+    assert "runs past the end of the calendar" in explanations["task-aaa002"].text
+    assert spans["task-aaa003"] == Span(start=MONDAY, end=date(2026, 8, 21))
+
+
+def test_a_worker_booked_to_the_end_of_the_calendar_does_not_spin():
+    """The placement loop advances `start` past whoever is busy, so a worker
+    booked to `date.max` used to hand it a start it could not move past — and
+    with the walk saturating instead of raising, that is an infinite loop rather
+    than a stack trace. The calendar question is asked each time round, so the
+    loop ends with an answer instead."""
+    started = time.monotonic()
+    spans, explanations = run(
+        [
+            task("aaa001", status="done", assigned_on=date.max, prs=["o/r#1"]),
+            task("aaa002", depends_on=["task-aaa001"]),
+            task("aaa003"),  # same owner as aaa002, so it queues behind it
+        ]
+    )
+
+    assert time.monotonic() - started < 5.0
+    assert spans["task-aaa002"].unscheduled
+    assert spans["task-aaa003"] == Span(start=MONDAY, end=date(2026, 8, 21))
+
+
+@pytest.mark.parametrize("size", [float("inf"), float("nan")])
+def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
+    """`Infinity` and `NaN` are valid JSON to Python's parser, so `effort_weeks:
+    Infinity` was one PATCH away — and `math.ceil(inf)` raised inside
+    `_runs_past_the_calendar` itself. The guard was the thing that fell over, so
+    every page 500'd on a committed value that no rule refuses.
+
+    The route refuses the number now. This is the file somebody wrote by hand.
+    """
+    spans, _ = run([task("aaa001", size=size), task("aaa002", owner="bo")])
+
+    assert spans["task-aaa001"].unscheduled
+    assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 21))

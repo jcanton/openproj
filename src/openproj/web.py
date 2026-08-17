@@ -97,6 +97,15 @@ CYCLE_DIR = "cycles"
 # writable surface closed by construction, and widening it to admit a fourth
 # shape is how that property gets lost by degrees.
 CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
+# The longest a build or a cool-down may be. Shape Up's cycle is six weeks and
+# the box beside it had no bound at all, so `build_weeks: 500000` — three
+# keystrokes and a confirmation — committed a cycle whose end date is past the
+# end of the calendar, and every page that reads a cycle answered 500 to
+# everybody, permanently, on a branch whose protection means the commit cannot
+# be force-pushed away. Ten years is not a cycle by any reading; the number is
+# refused here so it never reaches a file, and `Cycle._last_day` clamps anyway
+# for the file somebody writes by hand.
+MAX_CYCLE_WEEKS = 520.0
 
 
 def _cycles_at(store: Store, commit: str) -> list[Cycle]:
@@ -158,7 +167,7 @@ def _reject_bad_cycle(fields: dict) -> None:
     # and this endpoint answers browsers it did not render.
     for name in ("build_weeks", "cooldown_weeks"):
         if name in fields:
-            fields[name] = _as_positive(fields[name], name)
+            fields[name] = _as_positive(fields[name], name, most=MAX_CYCLE_WEEKS)
     rates = fields.get("availability")
     if rates is not None:
         if not isinstance(rates, dict):
@@ -197,7 +206,7 @@ def _as_iso_date(value: object, name: str) -> str:
     raise HTTPException(422, f"{name} must be a date like 2026-09-01, not {value!r}")
 
 
-def _as_positive(value: object, name: str) -> float:
+def _as_positive(value: object, name: str, most: float = math.inf) -> float:
     # Said as "blank" rather than as `None`: null arrives here from a box
     # somebody emptied or typed a word into, and `None` is a word from this
     # language rather than from anything on their screen.
@@ -214,6 +223,8 @@ def _as_positive(value: object, name: str) -> float:
         raise HTTPException(422, f"{name} must be an ordinary number, not {value!r}")
     if number <= 0:
         raise HTTPException(422, f"{name} must be greater than zero, not {number:g}")
+    if number > most:
+        raise HTTPException(422, f"{name} must be at most {most:g}, not {number:g}")
     return number
 
 
@@ -227,6 +238,14 @@ def _reject_bad_types(fields: dict) -> None:
         if value is not None and not isinstance(value, int | float) or isinstance(value, bool):
             if name in fields and fields[name] is not None:
                 raise HTTPException(422, f"{name} must be a number, not {fields[name]!r}")
+        # `Infinity` and `NaN` are valid JSON to Python's parser, so both arrive
+        # here as ordinary floats and pass every check above. `effort_weeks:
+        # Infinity` committed, and then `math.ceil` raised inside the
+        # scheduler's own end-of-calendar guard: every page 500, permanently.
+        # The guard no longer raises; this stops the value at the door, the way
+        # the cycle route already stops it.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise HTTPException(422, f"{name} must be an ordinary number, not {value!r}")
     for name in _LISTS:
         if name in fields and not isinstance(fields[name], list):
             raise HTTPException(422, f"{name} must be a list, not {fields[name]!r}")
@@ -625,6 +644,10 @@ def create_app(
         kind = fields.get("kind")
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
+        # The same door as the save beside it. Create had no type check at all,
+        # so every value the save route refuses could be created instead — the
+        # closed writable surface is only closed if both ways in are.
+        _reject_bad_types(fields)
 
         # A pitch has an appetite and a task has an effort. The create page carries
         # every kind's fields and hides the ones that do not apply, so what belongs

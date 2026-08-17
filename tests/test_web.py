@@ -1990,3 +1990,115 @@ def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(
 
     for route in ("/", f"/detail/{TASK}", "/api/index.json", "/graph", "/timeline", "/people"):
         assert client.get(route).status_code == 200, route
+
+
+def test_a_cycle_longer_than_the_calendar_is_refused_and_writes_nothing(
+    client: TestClient, repo_path: Path
+):
+    """`build_weeks: 500000` — three keystrokes into the Cycles form's own box,
+    which had no bound at all — committed, and then `Cycle.ends_on` raised
+    OverflowError while the config was still being assembled. That is before any
+    rule has looked at the record, so nine routes answered 500 and `/healthz`
+    alone survived, permanently, on a branch whose protection means the commit
+    cannot be force-pushed away.
+
+    Refused where the route already refuses a word for a number, and the refusal
+    quotes the value: a 422 that will not say what was wrong is a form nobody
+    can correct.
+    """
+    base = head(client)
+
+    refused = client.put(
+        "/api/cycle/38",
+        json={"base_commit": base, "fields": {"starts_on": "2026-09-01", "build_weeks": 500_000}},
+    )
+
+    assert refused.status_code == 422
+    assert "build_weeks" in refused.json()["detail"]
+    assert "500000" in refused.json()["detail"]
+    assert head(client) == base, "a refused write leaves HEAD where it was"
+    # In git, not in the answer: a 422 that still wrote the file is the failure.
+    tree = pygit2.Repository(str(repo_path)).revparse_single("HEAD^{tree}")
+    assert "cycles" not in [entry.name for entry in tree]
+
+
+def test_a_cycle_record_longer_than_the_calendar_leaves_every_page_readable(
+    client: TestClient, repo_path: Path
+):
+    """The file somebody wrote in git, which never passed the route.
+
+    "Edit it in git if you prefer" is the promise, so the door check cannot be
+    the only guard: a hand-written record still has to cost that cycle's dates
+    rather than every page.
+    """
+    record = "---\ncycle: 38\nstarts_on: 2026-09-01\nbuild_weeks: 500000\n---\n"
+    commit_directly(repo_path, SEED | {"cycles/0038.md": record}, "a cycle nobody could mean")
+
+    for route in ("/", "/detail", "/api/index.json", "/graph", "/timeline", "/people", "/cycles"):
+        assert client.get(route).status_code == 200, route
+
+
+def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(
+    client: TestClient
+):
+    """`31/12/9999` into the detail page's "Assigned on": committed, and
+    `/timeline` answered 500 for good.
+
+    Worse than the cycle above in one way — `openproj check` reported "0
+    blockers, 0 warnings" and `openproj render` wrote no files at all, so both
+    of the tools you would reach for to diagnose it were silent or dead.
+
+    A 200 is not the whole claim: left to itself the plot draws every day
+    between here and the year 9999 and comes out fourteen megabytes wide, which
+    is a hung tab rather than a page. So the timeline is measured, not just
+    fetched.
+    """
+    base = head(client)
+
+    saved = client.patch(
+        f"/api/entity/{DONE}", json={"base_commit": base, "fields": {"assigned_on": "9999-12-31"}}
+    )
+    assert saved.status_code == 200, saved.text
+
+    for route in ("/", f"/detail/{DONE}", "/api/index.json", "/graph", "/timeline", "/people"):
+        assert client.get(route).status_code == 200, route
+    timeline = client.get("/timeline").text
+    assert len(timeline) < 1_000_000, f"{len(timeline)} bytes is not a page"
+    assert len(re.findall(r'<text class="month-label"', timeline)) < 600
+
+
+@pytest.mark.parametrize("size", [float("inf"), float("nan")])
+def test_a_size_that_is_not_a_number_is_refused_at_both_doors(client: TestClient, size: float):
+    """`Infinity` and `NaN` are valid JSON to Python's parser, so they arrive as
+    ordinary floats and passed every type check on the way in. `effort_weeks:
+    Infinity` committed, and then `math.ceil` raised inside the scheduler's own
+    end-of-calendar guard — the guard was the thing that fell over.
+
+    Both doors, because `create` had no type check at all: a closed writable
+    surface is only closed if both ways in are.
+    """
+    base = head(client)
+    # `content`, not `json`: the standard encoder refuses these two, and the
+    # point is that Python's *decoder* accepts them, so this is what a client
+    # that is not this test suite can actually put on the wire.
+    literal = "Infinity" if size == size else "NaN"
+    headers = {"content-type": "application/json"}
+
+    saved = client.patch(
+        f"/api/entity/{TASK}",
+        content=f'{{"base_commit": "{base}", "fields": {{"effort_weeks": {literal}}}}}',
+        headers=headers,
+    )
+    created = client.post(
+        "/api/entity",
+        content=(
+            '{"fields": {"kind": "task", "title": "Big", "owner": "ann", '
+            f'"reviewers": ["bo"], "status": "ready", "effort_weeks": {literal}}}}}'
+        ),
+        headers=headers,
+    )
+
+    assert saved.status_code == 422, saved.text
+    assert "effort_weeks" in saved.json()["detail"]
+    assert created.status_code == 422, created.text
+    assert head(client) == base, "a refused write leaves HEAD where it was"

@@ -96,3 +96,88 @@ def test_capacity_is_availability_times_the_build_weeks():
 
     assert cycle.capacity("ann") == 2.0
     assert cycle.capacity("bo") == 4.0, "unlisted means nobody said otherwise"
+
+
+# --------------------------------------------------------------------------- #
+# The end of the calendar
+# --------------------------------------------------------------------------- #
+
+
+def test_a_date_stops_at_the_end_of_the_calendar_rather_than_raising():
+    """`days_after` is the one place a date moves, and this is why it exists.
+
+    `date` covers years 1 to 9999 and `timedelta` raises the moment arithmetic
+    leaves that range — which, out of a property read while the config is being
+    assembled, is every page 500 at once. Saturating is the answer because
+    `date.max` is not a date anybody plans against.
+    """
+    from openproj.model import days_after
+
+    assert days_after(date(2026, 8, 17), 1) == date(2026, 8, 18)
+    assert days_after(date(2026, 8, 17), -1) == date(2026, 8, 16)
+    assert days_after(date.max, 1) == date.max
+    assert days_after(date.min, -1) == date.min
+    assert days_after(date(2026, 8, 17), 5_000_000) == date.max
+    assert days_after(date(2026, 8, 17), -5_000_000) == date.min
+
+
+def test_a_length_that_is_not_a_number_saturates_instead_of_raising():
+    """`round()` and `math.ceil()` both raise on infinity, and a length in weeks
+    is a float a hand-edited file may write as `.inf`. NaN arrives from
+    `inf - inf` one addition later and rounds no better, so it lands on the
+    forward edge rather than on an exception."""
+    from openproj.model import CALENDAR_DAYS, days_after, within_the_calendar
+
+    assert within_the_calendar(3.0) == 3.0
+    # The constant first in the `min`, because NaN loses every comparison: the
+    # other order returns the NaN and the caller rounds it.
+    assert within_the_calendar(float("inf")) == CALENDAR_DAYS
+    assert within_the_calendar(float("nan")) == CALENDAR_DAYS
+    assert days_after(date(2026, 8, 17), float("inf")) == date.max
+    assert days_after(date(2026, 8, 17), float("nan")) == date.max
+    assert days_after(date(2026, 8, 17), float("-inf")) == date.min
+
+
+def test_a_cycle_longer_than_the_calendar_ends_at_the_end_of_it():
+    """`build_weeks: 500000` typed into the Cycles form: the record committed, and
+    then `ends_on` raised OverflowError while `Config.with_plans` was assembling
+    the cycle windows. That is before any rule has looked at the record, so
+    `openproj check`, `openproj render` and nine of the ten routes went down
+    together, on a branch whose protection means the commit cannot be
+    force-pushed away.
+
+    The route refuses that number now. This is the file somebody edited in git,
+    which never passed the route at all.
+    """
+    from openproj.model import Cycle
+
+    absurd = Cycle(cycle=38, starts_on=date(2026, 9, 1), build_weeks=500_000.0)
+    infinite = Cycle(
+        cycle=39, starts_on=date(2026, 9, 1),
+        build_weeks=float("inf"), cooldown_weeks=float("-inf"),
+    )
+
+    assert absurd.builds_until == date.max
+    assert absurd.ends_on == date.max
+    assert infinite.builds_until == date.max
+    assert infinite.ends_on == date.max, "inf + -inf is NaN, which rounds no better"
+
+
+def test_the_clamp_does_not_move_a_length_the_calendar_can_hold():
+    """A guard that changes an ordinary answer is a bug with a docstring.
+
+    Half weeks are the ones at risk: the length is `round(weeks * 7)` days and
+    the last day is one before it, so 4.5 weeks is 32 days and ends on the 31st
+    — not `round(4.5 * 7 - 1)`, which is 30.
+    """
+    from openproj.model import Cycle
+
+    start = date(2026, 8, 17)
+    for weeks, cooldown, builds, ends in (
+        (4.5, 2.0, date(2026, 9, 17), date(2026, 10, 1)),
+        (0.5, 0.5, date(2026, 8, 20), date(2026, 8, 23)),
+        (1.2, 0.3, date(2026, 8, 24), date(2026, 8, 26)),
+        (3.7, 1.1, date(2026, 9, 11), date(2026, 9, 19)),
+    ):
+        cycle = Cycle(cycle=1, starts_on=start, build_weeks=weeks, cooldown_weeks=cooldown)
+        assert (cycle.builds_until, cycle.ends_on) == (builds, ends), weeks
