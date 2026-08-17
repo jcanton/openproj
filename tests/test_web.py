@@ -1252,11 +1252,12 @@ def test_the_server_reads_the_same_config_the_cli_does(repo_path: Path):
     from openproj.web import _config_at
 
     store = Store(repo_path)
-    served = _config_at(store, store.head())
+    served, unreadable = _config_at(store, store.head())
 
     assert set(model.CONFIG_FILES) == {"defaults.yaml", "cycles.yaml",
                                        "holidays.yaml", "people.yaml"}
     assert served.known_people == ["ann", "bo", "cy"]
+    assert unreadable == []
 
 
 # --- cycle records ----------------------------------------------------------

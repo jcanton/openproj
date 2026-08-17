@@ -27,7 +27,7 @@ PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
 def seed_index(seed_root: Path) -> Index:
     from datetime import date
 
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     return build_index(entities, config, date(2026, 8, 17))
 
 
@@ -685,7 +685,7 @@ def demo_rendered(demo_root: Path, tmp_path: Path) -> tuple[Path, Index]:
     references and the dependency diamond these tests are about."""
     from datetime import date
 
-    entities, config = load_repo(demo_root)
+    entities, config, _ = load_repo(demo_root)
     index = build_index(entities, config, date(2026, 8, 17))
     out = tmp_path / "demo"
     render_static(index, out)
@@ -2658,7 +2658,7 @@ def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
     this is what one keystroke too many in the detail page's date box leaves in
     the repository — permanently, on a protected branch.
     """
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     # Already `done`, and nothing depends on it — the narrowest possible blast
     # radius, which is what the audit hit: every other page stayed up and only
     # `/timeline` broke.
@@ -3330,3 +3330,37 @@ def test_the_graph_does_not_animate_where_css_cannot_stop_it():
             f"the layout has to ask matchMedia('(prefers-reduced-motion: reduce)') itself"
         )
     assert ".animate(" not in source, "cytoscape's own animation API moves the canvas too"
+
+
+def test_no_page_uses_one_id_for_more_than_one_element(rendered: Path):
+    """An id names one element, and five of them named five.
+
+    `detail.html` is every entity in one document with a hash router over them,
+    and the facts list inside each article carried `id="facts"` — so the export
+    held five, which is invalid, and `getElementById('facts')` would answer with
+    the first entity's list whatever the hash said. Nothing calls it today: it is
+    a hook, the styling is `.panes > .facts dl`, and a hook that answers the
+    wrong element is worse than no hook. It is written now only on the page that
+    holds one entity, which is what an id means.
+
+    Asked of every page and not of that one, because this is the kind of thing
+    that arrives with the next template that gets rendered in a loop.
+    """
+    from collections import Counter
+    from html.parser import HTMLParser
+
+    class Ids(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.seen: Counter[str] = Counter()
+
+        def handle_starttag(self, tag, attrs):
+            found = dict(attrs).get("id")
+            if found:
+                self.seen[found] += 1
+
+    for page in PAGES:
+        parser = Ids()
+        parser.feed(read(rendered, page))
+        repeated = {one: n for one, n in parser.seen.items() if n > 1}
+        assert not repeated, f"{page} uses one id for several elements: {repeated}"

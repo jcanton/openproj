@@ -68,7 +68,7 @@ def family_index() -> Index:
 
 @pytest.fixture
 def seed_index(seed_root: Path) -> Index:
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     return build_index(entities, config, TODAY)
 
 
@@ -606,7 +606,7 @@ def test_the_seed_incomplete_entities_are_the_ones_missing_fields(seed_index: In
 
 
 def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Path):
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     index = build_index(entities, config, TODAY)
     spans, explanations = schedule(entities, config, TODAY)
 

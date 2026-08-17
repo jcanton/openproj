@@ -141,7 +141,7 @@ def demo_page(demo_root: Path) -> str:
     """
     from openproj.render import render_table
 
-    entities, config = load_repo(demo_root)
+    entities, config, _ = load_repo(demo_root)
     return render_table(build_index(entities, config, date(2026, 8, 17)))
 
 
@@ -480,7 +480,7 @@ def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: P
     export that shows a Save button is a page that silently does nothing, which is
     worse than one that never offered.
     """
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
     exported = (tmp_path / "index.html").read_text(encoding="utf-8")
 

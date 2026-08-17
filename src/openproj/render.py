@@ -40,6 +40,7 @@ from .model import (
     Pitch,
     Project,
     Task,
+    Unreadable,
     days_after,
     required_at,
     size_weeks,
@@ -1401,6 +1402,24 @@ tr.nothing .hint { margin: 0 0 .75rem; }
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
 #moved a { color: var(--on-accent); }
 #moved .sha { font-family: var(--font-mono); opacity: .7; }
+/* The plan is incomplete, and the page must not be able to look complete. Drawn
+   with the blocker severity's own tokens rather than a fourth colour of its own:
+   a file that is not a record is the most blocking thing this repository can
+   hold, and it should read as the same kind of thing as the mark on a row that
+   is missing a required field — the same vocabulary, one level up, about the
+   plan instead of about an entity. */
+.unreadable { border-left: 3px solid var(--sev-blocker); background: var(--sev-blocker-soft);
+              padding: .6rem .8rem; margin: 0 0 1rem; font-size: 13px; }
+.unreadable .headline { margin: 0 0 .35rem; font-weight: 600; color: var(--fg); }
+.unreadable ul { margin: 0; padding-left: 1.1rem; }
+.unreadable li { margin: .15rem 0; }
+/* A path is a thing you type back into a terminal, so it is set in the face the
+   rest of the app sets identifiers in. `overflow-wrap` because the reason beside
+   it is a sentence of unbounded length and the box is as narrow as the window: a
+   phone at 360px would otherwise scroll the whole page sideways. */
+.unreadable code { font-family: var(--font-mono); }
+.unreadable li, .unreadable .headline { overflow-wrap: anywhere; }
+.unreadable .hint { margin: .35rem 0 0; color: var(--muted); }
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no
    toggle for it and nothing in `remembered` — the browser answers, every page.
@@ -1619,6 +1638,25 @@ function settleRoom(passes) {
 function fitRoom() { settleRoom(4); }
 </script>
 <main id="main">
+{#- What the plan holds that is not a record, on every page because the shell
+    draws it and no page can forget. Inside `<main>` and first, so "Skip to the
+    content" lands on it: everything in these files is missing from every count,
+    every row, every bar and every node on the page, and there is nothing else
+    that says so.
+
+    The quiet failure is the one this is here for. Before it, a file that would
+    not parse answered 500 on all eight routes — loud, permanent, and at least
+    unmistakable. Skipping the file and saying nothing would trade that for a
+    table that draws fifteen of sixteen tasks and looks completely normal, which
+    is worse: you cannot act on what you cannot see is missing. -#}
+{% if unreadable %}<section id="unreadable" class="unreadable">
+<p class="headline">{{ headline }}</p>
+<ul>{% for one in unreadable %}
+  <li><code>{{ one.path }}</code> — {{ one.why }}</li>{% endfor %}
+</ul>
+<p class="hint">Fix them in git and reload. Everything else in the plan is here.</p>
+</section>
+{% endif -%}
 {{ content }}
 </main>
 <script>
@@ -4945,7 +4983,16 @@ _DETAIL = """
   {% endif %}
   <div class="panes">
     <aside class="facts">
-      <dl id="facts">
+      {#- The id only where there is one of these on the page. This template is
+          rendered once per entity, and the static export puts every entity in
+          one document — so the export carried seventeen elements with the same
+          id, which is invalid, and which makes `getElementById('facts')` answer
+          with the first entity's list whatever the hash says. Nothing calls it
+          today: the styling is `.panes > .facts dl` and the class beside it, so
+          the id is a hook rather than a rule. A hook that answers the wrong
+          element is worse than no hook, and `{% if single %}` is what an id
+          means. -#}
+      <dl{% if single %} id="facts"{% endif %}>
         {#- The label only where the control it names is on the page. In read
             mode there is no control and a `<label for>` would point at nothing;
             in edit mode it is the only thing giving the box a name, because a
@@ -5813,7 +5860,13 @@ def render_new(
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
     )
-    return _page(f"openproj — new {kind}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
+    return _page(
+        f"openproj — new {kind}",
+        body,
+        _DETAIL_STYLE + _SUGGEST_STYLE,
+        links,
+        unreadable=index.unreadable if index else (),
+    )
 
 
 def _pr_sort(ref: str) -> tuple[str, int]:
@@ -6917,6 +6970,7 @@ def render_cycle(
         # The heading below is "Cycle 37", which is the thing you are looking at
         # and not the word in the nav, so it stays on the screen.
         "cycles",
+        index.unreadable,
     )
 
 
@@ -7043,7 +7097,10 @@ def render_cycles(
         },
         roster=last.availability if last else {},
     )
-    return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links, "cycles")
+    return _page(
+        "openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links, "cycles",
+        index.unreadable,
+    )
 
 
 def _person_load(index: Index, logins: list[str]) -> dict:
@@ -7161,7 +7218,7 @@ def render_people(index: Index, links: Links = STATIC) -> str:
         load=load,
         filters=_FILTER_JS,
     )
-    return _page("openproj — people", body, _PEOPLE_STYLE, links, "people")
+    return _page("openproj — people", body, _PEOPLE_STYLE, links, "people", index.unreadable)
 
 
 def _by_status(rows: list[dict]) -> list[dict]:
@@ -7216,7 +7273,10 @@ def render_detail(
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
     )
-    return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail")
+    return _page(
+        "openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail",
+        index.unreadable,
+    )
 
 
 _NO_ASIDE = Markup("")
@@ -7266,7 +7326,12 @@ _NAV_KEYS = frozenset(key for key, _ in _NAV)
 
 
 def _page(
-    title: str, content: str, style: str = "", links: Links = STATIC, current: str = ""
+    title: str,
+    content: str,
+    style: str = "",
+    links: Links = STATIC,
+    current: str = "",
+    unreadable: Sequence[Unreadable] = (),
 ) -> str:
     """Autoescaping protects entity titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
@@ -7285,6 +7350,11 @@ def _page(
 
     A `current` that is not a nav key raises rather than quietly marking nothing,
     because marking nothing is the exact defect this round is here to fix.
+
+    `unreadable` is the plan files that are not records. It is drawn here rather
+    than by each page for the same reason the nav mark is decided here: eight
+    entry points is eight places to forget, and the one page that forgot would be
+    a page that silently draws a plan short.
     """
     if current and current not in _NAV_KEYS:
         raise ValueError(f"{current!r} is not a nav item: {sorted(_NAV_KEYS)}")
@@ -7294,6 +7364,16 @@ def _page(
         style=Markup(style),
         font=_font_uri(),
         links=links,
+        unreadable=list(unreadable),
+        # The sentence is built here rather than in the template, because English
+        # is not something Jinja should be doing arithmetic about and "1 files
+        # are not records" is the kind of copy that tells a reader nobody looked.
+        headline=(
+            "One file in the plan is not a record, so nothing in it is on this page."
+            if len(unreadable) == 1
+            else f"{len(unreadable)} files in the plan are not records, "
+                 "so nothing in them is on this page."
+        ),
         nav=[
             {"href": getattr(links, key), "label": label, "current": key == current}
             for key, label in _NAV
@@ -7347,7 +7427,10 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
-    return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table")
+    return _page(
+        "openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table",
+        index.unreadable,
+    )
 
 
 def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
@@ -7377,7 +7460,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         dagre=_library("dagre.min.js"),
         cytoscape_dagre=_library("cytoscape-dagre.js"),
     )
-    return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph")
+    return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 
 
 _ZOOMS = (("2", "months"), ("6", "weeks"), ("14", "days"), ("30", "close"))
@@ -7419,7 +7502,9 @@ def render_timeline(
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
     )
-    return _page("openproj — timeline", body, _timeline_css(), links, "timeline")
+    return _page(
+        "openproj — timeline", body, _timeline_css(), links, "timeline", index.unreadable
+    )
 
 
 def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tuple[str, ...]:

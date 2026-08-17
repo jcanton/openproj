@@ -13,6 +13,7 @@ the same twice.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import date
 
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ from .model import (
     Cycle,
     Entity,
     Problem,
+    Unreadable,
     ancestors,
     size_weeks,
     validate_all,
@@ -62,6 +64,10 @@ class Index(BaseModel):
     spans: dict[str, Span]
     explanations: dict[str, Explanation]
     problems: list[Problem]
+    # The plan files that are not records. Carried on the index rather than
+    # handed to each renderer, because it is the answer to "is what I am looking
+    # at the whole plan" and every page has to be able to say no.
+    unreadable: list[Unreadable] = []
     facets: dict[str, list[str]]
     search_blob: dict[str, str]
     # Carried so a renderer needs nothing but the index: the timeline cannot draw
@@ -155,7 +161,12 @@ def _facet_values(entity: Entity, field: str, by_id: dict[str, Entity]) -> list[
     return [] if value is None else [str(value)]
 
 
-def build_index(entities: list[Entity], config: Config, today: date) -> Index:
+def build_index(
+    entities: list[Entity],
+    config: Config,
+    today: date,
+    unreadable: Iterable[Unreadable] = (),
+) -> Index:
     by_id = {entity.id: entity for entity in entities}
     children: dict[str, list[str]] = {entity_id: [] for entity_id in by_id}
     blocked_by: dict[str, list[str]] = {}
@@ -187,6 +198,7 @@ def build_index(entities: list[Entity], config: Config, today: date) -> Index:
         spans=spans,
         explanations=explanations,
         problems=validate_all(entities, config),
+        unreadable=list(unreadable),
         facets={field: _ordered(field, values) for field, values in facets.items()}
         | {"predicate": sorted(COMPUTED_PREDICATES)},
         search_blob=search_blob,

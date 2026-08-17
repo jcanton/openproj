@@ -4,7 +4,7 @@ Git-backed appetite planning for the icon4py team. `README.md` has the shape of 
 markdown file per entity, the shaping document *is* the record, every date derived from one typed
 `assigned_on` and one size, the tool and the plan kept in two repositories on purpose. Read it
 first. This file is the part it does not say — the invariants that fail loudly when you step on
-them, the rules that seven rounds of audit paid for, and how to find the bug that is already here.
+them, the rules that eight rounds of audit paid for, and how to find the bug that is already here.
 
 ## This branch's history does not move
 
@@ -34,6 +34,20 @@ first time a save reformats somebody's file, and nobody comes back after that.
 (`model.py`) and nowhere else. One file written before a vocabulary change took every page down
 with a 500 instead of showing a problem beside the record that caused it — a record that fails to
 load is worse than a record that is wrong, because it takes the other four hundred with it.
+
+**A file that is not a record costs that file and nothing else.** Permissive parsing covers the
+values *inside* a record that loads; it said nothing about a file that will not load at all, and
+every plan file was parsed with nothing around the parse. Fifteen ways of writing one — no `---`, a
+flow sequence that never closes, `effort_weeks: three`, `assigned_on: next tuesday`, a frontmatter
+written as a list, a cycle numbered `forty-one`, `holidays: [not-a-day]` — each answered 500 on ten
+of the eleven routes, for everybody, until somebody with a terminal fixed it, while `/healthz` went
+on answering. Every plan file now goes through `readable` (`model.py`), which returns what loaded and
+one `Unreadable` per file that did not, and the shell draws those on every page by path and reason.
+Skipping them silently would have been worse than the 500: a table that draws fifteen of sixteen
+tasks and looks completely normal is a thing you cannot act on. `readable` catches `Exception`, and
+it is the only place that does — the failures are a ValueError, a ruamel ParserError, a pydantic
+ValidationError, a UnicodeDecodeError and an AttributeError, and a tuple of the ones seen so far is
+the denylist this file refuses to write everywhere else.
 
 **A rule blocks only entities created after it existed.** Each rule carries the `schema_version`
 that introduced it, and `validate_all` demotes a rule newer than the entity it is judging to a
@@ -117,7 +131,7 @@ there is no working copy, and why a single `repo.index` anywhere in that file gi
 
 ## How to find bugs here
 
-**This is the section worth the file.** Seven rounds of adversarial audit ran on this branch, and a
+**This is the section worth the file.** Eight rounds of adversarial audit ran on this branch, and a
 green test suite missed every defect they found. Each round was cracked by exactly one question.
 
 | Ask this | What it found |
@@ -129,8 +143,9 @@ green test suite missed every defect they found. Each round was cracked by exact
 | The same arithmetic is written three times — which copies got the guard? | Two of three date computations had none. A build-weeks of 500000 killed nine routes. |
 | Can the test tell the difference between the value resolving and the pixel appearing? | An outset `box-shadow` on a cell in a `border-collapse: collapse` table is never painted by Chrome. The test asserted the stylesheet resolved correctly, and it did, while nothing was drawn. |
 | What do the diagnostic tools say when the thing is broken? | `openproj check` reported "0 blockers, 0 warnings" and `openproj render` wrote no files, on a plan that 500ed every page. |
+| What does a person with a terminal commit that this never tries to parse? | Fifteen files that are not records — a pasted note with no `---` among them. Each took ten of eleven routes down permanently; `/healthz` alone answered, and `openproj check` died with a traceback on the first one and never mentioned the second. |
 
-Behind all seven is one habit: **ask the question in the medium where the answer lives.** In
+Behind all eight is one habit: **ask the question in the medium where the answer lives.** In
 practice that means:
 
 - **Render pages and parse them in a real DOM.** A substring cannot tell markup from text; a parser

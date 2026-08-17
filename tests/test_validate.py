@@ -300,7 +300,7 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     Only pitch-1b3f9a is missing shaped_by *at status todo*, which is where that
     rule lives; the other four pitches are wip or done and so are not asked.
     """
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     assert len(entities) == 17
     assert summaries(validate_all(entities, config)) == {
         # wip without a start date

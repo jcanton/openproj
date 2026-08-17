@@ -52,23 +52,42 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _check(repo: Path) -> int:
-    entities, config = load_repo(repo)
+    """Every file that is not a record, then every problem, then the count.
+
+    The files come first and are counted as blockers because they are the worst
+    thing this command can find: a record that is wrong is on screen with a note
+    beside it, and a file that will not parse is not in the plan at all. It used
+    to raise on the first one — a traceback instead of a report, and no word
+    about the second bad file until the first was fixed — which is the same
+    failure as "0 blockers, 0 warnings" on a plan that answered 500 everywhere.
+    """
+    entities, config, unreadable = load_repo(repo)
+    for one in unreadable:
+        print(f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
+              f"{one.why}")
     problems = sorted(
         validate_all(entities, config), key=lambda p: (p.severity, p.entity_id, p.field or "")
     )
     for problem in problems:
         print(f"{problem.severity}: {problem.entity_id}: {problem.field}: {problem.message}")
     blockers = [p for p in problems if p.severity == "blocker"]
-    print(f"{len(blockers)} blockers, {len(problems) - len(blockers)} warnings")
-    return 1 if blockers else 0
+    print(f"{len(blockers) + len(unreadable)} blockers, {len(problems) - len(blockers)} warnings")
+    return 1 if blockers or unreadable else 0
 
 
 def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     from .render import render_static
 
-    entities, config = load_repo(repo)
-    written = render_static(build_index(entities, config, today or date.today()), out_dir, repo)
+    entities, config, unreadable = load_repo(repo)
+    written = render_static(
+        build_index(entities, config, today or date.today(), unreadable), out_dir, repo
+    )
     print(f"wrote {', '.join(written)} to {out_dir}")
+    # Said here as well as drawn on the pages: a build log is where somebody
+    # notices, and a static export of a plan missing three of its files that
+    # announces only success is how it ships.
+    for one in unreadable:
+        print(f"left out {one.path}: {one.why}")
     return 0
 
 
@@ -121,9 +140,13 @@ def _exit_aware_server(app, host: str, port: int):
 
 
 def _schedule(repo: Path, as_json: bool, today: date | None) -> int:
-    entities, config = load_repo(repo)
+    entities, config, unreadable = load_repo(repo)
     when = today or date.today()
-    index = build_index(entities, config, when)
+    index = build_index(entities, config, when, unreadable)
+    for one in unreadable:
+        # To stderr, so `--json` stays a document a script can pipe while the
+        # person watching still finds out the plan was read short.
+        print(f"left out {one.path}: {one.why}", file=sys.stderr)
     if as_json:
         print(
             json.dumps(
