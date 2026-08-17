@@ -259,6 +259,35 @@ def test_every_rule_that_corrects_a_frozen_column_outweighs_it(table: Sheet):
         )
 
 
+def test_the_column_control_is_drawn_as_a_control_and_the_label_is_not(table: Sheet):
+    """Two buttons in one `<th>` that must not look alike.
+
+    `th button` strips the sort control of its border and its background on
+    purpose: the header word is the control, and only the focus ring says so. The
+    column's `+` is the opposite claim — it has to read as the badge it repeats
+    one level down — and it is reached by that same rule. `th .expand` is (0,1,1)
+    against (0,0,2), so it wins on weight and not on the order two stylesheets are
+    concatenated in, which is the only thing that ever decides ties in this file.
+    """
+    control = header("reviewers", "expands") + [el("button", "expand")]
+    label = header("reviewers", "expands") + [el("button")]
+
+    assert table.value(control, "border") == "1px solid var(--line-strong)", says(
+        table, control, "border")
+    assert table.value(control, "position") == "absolute", says(table, control, "position")
+    won = table.winner(control, "border")
+    lost = table.winner(label, "border")
+    assert won is not None and lost is not None
+    assert won.specificity > lost.specificity, (
+        f"`{won.selector}` and `{lost.selector}` are the same weight, so which "
+        f"button is drawn as a control is decided by the order of the stylesheets"
+    )
+
+    # And the sort control keeps the look that makes a header word a header word.
+    assert table.value(label, "border") == "0", says(table, label, "border")
+    assert table.value(label, "background") == "none", says(table, label, "background")
+
+
 # --------------------------------------------------------------------------- #
 # B2: the popup and the box that used to clip it
 # --------------------------------------------------------------------------- #

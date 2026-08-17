@@ -1989,14 +1989,31 @@ const WHY = {{ why|tojson }};
 // part being cut, by a third of itself under about 128px and by 368px on a
 // sixty-character login. `.first` is the flex item that shrinks; the badge never
 // does. See `td.clamp` in the stylesheet.
-function clamped(pieces, noun) {
+//
+// Both words for the thing being counted, because the badge names a number of
+// them and `+1` is as ordinary as `+4`. It used to be the singular and an `s`,
+// which is how the control offering to show two more people offered "2 more
+// persons".
+//
+// The badge is a *toggle*: `classList.add('open')` was the whole of the reveal
+// and nothing anywhere took the class off again, so an expanded cell could only
+// be collapsed by reloading the page. One cell is cheap enough to live with;
+// with the column control beside it, one click opens seventeen and a one-way
+// control that doubles the height of the table is a trap. So it carries both of
+// its names — a control says exactly what it will do, and what this one will do
+// changes with the cell it is in — and the sign in front of the count is drawn
+// by the stylesheet from the same class that opens the cell, which is how the
+// glyph and the state cannot come apart.
+function clamped(pieces, one, many) {
   if (!pieces.length) return '';
   const [first, ...rest] = pieces;
   const shown = `<span class="first">${first}</span>`;
   if (!rest.length) return shown;
+  const word = rest.length === 1 ? one : many;
+  const expand = `Show ${rest.length} more ${word}`;
   return `${shown}<span class="rest">, ${rest.join(', ')}</span>` +
-    `<button type="button" class="more" aria-label="Show ${rest.length} more ${noun}` +
-    `${rest.length === 1 ? '' : 's'}">+${rest.length}</button>`;
+    `<button type="button" class="more" aria-label="${expand}" data-expand="${expand}"` +
+    ` data-collapse="Show ${rest.length} fewer ${word}">${rest.length}</button>`;
 }
 
 function shown(row, key) {
@@ -2005,7 +2022,7 @@ function shown(row, key) {
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
   if (key === 'title') return `<a href="{{ links.entity }}${esc(row.id)}">${esc(row.title)}</a>`;
-  if (key === 'prs') return clamped((value || []).map(prLink), 'pull request');
+  if (key === 'prs') return clamped((value || []).map(prLink), 'pull request', 'pull requests');
   // No kind chip here. `pitch-0c0001` already says pitch, in a prefix the model
   // guarantees agrees with the kind, so the chip was restating the first word of
   // the cell it sat in — seventeen times, in a column that is otherwise the
@@ -2019,7 +2036,7 @@ function shown(row, key) {
   if (key === 'status')
     return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
-  if (key === 'tags') return clamped((value || []).map(esc), 'tag');
+  if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
   // Every list in the table clamps, for the same reason and by the same badge.
   // These two were the last that did not, and they were most of the wrapping
   // left: `OngChia, nfarabullini, jcanton` took three lines in a 159px column and
@@ -2027,7 +2044,7 @@ function shown(row, key) {
   // for. The owner is the name that matters and it has its own column; the rest
   // are one click away, where they always were.
   if (key === 'assignees' || key === 'reviewers')
-    return clamped((value || []).map(esc), 'person');
+    return clamped((value || []).map(esc), 'person', 'people');
   return esc(stored(row, key));
 }
 
@@ -2210,6 +2227,11 @@ function draw() {
     th.setAttribute('aria-sort', here ? (descending ? 'descending' : 'ascending') : 'none');
     th.querySelector('.dir').textContent = here ? (descending ? '▾' : '▴') : '';
   }
+  // Every cell here is new, so every one of them is closed: the column controls
+  // are told what they are looking at rather than left saying `−` over a column
+  // a sort just collapsed. It is also the whole of "this does not persist" — a
+  // redraw is where the state goes, and there is nowhere else it is kept.
+  syncExpanders();
 }
 // The control bar changed the query string; what that means to a table is a
 // redraw, and to the graph beside it a different set of nodes.
@@ -2449,10 +2471,36 @@ if (EDITABLE) {
   });
 }
 {% endif %}
+// One `open` class and two controls that set it — the badge in the cell and the
+// `+` in the header — so a cell is in one state however it got there, and there
+// is no third one to reason about. Both are toggles, and the badge's name is
+// swapped here because an icon-only control's name is the whole of what it says.
+function setOpen(td, open) {
+  td.classList.toggle('open', open);
+  const badge = td.querySelector('button.more');
+  if (badge) {
+    badge.setAttribute('aria-label', open ? badge.dataset.collapse : badge.dataset.expand);
+  }
+}
+
+// The cells in one column that have anything to open. A list that already fits
+// draws no badge, and counting those would leave a column of seventeen cells
+// with nothing hidden in it reporting itself as closed forever — a `+` offering
+// to do nothing.
+function openable(key) {
+  return [...tbody.querySelectorAll(`td[data-col="${key}"].clamp`)]
+    .filter(td => td.querySelector('button.more'));
+}
+
 tbody.addEventListener('click', event => {
   if (event.target.id === 'clear-filters') { clearFilters(); return; }
   const more = event.target.closest('button.more');
-  if (more) more.closest('td').classList.add('open');
+  if (!more) return;
+  const td = more.closest('td');
+  setOpen(td, !td.classList.contains('open'));
+  // The column's control offers whatever the column is not already doing, so
+  // opening the last closed cell by hand is what turns its `+` into a `−`.
+  syncExpanders();
 });
 // A derived cell that ignores a double-click looks exactly like a cell that is
 // broken. It answers instead, in the same place a refused save answers — and
@@ -2547,7 +2595,17 @@ const FLOOR = 110;      // narrower than this and a squeezed column is unreadabl
 // wrapped over two lines above a truncated login, which is a narrower column and
 // a taller row: exactly what the clamp was for, undone. A column is only worth
 // narrowing while it still says something.
-const CLAMP_FLOOR = 112;
+//
+// 116 and not the 112 it was, because these four headers now carry the column's
+// `+` as well: `.5rem` of padding, then `REVIEWERS` and its sort glyph, then the
+// 2rem the control and the grip stand in. Measured in Chrome at each width in
+// turn — at 112 and at 115 `ASSIGNEES` and `REVIEWERS` wrap over two lines, and
+// at 116 all four fit on one. The floor went up to pay for the control rather
+// than the control shrinking to fit under the old one: it is a 17px target in a
+// header that already holds a sort button and a drag handle, and the mis-click
+// that sorts the table when somebody meant to expand it is what those four
+// pixels of column buy.
+const CLAMP_FLOOR = 116;
 
 // What each column would need with every cell on one line, so a column ends up
 // as wide as its widest value needs and not one character more. Measured from a
@@ -2711,6 +2769,77 @@ function applyWidths() {
 // somebody moved a grip.
 function stickyOffset() {
   table.style.setProperty('--sticky-1', headers[0].getBoundingClientRect().width + 'px');
+}
+
+// Expanding a whole column: one click opens every clamped cell in it, one more
+// closes them again. Built from `CLAMPED` and not from a second list of column
+// names — the set that decides which cells clamp is the set that decides which
+// headers can unclamp them, or the two drift and a column grows a control for a
+// badge it does not draw.
+//
+// It lands in a `<th>` that already holds a sort button and a drag grip, and a
+// mis-click that sorts the table when somebody meant to expand it is the failure
+// this is designed against. Three things answer it:
+//
+//   * it is a sibling of the sort button, never a child of it: inside, its click
+//     would be the button's click and sorting would happen on the way;
+//   * the click stops here, because the `<th>` itself is what sorts — the grip
+//     already had to do exactly this for the same reason;
+//   * the room it stands in is reserved in the header's own padding (`.expands`
+//     in the stylesheet), so it is never drawn over the label, and `CLAMP_FLOOR`
+//     is the width at which the label, the sort glyph, the control and the grip
+//     all still fit. That floor went up to pay for the control. The alternative
+//     was a smaller target in a 112px column beside two other things to hit,
+//     which is the mis-click written down as a decision.
+//
+// The two header shapes end up as one control: `assignees` and `reviewers` sort
+// and hold a button, `prs` and `tags` are bare text, and in both the label is at
+// the left of the cell and the `+` is at the right of it.
+const expanders = new Map();
+for (const th of headers) {
+  const key = keyOf(th);
+  if (!CLAMPED.has(key)) continue;
+  th.classList.add('expands');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'expand';
+  // Appended before the grip is, below, so the reading order is label, control,
+  // grip — the order they are drawn in.
+  th.append(button);
+  button.onclick = event => {
+    event.stopPropagation();
+    // What it does is the inverse of what the column is already doing, and the
+    // class it reflects that with is set by `syncExpanders` from the cells
+    // themselves. Firing blindly, a `−` on a column somebody had closed by hand
+    // would close what was already closed and look broken.
+    const open = !button.classList.contains('open');
+    for (const td of openable(key)) setOpen(td, open);
+    syncExpanders();
+  };
+  expanders.set(key, button);
+}
+
+// What each column control offers, read off the column rather than remembered.
+// Nothing here is stored: a redraw replaces every cell and takes the state with
+// it, and that is the point — this is a way of reading the plan, not a setting.
+// A filter can also leave a column with nothing hidden in it, and a control with
+// nothing to do goes rather than sitting there lying about what it will do.
+function syncExpanders() {
+  for (const [key, button] of expanders) {
+    const cells = openable(key);
+    const open = cells.length > 0 && cells.every(td => td.classList.contains('open'));
+    button.hidden = !cells.length;
+    button.classList.toggle('open', open);
+    // The column's own word, lowercased the way the cells' tooltips say it, so
+    // "Show all reviewers" and "Double-click to edit reviewers" name the same
+    // column the same way. A `title` as well, because the sighted reader of an
+    // icon has the same question — but never a `title` alone: this is a control,
+    // not a hint.
+    const named = (FIELD_LABELS[key] || key).toLowerCase();
+    const name = open ? `Show fewer ${named}` : `Show all ${named}`;
+    button.setAttribute('aria-label', name);
+    button.title = name;
+  }
 }
 
 headers.forEach((th, i) => {
@@ -2950,17 +3079,55 @@ td.clamp .rest { display: none; }
 td.clamp .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
                 padding: 0 .25rem; border: 1px solid var(--line-strong); border-radius: 2px;
                 background: none; color: var(--muted); cursor: pointer; }
+/* The sign, from the class that opens the cell rather than from the script that
+   sets it: `+2` and `−2` are one count seen from either side, and drawn this way
+   the glyph cannot end up disagreeing with the state it is describing. The badge
+   used to be `display: none` while the cell was open, which is what made the
+   reveal one-way — there was nothing left to click. */
+td.clamp .more::before { content: "+"; }
+td.clamp.open .more::before { content: "−"; }
 td.clamp.open { white-space: normal; }
 /* Opened, the cell is a paragraph again: every item on as many lines as it
    takes, which is what the reveal is for. A flex row here would lay the value
    and the rest of the list side by side and clip the pair. */
 td.clamp.open .clamped { display: block; }
 td.clamp.open .rest { display: inline; }
-td.clamp.open .more { display: none; }
 td .sev-mark { margin-left: .25rem; }
 .eid { font-family: var(--font-mono); }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
+/* The column's `+`, in the header of every column that clamps. It is the badge
+   in the cells below it wearing the same border and the same 11px, because it
+   means the same thing one level up — `+4` in a cell is four you cannot see,
+   `+` in the header is every one of them in the column.
+
+   `th .expand` is (0,1,1) and beats `th button` at (0,0,2) whichever order this
+   file ends up in, which is the point: that rule strips a header button of its
+   border and its background on purpose, so that a sort control reads as a label,
+   and this control has to read as a control.
+
+   Absolute, so it sits at the right of the header rather than after a label
+   whose width is a different number in each of the four columns — and clear of
+   the grip, which owns the last 7px of the cell. The room it stands in is
+   reserved below rather than taken from the label. */
+th .expand {
+  position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
+  font: inherit; font-size: 11px; line-height: 1.2; padding: 0 .25rem;
+  border: 1px solid var(--line-strong); border-radius: 2px; background: none;
+  color: var(--muted); cursor: pointer;
+}
+th .expand::before { content: "+"; }
+th .expand.open::before { content: "−"; }
+/* Reserved in the header's own box, because a positioned box is in no
+   measurement of its own accord. This is the whole of what puts the control into
+   `naturalWidths()`: without it a column whose widest cell is narrower than its
+   own header — a plan of two-letter logins — is measured at the label's width,
+   handed exactly that, and draws the `+` over the end of the word. On the demo
+   corpus every one of the four is sized by a cell instead and nothing overlaps,
+   which is precisely why this is not a thing to leave to being noticed.
+   `CLAMP_FLOOR` is the other half: the width at which what is left of the header
+   still holds the longest of the four labels on one line. */
+th.expands { padding-right: 2rem; }
 th .grip {
   position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
 }

@@ -123,6 +123,28 @@ def page(client: TestClient) -> str:
     return client.get("/").text
 
 
+@pytest.fixture
+def demo_page(demo_root: Path) -> str:
+    """The shipped demo, rendered: seventeen entities, with more than one name in
+    a list on almost every row.
+
+    The corpus above is four entities and answers everything about markup, but a
+    control that expands a whole column has almost nothing to say on a plan where
+    a single cell hides anything — and the height this deliberately costs is a
+    fact about seventeen rows. It is also the corpus `MEASURED` was read from, so
+    the widths these tests squeeze the header to are the widths the fit works
+    with.
+
+    Nothing here assumes what is in it: the counts and the words are read back off
+    the cells. `seed/` is the demo and is free to be rewritten, unlike the frozen
+    corpus the schedulers' goldens are derived from.
+    """
+    from openproj.render import render_table
+
+    entities, config = load_repo(demo_root)
+    return render_table(build_index(entities, config, date(2026, 8, 17)))
+
+
 # --------------------------------------------------------------------------- #
 # Reading the page
 # --------------------------------------------------------------------------- #
@@ -875,11 +897,15 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 # `assignees` and `reviewers` are one login and a `+N` now, not a whole list, and
 # `prs` is `#1223` rather than `C2SM/icon4py#1223` — three columns that were
 # written down here at 198, 161 and 172 and had not needed that much for two
-# rounds. They add to 1354, which is what the media query at 1100px was supposed
-# to be agreeing with.
+# rounds.
+#
+# Re-read again when the four clamped headers grew the column's own `+`: the
+# control is out of flow and the room for it is `padding-right` on the header, so
+# `reviewers` went from 111 to 116 — the first of the four whose header, not its
+# widest cell, is what the column needs.
 MEASURED = {
     "id": 110, "title": 304, "priority": 79, "status": 107, "owner": 100,
-    "assignees": 124, "reviewers": 111, "cycle": 63, "size": 81, "start": 101,
+    "assignees": 124, "reviewers": 116, "cycle": 63, "size": 81, "start": 101,
     "end": 101, "blocked_by": 87, "prs": 80, "tags": 128,
 }
 # The window the owner reported the sideways scroll from: a 1460px scroll
@@ -1116,7 +1142,418 @@ def test_the_badge_is_never_the_part_of_a_clamped_cell_that_gets_cut(
     # And the value is what gave way instead — with an ellipsis, so a cut value
     # says it was cut rather than simply stopping mid-word.
     assert got["long"]["cut"] == got["badges"], (
-        "sixty characters fit in a column that is 112px wide, which cannot be true"
+        "sixty characters fit in a column on its floor, which cannot be true"
+    )
+
+
+# Both controls, driven, in the browser they are drawn in. None of this exists in
+# the rendered file: the cells are built by the page's own script and the column
+# control is created from `CLAMPED` at load, so a string search can say what the
+# code says and nothing about what a click does.
+#
+# `state()` is deliberately read from the DOM rather than from a variable the
+# script keeps, because there is no such variable — one `open` class on the cell
+# is the whole state, which is the property being tested.
+_TOGGLES = """
+const key = 'reviewers';
+const th = headers.find(h => keyOf(h) === key);
+const control = th.querySelector('.expand');
+const cells = () => [...tbody.querySelectorAll(`td[data-col="${key}"]`)]
+  .filter(td => td.querySelector('.more'));
+const badge = () => cells()[0].querySelector('.more');
+const sign = el => getComputedStyle(el, '::before').content.replace(/"/g, '');
+const stored = () => {
+  // `localStorage` throws on the property itself where it is denied, which would
+  // take the whole report with it — and a run that cannot see storage has to say
+  // so rather than reporting an empty one.
+  try { return JSON.stringify(Object.entries(localStorage).sort()); }
+  catch (error) { return 'denied'; }
+};
+const state = () => ({
+  open: cells().filter(td => td.classList.contains('open')).length,
+  of: cells().length,
+  controlName: control.getAttribute('aria-label'),
+  controlSign: sign(control),
+  badgeName: badge().getAttribute('aria-label'),
+  badgeSign: sign(badge()),
+  // The count the badge draws, so the name it carries can be checked against the
+  // number it is about rather than against a number this file assumes.
+  badgeCount: Number(badge().textContent),
+  stored: stored(),
+  query: location.search,
+  height: Math.round(table.getBoundingClientRect().height),
+});
+// The naming rule at both counts, asked of the function that writes the badge
+// rather than of whichever counts this corpus happens to hold: a plan where
+// every list is one name over is a plan that never says "people" out loud.
+const naming = [1, 2].map(hidden => {
+  const html = clamped(Array.from({length: hidden + 1}, (_, i) => 'name' + i),
+                       'person', 'people');
+  return [/aria-label="([^"]*)"/.exec(html)[1], /data-collapse="([^"]*)"/.exec(html)[1]];
+});
+const report = {control: control.outerHTML,
+                inSortButton: !!th.querySelector('button:not(.expand) .expand'),
+                naming,
+                at: [['loaded', state()]]};
+const step = (what, act) => { act(); report.at.push([what, state()]); };
+step('the badge clicked once', () => badge().click());
+step('the badge clicked again', () => badge().click());
+step('the column opened', () => control.click());
+step('one cell closed by hand', () => badge().click());
+step('the column opened again', () => control.click());
+step('the column closed', () => control.click());
+step('a redraw', () => { control.click(); draw(); });
+// The header itself still sorts — otherwise "the control did not sort" is a
+// claim about a table that cannot be sorted at all.
+step('the header itself clicked', () => th.click());
+// And a write this page really does make, through the same storage, so that
+// "nothing was written" is an observation and not an unreachable API.
+step('a width remembered', () =>
+  th.querySelector('.grip').dispatchEvent(new MouseEvent('dblclick', {bubbles: true})));
+return report;
+"""
+
+
+def test_a_revealed_cell_can_be_put_back(demo_page: str, tmp_path: Path):
+    """`classList.add('open')` was the whole of the reveal and nothing anywhere
+    took the class off, so an expanded cell could only be collapsed by reloading
+    the page. Nobody reported it because expanding one cell is cheap — and then
+    the column control made one click expand seventeen, which turns a nuisance
+    into a trap.
+
+    Driven in Chrome rather than read: the badge is written by the page's own
+    script and the reveal is a class a click puts on a cell, so what is assertable
+    in the rendered file is the code and not the behaviour.
+    """
+    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1460, _TOGGLES)
+    at = dict(got["at"])
+    assert at["loaded"]["of"] >= 2, "no cell in this column had anything hidden to reveal"
+
+    assert at["loaded"]["open"] == 0
+    assert at["the badge clicked once"]["open"] == 1, "the badge reveals"
+    assert at["the badge clicked again"]["open"] == 0, "and puts it back"
+
+    # And it says which of the two it will do next, in its name and in its sign —
+    # icon-only, so the name is the whole of what a screen reader is given. The
+    # count comes off the badge and the word follows from it, because "+1" is as
+    # ordinary as "+4" and the name used to reach a screen reader as "1 more
+    # persons".
+    hidden = at["loaded"]["badgeCount"]
+    people = "person" if hidden == 1 else "people"
+    assert at["loaded"]["badgeName"] == f"Show {hidden} more {people}"
+    assert at["loaded"]["badgeSign"] == "+"
+    assert at["the badge clicked once"]["badgeName"] == f"Show {hidden} fewer {people}"
+    assert at["the badge clicked once"]["badgeSign"] == "−"
+
+    # Both counts, from the function that writes the name, because a corpus whose
+    # lists are all one name over never exercises the plural at all.
+    assert got["naming"] == [
+        ["Show 1 more person", "Show 1 fewer person"],
+        ["Show 2 more people", "Show 2 fewer people"],
+    ]
+
+
+def test_the_column_control_opens_the_column_and_closes_it(demo_page: str, tmp_path: Path):
+    """One click opens every clamped cell in the column, one more puts them all
+    back, and what it offers is what the column is not already doing.
+
+    The mis-click it is designed against is the one that sorts the table when
+    somebody meant to expand it: the control sits in a 116px header beside a sort
+    button and a drag grip. So the click has to stop at the control — asserted
+    against a header that demonstrably does sort when it is the thing clicked,
+    or the assertion is about a table with no sorting in it.
+    """
+    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1460, _TOGGLES)
+    at = dict(got["at"])
+    every = at["loaded"]["of"]
+    assert every >= 2, "no cell in this column had anything hidden to reveal"
+
+    assert at["the column opened"]["open"] == every, "one click opens the column"
+    assert at["the column opened"]["controlName"] == "Show fewer reviewers"
+    assert at["the column opened"]["controlSign"] == "−"
+    # It reflects the column rather than firing blindly: close one cell by hand and
+    # the column is no longer open, so what it offers is to open that one.
+    assert at["one cell closed by hand"]["open"] == every - 1
+    assert at["one cell closed by hand"]["controlName"] == "Show all reviewers"
+    assert at["one cell closed by hand"]["controlSign"] == "+"
+    assert at["the column opened again"]["open"] == every
+    # Closing the column closes the cells inside it.
+    assert at["the column closed"]["open"] == 0
+    # What it costs, and that the cost is entirely refundable: expanding a column
+    # is the plan not fitting on one screen any more, and one click has to put the
+    # table back exactly as it was rather than nearly.
+    assert at["the column opened"]["height"] > at["loaded"]["height"], (
+        "opening a column of lists cost no height at all, which cannot be true"
+    )
+    assert at["the column closed"]["height"] == at["loaded"]["height"], (
+        "closing the column did not put the table back where it started"
+    )
+
+    # It is in the `<th>` and not in the sort button, and its click stops there.
+    assert not got["inSortButton"], "a control inside the sort button sorts on its way"
+    assert 'type="button"' in got["control"], "or it submits something"
+    for step in ("the column opened", "the column closed"):
+        assert at[step]["query"] == at["loaded"]["query"], (
+            f"{step} re-sorted the table: the click reached the header"
+        )
+    assert at["the header itself clicked"]["query"] != at["loaded"]["query"], (
+        "the header no longer sorts at all, so nothing above was tested"
+    )
+
+
+def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(
+    demo_page: str, tmp_path: Path
+):
+    """It costs height — seventeen rows of every list at full length — and that is
+    fine because it was asked for and one click puts it back. What would not be
+    fine is arriving that way tomorrow.
+
+    So nothing is written down: a redraw replaces every cell and the state goes
+    with it, and `localStorage` is untouched by any of it. The remembered width is
+    the only thing this table keeps, and it is kept because somebody dragged it.
+    """
+    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1460, _TOGGLES)
+    at = dict(got["at"])
+
+    assert at["a redraw"]["open"] == 0, "a sort or a save reopens nothing"
+    assert at["a redraw"]["controlName"] == "Show all reviewers", (
+        "and the control says so, rather than offering to close a column that a "
+        "redraw already closed"
+    )
+    assert at["loaded"]["stored"] != "denied", (
+        "this run cannot see localStorage at all, so it cannot say nothing was "
+        "written to it"
+    )
+    for step, seen in got["at"]:
+        if step == "a width remembered":
+            continue
+        assert seen["stored"] == at["loaded"]["stored"], f"{step} wrote to localStorage"
+    # The width is the one thing this table does keep, and it is kept because
+    # somebody asked for it by dragging. It is here so that every assertion above
+    # is known to be watching a storage that writes.
+    assert at["a width remembered"]["stored"] != at["loaded"]["stored"], (
+        "a remembered width did not reach localStorage either, so nothing above "
+        "was observed"
+    )
+
+
+# The header at the two widths it is ever drawn at: what the fit gave it with
+# room to spare, and the floor it is squeezed to when there is none. Four
+# columns, two shapes — `assignees` and `reviewers` sort and hold a button,
+# `prs` and `tags` are bare text — and all four carry the control and the grip.
+#
+# Both widths, because they fail for different reasons. The control is out of
+# flow, so at the floor it is the floor that has to be big enough — and at any
+# width above it, it is the header's own `padding-right`, which is what puts the
+# control into a measurement it is not otherwise part of. On this corpus every
+# clamped column is sized by its widest cell rather than by its header, so taking
+# the reservation away overlaps nothing here; it is a plan of two-letter logins
+# that draws the `+` over REVIEWERS. So the reservation is asserted as what it is
+# — room that is at least as wide as the thing standing in it — rather than
+# waited for as an overlap this corpus cannot produce.
+#
+# `labelBox` measures the label whichever shape it is, through a Range for the
+# bare text, so a wrap shows up as a box two lines tall.
+_HEADROOM = """
+function labelBox(th) {
+  const button = th.querySelector('button:not(.expand)');
+  if (button) return button.getBoundingClientRect();
+  const nodes = [...th.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim());
+  const range = document.createRange();
+  range.setStart(nodes[0], 0);
+  range.setEnd(nodes[nodes.length - 1], nodes[nodes.length - 1].textContent.length);
+  return range.getBoundingClientRect();
+}
+const clamped = headers.filter(th => CLAMPED.has(keyOf(th)));
+const line = Math.round(labelBox(clamped[0]).height);
+const measure = () => clamped.map(th => {
+  const box = th.getBoundingClientRect();
+  const label = labelBox(th);
+  const control = th.querySelector('.expand').getBoundingClientRect();
+  const grip = th.querySelector('.grip').getBoundingClientRect();
+  return {
+    column: keyOf(th),
+    width: Math.round(box.width),
+    wrapped: Math.round(label.height) > line + 1,
+    overLabel: Math.round(label.right - control.left),
+    overGrip: Math.round(control.right - grip.left),
+    // What the header sets aside for the control, against what the control and
+    // the gap to the grip actually take up.
+    reserved: Math.round(Number.parseFloat(getComputedStyle(th).paddingRight)),
+    needs: Math.round(control.width + (box.right - control.right)),
+  };
+});
+const at = width => {
+  for (const key of CLAMPED) WIDTHS[key] = width;
+  automatic = false;
+  applyWidths();
+  return measure();
+};
+// The fit's own answer first, before anything here has touched a width.
+const asFitted = measure();
+return {floor: CLAMP_FLOOR, asFitted, atFloor: at(CLAMP_FLOOR), below: at(CLAMP_FLOOR - 8)};
+"""
+
+
+def test_the_header_fits_at_the_width_the_fit_may_squeeze_it_to(
+    demo_page: str, tmp_path: Path
+):
+    """Measured in Chrome at the two widths these columns are drawn at: the one
+    the fit chose with room to spare, and `CLAMP_FLOOR`, the narrowest it is
+    allowed to squeeze them to. Every one of the four now holds a label, a sort
+    glyph, the column's `+` and a drag grip.
+
+    At 112 — the floor before the control existed — `ASSIGNEES` and `REVIEWERS`
+    wrap over two lines, which is a narrower column and a taller header: exactly
+    what the clamp was for, undone. The floor went up to 116 to pay for the
+    control rather than the control shrinking to fit under the old one.
+
+    The fitted width is the other half and fails differently. The control is
+    positioned, so it is in no measurement of its own accord: what puts it into
+    one is the room the header sets aside for it, and a header that sets aside
+    none is measured as though the control were not there and then handed exactly
+    that many pixels by a fit with 300 to spare. Every clamped column in this
+    corpus is sized by its widest cell rather than by its header, so that failure
+    draws no overlap here — it needs a plan of two-letter logins. The reservation
+    is therefore asserted as what it is: room at least as wide as what stands in
+    it.
+
+    The last assertion is this test checking itself. Eight pixels below the floor
+    the same measurement must report a failure — if it cannot see a header that
+    does not fit, its silence above means nothing.
+    """
+    got = measured_in(chrome(), demo_page, tmp_path / "headroom.html", 1460, _HEADROOM)
+
+    assert len(got["atFloor"]) == 4, "the four clamped columns are the four with a control"
+    for where, columns in (("as the fit drew it", got["asFitted"]),
+                           (f"at the {got['floor']}px floor", got["atFloor"])):
+        for column in columns:
+            assert not column["wrapped"], (
+                f"{where}, the {column['column']} header wraps over two lines in "
+                f"{column['width']}px"
+            )
+            assert column["overLabel"] <= 0, (
+                f"{where}, the {column['column']} label runs {column['overLabel']}px "
+                f"under the control in {column['width']}px"
+            )
+            assert column["overGrip"] <= 0, (
+                f"{where}, the {column['column']} control runs {column['overGrip']}px "
+                f"into the grip"
+            )
+            assert column["reserved"] >= column["needs"], (
+                f"{where}, the {column['column']} header sets aside "
+                f"{column['reserved']}px for a control that takes {column['needs']}px, "
+                f"so the column can be measured and fitted as if it were not there"
+            )
+
+    assert any(column["wrapped"] or column["overLabel"] > 0 for column in got["below"]), (
+        f"{got['floor'] - 8}px fits four headers, a label, a glyph, a control and a "
+        f"grip — so this measurement cannot tell a header that fits from one that "
+        f"does not, and the floor above is unproven"
+    )
+
+
+# Seventeen rows with every clamped column open, in a window narrow enough that
+# the table really is scrolled both ways — which is the only state in which the
+# sticky header and the frozen pair are doing anything at all.
+#
+# `at()` asks what is painted at a point rather than what a stylesheet resolved
+# to. A frozen cell that has lost its layer keeps every value the tests assert
+# and is drawn under the rows passing beneath it, which is the whole of the
+# defect and is invisible to `getComputedStyle`.
+#
+# The header measured is `status` and deliberately not `title`: the title header
+# is sticky twice over — `[data-col="title"]` freezes it sideways at (0,1,0) and
+# outranks `thead th` — so it goes on holding the top of the scroller after
+# `thead th { position: sticky }` has been taken away entirely. It is the one
+# header that cannot answer this question.
+_TALL = """
+for (const th of headers) {
+  const control = th.querySelector('.expand');
+  if (control && th.offsetParent !== null) control.click();
+}
+const rows = [...tbody.rows];
+const height = rows.map(tr => Math.round(tr.getBoundingClientRect().height));
+scroller.scrollTop = Math.round(scroller.scrollHeight / 3);
+scroller.scrollLeft = 200;
+scroller.dispatchEvent(new Event('scroll'));
+const box = scroller.getBoundingClientRect();
+const head = table.querySelector('thead th[data-col="status"]').getBoundingClientRect();
+const id = table.querySelector('tbody td[data-col="id"]').getBoundingClientRect();
+const title = table.querySelector('tbody td[data-col="title"]').getBoundingClientRect();
+const at = (x, y) => {
+  const found = document.elementFromPoint(x, y);
+  const cell = found && found.closest ? found.closest('td,th') : null;
+  return cell ? `${cell.tagName}:${cell.dataset.col}` : 'nothing';
+};
+// A header to probe that is not itself frozen and is not hidden behind the pair
+// that is: scrolled sideways, the columns to the left of the viewport are under
+// the frozen pair, and asking what is painted there answers a question about the
+// frozen pair rather than about the header row.
+const clear = headers
+  .filter(th => th.offsetParent !== null && !['id', 'title'].includes(keyOf(th)))
+  .map(th => [keyOf(th), th.getBoundingClientRect()])
+  .find(([, seen]) => seen.left > title.right + 8);
+return {
+  headerProbed: clear[0],
+  rows: rows.length,
+  open: tbody.querySelectorAll('td.clamp.open').length,
+  tallest: Math.max(...height),
+  shortest: Math.min(...height),
+  scrolls: {down: scroller.scrollHeight > scroller.clientHeight + 1,
+            sideways: scroller.scrollWidth > scroller.clientWidth + 1},
+  scrolled: scroller.classList.contains('scrolled'),
+  headerAtTop: Math.round(head.top - box.top),
+  idAtLeft: Math.round(id.left - box.left),
+  titleAfterId: Math.round(title.left - id.right),
+  painted: {
+    header: at(clear[1].left + 4, head.top + 4),
+    frozenHeader: at(id.right + 20, head.top + 4),
+    idColumn: at(box.left + 4, box.top + box.height / 2),
+    titleColumn: at(id.right + 20, box.top + box.height / 2),
+    beyond: at(box.right - 20, box.top + box.height / 2),
+  },
+};
+"""
+
+
+def test_the_header_and_the_frozen_pair_hold_when_the_rows_are_tall(
+    demo_page: str, tmp_path: Path
+):
+    """What expanding a column deliberately costs: seventeen rows of lists at full
+    length, and a plan that no longer fits on one screen. That is the whole point
+    of it being asked for rather than being the default — but it is also the state
+    in which the two things that keep a scrolled table readable have the most work
+    to do, and neither was ever seen doing it against a 150px row.
+
+    So the table is scrolled down into the middle of the plan and sideways past
+    the frozen pair, and what is *painted* at four points is what is asked. A
+    frozen cell that has lost its layer resolves to every value a stylesheet test
+    asserts and is drawn under the rows passing beneath it.
+    """
+    got = measured_in(chrome(), demo_page, tmp_path / "tall.html", 700, _TALL, height=600)
+
+    assert got["rows"] == 17
+    assert got["open"], "no column opened, so nothing here is about tall rows"
+    assert got["tallest"] > got["shortest"], "the rows did not grow"
+    assert got["scrolls"]["down"] and got["scrolls"]["sideways"], (
+        "the table fits its window, so neither the sticky header nor the frozen "
+        "columns are holding anything back"
+    )
+
+    assert got["headerAtTop"] == 0, "the header did not stay at the top of the scroller"
+    assert got["idAtLeft"] == 0, "the id column did not stay at the left"
+    assert got["titleAfterId"] == 0, "the title column no longer begins where id ends"
+    assert got["scrolled"], "the frozen edge is not drawn, with columns passing under it"
+
+    assert got["painted"]["header"] == f"TH:{got['headerProbed']}", (
+        "a tall row is painted over the header"
+    )
+    assert got["painted"]["frozenHeader"] == "TH:title", "and over the frozen header"
+    assert got["painted"]["idColumn"] == "TD:id", "a passing cell is painted over the id"
+    assert got["painted"]["titleColumn"] == "TD:title", "and over the title"
+    assert got["painted"]["beyond"] not in ("TD:id", "TD:title"), (
+        "the frozen pair is drawn across the whole table, so nothing is scrolling"
     )
 
 
@@ -1490,7 +1927,7 @@ def test_a_title_somebody_typed_never_becomes_markup():
         "${esc(was)}",                  # and the value the editor opens with
     ):
         assert interpolation in body, interpolation
-    assert "clamped((value || []).map(esc), 'tag')" in body
+    assert "clamped((value || []).map(esc), 'tag', 'tags')" in body
 
     # Nothing typed reaches the page as markup by either route.
     assert "<b>&" not in page and "<i>one" not in page
@@ -1715,22 +2152,32 @@ def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
     assert "td.clamp { white-space: nowrap; overflow: hidden; }" in page
     assert "td.clamp .rest { display: none; }" in page
     assert "td.clamp.open .rest { display: inline; }" in page
-    assert "td.clamp.open .more { display: none; }" in page
     assert "padding: .3rem .5rem" in page, "the row keeps the padding it had"
+    # The badge is still there when the cell is open, because it is what closes it
+    # again. `td.clamp.open .more { display: none; }` is what made the reveal
+    # one-way: there was nothing left to click.
+    assert 'td.clamp .more::before { content: "+"; }' in page
+    assert 'td.clamp.open .more::before { content: "−"; }' in page
+    assert "td.clamp.open .more { display: none; }" not in page
 
     body = script(page)
-    assert re.search(r'aria-label="Show \$\{rest\.length\} more \$\{noun\}', body), (
+    assert 'const expand = `Show ${rest.length} more ${word}`;' in body, (
         "the reveal has a name, not only a plus sign"
+    )
+    assert 'data-collapse="Show ${rest.length} fewer ${word}"' in body, (
+        "and the name changes with the state, because a control says what it will do"
     )
     # Both list columns, because fixing tags alone only moved the problem one
     # column left: a task with three merged PRs stood 128px tall beside a 50px row.
-    assert "clamped((value || []).map(esc), 'tag')" in body
-    assert "clamped((value || []).map(prLink), 'pull request')" in body
+    assert "clamped((value || []).map(esc), 'tag', 'tags')" in body
+    assert "clamped((value || []).map(prLink), 'pull request', 'pull requests')" in body
     # Every list column, not three of four: assignees and reviewers were the last
     # that wrapped, and they were most of the height left in the table.
-    assert "clamped((value || []).map(esc), 'person')" in body
+    assert "clamped((value || []).map(esc), 'person', 'people')" in body
     assert "CLAMPED.has(key) ? 'clamp' : ''" in body
-    assert "more.closest('td').classList.add('open')" in body
+    # `toggle`, not `add`, and one function both controls go through.
+    assert "td.classList.toggle('open', open);" in body
+    assert "more.closest('td').classList.add('open')" not in body
     # It is a control inside an editable cell, so it must not also open the editor.
     assert "event.target.closest('button.more')) return;" in body
 
