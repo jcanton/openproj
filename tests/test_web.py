@@ -492,6 +492,24 @@ def test_healthz_reports_the_commit_being_served(client: TestClient, repo_path: 
     assert head(client) == git_head(repo_path)
 
 
+def test_the_health_check_is_reachable_at_a_path_that_is_ours(client: TestClient):
+    """`/healthz` is not ours on Cloud Run. Google's frontend answers it with its
+    own 404 page and the request never reaches the container — observed on the
+    deployed service, where `/healthz` returned Google-branded HTML with no
+    access-log line while an unrouted path on the same host returned this app's
+    JSON 404. The one URL meant to prove the service is alive was the one that
+    could not reach it.
+
+    So the deployment checks `/api/health`, in a namespace this app owns and
+    nothing in front of it claims. `/healthz` stays for a run behind anything
+    else, and both must keep answering the same thing.
+    """
+    ours = client.get("/api/health")
+
+    assert ours.status_code == 200
+    assert ours.json() == client.get("/healthz").json()
+
+
 def test_the_index_json_carries_the_entities_the_spans_and_the_problems(client: TestClient):
     """The whole snapshot, so a client can render a view without a second request.
 

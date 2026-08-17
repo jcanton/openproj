@@ -844,7 +844,22 @@ def create_app(
             }
         )
 
+    # Two paths, one answer, because `/healthz` is not ours on Cloud Run.
+    #
+    # Google's frontend answers `/healthz` itself with its own 404 page — the
+    # "Error 404 (Not Found)!!1" robot — and the request never reaches the
+    # container. Observed on the deployed service: `/healthz` came back as
+    # Google-branded HTML with no access-log line, while an unrouted path on the
+    # same host came back as this app's JSON 404 carrying this app's CSP header.
+    # So the check that is meant to prove the service is alive was the one URL
+    # that could not reach it, and it failed on a service that was working.
+    #
+    # `/api/health` sits in the namespace this app already owns and nothing in
+    # front of it claims. `/healthz` stays for a run behind anything else — it is
+    # the convention every other health check follows — but nothing this project
+    # ships points at it any more.
     @app.get("/healthz")
+    @app.get("/api/health")
     def healthz() -> dict:
         return {"ok": True, "head": store.head()}
 

@@ -314,8 +314,12 @@ URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='valu
 
 say "Checking ${URL}"
 
-printf '   /healthz           '
-curl -fsS --max-time 30 "$URL/healthz" || note "FAILED — see the logs below"
+# /api/health and NOT /healthz. Google's frontend answers /healthz itself, with
+# its own 404 page, and the request never reaches the container — so the one
+# check meant to prove the service is alive was the one URL that could not reach
+# it, and it failed against a service that was working perfectly.
+printf '   /api/health        '
+curl -fsS --max-time 30 "$URL/api/health" || note "FAILED — see the logs below"
 printf '\n'
 
 # The one worth checking explicitly. static/ is not in the wheel, so a container
@@ -331,21 +335,43 @@ printf '   PATCH an entity    %s (want 401)\n' \
 # Proves the push credential worked on the cold start. If this line is missing
 # and the service is up, it is serving an empty plan it made itself — which
 # looks completely normal until the first save goes nowhere.
+# Retried, because Cloud Logging ingests on its own schedule: the first run of
+# this check reported NOT FOUND against a boot that had cloned perfectly well
+# thirty seconds earlier, which is worse than no check — it accuses the one part
+# of the stack that is hardest to re-test.
 printf '   cloned on boot     '
-if gcloud run services logs read "$SERVICE" --region "$REGION" --limit 50 2>/dev/null \
-     | grep -q cloning; then
+cloned=""
+for _ in 1 2 3 4 5 6; do
+  if gcloud run services logs read "$SERVICE" --region "$REGION" --limit 50 2>/dev/null \
+       | grep -q cloning; then
+    cloned="yes"
+    break
+  fi
+  sleep 5
+done
+if [[ -n "$cloned" ]]; then
   printf 'yes\n'
 else
-  printf 'NOT FOUND — check: gcloud run services logs read %s --region %s\n' "$SERVICE" "$REGION"
+  printf 'not in the logs yet — check: gcloud run services logs read %s --region %s\n' \
+    "$SERVICE" "$REGION"
 fi
+
+# Cloud Run answers on two hostnames — the one `describe` reports and the
+# project-number one the deploy prints — and GitHub matches a redirect URI
+# exactly. Registering only one means sign-in works or 404s depending on which
+# link somebody followed, so both are printed and both should be registered.
+ALT_URL="https://${SERVICE}-$(gcloud projects describe "$PROJECT" \
+  --format='value(projectNumber)').${REGION}.run.app"
 
 say "Deployed: ${URL}"
 cat <<EOF
 
-   One thing left, and sign-in fails until it is done:
+   One thing left, and sign-in fails until it is done. Add BOTH of these to the
+   OAuth App's Redirect URIs at https://github.com/settings/developers —
+   Cloud Run answers on both hostnames and GitHub matches them exactly:
 
-   add  ${URL}/auth/callback
-   to the OAuth App's Redirect URIs at https://github.com/settings/developers
+     ${URL}/auth/callback
+     ${ALT_URL}/auth/callback
 
    (Leave wildcard matching off. The app already holds the loopback URI, and it
    takes up to ten, so nothing has to be replaced.)

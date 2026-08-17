@@ -287,11 +287,16 @@ they can be re-run by hand later, when something that worked stops working.
 
 ```bash
 URL=$(gcloud run services describe openproj --region $REGION --format='value(status.url)')
-curl -s $URL/healthz                                  # {"ok":true,"head":"..."}
+curl -s $URL/api/health                               # {"ok":true,"head":"..."}
 curl -s -o /dev/null -w '%{http_code}\n' $URL/graph   # 200, not 500 — static/ resolved
 curl -s -X PATCH $URL/api/entity/x -d '{}'            # 401 — writes are gated
 gcloud run services logs read openproj --region $REGION --limit 20 | grep cloning
 ```
+
+`/api/health` and not `/healthz`: Google's frontend answers that path itself,
+with its own 404 page, and the request never reaches the container — so the check
+meant to prove the service is alive is the one URL that cannot reach it. The route
+still answers on `/healthz` for a run behind anything else.
 
 `/graph` is the one worth checking explicitly: `static/` is not in the wheel, and
 a container that resolved it wrongly serves every other page fine and 500s only
