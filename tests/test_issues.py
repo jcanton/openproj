@@ -335,3 +335,26 @@ def test_the_formatting_bar_sits_above_the_body_not_beside_it(client: TestClient
 
     assert "field" not in bar
     assert "body.editing .bodybar { display: flex; }" in page
+
+
+def test_the_issue_columns_can_be_dragged(client: TestClient):
+    """The same behaviour the entity table has, written small: its own machinery
+    is wound through sticky columns, a narrow breakpoint and per-column expanders,
+    none of which this table has."""
+    page = client.get("/issues").text
+
+    assert "const WIDTH_KEY = 'openproj:issue-widths:1';" in page
+    assert "grip.onpointerdown" in page
+    assert "grip.ondblclick" in page, "double-click fits the column to its widest cell"
+    assert "remembered.map(WIDTH_KEY)" in page, "and it is remembered"
+    assert "#issues th { position: relative; }" in page, "the grip is positioned against it"
+
+
+def test_an_issue_cell_is_border_box(client: TestClient):
+    """A width set from a measured box gains the padding again otherwise, and
+    every column grows by exactly one cell's worth on the first drag. The entity
+    table carries this in its own stylesheet, which this page does not get —
+    dragging one column here moved all six until it did."""
+    style = re.search(r"#issues th, #issues td \{(.*?)\}", client.get("/issues").text, re.S)
+
+    assert style and "box-sizing: border-box;" in style.group(1)

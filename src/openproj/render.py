@@ -7707,6 +7707,85 @@ const RANK = {{ statuses|tojson }};
 let sorted = null;
 let reversed = false;
 const HEADS = [...document.querySelectorAll('#issues th[data-sort]')];
+const TABLE = document.getElementById('issues');
+
+// Columns you can drag, the way the entity table's are. Its own machinery is
+// wound through sticky columns, a narrow breakpoint and the per-column expanders,
+// none of which this table has — so this is the same behaviour written small,
+// against the same shared `remembered` and the same `.grip` and `.measuring`
+// rules, rather than the same code made general.
+const WIDTH_KEY = 'openproj:issue-widths:1';
+const WIDTHS = remembered.map(WIDTH_KEY);
+const keyOf = head => head.dataset.sort;
+
+function applyWidths() {
+  if (!Object.keys(WIDTHS).length) return;
+  TABLE.style.tableLayout = 'fixed';
+  let total = 0;
+  for (const head of HEADS) {
+    const width = WIDTHS[keyOf(head)];
+    if (width) { head.style.width = width + 'px'; total += width; }
+  }
+  // A fixed layout divides the space it is given, so at 100% widening one column
+  // silently squeezes every other — which is what freezing them was meant to
+  // prevent. The table is as wide as its columns and scrolls in its own box.
+  TABLE.style.width = total + 'px';
+}
+
+// What each column needs with every cell on one line. Measured from a layout that
+// has forgotten the widths already applied, or a column can only ever be measured
+// wider than it currently is.
+function naturalWidths() {
+  const applied = HEADS.map(head => head.style.width);
+  HEADS.forEach(head => { head.style.width = ''; });
+  TABLE.classList.add('measuring');
+  TABLE.style.tableLayout = 'auto';
+  TABLE.style.width = 'max-content';
+  const natural = HEADS.map(head => head.getBoundingClientRect().width);
+  TABLE.classList.remove('measuring');
+  HEADS.forEach((head, i) => { head.style.width = applied[i]; });
+  return natural;
+}
+
+HEADS.forEach((head, i) => {
+  const grip = document.createElement('span');
+  grip.className = 'grip';
+  head.append(grip);
+  // Double-click a grip and the column shrinks to what its widest cell needs on
+  // one line — the width you would have dragged to, without the dragging.
+  grip.ondblclick = event => {
+    event.stopPropagation();
+    WIDTHS[keyOf(head)] = Math.ceil(naturalWidths()[i]);
+    remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
+    applyWidths();
+  };
+  grip.onpointerdown = event => {
+    event.preventDefault();
+    grip.classList.add('dragging');
+    // Freeze every column first, or resizing one reflows all the others.
+    for (const other of HEADS) {
+      const key = keyOf(other);
+      WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
+    }
+    TABLE.style.tableLayout = 'fixed';
+    const key = keyOf(head);
+    const from = event.clientX;
+    const was = WIDTHS[key];
+    const move = e => {
+      WIDTHS[key] = Math.max(40, was + e.clientX - from);
+      applyWidths();
+    };
+    const stop = () => {
+      grip.classList.remove('dragging');
+      remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', stop);
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', stop);
+  };
+});
+applyWidths();
 
 function mark() {
   for (const head of HEADS) {
@@ -7911,6 +7990,14 @@ _ISSUES_STYLE = """
 #issues th, #issues td {
   border-bottom: 1px solid var(--line); padding: .35rem .6rem; text-align: left;
   vertical-align: top;
+  /* Border-box, or a width set from a measured box gains the padding again and
+     every column grows by exactly one cell's worth on the first drag. The entity
+     table carries this rule in its own stylesheet, which this page does not
+     get — and dragging one column here moved all six until it did. */
+  box-sizing: border-box;
+  /* A PR reference has no space in it, so at a narrow width it hangs over the
+     next column instead of wrapping inside its own. */
+  overflow-wrap: anywhere;
 }
 #issues th { color: var(--muted); font-weight: 400; font-size: 11px;
              text-transform: uppercase; letter-spacing: .04em; user-select: none;
@@ -7919,6 +8006,8 @@ _ISSUES_STYLE = """
                 scrolls straight over the top of it — so the rule is drawn inside
                 the box instead. */
              box-shadow: inset 0 -1px 0 var(--line); }
+/* The grip is positioned against this. */
+#issues th { position: relative; }
 #issues th button { font: inherit; color: inherit; letter-spacing: inherit;
                     text-transform: inherit; background: none; border: 0; padding: 0;
                     cursor: pointer; }
