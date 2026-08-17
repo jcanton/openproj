@@ -57,7 +57,13 @@ def screenshot(browser: str, html: Path, png: Path) -> bytes:
 
 
 def measured_in(
-    browser: str, page: str, where: Path, width: int, script: str, height: int = 900
+    browser: str,
+    page: str,
+    where: Path,
+    width: int,
+    script: str,
+    height: int = 900,
+    flags: tuple[str, ...] = (),
 ) -> dict:
     """Lay the page out in Chrome at this size, run `script` over the result and
     bring back what it found.
@@ -71,6 +77,14 @@ def measured_in(
     `height` is a parameter and not the 900 it used to be fixed at: the box each
     view sizes to the window is right or wrong *per window*, and one window is
     the one thing that cannot show it.
+
+    `flags` is how a test asks about a reader who is not the default one.
+    `--force-prefers-reduced-motion` is the only user in the suite: the media
+    query it flips cannot be reached from the page, and a test that asserted the
+    block was *in* the stylesheet would be the same test that missed the frozen
+    column's edge. Passed through rather than baked in, because a run under a
+    forced setting has to be comparable to a run without it — the assertion is
+    the difference between the two.
     """
     where.write_text(page.replace(
         "</body>",
@@ -80,7 +94,7 @@ def measured_in(
     done = subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
          "--force-device-scale-factor=1", f"--window-size={width},{height}",
-         "--virtual-time-budget=2500", "--dump-dom", str(where)],
+         *flags, "--virtual-time-budget=2500", "--dump-dom", str(where)],
         capture_output=True, text=True, check=True,
     )
     found = re.search(r'data-report="([^"]*)"', done.stdout)

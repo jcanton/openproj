@@ -1338,6 +1338,38 @@ tr.nothing .hint { margin: 0 0 .75rem; }
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
 #moved a { color: var(--on-accent); }
 #moved .sha { font-family: var(--font-mono); opacity: .7; }
+/* A reader who has told their operating system they want less motion gets none.
+   It is a system setting and not a preference this app keeps, so there is no
+   toggle for it and nothing in `remembered` — the browser answers, every page.
+
+   One blanket block rather than a `transition: none` beside the single animated
+   rule the app owns, because the next person to write a transition will not come
+   back here to add it. That rule is `#grip::before` on the detail page, the width
+   handle's fade, and it is the only one: `transition`, `animation` and
+   `@keyframes` across `src/` return it and nothing else.
+
+   `!important` is load-bearing rather than shouting. Each page's own stylesheet is
+   inlined immediately below this block, so a page rule is *later* in the sheet and
+   takes every tie on order — which is precisely what the grip's rule does at equal
+   specificity. Importance is the only thing that outranks it, and the browser test
+   for this asks about that exact rule so the ordering is proved rather than
+   assumed.
+
+   `.01ms` and not `0s`: a zero-duration transition never fires `transitionend`, so
+   a listener waiting on one would wait for good. Nothing waits today; the block
+   should not be the reason the first one hangs.
+
+   CSS does not reach a canvas. The graph is cytoscape, whose layout runs with
+   `animate: false` — its default, and `LAYOUT` does not turn it on. Turning it on
+   means reading the media query in JavaScript, because this block cannot. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
 {{ style }}
 </style></head><body>
 <a class="skip" href="#main">Skip to the content</a>

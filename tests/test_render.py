@@ -2917,3 +2917,156 @@ def test_a_window_that_changes_under_an_open_page_is_measured_again(
         f"{got['before']['room']} of its room"
     )
     assert got["editing"]["clearance"] >= 0 and got["editing"]["scrolls"] == 0
+
+
+# --- the motion floor --------------------------------------------------------
+
+
+_MOTION = """
+// The grip belongs to whichever document is on screen, and the exported page opens
+// on the index, where every article is hidden and `place()` hides the grip with
+// them. So drive the page the way a reader does — set the hash, call the page's
+// own `show()` — rather than clearing `hidden` from here, which would be this test
+// inventing a state the app never puts itself in.
+location.hash = document.querySelector('article.entity').id;
+show();
+const grip = document.getElementById('grip');
+const painted = getComputedStyle(grip, '::before');
+return {
+  asked: matchMedia('(prefers-reduced-motion: reduce)').matches,
+  shown: !grip.hidden,
+  // "0.15s, 0.15s" resting, one value once the blanket rule wins. Numbers, so the
+  // assertion is about how long the fade lasts and not about how Chrome spells it.
+  seconds: painted.transitionDuration.split(',').map(one => parseFloat(one)),
+};
+"""
+
+
+def test_a_reader_who_asked_for_less_motion_gets_none_of_the_motion_there_is(
+    rendered: Path, tmp_path: Path
+):
+    """The quality floor, asked of the browser because nothing else can answer it.
+
+    `prefers-reduced-motion` is a setting on the reader's machine. A page cannot
+    see it, `cascade.py` skips at-rules by construction, and a test that searched
+    the stylesheet for the block would be the same test that passed on the frozen
+    column's edge while Chrome painted nothing — presence is not effect.
+
+    So the app's one animated rule is measured twice, and the assertion is the
+    difference between the runs. The resting run matters as much as the forced
+    one: without it a page that had lost the transition altogether would pass this
+    quietly, and the floor would be a claim about nothing.
+
+    It also proves the `!important` in the shell's block is load-bearing rather
+    than decorative. `#grip::before` is a `_DETAIL_STYLE` rule, inlined *after* the
+    shell's, and at equal importance it would win the tie on order and keep its
+    fade. It does not.
+    """
+    from browser import chrome, measured_in
+
+    browser = chrome()
+    page = read(rendered, "detail.html")
+
+    resting = measured_in(browser, page, tmp_path / "motion-resting.html", 1400, _MOTION)
+    assert not resting["asked"], "Chrome came up already asking for reduced motion"
+    assert resting["shown"], "the grip is hidden, so nothing below is about the app's animation"
+    assert min(resting["seconds"]) >= 0.1, (
+        f"the grip's fade resolves to {resting['seconds']}s, so there is no motion here "
+        f"to switch off and this test proves nothing"
+    )
+
+    reduced = measured_in(
+        browser, page, tmp_path / "motion-reduced.html", 1400, _MOTION,
+        flags=("--force-prefers-reduced-motion",),
+    )
+    assert reduced["asked"], "the flag did not reach the media query"
+    assert reduced["shown"]
+    assert max(reduced["seconds"]) <= 0.001, (
+        f"a reader who asked for less motion still gets a {max(reduced['seconds'])}s fade"
+    )
+
+
+def test_the_motion_floor_is_the_shell_s_and_not_one_page_s(rendered: Path):
+    """Where the block lives, which is the half the browser test cannot see.
+
+    It measures `detail.html`, the only page with a transition on it. Written into
+    `_DETAIL_STYLE` that test would pass unchanged and the other five pages would
+    have no floor at all the day one of them grew an animation — which is the same
+    shape as the capacity meter's `.bar` rule reaching the timeline: a rule's page
+    is a fact about the rule, and nobody notices it from inside one page.
+    """
+    for name in PAGES:
+        style = re.search(r"<style>(.*?)</style>", read(rendered, name), re.S).group(1)
+        assert "@media (prefers-reduced-motion: reduce) {" in style, name
+
+
+_MOVES = re.compile(r"@keyframes|\b(?:transition|animation)(?:-[a-z]+)?\s*:")
+
+
+def _outside_the_floor(page: str) -> str:
+    """A page's stylesheet with the reduced-motion block cut whole out of it, so
+    what is left is the motion that block exists to switch off."""
+    style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    css = re.sub(r"/\*.*?\*/", " ", style, flags=re.S)
+    at = css.find("@media (prefers-reduced-motion: reduce) {")
+    assert at >= 0, "this page has no motion floor, so there is nothing to cut out of it"
+    depth, i = 0, at
+    while True:
+        depth += (css[i] == "{") - (css[i] == "}")
+        if depth == 0 and css[i] == "}":
+            break
+        i += 1
+    return css[:at] + css[i + 1:]
+
+
+# The pages that inline `_DETAIL_STYLE`, which is where the app's one animated rule
+# is written. `#grip` exists on the detail page alone, so on the cycles index the
+# declaration ships with no element to move — a stylesheet meant for one page,
+# loaded by another, which is the shape of the worst defect this branch had. Inert
+# here rather than harmful, and it is why the floor is written in the shell: a rule
+# that travels has to be switched off wherever it lands, not next to where it was
+# written.
+_CARRIES_MOTION = ("detail.html", "cycles.html")
+
+
+def test_the_app_moves_in_exactly_one_place(rendered: Path):
+    """The inventory the floor's comment claims, kept true by something other than
+    the person who wrote it.
+
+    The blanket rule covers whatever is written next, so this is not a ban on new
+    motion — it is what lets the comment say "the only one" without going stale, and
+    the trigger to check the two things a second `transition` would need: that it is
+    inside the shell's reach, and that it is not on a canvas.
+    """
+    for name in PAGES:
+        found = _MOVES.findall(_outside_the_floor(read(rendered, name)))
+        expected = 1 if name in _CARRIES_MOTION else 0
+        assert len(found) == expected, f"{name} moves in {len(found)} places, not {expected}"
+        assert (name in _CARRIES_MOTION) == (
+            "transition: opacity .15s, background .15s" in read(rendered, name)
+        ), name
+    assert 'id="grip"' in read(rendered, "detail.html")
+    assert 'id="grip"' not in read(rendered, "cycles.html"), (
+        "the cycles index grew a grip, so the rule it has been carrying now moves "
+        "something and the floor is doing more than it was measured doing"
+    )
+
+
+def test_the_graph_does_not_animate_where_css_cannot_stop_it():
+    """A canvas is the exception the floor cannot cover: cytoscape draws into one,
+    and no stylesheet slows that down. `LAYOUT` leaves `animate` at the vendored
+    default of `false`, which is the whole reason the block is honest — turn it on
+    and a reader who asked for stillness gets a 500ms slide anyway."""
+    from openproj import render
+
+    source = Path(render.__file__).read_text(encoding="utf-8")
+    # The constant and every call that spreads it. Both, because `{...LAYOUT,
+    # fit: true}` is where an option gets added without the constant changing.
+    specs = [re.search(r"^const LAYOUT = (\{.*\});$", source, re.M).group(1)]
+    specs += re.findall(r"\.layout\((\{[^}]*\})\)", source)
+    for spec in specs:
+        assert "animate" not in spec, (
+            f"cytoscape was told to animate in {spec}; CSS cannot reach a canvas, so "
+            f"the layout has to ask matchMedia('(prefers-reduced-motion: reduce)') itself"
+        )
+    assert ".animate(" not in source, "cytoscape's own animation API moves the canvas too"
