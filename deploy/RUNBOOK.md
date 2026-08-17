@@ -150,15 +150,27 @@ A token printed means the App, the key and the installation all line up:
 Separate from step 2 and doing a different job: step 2 lets the *server* write to
 one repository, this lets a *person* prove who they are.
 
-At **https://github.com/settings/developers → New OAuth App**:
+**A classic OAuth App, and not the GitHub App from step 2.** The two look alike
+in the settings and do different jobs: step 2's App writes to one repository and
+holds no user identity; this one identifies a person and touches no repository. A
+GitHub App *can* authorise users, but its user-to-server token carries the App's
+permissions rather than a scope — so `/user/memberships/orgs/{org}`, which is how
+`identify` decides who may write, would need an org-members permission this App
+deliberately does not have.
+
+Go to **https://github.com/settings/developers**, the **OAuth Apps** tab (not
+GitHub Apps), then **New OAuth App**. If the URL in your browser reads
+`/settings/apps/…` you are editing the wrong thing.
 
 - **Application name:** anything, e.g. `openproj`.
 - **Homepage URL:** `https://github.com/jcanton/openproj`. Cosmetic, like the
   App's in step 2.
-- **Authorization callback URL:** **a URL on YOUR service, not on github.com.**
-  This one is load-bearing: it is where GitHub sends the browser after somebody
-  signs in, and it must reach openproj. Pointed at a github.com address, sign-in
-  lands on a 404 and no session is ever created.
+- **Authorization callback URL** — GitHub's newer form calls this field
+  **Redirect URI**; they are the same thing. It is **a URL on YOUR service, not
+  on github.com**, and it is the one field here that is load-bearing: it is where
+  GitHub sends the browser after somebody signs in, and it must reach openproj.
+  Pointed at a github.com address, sign-in lands on a 404 and no session is ever
+  created.
 
   ```
   https://<service>.<region>.run.app/auth/callback     for the deployment
