@@ -132,6 +132,43 @@ def test_blocked_by_keeps_only_edges_to_entities_that_exist():
     assert "task-ffffff" not in index.blocks
 
 
+def test_a_parent_that_names_nothing_does_not_take_the_whole_index_down():
+    """A parent chain may end at an id no file was ever written for.
+
+    `ancestors` returns the chain as *named*, so its last link can be an id that
+    is absent from `by_id` — and `_project_of` looked that link up with `[]`.
+    The KeyError came out of `build_index`, which is on the read path of `/`,
+    `/detail/<id>` and `/api/index.json`, so one committed `parent` field
+    answered 500 to every reader on every page, permanently, on a branch whose
+    protection means the commit cannot be force-pushed away.
+
+    A dangling parent is deliberately not a validation problem — see the `task()`
+    helper in `test_validate` — so it has to be a plan the index can render.
+    Unresolvable means "no project", the same answer as no parent at all.
+    """
+    entities = [a_task("task-c00001", parent="proj-ffffff", owner="alice", effort_weeks=1.0)]
+
+    index = build_index(entities, CONFIG, TODAY)
+
+    assert index.facets["project"] == []
+    assert set(index.entities) == {"task-c00001"}
+
+
+def test_a_parent_chain_that_ends_outside_the_plan_still_finds_the_project_it_names():
+    """The half of the same walk that must keep working: a chain that reaches a
+    real project reports it, even though a later link is missing."""
+    entities = [
+        a_project("proj-a00001", "Greenline"),
+        a_pitch("pitch-b00001", parent="proj-a00001"),
+        a_task("task-c00001", parent="pitch-b00001"),
+        a_task("task-c00002", parent="pitch-ffffff"),
+    ]
+
+    index = build_index(entities, CONFIG, TODAY)
+
+    assert index.facets["project"] == ["proj-a00001"]
+
+
 def test_entities_are_keyed_by_id(family_index: Index):
     assert family_index.entities["task-c00001"].title == "First"
     assert set(family_index.entities) == {

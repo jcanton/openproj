@@ -68,15 +68,49 @@ def _first_working_day(day: date, config: Config) -> date:
     return day
 
 
+def _working_days(weeks: float) -> int:
+    """Whole working days in `weeks`.
+
+    Rounded to six decimals first: 1.2 * 5 is 6.000000000000001 in binary
+    floating point, and a naive ceil would buy a seventh day.
+    """
+    return max(1, math.ceil(round(weeks * _WORKING_DAYS_PER_WEEK, 6)))
+
+
+def _runs_past_the_calendar(start: date, weeks: float, config: Config) -> bool:
+    """Whether `weeks` of work beginning at `start` outruns the end of `date`.
+
+    `effort_weeks: 1000000` is one PATCH away and no rule refuses it. The day
+    walk below used to keep adding days until `timedelta` went past year 9999
+    and raised OverflowError — out of `build_index`, so `/`, `/graph`,
+    `/timeline`, `/people` and `/api/index.json` all answered 500 to every
+    reader, off a value already committed to a branch whose protection means the
+    commit cannot be force-pushed away. The five million iterations before the
+    raise are the other half of it, so the question is asked before the walk
+    rather than answered by catching what the walk throws.
+
+    Each working day costs one calendar day, plus at most two more for a
+    weekend, plus one for each configured holiday it steps over — and a walk
+    that only moves forward steps over each holiday at most once. So
+    `3 * days + len(holidays)` is a ceiling on the calendar days consumed,
+    including the roll-forward in `_first_working_day`. Against the ~2.9 million
+    days between now and `date.max`, nothing anybody plans comes near it.
+    """
+    return 3 * _working_days(weeks) + len(config.holidays) > (date.max - start).days
+
+
 def working_days_after(start: date, weeks: float, config: Config) -> date:
     """The inclusive last day of `weeks` working weeks beginning at `start`.
 
-    Rounded to whole days, and to six decimals first: 1.2 * 5 is 6.000000000000001
-    in binary floating point, and a naive ceil would buy a seventh day.
+    The end of the calendar when the work does not fit inside it: this is the
+    primitive, and a primitive that raises is a 500 on every page. The scheduler
+    asks `_runs_past_the_calendar` first and leaves such an entity unscheduled,
+    which is the answer a reader can actually use.
     """
-    days = max(1, math.ceil(round(weeks * _WORKING_DAYS_PER_WEEK, 6)))
+    if _runs_past_the_calendar(start, weeks, config):
+        return date.max
     day = _first_working_day(start, config)
-    for _ in range(days - 1):
+    for _ in range(_working_days(weeks) - 1):
         day = _next_working_day(day, config)
     return day
 
@@ -267,6 +301,24 @@ def schedule(
 
         duration, estimated = _duration_weeks(entity, config)
         workers = _workers(entity)
+        if _runs_past_the_calendar(floor, duration, config):
+            # Unscheduled, exactly as a dependency cycle is: the scheduler has no
+            # answer, and saying so is better than inventing one. Clamping the end
+            # to `date.max` instead was worse in every direction — the timeline
+            # then drew a bar to the end of time and `_month_ticks` walked eight
+            # thousand years of months, so the page that stopped raising started
+            # producing megabytes of ticks nobody asked for. `render` drops an
+            # unscheduled span from the plot entirely, so this keeps one absurd
+            # number from setting the scale for every other bar on the page.
+            spans[entity_id] = Span(
+                start=floor, end=floor, unscheduled=True, estimated=estimated,
+                unowned=not workers,
+            )
+            explanations[entity_id] = Explanation(
+                entity_id=entity_id,
+                text=f"Not placed: {duration:g} weeks of work runs past the end of the calendar.",
+            )
+            continue
         span, explanation = _place(
             entity, duration, workers, booked, spans, floor, config
         )

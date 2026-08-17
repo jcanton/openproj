@@ -32,7 +32,14 @@ packages = ["src/openproj"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# `-ra`, and deliberately not `-q`. The documented command is `pytest -q`, and a
+# `-q` here made that `-qq`, which suppresses the final "N passed" line
+# altogether — so a run printed dots and nothing else. Thirty-four tests skip
+# themselves when node is absent (the half of test_injection that drives the
+# shipped JavaScript, plus the table fit), and under `-qq` a suite that had
+# silently dropped them looked exactly like one that had run them. `-ra` names
+# every skip and its reason, in every verbosity anybody runs.
+addopts = "-ra"
 
 [tool.ruff]
 line-length = 100

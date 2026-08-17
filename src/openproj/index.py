@@ -104,7 +104,23 @@ def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
     if entity.kind == "project":
         return entity.id
     for ancestor in ancestors(entity.id, by_id):
-        if by_id[ancestor].kind == "project":
+        # `.get`, not `[]`. `ancestors` returns the chain as it is *named*, so its
+        # last link can be an id no file was ever written for — and a dangling
+        # parent is deliberately not a validation problem (see the `task()` helper
+        # in test_validate), so a plan is allowed to contain one. Indexing it
+        # raised KeyError out of `build_index`, which is the read path of `/`,
+        # `/detail/<id>`, `/graph`, `/timeline`, `/people` and `/api/index.json`
+        # alike: one committed `parent` field, sent by any signed-in member and
+        # accepted with a 200, answered 500 to every reader on every page from
+        # then on. Branch protection means that commit cannot be force-pushed
+        # away, and the 500ing pages will not give you the sha to repair against.
+        #
+        # Unresolvable is answered the same way as no parent at all: no project.
+        # Inventing one would put a node in the facet menu that the graph and the
+        # table cannot agree exists, which is the failure the `blocked_by` edge
+        # map already refuses next door.
+        named = by_id.get(ancestor)
+        if named is not None and named.kind == "project":
             return ancestor
     return None
 

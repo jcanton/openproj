@@ -15,6 +15,7 @@ because they are the source of most off-by-one arguments:
 testing the scheduler and starts testing the calendar.
 """
 
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -98,6 +99,34 @@ def test_configured_holidays_do_not_count(seed_root: Path):
     """The seed's ETH year-end closure: 24 and 25 December 2026 are not working days."""
     config = model.load_config(seed_root)
     assert working_days_after(date(2026, 12, 21), 1.0, config) == date(2026, 12, 29)
+
+
+def test_a_size_too_large_for_the_calendar_stops_at_the_last_day_it_can_name():
+    """`effort_weeks: 1000000` is one PATCH, and it used to be a 500 on every page.
+
+    The walk added a day at a time until `timedelta` ran past year 9999 and
+    raised OverflowError — out of `build_index`, so `/`, `/graph`, `/timeline`,
+    `/people` and `/api/index.json` all answered 500 to every reader, for a
+    committed value that no rule refuses. Two things are wrong with walking it
+    at all: the exception, and the five million iterations before it.
+
+    The end of the calendar is the honest answer. A bar that runs off the end of
+    time is what "somebody typed a million weeks" looks like, and it is a page
+    rather than a stack trace.
+    """
+    assert working_days_after(MONDAY, 1_000_000.0, CONFIG) == date.max
+    assert working_days_after(MONDAY, 1e9, CONFIG) == date.max
+    # Not by exhausting the calendar first: the bound is taken before the walk,
+    # so a size nobody meant costs no more than a size somebody did.
+    started = time.monotonic()
+    working_days_after(MONDAY, 1e12, CONFIG)
+    assert time.monotonic() - started < 1.0
+
+
+def test_a_size_that_only_just_fits_is_still_walked_exactly():
+    """The clamp must not round off a plan that genuinely reaches far out."""
+    assert working_days_after(MONDAY, 52.0, CONFIG) == date(2027, 8, 13)
+    assert working_days_after(MONDAY, 520.0, CONFIG) < date.max
 
 
 # --------------------------------------------------------------------------- #
@@ -541,3 +570,22 @@ def test_a_cool_down_longer_than_the_window_does_not_invert_the_build():
 
     assert build_end(36, window, absurd) == window[0]
     assert build_end(36, window, absurd) >= window[0]
+
+
+def test_an_entity_too_large_for_the_calendar_is_unscheduled_and_says_why():
+    """Not clamped to `date.max`: unscheduled, the way a dependency cycle is.
+
+    A span ending at the end of the calendar is drawable in principle and a
+    disaster in practice — the timeline sets its scale from the widest span, so
+    one absurd number flattens every real bar to a hairline, and `_month_ticks`
+    walks eight thousand years of months building an SVG nobody can open. An
+    unscheduled span is dropped from the plot, which is what the scheduler
+    already does with work it cannot place.
+    """
+    spans, explanations = run([task("aaa001", size=1_000_000.0), task("aaa002", owner="bo")])
+
+    assert spans["task-aaa001"].unscheduled
+    assert spans["task-aaa001"].start == spans["task-aaa001"].end == MONDAY
+    assert "runs past the end of the calendar" in explanations["task-aaa001"].text
+    # The plan around it is untouched: one absurd number is one absurd row.
+    assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 21))

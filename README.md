@@ -113,6 +113,13 @@ docs/superpowers/          the spec and the plan
 internal tool becomes unbuildable in two years. `tests/test_render.py` asserts no rendered page
 reaches the network.
 
+**`node` is not needed to build or run it, and is needed to test it fully.** Thirty-four tests run
+the shipped page scripts against a minimal DOM — the table's rows, the timeline's tooltip, the
+combobox and the cycle roster exist only after a script has run, so nothing in a rendered file
+shows what they build. Without `node` on PATH those tests skip, and a suite missing them is green
+for the wrong reason. `pytest` names every skip; a machine that is meant to gate a merge should
+have `node` installed.
+
 ## Deliberately not built
 
 Real-time collaborative editing, notification infrastructure, user-defined custom fields, a

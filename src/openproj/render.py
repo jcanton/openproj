@@ -445,10 +445,18 @@ def _timeline(
     days = max((last - origin).days, 1)
     day_px = zoom if zoom else max(1.6, min(_DAY_PX, _PLOT_PX / days))
 
-    def x(day: date) -> float:
+    def x(day: date, plus_days: int = 0) -> float:
         # Plot coordinates only. The label column is HTML beside the SVG, not
         # inside it, so that it can stay put while the plot scrolls.
-        return round((day - origin).days * day_px, 1)
+        #
+        # `plus_days` rather than handing this `day + timedelta(days=1)`: a bar
+        # and a cycle band are both inclusive of their last day, and building
+        # that day as a `date` raises OverflowError once a span reaches
+        # `date.max` — which it does the moment somebody commits a size larger
+        # than the calendar, and the timeline was the one page that still 500'd
+        # after the scheduler stopped raising. The offset is a coordinate, so it
+        # is added in days instead of by naming a date that cannot exist.
+        return round(((day - origin).days + plus_days) * day_px, 1)
 
     config = Config(default_task_effort=index.default_task_effort)
     bars, rows = [], {}
@@ -466,7 +474,7 @@ def _timeline(
         if span.overruns_cycle_weeks:
             classes.append("late")
         width = round(
-            max(_MIN_BAR_PX, day_px, x(visible_end + timedelta(days=1)) - x(visible_start)),
+            max(_MIN_BAR_PX, day_px, x(visible_end, 1) - x(visible_start)),
             1,
         )
         explanation = index.explanations.get(entity_id)
@@ -523,7 +531,7 @@ def _timeline(
                 "number": number,
                 "label": f"cycle {number}",
                 "x": left,
-                "width": round(max(1.0, x(min(closes, last) + timedelta(days=1)) - left), 1),
+                "width": round(max(1.0, x(min(closes, last), 1) - left), 1),
                 # The dashed rule only where the cycle really closes. Drawn at a
                 # clamped edge it would claim a cycle ends where the window does.
                 "rule_x": x(closes) if origin <= closes <= last else None,

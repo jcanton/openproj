@@ -1933,3 +1933,60 @@ def test_a_receipt_the_cycle_page_draws_is_a_receipt_it_announces(client: TestCl
     assert "function say(message) { announce(message); }" in page
     assert "STATE.textContent" not in page, "the direct write this replaced"
     assert 'id="state" role="status"' in page
+
+
+def test_a_committed_parent_that_names_nothing_leaves_every_page_readable(
+    client: TestClient, repo_path: Path
+):
+    """`parent` is a `str`, so a well-formed id nobody wrote a file for parses.
+
+    Which is the whole point: the write path's parse-before-write refusal asks
+    whether the *record* reads back, and this record does. What did not read back
+    was the *plan* — `build_index` walked the parent chain and indexed a link
+    that is not there — so a PATCH any signed-in member can send returned 200,
+    committed, and then answered 500 on `/`, `/detail/<id>`, `/graph`,
+    `/timeline`, `/people` and `/api/index.json` for everybody, on every read.
+    Branch protection means that commit cannot be force-pushed away, and the
+    500ing pages will not hand you the sha to craft the repair against.
+
+    A dangling parent is deliberately not a validation problem (see the `task()`
+    helper in `test_validate`), so the requirement is not that the write is
+    refused — it is that the plan still renders afterwards.
+    """
+    head = client.get("/healthz").json()["head"]
+
+    saved = client.patch(
+        f"/api/entity/{TASK}",
+        json={"base_commit": head, "fields": {"parent": "proj-ffffff"}},
+    )
+    assert saved.status_code == 200, saved.text
+
+    # In git, not in the answer: the point is that the value really did land.
+    written = pygit2.Repository(str(repo_path)).revparse_single(
+        f"{saved.json()['commit']}:{PATH}"
+    ).data.decode()
+    assert "parent: proj-ffffff" in written
+
+    for route in ("/", f"/detail/{TASK}", "/api/index.json", "/graph", "/timeline", "/people"):
+        assert client.get(route).status_code == 200, route
+
+
+def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(
+    client: TestClient
+):
+    """The same shape, through the scheduler instead of the index.
+
+    `effort_weeks: 1000000` parses, commits, and then `working_days_after` walked
+    a day at a time until `timedelta` went past year 9999 and raised. Same blast
+    radius as the dangling parent, same permanence, and no rule refuses the value.
+    """
+    head = client.get("/healthz").json()["head"]
+
+    saved = client.patch(
+        f"/api/entity/{TASK}",
+        json={"base_commit": head, "fields": {"effort_weeks": 1_000_000.0}},
+    )
+    assert saved.status_code == 200, saved.text
+
+    for route in ("/", f"/detail/{TASK}", "/api/index.json", "/graph", "/timeline", "/people"):
+        assert client.get(route).status_code == 200, route
