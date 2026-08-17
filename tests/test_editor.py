@@ -596,18 +596,33 @@ def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
 
 def test_the_toolbar_carries_what_this_team_writes(client: TestClient):
     """Counted across the seed and migrated corpora: 485 lines carry an inline
-    code span, 124 a heading, 161 a bullet, 83 bold — and two carry a fenced code
-    block, eight a markdown link. So there is no code-block button and no link
-    button: people cite a symbol name and write `C2SM/icon4py#1364` bare, which
-    the renderer already links."""
+    code span, 161 a bullet, 124 a heading, 83 bold — and eight a markdown link,
+    which is why there is no link button: people write `C2SM/icon4py#1364` bare
+    and the renderer already links it.
+
+    The two code buttons are here for a better reason than frequency. The team
+    types on a mix of US and Swiss-German layouts, and on CH a backtick is a dead
+    key, so a fence is three of them in a row — the two fenced blocks in the whole
+    corpus measure how awkward that is, not how little code people would paste."""
     page = client.get(f"/detail/{TASK}").text
     marks = re.search(r"const FORMATS = \[(.*?)\];", page, re.S).group(1)
 
-    assert marks.count("{key:") == 6
-    for wanted in ("Bold", "Italic", "Code", "Heading", "Bullet", "Quote"):
+    assert marks.count("{key:") == 7
+    for wanted in ("Bold", "Italic", "Code  ", "Code block", "Heading", "Bullet", "Quote"):
         assert wanted in marks, wanted
-    assert "```" not in marks, "a corpus with two code blocks does not need a button"
     assert "](" not in marks, "bare PR references are already linked by the renderer"
+
+
+def test_a_fence_takes_whole_lines_of_its_own(client: TestClient):
+    """A fence only opens a block if nothing shares its line, so wrapping a
+    selection in place would produce three paragraphs of literal backticks."""
+    page = client.get(f"/detail/{TASK}").text
+    fence = re.search(r"if \(mark\.fence\) \{.*?\n    return;\n  \}", page, re.S).group(0)
+
+    assert "const [from, to] = lineRange(area);" in fence
+    assert "'```\\n' + chosen + '\\n```'" in fence
+    assert "area.setSelectionRange(from + 3, from + 3)" in fence, "the caret lands on the language"
+    assert "fenced" in fence, "and pressing it again unwraps"
 
 
 def test_a_list_continues_and_an_empty_item_ends_it(client: TestClient):

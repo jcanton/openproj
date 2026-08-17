@@ -3065,14 +3065,21 @@ function replaceRange(area, text) {
 
 // A small toolbar, sized to what this team writes rather than to what an editor
 // usually offers. Counted across the seed and the migrated HackMD corpus: 485
-// lines carry an inline code span, 124 a heading, 161 a bullet, 83 bold — and
-// two carry a fenced code block, eight a markdown link. So there is no code-block
-// button and no link button: people cite `turbdiff_setup_config` and write
-// `C2SM/icon4py#1364` bare, which the renderer already turns into a link.
+// lines carry an inline code span, 161 a bullet, 124 a heading, 83 bold — and
+// eight carry a markdown link, which is why there is no link button: people write
+// `C2SM/icon4py#1364` bare and the renderer already turns it into a link.
+//
+// The two code buttons are here for a different reason than frequency, and it is
+// the better reason. The team types on a mix of US and Swiss-German layouts, and
+// on CH a backtick is a dead key — so a fence is three of them in a row, and the
+// two fenced blocks in the whole corpus are a measure of how awkward that is
+// rather than of how little code people would paste. A button is worth more than
+// a count here.
 const FORMATS = [
   {key: 'b', label: 'B', title: 'Bold  ⌘B', wrap: '**'},
   {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
   {key: 'e', label: '<>', title: 'Code  ⌘E', wrap: '`'},
+  {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
   {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
   {key: '8', label: '•', title: 'Bullet  ⌘8', prefix: '- '},
   {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
@@ -3085,6 +3092,26 @@ function lineRange(area) {
 }
 
 function applyMark(area, mark) {
+  if (mark.fence) {
+    // Whole lines, and on their own lines: a fence only opens a block if nothing
+    // shares its line, so wrapping a selection in place would produce three
+    // paragraphs of literal backticks.
+    const [from, to] = lineRange(area);
+    const chosen = area.value.slice(from, to);
+    const fenced = /^```/.test(chosen) && /```$/.test(chosen);
+    area.setSelectionRange(from, to);
+    if (fenced) {
+      const inner = chosen.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
+      replaceRange(area, inner);
+      area.setSelectionRange(from, from + inner.length);
+      return;
+    }
+    replaceRange(area, '```\n' + chosen + '\n```');
+    // The caret lands on the language, which is the one word you type before the
+    // code and cannot paste from anywhere.
+    area.setSelectionRange(from + 3, from + 3);
+    return;
+  }
   if (mark.prefix) {
     // Whole lines, and a toggle: pressing bullet twice is how somebody undoes a
     // bullet, and it costs one `startsWith`.
@@ -3140,7 +3167,9 @@ function attachEditing(area, bar) {
 
   area.addEventListener('keydown', event => {
     if (event.metaKey || event.ctrlKey) {
-      const mark = FORMATS.find(m => m.key === event.key.toLowerCase());
+      const mark = FORMATS.find(
+        m => m.key === event.key.toLowerCase() && !!m.shift === event.shiftKey
+      );
       if (mark && !event.altKey) {
         event.preventDefault();
         applyMark(area, mark);
