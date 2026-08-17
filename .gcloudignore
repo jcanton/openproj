@@ -1,0 +1,23 @@
+# What NOT to upload to Cloud Build. Without this file gcloud uploads the whole
+# directory — .git is 20 MB and .venv is 101 MB, none of which the image uses,
+# on every single build.
+#
+# Deliberately not the default gcloudignore behaviour of honouring .gitignore:
+# .venv is git-ignored and would be excluded, but so is nothing else that
+# matters, and an ignore file that silently follows another file is one more
+# place a build can lose something it needed. Everything here is explicit.
+
+.git/
+.gitignore
+.worktrees/
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Not part of the running service.
+tests/
+docs/
+deploy/RUNBOOK.md
+gcloud_deploy.sh

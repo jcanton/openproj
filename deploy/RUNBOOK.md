@@ -226,50 +226,22 @@ still comes from C2SM.
 
 ## 4. Deploy
 
+Everything below is in **`gcloud_deploy.sh`** at the repository root. Fill in the
+block marked FILL IN — the project, the two GitHub App ids, the OAuth client id —
+and run it from the root:
+
 ```bash
-PROJECT=<your gcp project>
-REGION=europe-west1
-
-gcloud auth login
-gcloud config set project $PROJECT
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
-  artifactregistry.googleapis.com secretmanager.googleapis.com
-
-gcloud secrets create openproj-app-key --data-file=/path/to/app-key.pem
-python -c "import secrets;print(secrets.token_urlsafe(48))" \
-  | gcloud secrets create openproj-session-secret --data-file=-
-printf '%s' '<oauth client secret>' \
-  | gcloud secrets create openproj-oauth-client-secret --data-file=-
-
-gcloud iam service-accounts create openproj-run --display-name "openproj Cloud Run runtime"
-for S in openproj-session-secret openproj-oauth-client-secret openproj-app-key; do
-  gcloud secrets add-iam-policy-binding "$S" \
-    --member "serviceAccount:openproj-run@${PROJECT}.iam.gserviceaccount.com" \
-    --role roles/secretmanager.secretAccessor
-done
-
-gcloud artifacts repositories create openproj \
-  --repository-format=docker --location=$REGION
-SHA=$(git rev-parse --short HEAD)
-gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/openproj/openproj:$SHA
-
-gcloud run deploy openproj \
-  --image $REGION-docker.pkg.dev/$PROJECT/openproj/openproj:$SHA \
-  --region $REGION \
-  --allow-unauthenticated \
-  --service-account openproj-run@$PROJECT.iam.gserviceaccount.com \
-  --cpu 1 --memory 512Mi --cpu-boost \
-  --concurrency 80 --min-instances 0 --max-instances 1 --timeout 300 \
-  --set-env-vars OPENPROJ_AUTH=github,OPENPROJ_ORG=C2SM \
-  --set-env-vars OPENPROJ_REMOTE=https://github.com/jcanton/icon4py-plan.git \
-  --set-env-vars OPENPROJ_CLIENT_ID=<oauth client id> \
-  --set-env-vars OPENPROJ_APP_ID=<app id> \
-  --set-env-vars OPENPROJ_INSTALLATION_ID=<installation id> \
-  --set-env-vars OPENPROJ_APP_KEY=/secrets/app-key.pem \
-  --set-secrets OPENPROJ_SECRET=openproj-session-secret:1 \
-  --set-secrets OPENPROJ_CLIENT_SECRET=openproj-oauth-client-secret:1 \
-  --set-secrets /secrets/app-key.pem=openproj-app-key:latest
+./gcloud_deploy.sh
 ```
+
+It is safe to run again: everything it creates is checked for first, so a second
+run redeploys the current commit and leaves the secrets, the service account and
+the registry alone. It asks for the OAuth client secret at the prompt rather than
+reading it from the file, so that one value is never on disk or in your history.
+It builds `deploy/Dockerfile`, deploys, runs the four checks below, and prints
+the callback URI to add to the OAuth App.
+
+What it is doing, and why the flags are what they are:
 
 **Secrets go in Secret Manager, not `--set-env-vars`.** A plain env var is in the
 revision's metadata: readable by anyone with `roles/run.viewer`, printed by
@@ -294,7 +266,8 @@ forever. The App ID and installation id are *not* secret and are fine as env var
   different session keys and a cookie minted by one is rejected by the other. The
   PEM is a file mount instead, so rotating it needs no redeploy.
 
-**Verify, in this order:**
+**Verify, in this order.** The script runs these four itself; they are here so
+they can be re-run by hand later, when something that worked stops working.
 
 ```bash
 URL=$(gcloud run services describe openproj --region $REGION --format='value(status.url)')
