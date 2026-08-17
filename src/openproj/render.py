@@ -1776,10 +1776,19 @@ const WHY = {{ why|tojson }};
 // `list.map(prLink)` — which makes this the one function here that must NOT
 // escape what it is given. Everything it adds of its own is a literal or a
 // count, so nothing else on this line can carry stored text.
+//
+// The one visible piece is wrapped even when there is no badge beside it, because
+// the wrapper is what can be given an ellipsis: the badge is the promise the
+// clamp makes — "there are two more, here is where they are" — and it was the
+// part being cut, by a third of itself under about 128px and by 368px on a
+// sixty-character login. `.first` is the flex item that shrinks; the badge never
+// does. See `td.clamp` in the stylesheet.
 function clamped(pieces, noun) {
-  if (pieces.length < 2) return pieces.join('');
+  if (!pieces.length) return '';
   const [first, ...rest] = pieces;
-  return `${first}<span class="rest">, ${rest.join(', ')}</span>` +
+  const shown = `<span class="first">${first}</span>`;
+  if (!rest.length) return shown;
+  return `${shown}<span class="rest">, ${rest.join(', ')}</span>` +
     `<button type="button" class="more" aria-label="Show ${rest.length} more ${noun}` +
     `${rest.length === 1 ? '' : 's'}">+${rest.length}</button>`;
 }
@@ -1826,7 +1835,15 @@ function cell(row, key) {
     ? ` <span class="sev-mark sev-mark-${SEV_CLASS[mark.severity]}" role="img"` +
       ` aria-label="${esc(note)}" title="${esc(note)}">⚠</span>`
     : '';
-  const body = shown(row, key) + glyph;
+  // A clamped cell is one line laid out in a row: the value, which gives up
+  // width, and then the badge and the severity glyph, which do not. The wrapper
+  // is what makes that a row — a `td` cannot be the flex container itself
+  // without ceasing to be a table cell — and it holds the glyph too, or the mark
+  // that says which cell is wrong drops to a second line and takes the row's
+  // height with it.
+  const body = CLAMPED.has(key)
+    ? `<span class="clamped">${shown(row, key)}${glyph}</span>`
+    : shown(row, key) + glyph;
   const editable = EDITABLE && key in EDITABLE;
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the
@@ -2253,6 +2270,16 @@ const SPARE_COLUMN = 'tags';
 // narrower exactly when its overflow already has somewhere to go.
 const CLAMPED = new Set(['tags', 'prs', 'assignees', 'reviewers']);
 const SQUEEZABLE = new Set(['title', 'owner']);
+// What the table gives up when it runs out of room, in the order it gives them
+// up. All three are lookups rather than answers — each is on the detail page and
+// each stays filterable in the facets above — so they are what it can lose and
+// still answer the question it is open for.
+// `tags` is last because it is the column that absorbs whatever is left over:
+// while it is drawn the table fills its container exactly, and once it is gone
+// the fit can only leave a gap at the right.
+const SHED = ['reviewers', 'prs', 'tags'];
+// One class per column and not one for the set, because they go one at a time.
+const shedClass = key => 'shed-' + key;
 
 // A column's identity is the field it stands for. It used to be the column's
 // POSITION for the two that do not sort, so inserting a column anywhere to their
@@ -2275,13 +2302,58 @@ const CLAMP_FLOOR = 112;
 function naturalWidths() {
   const applied = headers.map(th => th.style.width);
   headers.forEach(th => { th.style.width = ''; });
+  // Every column, drawn or shed. What a shed column would need is exactly how
+  // the fit decides whether there is room to draw it again, and a column that is
+  // `display: none` measures zero — so measured with the shedding undone and put
+  // back before anything can paint.
+  const shedding = SHED.map(shedClass).filter(one => table.classList.contains(one));
+  table.classList.remove(...SHED.map(shedClass));
   table.classList.add('measuring');
   table.style.tableLayout = 'auto';
   table.style.width = 'max-content';
-  const natural = headers.map(th => th.getBoundingClientRect().width);
+  const natural = headers.map(th => Math.ceil(th.getBoundingClientRect().width));
   table.classList.remove('measuring');
+  table.classList.add(...shedding);
   headers.forEach((th, i) => { th.style.width = applied[i]; });
   return natural;
+}
+
+// The narrowest this set of columns can be drawn: each one on its floor, or at
+// what it measured where that is already narrower. It is the same three numbers
+// `fitted` works from and the same two floors, so the number below which the
+// table starts scrolling and the number that decides which columns are drawn
+// cannot disagree.
+//
+// They did. The shedding was a typed `@media (max-width: 1100px)` while the
+// floors put the fourteen-column minimum at 1354px, so every window from 1101 to
+// 1393 scrolled sideways with all fourteen columns it had been told it could
+// keep — 293px of overflow at the low end. Two numbers that have to agree,
+// written in two languages, drifting; now there is one and it is measured.
+function minimumWidth(natural, keys) {
+  return keys.reduce((total, key, i) => {
+    const floor = CLAMPED.has(key) ? CLAMP_FLOOR : SQUEEZABLE.has(key) ? FLOOR : Infinity;
+    return total + Math.min(Math.ceil(natural[i]), floor);
+  }, 0);
+}
+
+// Which columns this much room can hold, as `[key, width]` pairs in the order
+// they are drawn — and the whole of the responsive layout, so that it is
+// arithmetic a test can run at any window rather than a rule only a browser can
+// answer.
+//
+// One column at a time, and only while what is left over still will not fit: the
+// window at which a column goes is the window at which the fit would otherwise
+// have to start scrolling, for each of them in turn. All three at once is a cliff
+// — at 1354px the table would drop a fifth of what it says to buy 300px it needs
+// 112 of.
+function drawnColumns(natural, keys, room) {
+  let drawn = keys.map((key, i) => [key, natural[i]]);
+  const needs = () => minimumWidth(drawn.map(one => one[1]), drawn.map(one => one[0]));
+  for (const key of SHED) {
+    if (needs() <= room) break;
+    drawn = drawn.filter(one => one[0] !== key);
+  }
+  return drawn;
 }
 
 // The fit itself, as arithmetic over three numbers per column and nothing else:
@@ -2340,9 +2412,15 @@ function chromeOverhead() {
 
 function fitWidths() {
   const keys = headers.map(keyOf);
+  const natural = naturalWidths();
   const fit = room => {
-    const width = fitted(naturalWidths(), keys, room);
-    keys.forEach((key, i) => { WIDTHS[key] = width[i]; });
+    // Which columns are drawn is this measurement and nothing else — it was a
+    // typed breakpoint 254px away from the number it had to agree with.
+    const drawn = drawnColumns(natural, keys, room);
+    const kept = new Set(drawn.map(one => one[0]));
+    SHED.forEach(key => table.classList.toggle(shedClass(key), !kept.has(key)));
+    const width = fitted(drawn.map(one => one[1]), drawn.map(one => one[0]), room);
+    drawn.forEach(([key], i) => { WIDTHS[key] = width[i]; });
     applyWidths();
   };
   fit(scroller.clientWidth);
@@ -2455,11 +2533,16 @@ if (automatic) fitWidths(); else applyWidths();
 // "broken until I reloaded" it looked like. Measured once more when the real
 // face is in, which is the moment the numbers stop moving.
 if (document.fonts) document.fonts.ready.then(() => { if (automatic) fitWidths(); });
-// The breakpoint drops columns as the window narrows, and the sticky title
-// column starts where the id column ends — both are facts about a layout that
-// only exists once it has been laid out. An automatic fit is a fit to *this*
-// window, so a new window gets a new one; a dragged width is a decision and is
-// only re-applied.
+// The fit drops columns as the window narrows, and the sticky title column
+// starts where the id column ends — both are facts about a layout that only
+// exists once it has been laid out. An automatic fit is a fit to *this* window,
+// so a new window gets a new one; a dragged width is a decision and is only
+// re-applied.
+// Which is also why a dragged layout keeps all fourteen columns however narrow
+// the window gets: shedding exists because the fit would otherwise squeeze every
+// column past reading, and a column somebody sized by hand is not being squeezed
+// by anything. It scrolls sideways, which is what dragging a column wider than
+// the window asks for.
 addEventListener('resize', () => {
   if (automatic) fitWidths(); else applyWidths();
   stickyOffset();
@@ -2559,14 +2642,21 @@ thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
    it. Unconditionally it is a vertical rule between title and priority and
    nothing else — the table has no other column separators, so at scrollLeft 0 it
    reads as one column having been singled out for a border.
-   Two rules and not one: the header's own bottom rule is drawn *inside* its box
-   (a collapsed border is not painted on a sticky cell), so both shadows have to
-   be named together or setting one drops the other. `.scrolled td[…]` is (0,2,1)
-   and beats the bare (0,1,0) above it; `.scrolled thead th[…]` is (0,2,2) and
-   beats that in turn, whatever order this file ends up in. */
-.scrolled td[data-col="title"] { box-shadow: 1px 0 0 var(--line); }
+   Inset, and that is the whole of it: this shipped as `1px 0 0 var(--line)` and
+   painted nothing at all, in either state, because Chrome does not paint an
+   *outset* box-shadow on a cell in a `border-collapse: collapse` table. The
+   comment two rules up already said so about the header's bottom rule and the
+   right edge was written outset anyway, so the resting state was accidentally
+   right and the scrolled state had no edge — half-clipped `+N` badges sitting
+   hard against the title column, looking like a clipping bug.
+   Two rules and not one: the header's own bottom rule is drawn inside its box
+   too, so both shadows have to be named together or setting one drops the other.
+   `.scrolled td[…]` is (0,2,1) and beats the bare (0,1,0) above it;
+   `.scrolled thead th[…]` is (0,2,2) and beats that in turn, whatever order this
+   file ends up in. */
+.scrolled td[data-col="title"] { box-shadow: inset -1px 0 0 var(--line); }
 .scrolled thead th[data-col="title"] {
-  box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line);
+  box-shadow: inset 0 -1px 0 var(--line), inset -1px 0 0 var(--line);
 }
 /* One weight heavier than the sticky rules above — an element and a class beats
    a bare attribute selector — so a problem in the id or the title column keeps
@@ -2583,11 +2673,31 @@ td.edit { cursor: cell; }
 td.edit:hover { background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--line-strong); }
 td.refused { background: var(--surface-2); }
 td.clamp { white-space: nowrap; overflow: hidden; }
+/* A row, so that what gets cut is the value and never the badge. Laid out
+   inline, the `+2` is simply the last thing on an overflowing line: a clamped
+   column on its 112px floor cut a third off it, and one sixty-character login
+   pushed it 368px past the edge of the cell. The badge is the whole promise the
+   clamp makes — it says how many are hidden and it is the control that shows
+   them — so it is the one part that cannot be the part that goes.
+   Two declarations do the work: `min-width: 0` on the value, because a flex item
+   refuses to shrink below its own content without it and we would be back where
+   we started, and the ellipsis, so a value that was cut says so.
+   `flex: none` on the badge and the glyph is belt and braces. A flex item's
+   automatic minimum already keeps them whole — but only while their text has
+   nowhere to wrap, and "this one never gives up width" is what they mean rather
+   than something the next reader should have to re-derive. */
+td.clamp .clamped { display: flex; align-items: baseline; }
+td.clamp .clamped > .first { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+td.clamp .clamped > .more, td.clamp .clamped > .sev-mark { flex: none; }
 td.clamp .rest { display: none; }
 td.clamp .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
                 padding: 0 .25rem; border: 1px solid var(--line-strong); border-radius: 2px;
                 background: none; color: var(--muted); cursor: pointer; }
 td.clamp.open { white-space: normal; }
+/* Opened, the cell is a paragraph again: every item on as many lines as it
+   takes, which is what the reveal is for. A flex row here would lay the value
+   and the rest of the list side by side and clip the pair. */
+td.clamp.open .clamped { display: block; }
 td.clamp.open .rest { display: inline; }
 td.clamp.open .more { display: none; }
 td .sev-mark { margin-left: .25rem; }
@@ -2603,13 +2713,18 @@ th .grip::before {
 }
 th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
 .measuring th, .measuring td { white-space: nowrap; }
-/* One screen is not one width. Fourteen columns below this and every one of them
-   is too narrow to read, so the three that are lookups rather than answers go —
-   they are all reachable on the detail page, and the filters above still see
-   them. */
-@media (max-width: 1100px) {
-  [data-col="reviewers"], [data-col="prs"], [data-col="tags"] { display: none; }
-}
+/* One screen is not one width. Below the width the columns need with every
+   squeezable one already on its floor, the ones that are lookups rather than
+   answers go, one at a time — they are all reachable on the detail page, and the
+   filters above still see them.
+   Which width that is is not written here. It was, as a media query at a typed
+   1100px, and the floors it had to agree with put the real minimum at 1354px:
+   every window between them scrolled sideways with all fourteen columns.
+   `fitWidths` sets these classes from its own arithmetic now, so there is one
+   number and the browser measures it. */
+.shed-reviewers [data-col="reviewers"],
+.shed-prs [data-col="prs"],
+.shed-tags [data-col="tags"] { display: none; }
 """
 
 _GRAPH = """
@@ -4224,12 +4339,15 @@ _DETAIL = """
   {#- Above the title, not under it. What a thing *is* is the first question a
       page answers, and the kind was the third item on a line below the name,
       between an id and a status. It is also the one fact here that never
-      changes, which is why the status chip does not come with it: a status is
-      news about the thing and belongs with the rest of the news. -#}
+      changes, which is why it is the one that sits here. -#}
   <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
   <h1><span class="read">{{ e.title }}</span></h1>
+  {#- No status chip. It was here as well as in the facts column forty pixels
+      below — the same word, in the same colour, twice, and in edit mode the
+      lower one is the select that changes it. A field that can be changed is
+      stated where it can be changed: STATUS is the first row of the facts
+      column, level with the title, so nothing is further away than it was. -#}
   <p class="meta"><code>{{ e.id }}</code>
-     <span class="chip {{ status_class(e.status) }}">{{ e.status|human }}</span>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
   {% if editable %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
@@ -5676,8 +5794,18 @@ tr.over td { color: var(--danger); }
 input.rate { width: 4rem; }
 #bets input.live { font: inherit; font-size: 13px; width: 5rem;
                    background: var(--surface); color: inherit;
-                   border: 1px solid transparent; border-radius: 3px; padding: .1rem .3rem; }
-#bets input.live.wide { width: 11rem; }
+                   border: 1px solid transparent; border-radius: 3px; padding: .1rem .3rem;
+                   /* A box with no border that cuts its value mid-word — "…jcanto"
+                      — reads as broken text rather than as a field. An input
+                      clips its overflow and says nothing about it; this is the
+                      one thing that does. */
+                   text-overflow: ellipsis; }
+/* As wide as the column it is in, not 11rem regardless. The column is sized by
+   the header and the widest name in it and there was room to spare beside every
+   one of these boxes, so a fixed width was cutting values the table had already
+   made room for. `min-width` keeps the column from collapsing to the width of
+   the word above it, and `border-box` keeps the padding inside the cell. */
+#bets input.live.wide { width: 100%; min-width: 11rem; box-sizing: border-box; }
 #bets input.live:hover { border-color: var(--line); }
 /* The border is the hover affordance, not the focus one. Suppressing the outline
    here left the only keyboard-reachable cell on the page with nothing to say it

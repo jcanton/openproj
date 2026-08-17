@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 from datetime import date
+from html import unescape
 from pathlib import Path
 
 import pygit2
@@ -857,26 +858,36 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
     ), "a new window gets a new fit, and a dragged width only gets re-applied"
 
 
-# What each column needs with its widest cell on one line, measured in Chrome on
-# the demo corpus at the window the owner reported this from: a 1460px scroll
-# container. Numbers a browser produced, so they are written down rather than
-# derived — but the *columns* are the code's, so a column added without a
-# measurement fails here rather than being quietly left out of the arithmetic.
+# What each column needs with its widest cell on one line, read out of Chrome by
+# `naturalWidths()` itself on the demo corpus. Numbers a browser produced, so
+# they are written down rather than derived — but the *columns* are the code's,
+# so a column added without a measurement fails here rather than being quietly
+# left out of the arithmetic.
+#
+# Re-read once the clamped columns stopped being able to overflow their badge:
+# `assignees` and `reviewers` are one login and a `+N` now, not a whole list, and
+# `prs` is `#1223` rather than `C2SM/icon4py#1223` — three columns that were
+# written down here at 198, 161 and 172 and had not needed that much for two
+# rounds. They add to 1354, which is what the media query at 1100px was supposed
+# to be agreeing with.
 MEASURED = {
     "id": 110, "title": 304, "priority": 79, "status": 107, "owner": 100,
-    "assignees": 198, "reviewers": 161, "cycle": 63, "size": 81, "start": 101,
-    "end": 101, "blocked_by": 87, "prs": 172, "tags": 128,
+    "assignees": 124, "reviewers": 111, "cycle": 63, "size": 81, "start": 101,
+    "end": 101, "blocked_by": 87, "prs": 80, "tags": 128,
 }
+# The window the owner reported the sideways scroll from: a 1460px scroll
+# container inside it.
 WINDOW = 1460
 
 
-def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]:
-    """Run the served page's own `fitted()` over one set of measurements.
+def _arithmetic(page: str, expression: str, args: list) -> object:
+    """Run the served page's own fit over one set of measurements.
 
     Lifted out of the page rather than copied into this file: a second copy of
     the arithmetic is a test that goes on passing after the page stops agreeing
-    with it. Everything the function needs is a handful of top-level declarations,
-    so the extraction is exact and fails loudly if the shape changes.
+    with it. Everything the functions need is a handful of top-level
+    declarations, so the extraction is exact and fails loudly if the shape
+    changes.
     """
     node = shutil.which("node")
     if node is None:  # pragma: no cover - depends on the machine, not on the code
@@ -884,19 +895,50 @@ def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]
     parts = [
         re.search(r"^const SPARE_COLUMN = .*?;$", page, re.M),
         re.search(r"^const SQUEEZABLE = new Set\(\[[^\]]*\]\);$", page, re.M),
+        re.search(r"^const SHED = \[[^\]]*\];$", page, re.M),
         re.search(r"^const FLOOR = \d+;", page, re.M),
         re.search(r"^const CLAMP_FLOOR = \d+;", page, re.M),
         re.search(r"^const CLAMPED = new Set\(\[[^\]]*\]\);$", page, re.M),
+        re.search(r"^function minimumWidth\(natural, keys\) \{.*?^\}$", page, re.S | re.M),
+        re.search(r"^function drawnColumns\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
         re.search(r"^function fitted\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
     ]
     assert all(parts), "the fit is no longer the declarations this lifts out"
     source = "\n".join(found.group(0) for found in parts)
-    source += "\nconsole.log(JSON.stringify(fitted(...JSON.parse(process.argv[1]))));"
+    source += "\nconst ARGS = JSON.parse(process.argv[1]);"
+    source += f"\nconsole.log(JSON.stringify({expression}));"
     done = subprocess.run(
-        [node, "-e", source, json.dumps([natural, keys, room])],
+        [node, "-e", source, json.dumps(args)],
         capture_output=True, text=True, check=True,
     )
     return json.loads(done.stdout)
+
+
+def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]:
+    return _arithmetic(page, "fitted(ARGS[0], ARGS[1], ARGS[2])", [natural, keys, room])
+
+
+def _minimum(page: str, keys: list[str]) -> int:
+    """The narrowest these columns can be drawn, by the page's own reckoning."""
+    return _arithmetic(
+        page, "minimumWidth(ARGS[0], ARGS[1])", [[MEASURED[key] for key in keys], keys]
+    )
+
+
+def _drawn(page: str, keys: list[str], room: int) -> list[str]:
+    """The columns the page would draw in this much room, in order."""
+    pairs = _arithmetic(
+        page,
+        "drawnColumns(ARGS[0], ARGS[1], ARGS[2])",
+        [[MEASURED[key] for key in keys], keys, room],
+    )
+    return [key for key, _ in pairs]
+
+
+def _shed(page: str) -> list[str]:
+    """What the table gives up when it runs out of room, in that order."""
+    return (re.search(r"const SHED = \[([^\]]*)\]", page).group(1)
+            .replace("'", "").replace(" ", "").split(","))
 
 
 def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
@@ -944,10 +986,12 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # two of them. Every list column clamps, so its overflow already has somewhere
     # to go — a badge that says how many — and it gives up width before a sentence
     # does. The other way round, this window put `title` on its 110px floor, the
-    # one column on the page anybody reads, while `prs` kept all 172px of a
+    # one column on the page anybody reads, while `prs` kept every pixel of a
     # reference the row also links to.
-    assert width["prs"] < MEASURED["prs"], "a clamped column pays"
-    assert width["reviewers"] < MEASURED["reviewers"], "and so does a list of logins"
+    # The two that are wider than the clamp floor here are the two that pay;
+    # `prs` and `reviewers` are already under it and have nothing to give.
+    assert width["tags"] < MEASURED["tags"], "a clamped column pays"
+    assert width["assignees"] < MEASURED["assignees"], "and so does a list of logins"
     # The sentence pays only what is left after they are spent — so if `title` gave
     # anything up, every clamped column must already be as narrow as it is allowed
     # to be. On a window this tight it does pay; on a real one it keeps its width.
@@ -986,6 +1030,198 @@ def test_the_frozen_edge_is_painted_from_the_scroll_position(page: str):
     only reacts to the event starts out wrong."""
     assert "scroller.classList.toggle('scrolled', scroller.scrollLeft > 0)" in page
     assert re.search(r"scroller\.addEventListener\('scroll', frozenEdge\);\nfrozenEdge\(\);", page)
+
+
+# The browsers this will drive if one of them is installed. Named rather than
+# searched for, because a headless run of *something* is not evidence about the
+# browser the plan is read in.
+CHROMES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "google-chrome",
+    "chromium",
+)
+
+
+def _chrome() -> str:
+    chrome = next((found for name in CHROMES if (found := shutil.which(name))), None)
+    if chrome is None:  # pragma: no cover - depends on the machine, not on the code
+        pytest.skip("no Chrome on this machine, so nothing here can be said about pixels")
+    return chrome
+
+
+def _screenshot(chrome: str, html: Path, png: Path) -> bytes:
+    """One page, one window, one PNG. 700px wide so the table has more columns
+    than room and can actually be scrolled sideways."""
+    subprocess.run(
+        [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+         "--force-device-scale-factor=1", "--window-size=700,600",
+         f"--screenshot={png}", "--virtual-time-budget=2500", str(html)],
+        capture_output=True, check=True,
+    )
+    return png.read_bytes()
+
+
+def _measured_in(chrome: str, page: str, where: Path, width: int, script: str) -> dict:
+    """Lay the page out in Chrome at this width, run `script` over the result and
+    bring back what it found.
+
+    The DOM is the only channel out of a headless run, so the script writes its
+    answer onto the body and `--dump-dom` carries it back. After a delay, because
+    the fit runs again when the inlined typeface lands and a measurement taken
+    before that is a measurement of the fallback's metrics.
+    """
+    where.write_text(page.replace(
+        "</body>",
+        "<script>setTimeout(() => { document.body.dataset.report = JSON.stringify("
+        f"(() => {{ {script} }})()); }}, 1200);</script></body>",
+    ))
+    done = subprocess.run(
+        [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+         "--force-device-scale-factor=1", f"--window-size={width},900",
+         "--virtual-time-budget=2500", "--dump-dom", str(where)],
+        capture_output=True, text=True, check=True,
+    )
+    found = re.search(r'data-report="([^"]*)"', done.stdout)
+    assert found, "the page reported nothing: it did not lay out, or the script threw"
+    return json.loads(unescape(found.group(1)))
+
+
+# What a clamped cell promises, measured in the three states it is kept or broken
+# in. `overhang` is how far the badge reaches past its cell's right padding edge,
+# so anything above zero is a badge with a piece missing; `cut` counts the values
+# that had to give up width, which is what is supposed to happen instead.
+#
+# The second and third states are put there on purpose. The corpus this page is
+# built from has short logins and a wide window, so nothing in it is under
+# pressure — and the defect is entirely about what happens when something is. The
+# fit's own floor, applied through the page's own `applyWidths`, is the state a
+# real plan puts these columns in.
+_BADGES = """
+const cells = [...document.querySelectorAll('td.clamp')]
+  .filter(td => td.offsetParent && td.querySelector('.more'));
+const at = () => ({
+  overhang: Math.max(-999, ...cells.map(td => {
+    const box = td.getBoundingClientRect();
+    const badge = td.querySelector('.more').getBoundingClientRect();
+    return Math.round(badge.right - (box.right - Number.parseFloat(
+      getComputedStyle(td).paddingRight)));
+  })),
+  cut: cells.filter(td => {
+    const first = td.querySelector('.first');
+    return first.scrollWidth > first.clientWidth + 1;
+  }).length,
+  // The other way to lose a badge: not pushed out of the cell but squeezed
+  // inside it, until `+12` is drawn in the width of `+1`.
+  squashed: cells.filter(td => {
+    const badge = td.querySelector('.more');
+    return badge.scrollWidth > badge.clientWidth + 1;
+  }).length,
+});
+const asDrawn = at();
+for (const key of CLAMPED) WIDTHS[key] = CLAMP_FLOOR;
+applyWidths();
+const onFloor = at();
+for (const td of cells) td.querySelector('.first').textContent = 'a'.repeat(60);
+return {badges: cells.length, asDrawn, onFloor, long: at()};
+"""
+
+
+def test_the_badge_is_never_the_part_of_a_clamped_cell_that_gets_cut(
+    page: str, tmp_path: Path
+):
+    """`+2` is the whole promise the clamp makes — it says how much of the value
+    is hidden, and it is the button that shows it. It was the part being cut: a
+    third of it gone wherever a clamped column fell under about 128px, and 368px
+    of it outside the cell on a sixty-character login, which reads as the table
+    clipping rather than as a column that clamps.
+
+    Geometry from a browser rather than a string search for the rule that is
+    meant to produce it: this is a claim about where a box ends up, and a
+    stylesheet saying `flex: none` somewhere is not that claim.
+    """
+    got = _measured_in(_chrome(), page, tmp_path / "clamped.html", 1280, _BADGES)
+    assert got["badges"], "no clamped cell on the page had a badge to check"
+
+    for state, where in (
+        ("asDrawn", "as the fit drew it"),
+        ("onFloor", "with every clamped column on its floor"),
+        ("long", "with a sixty-character value in a column fitted for a short one"),
+    ):
+        assert got[state]["overhang"] <= 0, (
+            f"{where}, a badge reaches {got[state]['overhang']}px past the right edge "
+            f"of its own cell"
+        )
+        assert got[state]["squashed"] == 0, (
+            f"{where}, {got[state]['squashed']} badges are drawn narrower than the "
+            f"count inside them"
+        )
+    # And the value is what gave way instead — with an ellipsis, so a cut value
+    # says it was cut rather than simply stopping mid-word.
+    assert got["long"]["cut"] == got["badges"], (
+        "sixty characters fit in a column that is 112px wide, which cannot be true"
+    )
+
+
+def test_the_frozen_edge_is_a_pixel_a_browser_draws(page: str, tmp_path: Path):
+    """The edge shipped dead for two rounds and every test of it passed.
+
+    It was `box-shadow: 1px 0 0 var(--line)` on a `<td>` in a
+    `border-collapse: collapse` table, and Chrome paints no *outset* box-shadow
+    on a collapsed cell at all. The class was toggled correctly, the stylesheet
+    resolved to exactly the value asserted, the cascade engine agreed — and there
+    was no pixel in either state, so the frozen pair had no edge when scrolled and
+    the `+N` badges beside it looked like a clipping bug.
+
+    What no test of a stylesheet can answer is whether anything was drawn, so this
+    one asks the browser and compares what came back. Four screenshots of the same
+    page: at rest and scrolled sideways, each with the edge and with the edge
+    suppressed by a rule appended after it.
+
+    Byte comparison, deliberately: the question is "did this declaration change
+    what is on the screen", and equal PNGs are the answer "no". That the resting
+    pair comes back byte-identical from two separate runs of Chrome over two
+    different files is what says the comparison means anything at all — if this
+    renderer were not reproducible, that assertion is the one that fails first,
+    and it fails before any conclusion is drawn from an inequality below.
+
+    The two declarations are suppressed one at a time and never together. Both at
+    once passes on either one of them alone: the header would carry the whole
+    proof while every row under it drew nothing, which is most of the defect.
+    """
+    chrome = _chrome()
+
+    # Sideways, by the page's own scroll handler rather than by adding the class:
+    # scrolling is what is supposed to produce the edge, so scrolling is what the
+    # test does.
+    scroll = "<script>document.querySelector('.table-scroll').scrollLeft = 10000;</script>"
+    # The same weight as the rules that draw the edge, appended after them, so
+    # each is the last declaration standing for its own cell. The header keeps its
+    # bottom rule, which is a different line for a different reason.
+    no_rows = '<style>.scrolled td[data-col="title"] { box-shadow: none; }</style>'
+    no_header = ('<style>.scrolled thead th[data-col="title"] '
+                 "{ box-shadow: inset 0 -1px 0 var(--line); }</style>")
+
+    def shot(name: str, extra: str) -> bytes:
+        html = tmp_path / f"{name}.html"
+        html.write_text(page.replace("</body>", extra + "</body>"))
+        return _screenshot(chrome, html, tmp_path / f"{name}.png")
+
+    rest, rest_without = shot("rest", ""), shot("rest_without", no_rows + no_header)
+    assert rest == rest_without, (
+        "either the edge is painted at scrollLeft 0 — the whole of what the owner "
+        "asked to be rid of — or this browser does not render the same page the "
+        "same way twice, and nothing below can be concluded"
+    )
+
+    scrolled = shot("scrolled", scroll)
+    assert scrolled != rest, "the table did not scroll, so there was no edge to draw either way"
+
+    dead = ("changes no pixel: the declaration is dead. An outset box-shadow on a cell "
+            "in a `border-collapse: collapse` table is not painted by Chrome — on these "
+            "cells it has to be `inset`")
+    assert scrolled != shot("scrolled_rows", scroll + no_rows), f"the edge down the rows {dead}"
+    assert scrolled != shot("scrolled_head", scroll + no_header), f"the edge on the header {dead}"
 
 
 def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: TestClient):
@@ -1417,19 +1653,95 @@ def test_the_header_and_the_two_identity_columns_stay_put(page: str):
 
 
 def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
-    """The only media query in the app was `prefers-color-scheme`. Fourteen
-    columns below 1100px means fourteen columns too narrow to read; the three
-    that go are reachable on the detail page and still filterable above."""
-    narrow = re.search(r"@media \(max-width: 1100px\) \{(.*?)\n\}", page, re.S).group(1)
+    """Fourteen columns below the width the fit needs means fourteen columns too
+    narrow to read; the three that go are reachable on the detail page and still
+    filterable above.
 
-    for column in ("reviewers", "prs", "tags"):
-        assert f'[data-col="{column}"]' in narrow, column
-    assert "display: none" in narrow
+    *Which* width that is is not written in the stylesheet any more. It was
+    `@media (max-width: 1100px)` while the floors below put the fourteen-column
+    minimum at 1354px, so every window from 1101 to 1393 kept all fourteen
+    columns and scrolled sideways — 293px of it at the low end. Two numbers that
+    have to agree, one in CSS and one in JavaScript. Now the fit measures it.
+    """
+    # The served stylesheet with its comments taken out — the comments say what
+    # the breakpoint was and why it went, and a search that reads them is a search
+    # that cannot tell a rule from an explanation of one.
+    styles = re.sub(r"/\*.*?\*/", "", "".join(re.findall(r"<style>(.*?)</style>", page, re.S)),
+                    flags=re.S)
+    assert "@media (max-width" not in styles, "the breakpoint that drifted is gone"
+    rule = re.search(r"\n(\.shed-.*?) \{ display: none; \}", styles, re.S).group(1)
+    for column in _shed(page):
+        assert f'.shed-{column} [data-col="{column}"]' in rule, column
+
+    body = script(page)
+    assert "SHED.forEach(key => table.classList.toggle(shedClass(key), !kept.has(key)));" in body
+    assert "const drawn = drawnColumns(natural, keys, room);" in body, (
+        "the fit decides it, from the same floors it fits by"
+    )
     # Every cell declares its column, or the rule above would have to count them.
-    assert 'return `<td data-col="${key}"' in script(page)
+    assert 'return `<td data-col="${key}"' in body
     # A dropped column is not part of the table's width, or the table is set
     # wider than the columns it draws.
-    assert "if (th.offsetParent === null) { th.style.width = ''; return; }" in script(page)
+    assert "if (th.offsetParent === null) { th.style.width = ''; return; }" in body
+    # A shed column measures zero, and what it *would* need is how the fit
+    # decides whether to draw it again — so it is measured with the classes off.
+    assert "table.classList.remove(...SHED.map(shedClass));" in body
+
+
+# Every window the audit walked, plus the two edges of the drift it found: 1101
+# was 293px of sideways scroll and 1393 was one pixel of it.
+@pytest.mark.parametrize(
+    "room", [900, 1050, 1091, 1100, 1101, 1280, 1353, 1354, 1366, 1393, 1440, 1500,
+             1600, 1920, 2560],
+)
+def test_no_window_leaves_the_table_scrolling_sideways_by_choice(page: str, room: int):
+    """The fit and the shedding are one number now, so this is the check that the
+    number is right at every window rather than at the one it was written for.
+
+    Below the minimum of the last layout there is nothing left to shed and the
+    table scrolls, which is honest — but it may only scroll by exactly the
+    shortfall, never by a column it could have dropped.
+    """
+    keys = [column for column, _ in _TABLE_COLUMNS]
+    last = [key for key in keys if key not in _shed(page)]
+    minimum, reduced = _minimum(page, keys), _minimum(page, last)
+    assert reduced < minimum, "shedding a column has to buy room"
+
+    drawn = _drawn(page, keys, room)
+    total = sum(_fit(page, [MEASURED[key] for key in drawn], drawn, room))
+
+    if room >= reduced:
+        assert total <= room, (
+            f"{room}px draws {len(drawn)} columns in {total}px: {total - room}px of "
+            f"sideways scroll, with a full minimum of {minimum} and a shed-down "
+            f"minimum of {reduced}"
+        )
+    else:
+        assert drawn == last, "and everything that can go has gone"
+        assert total == reduced, "and at its narrowest it is exactly its own minimum"
+
+
+def test_a_column_goes_only_when_the_one_before_it_was_not_enough(page: str):
+    """The three do not go together. At 1354px the table would give up a fifth of
+    what it says to buy 300px it needs 112 of — and every window in that band
+    kept all fourteen columns and scrolled before this was measured at all.
+
+    So each of them goes at its own width, in the stated order, and each of those
+    widths is the width at which the layout above it stopped fitting.
+    """
+    keys = [column for column, _ in _TABLE_COLUMNS]
+    order = _shed(page)
+
+    kept = list(keys)
+    for column in order:
+        # One pixel below what this layout needs is where the next column goes.
+        edge = _minimum(page, kept)
+        assert _drawn(page, keys, edge) == kept, f"{column} goes too early"
+        kept = [key for key in kept if key != column]
+        assert _drawn(page, keys, edge - 1) == kept, f"{column} goes too late"
+
+    # And nothing goes below that: what is left is what the table always draws.
+    assert _drawn(page, keys, 320) == kept
 
 
 def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):

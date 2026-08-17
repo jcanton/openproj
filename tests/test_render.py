@@ -1539,8 +1539,13 @@ def test_no_fact_is_formatted_for_the_detail_page_twice(seed_index: Index):
     """
     from openproj.render import _DETAIL, _detail_rows
 
+    # `e.` is one entity's own line; `group.` is the index, which reads `status`
+    # to group by it and prints it as the heading over each group. The status
+    # left the meta line under the title — it was the same chip the facts column
+    # shows forty pixels below, said twice — and the grouping is the reader that
+    # is left. Either counts; neither being present is a fact built for nobody.
     for key in _detail_rows(seed_index)[0]:
-        assert re.search(rf"\be\.{key}\b", _DETAIL), f"{key} is built and read by nobody"
+        assert re.search(rf"\b(e|group)\.{key}\b", _DETAIL), f"{key} is built and read by nobody"
 
 
 def test_the_labels_and_the_bars_are_laid_out_on_one_row_height(

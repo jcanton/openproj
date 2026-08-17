@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from cascade import El, Sheet, el, sheet_of
+from cascade import El, Sheet, el, sheet_of, split_list
 
 from openproj.index import Index, build_index
 from openproj.model import load_repo
@@ -58,14 +58,20 @@ SCROLL = PAGE + [el("div", "table-scroll"), el("table", id="rows")]
 # The frozen pair's right edge is drawn from here and nowhere else, so the two
 # states are two different elements as far as this engine is concerned.
 SCROLLED = PAGE + [el("div", "table-scroll scrolled"), el("table", id="rows")]
+# The table itself, for the one property every shadow on it depends on.
+TABLE = SCROLL
 
 
 def header(column: str, classes: str = "", within: list[El] | None = None) -> list[El]:
     return (within or SCROLL) + [el("thead"), el("tr"), el("th", classes, data_col=column)]
 
 
-def cell(column: str, classes: str = "", within: list[El] | None = None) -> list[El]:
-    return (within or SCROLL) + [el("tbody"), el("tr"), el("td", classes, data_col=column)]
+def cell(
+    column: str, classes: str = "", within: list[El] | None = None, states: str = ""
+) -> list[El]:
+    return (within or SCROLL) + [
+        el("tbody"), el("tr"), el("td", classes, states=states, data_col=column)
+    ]
 
 
 def says(sheet: Sheet, path: list[El], prop: str) -> str:
@@ -121,7 +127,7 @@ def test_the_title_header_keeps_the_rule_along_its_bottom_edge(table: Sheet):
     that draws the frozen pair's right edge. The cell needs both, and only in the
     state that has a right edge to draw."""
     drawn = table.value(header("title", within=SCROLLED), "box-shadow")
-    assert drawn == "inset 0 -1px 0 var(--line), 1px 0 0 var(--line)", says(
+    assert drawn == "inset 0 -1px 0 var(--line), inset -1px 0 0 var(--line)", says(
         table, header("title", within=SCROLLED), "box-shadow")
     # Unscrolled it is a header like any other. This is the half that regressed:
     # the right-edge shadow replaced the bottom rule wholesale, so naming one
@@ -146,11 +152,22 @@ def test_the_frozen_edge_is_drawn_only_while_the_table_is_scrolled(table: Sheet)
     It is the class, not the property, that decides: the rules that draw it are
     all under `.scrolled`, so a body cell in the resting state has no rule
     setting `box-shadow` at all.
+
+    **What this cannot tell you is whether anything is painted**, and that is how
+    the edge shipped dead. It resolved to `1px 0 0 var(--line)` — the value this
+    asserted, on the element it asserted it on — and Chrome paints no *outset*
+    box-shadow at all on a cell inside a `border-collapse: collapse` table, so
+    there was no pixel in either state. A resolved value is a promise about
+    pixels that a stylesheet cannot keep on its own.
+    Two things stand behind this now: `test_a_frozen_cell_never_asks_for_an
+    _outset_shadow` below, which is the rule that was broken said as an
+    invariant, and `test_table.test_the_frozen_edge_is_a_pixel_a_browser_draws`,
+    which opens the page in Chrome and compares the screenshots.
     """
     assert table.value(cell("title", "edit"), "box-shadow") is None, says(
         table, cell("title", "edit"), "box-shadow")
     assert table.value(cell("title", "edit", within=SCROLLED), "box-shadow") == (
-        "1px 0 0 var(--line)"
+        "inset -1px 0 0 var(--line)"
     ), says(table, cell("title", "edit", within=SCROLLED), "box-shadow")
     # And the ground under it is unchanged by either state: `.scrolled` adds an
     # edge, and must not win `background` off the severity rules below.
@@ -158,6 +175,38 @@ def test_the_frozen_edge_is_drawn_only_while_the_table_is_scrolled(table: Sheet)
                  cell("title", "edit sev-cell-blocker", within=SCROLLED)):
         assert table.value(path, "background") == "var(--sev-blocker-soft)", says(
             table, path, "background")
+
+
+def test_a_frozen_cell_never_asks_for_an_outset_shadow(table: Sheet):
+    """One fact about this table decides every shadow on it: its borders are
+    collapsed, and Chrome paints no outset box-shadow on a cell in a collapsed
+    table. Not a dimmer one — none.
+
+    So on these cells `inset` is not a style choice, it is the difference between
+    a line and nothing, and the file already knew it for the header's bottom rule
+    while the right edge beside it was written outset and drew nothing for two
+    rounds. Said here as the invariant rather than as five separate expected
+    values, because the next shadow anybody adds to this table is the one this
+    has to catch.
+    """
+    assert table.value(TABLE, "border-collapse") == "collapse", (
+        "the premise of every assertion here"
+    )
+    for path in (header("id"), header("title"), header("owner"),
+                 header("id", within=SCROLLED), header("title", within=SCROLLED),
+                 cell("id"), cell("title", "edit"), cell("owner", "edit"),
+                 cell("id", within=SCROLLED), cell("title", "edit", within=SCROLLED),
+                 cell("title", "edit", within=SCROLLED, states="hover"),
+                 cell("owner", "edit", states="hover")):
+        drawn = table.value(path, "box-shadow")
+        if drawn in (None, "none"):
+            continue
+        for layer in split_list(drawn):
+            assert layer.startswith("inset "), (
+                f"`{table.winner(path, 'box-shadow').selector}` draws `{layer}`, and an "
+                f"outset shadow on a cell in a collapsed table is not painted:\n"
+                f"{says(table, path, 'box-shadow')}"
+            )
 
 
 @pytest.mark.parametrize("column", ["id", "title", "owner"])

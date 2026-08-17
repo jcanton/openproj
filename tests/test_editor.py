@@ -327,9 +327,8 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     """What a thing *is* is the first question a page answers.
 
     The kind was the middle item of a line under the title, between an id and a
-    status; it is now the eyebrow above the heading. The status chip stays in
-    that line, because a status is news about the thing and the kind is what the
-    thing is — one changes weekly and the other never.
+    status; it is now the eyebrow above the heading. It is the one fact on this
+    page that never changes, which is what makes it the one that belongs there.
 
     Three headers have to agree, and this is what "agree" means: back link,
     eyebrow, heading, meta line, in that order.
@@ -339,10 +338,16 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     assert detail.index('<p class="back">') < kind < detail.index("<h1>")
     meta = detail.index('<p class="meta">')
     assert meta > detail.index("<h1>")
-    assert '<span class="chip st-' in detail[meta:detail.index("</p>", meta)], (
-        "the status chip stays in the meta line under the title"
-    )
     assert 'class="chip kind-' not in detail[meta:], "and the kind is not said twice"
+    # Nor is the status. It was a chip in this line AND a chip forty pixels below
+    # it in the facts column, where in edit mode it is also the select that
+    # changes it — the same word in the same colour, twice, one of them inert.
+    # A field that can be changed is stated where it can be changed.
+    assert detail.count('<span class="chip st-') == 1, (
+        "the status is said once, in the facts column, where the control for it is"
+    )
+    facts = detail.index('<dl id="facts">')
+    assert facts < detail.index('<span class="chip st-') < detail.index("</dl>", facts)
 
     # The create form is the same document in another mode, so the picker that
     # decides the kind sits where the kind chip sits.
