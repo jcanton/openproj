@@ -1099,8 +1099,9 @@ def test_a_window_that_excludes_today_draws_no_today_line(seed_index: Index):
 
 def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     """They rendered empty under a sentence naming the dates being drawn, so the
-    controls disagreed with the picture. What is lost by filling them in — "am I
-    looking at everything?" — is answered by the sentence instead."""
+    controls disagreed with the picture. The boxes are what answer "am I looking
+    at everything?" now — the sentence used to say the same dates a third time,
+    after the boxes and the axis had both already said them."""
     from datetime import date
 
     from openproj.render import render_timeline
@@ -1109,7 +1110,11 @@ def test_the_date_boxes_hold_the_window_on_screen(seed_index: Index):
     origin = re.search(r'name="from" value="([\d-]+)"', whole).group(1)
     last = re.search(r'name="to" value="([\d-]+)"', whole).group(1)
 
-    assert f"Showing the whole plan, {origin} to {last}." in " ".join(whole.split())
+    assert origin and last, "the boxes hold the window the chart is drawing"
+    assert "Showing the whole plan" not in " ".join(whole.split()), (
+        "the axis and the boxes say the dates; the sentence says how to move"
+    )
+    assert "Drag sideways or scroll" in " ".join(whole.split())
 
     windowed = render_timeline(seed_index, window=(date(2026, 9, 1), date(2026, 9, 30)))
     assert 'name="from" value="2026-09-01"' in windowed
@@ -2948,7 +2953,15 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         assert _shares_a_line(got["count"], got["key"]), (
             f"the count is at {got['count']} and the key at {got['key']}"
         )
-        assert got["aside"]["right"] == got["controlsRight"], "right-aligned, as asked"
+        # It keeps the search box's line — that is what stops it costing a row
+        # above the drawing — but it reads left to right like the sentence on
+        # every other page, rather than being pushed to the far end and set
+        # right-aligned. Asked for on 2026-08-17, having been the one thing about
+        # these two views that did not match the rest of the site.
+        assert got["aside"]["right"] < got["controlsRight"], (
+            f"the instruction ends at {got['aside']['right']} and the bar at "
+            f"{got['controlsRight']}: it is still pinned to the right edge"
+        )
 
     # Flush with the right edge of the bar above it, on every view.
     assert got["count"]["right"] == got["controlsRight"], (

@@ -1235,7 +1235,7 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    806px window for the graph. A sentence beside the search box costs no rows. */
 #controls .searching { display: flex; flex-wrap: wrap; align-items: baseline;
                        gap: .35rem 1.5rem; }
-#controls .aside { margin-left: auto; text-align: right; }
+#controls .aside { text-align: left; }
 /* The slot holds a `<p>`, which arrives with the browser's own margin and would
    make the search row a line taller than the box in it. */
 #controls .aside > * { margin: 0; }
@@ -3861,8 +3861,7 @@ _GRAPH_STYLE = """
 # eight rows before the first bar. What it says is not a control of the view, it
 # is a description of it, and a description does not earn a row.
 _TIMELINE_HINT = """<p class="hint">{% if windowed %}Showing {{ t.origin }} to {{ t.last }},
-  a window of the plan — Reset goes back to all of it.{% else %}Showing the whole plan{%
-  if t.origin %}, {{ t.origin }} to {{ t.last }}{% endif %}.{% endif %}
+  a window of the plan — Reset goes back to all of it.{% endif %}
   Drag sideways or scroll to move through it. Bars reaching past the window are
   clipped to it, never dropped.</p>"""
 
