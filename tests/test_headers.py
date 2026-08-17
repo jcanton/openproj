@@ -33,7 +33,14 @@ def client(tmp_path: Path) -> TestClient:
 
     plan = tmp_path / "plan"
     plan.mkdir()
-    repo = pygit2.init_repository(str(plan))
+    # `initial_head="main"`, as every other suite here passes it. Without it the
+    # branch is whatever the machine's `init.defaultBranch` says, and `Store`
+    # reads `refs/heads/main` and nothing else — so on a laptop configured for
+    # `main` these pass, and on a runner defaulting to `master` all nine die with
+    # `KeyError: 'refs/heads/main'` from inside pygit2. It was the first thing CI
+    # found, on its first green-except-for-this run, which is the argument for
+    # having CI: the suite was machine-dependent and no machine here said so.
+    repo = pygit2.init_repository(str(plan), initial_head="main")
     for source in SEED.rglob("*"):
         if source.is_file():
             target = plan / source.relative_to(SEED)
