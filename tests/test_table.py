@@ -840,8 +840,8 @@ def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]
 
     Lifted out of the page rather than copied into this file: a second copy of
     the arithmetic is a test that goes on passing after the page stops agreeing
-    with it. Everything the function needs is four top-level declarations, so the
-    extraction is exact and fails loudly if the shape changes.
+    with it. Everything the function needs is a handful of top-level declarations,
+    so the extraction is exact and fails loudly if the shape changes.
     """
     node = shutil.which("node")
     if node is None:  # pragma: no cover - depends on the machine, not on the code
@@ -850,9 +850,11 @@ def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]
         re.search(r"^const SPARE_COLUMN = .*?;$", page, re.M),
         re.search(r"^const SQUEEZABLE = new Set\(\[[^\]]*\]\);$", page, re.M),
         re.search(r"^const FLOOR = \d+;", page, re.M),
+        re.search(r"^const CLAMP_FLOOR = \d+;", page, re.M),
+        re.search(r"^const CLAMPED = new Set\(\[[^\]]*\]\);$", page, re.M),
         re.search(r"^function fitted\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
     ]
-    assert all(parts), "the fit is no longer the four declarations this lifts out"
+    assert all(parts), "the fit is no longer the declarations this lifts out"
     source = "\n".join(found.group(0) for found in parts)
     source += "\nconsole.log(JSON.stringify(fitted(...JSON.parse(process.argv[1]))));"
     done = subprocess.run(
@@ -878,7 +880,9 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     squeezable = set(re.search(r"const SQUEEZABLE = new Set\(\[([^\]]*)\]\)", page).group(1)
                      .replace("'", "").replace(" ", "").split(","))
     floor = int(re.search(r"const FLOOR = (\d+);", page).group(1))
-    spare = re.search(r"const SPARE_COLUMN = '([^']+)';", page).group(1)
+    clamp_floor = int(re.search(r"const CLAMP_FLOOR = (\d+);", page).group(1))
+    clamped = set(re.search(r"const CLAMPED = new Set\(\[([^\]]*)\]\)", page).group(1)
+                  .replace("'", "").replace(" ", "").split(","))
 
     # No cushion. This is the whole of the reported defect.
     assert _fit(page, natural, keys, sum(natural)) == natural
@@ -888,22 +892,38 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     assert sum(width.values()) == WINDOW, "and it fills the window rather than stopping short"
 
     for key in keys:
-        if key in squeezable:
+        if key in clamped:
+            # Clamped: already one item and a `+N`, so a narrower one hides an
+            # item behind a badge that is right there and says how many.
+            assert width[key] == MEASURED[key] or width[key] >= clamp_floor, key
+        elif key in squeezable:
             # Squeezed, but never past the width at which a column stops being
             # readable — below the floor it scrolls instead, which is honest.
             assert width[key] == MEASURED[key] or width[key] >= floor, key
-        elif key == spare:
-            # Never squeezed either, but it does take the pixel or two the
-            # levelling overshoots by, which is what makes the total exact.
-            assert width[key] >= MEASURED[key], key
         else:
-            # A date, a count, a cycle number, and `prs`, which clamps to one
-            # line: every one of them has exactly one right width. A pixel under
-            # it and `prs` hides its first reference and the `+N` with it.
+            # A date, a count and a cycle number have exactly one right width and
+            # no graceful way to be narrower.
             assert width[key] == MEASURED[key], key
 
-    # Worst-first: the sentence pays before the lists of logins do.
-    assert MEASURED["title"] - width["title"] > MEASURED["reviewers"] - width["reviewers"]
+    # The groups pay in order, and that order is the whole point of there being
+    # two of them. Every list column clamps, so its overflow already has somewhere
+    # to go — a badge that says how many — and it gives up width before a sentence
+    # does. The other way round, this window put `title` on its 110px floor, the
+    # one column on the page anybody reads, while `prs` kept all 172px of a
+    # reference the row also links to.
+    assert width["prs"] < MEASURED["prs"], "a clamped column pays"
+    assert width["reviewers"] < MEASURED["reviewers"], "and so does a list of logins"
+    # The sentence pays only what is left after they are spent — so if `title` gave
+    # anything up, every clamped column must already be as narrow as it is allowed
+    # to be. On a window this tight it does pay; on a real one it keeps its width.
+    if width["title"] < MEASURED["title"]:
+        for key in clamped:
+            assert width[key] == min(MEASURED[key], clamp_floor), key
+    assert width["title"] >= floor, "and never past the width at which it stops being readable"
+
+    # Worst-first inside the clamped group: the widest list pays before the
+    # narrowest one does, rather than every column losing the same proportion.
+    assert MEASURED["assignees"] - width["assignees"] >= MEASURED["prs"] - width["prs"]
 
 
 def test_a_window_wider_than_the_plan_gives_the_slack_to_tags(page: str):
@@ -1399,7 +1419,10 @@ def test_the_tags_cell_is_one_line_with_the_rest_behind_a_count(page: str):
     # column left: a task with three merged PRs stood 128px tall beside a 50px row.
     assert "clamped((value || []).map(esc), 'tag')" in body
     assert "clamped((value || []).map(prLink), 'pull request')" in body
-    assert "key === 'tags' || key === 'prs' ? 'clamp' : ''" in body
+    # Every list column, not three of four: assignees and reviewers were the last
+    # that wrapped, and they were most of the height left in the table.
+    assert "clamped((value || []).map(esc), 'person')" in body
+    assert "CLAMPED.has(key) ? 'clamp' : ''" in body
     assert "more.closest('td').classList.add('open')" in body
     # It is a control inside an editable cell, so it must not also open the editor.
     assert "event.target.closest('button.more')) return;" in body

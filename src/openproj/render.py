@@ -703,6 +703,18 @@ def _image(
     what inlining every library was for. Remote images become links instead: the
     reference survives, the dependency does not.
 
+    **An allowlist, and it has to be.** This asked whether the source began with
+    `http://` or `https://`, which is a list of the two ways somebody would write it
+    on purpose and none of the ways they would not. `//host/a.png` inherits the
+    page's scheme and `HTTP://host/a.png` is the same URL to a browser and a
+    different string to `startswith`; both drew a live `<img>`, and a real Chrome
+    fetched both, referer included. In a plan anybody can write to, that is one line
+    of markdown turning a shaping document into a tracking pixel aimed at everyone
+    who opens it — and it survived into the static export, where there is no origin
+    to appeal to. There is no denylist of URL spellings that is finished, so the
+    question is asked the other way round: an image is drawn only if it is an asset
+    this tool stored, and everything else is a link.
+
     An image stored in the plan is a different thing — it is in the repository, it
     travels with the clone, and it is served from the same origin as the page.
     Those are drawn, with the one prefix that differs between a served page and a
@@ -716,12 +728,11 @@ def _image(
     token = tokens[idx]
     source = token.attrGet("src") or ""
     links = env.get("links", STATIC)
-    if source.startswith(("http://", "https://")):
+    asset = _ASSET_SRC.fullmatch(source)
+    if not asset:
         alt = self.renderInlineAsText(token.children, options, env) if token.children else ""
         return str(Markup('<a href="{}">{} (external image)</a>').format(source, alt or "image"))
-    asset = _ASSET_SRC.fullmatch(source)
-    if asset:
-        token.attrSet("src", links.asset + asset.group(1))
+    token.attrSet("src", links.asset + asset.group(1))
     return RendererHTML.image(self, tokens, idx, options, env)
 
 
@@ -1715,6 +1726,14 @@ function shown(row, key) {
     return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
   if (key === 'tags') return clamped((value || []).map(esc), 'tag');
+  // Every list in the table clamps, for the same reason and by the same badge.
+  // These two were the last that did not, and they were most of the wrapping
+  // left: `OngChia, nfarabullini, jcanton` took three lines in a 159px column and
+  // the whole row grew to match, which is the defect the tags clamp was written
+  // for. The owner is the name that matters and it has its own column; the rest
+  // are one click away, where they always were.
+  if (key === 'assignees' || key === 'reviewers')
+    return clamped((value || []).map(esc), 'person');
   return esc(stored(row, key));
 }
 
@@ -1736,7 +1755,7 @@ function cell(row, key) {
   const classes = [
     editable ? 'edit' : '',
     !editable && key in WHY ? 'derived' : '',
-    key === 'tags' || key === 'prs' ? 'clamp' : '',
+    CLAMPED.has(key) ? 'clamp' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -1759,9 +1778,18 @@ function cell(row, key) {
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
 }
 
+// `#1223`, not `C2SM/icon4py#1223`. Every reference in a plan is to the repository
+// the plan is about, so the owner and the name were seventeen rows of the same
+// eleven characters — the widest column on the page spent on the part that never
+// varies. It cost the sentence beside it: `title` was squeezed to its floor while
+// `prs` kept 172px, and at the window this was reported on the table still would
+// not fit. The whole reference is in the link's title, and the detail page prints
+// it in full, so nothing is lost — a plan that does span two repositories reads a
+// little thinner here and exactly the same everywhere else.
 function prLink(ref) {
   const [repo, number] = ref.split('#');
-  return `<a href="https://github.com/${esc(repo)}/pull/${esc(number)}">${esc(ref)}</a>`;
+  return `<a href="https://github.com/${esc(repo)}/pull/${esc(number)}"` +
+    ` title="${esc(ref)}">#${esc(number)}</a>`;
 }
 
 function rowHtml(row) {
@@ -2128,13 +2156,24 @@ const scroller = table.parentElement;
 // space, or refused it, without changing what the row says.
 const SPARE_COLUMN = 'tags';
 
-// The columns the fit is allowed to squeeze when the plan does not fit the
-// window: a sentence and three lists of logins. They degrade by wrapping, which
-// costs height and loses nothing. Every column not named here keeps exactly its
-// measured width — a date, a count and a cycle number have one right width, and
-// `prs` and `tags` clamp, so a pixel under their measured width hides the first
-// item and takes the `+N` badge off the end of the row with it.
-const SQUEEZABLE = new Set(['title', 'owner', 'assignees', 'reviewers']);
+// Who pays for an overflow, in order.
+//
+// The clamped columns pay first. They already show one item and a `+N`, so a
+// narrower one hides an item behind a badge that is right there and says how
+// many — the cheapest thing on the page to give up. Then the squeezable ones: the
+// title, which is a sentence, and the owner, which is one name. Those degrade by
+// wrapping, which costs height on every row that holds a long value.
+//
+// The order is the whole point, and it was wrong the other way round. With `prs`
+// exempt, a 1460px window put `title` on its 110px floor — the column you read —
+// while `prs` kept all 172px of a reference you can also get by opening the row.
+// Every column named in neither keeps exactly what it measured: a date, a count
+// and a cycle number have one right width and no graceful way to be narrower.
+// The four columns that hold a list, drawn as one item and a `+N`, and the four
+// the fit narrows first. One set, because it is one fact: a column may be made
+// narrower exactly when its overflow already has somewhere to go.
+const CLAMPED = new Set(['tags', 'prs', 'assignees', 'reviewers']);
+const SQUEEZABLE = new Set(['title', 'owner']);
 
 // A column's identity is the field it stands for. It used to be the column's
 // POSITION for the two that do not sort, so inserting a column anywhere to their
@@ -2143,6 +2182,12 @@ const SQUEEZABLE = new Set(['title', 'owner', 'assignees', 'reviewers']);
 // printed above it rather than to the column.
 const keyOf = th => th.dataset.col;
 const FLOOR = 110;      // narrower than this and a squeezed column is unreadable
+// A clamped column shows one item and a badge, and its header above them. Set to
+// 76 — the badge and a short tag — the fit drove all four to that and `REVIEWERS`
+// wrapped over two lines above a truncated login, which is a narrower column and
+// a taller row: exactly what the clamp was for, undone. A column is only worth
+// narrowing while it still says something.
+const CLAMP_FLOOR = 112;
 
 // What each column would need with every cell on one line, so a column ends up
 // as wide as its widest value needs and not one character more. Measured from a
@@ -2173,35 +2218,60 @@ function naturalWidths() {
 function fitted(natural, keys, room) {
   const width = natural.map(w => Math.ceil(w));
   let over = width.reduce((a, b) => a + b, 0) - room;
-  // Worst-first, by levelling: the widest squeezable column comes down to the
+
+  // Worst-first, by levelling: the widest column in the group comes down to the
   // second widest, then those two come down to the third, and so on until the
-  // overflow is paid for. A proportional cut instead takes the same 18% off a
-  // 300px sentence and a 110px login, so the column that was already the
-  // narrowest pays as much as the one that caused the overflow.
-  while (over > 0) {
-    const flex = keys.map((_, i) => i)
-                     .filter(i => SQUEEZABLE.has(keys[i]) && width[i] > FLOOR);
-    if (!flex.length) break;    // everything squeezable is at the floor: it scrolls
-    const worst = Math.max(...flex.map(i => width[i]));
-    const paying = flex.filter(i => width[i] === worst);
-    const next = Math.max(FLOOR, ...flex.filter(i => width[i] < worst).map(i => width[i]));
-    const step = Math.min(worst - next, Math.ceil(over / paying.length));
-    paying.forEach(i => { width[i] -= step; });
-    over -= step * paying.length;
-  }
-  // What is left over — a window wider than the plan needs, or the pixel or two
-  // the levelling overshot by — goes to the one column that can hold it without
-  // changing what any row says.
+  // overflow is paid for or the group is on its floor. A proportional cut instead
+  // takes the same 18% off a 300px sentence and a 110px login, so the column that
+  // was already the narrowest pays as much as the one that caused the overflow.
+  const level = (group, floor) => {
+    while (over > 0) {
+      const flex = keys.map((_, i) => i)
+                       .filter(i => group.has(keys[i]) && width[i] > floor);
+      if (!flex.length) return;
+      const worst = Math.max(...flex.map(i => width[i]));
+      const paying = flex.filter(i => width[i] === worst);
+      const next = Math.max(floor, ...flex.filter(i => width[i] < worst).map(i => width[i]));
+      const step = Math.min(worst - next, Math.ceil(over / paying.length));
+      paying.forEach(i => { width[i] -= step; });
+      over -= step * paying.length;
+    }
+  };
+
+  level(CLAMPED, CLAMP_FLOOR);
+  level(SQUEEZABLE, FLOOR);
+
+  // Whatever is left over — a window wider than the plan needs, or the pixel or
+  // two the levelling overshot by — goes to the one column that can hold it
+  // without changing what any row says.
   const spare = keys.indexOf(SPARE_COLUMN);
   if (over < 0 && spare !== -1 && width[spare] > 0) width[spare] -= over;
   return width;
 }
 
+// A collapsed border is drawn between the columns, not inside them, so the table
+// renders a pixel or two wider than the sum `applyWidths` sets — and two pixels is
+// a horizontal scrollbar across the whole plan just as surely as two hundred are.
+// Measured rather than assumed: it depends on the border width, the zoom and how
+// the browser rounds, and this table is drawn at whatever zoom somebody left it at.
+function chromeOverhead() {
+  const set = Number.parseFloat(table.style.width) || 0;
+  return set ? Math.max(0, Math.ceil(table.getBoundingClientRect().width - set)) : 0;
+}
+
 function fitWidths() {
   const keys = headers.map(keyOf);
-  const width = fitted(naturalWidths(), keys, scroller.clientWidth);
-  keys.forEach((key, i) => { WIDTHS[key] = width[i]; });
-  applyWidths();
+  const fit = room => {
+    const width = fitted(naturalWidths(), keys, room);
+    keys.forEach((key, i) => { WIDTHS[key] = width[i]; });
+    applyWidths();
+  };
+  fit(scroller.clientWidth);
+  // Once round to find out what the border costs, and once more to pay for it.
+  // Not a loop: the second fit cannot change the overhead, only what is left after
+  // it, and a fit that chased its own tail would be a fit that never settled.
+  const overhead = chromeOverhead();
+  if (overhead) fit(scroller.clientWidth - overhead);
 }
 
 function applyWidths() {

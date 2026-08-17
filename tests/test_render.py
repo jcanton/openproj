@@ -169,7 +169,7 @@ def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Pat
     index = read(rendered, "index.html")
 
     assert "base_commit" not in index, "this is the read-only build"
-    assert "key === 'tags' || key === 'prs' ? 'clamp' : ''" in index, (
+    assert "CLAMPED.has(key) ? 'clamp' : ''" in index, (
         "the clamp is not behind the editor"
     )
     assert "td.clamp .rest { display: none; }" in index
@@ -2429,3 +2429,50 @@ def test_the_hatching_says_in_words_what_it_says_in_texture(demo_rendered: tuple
     assert late, "the demo corpus overruns nothing"
     for bar in late:
         assert "overruns its cycle" in bar["reads"].lower(), bar["id"]
+
+
+def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
+    """A remote image makes the page fetch from the network, which is what inlining
+    every library was for — and in a plan anybody can write to, it aims a tracking
+    pixel at every colleague who opens the document.
+
+    This asked whether the source started with `http://` or `https://`: the two
+    ways somebody writes it on purpose, and none of the ways they do not. Both of
+    the spellings below drew a live `<img>`, and a real browser fetched both,
+    referer and all. `//host` inherits the page's scheme; `HTTP://host` is the same
+    URL to a browser and a different string to `startswith`. Neither is exotic —
+    the first is what a copied `<img>` tag from a CDN looks like.
+
+    So the question is asked the other way round now, and the assertion is the
+    shape of the rule rather than a list of the spellings somebody thought of: an
+    image is drawn only if it is an asset this tool stored. Everything else is a
+    link, which keeps the reference and drops the dependency.
+    """
+    from openproj.model import Task
+    from openproj.render import _body_html
+
+    def _entity(body: str) -> Task:
+        return Task(id="task-000001", kind="task", title="t", effort_weeks=1, body=body)
+
+    stored = "assets/0123456789abcdef.png"
+    assert f'<img src="{stored}"' in _body_html(_entity(f"![ok]({stored})"))
+
+    for source in (
+        "//example.com/a.png",              # scheme-relative: inherits the page's
+        "HTTP://example.com/a.png",         # the same URL, a different string
+        "HtTpS://example.com/a.png",
+        "http://example.com/a.png",
+        "\thttp://example.com/a.png",       # leading whitespace a parser forgives
+        "data:image/png;base64,iVBORw0KGgo=",
+        "javascript:alert(1)",
+        "../../etc/passwd.png",             # same origin, still not ours
+        "assets/notahash.png",              # our directory, not our naming
+        "assets/0123456789abcdef.svg",      # our naming, a format we do not store
+    ):
+        drawn = _body_html(_entity(f"![x]({source})"))
+        # The invariant is that nothing fetches: no `<img>`, ever. What happens
+        # instead varies in one case, and honestly — markdown-it refuses to link
+        # `javascript:` at all and leaves the line as text, which is a better
+        # answer than the link this would otherwise have made of it.
+        assert "<img" not in drawn, source
+        assert "(external image)" in drawn or source in str(drawn), source
