@@ -2,6 +2,8 @@
 name = "openproj"
 version = "0.1.0"
 description = "Git-backed appetite planning for the icon4py team"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",
