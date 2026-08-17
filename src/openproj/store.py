@@ -214,6 +214,23 @@ class Store:
         """Read the branch tip from disk, so an outside commit is visible at once."""
         return str(pygit2.Repository(str(self._path)).references[_BRANCH].target)
 
+    def has(self, commit: str) -> bool:
+        """Whether this repository holds that commit.
+
+        Everything below reads at an explicit commit and assumes it exists: a sha
+        this repository has never seen reaches `_tree` as `None.tree`, and one
+        that is not hex reaches it as a ValueError — both of which are a 500 on a
+        route whose whole job is to refuse politely. The caller that needs this is
+        the entity save: a restored draft carries the commit it was drafted
+        against, which is older than HEAD on purpose, and a draft that has sat in
+        a browser through a re-clone of the plan is a sha nothing here has.
+        """
+        try:
+            found = self._repo.get(commit)
+        except (ValueError, TypeError):
+            return False
+        return found is not None and found.type_str == "commit"
+
     def _tree(self, commit: str):
         return self._repo.get(commit).tree
 

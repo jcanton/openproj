@@ -574,6 +574,34 @@ def test_a_stale_base_whose_file_nobody_touched_is_retried_silently(
     assert index_of(client)["entities"][TASK]["priority"] == "high"
 
 
+@pytest.mark.parametrize("base", ["0" * 40, "not-a-sha", ""])
+def test_a_base_this_repository_never_had_is_refused_rather_than_raised(
+    client: TestClient, repo_path: Path, base: str
+):
+    """Every read here is at an explicit commit, and each one assumed it exists.
+
+    A sha the repository has never seen reached `_tree` as `None.tree` and a
+    string that is not hex reached it as a ValueError — a 500, in `text/plain`,
+    which is the one answer the page cannot even read back to say what happened.
+
+    It stopped being hypothetical when a restored draft started carrying the
+    commit it was drafted against: that base is older than HEAD on purpose, so a
+    draft left in a browser across a re-clone of the plan arrives here naming a
+    commit nothing has. The draft is still in the browser, and the refusal says
+    what to do with it.
+    """
+    was = git_head(repo_path)
+
+    response = client.patch(
+        f"/api/entity/{TASK}",
+        json={"base_commit": base, "fields": {"priority": "high"}, "body": None},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "copy anything unsaved" in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
 def test_two_people_changing_different_fields_of_one_entity_are_merged(client: TestClient):
     """Field-level, not file-level: they set the status while I set the priority is
     not a disagreement, and refusing it teaches people to keep their editors shut."""

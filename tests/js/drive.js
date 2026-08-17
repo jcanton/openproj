@@ -27,10 +27,14 @@
 //          {replies: [...]}  {status, json} or {status, text} per fetch, in
 //                            order — a `text` that is not JSON rejects
 //                            `response.json()`, exactly as a 500 does.
+//          {storage: {...}}  localStorage starts holding these; "denied" makes
+//                            reading the property itself throw, the way a
+//                            private window and a blocked-cookies policy do.
 // The expression may be async; its promise is awaited, and one that never
 // settles comes back as settled: false rather than as an empty answer.
 // Prints {written: [...innerHTML strings...], value: <expression result>,
-//         errors: [...], calls: [...requests...], settled: <bool>} as JSON.
+//         errors: [...], calls: [...requests...], settled: <bool>,
+//         stored: {...localStorage as the run left it...}} as JSON.
 
 'use strict';
 
@@ -222,11 +226,14 @@ class Element {
   setAttribute(name, value) {
     this.attributes[name] = String(value);
     if (name === 'class') this._classSet = null;
-    // The two attributes a browser reflects into a property that page scripts
-    // read: an `<input value="0.5">` in the roster answers 0.5 to `.value`, and
-    // the conflict box the table renders with `hidden` starts out hidden.
+    // The three attributes a browser reflects into a property that page scripts
+    // read: an `<input value="0.5">` in the roster answers 0.5 to `.value`, the
+    // conflict box the table renders with `hidden` starts out hidden, and
+    // `.name` is the key every field a save sends is filed under — without it
+    // the detail page's PATCH carried one field called "undefined".
     if (name === 'value') this.value = String(value);
     if (name === 'hidden') this.hidden = value !== 'false';
+    if (name === 'name') this.name = String(value);
     if (name.startsWith('data-')) {
       const key = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       this.dataset[key] = String(value);
@@ -438,6 +445,23 @@ async function run(html, expression, options) {
     });
   }
 
+  // Storage, in the three states a browser really has: empty, already holding
+  // something, and denied. The third is the one worth having — a denied browser
+  // does not answer null, it THROWS, and it throws on the `localStorage`
+  // property itself rather than on the method call, which is why it is a getter
+  // below and not a stub whose methods raise. A page that guards `getItem` and
+  // not the property is still dead at its first read.
+  const denied = options.storage === 'denied';
+  const held = new Map(Object.entries(denied ? {} : options.storage || {}));
+  // A real store and not a black hole: what a page writes it can read back, and
+  // what it wrote comes home in the answer, which is how a test says what a
+  // draft was saved *as*.
+  const storage = {
+    getItem: key => (held.has(String(key)) ? held.get(String(key)) : null),
+    setItem: (key, value) => { held.set(String(key), String(value)); },
+    removeItem: key => { held.delete(String(key)); },
+  };
+
   // Queued, not run. A timer that fired by itself would set a page's autosave
   // going against an answer nobody scripted; `__tick()` runs what is pending, so
   // a test about a timer — the live region re-sets a repeated message on one —
@@ -481,7 +505,7 @@ async function run(html, expression, options) {
     fetch: answer,
     location: {search: '', pathname: '/', href: 'http://localhost/'},
     history: {replaceState() {}, pushState() {}},
-    localStorage: {getItem: () => null, setItem() {}, removeItem() {}},
+    localStorage: storage,
     matchMedia: () => ({matches: false, addEventListener() {}, addListener() {}}),
     getComputedStyle: () => ({getPropertyValue: () => ''}),
     // The escape the pages reach for when a selector has to hold typed text.
@@ -506,6 +530,18 @@ async function run(html, expression, options) {
   sandbox.self = sandbox;
 
   const context = vm.createContext(sandbox);
+  if (denied) {
+    // Defined from inside the context, not with `Object.defineProperty` on the
+    // sandbox out here: a throwing getter placed on the sandbox is swallowed by
+    // node's global proxy and the name comes back as merely undefined, which is
+    // a different failure from the one browsers make. Run in here it throws on
+    // the property access — `localStorage`, `window.localStorage`, either — with
+    // the error a denied browser raises.
+    new vm.Script(
+      "Object.defineProperty(globalThis, 'localStorage', {configurable: true," +
+      " get() { throw new Error('SecurityError: The operation is insecure.'); }});"
+    ).runInContext(context);
+  }
   const errors = [];
   for (const source of scripts) {
     try {
@@ -548,7 +584,7 @@ async function run(html, expression, options) {
   } catch (error) {
     errors.push('expression: ' + String(error && error.message ? error.message : error));
   }
-  return {written: WRITTEN, value, errors, calls, settled};
+  return {written: WRITTEN, value, errors, calls, settled, stored: Object.fromEntries(held)};
 }
 
 let input = '';

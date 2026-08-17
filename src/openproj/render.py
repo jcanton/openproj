@@ -844,12 +844,57 @@ _SHELL = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
 <script>
+// The only way in and out of localStorage, for every script on every page.
+//
+// `localStorage` denied does not answer null — it THROWS, and it throws on the
+// property itself before any method is called: a private window, blocked
+// cookies, a third-party frame, some enterprise policies. Three of the twelve
+// reads and writes in this file were wrapped in a try and nine were bare, and
+// the bare one at the top of the table's script took the whole table with it —
+// the script died before the first row was drawn, so the page in front of
+// everybody was a heading and "17 of 17 shown" over nothing at all.
+//
+// A remembered width, a remembered measure and a remembered theme are all
+// conveniences; the rows are the page. So a read answers with its default and a
+// write is allowed to do nothing, and no caller has to remember that. Declared
+// in the head, before the first paint, because the theme below is the first
+// thing that needs it and a function in a later <script> is not hoisted into an
+// earlier one.
+const remembered = {
+  get(key, fallback = null) {
+    try {
+      const held = localStorage.getItem(key);
+      return held === null ? fallback : held;
+    } catch (e) { return fallback; }
+  },
+  // The one structured thing this app stores is the table's widths, and
+  // `JSON.parse` throws on a half-written or hand-edited entry exactly where the
+  // bare read did — so the parse belongs behind the same door as the read. A
+  // stored value that is not an object is not a map of widths either.
+  map(key) {
+    try {
+      const held = JSON.parse(localStorage.getItem(key));
+      return held && typeof held === 'object' ? held : {};
+    } catch (e) { return {}; }
+  },
+  // Writing throws too, and for a second reason: Safari's private mode reports a
+  // quota of zero, so the first setItem raises QuotaExceededError. A width
+  // nobody can save is still a width.
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) { /* not remembered */ }
+  },
+  forget(key) {
+    try { localStorage.removeItem(key); } catch (e) { /* nothing to forget */ }
+  },
+};
+
 // Before the first paint, or the page renders light and then turns dark in front
 // of whoever chose dark — which is worse than not having the choice.
-try {
-  const stored = localStorage.getItem('openproj:theme');
-  if (stored) document.documentElement.dataset.theme = stored;
-} catch (e) { /* a browser with storage denied still gets the system theme */ }
+// A name nothing else on any page uses: this is the global lexical scope every
+// classic script shares, and a second `const` of the same name anywhere on the
+// page is a SyntaxError rather than a shadowing — the whole page, not one line.
+const storedTheme = remembered.get('openproj:theme');
+if (storedTheme) document.documentElement.dataset.theme = storedTheme;
 </script>
 <style>
 /* Inlined, not linked: a linked face is one more thing a CDN, a proxy or a train
@@ -1373,7 +1418,7 @@ function labelTheme() {
 THEME.onclick = () => {
   const next = theme() === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('openproj:theme', next); } catch (e) { /* still switches */ }
+  remembered.set('openproj:theme', next);   // and a browser that refuses still switches
   labelTheme();
   // Anything painted by script rather than by the stylesheet — the graph — has
   // to be told, because its colours were read once when it was built.
@@ -2172,7 +2217,7 @@ window.SHOWING = Object.keys(DATA.rows);
 // Bumped a third time when the kind chip left the id cell: a width dragged for
 // `PITCH pitch-0c0001` is 60px of empty column beside `pitch-0c0001`.
 const WIDTH_KEY = 'openproj:widths:4';
-const WIDTHS = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+const WIDTHS = remembered.map(WIDTH_KEY);
 // Whether the columns are still the fit's to decide. It goes false the moment a
 // grip is let go, and never comes back: after that the widths are a decision
 // somebody made, and a refit — on a resize, or when the real face lands — would
@@ -2347,7 +2392,7 @@ headers.forEach((th, i) => {
     event.stopPropagation();
     const key = keyOf(th);
     WIDTHS[key] = Math.ceil(naturalWidths()[i]);
-    localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
+    remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
     automatic = false;
     applyWidths();
   };
@@ -2374,7 +2419,7 @@ headers.forEach((th, i) => {
     const stop = () => {
       grip.classList.remove('dragging');
       setTimeout(() => { dragging = false; }, 0);   // after the click it caused
-      localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
+      remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
       automatic = false;
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', stop);
@@ -4255,7 +4300,7 @@ window.SHOWING = {{ showing|tojson }};
 // per entity: it is a property of the screen it is being read on, not of the plan.
 const grip = document.getElementById('grip');
 const root = document.documentElement;
-const saved = localStorage.getItem('openproj:measure');
+const saved = remembered.get('openproj:measure');
 if (saved) root.style.setProperty('--measure', saved);
 
 function place() {
@@ -4282,7 +4327,7 @@ grip.onpointerdown = event => {
   };
   const stop = () => {
     grip.classList.remove('dragging');
-    localStorage.setItem('openproj:measure', root.style.getPropertyValue('--measure'));
+    remembered.set('openproj:measure', root.style.getPropertyValue('--measure'));
     removeEventListener('pointermove', move);
     removeEventListener('pointerup', stop);
   };
@@ -4307,7 +4352,14 @@ const BODY = FORM.querySelector('[name=body]');
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
-const DRAFT = `openproj:${FORM.dataset.id}`;
+// The commit this page was rendered at, and what every save is compared against.
+// Read through this one box rather than looked up at each write, because a
+// restored draft moves it back to the commit that draft was written on top of.
+const BASE = FORM.querySelector('[name=base_commit]');
+// The draft's key, version 2: a draft is now `{base, text}` rather than text.
+// Bumped rather than parsed loosely, so a body that happens to be valid JSON
+// cannot be mistaken for the new shape.
+const DRAFT = `openproj:draft:2:${FORM.dataset.id}`;
 
 function read(control) {
   const type = control.dataset.type;
@@ -4376,7 +4428,10 @@ function show(editing) {
 document.getElementById('toggle').onclick = () => {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   show(editing);
-  if (!editing) localStorage.removeItem(DRAFT);
+  // The stored draft goes; the base it brought with it stays. The text is still
+  // in the box, so the page is still holding work written against that commit —
+  // moving the base forward here is the silent overwrite by another route.
+  if (!editing) remembered.forget(DRAFT);
 };
 
 document.getElementById('preview').onclick = async () => {
@@ -4431,9 +4486,7 @@ async function save() {
   try {
     const response = await fetch(`/api/entity/${encodeURIComponent(FORM.dataset.id)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({
-        base_commit: FORM.querySelector('[name=base_commit]').value, fields, body,
-      }),
+      body: JSON.stringify({base_commit: BASE.value, fields, body}),
     });
     const answer = await answerOf(response);
     const box = document.getElementById('conflict');
@@ -4447,7 +4500,7 @@ async function save() {
     }
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
-    localStorage.removeItem(DRAFT);
+    remembered.forget(DRAFT);
     location.reload();
   } finally {
     // Announced even when refused, or one 409 leaves every event after it held
@@ -4465,11 +4518,43 @@ addEventListener('keydown', event => {
 
 // One Save is one commit, so an unsaved draft is the only thing git cannot get
 // back. It survives a closed tab and is dropped the moment it is committed.
-BODY.addEventListener('input', () => localStorage.setItem(DRAFT, BODY.value));
-const draft = localStorage.getItem(DRAFT);
-if (draft !== null && draft !== BODY.value) {
-  announce('unsaved draft restored');
-  BODY.value = draft;
+//
+// Stored with the commit it was written on top of, and not as bare text. A
+// draft restored into a page rendered an hour later paired hour-old text with
+// today's `base_commit`, so `store.write` compared the two things that agreed,
+// found nothing to refuse, and committed a body that reverted whoever had saved
+// in between — no 409, no conflict report, their paragraph simply gone. The
+// base travels with the text, which is what makes the save that follows a
+// restore a compare-and-swap against the right commit: a merge where the edits
+// do not overlap, and the same 409 and the same report as every other write
+// path where they do.
+BODY.addEventListener('input', () => {
+  remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: BODY.value}));
+});
+const draft = remembered.map(DRAFT);
+// A draft from before this — bare text under the old key — records no commit,
+// and there is nothing honest to do with one: pairing it with today's base is
+// the defect above, and inventing a base is worse. Dropped, and said out loud
+// unless a newer draft supersedes it, because work that goes quietly is the
+// other half of this section.
+const older = `openproj:${FORM.dataset.id}`;
+if (remembered.get(older) !== null) {
+  remembered.forget(older);
+  if (typeof draft.text !== 'string') {
+    announce('a draft saved by an older version of this page was discarded');
+  }
+}
+if (typeof draft.text === 'string' && draft.text !== BODY.value) {
+  // The page is at HEAD and this text is not. Saving it is compared against the
+  // commit it was drafted against, so the server can tell a merge from an
+  // overwrite — and whoever restores it is told the ground moved rather than
+  // finding out from a refusal one keystroke later.
+  const moved = draft.base && draft.base !== BASE.value;
+  if (draft.base) BASE.value = draft.base;
+  announce(moved
+    ? 'unsaved draft restored — somebody else has changed this since it was written'
+    : 'unsaved draft restored');
+  BODY.value = draft.text;
   show(true);
 }
 </script>{% endif %}

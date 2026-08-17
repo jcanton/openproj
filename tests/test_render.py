@@ -1318,13 +1318,58 @@ def test_the_theme_is_chosen_before_the_first_paint(rendered: Path):
     body = read(rendered, "index.html")
     head = body[: body.index("</head>")]
 
-    assert "localStorage.getItem('openproj:theme')" in head
+    assert "remembered.get('openproj:theme')" in head
     assert "documentElement.dataset.theme" in head
+    # And the helper it reads through is declared above it, in the same block:
+    # a page whose theme is chosen by a function defined further down the
+    # document is a page that throws before it has a theme at all.
+    assert head.index("const remembered = {") < head.index("remembered.get('openproj:theme')")
 
 
 def test_every_page_carries_the_toggle(rendered: Path):
     for page in PAGES:
         assert '<button type="button" id="theme">' in read(rendered, page), page
+
+
+# --- storage ----------------------------------------------------------------
+
+
+def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal():
+    """One door, because the browsers that slam it slam it on the property.
+
+    Three of the twelve reads and writes were wrapped in a try and carried a
+    comment saying why; the other nine were bare, and one of those was at the
+    top of the script that draws the table's rows — so on a browser with storage
+    denied the whole plan rendered as an empty body. A guard remembered nine
+    times out of twelve is a guard that will be forgotten the tenth time, which
+    is exactly how that line got written.
+
+    Which makes this a grep on purpose: what a page *does* with denied storage
+    is proved by running it (`test_table`, `test_editor`), and what this pins is
+    that the next call site cannot be written bare.
+    """
+    from openproj.render import __file__ as rendered_from
+
+    source = Path(rendered_from).read_text(encoding="utf-8")
+    helper = re.search(r"const remembered = \{.*?\n\};", source, re.S)
+    assert helper, "the storage helper is gone or has been renamed"
+
+    outside = source.replace(helper.group(0), "")
+    bare = [
+        line
+        for line in outside.splitlines()
+        # The prose above the helper has to be able to name the thing it wraps.
+        if "localStorage" in line and not line.lstrip().startswith("//")
+    ]
+    assert not bare, f"a bare localStorage is back: {bare}"
+    # Once, like `esc`: two classic scripts on one page share one lexical scope,
+    # so a second `const remembered` would be a SyntaxError that takes the page
+    # down rather than a duplicate that drifts quietly.
+    assert source.count("const remembered = ") == 1
+    # And the helper answers every question a caller could otherwise ask the
+    # property directly — a missing verb is how the next bare call gets written.
+    for verb in ("get(key, fallback = null)", "map(key)", "set(key, value)", "forget(key)"):
+        assert verb in helper.group(0), verb
 
 
 def test_no_colour_is_defined_only_in_the_dark_block(rendered: Path):

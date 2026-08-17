@@ -23,7 +23,7 @@ import pygit2
 import pytest
 from fastapi.testclient import TestClient
 from test_store import commit_directly
-from test_web import ANN, PATH, SECRET, SEED, TASK
+from test_web import ANN, PATH, SECRET, SEED, TASK, file_at, git_head, head, save
 
 from openproj.auth import sign_session
 from openproj.web import SESSION_COOKIE, create_app
@@ -559,8 +559,16 @@ def test_the_detail_page_announces_a_save_it_only_used_to_draw(page: str):
     body = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", page, re.S))
 
     assert "STATE.textContent" not in body, "the direct write this replaced"
-    for message in ("'saving…'", "'not saved'", "'nothing changed'", "'unsaved draft restored'"):
+    for message in ("'saving…'", "'not saved'", "'nothing changed'"):
         assert f"announce({message})" in body, message
+    # The restored draft says two different things — one of them "somebody else
+    # has changed this since it was written" — so it is announced as a chosen
+    # value rather than as a literal. Both spellings are on the page, and both
+    # go through `announce` rather than into a region this page happens to have.
+    restored = re.search(r"announce\(moved\s*\n\s*\?\s*('[^']+')\s*\n\s*:\s*('[^']+')\)", body)
+    assert restored, "the restored draft no longer announces both of its messages"
+    assert "somebody else has changed this" in restored.group(1)
+    assert restored.group(2) == "'unsaved draft restored'"
     # Through the shell's `refusal`, which knows that a 409 carries the report
     # rather than a `detail` — the key this line used to read on its own.
     assert "announce(refusal(answer, response.status))" in body
@@ -611,3 +619,126 @@ def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient
     assert "PROBLEMS.replaceChildren(" in new
     assert "PROBLEMS.innerHTML = (answer.problems" not in new, "the interpolation this replaced"
     assert "${p.field}" not in new, "the identifier this replaced"
+
+
+# --------------------------------------------------------------------------- #
+# The unsaved draft
+# --------------------------------------------------------------------------- #
+
+
+def test_a_restored_draft_is_saved_against_the_commit_it_was_drafted_against(
+    client: TestClient, repo_path: Path
+):
+    """A draft is text plus the commit it was written on top of, or it is a way
+    to revert a colleague without being told.
+
+    The draft used to be bare text. Restoring one into a page rendered an hour
+    later paired hour-old text with today's `base_commit`, so `store.write`
+    compared the two things that agreed, found nothing to refuse, and committed
+    a body that silently threw away whoever had saved in between: no 409, no
+    conflict report, their paragraph simply gone.
+
+    Driven end to end and in the medium it happens in — the page's own script
+    stores the draft, the page's own script restores it and builds the PATCH,
+    and the request that comes out of it is answered by the real server rather
+    than by a scripted reply. Nothing here is asserted about a string in a file.
+    """
+    from test_injection import run_js
+
+    first = head(client)
+    drafted_on = client.get(f"/detail/{TASK}").text
+
+    # Ann types a paragraph and closes the tab without saving.
+    typed = "Rewritten from the top, by ann.\n"
+    typing = run_js(
+        drafted_on,
+        f"(() => {{ BODY.value = {json.dumps(typed)};"
+        "   BODY.dispatchEvent(new Event('input')); return BODY.value; })()",
+        page=True,
+    )
+    key = f"openproj:draft:2:{TASK}"
+    assert key in typing["stored"], (
+        f"a draft was stored that does not record the commit it was written on "
+        f"top of: {typing['stored']}"
+    )
+    draft = json.loads(typing["stored"][key])
+    assert draft == {"base": first, "text": typed}
+
+    # Bo rewrites the same paragraph and saves. (One client, because what a
+    # compare-and-swap compares is commits, not logins.)
+    assert save(client, TASK, {}, body="A different paragraph, by bo.\n").status_code == 200
+    second = head(client)
+
+    # Ann opens the page again. It is rendered at Bo's commit; her draft is not.
+    reopened = client.get(f"/detail/{TASK}").text
+    assert f'name="base_commit" value="{second}"' in reopened
+    restoring = run_js(
+        reopened,
+        "save()",
+        page=True,
+        storage={key: json.dumps(draft)},
+        # Enough of an answer for the page to take its 409 branch and stop; the
+        # request it made on the way is what this test carries to the server.
+        replies=[{"status": 409, "json": {"conflict": "scripted, so that save() returns"}}],
+    )
+    assert not restoring["errors"], restoring["errors"]
+    sent = [call for call in restoring["calls"] if call["method"] == "PATCH"]
+    assert len(sent) == 1, restoring["calls"]
+    written = json.loads(sent[0]["body"])
+    assert written["base_commit"] == first, (
+        "the restored draft was saved against the commit the page was rendered at, "
+        "which is the commit its text was never written against"
+    )
+    assert written["body"] == typed
+
+    # And the real server refuses it, in the words every other write path shows.
+    refused = client.patch(f"/api/entity/{TASK}", json=written)
+    assert refused.status_code == 409
+    report = refused.json()["conflict"]
+    assert PATH in report and "somebody changed this before you" in report
+    assert "by bo" in report and "by ann" in report, report
+    assert git_head(repo_path) == second, "refused, and yet something was committed"
+
+    # The defect itself, one line, so this test cannot pass for the wrong reason:
+    # the same body against the page's fresh commit is taken without a murmur and
+    # Bo's paragraph is gone from the file.
+    silent = client.patch(f"/api/entity/{TASK}", json={**written, "base_commit": second})
+    assert silent.status_code == 200
+    assert "by bo" not in file_at(repo_path, git_head(repo_path), PATH)
+
+
+def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
+    client: TestClient,
+):
+    """Cancel drops the stored draft, not the base it arrived with.
+
+    The text is still in the textarea after a cancel — Cancel hides the editor,
+    it does not put back what was there — so the page is still holding work
+    written against an older commit. Letting `base_commit` spring forward when
+    the storage entry goes would be the same silent overwrite by another route,
+    so this drives the button rather than reading the handler.
+    """
+    from test_injection import run_js
+
+    first = head(client)
+    save(client, TASK, {}, body="Somebody else's paragraph.\n")
+    second = head(client)
+    assert first != second
+
+    reopened = client.get(f"/detail/{TASK}").text
+    key = f"openproj:draft:2:{TASK}"
+    draft = {"base": first, "text": "Half a paragraph, left in the box.\n"}
+    after = run_js(
+        reopened,
+        "(() => { document.getElementById('toggle')"
+        "   .dispatchEvent(new Event('click'));"
+        "  return [document.querySelector('[name=base_commit]').value,"
+        "          document.querySelector('[name=body]').value]; })()",
+        page=True,
+        storage={key: json.dumps(draft)},
+    )
+    base, body = after["value"]
+
+    assert key not in after["stored"], "cancelling left the draft in storage"
+    assert body == draft["text"], "the text a cancel leaves in the box"
+    assert base == first, "cancelling put the page's own commit back under older text"

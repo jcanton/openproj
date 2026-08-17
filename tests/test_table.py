@@ -796,8 +796,43 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
     assert "if (automatic) fitWidths(); else applyWidths();" in page, (
         "a width somebody dragged must survive the automatic fit"
     )
-    assert re.search(r"localStorage\.setItem\(WIDTH_KEY[^\n]*\n\s*automatic = false;", page), (
+    assert re.search(r"remembered\.set\(WIDTH_KEY[^\n]*\n\s*automatic = false;", page), (
         "and letting go of a grip is what ends the automatic one"
+    )
+
+
+def test_the_table_draws_its_rows_in_a_browser_that_refuses_storage(page: str):
+    """A browser with storage denied does not answer null — it throws.
+
+    Private windows, blocked cookies, a page inside a third-party frame and a
+    handful of enterprise policies all raise on `localStorage` itself, before
+    any method is called. The read that remembers dragged column widths was the
+    second statement of the script that draws every row, so on those browsers
+    the page everybody lives in was a heading and "17 of 17 shown" over an empty
+    body — the whole plan invisible, with nothing said about why.
+
+    Run, not grepped, and run twice. "It still drew something" is also what a
+    fallback that quietly loses half the columns does, so the rows a denied
+    browser draws have to be the same markup as the rows a working one draws,
+    and every entity has to be in them.
+    """
+    from test_injection import run_js
+
+    working = run_js(page)
+    denied = run_js(page, storage="denied")
+
+    drawn = [written for written in denied["written"] if "<tr" in written]
+    assert drawn, f"storage denied and the table drew nothing: {denied['errors']}"
+    assert drawn == [written for written in working["written"] if "<tr" in written], (
+        "a browser that refuses storage draws different rows from one that allows it"
+    )
+    for entity_id in payload(page)["rows"]:
+        assert entity_id in drawn[0], f"{entity_id} is missing from the denied browser's table"
+    # And it got exactly as far: the widths it could not read are simply the
+    # ones nobody dragged. Both runs stop at the same place, which is the shim's
+    # own gap rather than anything storage did.
+    assert denied["errors"] == working["errors"], (
+        "the denied browser's script stopped somewhere the allowed one did not"
     )
 
 

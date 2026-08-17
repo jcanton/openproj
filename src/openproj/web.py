@@ -502,6 +502,19 @@ def create_app(
             raise HTTPException(413, "that body is too large to commit")
 
         base = payload["base_commit"]
+        # A commit this repository does not have is a refusal, not a crash. This
+        # is the one route that is handed a base older than HEAD by design — a
+        # restored draft carries the commit it was drafted against — so a draft
+        # that has sat in a browser through a re-clone of the plan arrives with a
+        # sha `store.paths` throws on, and a 500 answers in plain text that the
+        # page cannot even read back. The draft is still in the browser; say what
+        # to do with it.
+        if not store.has(base):
+            raise HTTPException(
+                422,
+                "this page was written against a commit that is not in the plan "
+                "repository; copy anything unsaved, reload, and paste it back",
+            )
         path = _path_for(store, base, entity_id)
         if path is None:
             raise HTTPException(404, f"no entity {entity_id!r}")
