@@ -41,8 +41,6 @@ from typing import Literal
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
-from pydantic import ValidationError
-from ruamel.yaml import YAML
 
 from . import render
 from .auth import User, exchange_code, identify, login_url, read_session, sign_session
@@ -57,12 +55,16 @@ from .model import (
     Pitch,
     Project,
     Task,
+    Unreadable,
     parse_cycle_text,
     parse_issue_text,
     parse_text,
     patch_text,
+    read_config,
+    readable,
     validate_all,
     what_json_can_carry,
+    why_it_will_not_read,
 )
 from .store import Store
 
@@ -114,24 +116,30 @@ ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 MAX_CYCLE_WEEKS = 520.0
 
 
-def _cycles_at(store: Store, commit: str) -> list[Cycle]:
-    return [
-        parse_cycle_text(store.read(commit, path), path)
-        for path in store.paths(commit)
-        if path.endswith(".md") and path.split("/")[0] == CYCLE_DIR
-    ]
+def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
+    return readable(
+        [
+            path
+            for path in store.paths(commit)
+            if path.endswith(".md") and path.split("/")[0] == CYCLE_DIR
+        ],
+        lambda path: parse_cycle_text(store.read(commit, path), path),
+    )
 
 
 def _cycle_path(number: int) -> str:
     return f"{CYCLE_DIR}/{number:04d}.md"
 
 
-def _issues_at(store: Store, commit: str) -> list[Issue]:
-    return [
-        parse_issue_text(store.read(commit, path), path)
-        for path in store.paths(commit)
-        if path.endswith(".md") and path.split("/")[0] == ISSUE_DIR
-    ]
+def _issues_at(store: Store, commit: str) -> tuple[list[Issue], list[Unreadable]]:
+    return readable(
+        [
+            path
+            for path in store.paths(commit)
+            if path.endswith(".md") and path.split("/")[0] == ISSUE_DIR
+        ],
+        lambda path: parse_issue_text(store.read(commit, path), path),
+    )
 
 
 def _issue_path(issue_id: str) -> str:
@@ -146,34 +154,43 @@ def _issue_path(issue_id: str) -> str:
     return f"{ISSUE_DIR}/{issue_id}.md"
 
 
-def _config_at(store: Store, commit: str) -> Config:
-    yaml = YAML(typ="safe")
-    data: dict = {}
-    # The same list the CLI reads. Hardcoded here, this was missing people.yaml,
-    # so `known_people` was empty under `serve` and the roster check that rejects
-    # an unknown login was silently off in the browser and on in CI.
-    for name in CONFIG_FILES:
-        raw = store.read(commit, f"config/{name}")
-        if raw is None:
-            continue
-        loaded = yaml.load(raw)
-        if isinstance(loaded, dict):
-            data.update({k: v for k, v in loaded.items() if k in Config.model_fields})
+def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
+    """The configuration at this commit, and every plan file that is not a record.
+
+    `CONFIG_FILES` is the same list the CLI reads. Hardcoded here, it was missing
+    people.yaml, so `known_people` was empty under `serve` and the roster check
+    that rejects an unknown login was silently off in the browser and on in CI —
+    and `read_config` is now shared with the CLI for the same reason, so a config
+    file that will not scan costs the same thing in both.
+
+    The reads all happen inside `read_config`'s guard: `store.read` decodes, and
+    a config file somebody saved in latin-1 was a UnicodeDecodeError on every
+    route before the YAML parser was ever reached.
+    """
+    present = set(store.paths(commit))
+    config, refused = read_config(
+        [path for name in CONFIG_FILES if (path := f"config/{name}") in present],
+        lambda path: store.read(commit, path) or "",
+    )
     # The cycle records last, so a record supersedes the dates in cycles.yaml the
     # same way it does under the CLI.
+    plans, refused_plans = _cycles_at(store, commit)
+    issues, refused_issues = _issues_at(store, commit)
     return (
-        Config.model_validate(data)
-        .with_plans(_cycles_at(store, commit))
-        .with_issues(_issues_at(store, commit))
+        config.with_plans(plans).with_issues(issues),
+        [*refused, *refused_plans, *refused_issues],
     )
 
 
-def _entities_at(store: Store, commit: str) -> list[Entity]:
-    return [
-        parse_text(store.read(commit, path), path)
-        for path in store.paths(commit)
-        if path.endswith(".md") and path.split("/")[0] in DIRECTORY.values()
-    ]
+def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
+    return readable(
+        [
+            path
+            for path in store.paths(commit)
+            if path.endswith(".md") and path.split("/")[0] in DIRECTORY.values()
+        ],
+        lambda path: parse_text(store.read(commit, path), path),
+    )
 
 
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
@@ -205,20 +222,6 @@ def _reject_bad_cycle(fields: dict) -> None:
         fields["availability"] = {
             str(who): _as_positive(rate, f"availability of {who}") for who, rate in rates.items()
         }
-
-
-def _why(error: ValueError) -> str:
-    """A parse failure in one line of somebody's own words.
-
-    `str(ValidationError)` is four lines and a documentation URL; what a reader
-    needs is which field would not read back.
-    """
-    if isinstance(error, ValidationError):
-        return "; ".join(
-            f"{'.'.join(str(part) for part in one['loc']) or 'the record'}: {one['msg']}"
-            for one in error.errors()
-        )
-    return str(error)
 
 
 def _as_iso_date(value: object, name: str) -> str:
@@ -363,6 +366,26 @@ def _fields_in(payload: dict) -> dict:
     return dict(fields)
 
 
+def _patched(original: str, fields: dict, body: str | None, path: str) -> str:
+    """The file with those fields applied, or a refusal naming the file.
+
+    About the file being edited, not about the edit. `patch_text` loads the
+    frontmatter it is going to change, so a record somebody wrote in git whose
+    YAML never closes raised a ruamel ParserError under the router — a 500 with a
+    `text/plain` body, which is the one answer the editor cannot read back to say
+    what happened. The page below it is already telling the reader that this file
+    is not a record; this is what Save says when they try anyway.
+    """
+    try:
+        return patch_text(original, fields, body)
+    except Exception as error:  # noqa: BLE001 - a file in git can be anything
+        raise HTTPException(
+            422,
+            f"{path} is not a record, so it cannot be saved from here: "
+            f"{why_it_will_not_read(error, path)}. Fix it in git.",
+        ) from None
+
+
 def _directory_for(entity_id: str) -> str:
     """The directory an id belongs in, or a refusal. The one place an id becomes
     part of a path — everything else must come through here."""
@@ -444,8 +467,18 @@ def create_app(
 
     def index_now():
         commit = store.head()
-        config = _config_at(store, commit)
-        return commit, build_index(_entities_at(store, commit), config, date.today())
+        config, unreadable_config = _config_at(store, commit)
+        entities, unreadable_entities = _entities_at(store, commit)
+        return commit, build_index(
+            entities,
+            config,
+            date.today(),
+            # Sorted by path, because a reader works through the list by opening
+            # files and two walks finishing in whatever order is not that order.
+            unreadable=sorted(
+                [*unreadable_config, *unreadable_entities], key=lambda one: one.path
+            ),
+        )
 
     def viewer(request: Request) -> User | None:
         return read_session(request.cookies.get(SESSION_COOKIE), secret)
@@ -514,15 +547,23 @@ def create_app(
         return page(render.render_issues(index, render.ROUTES, commit))
 
     @app.get("/issue/new", response_class=HTMLResponse)
-    def new_issue() -> HTMLResponse:
+    def new_issue(request: Request) -> HTMLResponse:
         commit, index = index_now()
-        return page(render.render_issue(index, None, render.ROUTES, commit))
+        who = viewer(request)
+        return page(
+            render.render_issue(index, None, render.ROUTES, commit, who.login if who else "")
+        )
 
     @app.get("/issue/{issue_id}", response_class=HTMLResponse)
-    def one_issue(issue_id: str) -> HTMLResponse:
+    def one_issue(issue_id: str, request: Request) -> HTMLResponse:
         commit, index = index_now()
+        who = viewer(request)
         try:
-            return page(render.render_issue(index, issue_id, render.ROUTES, commit))
+            return page(
+                render.render_issue(
+                    index, issue_id, render.ROUTES, commit, who.login if who else ""
+                )
+            )
         except KeyError:
             raise HTTPException(404, f"no issue {issue_id!r}") from None
 
@@ -542,17 +583,22 @@ def create_app(
             raise HTTPException(422, "an issue needs a title")
 
         given = {k: v for k, v in (payload.get("fields") or {}).items()
-                 if k not in ("id", "title", "reported_by", "opened_on")}
+                 if k not in ("id", "title", "opened_on")}
         _reject_bad_issue(given)
         issue_id = f"issue-{secrets.token_hex(3)}"
         fields = {
             "id": issue_id,
             "title": title,
             "status": "ready",
-            **given,
-            # The server's, always: who opened it and when are facts about the
-            # act, not fields somebody fills in.
+            # Whoever is signed in, as a default rather than as a fact. The
+            # session knows who is writing — it is the same name that becomes the
+            # commit's author — and that is right almost every time. It is not
+            # right when somebody files what a colleague mentioned in a corridor,
+            # so the form can say otherwise.
             "reported_by": user.login,
+            **given,
+            # `opened_on` stays the server's: it is when this record was made,
+            # which is not an opinion.
             "opened_on": date.today().isoformat(),
         }
         content = patch_text("---\n---\n", fields, payload.get("body") or "")
@@ -695,6 +741,10 @@ def create_app(
                     "spans": {i: s.model_dump(mode="json") for i, s in index.spans.items()},
                     "explanations": {i: e.text for i, e in index.explanations.items()},
                     "problems": [p.model_dump(mode="json") for p in index.problems],
+                    # A script reading this has to be able to tell "the plan
+                    # holds sixteen tasks" from "the plan holds sixteen tasks
+                    # that parsed", and nothing else in this payload says so.
+                    "unreadable": [u.model_dump(mode="json") for u in index.unreadable],
                 }
             )
         )
@@ -730,7 +780,7 @@ def create_app(
 
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         _reject_bad_types(fields)
-        content = patch_text(original, fields, body)
+        content = _patched(original, fields, body, path)
         # Parse before writing, the same refusal the cycle route beside this one
         # makes, and for a worse reason: a record that fails to load takes `/`,
         # `/detail/<id>` and `/api/index.json` down for everybody, on every read,
@@ -744,7 +794,7 @@ def create_app(
             parse_text(content, path)
         except ValueError as error:
             raise HTTPException(
-                422, f"that would not read back as an entity: {_why(error)}"
+                422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
             ) from None
         written = store.write(
             path=path,
@@ -779,7 +829,7 @@ def create_app(
         fields["cycle"] = number
         _reject_bad_cycle(fields)
 
-        content = patch_text(original, fields, body)
+        content = _patched(original, fields, body, path)
         # Parse before writing, not after: a roster that fails to load would take
         # every date on every page with it, and the file would already be in git.
         # Refused rather than raised — everything the checks above do not name
@@ -790,7 +840,7 @@ def create_app(
             parse_cycle_text(content, path)
         except ValueError as error:
             raise HTTPException(
-                422, f"that would not read back as a cycle: {_why(error)}"
+                422, f"that would not read back as a cycle: {why_it_will_not_read(error)}"
             ) from None
         written = store.write(
             path=path,
@@ -880,7 +930,7 @@ def create_app(
         # is a path supplied by a browser once it becomes `tasks/<id>.md`.
         entity_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
         commit = store.head()
-        config = _config_at(store, commit)
+        config, _ = _config_at(store, commit)
         fields["id"] = entity_id
         # Grandfathering protects the corpus that already exists, not the entity
         # being written right now: something created today is held to today's rules.
@@ -897,11 +947,15 @@ def create_app(
             candidate = parse_text(content, entity_id)
         except ValueError as error:
             raise HTTPException(
-                422, f"that would not read back as an entity: {_why(error)}"
+                422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
             ) from None
         problems = [
             p
-            for p in validate_all([*_entities_at(store, commit), candidate], config)
+            # A file already in the plan that will not parse is not this entity's
+            # problem and must not stop it being created: the validator only
+            # needs the neighbours it can read, and the banner is what says the
+            # rest are missing.
+            for p in validate_all([*_entities_at(store, commit)[0], candidate], config)
             if p.entity_id == entity_id and p.severity == "blocker"
         ]
         if problems:

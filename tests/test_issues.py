@@ -75,7 +75,7 @@ def test_an_issue_is_not_an_entity_and_cannot_become_one(client: TestClient, rep
     assert _ISSUE_ID_PATTERN.match(issue_id)
     assert client.patch(f"/api/entity/{issue_id}", json={"base_commit": git_head(repo_path),
                                                          "fields": {}, "body": None}).status_code
-    entities, _ = load_repo(Path("seed"))
+    entities, _, _ = load_repo(Path("seed"))
     assert all(not e.id.startswith("issue-") for e in entities)
 
 
@@ -209,11 +209,20 @@ def test_the_list_is_a_table_sorted_the_way_the_other_table_sorts(client: TestCl
     """Same shape as the table view: columns that sort, click again to reverse,
     and `state` ranked as a sequence rather than as a word."""
     page = client.get("/issues").text
-    headers = re.findall(r'<th data-sort="(\w+)">', page)
+    headers = re.findall(r'<th data-sort="(\w+)"', page)
 
     assert headers == ["state", "title", "reported_by", "opened", "pitched", "tags"]
     assert "reversed = sorted === key ? !reversed : false;" in page
     assert "RANK.indexOf(row.dataset.state)" in page, "a state is a sequence, not a word"
+    # The affordances the entity table grew: a real button, because there is no
+    # way to tab to a cell; a direction glyph in a reserved box, so sorting does
+    # not shove every header sideways; and aria-sort, which is all a screen
+    # reader has to go on.
+    assert page.count('aria-sort="none"') == len(headers)
+    assert '<button type="button">' in page
+    assert '<span class="dir" aria-hidden="true">' in page
+    assert "head.setAttribute('aria-sort'" in page
+    assert "'\u25be' : '\u25b4'" in page.replace("▾", "\u25be").replace("▴", "\u25b4")
 
 
 def test_opening_an_issue_is_the_same_view_as_editing_one(client: TestClient, repo_path: Path):
@@ -251,15 +260,32 @@ def test_creating_writes_the_body_and_the_fields_in_one_commit(
     assert "- graph" in stored
 
 
-def test_who_opened_an_issue_is_the_servers_to_say(client: TestClient, repo_path: Path):
-    """Who noticed it and when are facts about the act, not fields to fill in."""
-    issue_id = opened(client, "x", git_head(repo_path), reported_by="somebody-else")
-    stored = pygit2.Repository(str(repo_path))[git_head(repo_path)].tree[
-        f"issues/{issue_id}.md"
-    ].data.decode()
+def test_the_reporter_defaults_to_whoever_is_signed_in(client: TestClient, repo_path: Path):
+    """The session knows who is writing — it is the same name that becomes the
+    commit's author — and that is right almost every time. It is not right when
+    somebody files what a colleague mentioned in a corridor, so the form can say
+    otherwise. `opened_on` stays the server's: when the record was made is not an
+    opinion."""
+    mine = opened(client, "x", git_head(repo_path))
+    theirs = opened(client, "y", git_head(repo_path), reported_by="halungge")
 
-    assert f"reported_by: {ANN.login}" in stored
-    assert "somebody-else" not in stored
+    def stored(issue_id: str) -> str:
+        return pygit2.Repository(str(repo_path))[git_head(repo_path)].tree[
+            f"issues/{issue_id}.md"
+        ].data.decode()
+
+    assert f"reported_by: {ANN.login}" in stored(mine)
+    assert "reported_by: halungge" in stored(theirs)
+    for issue_id in (mine, theirs):
+        assert re.search(r"opened_on: '\d{4}-\d{2}-\d{2}'", stored(issue_id))
+
+    refused = client.post(
+        "/api/issue",
+        json={"base_commit": git_head(repo_path), "title": "z",
+              "fields": {"opened_on": "1999-01-01"}},
+    )
+    assert refused.status_code == 200
+    assert "1999" not in stored(refused.json()["id"])
 
 
 def test_a_derived_state_cannot_also_be_set_by_hand(client: TestClient, repo_path: Path):
@@ -278,7 +304,9 @@ def test_a_derived_state_cannot_also_be_set_by_hand(client: TestClient, repo_pat
 
 
 def test_the_seed_corpus_carries_issues_that_load(seed_root: Path):
-    entities, config = load_repo(Path("seed"))
+    entities, config, unreadable = load_repo(Path("seed"))
+
+    assert not unreadable
     index = build_index(entities, config, date(2026, 8, 17))
 
     assert index.issues, "the demo corpus has issues"
@@ -286,3 +314,24 @@ def test_the_seed_corpus_carries_issues_that_load(seed_root: Path):
     assert {i.state(index.entities) for i in index.issues.values()} <= {
         "ready", "in_progress", "done", "shelved"
     }
+
+
+def test_a_new_issue_has_fields_to_type_in(client: TestClient):
+    """Creating IS editing. Without the class its own controls are gated on, the
+    page rendered every one of them and then hid all of them, so opening an issue
+    was a heading, a Save button and nothing to write in."""
+    blank = client.get("/issue/new").text
+    creating = re.search(r"const CREATING = true;.*?</script>", blank, re.S).group(0)
+
+    assert "document.body.classList.add('editing');" in creating
+    assert "body.editing .field { display: inline-block; }" in blank
+
+
+def test_the_formatting_bar_sits_above_the_body_not_beside_it(client: TestClient):
+    """`.field` on the bar won on specificity over `.bodybar` and turned it
+    inline-block, which put the textarea on the same line as the buttons."""
+    page = client.get("/issue/new").text
+    bar = re.search(r'<p class="([^"]*)bodybar[^"]*">', page).group(1)
+
+    assert "field" not in bar
+    assert "body.editing .bodybar { display: flex; }" in page

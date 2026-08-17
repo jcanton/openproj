@@ -284,7 +284,7 @@ def test_a_static_page_opens_no_event_stream(tmp_path: Path):
     from openproj.model import load_repo
     from openproj.render import render_static
 
-    entities, config = load_repo(Path("seed"))
+    entities, config, _ = load_repo(Path("seed"))
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
 
     assert "EventSource" not in (tmp_path / "index.html").read_text()

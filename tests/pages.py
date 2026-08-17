@@ -94,6 +94,82 @@ def nav_of(page: str) -> list[tuple[str, str, bool]]:
     return parser.found
 
 
+class _Unreadable(HTMLParser):
+    """The shell's "not a record" banner: its headline, and each file it lists."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: list[str] = []
+        self.headline = ""
+        self._depth = 0
+        self._text: list[str] | None = None
+        self._kind = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        found = dict(attrs)
+        if found.get("id") == "unreadable":
+            self._depth = 1
+            # A banner that exists says at least this much, so an empty one is
+            # still distinguishable from no banner at all.
+            self.headline = self.headline or "(no headline)"
+            return
+        if not self._depth:
+            return
+        # Every element inside counts, so the `<code>` wrapping the path does not
+        # close the section on its own end tag.
+        self._depth += 1
+        if tag == "li" or "headline" in (found.get("class") or "").split():
+            self._text, self._kind = [], tag
+            self._kind = "item" if tag == "li" else "headline"
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._depth:
+            return
+        if self._text is not None and (
+            (self._kind == "item" and tag == "li") or (self._kind == "headline" and tag == "p")
+        ):
+            said = " ".join("".join(self._text).split())
+            if self._kind == "item":
+                self.found.append(said)
+            else:
+                self.headline = said
+            self._text = None
+        self._depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._text is not None:
+            self._text.append(data)
+
+
+def unreadable_in(page: str) -> list[str]:
+    """"<path> — <why>" for each plan file the page says is not a record.
+
+    Read out of the parsed document and not searched for in the served bytes.
+    The shell inlines its own stylesheet into every page and the comments in it
+    name files, quote sentences and spell out `.unreadable` — a substring test
+    for a path finds its answer in a CSS comment as happily as in a banner, which
+    is exactly how two earlier assertions in this suite passed over nothing.
+    """
+    parser = _Unreadable()
+    parser.feed(page)
+    return parser.found
+
+
+def banner_says(page: str) -> str:
+    """The headline of that banner, or "" when the page draws no banner.
+
+    Separate from the list, and not derived from it, because an empty list is the
+    answer to two different questions: "there is no banner" and "there is a
+    banner with nothing in it". A test written only against the list stayed green
+    with the `{% if %}` around the section deleted — an empty red box announcing
+    "0 files in the plan are not records" on every page in the app, which is the
+    negative case it was written to hold and could not see.
+    """
+    parser = _Unreadable()
+    parser.feed(page)
+    return parser.headline
+
+
 def lit(page: str) -> list[str]:
     """The label of every nav item carrying `aria-current="page"`.
 

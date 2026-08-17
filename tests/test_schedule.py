@@ -543,13 +543,13 @@ GOLDEN_OVERRUNS = {
 
 
 def test_the_seed_corpus_schedules_to_the_golden_timeline(seed_root: Path):
-    entities, config = model.load_repo(seed_root)
+    entities, config, _ = model.load_repo(seed_root)
     spans, _ = schedule(entities, config, GOLDEN_TODAY)
     assert {i: (s.start, s.end) for i, s in spans.items()} == GOLDEN_SPANS
 
 
 def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
-    entities, config = model.load_repo(seed_root)
+    entities, config, _ = model.load_repo(seed_root)
     spans, _ = schedule(entities, config, GOLDEN_TODAY)
     assert not GOLDEN_ABSENT & spans.keys()
     overruns = {i: s.overruns_cycle_weeks for i, s in spans.items() if s.overruns_cycle_weeks}

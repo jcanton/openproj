@@ -10,16 +10,17 @@ from __future__ import annotations
 import io
 import math
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationError, field_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
+from ruamel.yaml.error import MarkedYAMLError
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
@@ -190,6 +191,95 @@ class Issue(BaseModel):
         if all(entity.status in ("done", "shelved") for entity in linked):
             return "done"
         return "in_progress"
+class Unreadable(BaseModel):
+    """A file in the plan that is not a record, and the reason in one line.
+
+    Deliberately not a `Problem`. A Problem is about an entity: it is keyed by
+    entity id, every page hangs it on that entity's row, and the table's headline
+    count links to a filter over entities. A file that will not parse has no
+    entity — that is precisely what is wrong with it — so keying one to a path
+    would add to a count whose filter can never show it, which is the mismatch
+    that count was fixed for once already.
+    """
+
+    path: str
+    why: str
+
+
+def why_it_will_not_read(error: BaseException, path: str = "") -> str:
+    """One line somebody can act on, out of whatever the read threw.
+
+    `str(ValidationError)` is four lines and a documentation URL; a ruamel error
+    is a paragraph with a caret drawn under the offending column. What a reader
+    standing in front of a banner needs is which field, or which line, and the
+    rest is noise that makes the banner unread.
+
+    `path` is stripped off the front when the message already carries it — the
+    parse errors raised here name their source, and the banner names the file
+    beside the reason, so leaving it in prints the path twice on one line.
+    """
+    if isinstance(error, ValidationError):
+        said = "; ".join(
+            f"{'.'.join(str(part) for part in one['loc']) or 'the record'}: {one['msg']}"
+            for one in error.errors()
+        )
+    elif isinstance(error, MarkedYAMLError):
+        # The line number is the only thing that makes a YAML error actionable,
+        # and it is the part `str()` buries under the drawing.
+        where = f", line {error.problem_mark.line + 1}" if error.problem_mark else ""
+        said = f"{error.context + ', ' if error.context else ''}{error.problem}{where}"
+    elif isinstance(error, ValueError):
+        said = str(error)
+    else:
+        # Named rather than swallowed. Anything arriving here is a way of failing
+        # nobody has met yet, and "could not be read" with no reason attached is
+        # a sentence people learn to skip.
+        said = f"{type(error).__name__}: {error}"
+    prefix = f"{path}: "
+    return said[len(prefix) :] if path and said.startswith(prefix) else said
+
+
+def readable[T](
+    paths: Iterable[str], load: Callable[[str], T]
+) -> tuple[list[T], list[Unreadable]]:
+    """The records that loaded, and one `Unreadable` for every file that did not.
+
+    The one place a plan file is read, because there were four and not one of
+    them had this. `load` does the whole trip — fetch the bytes, decode them,
+    scan the YAML, validate the model — since every one of those steps is a way a
+    file somebody wrote in git fails, and a guard around only the last of them is
+    the guard that was already here.
+
+    Fifteen files proved it: no `---` at all, a flow sequence that never closes,
+    a tab where YAML wants spaces, `effort_weeks: three`, `assigned_on: next
+    tuesday`, a frontmatter written as a list, a cycle numbered `forty-one`, a
+    config file that is half a line. Every one of them answered 500 on `/`,
+    `/graph`, `/timeline`, `/people`, `/cycles`, `/detail`, `/new` and
+    `/api/index.json` at once — not the page that shows the file, every page, for
+    every reader, until somebody with a terminal fixed it. `openproj check`, the
+    tool you would reach for to find out which file, died with a traceback on the
+    first one and never mentioned the second.
+
+    `except Exception`, and this is the one place in the codebase that earns it.
+    The failures are not one family and cannot be enumerated: `no YAML
+    frontmatter` is a ValueError raised twenty lines below, an unclosed flow
+    sequence is a ruamel ParserError, a size spelled as a word is a pydantic
+    ValidationError, bytes that are not UTF-8 are a UnicodeDecodeError out of the
+    decode, and a frontmatter written as a list reached `.get` as an
+    AttributeError. A tuple of the ones that have been seen is a denylist, and
+    the cost of missing the next spelling is every page for everybody — which is
+    the failure this function exists to end. What each one *says* is
+    `why_it_will_not_read`'s problem, and it names the type for anything it does
+    not recognise, so nothing is lost by catching broadly here.
+    """
+    records: list[T] = []
+    refused: list[Unreadable] = []
+    for path in paths:
+        try:
+            records.append(load(path))
+        except Exception as error:  # noqa: BLE001 - see above; this is the file boundary
+            refused.append(Unreadable(path=path, why=why_it_will_not_read(error, path)))
+    return records, refused
 
 
 class Cycle(BaseModel):
@@ -279,21 +369,67 @@ class Config(BaseModel):
         )
 
 
-def load_config(root: Path) -> Config:
-    """Merge the three config files. Absent files fall back to the defaults.
+def _config_mapping(path: str, text: str) -> tuple[str, dict]:
+    loaded = YAML(typ="safe").load(text)
+    if loaded is None:  # an empty config file is not a broken one
+        return path, {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path}: a config file is a map of settings, and this is not")
+    return path, loaded
 
-    Unknown keys are ignored so that a repository with a half-written config
-    still loads rather than taking the whole index down.
+
+def read_config(
+    paths: Iterable[str], text_of: Callable[[str], str]
+) -> tuple[Config, list[Unreadable]]:
+    """The merged configuration, and the config files that could not be merged.
+
+    `paths` are repository-relative and are the config files that exist; reading
+    them is `text_of`'s job and is done inside the guard, because a config file
+    saved in latin-1 is a UnicodeDecodeError before any of this gets a look at it.
+
+    Validated after each file rather than once at the end. "The configuration is
+    invalid" names no file and leaves a reader four to search; validating the
+    merge as it grows says which one broke it. A file that will not merge is
+    dropped and named, and the settings in the others still load — the same
+    bargain the entity files get, and for the same reason: `holidays:
+    [not-a-day]` is one word in one file and it took every page down.
     """
+    loaded, refused = readable(paths, lambda path: _config_mapping(path, text_of(path)))
     data: dict[str, object] = {}
-    for name in CONFIG_FILES:
-        path = root / "config" / name
-        if not path.is_file():
+    for path, mapping in loaded:
+        # Unknown keys are ignored so a repository with a half-written config
+        # still loads rather than taking the whole index down.
+        candidate = {**data, **{k: v for k, v in mapping.items() if k in Config.model_fields}}
+        try:
+            Config.model_validate(candidate)
+        except ValidationError as error:
+            refused.append(Unreadable(path=path, why=why_it_will_not_read(error, path)))
             continue
-        loaded = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            data.update({k: v for k, v in loaded.items() if k in Config.model_fields})
-    return Config.model_validate(data)
+        data = candidate
+    return Config.model_validate(data), refused
+
+
+def load_config(root: Path) -> Config:
+    """Merge the config files on disk. Absent files fall back to the defaults.
+
+    Drops `read_config`'s second answer on purpose: a caller that wants the
+    settings should not have to take delivery of a report, and `load_repo` below
+    is what carries it to the pages. Nothing that renders anything calls this.
+    """
+    return read_config(*_config_on_disk(root))[0]
+
+
+def _config_on_disk(root: Path) -> tuple[list[str], Callable[[str], str]]:
+    """The config files this repository actually has, and how to read one.
+
+    Filtered to what exists rather than letting a missing file raise: absent is
+    the normal state of three of the four, and reporting `holidays.yaml` as
+    unreadable because nobody wrote one would make the banner meaningless.
+    """
+    paths = [
+        f"config/{name}" for name in CONFIG_FILES if (root / "config" / name).is_file()
+    ]
+    return paths, lambda path: (root / path).read_text(encoding="utf-8")
 
 
 class Entity(BaseModel):
@@ -403,6 +539,13 @@ def parse_text(text: str, source: str) -> Entity:
     """Parse one entity file. `source` names the file in error messages only."""
     frontmatter, body = _split(text, source)
     data = _round_trip_yaml().load(frontmatter) or {}
+    # Said here rather than met four lines down as `'CommentedSeq' object has no
+    # attribute 'get'`. A frontmatter written as a list of one-key items is a
+    # plausible typo — it is what you get from pasting a bullet list — and the
+    # reader is owed the sentence rather than the internals of the thing that
+    # tripped over it.
+    if not isinstance(data, dict):
+        raise ValueError(f"{source}: the frontmatter has to be a map of fields, and this is not")
 
     kind = data.get("kind")
     if kind not in _MODELS:
@@ -432,6 +575,8 @@ def parse_cycle_text(text: str, source: str) -> Cycle:
     fraction that is the whole point of the record."""
     frontmatter, body = _split(text, source)
     data = _round_trip_yaml().load(frontmatter) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{source}: the frontmatter has to be a map of fields, and this is not")
     fields = {k: v for k, v in data.items() if k in Cycle.model_fields}
     return Cycle.model_validate({**fields, "body": body})
 
@@ -492,23 +637,65 @@ def serialise(entity: Entity, original_text: str | None = None) -> str:
     return f"---\n{stream.getvalue()}---\n" + (f"\n{entity.body}" if entity.body else "")
 
 
-def load_repo(root: Path) -> tuple[list[Entity], Config]:
-    """Everything in a plan repository, with the cycle records folded into the
-    config rather than returned beside it.
+def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
+    """Everything in a plan repository: the records, the configuration, and the
+    files that are neither.
 
-    Sixteen call sites take `(entities, config)`, and a cycle is configuration in
-    the sense that matters here: nothing iterates it, everything looks it up. A
-    third element would have been a third thing for every caller to thread
-    through and drop.
+    The cycle records are folded into the config rather than returned beside it,
+    because a cycle is configuration in the sense that matters here: nothing
+    iterates it, everything looks it up.
+
+    The files that will not read are the third element and cannot be folded
+    anywhere, because everything about them is a list somebody has to work
+    through. Three values and not two, and the two-value version is what every
+    caller had until this round: it raised on the first file that would not
+    parse, so `openproj check` died with a traceback instead of reporting, never
+    mentioned the second bad file, and the server answered 500 on every route to
+    every reader until somebody with a terminal fixed the first one. A repository
+    a whole team can push to will contain a file that is not a record; that is
+    not an exceptional condition, it is Tuesday.
     """
-    entities = [
-        parse_file(path)
-        for directory in _ENTITY_DIRS
-        for path in sorted((root / directory).glob("*.md"))
-    ]
-    plans = [parse_cycle_file(path) for path in sorted((root / _CYCLE_DIR).glob("*.md"))]
-    issues = [parse_issue_file(path) for path in sorted((root / _ISSUE_DIR).glob("*.md"))]
-    return entities, load_config(root).with_plans(plans).with_issues(issues)
+    entities, unreadable = readable(
+        [
+            f"{directory}/{path.name}"
+            for directory in _ENTITY_DIRS
+            for path in sorted((root / directory).glob("*.md"))
+        ],
+        # Read here rather than through `parse_file`, so the name in the message
+        # is the name in `Unreadable.path`. `parse_file` names its source by the
+        # absolute path it was handed, and the banner prints the path beside the
+        # reason — so the two disagreeing put `/private/var/…/tasks/x.md` after
+        # `tasks/x.md` on one line, and the served pages and `openproj check`
+        # would answer differently to somebody grepping a build log for a file.
+        lambda relative: parse_text((root / relative).read_text(encoding="utf-8"), relative),
+    )
+    plans, unreadable_plans = readable(
+        [f"{_CYCLE_DIR}/{path.name}" for path in sorted((root / _CYCLE_DIR).glob("*.md"))],
+        lambda relative: parse_cycle_text(
+            (root / relative).read_text(encoding="utf-8"), relative
+        ),
+    )
+    # Issues through the same door: a file somebody hand-edited in git is how
+    # every one of these fails, and an issue file is no different from a cycle
+    # file in that respect.
+    issues, unreadable_issues = readable(
+        [f"{_ISSUE_DIR}/{path.name}" for path in sorted((root / _ISSUE_DIR).glob("*.md"))],
+        lambda relative: parse_issue_text(
+            (root / relative).read_text(encoding="utf-8"), relative
+        ),
+    )
+    config, unreadable_config = read_config(*_config_on_disk(root))
+    return (
+        entities,
+        config.with_plans(plans).with_issues(issues),
+        # Sorted by path, so the banner and `openproj check` list them in the
+        # order somebody would open them rather than in the order three separate
+        # walks happened to finish.
+        sorted(
+            [*unreadable, *unreadable_plans, *unreadable_issues, *unreadable_config],
+            key=lambda one: one.path,
+        ),
+    )
 
 
 def ancestors(entity_id: str, by_id: dict[str, Entity]) -> list[str]:

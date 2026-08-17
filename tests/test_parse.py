@@ -155,7 +155,7 @@ def test_ancestors_are_nearest_first():
 
 
 def test_ancestors_of_a_seed_task_reach_its_pitch(seed_root: Path):
-    entities, _ = load_repo(seed_root)
+    entities, _, _ = load_repo(seed_root)
     by_id = {entity.id: entity for entity in entities}
     assert ancestors("task-2b6c94", by_id) == ["pitch-2a7f3e"]
     assert ancestors("task-0e4b7a", by_id) == ["proj-7e57a0"]
@@ -196,7 +196,7 @@ def test_size_weeks_keeps_a_stated_zero():
 
 
 def test_load_repo_loads_the_whole_seed_corpus(seed_root: Path):
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     assert len(entities) == 17
     kinds = [entity.kind for entity in entities]
     assert kinds.count("project") == 1
@@ -207,6 +207,6 @@ def test_load_repo_loads_the_whole_seed_corpus(seed_root: Path):
 
 
 def test_load_repo_of_an_empty_directory_is_empty(tmp_path: Path):
-    entities, config = load_repo(tmp_path)
+    entities, config, _ = load_repo(tmp_path)
     assert entities == []
     assert config == Config()

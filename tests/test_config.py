@@ -65,7 +65,7 @@ def test_a_cycle_record_supersedes_the_dates_in_config(tmp_path: Path):
         "availability:\n  ann: 0.5\n---\n## Goal\n\nShip it.\n"
     )
 
-    _, config = load_repo(tmp_path)
+    _, config, _ = load_repo(tmp_path)
 
     assert config.cycles[36] == (date(2026, 6, 22), date(2026, 8, 14))  # untouched
     assert config.cycles[37] == (date(2026, 8, 17), date(2026, 9, 27))  # from the record

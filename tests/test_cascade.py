@@ -37,7 +37,7 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(seed_root: Path) -> Index:
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     return build_index(entities, config, date(2026, 8, 17))
 
 

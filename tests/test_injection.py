@@ -234,7 +234,7 @@ def static_pages(root: Path, out: Path, plan: dict[str, str]) -> dict[str, str]:
     for path, content in plan.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content, encoding="utf-8")
-    entities, config = load_repo(root)
+    entities, config, _ = load_repo(root)
     index = build_index(entities, config, date(2026, 8, 17))
     render_static(index, out)
     return {name: (out / name).read_text(encoding="utf-8") for name in STATIC_PAGES}

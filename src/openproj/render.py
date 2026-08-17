@@ -42,6 +42,7 @@ from .model import (
     Pitch,
     Project,
     Task,
+    Unreadable,
     days_after,
     required_at,
     size_weeks,
@@ -1406,6 +1407,24 @@ tr.nothing .hint { margin: 0 0 .75rem; }
          padding: .5rem .8rem; font-size: 13px; border-radius: 3px; }
 #moved a { color: var(--on-accent); }
 #moved .sha { font-family: var(--font-mono); opacity: .7; }
+/* The plan is incomplete, and the page must not be able to look complete. Drawn
+   with the blocker severity's own tokens rather than a fourth colour of its own:
+   a file that is not a record is the most blocking thing this repository can
+   hold, and it should read as the same kind of thing as the mark on a row that
+   is missing a required field — the same vocabulary, one level up, about the
+   plan instead of about an entity. */
+.unreadable { border-left: 3px solid var(--sev-blocker); background: var(--sev-blocker-soft);
+              padding: .6rem .8rem; margin: 0 0 1rem; font-size: 13px; }
+.unreadable .headline { margin: 0 0 .35rem; font-weight: 600; color: var(--fg); }
+.unreadable ul { margin: 0; padding-left: 1.1rem; }
+.unreadable li { margin: .15rem 0; }
+/* A path is a thing you type back into a terminal, so it is set in the face the
+   rest of the app sets identifiers in. `overflow-wrap` because the reason beside
+   it is a sentence of unbounded length and the box is as narrow as the window: a
+   phone at 360px would otherwise scroll the whole page sideways. */
+.unreadable code { font-family: var(--font-mono); }
+.unreadable li, .unreadable .headline { overflow-wrap: anywhere; }
+.unreadable .hint { margin: .35rem 0 0; color: var(--muted); }
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no
    toggle for it and nothing in `remembered` — the browser answers, every page.
@@ -1624,6 +1643,25 @@ function settleRoom(passes) {
 function fitRoom() { settleRoom(4); }
 </script>
 <main id="main">
+{#- What the plan holds that is not a record, on every page because the shell
+    draws it and no page can forget. Inside `<main>` and first, so "Skip to the
+    content" lands on it: everything in these files is missing from every count,
+    every row, every bar and every node on the page, and there is nothing else
+    that says so.
+
+    The quiet failure is the one this is here for. Before it, a file that would
+    not parse answered 500 on all eight routes — loud, permanent, and at least
+    unmistakable. Skipping the file and saying nothing would trade that for a
+    table that draws fifteen of sixteen tasks and looks completely normal, which
+    is worse: you cannot act on what you cannot see is missing. -#}
+{% if unreadable %}<section id="unreadable" class="unreadable">
+<p class="headline">{{ headline }}</p>
+<ul>{% for one in unreadable %}
+  <li><code>{{ one.path }}</code> — {{ one.why }}</li>{% endfor %}
+</ul>
+<p class="hint">Fix them in git and reload. Everything else in the plan is here.</p>
+</section>
+{% endif -%}
 {{ content }}
 </main>
 <script>
@@ -5109,7 +5147,16 @@ _DETAIL = """
   {% endif %}
   <div class="panes">
     <aside class="facts">
-      <dl id="facts">
+      {#- The id only where there is one of these on the page. This template is
+          rendered once per entity, and the static export puts every entity in
+          one document — so the export carried seventeen elements with the same
+          id, which is invalid, and which makes `getElementById('facts')` answer
+          with the first entity's list whatever the hash says. Nothing calls it
+          today: the styling is `.panes > .facts dl` and the class beside it, so
+          the id is a hook rather than a rule. A hook that answers the wrong
+          element is worse than no hook, and `{% if single %}` is what an id
+          means. -#}
+      <dl{% if single %} id="facts"{% endif %}>
         {#- The label only where the control it names is on the page. In read
             mode there is no control and a `<label for>` would point at nothing;
             in edit mode it is the only thing giving the box a name, because a
@@ -5981,7 +6028,13 @@ def render_new(
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
     )
-    return _page(f"openproj — new {kind}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
+    return _page(
+        f"openproj — new {kind}",
+        body,
+        _DETAIL_STYLE + _SUGGEST_STYLE,
+        links,
+        unreadable=index.unreadable if index else (),
+    )
 
 
 def _pr_sort(ref: str) -> tuple[str, int]:
@@ -7085,6 +7138,7 @@ def render_cycle(
         # The heading below is "Cycle 37", which is the thing you are looking at
         # and not the word in the nav, so it stays on the screen.
         "cycles",
+        index.unreadable,
     )
 
 
@@ -7201,18 +7255,26 @@ def render_issues(
         _ISSUES,
         issues=rows,
         statuses=list(ISSUE_STATUS),
+        columns=(
+            ("state", "state"), ("title", "title"), ("reported_by", "reported by"),
+            ("opened", "opened"), ("pitched", "pitched into"), ("tags", "tags"),
+        ),
         human=_human,
         links=links,
         editable=base_commit is not None,
     )
-    return _page("Issues", body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues")
+    return _page(
+        "Issues", body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues",
+        unreadable=index.unreadable,
+    )
 
 
 def render_issue(
     index: Index,
-    issue_id: str | None,
+    issue_id: str | None = None,
     links: Links = ROUTES,
     base_commit: str | None = None,
+    signed_in: str = "",
 ) -> str:
     """One issue, or a blank one. The same page either way.
 
@@ -7234,17 +7296,22 @@ def render_issue(
         links=links,
         editable=base_commit is not None,
         base_commit=base_commit or "",
+        signed_in=signed_in,
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
         original={
             "title": view["title"],
             "status": view["status"],
+            "reported_by": view["reported_by"] or "",
             "pitched_into": view["pitched_list"],
             "tags": view["tag_list"],
             "body": view["body"],
         },
     )
     title = "A new issue" if creating else view["title"] or view["id"]
-    return _page(title, body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues")
+    return _page(
+        title, body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues",
+        unreadable=index.unreadable,
+    )
 
 
 def _issue_view(
@@ -7342,7 +7409,10 @@ def render_cycles(
         },
         roster=last.availability if last else {},
     )
-    return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links, "cycles")
+    return _page(
+        "openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links, "cycles",
+        index.unreadable,
+    )
 
 
 def _person_load(index: Index, logins: list[str]) -> dict:
@@ -7460,7 +7530,7 @@ def render_people(index: Index, links: Links = STATIC) -> str:
         load=load,
         filters=_FILTER_JS,
     )
-    return _page("openproj — people", body, _PEOPLE_STYLE, links, "people")
+    return _page("openproj — people", body, _PEOPLE_STYLE, links, "people", index.unreadable)
 
 
 def _by_status(rows: list[dict]) -> list[dict]:
@@ -7515,7 +7585,10 @@ def render_detail(
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
     )
-    return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail")
+    return _page(
+        "openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail",
+        index.unreadable,
+    )
 
 
 _NO_ASIDE = Markup("")
@@ -7578,9 +7651,14 @@ _ISSUES = """
 </div>
 <div id="summary"><span id="shown">{{ issues|length }}</span> of {{ issues|length }}</div>
 <div class="table-scroll"><table id="issues"><thead><tr>
-  <th data-sort="state">state</th><th data-sort="title">title</th>
-  <th data-sort="reported_by">reported by</th><th data-sort="opened">opened</th>
-  <th data-sort="pitched">pitched into</th><th data-sort="tags">tags</th>
+  {#- A real button inside every header, the way the entity table does it: there
+      is no way to tab to a table cell, so a click handler on the cell alone made
+      sorting mouse-only. The direction glyph has its own reserved box so that
+      sorting does not shove every header one glyph to the left. -#}
+  {% for column, label in columns %}
+  <th data-sort="{{ column }}" aria-sort="none"
+    ><button type="button">{{ label }}<span class="dir" aria-hidden="true"></span></button></th>
+  {%- endfor %}
 </tr></thead><tbody>
   {% for issue in issues %}
   <tr data-id="{{ issue.id }}" data-state="{{ issue.state }}" data-text="{{ issue.search }}"
@@ -7628,8 +7706,21 @@ apply();
 const RANK = {{ statuses|tojson }};
 let sorted = null;
 let reversed = false;
-for (const head of document.querySelectorAll('#issues th[data-sort]')) {
-  head.addEventListener('click', () => {
+const HEADS = [...document.querySelectorAll('#issues th[data-sort]')];
+
+function mark() {
+  for (const head of HEADS) {
+    const here = head.dataset.sort === sorted;
+    head.classList.toggle('sorted', here);
+    // The direction was invisible, so a column looked the same sorted either
+    // way. Announced as well as drawn: aria-sort is all a screen reader has.
+    head.setAttribute('aria-sort', here ? (reversed ? 'descending' : 'ascending') : 'none');
+    head.querySelector('.dir').textContent = here ? (reversed ? '▾' : '▴') : '';
+  }
+}
+
+for (const head of HEADS) {
+  head.querySelector('button').addEventListener('click', () => {
     const key = head.dataset.sort;
     reversed = sorted === key ? !reversed : false;
     sorted = key;
@@ -7639,8 +7730,7 @@ for (const head of document.querySelectorAll('#issues th[data-sort]')) {
     const order = [...ROWS].sort((a, b) => value(a).localeCompare(value(b)));
     if (reversed) order.reverse();
     order.forEach(row => BODY_ROWS.append(row));
-    for (const other of document.querySelectorAll('#issues th[data-sort]'))
-      other.classList.toggle('sorted', other === head);
+    mark();
   });
 }
 </script>
@@ -7678,6 +7768,11 @@ _ISSUE = """
       </select>
       {% if issue.derived %}<span class="hint">from the work it was pitched into</span>
       {% endif %}</dd>
+    <dt>Reported by</dt>
+    <dd><span class="read">{{ issue.reported_by or '—' }}</span>
+      <input name="reported_by" data-suggest="people" class="field"
+             value="{{ issue.reported_by }}" autocomplete="off"
+             placeholder="{{ signed_in }}"></dd>
     <dt>Pitched into</dt>
     <dd><span class="read">{{ issue.pitched }}</span>
       <input name="pitched_into" data-type="list" data-suggest="entities" class="field"
@@ -7691,7 +7786,7 @@ _ISSUE = """
     {% for problem in issue.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc read">{{ issue.rendered }}</div>
   {% if editable %}
-  <p class="field bodybar">
+  <p class="bodybar">
     <span id="marks" class="marks"></span>
     <span class="hint">paste or drop an image to put it in the plan</span>
     <span class="hint" id="upload" role="status" aria-live="polite"></span>
@@ -7730,7 +7825,7 @@ function changed() {
   // Diffed against what was rendered, never serialised whole: sending every field
   // would overwrite whatever somebody else changed while this tab was open.
   const fields = {};
-  for (const name of ['title', 'status', 'pitched_into', 'tags']) {
+  for (const name of ['title', 'status', 'reported_by', 'pitched_into', 'tags']) {
     const now = read(name);
     if (now === null) continue;
     if (JSON.stringify(now) !== JSON.stringify(ORIGINAL[name])) fields[name] = now;
@@ -7764,7 +7859,7 @@ if (!CREATING) {
     if (!on) {
       // Cancel puts back what was rendered rather than reloading: a reload would
       // also throw away a body somebody is part way through.
-      for (const name of ['title', 'status', 'pitched_into', 'tags']) {
+      for (const name of ['title', 'status', 'reported_by', 'pitched_into', 'tags']) {
         const control = FORM.querySelector(`[name=${name}]`);
         if (!control) continue;
         const was = ORIGINAL[name];
@@ -7776,7 +7871,12 @@ if (!CREATING) {
   };
   show(false);
 } else {
+  // Creating IS editing. Without this the page rendered every control and then
+  // hid all of them behind `body.editing`, so a new issue was a heading, a Save
+  // button and nothing to type in.
+  document.body.classList.add('editing');
   document.getElementById('toggle').onclick = () => { location.href = '{{ links.issues }}'; };
+  dirty();
 }
 
 SAVE.onclick = async () => {
@@ -7813,8 +7913,18 @@ _ISSUES_STYLE = """
   vertical-align: top;
 }
 #issues th { color: var(--muted); font-weight: 400; font-size: 11px;
-             text-transform: uppercase; letter-spacing: .04em;
-             cursor: pointer; user-select: none; }
+             text-transform: uppercase; letter-spacing: .04em; user-select: none;
+             position: sticky; top: 0; z-index: 3; background: var(--surface);
+             /* A collapsed border is not painted on a sticky cell — the first row
+                scrolls straight over the top of it — so the rule is drawn inside
+                the box instead. */
+             box-shadow: inset 0 -1px 0 var(--line); }
+#issues th button { font: inherit; color: inherit; letter-spacing: inherit;
+                    text-transform: inherit; background: none; border: 0; padding: 0;
+                    cursor: pointer; }
+/* Reserved whether or not this is the sorted column, so sorting does not shove
+   every header one glyph to the left. */
+#issues th .dir { display: inline-block; width: .8em; color: var(--accent); }
 #issues th.sorted { color: inherit; font-weight: 700; }
 #issues td:nth-child(2) { font-weight: 600; }
 .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
@@ -7831,6 +7941,9 @@ _ISSUES_STYLE = """
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
+/* `display: flex` and not `inline-block`, and NOT carrying `.field`: with that
+   class on it, `body.editing .field` won on specificity and the bar went
+   inline — putting the textarea on the same line as the buttons. */
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem; }
 body.editing .bodybar { display: flex; }
 #facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
@@ -7856,7 +7969,12 @@ _NAV_KEYS = frozenset(key for key, _ in _NAV)
 
 
 def _page(
-    title: str, content: str, style: str = "", links: Links = STATIC, current: str = ""
+    title: str,
+    content: str,
+    style: str = "",
+    links: Links = STATIC,
+    current: str = "",
+    unreadable: Sequence[Unreadable] = (),
 ) -> str:
     """Autoescaping protects entity titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
@@ -7875,6 +7993,11 @@ def _page(
 
     A `current` that is not a nav key raises rather than quietly marking nothing,
     because marking nothing is the exact defect this round is here to fix.
+
+    `unreadable` is the plan files that are not records. It is drawn here rather
+    than by each page for the same reason the nav mark is decided here: eight
+    entry points is eight places to forget, and the one page that forgot would be
+    a page that silently draws a plan short.
     """
     if current and current not in _NAV_KEYS:
         raise ValueError(f"{current!r} is not a nav item: {sorted(_NAV_KEYS)}")
@@ -7884,6 +8007,16 @@ def _page(
         style=Markup(style),
         font=_font_uri(),
         links=links,
+        unreadable=list(unreadable),
+        # The sentence is built here rather than in the template, because English
+        # is not something Jinja should be doing arithmetic about and "1 files
+        # are not records" is the kind of copy that tells a reader nobody looked.
+        headline=(
+            "One file in the plan is not a record, so nothing in it is on this page."
+            if len(unreadable) == 1
+            else f"{len(unreadable)} files in the plan are not records, "
+                 "so nothing in them is on this page."
+        ),
         nav=[
             {"href": getattr(links, key), "label": label, "current": key == current}
             for key, label in _NAV
@@ -7937,7 +8070,10 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
-    return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table")
+    return _page(
+        "openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table",
+        index.unreadable,
+    )
 
 
 def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
@@ -7967,7 +8103,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         dagre=_library("dagre.min.js"),
         cytoscape_dagre=_library("cytoscape-dagre.js"),
     )
-    return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph")
+    return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 
 
 _ZOOMS = (("2", "months"), ("6", "weeks"), ("14", "days"), ("30", "close"))
@@ -8009,7 +8145,9 @@ def render_timeline(
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
     )
-    return _page("openproj — timeline", body, _timeline_css(), links, "timeline")
+    return _page(
+        "openproj — timeline", body, _timeline_css(), links, "timeline", index.unreadable
+    )
 
 
 def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tuple[str, ...]:

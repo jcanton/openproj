@@ -74,7 +74,7 @@ def family_index() -> Index:
 
 @pytest.fixture
 def seed_index(seed_root: Path) -> Index:
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     return build_index(entities, config, TODAY)
 
 
@@ -612,7 +612,7 @@ def test_the_seed_incomplete_entities_are_the_ones_missing_fields(seed_index: In
 
 
 def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Path):
-    entities, config = load_repo(seed_root)
+    entities, config, _ = load_repo(seed_root)
     index = build_index(entities, config, TODAY)
     spans, explanations = schedule(entities, config, TODAY)
 
@@ -662,7 +662,7 @@ def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(s
 def test_a_pr_reference_is_searchable(demo_root: Path):
     """"Which entity is #1364?" is asked in front of a screen, and the answer was
     findable only if the number also happened to appear in the prose."""
-    entities, config = load_repo(demo_root)
+    entities, config, _ = load_repo(demo_root)
     index = build_index(entities, config, TODAY)
     cited = {ref for e in index.entities.values() for ref in e.prs}
     assert cited, "the demo corpus cites PRs"
@@ -675,7 +675,7 @@ def test_a_pr_reference_is_searchable(demo_root: Path):
 def test_work_running_past_its_cycles_build_is_a_filter(demo_root: Path):
     """Shape Up's circuit breaker. Derived from dates the tool already has, rather
     than from anything a person remembers to set."""
-    entities, config = load_repo(demo_root)
+    entities, config, _ = load_repo(demo_root)
     index = build_index(entities, config, TODAY)
     caught = [i for i in index.entities if _matches_predicate(index, i, "past_cycle_build")]
 
