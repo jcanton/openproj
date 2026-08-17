@@ -16,7 +16,7 @@ from markupsafe import escape
 from pages import headings, lit
 
 from openproj.index import Index, build_index
-from openproj.model import load_repo
+from openproj.model import Config, load_repo
 from openproj.render import STATUS_GLYPH, STATUSES, render_static
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
@@ -3564,3 +3564,27 @@ def test_the_progress_column_appears_only_once_a_plan_has_a_checklist(seed_index
     # is there, which is what makes the two rendered pages differ.
     assert seed_index.progress
     assert "progress" in dict(_columns_for(seed_index))
+
+
+def test_a_cycle_with_no_record_says_what_every_other_view_says_about_it(seed_index: Index):
+    """Cool-down is inside a window, so taking the window's last day for the
+    review meeting made the page offer 7.8 weeks of capacity against a build the
+    scheduler ends seven weeks in. Three answers about one cycle, and a betting
+    table would have bet against the largest.
+
+    The corpus dates cycles 28 and 34–36 in `config/cycles.yaml` and writes a
+    record for none of them, which is the state every plan passes through."""
+    from openproj.render import _cycle_view
+    from openproj.schedule import build_end
+
+    config = Config(holidays=seed_index.holidays, cooldown_weeks=seed_index.cooldown_weeks)
+    unrecorded = [n for n in seed_index.cycles if n not in seed_index.plans]
+    assert unrecorded, "the corpus dates cycles it has written no record for"
+
+    for number in unrecorded:
+        view = _cycle_view(seed_index, number)
+        window = seed_index.cycles[number]
+
+        assert view["builds_until"] == build_end(number, window, config).isoformat(), number
+        assert view["ends_on"] == window[1].isoformat(), number
+        assert float(view["build_weeks"]) <= config.working_weeks(*window), number

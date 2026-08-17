@@ -357,6 +357,13 @@ class Config(BaseModel):
             day = days_after(day, -1)
         return day
 
+    def next_working_day(self, day: date) -> date:
+        """The first working day strictly after `day`, capped at the calendar."""
+        day = days_after(day, 1)
+        while day < date.max and not self.is_working_day(day):
+            day = days_after(day, 1)
+        return day
+
     def working_weeks(self, first: date, last: date) -> float:
         """Working days in an inclusive span, in weeks of five.
 

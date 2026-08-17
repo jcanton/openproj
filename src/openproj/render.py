@@ -7315,16 +7315,46 @@ _ROLE_FILTER = {
 }
 
 
-def _resolved(plan: Cycle, index: Index) -> Cycle:
-    """One unsaved cycle, put through the same resolver a stored one goes through.
+def _proposed(index: Index, number: int, window: tuple[date, date] | None) -> Cycle:
+    """The record Save would write for a cycle nobody has written one for.
 
-    `Config.with_plans` is the only thing that turns two meetings into a build
-    end, a cool-down end and a length in working weeks. A page that did that
-    arithmetic itself would be a second implementation of the calendar, and the
-    two would disagree about a holiday the day one of them was corrected.
+    Every date on it comes from where the rest of the tool already gets that
+    cycle's dates: the `config/cycles.yaml` window, and `schedule.build_end`,
+    which is what the overrun flag and the timeline's solid rule both read. This
+    page must not have arithmetic of its own — it had, briefly, and it took the
+    end of the WINDOW for the review meeting. Cool-down is inside a window, so
+    cycle 36 offered 7.8 weeks of capacity against a build the scheduler ends
+    seven weeks in: three answers about one cycle, and the largest of them was
+    the number a betting table would have bet against.
+
+    A cycle nobody has dated at all falls back to the team's cadence, and both
+    dates are marked assumed so the page says so.
     """
     config = Config(holidays=index.holidays, cooldown_weeks=index.cooldown_weeks)
-    return config.with_plans([*index.plans.values(), plan]).plans[plan.cycle]
+    if window is None:
+        starts_on = index.today
+        builds_until = days_after(starts_on, _DEFAULT_CYCLE_DAYS - 1)
+        ends_on = days_after(builds_until, round(index.cooldown_weeks * 7))
+    else:
+        starts_on = window[0]
+        builds_until = build_end(number, window, config)
+        ends_on = window[1]
+    return Cycle(
+        cycle=number,
+        starts_on=starts_on,
+        # The meeting is the day after the last day of build, and nobody holds one
+        # on a Saturday.
+        reviews_on=config.next_working_day(builds_until),
+        builds_until=builds_until,
+        # A window whose cool-down is longer than the window itself would end
+        # before its own build. One bad row in a config file, not a broken page.
+        ends_on=max(ends_on, builds_until),
+        build_weeks=config.working_weeks(starts_on, builds_until),
+        # Nobody wrote either of them: the review is inferred from the global
+        # cool-down, and the end is only as good as the window it came from.
+        assumed_review=True,
+        assumed_end=window is None,
+    )
 
 
 def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
@@ -7349,14 +7379,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     # the same way a real one is: `with_plans` is what turns two meetings into
     # dates and a length, and doing that arithmetic a second time here is how the
     # form and the page start disagreeing about the same cycle.
-    proposed = plan or _resolved(
-        Cycle(
-            cycle=number,
-            starts_on=window[0] if window else index.today,
-            reviews_on=window[1] if window else None,
-        ),
-        index,
-    )
+    proposed = plan or _proposed(index, number, window)
     listed = list(plan.availability) if plan else list(index.known_people)
     ends_on = proposed.ends_on.isoformat() if proposed.ends_on else ""
 
