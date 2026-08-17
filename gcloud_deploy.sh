@@ -27,13 +27,24 @@ set -euo pipefail
 # everything below, and a throwaway is fine to start.
 #
 #     gcloud projects create icon4py-plan-<something-unique> --name openproj
-#     gcloud billing projects link <that-id> --billing-account <your account>
 #
 # Project IDs are globally unique across all of Google Cloud, so the plain names
 # are long gone; add a suffix. It cannot be changed later, but the service can
 # be redeployed into a different project in minutes, so this is not a decision
 # to agonise over.
-PROJECT=""
+#
+# The project also needs billing enabled — Cloud Run, Cloud Build and Artifact
+# Registry all refuse without it, free tier included. A *billing account* cannot
+# be created from the CLI at all; it takes a card, at
+# https://console.cloud.google.com/billing. Once one exists:
+#
+#     gcloud billing accounts list                     # ID, not your email
+#     gcloud billing projects link <project-id> --billing-account 01ABCD-EF2345-6789GH
+#
+# The flag wants that dashed ID. Given an email it answers `INVALID_ARGUMENT:
+# Request contains an invalid argument` and names neither the field nor the
+# format it wanted.
+PROJECT="icon4py-plan-gcloud"
 
 # Zurich. europe-west1 (Belgium) is the alternative and is marginally cheaper;
 # both are fine for a service that scales to zero.

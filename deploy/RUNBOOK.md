@@ -226,6 +226,22 @@ still comes from C2SM.
 
 ## 4. Deploy
 
+**Before anything else: the project needs billing enabled.** Cloud Run, Cloud
+Build and Artifact Registry all refuse without it, free tier included — and a
+billing account cannot be created from the CLI, because it takes a card. Make one
+at <https://console.cloud.google.com/billing>, then:
+
+```bash
+gcloud projects create icon4py-plan-<something-unique> --name openproj
+gcloud billing accounts list      # the dashed ID, 01ABCD-EF2345-6789GH
+gcloud billing projects link icon4py-plan-<...> --billing-account <that ID>
+gcloud billing projects describe icon4py-plan-<...>   # billingEnabled: true
+```
+
+`--billing-account` wants that ID and not your email address; given an email it
+answers `INVALID_ARGUMENT: Request contains an invalid argument`, naming neither
+the field nor the format.
+
 Everything below is in **`gcloud_deploy.sh`** at the repository root. Fill in the
 block marked FILL IN — the project, the two GitHub App ids, the OAuth client id —
 and run it from the root:
