@@ -38,6 +38,7 @@ from .model import (
     Config,
     Cycle,
     Entity,
+    Issue,
     Pitch,
     Project,
     Task,
@@ -654,6 +655,7 @@ class Links(BaseModel):
     cycles: str = "cycles.html"
     cycle: str = "cycles.html#"  # prefix, then the cycle number
     issues: str = "issues.html"
+    issue: str = "issues.html#"  # prefix, then the issue id
     asset: str = "assets/"  # a rendered file sits beside the assets it names
 
 
@@ -661,7 +663,8 @@ STATIC = Links()
 ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
-    cycles="/cycles", cycle="/cycle/", issues="/issues", asset="/assets/",
+    cycles="/cycles", cycle="/cycle/", issues="/issues", issue="/issue/",
+    asset="/assets/",
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -7197,14 +7200,90 @@ def render_issues(
     body = _fragment(
         _ISSUES,
         issues=rows,
-        statuses=ISSUE_STATUS,
+        statuses=list(ISSUE_STATUS),
+        human=_human,
+        links=links,
+        editable=base_commit is not None,
+    )
+    return _page("Issues", body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues")
+
+
+def render_issue(
+    index: Index,
+    issue_id: str | None,
+    links: Links = ROUTES,
+    base_commit: str | None = None,
+) -> str:
+    """One issue, or a blank one. The same page either way.
+
+    A second, differently-shaped form for opening an issue is what made the tool
+    feel like two tools the last time, so this is the create view and the edit
+    view with one flag between them.
+    """
+    creating = issue_id is None
+    issue = index.issues.get(issue_id or "") if not creating else None
+    if not creating and issue is None:
+        raise KeyError(issue_id)
+    view = _issue_view(issue, index, links) if issue else _blank_issue()
+    body = _fragment(
+        _ISSUE,
+        issue=view,
+        creating=creating,
+        statuses=list(ISSUE_STATUS),
         human=_human,
         links=links,
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        combobox=_combobox_html(index) if base_commit is not None else "",
+        combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        original={
+            "title": view["title"],
+            "status": view["status"],
+            "pitched_into": view["pitched_list"],
+            "tags": view["tag_list"],
+            "body": view["body"],
+        },
     )
-    return _page("Issues", body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues")
+    title = "A new issue" if creating else view["title"] or view["id"]
+    return _page(title, body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues")
+
+
+def _issue_view(
+    issue: Issue, index: Index, links: Links, problems: dict[str, list[str]] | None = None
+) -> dict:
+    if problems is None:
+        problems = {}
+        for problem in index.issue_problems:
+            problems.setdefault(problem.entity_id, []).append(problem.message)
+    return {
+        "id": issue.id,
+        "title": issue.title,
+        "status": issue.status,
+        "state": issue.state(index.entities),
+        # An issue whose links decide its state cannot also be set by hand: two
+        # ways to say one thing disagree the moment one of them is used.
+        "derived": bool(issue.pitched_into) and issue.status != "shelved",
+        "reported_by": issue.reported_by,
+        "opened": issue.opened_on.isoformat() if issue.opened_on else "",
+        "tags": ", ".join(issue.tags),
+        "tag_list": list(issue.tags),
+        "pitched_into": ", ".join(issue.pitched_into),
+        "pitched_list": list(issue.pitched_into),
+        "pitched": _links(issue.pitched_into, index, links) or Markup("—"),
+        "body": issue.body,
+        "rendered": _markdown(issue.body, links) if issue.body else Markup(""),
+        "problems": problems.get(issue.id, []),
+        "search": f"{issue.id} {issue.title} {' '.join(issue.tags)} "
+        f"{issue.reported_by or ''} {issue.body}".lower(),
+    }
+
+
+def _blank_issue() -> dict:
+    return {
+        "id": "", "title": "", "status": "ready", "state": "ready", "derived": False,
+        "reported_by": "", "opened": "", "tags": "", "tag_list": [],
+        "pitched_into": "", "pitched_list": [], "pitched": Markup(""),
+        "body": "", "rendered": Markup(""), "problems": [], "search": "",
+    }
 
 
 def render_cycles(
@@ -7480,17 +7559,10 @@ def _combobox_html(index: Index | None) -> Markup:
 # nowhere.
 _ISSUES = """
 <h1 class="sr-only">Issues</h1>
-<p class="hint">Something somebody noticed. Most of these will never be worked on,
-  which is the point of having somewhere to put them — at the betting table
-  somebody reads what is open and writes a pitch for what matters.</p>
+<p class="hint">Something somebody noticed. At the betting table somebody reads what
+  is open and writes a pitch for what matters.</p>
 {% if editable %}
-<form id="open" class="editbar" onsubmit="return false">
-  <input id="what" placeholder="What did you notice?" autocomplete="off"
-         aria-label="What did you notice?">
-  <button type="button" id="add">Open an issue</button>
-  <span id="state" role="status" aria-live="polite"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</form>
+<p class="editbar"><a class="button" href="{{ links.issue }}new">Open an issue</a></p>
 {% endif %}
 <div id="controls">
   <input id="q" type="search" placeholder="Search issues" aria-label="Search issues">
@@ -7505,121 +7577,32 @@ _ISSUES = """
   </div>
 </div>
 <div id="summary"><span id="shown">{{ issues|length }}</span> of {{ issues|length }}</div>
-{% for issue in issues %}
-<details class="issue" data-id="{{ issue.id }}" data-state="{{ issue.state }}"
-         data-text="{{ issue.search }}">
-  <summary>
-    <span class="badge state-{{ issue.state }}">{{ human(issue.state) }}</span>
-    <span class="what">{{ issue.title }}</span>
-    <span class="tocmeta">{{ issue.opened }}{% if issue.reported_by %} ·
-      {{ issue.reported_by }}{% endif %}{% if issue.pitched %} · in
-      {{ issue.pitched }}{% endif %}</span>
-  </summary>
-  <dl class="facts">
-    <dt>Title</dt>
-    <dd>{% if editable %}<input data-field="title" value="{{ issue.title }}"
-        autocomplete="off">{% else %}{{ issue.title }}{% endif %}</dd>
-    <dt>State</dt>
-    <dd>
-      {% if editable %}
-      <select data-field="status" {{ 'disabled' if issue.derived else '' }}>
-        {% for value in statuses %}<option value="{{ value }}"
-          {{ 'selected' if value == issue.status else '' }}>{{ human(value) }}</option>
-        {% endfor %}
-      </select>
-      {% else %}{{ human(issue.status) }}{% endif %}
-      {% if issue.derived %}<span class="hint">from the work it was pitched
-        into</span>{% endif %}
-    </dd>
-    <dt>Pitched into</dt>
-    <dd>{% if editable %}<input data-field="pitched_into" data-type="list"
-        data-suggest="entities" autocomplete="off"
-        value="{{ issue.pitched_into }}">{% else %}{{ issue.pitched_into or '—' }}{% endif %}</dd>
-    <dt>Tags</dt>
-    <dd>{% if editable %}<input data-field="tags" data-type="list" data-suggest="tags"
-        autocomplete="off" value="{{ issue.tags }}">{% else %}{{ issue.tags or '—' }}
-        {% endif %}</dd>
-  </dl>
-  {% if editable %}
-  <p class="bodybar"><span class="hint">paste or drop an image to put it in the
-    plan</span></p>
-  <textarea data-field="body" class="body-field" rows="8">{{ issue.body }}</textarea>
-  {% elif issue.rendered %}<div class="doc">{{ issue.rendered }}</div>{% endif %}
-  {% if issue.problems %}<ul class="problems">
-    {% for problem in issue.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
-</details>
-{% endfor %}
-{{ combobox }}
+<div class="table-scroll"><table id="issues"><thead><tr>
+  <th data-sort="state">state</th><th data-sort="title">title</th>
+  <th data-sort="reported_by">reported by</th><th data-sort="opened">opened</th>
+  <th data-sort="pitched">pitched into</th><th data-sort="tags">tags</th>
+</tr></thead><tbody>
+  {% for issue in issues %}
+  <tr data-id="{{ issue.id }}" data-state="{{ issue.state }}" data-text="{{ issue.search }}"
+      data-title="{{ issue.title }}" data-reported_by="{{ issue.reported_by or '' }}"
+      data-opened="{{ issue.opened }}" data-pitched="{{ issue.pitched_into }}"
+      data-tags="{{ issue.tags }}">
+    <td><span class="badge state-{{ issue.state }}">{{ human(issue.state) }}</span></td>
+    <td><a href="{{ links.issue }}{{ issue.id }}">{{ issue.title }}</a></td>
+    <td>{{ issue.reported_by or '—' }}</td>
+    <td class="derived">{{ issue.opened or '—' }}</td>
+    <td>{{ issue.pitched }}</td>
+    <td>{{ issue.tags or '—' }}</td>
+  </tr>
+  {% endfor %}
+</tbody></table></div>
 <script>
-const OPEN = document.getElementById('add');
-const BASE = document.getElementById('base');
-const SAY = document.getElementById('state');
-
-function say(message) { if (SAY) SAY.textContent = message; }
-
-if (OPEN) {
-  // The shortest write in the tool. Somebody noticed something while doing
-  // something else; anything asked for beyond a title is a reason not to write
-  // it down at all.
-  const WHAT = document.getElementById('what');
-  const open = async () => {
-    const title = WHAT.value.trim();
-    if (!title) return;
-    OPEN.disabled = true;
-    const response = await fetch('/api/issue', {
-      method: 'POST', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, title}),
-    });
-    const answer = await response.json();
-    OPEN.disabled = false;
-    if (!response.ok) { say(refusal(answer, response.status)); return; }
-    location.reload();
-  };
-  OPEN.onclick = open;
-  WHAT.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); open(); } };
-
-  for (const control of document.querySelectorAll('.issue [data-field]')) {
-    if (control.dataset.suggest) attachSuggest(control);
-    // No formatting toolbar here yet: `attachEditing` is on the two_feats
-    // branch, and a `typeof` check to pick it up if it happens to be there is a
-    // worse thing to leave behind than one line to add when that merges.
-    if (control.tagName === 'TEXTAREA') attachUploads(control, SAY);
-    let was = control.value;
-    let edited = control.tagName === 'SELECT';
-    control.addEventListener('input', () => { edited = true; });
-    control.onblur = control.onchange = async () => {
-      if (!edited || control.value === was) return;
-      const id = control.closest('.issue').dataset.id;
-      const value = control.dataset.type === 'list'
-        ? [...new Set(control.value.split(',').map(s => s.trim()).filter(Boolean))]
-        : control.value;
-      const response = await fetch(`/api/issue/${id}`, {
-        method: 'PATCH', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({
-          base_commit: BASE.value,
-          fields: control.dataset.field === 'body' ? {} : {[control.dataset.field]: value},
-          body: control.dataset.field === 'body' ? control.value : null,
-        }),
-      });
-      const answer = await response.json();
-      if (!response.ok) {
-        control.value = was;
-        say(refusal(answer, response.status));
-        return;
-      }
-      BASE.value = answer.commit || BASE.value;
-      was = control.value;
-      edited = control.tagName === 'SELECT';
-      say(`${id} saved`);
-    };
-  }
-}
-
 // Open issues are the question the page exists to answer, so they are what it
 // shows until somebody asks for more.
-const ROWS = [...document.querySelectorAll('details.issue')];
+const ROWS = [...document.querySelectorAll('#issues tbody tr')];
 const QUERY = document.getElementById('q');
 const STATE = document.getElementById('state-filter');
+const BODY_ROWS = document.querySelector('#issues tbody');
 
 function apply() {
   const text = QUERY.value.trim().toLowerCase();
@@ -7639,31 +7622,228 @@ function apply() {
 QUERY.oninput = apply;
 STATE.onchange = apply;
 apply();
+
+// Sorting, the way the table view sorts: click to sort, click again to reverse.
+// `state` is a sequence rather than a word, so it gets a rank like status does.
+const RANK = {{ statuses|tojson }};
+let sorted = null;
+let reversed = false;
+for (const head of document.querySelectorAll('#issues th[data-sort]')) {
+  head.addEventListener('click', () => {
+    const key = head.dataset.sort;
+    reversed = sorted === key ? !reversed : false;
+    sorted = key;
+    const value = row => key === 'state'
+      ? String(RANK.indexOf(row.dataset.state)).padStart(3, '0')
+      : (row.dataset[key] || '');
+    const order = [...ROWS].sort((a, b) => value(a).localeCompare(value(b)));
+    if (reversed) order.reverse();
+    order.forEach(row => BODY_ROWS.append(row));
+    for (const other of document.querySelectorAll('#issues th[data-sort]'))
+      other.classList.toggle('sorted', other === head);
+  });
+}
 </script>
 """
 
+_ISSUE = """
+<p class="back"><a href="{{ links.issues }}">← all issues</a></p>
+{% if editable %}
+<p class="editbar">
+  <button type="button" id="toggle">{{ 'Cancel' if creating else 'Edit' }}</button>
+  <button type="button" id="save" {{ '' if creating else 'hidden' }}>
+    {{ 'Open it' if creating else 'Save' }}</button>
+  <span id="state" role="status" aria-live="polite"></span>
+</p>
+{% endif %}
+<h1>{% if creating %}A new issue{% else %}<span class="read">{{ issue.title }}</span>
+{% endif %}</h1>
+{% if not creating %}
+<p class="meta"><code>{{ issue.id }}</code> ·
+  <span class="badge state-{{ issue.state }}">{{ human(issue.state) }}</span>
+  {% if issue.opened %}· opened {{ issue.opened }}{% endif %}
+  {% if issue.reported_by %}· by {{ issue.reported_by }}{% endif %}</p>
+{% endif %}
+<form id="edit" data-id="{{ issue.id }}" onsubmit="return false">
+  <input type="hidden" name="base_commit" value="{{ base_commit }}">
+  <input name="title" class="field title-field" value="{{ issue.title }}"
+         placeholder="What did you notice?" autocomplete="off" aria-label="Title">
+  <dl id="facts">
+    <dt>State</dt>
+    <dd><span class="read">{{ human(issue.state) }}</span>
+      <select name="status" class="field" {{ 'disabled' if issue.derived else '' }}>
+        {% for value in statuses %}<option value="{{ value }}"
+          {{ 'selected' if value == issue.status else '' }}>{{ human(value) }}</option>
+        {% endfor %}
+      </select>
+      {% if issue.derived %}<span class="hint">from the work it was pitched into</span>
+      {% endif %}</dd>
+    <dt>Pitched into</dt>
+    <dd><span class="read">{{ issue.pitched }}</span>
+      <input name="pitched_into" data-type="list" data-suggest="entities" class="field"
+             value="{{ issue.pitched_into }}" autocomplete="off"></dd>
+    <dt>Tags</dt>
+    <dd><span class="read">{{ issue.tags or '—' }}</span>
+      <input name="tags" data-type="list" data-suggest="tags" class="field"
+             value="{{ issue.tags }}" autocomplete="off"></dd>
+  </dl>
+  {% if issue.problems %}<ul class="problems">
+    {% for problem in issue.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
+  <div class="doc read">{{ issue.rendered }}</div>
+  {% if editable %}
+  <p class="field bodybar">
+    <span id="marks" class="marks"></span>
+    <span class="hint">paste or drop an image to put it in the plan</span>
+    <span class="hint" id="upload" role="status" aria-live="polite"></span>
+  </p>
+  <textarea name="body" class="field body-field" rows="12"
+            placeholder="What happened, and how to see it again.">{{ issue.body }}</textarea>
+  {% endif %}
+</form>
+{{ combobox }}
+{% if editable %}
+<script>
+const FORM = document.getElementById('edit');
+const SAVE = document.getElementById('save');
+const SAY = document.getElementById('state');
+const BASE = FORM.querySelector('[name=base_commit]');
+const BODY = FORM.querySelector('[name=body]');
+const CREATING = {{ 'true' if creating else 'false' }};
+const ORIGINAL = {{ original|tojson }};
+
+attachUploads(BODY, document.getElementById('upload'));
+attachEditing(BODY, document.getElementById('marks'));
+for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
+
+function say(message) { SAY.textContent = message; }
+
+function read(name) {
+  const control = FORM.querySelector(`[name=${name}]`);
+  if (!control) return null;
+  const value = control.value.trim();
+  if (control.dataset.type === 'list')
+    return value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
+  return value;
+}
+
+function changed() {
+  // Diffed against what was rendered, never serialised whole: sending every field
+  // would overwrite whatever somebody else changed while this tab was open.
+  const fields = {};
+  for (const name of ['title', 'status', 'pitched_into', 'tags']) {
+    const now = read(name);
+    if (now === null) continue;
+    if (JSON.stringify(now) !== JSON.stringify(ORIGINAL[name])) fields[name] = now;
+  }
+  return fields;
+}
+
+function dirty() {
+  const count = Object.keys(changed()).length + (BODY.value !== ORIGINAL.body ? 1 : 0);
+  if (!CREATING) SAVE.hidden = !editing();
+  SAVE.disabled = !CREATING && count === 0;
+  if (!CREATING) say(count ? `${count} unsaved change${count === 1 ? '' : 's'}` : '');
+}
+
+function editing() {
+  return CREATING || document.body.classList.contains('editing');
+}
+
+function show(on) {
+  document.body.classList.toggle('editing', on);
+  document.getElementById('toggle').textContent = on ? 'Cancel' : 'Edit';
+  dirty();
+}
+
+FORM.addEventListener('input', dirty);
+FORM.addEventListener('change', dirty);
+
+if (!CREATING) {
+  document.getElementById('toggle').onclick = () => {
+    const on = !document.body.classList.contains('editing');
+    if (!on) {
+      // Cancel puts back what was rendered rather than reloading: a reload would
+      // also throw away a body somebody is part way through.
+      for (const name of ['title', 'status', 'pitched_into', 'tags']) {
+        const control = FORM.querySelector(`[name=${name}]`);
+        if (!control) continue;
+        const was = ORIGINAL[name];
+        control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
+      }
+      BODY.value = ORIGINAL.body;
+    }
+    show(on);
+  };
+  show(false);
+} else {
+  document.getElementById('toggle').onclick = () => { location.href = '{{ links.issues }}'; };
+}
+
+SAVE.onclick = async () => {
+  SAVE.disabled = true;
+  const route = CREATING ? '/api/issue' : `/api/issue/${FORM.dataset.id}`;
+  const response = await fetch(route, {
+    method: CREATING ? 'POST' : 'PATCH',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      base_commit: BASE.value,
+      title: read('title'),
+      fields: CREATING
+        ? {...changed(), title: read('title')}
+        : changed(),
+      body: BODY.value,
+    }),
+  });
+  const answer = await response.json();
+  if (!response.ok) {
+    SAVE.disabled = false;
+    say(refusal(answer, response.status));
+    return;
+  }
+  location.href = CREATING ? `{{ links.issue }}${answer.id}` : location.pathname;
+};
+</script>
+{% endif %}
+"""
+
 _ISSUES_STYLE = """
-details.issue { border-bottom: 1px solid var(--line); padding: .5rem 0; }
-details.issue summary { cursor: pointer; display: flex; gap: .6rem; align-items: baseline; }
-details.issue .what { font-weight: 600; }
-details.issue dl.facts { display: grid; grid-template-columns: 9rem 1fr; gap: .3rem .8rem;
-                         margin: .8rem 0 .4rem 1.2rem; align-items: baseline; }
-details.issue dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
-                   letter-spacing: .04em; }
-details.issue input, details.issue select { font: inherit; font-size: 13px; width: 100%;
-                                            max-width: 32rem; }
-details.issue textarea { width: 100%; max-width: 40rem; margin-left: 1.2rem; }
-#open { display: flex; gap: .5rem; align-items: baseline; margin: .75rem 0; }
-#what { font: inherit; font-size: 13px; min-width: 22rem; }
+#issues { border-collapse: collapse; width: 100%; font-size: 13px; }
+#issues th, #issues td {
+  border-bottom: 1px solid var(--line); padding: .35rem .6rem; text-align: left;
+  vertical-align: top;
+}
+#issues th { color: var(--muted); font-weight: 400; font-size: 11px;
+             text-transform: uppercase; letter-spacing: .04em;
+             cursor: pointer; user-select: none; }
+#issues th.sorted { color: inherit; font-weight: 700; }
+#issues td:nth-child(2) { font-weight: 600; }
+.badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+         white-space: nowrap; }
+.state-ready { color: var(--accent); }
+.state-in_progress { color: var(--accent); }
+.state-done { color: var(--muted); }
+.state-shelved { color: var(--muted); }
 /* The few rules this page shares with the detail page, copied rather than
    inherited. `_DETAIL_STYLE` carries the width grip and its transition, which is
-   a control this page does not have — and the motion inventory is right to say
-   that a page should not ship animation for an element it never renders. */
+   a control these pages do not have — and the motion inventory is right that a
+   page should not ship animation for an element it never renders. */
 .problems { color: var(--warn); padding-left: 1.1rem; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
-.bodybar { display: flex; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem 1.2rem; }
+.bodybar { display: none; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem; }
+body.editing .bodybar { display: flex; }
+#facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
+         margin: 1rem 0; align-items: baseline; }
+#facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
+            letter-spacing: .04em; }
+.field { display: none; }
+body.editing .field { display: inline-block; }
+body.editing .read { display: none; }
+.title-field { font-size: 1.4rem; font-weight: 700; width: 100%; max-width: 44rem; }
+.body-field { width: 100%; max-width: 44rem; font-family: ui-monospace, monospace;
+              font-size: 13px; }
+#facts .field { width: 100%; max-width: 28rem; font: inherit; font-size: 13px; }
 """
 
 

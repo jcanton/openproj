@@ -513,6 +513,19 @@ def create_app(
         commit, index = index_now()
         return page(render.render_issues(index, render.ROUTES, commit))
 
+    @app.get("/issue/new", response_class=HTMLResponse)
+    def new_issue() -> HTMLResponse:
+        commit, index = index_now()
+        return page(render.render_issue(index, None, render.ROUTES, commit))
+
+    @app.get("/issue/{issue_id}", response_class=HTMLResponse)
+    def one_issue(issue_id: str) -> HTMLResponse:
+        commit, index = index_now()
+        try:
+            return page(render.render_issue(index, issue_id, render.ROUTES, commit))
+        except KeyError:
+            raise HTTPException(404, f"no issue {issue_id!r}") from None
+
     @app.post("/api/issue")
     async def open_issue(request: Request) -> JSONResponse:
         """Deliberately the shortest write path in the tool.
@@ -528,11 +541,17 @@ def create_app(
         if not title:
             raise HTTPException(422, "an issue needs a title")
 
+        given = {k: v for k, v in (payload.get("fields") or {}).items()
+                 if k not in ("id", "title", "reported_by", "opened_on")}
+        _reject_bad_issue(given)
         issue_id = f"issue-{secrets.token_hex(3)}"
         fields = {
             "id": issue_id,
             "title": title,
             "status": "ready",
+            **given,
+            # The server's, always: who opened it and when are facts about the
+            # act, not fields somebody fills in.
             "reported_by": user.login,
             "opened_on": date.today().isoformat(),
         }

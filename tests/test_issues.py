@@ -41,8 +41,10 @@ def client(repo_path: Path):
         yield client
 
 
-def opened(client: TestClient, title: str, base: str) -> str:
-    response = client.post("/api/issue", json={"base_commit": base, "title": title})
+def opened(client: TestClient, title: str, base: str, **fields) -> str:
+    response = client.post(
+        "/api/issue", json={"base_commit": base, "title": title, "fields": fields}
+    )
     assert response.status_code == 200, response.text
     return response.json()["id"]
 
@@ -201,6 +203,78 @@ def test_the_page_shows_open_issues_until_it_is_asked_for_more(client: TestClien
 
     assert "state !== 'done' && state !== 'shelved'" in script
     assert "wanted === '*' ? true" in script
+
+
+def test_the_list_is_a_table_sorted_the_way_the_other_table_sorts(client: TestClient):
+    """Same shape as the table view: columns that sort, click again to reverse,
+    and `state` ranked as a sequence rather than as a word."""
+    page = client.get("/issues").text
+    headers = re.findall(r'<th data-sort="(\w+)">', page)
+
+    assert headers == ["state", "title", "reported_by", "opened", "pitched", "tags"]
+    assert "reversed = sorted === key ? !reversed : false;" in page
+    assert "RANK.indexOf(row.dataset.state)" in page, "a state is a sequence, not a word"
+
+
+def test_opening_an_issue_is_the_same_view_as_editing_one(client: TestClient, repo_path: Path):
+    """A second, differently-shaped form for creating is what made the tool feel
+    like two tools the last time. One template, one flag."""
+    blank = client.get("/issue/new").text
+    issue_id = opened(client, "Something", git_head(repo_path))
+    existing = client.get(f"/issue/{issue_id}").text
+
+    for shape in ('<form id="edit"', 'name="title"', 'name="body"', 'id="marks"',
+                  'name="pitched_into"', 'id="save"'):
+        assert shape in blank, shape
+        assert shape in existing, shape
+    assert "const CREATING = true;" in blank
+    assert "const CREATING = false;" in existing
+    assert re.search(r'id="save"[^>]*>\s*Open it\s*</button>', blank)
+    assert client.get("/issue/nope").status_code == 404
+
+
+def test_creating_writes_the_body_and_the_fields_in_one_commit(
+    client: TestClient, repo_path: Path
+):
+    """Opening an issue used to take a title and nothing else, so the body had to
+    be found in a list and filled in afterwards — two visits for one thought."""
+    before = git_head(repo_path)
+    issue_id = opened(client, "Edges cross nodes", before, tags=["graph"])
+    after = git_head(repo_path)
+    stored = pygit2.Repository(str(repo_path))[after].tree[
+        f"issues/{issue_id}.md"
+    ].data.decode()
+
+    assert len(list(pygit2.Repository(str(repo_path)).walk(after))) == len(
+        list(pygit2.Repository(str(repo_path)).walk(before))
+    ) + 1, "one commit, not two"
+    assert "- graph" in stored
+
+
+def test_who_opened_an_issue_is_the_servers_to_say(client: TestClient, repo_path: Path):
+    """Who noticed it and when are facts about the act, not fields to fill in."""
+    issue_id = opened(client, "x", git_head(repo_path), reported_by="somebody-else")
+    stored = pygit2.Repository(str(repo_path))[git_head(repo_path)].tree[
+        f"issues/{issue_id}.md"
+    ].data.decode()
+
+    assert f"reported_by: {ANN.login}" in stored
+    assert "somebody-else" not in stored
+
+
+def test_a_derived_state_cannot_also_be_set_by_hand(client: TestClient, repo_path: Path):
+    """Two ways to say one thing disagree the moment one of them is used."""
+    issue_id = opened(client, "x", git_head(repo_path))
+    client.patch(
+        f"/api/issue/{issue_id}",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"pitched_into": ["task-c00001"]}, "body": None},
+    )
+    page = client.get(f"/issue/{issue_id}").text
+    control = re.search(r'<select name="status"[^>]*>', page).group(0)
+
+    assert "disabled" in control
+    assert "from the work it was pitched into" in page
 
 
 def test_the_seed_corpus_carries_issues_that_load(seed_root: Path):
