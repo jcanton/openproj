@@ -226,12 +226,26 @@ else
   note "$BUILD_SA created"
 fi
 
-for role in roles/artifactregistry.writer roles/logging.logWriter roles/storage.objectAdmin; do
+# storage.admin and not the narrower objectAdmin, which was tried and is not
+# enough. Cloud Build's regional log bucket —
+# `gs://<project-number>-<region>-cloudbuild-logs` — does not exist until the
+# first build, and the build is what creates it. Creating a bucket is a bucket
+# permission, not an object one, so objectAdmin fails with
+#
+#     FAILED_PRECONDITION: service account ... does not have access to bucket
+#     "gs://...-cloudbuild-logs". Please grant the service account
+#     roles/storage.admin.
+#
+# and a bucket-scoped grant is impossible on a bucket that is not there yet.
+# Project-wide is therefore the only shape this can take, and it is narrower than
+# it sounds here: the only buckets this project has are the ones Cloud Build makes
+# for itself. The plan is in git, not in GCS.
+for role in roles/artifactregistry.writer roles/logging.logWriter roles/storage.admin; do
   gcloud projects add-iam-policy-binding "$PROJECT" \
     --member "serviceAccount:${BUILD_SA}" --role "$role" \
     --condition=None >/dev/null
 done
-note "artifactregistry.writer, logging.logWriter, storage.objectAdmin"
+note "artifactregistry.writer, logging.logWriter, storage.admin"
 
 say "Building ${IMAGE}"
 note "uploads this directory minus .gcloudignore, then builds deploy/Dockerfile"
