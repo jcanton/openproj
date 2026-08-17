@@ -5865,7 +5865,7 @@ _DETAIL_STYLE = """
    the longest of the three, with the gap inside it rather than as a margin, so
    a row that wraps wraps its title and not its marker. */
 .toc li .chip.kind-project, .toc li .chip.kind-pitch, .toc li .chip.kind-task {
-  display: inline-block; min-width: 4.2rem; text-align: center;
+  display: inline-block; min-width: 5.4rem; text-align: center;
   margin-right: .5rem; vertical-align: baseline;
 }
 /* Centred, and a container so the panes below can ask how wide the column
