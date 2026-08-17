@@ -289,6 +289,7 @@ class Element {
   }
 
   appendChild(node) { this.append(node); return node; }
+  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
   insertAdjacentElement(_where, node) { node.parentNode = this.parentNode; return node; }
   insertAdjacentHTML(_where, html) { WRITTEN.push(String(html)); }
   remove() {}
@@ -428,6 +429,19 @@ async function run(html, expression, options) {
   const replies = (options.replies || []).slice();
 
   function answer(url, init) {
+    // The shell asks `/api/me` on every page load, to draw who is signed in.
+    // That is not the write path any of these tests are about: recorded, it
+    // shifts every assertion about `calls` by one, and answered from `replies`
+    // it eats the refusal the test scripted for the save. Answered here, signed
+    // out, which is what a driven page with no session is.
+    if (String(url) === '/api/me') {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({org: 'C2SM'}),
+        text: () => Promise.resolve('{"org":"C2SM"}'),
+      });
+    }
     calls.push({
       url: String(url),
       method: (init && init.method) || 'GET',

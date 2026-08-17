@@ -1285,8 +1285,23 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    copy of a control it must not offer found it in this block instead. */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
            overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+/* The right end of the nav, as one group rather than two things each pushing
+   themselves over. The toggle asked for `margin-left: auto` on its own and was
+   the only thing out there; with the identity beside it, two auto margins split
+   the free space and put the pair in the middle of the row. */
+.corner { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
+#who { display: flex; align-items: center; gap: .5rem; color: var(--muted); }
+#who form { margin: 0; }
+/* A sign-out that looks like the link it behaves as. It is a POST because a
+   GET that ends a session is a session ended by anything that prefetches. */
+#who button {
+  background: none; border: 0; padding: 0; font: inherit;
+  color: var(--muted); text-decoration: underline; cursor: pointer;
+}
+#who button:hover, #who a:hover { color: var(--accent); }
+#who .warn { color: var(--warn); }
 #theme {
-  margin-left: auto; width: 28px; height: 28px; border-radius: 50%;
+  width: 28px; height: 28px; border-radius: 50%;
   border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
   /* The glyphs are small inside their em box — the sun especially — so the box
      is grown until the drawing fills the button rather than floating in it. */
@@ -1601,7 +1616,19 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     node in a flex container, which is not a flex item and draws nothing. -#}
 <nav>{% for item in nav %}<a href="{{ item.href }}"
   {%- if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>
-{% endfor %}<button type="button" id="theme"></button></nav>
+{% endfor %}<span class="corner">
+{#- Who you are, and the only way in from the page. Reads are public here by
+    design, so nothing forces a sign-in and nothing ever offered one: `/login`
+    existed and was reachable only by typing it into the address bar, and a write
+    answered "sign in to make changes" with no way to do that.
+
+    Drawn empty and filled by the script below, because the shell is rendered by
+    eight entry points and threading a viewer through all eight is eight chances
+    to forget — and the static export, which has no server and no session, must
+    end up with nothing here at all. It does: the fetch fails over file:// and
+    this stays hidden. -#}
+<span id="who" hidden></span>
+<button type="button" id="theme"></button></span></nav>
 {#- The home for a message on the pages that have nowhere to put one. Every page
     that announces anything had a `#state` of its own and every one of those was
     inside `{% if editable %}`, so a page you can only read carried no live
@@ -1828,6 +1855,63 @@ THEME.onclick = () => {
 // so it follows the system as it changes.
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', labelTheme);
 labelTheme();
+
+// Who is signed in, asked rather than rendered.
+//
+// The session is an HttpOnly cookie, so a script cannot read it and the server
+// is the only one who knows. `/api/me` answers `{}` for a stranger rather than
+// 401: a page nobody has to sign in to read would otherwise log an error on
+// every load for the ordinary case, and an error that means "everything is fine"
+// is an error nobody reads twice.
+//
+// The whole thing is behind a catch because the static export runs this same
+// script from file://, where there is no server to ask. The corner stays hidden,
+// which is what a file with no session should show.
+(async () => {
+  const WHO = document.getElementById('who');
+  let me = {};
+  try {
+    const response = await fetch('/api/me', {headers: {'Accept': 'application/json'}});
+    if (!response.ok) return;
+    me = await response.json();
+  } catch (error) { return; }
+
+  // Built as elements rather than as a string of markup, for two reasons that
+  // point the same way. A login is somebody's typed text, and `textContent`
+  // cannot be talked into being a tag. And the export's dead-link check reads
+  // every href attribute in the file as a page that must exist — the check reads
+  // the source, not the DOM, so a link that only ever exists where a server
+  // answered would have had to be written in as an exception, and an exception
+  // is a hole somebody has to keep true. (The check is literal enough that this
+  // very comment failed it once, spelling the attribute out.)
+  const element = (tag, text, klass) => {
+    const made = document.createElement(tag);
+    if (text !== undefined) made.textContent = text;
+    if (klass) made.className = klass;
+    return made;
+  };
+
+  WHO.replaceChildren();
+  if (!me.login) {
+    // A link and not a form: `/login` starts an OAuth redirect, which is a
+    // navigation, and the state cookie it sets is what makes the callback safe.
+    const link = element('a', 'Sign in');
+    link.href = '/login';
+    WHO.append(link);
+  } else {
+    WHO.append(element('span', me.login));
+    // Signed in and not a member is signed in and still cannot write, and that
+    // is the state worth saying out loud: the alternative is a refusal at the
+    // moment of saving, which reads like the tool is broken.
+    if (!me.member) WHO.append(element('span', `(not in ${me.org})`, 'warn'));
+    const form = document.createElement('form');
+    form.method = 'post';
+    form.action = '/logout';
+    form.append(element('button', 'Sign out'));
+    WHO.append(form);
+  }
+  WHO.hidden = false;
+})();
 
 // The one format that never moves. A date box is drawn by the browser in the
 // reader's locale, so the same stored 2026-09-01 reads as 01/09/2026 here and

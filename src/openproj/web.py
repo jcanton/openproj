@@ -44,7 +44,15 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from . import render
-from .auth import User, exchange_code, identify, login_url, read_session, sign_session
+from .auth import (
+    OAuthError,
+    User,
+    exchange_code,
+    identify,
+    login_url,
+    read_session,
+    sign_session,
+)
 from .index import build_index
 from .model import (
     CONFIG_FILES,
@@ -69,7 +77,26 @@ from .model import (
 )
 from .store import Store
 
+# Two names for one session, chosen by the scheme the request actually arrived
+# on, because the `__Host-` prefix is not a hint — it is a rule the browser
+# enforces before it stores anything. A `Set-Cookie` carrying that prefix without
+# `Secure`, or with a `Domain`, or with a `Path` other than `/`, is not corrected
+# and not warned about: it is dropped, and the response looks like it worked.
+#
+# Over plain HTTP `Secure` cannot be sent honestly, so the prefixed name is
+# unstorable and every local sign-in ended where it started — GitHub redirected
+# back, the callback set a cookie the browser threw away, and `/` drew signed
+# out with nothing anywhere saying why. Found by trying it: a probe serving that
+# exact header over http://127.0.0.1 stored nothing, and the same header with
+# `Secure` added stored fine.
+#
+# So the deployment keeps the prefix and its guarantee — that cookie cannot have
+# been set by a sibling host or over a downgraded connection — and a local run
+# uses the bare name, which is the honest description of a cookie on a loopback
+# port with no TLS. Both are read, so a session survives the day somebody puts a
+# proxy in front of a local server.
 SESSION_COOKIE = "__Host-openproj_session"
+SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
 
 ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
@@ -555,7 +582,18 @@ def create_app(
         )
 
     def viewer(request: Request) -> User | None:
-        return read_session(request.cookies.get(SESSION_COOKIE), secret)
+        """Both names are read, prefixed first.
+
+        A signature that does not verify is nobody, so trying the second name
+        after the first costs a session nothing and saves the one case where the
+        two disagree: a server that used to be plain HTTP and is now behind TLS,
+        where the browser is still holding yesterday's bare cookie.
+        """
+        for name in (SESSION_COOKIE, SESSION_COOKIE_INSECURE):
+            user = read_session(request.cookies.get(name), secret)
+            if user is not None:
+                return user
+        return None
 
     def writer(request: Request) -> User:
         """Who is allowed to write, decided per request rather than at login.
@@ -576,12 +614,22 @@ def create_app(
     def secure_for(request: Request) -> bool:
         """Whether cookies are marked Secure, from the scheme actually in use.
 
-        A `__Host-` cookie is only ever accepted or cleared when Secure is set, so
-        hard-coding it true makes sign-out silently fail over plain HTTP — which is
-        every local run and every test. Behind Cloud Run the TLS is terminated
-        upstream, so uvicorn must run with --proxy-headers for this to see https.
+        Hard-coded true, a cookie set over plain HTTP is a cookie the browser
+        never stores — which is every local run and every test. Behind Cloud Run
+        the TLS is terminated upstream, so uvicorn must run with --proxy-headers
+        for this to see https.
         """
         return request.url.scheme == "https"
+
+    def session_name(request: Request) -> str:
+        """The name that can actually be stored on this connection.
+
+        Set and cleared through the same function, because a deletion aimed at
+        the other name is a session that quietly stays signed in — and that half
+        of this was already known and commented on before the setting half was
+        found to have never worked at all.
+        """
+        return SESSION_COOKIE if secure_for(request) else SESSION_COOKIE_INSECURE
 
     async def announce(commit: str, changed: list[str]) -> None:
         for queue in list(watchers):
@@ -1117,6 +1165,23 @@ def create_app(
 
     # -- sign in ------------------------------------------------------------
 
+    @app.get("/api/me")
+    def me(request: Request) -> JSONResponse:
+        """Who the session says you are, for the corner of the nav.
+
+        `{}` and 200 for a stranger, not 401. Every page here is readable signed
+        out, so the signed-out answer is the ordinary one — and answering it with
+        an error puts a red line in the console of a page that is working exactly
+        as designed, which is how a real error comes to be ignored.
+
+        The org travels with the answer because the page has no other way to name
+        it: "not a member" is only useful when it says of what.
+        """
+        who = viewer(request)
+        if who is None:
+            return JSONResponse({"org": org})
+        return JSONResponse({"login": who.login, "member": who.member, "org": org})
+
     @app.get("/login")
     def login(request: Request) -> RedirectResponse:
         state = secrets.token_urlsafe(32)
@@ -1136,16 +1201,32 @@ def create_app(
         if not expected or not given or not secrets.compare_digest(expected, given):
             raise HTTPException(400, "that sign-in did not start here")
 
-        async with httpx.AsyncClient() as client:
-            token = await exchange_code(
-                request.query_params.get("code", ""), client_id, client_secret, client
+        # GitHub sends the browser back here when somebody clicks Cancel too, with
+        # `error` in the query and no code at all. Left to fall through, that is
+        # an exchange that fails and a bare "Internal Server Error" in front of
+        # the one person who now cannot tell a refusal they chose from a tool
+        # that is broken. `OAuthError` already carries GitHub's own wording.
+        denied = request.query_params.get("error")
+        if denied:
+            raise HTTPException(
+                400,
+                f"GitHub did not authorise this sign-in ({denied}): "
+                + request.query_params.get("error_description", "no description given"),
             )
-            user = await identify(token, org, client)
+
+        async with httpx.AsyncClient() as client:
+            try:
+                token = await exchange_code(
+                    request.query_params.get("code", ""), client_id, client_secret, client
+                )
+                user = await identify(token, org, client)
+            except OAuthError as exc:
+                raise HTTPException(400, str(exc)) from exc
         # The token established who they are and is now dropped: it is never
         # written to the session and never used to push.
         response = RedirectResponse("/", status_code=303)
         response.set_cookie(
-            SESSION_COOKIE,
+            session_name(request),
             sign_session(user, secret),
             max_age=86400,
             httponly=True,
@@ -1162,7 +1243,7 @@ def create_app(
         # A __Host- cookie is only matched when Secure and Path=/ agree, so a
         # deletion that disagrees leaves the session quietly in place.
         response.delete_cookie(
-            SESSION_COOKIE,
+            session_name(request),
             path="/",
             secure=secure_for(request),
             httponly=True,

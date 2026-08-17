@@ -1402,6 +1402,21 @@ def test_a_status_colour_is_a_token_and_not_baked_into_a_bar(rendered: Path):
     assert "rect.st-done { fill: var(--st-done); }" in timeline
 
 
+# --- the corner of the nav --------------------------------------------------
+
+
+def test_the_export_draws_no_sign_in(rendered: Path):
+    """The corner is filled from `/api/me`, which over file:// is a fetch that
+    fails — so a static page shows nothing there, which is the truth about a file
+    with no server and no session. It must not draw a signed-out state either:
+    "Sign in" on a page that cannot is the dead control this suite exists over."""
+    for page in PAGES:
+        body = read(rendered, page)
+        assert '<span id="who" hidden></span>' in body, page
+        assert ">Sign in<" not in body, page
+        assert 'action="/logout"' not in body, page
+
+
 # --- the tab icon -----------------------------------------------------------
 
 

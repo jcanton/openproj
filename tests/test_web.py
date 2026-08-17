@@ -65,7 +65,14 @@ CLIENT_SECRET = "s3cr3t-client-secret"
 # Named exactly, because the `__Host-` prefix is load-bearing: it makes cookie
 # fixation from a sibling subdomain structurally impossible and forces the
 # browser to enforce Secure, Path=/ and no Domain on our behalf.
+#
+# Enforce is the operative word, and it is why there are two names. The browser
+# does not accept the prefix over plain HTTP at all, so a local run — where the
+# whole team will meet this tool first — uses the bare one. Spelled out here
+# rather than imported for the same reason as always: a test that imports the
+# name it is checking agrees with the code by construction.
 SESSION_COOKIE = "__Host-openproj_session"
+SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
 
 ANN = User(login="ann", member=True)
@@ -909,6 +916,56 @@ def test_a_member_writes_as_themselves(secure_client: TestClient, repo_path: Pat
     assert commit_at(repo_path, response.json()["commit"]).author.name == "ann"
 
 
+def test_a_stranger_is_told_so_without_an_error(secure_client: TestClient):
+    """`/api/me` is asked on every page load, and every page here is readable
+    signed out — so the signed-out answer is the ordinary one. A 401 would put a
+    red line in the console of a page working exactly as designed, which is how a
+    real error comes to be ignored.
+
+    The org travels with it because "not a member" is only useful said of what.
+    """
+    answer = secure_client.get("/api/me")
+
+    assert answer.status_code == 200
+    assert answer.json() == {"org": ORG}
+
+
+def test_the_corner_knows_a_member_from_somebody_who_only_signed_in(
+    secure_client: TestClient,
+):
+    """The nav draws these two differently, and the difference is the whole point:
+    Mallory has a valid session and cannot write. Saying so in the corner beats
+    finding out at the moment of saving, which reads like the tool is broken."""
+    secure_client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+    assert secure_client.get("/api/me").json() == {"login": "ann", "member": True, "org": ORG}
+
+    secure_client.cookies.set(SESSION_COOKIE, sign_session(MALLORY, SECRET))
+    answer = secure_client.get("/api/me").json()
+    assert answer == {"login": "mallory", "member": False, "org": ORG}
+
+
+def test_who_you_are_does_not_carry_a_token(secure_client: TestClient):
+    """The session holds a login and a membership and nothing else, by design.
+    This is the one place that hands the session back to a page, so it is the
+    place where a credential added to `User` later would first get out."""
+    secure_client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+
+    body = secure_client.get("/api/me").text
+
+    assert "token" not in body and "secret" not in body
+
+
+def test_a_forged_cookie_is_a_stranger_in_the_corner(secure_client: TestClient):
+    """The corner reads the same session the write gate does. If a forged cookie
+    drew a name here it would say somebody is signed in who cannot write, and the
+    tool would look broken rather than the cookie."""
+    secure_client.cookies.set(
+        SESSION_COOKIE, sign_session(User(login="mallory", member=True), "some-other-secret")
+    )
+
+    assert secure_client.get("/api/me").json() == {"org": ORG}
+
+
 def test_a_cookie_this_server_did_not_sign_is_nobody(secure_client: TestClient):
     """Anyone can put anything in a cookie jar. A forged or stale session is a
     clean logged-out state — a 401, never a 500, and never a member."""
@@ -936,12 +993,65 @@ def test_logging_out_ends_the_ability_to_write(secure_client: TestClient):
     response = secure_client.post("/logout", follow_redirects=False)
     assert response.status_code in (200, 204, 303)
     cleared = response.headers["set-cookie"]
-    assert cleared.startswith(f'{SESSION_COOKIE}=""')
+    # The name that can be stored on this connection, which over plain HTTP is
+    # the bare one. A deletion aimed at the other name clears nothing.
+    assert cleared.startswith(f'{SESSION_COOKIE_INSECURE}=""')
     assert "Max-Age=0" in cleared
     assert "Path=/" in cleared
 
     secure_client.cookies.clear()
     assert save(secure_client, TASK, {"priority": "high"}).status_code == 401
+
+
+def test_a_session_cookie_is_one_a_browser_will_actually_store(secure_client: TestClient):
+    """The bug this pair exists over: `__Host-` is a rule, not a hint.
+
+    A `Set-Cookie` carrying that prefix without `Secure` is dropped by the browser
+    with no warning and no error, and the response looks like it worked — so every
+    local sign-in ended signed out. Over plain HTTP `Secure` cannot be sent, so
+    the prefixed name cannot be used, and this asserts the two never come apart.
+    """
+    for header in (
+        secure_client.get("/login", follow_redirects=False).headers.get("set-cookie", ""),
+        secure_client.post("/logout", follow_redirects=False).headers.get("set-cookie", ""),
+    ):
+        assert "__Host-" not in header or "Secure" in header, header
+
+
+def test_the_deployment_keeps_the_prefix_and_its_guarantee(repo_path: Path):
+    """Over TLS the prefixed name comes back, with `Secure` and `Path=/` — which
+    is what makes it a cookie no sibling host and no downgraded connection can
+    have set. Losing that quietly is the other way this fix could go wrong."""
+    app = create_app(
+        repo_path,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    with TestClient(app, base_url="https://openproj.example") as client:
+        cleared = client.post("/logout", follow_redirects=False).headers["set-cookie"]
+
+    assert cleared.startswith(f'{SESSION_COOKIE}=""')
+    assert "Secure" in cleared and "Path=/" in cleared
+
+
+def test_a_session_set_before_tls_is_still_a_session(repo_path: Path):
+    """Both names are read. A server that used to be plain HTTP and is now behind
+    TLS otherwise signs everybody out on the day it moves, for no reason a reader
+    could work out from the page."""
+    app = create_app(
+        repo_path,
+        auth="github",
+        org=ORG,
+        secret=SECRET,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    with TestClient(app, base_url="https://openproj.example") as client:
+        client.cookies.set(SESSION_COOKIE_INSECURE, sign_session(ANN, SECRET))
+        assert client.get("/api/me").json()["login"] == "ann"
 
 
 @pytest.mark.parametrize(
@@ -1018,6 +1128,24 @@ def test_a_callback_whose_state_does_not_match_is_abandoned(secure_client: TestC
     assert response.status_code == 400
     assert SESSION_COOKIE not in response.headers.get("set-cookie", "")
     assert save(secure_client, TASK, {"priority": "high"}).status_code == 401
+
+
+def test_a_sign_in_somebody_cancelled_says_so(secure_client: TestClient):
+    """Clicking Cancel on GitHub's authorize page sends the browser back here with
+    an error and no code. Falling through to the exchange made that a bare
+    "Internal Server Error", which cannot be told apart from a broken tool by the
+    one person in a position to say which it was."""
+    login = secure_client.get("/login", follow_redirects=False)
+    state = login.headers["set-cookie"].split("op_state=")[1].split(";")[0]
+
+    response = secure_client.get(
+        f"/auth/callback?error=access_denied&error_description=The+user+has+denied&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "access_denied" in response.json()["detail"]
+    assert SESSION_COOKIE not in response.headers.get("set-cookie", "")
 
 
 # --------------------------------------------------------------------------- #
