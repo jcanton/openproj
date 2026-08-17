@@ -997,11 +997,21 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # No cushion. This is the whole of the reported defect.
     assert _fit(page, natural, keys, sum(natural)) == natural
 
-    width = dict(zip(keys, _fit(page, natural, keys, WINDOW), strict=True))
+    # At the reported window the table can no longer hold every column: the
+    # fifteenth put the all-columns minimum three pixels past it. So the page
+    # sheds the first of the lookups and fits what is left, which is the promise
+    # itself — no sideways scroll, whichever columns survive the window.
+    drawn = _drawn(page, keys, WINDOW)
+    assert "progress" not in drawn, "the newest lookup is the first thing to go"
+    width = dict(
+        zip(drawn, _fit(page, [MEASURED[key] for key in drawn], drawn, WINDOW), strict=True)
+    )
     assert sum(width.values()) <= WINDOW, width
     assert sum(width.values()) == WINDOW, "and it fills the window rather than stopping short"
 
-    for key in keys:
+    # The shed column has no width to check, and every other one still has to be
+    # what it measured or narrower for a stated reason.
+    for key in drawn:
         if key in clamped:
             # Clamped: already one item and a `+N`, so a narrower one hides an
             # item behind a badge that is right there and says how many.
