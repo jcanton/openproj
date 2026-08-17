@@ -114,9 +114,6 @@ def _serve(args) -> int:
         remote=os.environ.get("OPENPROJ_REMOTE", ""),
         credentials=GitHubApp.from_environment(dict(os.environ)),
     )
-    # proxy_headers matters behind Cloud Run: TLS is terminated upstream, and
-    # without it the app believes it is serving plain HTTP and stops marking the
-    # session cookie Secure.
     return _exit_aware_server(app, args.host, args.port).run() or 0
 
 
@@ -137,9 +134,32 @@ def _exit_aware_server(app, host: str, port: int):
             app.state.closing.set()
             super().handle_exit(sig, frame)
 
+    # `proxy_headers=True` on its own does nothing behind Cloud Run, which is the
+    # trap: it reads as "we handle a proxy" and the setting that decides whether
+    # the headers are believed is a different one, defaulted elsewhere.
+    #
+    # uvicorn only trusts `X-Forwarded-Proto` from `forwarded_allow_ips`, which
+    # defaults to 127.0.0.1. Cloud Run's frontend arrives from 169.254.169.126,
+    # so the header was dropped and every request looked like plain HTTP on a
+    # service reachable only over TLS. Two things then broke quietly:
+    # `request.url_for` built `http://…/auth/callback`, which GitHub refuses with
+    # "The redirect_uri is not associated with this application" — naming the
+    # OAuth App, which was configured correctly — and `secure_for` answered False,
+    # so a session cookie on a TLS-only service would have been issued without
+    # `Secure`.
+    #
+    # Not hardcoded to "*": trusting a forwarded scheme from anyone lets a client
+    # on a plain-HTTP run claim https. `OPENPROJ_FORWARDED_ALLOW_IPS` is set by
+    # `deploy/boot.py` when Cloud Run's own `K_SERVICE` says where it is, and a
+    # local run keeps uvicorn's careful default.
     return Server(
         uvicorn.Config(
-            app, host=host, port=port, proxy_headers=True, timeout_graceful_shutdown=10
+            app,
+            host=host,
+            port=port,
+            proxy_headers=True,
+            forwarded_allow_ips=os.environ.get("OPENPROJ_FORWARDED_ALLOW_IPS", "127.0.0.1"),
+            timeout_graceful_shutdown=10,
         )
     )
 

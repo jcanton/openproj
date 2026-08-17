@@ -5,6 +5,7 @@ code decides whether a bad record reaches the repository.
 """
 
 import json
+import os
 from pathlib import Path
 
 from openproj.cli import main
@@ -175,3 +176,60 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
         assert len(read_bytes := (out / name).read_bytes()) > 1000, (name, len(read_bytes))
     # And the one that used to raise is a drawing, not fourteen megabytes of it.
     assert len((out / "timeline.html").read_bytes()) < 1_000_000
+
+
+# --- behind a proxy ---------------------------------------------------------
+
+
+def test_the_forwarded_scheme_is_trusted_only_where_it_was_configured(monkeypatch):
+    """`proxy_headers=True` is not the setting that decides this, which is the
+    whole trap: uvicorn believes `X-Forwarded-Proto` only from
+    `forwarded_allow_ips`, defaulting to 127.0.0.1. Cloud Run's frontend arrives
+    from 169.254.169.126, so on the deployed service the header was dropped and
+    every request looked like plain HTTP.
+
+    Two things broke from that, both away from the code that caused them:
+    `request.url_for` built an `http://` callback, which GitHub refuses with "The
+    redirect_uri is not associated with this application" — accusing an OAuth App
+    that was configured correctly — and `secure_for` answered False, so a session
+    cookie on a TLS-only service would have gone out without `Secure`.
+    """
+    from openproj.cli import _exit_aware_server
+
+    monkeypatch.delenv("OPENPROJ_FORWARDED_ALLOW_IPS", raising=False)
+    careful = _exit_aware_server(lambda *a: None, "127.0.0.1", 8000)
+    assert careful.config.forwarded_allow_ips == "127.0.0.1"
+
+    monkeypatch.setenv("OPENPROJ_FORWARDED_ALLOW_IPS", "*")
+    behind_a_proxy = _exit_aware_server(lambda *a: None, "0.0.0.0", 8080)
+    assert behind_a_proxy.config.forwarded_allow_ips == "*"
+    assert behind_a_proxy.config.proxy_headers is True
+
+
+def test_the_container_says_where_it_is_running(monkeypatch, tmp_path):
+    """`K_SERVICE` is Cloud Run stating it is Cloud Run, and it is the only thing
+    that widens the trust. The same image on a laptop keeps the careful default,
+    because trusting a forwarded scheme from anyone lets a client on a plain-HTTP
+    run claim https."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "openproj_boot", Path(__file__).resolve().parents[1] / "deploy" / "boot.py"
+    )
+    boot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(boot)
+
+    # Neither run reaches the clone or the server: the repository is there and
+    # `serve` is replaced, so `main` stops at the one decision under test.
+    (tmp_path / "plan.git").mkdir()
+    monkeypatch.setattr(boot.subprocess, "call", lambda *a, **k: 0)
+    monkeypatch.setenv("OPENPROJ_REPO", str(tmp_path / "plan.git"))
+
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.delenv("OPENPROJ_FORWARDED_ALLOW_IPS", raising=False)
+    boot.main()
+    assert "OPENPROJ_FORWARDED_ALLOW_IPS" not in os.environ
+
+    monkeypatch.setenv("K_SERVICE", "openproj")
+    boot.main()
+    assert os.environ["OPENPROJ_FORWARDED_ALLOW_IPS"] == "*"

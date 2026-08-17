@@ -22,6 +22,15 @@ from openproj.github import GitHubApp
 
 
 def main() -> int:
+    # Cloud Run terminates TLS upstream and forwards over plain HTTP from an
+    # address that is not loopback, so uvicorn's default of trusting
+    # `X-Forwarded-Proto` only from 127.0.0.1 drops it — and the app then believes
+    # a TLS-only service is plain HTTP. Set here rather than in the CLI because
+    # `K_SERVICE` is Cloud Run stating where this is running; the same image run
+    # on a laptop keeps the careful default.
+    if os.environ.get("K_SERVICE"):
+        os.environ.setdefault("OPENPROJ_FORWARDED_ALLOW_IPS", "*")
+
     repo = Path(os.environ.get("OPENPROJ_REPO", "/srv/plan.git"))
     remote = os.environ.get("OPENPROJ_REMOTE", "")
     # The same credential the server pushes with. The clone needs it too, and a
