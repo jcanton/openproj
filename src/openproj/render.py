@@ -1081,6 +1081,39 @@ nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; align-item
    purple are both close to unreadable on a dark ground, and a link is the most
    clicked thing on every one of these pages. */
 a, a:visited { color: var(--accent); }
+/* The nav is the one row on the app where every word is already a link, so the
+   accent buys nothing there — six accent words said "six links" and left the one
+   you are standing on no colour to be. Underlined and in --muted they still read
+   as links (5.57:1 on the light page, 7.07:1 on the dark one: text contrast, not
+   a hint), and the accent is freed to mean "here".
+
+   `nav a:visited` and not `nav a` alone. The rule above is `a, a:visited`, and
+   `a:visited` weighs (0,1,1) against a bare `nav a`'s (0,0,2) — so every nav link
+   a reader had already clicked would have stayed in the accent while the rest
+   went muted, which is a highlight that means "visited". */
+nav a, nav a:visited { color: var(--muted); }
+/* Where you are: weight, colour and a box, all three. Colour alone is not a
+   signal this app accepts anywhere else — the status ladder is a luminance ramp
+   and a glyph for the same reason — and the nav is the one component every page
+   carries.
+   Quiet on purpose. --surface-2 is 1.07:1 against the light page and 1.16:1
+   against the dark one, so the ground is a whisper and the accent hairline is
+   what makes it a box; a filled --accent chip across the top of every page would
+   be the loudest thing on a screen full of data. 13px of chrome, not a tab bar.
+   Drawn from the attribute a screen reader reads, so the two cannot disagree:
+   there is no `.current` class to fall out of step with it.
+   The `:visited` twin is not decoration either — it is (0,2,2) against
+   `nav a:visited`'s (0,1,2), which settles the fight by weight instead of by
+   which rule happens to be written last.
+   The padding does not make the row taller. Measured in Chrome, not reasoned
+   about: the box is 24.69px against a sibling's 19.5, and the nav is 28 either
+   way because the theme toggle is a 28px circle and it is the tallest thing in
+   the row. Giving a row of space back at the heading and taking it again here
+   would be the change undoing itself, so a test measures this too. */
+nav a[aria-current="page"], nav a[aria-current="page"]:visited {
+  color: var(--accent); font-weight: 600; text-decoration: none;
+  background: var(--surface-2); border: 1px solid var(--accent);
+  border-radius: 3px; padding: .1rem .45rem; }
 /* The page's own name. Four of the six pages had no heading at all, which leaves
    a screen reader with nothing to say the page IS and a skip link with nowhere
    to land. Sized down from the browser's 2em: these are dense pages and the
@@ -1099,7 +1132,25 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
 .skip:focus { top: .5rem; }
 /* Announced, not drawn. `display: none` and `visibility: hidden` both take an
    element out of the accessibility tree, so a live region that must stay
-   readable to a screen reader and invisible to everybody else is clipped. */
+   readable to a screen reader and invisible to everybody else is clipped.
+
+   Five page headings wear this, one per view whose whole heading was the single
+   word already sitting in the nav two rows above it. The nav now says which page
+   you are on in the item it lights, so on screen that heading was a row of space
+   spent saying nothing new. It stays in the document because a page with no
+   top-level heading cannot be announced by name, cannot be found in a heading
+   list, and leaves the skip link nowhere to land — the fix round six made, which
+   this must not undo.
+
+   A heading that names what you are looking at rather than which route you are on
+   is not clipped and is not here: an entity's own title, a cycle's number, the
+   listing of the whole plan, and the create form, whose nav item does not exist
+   and whose heading is therefore the only thing on it that says what it makes.
+
+   Nothing in this comment quotes a heading or a control by its exact words. The
+   stylesheet is inlined into every page, so a phrase written here is a phrase in
+   the served bytes of all eight of them, and two tests that search a page for the
+   copy of a control it must not offer found it in this block instead. */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
            overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 #theme {
@@ -1385,11 +1436,15 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 {{ style }}
 </style></head><body>
 <a class="skip" href="#main">Skip to the content</a>
-<nav><a href="{{ links.table }}">Table</a><a href="{{ links.graph }}">Graph</a>
-<a href="{{ links.timeline }}">Timeline</a><a href="{{ links.cycles }}">Cycles</a>
-<a href="{{ links.people }}">People</a>
-<a href="{{ links.detail }}">Detail</a>
-<button type="button" id="theme"></button></nav>
+{#- One `<a>` per row of `_NAV`, and the row already carries whether it is the
+    page you are on. Six hand-written links were six places to forget the mark;
+    the mark is `aria-current="page"` and the stylesheet draws from that attribute
+    and from nothing else, so what a screen reader announces and what a reader
+    sees cannot come apart. Whitespace between the links is a whitespace-only text
+    node in a flex container, which is not a flex item and draws nothing. -#}
+<nav>{% for item in nav %}<a href="{{ item.href }}"
+  {%- if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>
+{% endfor %}<button type="button" id="theme"></button></nav>
 {#- The home for a message on the pages that have nowhere to put one. Every page
     that announces anything had a `#state` of its own and every one of those was
     inside `{% if editable %}`, so a page you can only read carried no live
@@ -1806,7 +1861,8 @@ syncFilters();
 """)
 
 _TABLE = """
-<h1>Table</h1>
+{#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
+<h1 class="sr-only">Table</h1>
 {#- Both of these used to be on the rendered files too, where `links.new` is the
     empty string — so the button was a link back to the page you were already on,
     and the hint promised an editor that has no server to save to. A read-only
@@ -3164,7 +3220,8 @@ _GRAPH_HINT = Markup(
 )
 
 _GRAPH = """
-<h1>Graph</h1>
+{#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
+<h1 class="sr-only">Graph</h1>
 {{ facets }}
 {#- The key and the count are one row. The key is the one thing on this canvas
     that is not a word — every swatch is the token the node is actually filled
@@ -3710,7 +3767,8 @@ _TIMELINE_HINT = """<p class="hint">{% if windowed %}Showing {{ t.origin }} to {
   clipped to it, never dropped.</p>"""
 
 _TIMELINE = """
-<h1>Timeline</h1>
+{#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
+<h1 class="sr-only">Timeline</h1>
 {{ facets }}
 <form class="tl-controls" method="get" action="{{ links.timeline }}">
   {#- Prefilled with the window on screen, not the one that was asked for. Two
@@ -5738,6 +5796,13 @@ def render_new(
     A second, differently-shaped form for creating was the thing that made the
     tool feel like two tools, so this is the same markup, the same controls and
     the same stylesheet — a blank entity rather than a stored one.
+
+    The only page that marks no nav item. `aria-current="page"` claims a page
+    within a set of pages and this form is not in the six: pressing Table from it
+    abandons the form rather than staying put, so lighting Table would be a claim
+    the link does not keep. That is also why `<h1>New entity</h1>` is the one page
+    label still on the screen — with nothing lit in the nav, the heading is all
+    that says what this page will make.
     """
     body = _ENV.from_string(_NEW).render(
         kind=kind,
@@ -6383,7 +6448,8 @@ tr.carried td { color: var(--muted); }
 """
 
 _CYCLES = """
-<h1>Cycles</h1>
+{#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
+<h1 class="sr-only">Cycles</h1>
 <p class="hint">Every cycle the plan names — the ones with a record, the ones
   config/cycles.yaml dates, and the ones something has been bet into. A cycle sets
   the build and cool-down weeks and who is available for it.</p>
@@ -6518,7 +6584,8 @@ document.getElementById('yes').onclick = async () => {
 """
 
 _PEOPLE = """
-<h1>People</h1>
+{#- Announced, not drawn: the lit nav item says this already. See `.sr-only`. -#}
+<h1 class="sr-only">People</h1>
 <p class="hint">Everyone named anywhere in the plan, and what they are on the hook
   for.
   {%- if load.cycle is none %}
@@ -6845,6 +6912,11 @@ def render_cycle(
         body,
         _DETAIL_STYLE + _CYCLE_STYLE + _SUGGEST_STYLE,
         links,
+        # `/cycle/37` is not `/cycles`, and one cycle is what the Cycles listing is
+        # a listing of — so the item that got you here is the item that stays lit.
+        # The heading below is "Cycle 37", which is the thing you are looking at
+        # and not the word in the nav, so it stays on the screen.
+        "cycles",
     )
 
 
@@ -6971,7 +7043,7 @@ def render_cycles(
         },
         roster=last.availability if last else {},
     )
-    return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links)
+    return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links, "cycles")
 
 
 def _person_load(index: Index, logins: list[str]) -> dict:
@@ -7089,7 +7161,7 @@ def render_people(index: Index, links: Links = STATIC) -> str:
         load=load,
         filters=_FILTER_JS,
     )
-    return _page("openproj — people", body, _PEOPLE_STYLE, links)
+    return _page("openproj — people", body, _PEOPLE_STYLE, links, "people")
 
 
 def _by_status(rows: list[dict]) -> list[dict]:
@@ -7144,7 +7216,7 @@ def render_detail(
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
     )
-    return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links)
+    return _page("openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail")
 
 
 _NO_ASIDE = Markup("")
@@ -7182,16 +7254,50 @@ def _combobox_html(index: Index | None) -> Markup:
     return _fragment(_COMBOBOX, suggest=data)
 
 
-def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> str:
+# The nav, as the field on `Links` each item points at and the word it wears. One
+# list, because the mark for "you are here" has to be decided once: six links
+# written out by hand were six places for a seventh page to be added and marked
+# nowhere.
+_NAV = (
+    ("table", "Table"), ("graph", "Graph"), ("timeline", "Timeline"),
+    ("cycles", "Cycles"), ("people", "People"), ("detail", "Detail"),
+)
+_NAV_KEYS = frozenset(key for key, _ in _NAV)
+
+
+def _page(
+    title: str, content: str, style: str = "", links: Links = STATIC, current: str = ""
+) -> str:
     """Autoescaping protects entity titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
-    them a second time."""
+    them a second time.
+
+    `current` is which nav item this page is, by `Links` field — and it is not
+    derived from the href, because two of the routes that must mark one are not
+    the href of the link that leads to them: `/detail/<id>` marks Detail and
+    `/cycle/<n>` marks Cycles, and a static export has no server to ask which page
+    it is serving. The caller knows; nothing else does.
+
+    Empty means no item is marked, which `/new` uses deliberately: it is not one
+    of the six, and pressing Table from it leaves the form. `aria-current="page"`
+    claims a page *within* the set, and a form that is not in the set gets a
+    visible `<h1>` instead — the one page that names itself on screen.
+
+    A `current` that is not a nav key raises rather than quietly marking nothing,
+    because marking nothing is the exact defect this round is here to fix.
+    """
+    if current and current not in _NAV_KEYS:
+        raise ValueError(f"{current!r} is not a nav item: {sorted(_NAV_KEYS)}")
     return _ENV.from_string(_SHELL).render(
         title=title,
         content=Markup(content),
         style=Markup(style),
         font=_font_uri(),
         links=links,
+        nav=[
+            {"href": getattr(links, key), "label": label, "current": key == current}
+            for key, label in _NAV
+        ],
         # The shell writes the chip and legend rules for every status, so a
         # status added to the model cannot arrive with three of its four tokens
         # wired up and the fourth still spelled out on a line nobody edited.
@@ -7241,7 +7347,7 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
-    return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links)
+    return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links, "table")
 
 
 def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
@@ -7271,7 +7377,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         dagre=_library("dagre.min.js"),
         cytoscape_dagre=_library("cytoscape-dagre.js"),
     )
-    return _page("openproj — graph", body, _GRAPH_STYLE, links)
+    return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph")
 
 
 _ZOOMS = (("2", "months"), ("6", "weeks"), ("14", "days"), ("30", "close"))
@@ -7313,7 +7419,7 @@ def render_timeline(
         # the whole plan: a bar that is not on this window cannot be filtered onto it.
         bars={"rows": timeline["rows"], "human": HUMAN},
     )
-    return _page("openproj — timeline", body, _timeline_css(), links)
+    return _page("openproj — timeline", body, _timeline_css(), links, "timeline")
 
 
 def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tuple[str, ...]:

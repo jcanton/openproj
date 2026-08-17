@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
+from pages import headings, lit
 
 from openproj.index import Index, build_index
 from openproj.model import load_repo
@@ -2345,6 +2346,12 @@ def test_every_page_names_itself_and_holds_exactly_one_main(rendered: Path):
     A page with no `<h1>` cannot be announced by name, cannot be found by a
     heading list, and gives a skip link nowhere to land — which is why the skip
     link came second. One `<main>` and one only, or "the content" is ambiguous.
+
+    Still true with five of those headings clipped to `.sr-only`. That is the
+    whole reason they were clipped rather than deleted, so this test is the one
+    that has to keep passing across the change — see
+    `test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn` for which of
+    them a reader can see.
     """
     for page in PAGES:
         body = read(rendered, page)
@@ -2352,12 +2359,10 @@ def test_every_page_names_itself_and_holds_exactly_one_main(rendered: Path):
         assert body.count("</main>") == 1, page
 
     for page, name in PAGE_NAMES.items():
-        body = read(rendered, page)
-        assert f"<h1>{name}</h1>" in body, page
         # These five draw no stored markdown, so every heading on them is the
         # page's own. The detail and cycle pages render shaping documents, and a
         # `# Heading` somebody wrote is not the page failing to have one.
-        assert body.count("<h1") == 1, page
+        assert [text for _, text in headings(read(rendered, page))] == [name], page
 
 
 def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index: Index):
@@ -2374,6 +2379,116 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
     # And the router shows one or the other, never both.
     assert "article.style.display = match ? '' : 'none';" in body
     assert "document.querySelector('.toc').style.display = found ? 'none' : '';" in body
+
+
+def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
+    rendered: Path, seed_index: Index
+):
+    """The sibling of `test_every_page_names_itself_and_holds_exactly_one_main`.
+
+    That one says the heading is in the document. This one says which of them a
+    reader can see, because "remove the title" and "keep exactly one `<h1>`" are
+    only compatible if the answer is different for the two kinds of heading:
+
+    * A heading that repeats the nav — one word, the same word the nav item two
+      rows above it wears, and the nav now says which page you are on by lighting
+      that item. On screen it was a row of space saying nothing new. Clipped.
+    * A heading that names the thing you are looking at — an entity's own title, a
+      cycle's number, the whole plan listed. That is content, and it is the reason
+      the rule is not "delete the h1". Drawn.
+
+    Getting this backwards is silent: `.sr-only` on the entity title would take
+    the name of the document off its own page and every test above would still
+    pass.
+    """
+    for page, name in PAGE_NAMES.items():
+        classes, text = headings(read(rendered, page))[0]
+        assert text == name, page
+        assert "sr-only" in classes, f"{page}: the nav says this already, twice over"
+
+    seen = {text: classes for classes, text in headings(read(rendered, "detail.html"))}
+    listing = "Every entity in this plan"
+    assert "sr-only" not in seen[listing], "the listing is what is on the screen, not a route"
+    for entity in seed_index.entities.values():
+        assert entity.title in seen, entity.id
+        assert "sr-only" not in seen[entity.title], (
+            f"{entity.id}: a document with its own name clipped off it"
+        )
+
+
+@pytest.fixture
+def server_pages(seed_index: Index) -> dict[str, str]:
+    """The three pages `render_static` never writes, rendered at the routes.
+
+    Rendered here rather than fetched, because what is under test is the page and
+    not the plumbing; `test_web.test_every_route_says_which_nav_item_it_is` asks
+    the real URLs, which is the half this cannot see.
+    """
+    from openproj.render import ROUTES, render_cycle, render_detail, render_new
+
+    one = next(iter(seed_index.entities))
+    return {
+        "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),
+        "new": render_new("task", "deadbee", ROUTES, seed_index),
+        "entity": render_detail(seed_index, ROUTES, only=one, base_commit="deadbee"),
+    }
+
+
+def test_the_headings_a_server_draws_are_the_same_two_kinds(server_pages: dict[str, str]):
+    """The three pages `render_static` does not write, decided the same way.
+
+    A cycle page and an entity page name what you are looking at and stay visible;
+    the create form is the odd one, and it is visible for the opposite reason to
+    the other two — it is the only page whose nav item does not exist, so with
+    nothing lit above it the heading is all that says what the form will make.
+    """
+    for route, name in (("cycle", "Cycle 37"), ("new", "New entity")):
+        found = headings(server_pages[route])
+        assert [text for _, text in found] == [name], route
+        assert "sr-only" not in found[0][0], f"{route}: nothing else on the page says this"
+
+
+def test_the_nav_says_which_page_you_are_on(rendered: Path, server_pages: dict[str, str]):
+    """`aria-current="page"` on exactly one item, and it is the right one.
+
+    The nav used to mark nothing at all: six links, six identical underlined
+    words, and the page you were standing on indistinguishable from the five you
+    were not. A screen reader was told nothing either — which is the half a
+    stylesheet can never fix, and the reason the attribute is the thing under test
+    here and the paint is measured from it in
+    `test_the_current_nav_item_is_drawn_and_not_merely_resolved`.
+
+    A rendered export is the case with no server to ask. It marks its own item out
+    of what it knew when it wrote the file, which is the only source there is.
+    """
+    for page, name in (*PAGE_NAMES.items(), ("detail.html", "Detail")):
+        assert lit(read(rendered, page)) == [name], page
+
+    # The two routes that are not the href of the link that leads to them. Nothing
+    # about `/cycle/37` matches `cycles.html` or `/cycles`, so an implementation
+    # that compared the current URL against the hrefs would light nothing on
+    # either of these — and both are pages somebody arrives at from the nav.
+    assert lit(server_pages["cycle"]) == ["Cycles"]
+    assert lit(server_pages["entity"]) == ["Detail"]
+
+    # And the one page that marks nothing, on purpose: the create form is not one
+    # of the six, and pressing Table from it abandons the form rather than staying
+    # put. `aria-current="page"` claims a page *within* the set.
+    assert lit(server_pages["new"]) == []
+
+
+def test_a_nav_item_that_is_not_a_nav_item_is_refused():
+    """`current` is a string, and a typo in one lights nothing — which is exactly
+    the defect this round is here to fix, arriving silently instead.
+
+    `"cycle"` and not a nonsense word: the route is `/cycle/<n>` and the nav item
+    is `cycles`, so the plausible mistake is the singular, and a page that marks
+    nothing looks fine until somebody opens it.
+    """
+    from openproj.render import _page
+
+    with pytest.raises(ValueError, match="cycle"):
+        _page("t", "", current="cycle")
 
 
 def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
@@ -2794,6 +2909,14 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     than an exception to it: the rule is about rows, and "double-click a cell to
     edit it" is already inline beside New entity — the control it shares a subject
     with — so it costs no row to move and no row to leave.
+
+    The heading is still first in the list and is now `.sr-only` — the seventh of
+    the six rows going. It is `position: absolute`, so it is out of flow and the
+    rows below it start where the nav ends; the test named below is the one that
+    measures that, and this one only has to know the heading did not turn back
+    into something a reader can see.
+
+    See `test_the_heading_costs_the_view_no_row`.
     """
     from browser import chrome, measured_in
 
@@ -2803,9 +2926,10 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     # Named, because the next thing anybody adds here is the row this is guarding
     # against.
     assert got["rows"] == {
-        "graph": ["h1", "div#controls", "div.keyrow"],
-        "table": ["h1", "p.editbar", "div#controls"],
-        "timeline": ["h1", "div#controls", "form.tl-controls", "ul.legend", "div.keyrow"],
+        "graph": ["h1.sr-only", "div#controls", "div.keyrow"],
+        "table": ["h1.sr-only", "p.editbar", "div#controls"],
+        "timeline": ["h1.sr-only", "div#controls", "form.tl-controls",
+                     "ul.legend", "div.keyrow"],
     }[view], got["rows"]
 
     if view == "table":
@@ -2826,6 +2950,142 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     assert got["count"]["right"] == got["controlsRight"], (
         f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
     )
+
+
+# What the nav and the box that fills the window are actually at, in the browser.
+_GEOMETRY = """
+const nav = document.querySelector('nav').getBoundingClientRect();
+const box = document.querySelector('[data-fills]').getBoundingClientRect();
+const here = document.querySelector('nav a[aria-current="page"]');
+const other = [...document.querySelectorAll('nav a')].find(a => a !== here);
+const at = el => { const r = el.getBoundingClientRect();
+                   return {top: r.top, bottom: r.bottom, height: r.height}; };
+return {
+  navHeight: Math.round(nav.height * 100) / 100,
+  navBottom: Math.round(nav.bottom * 100) / 100,
+  boxTop: Math.round(box.top * 100) / 100,
+  boxHeight: Math.round(box.height * 100) / 100,
+  room: getComputedStyle(document.documentElement).getPropertyValue('--room').trim(),
+  here: at(here),
+  other: at(other),
+  scrolls: document.documentElement.scrollHeight > innerHeight,
+};
+"""
+
+# `.sr-only` undone, and nothing else: one declaration puts the heading back in
+# flow, which is the state every one of these pages shipped in until this round.
+# (0,1,1) against `.sr-only`'s (0,1,0), so it wins on weight rather than on being
+# written last.
+_HEADING_BACK = ("<style>h1.sr-only { position: static; width: auto; height: auto; "
+                 "margin: .2rem 0 .6rem; clip-path: none; }</style>")
+
+
+@pytest.mark.parametrize("view", ("graph", "table", "timeline"))
+def test_the_heading_costs_the_view_no_row(views: dict[str, str], view: str, tmp_path: Path):
+    """The row of space was the point of the change, so it is measured.
+
+    A heading that is merely *styled* `.sr-only` and a heading that actually costs
+    the page nothing are two different claims, and the second is the one the owner
+    asked for. `.sr-only` is `position: absolute`, so the heading leaves the flow
+    entirely rather than shrinking to a pixel in it — this puts it back with one
+    declaration and asks the browser what the page looked like before.
+
+    The number goes into the box that fills the window, because the shell measures
+    the room rather than counting the rows above it: whatever the heading stops
+    taking, the view gets.
+    """
+    from browser import chrome, measured_in
+
+    browser = chrome()
+
+    def geometry(name: str, extra: str) -> dict:
+        page = views[view].replace("</body>", extra + "</body>")
+        return measured_in(browser, page, tmp_path / f"{view}-{name}.html", 1280, _GEOMETRY)
+
+    now, before = geometry("now", ""), geometry("before", _HEADING_BACK)
+
+    reclaimed = before["boxTop"] - now["boxTop"]
+    assert reclaimed > 30, (
+        f"{view}: the heading was drawn at {before['boxTop']} and is clipped at "
+        f"{now['boxTop']} — {reclaimed}px, which is not a row of a 1.35rem heading "
+        f"and its margin. The clip resolved and changed no layout."
+    )
+    assert now["boxTop"] < before["boxTop"]
+    # And the room is handed to the view rather than left at the top of the page.
+    assert int(now["room"].removesuffix("px")) >= int(before["room"].removesuffix("px"))
+
+
+def test_the_current_nav_item_is_drawn_and_not_merely_resolved(
+    views: dict[str, str], tmp_path: Path
+):
+    """Weight, colour and a box — three channels, each proved to paint.
+
+    A stylesheet resolving is not a pixel appearing: the frozen column's edge
+    resolved to exactly the asserted value on exactly the asserted element and
+    Chrome drew nothing, for a whole round, under a green suite. So each channel
+    is switched off on its own here and the page is photographed again. A channel
+    that changes no pixel is a channel that is not there, and "colour alone" is
+    precisely what this design was not allowed to be.
+
+    One at a time and never together: all three at once passes on any one of them,
+    which would let two dead channels ship behind one live one.
+    """
+    from browser import chrome, measured_in, screenshot
+
+    browser = chrome()
+    page = views["table"]
+
+    # Each is the same two selectors the shell uses, appended after them, so each
+    # is the last declaration standing for exactly its own property. `:visited` is
+    # in the list because the shell's rule is, and a nav link on a page a reader
+    # has opened before is the case the pair exists for.
+    def off(declarations: str) -> str:
+        return ('<style>nav a[aria-current="page"], nav a[aria-current="page"]:visited '
+                f"{{ {declarations} }}</style>")
+
+    def shot(name: str, extra: str) -> bytes:
+        html = tmp_path / f"nav-{name}.html"
+        html.write_text(page.replace("</body>", extra + "</body>"))
+        return screenshot(browser, html, tmp_path / f"nav-{name}.png")
+
+    marked = shot("marked", "")
+    assert marked == shot("again", "<style>/* nothing */</style>"), (
+        "this browser does not render the same page the same way twice, so no "
+        "inequality below means anything"
+    )
+
+    for channel, declarations in (
+        ("weight", "font-weight: 400;"),
+        ("colour", "color: var(--muted);"),
+        # The border keeps its width and loses its ink, so this is the box's
+        # pixels and not the box's geometry: a difference here cannot come from
+        # the row reflowing.
+        ("box", "background: none; border-color: transparent;"),
+    ):
+        assert marked != shot(channel, off(declarations)), (
+            f"the {channel} of the current nav item changes no pixel: the "
+            f"declaration is dead, and what is left is two channels doing the "
+            f"work of three"
+        )
+
+    # And the mark costs the row nothing. The item gains padding and a border, so
+    # the question is whether the nav got taller — it does not, because the theme
+    # toggle is a 28px circle and the marked item comes to less than that.
+    def navbox(name: str, extra: str) -> dict:
+        html = page.replace("</body>", extra + "</body>")
+        return measured_in(browser, html, tmp_path / f"navbox-{name}.html", 1280, _GEOMETRY)
+
+    lit_up = navbox("lit", "")
+    plain = navbox("plain", off("padding: 0; border: 0; background: none;"))
+    assert lit_up["navHeight"] == plain["navHeight"], (
+        f"the mark made the nav {lit_up['navHeight']}px against {plain['navHeight']}px, "
+        f"so the row it gave back at the heading it took again here"
+    )
+    assert lit_up["here"]["height"] > lit_up["other"]["height"], (
+        "the marked item is the same box as its siblings: the padding and the "
+        "border resolved and were not drawn"
+    )
+    assert not lit_up["scrolls"], "the page scrolls, so the room is not the window's"
 
 
 # The window changes under a page that is already open, and the graph's commit bar

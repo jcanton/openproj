@@ -318,6 +318,36 @@ def test_a_served_page_navigates_by_route_and_not_by_filename(client: TestClient
         assert 'href="/graph"' in body, route
 
 
+def test_every_route_says_which_nav_item_it_is(client: TestClient):
+    """Every route that serves a page, asked of the server and not of `_page`.
+
+    Two of them are why this is a test about routes rather than about a template.
+    `/cycle/37` and `/detail/task-c00001` are pages a reader reaches from the nav,
+    and neither is the href of the link that got them there — an implementation
+    that lit the item whose `href` matched the current URL would leave both of
+    them dark, which is the state every page on this app was in before this round.
+
+    `/new` marks nothing, on purpose: it is not one of the six, and pressing Table
+    from it abandons the form rather than staying put. `render_new`'s docstring is
+    where that is argued; this is where it is held.
+    """
+    from pages import lit
+
+    for route, item in (
+        ("/", "Table"),
+        ("/graph", "Graph"),
+        ("/timeline", "Timeline"),
+        ("/cycles", "Cycles"),
+        ("/cycle/37", "Cycles"),
+        ("/people", "People"),
+        ("/detail", "Detail"),
+        (f"/detail/{TASK}", "Detail"),
+    ):
+        assert lit(client.get(route).text) == [item], route
+
+    assert lit(client.get("/new?kind=task").text) == []
+
+
 def test_a_detail_route_serves_one_entity_and_not_the_whole_corpus(client: TestClient):
     """A shareable per-entity URL is the point of the route existing at all; a
     page that ships every entity and hides all but one with JavaScript is the

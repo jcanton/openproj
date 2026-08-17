@@ -371,6 +371,58 @@ def test_a_link_that_is_a_control_is_drawn_as_one_on_every_page(index: Index):
         )
 
 
+def test_the_nav_marks_where_you_are_even_on_a_link_you_have_already_used(index: Index):
+    """The same trap as `.button`, in the component every page carries.
+
+    The shell says `a, a:visited { color: var(--accent) }`, and `a:visited` weighs
+    (0,1,1) — heavier than a bare `nav a` at (0,0,2). Written the obvious way, the
+    nav links a reader had already clicked would have stayed in the accent while
+    the rest went muted, so the nav would have highlighted *history* rather than
+    position, and it would have looked correct on a fresh profile and wrong on
+    everybody's.
+
+    The current item has the same fight one rung up: `nav a[aria-current="page"]`
+    is (0,1,2) and ties `nav a:visited`, which is decided by whichever is written
+    last. Ties that are settled by source order are how the frozen columns lost
+    three rules to one qualifier, so this one is settled by weight instead — the
+    `:visited` twin is (0,2,2) and beats both.
+    """
+    nav = [el("body"), el("nav")]
+    for name, page in pages(index).items():
+        sheet = sheet_of(page)
+        for states in ("", "visited"):
+            other = nav + [el("a", states=states)]
+            assert sheet.value(other, "color") == "var(--muted)", (
+                f"{name} ({states or 'unvisited'}): {says(sheet, other, 'color')}"
+            )
+            here = nav + [el("a", states=states, aria_current="page")]
+            assert sheet.value(here, "color") == "var(--accent)", (
+                f"{name} ({states or 'unvisited'}): {says(sheet, here, 'color')}"
+            )
+            # Colour is one of three, and the other two have to reach the same
+            # element: a highlight that is only a hue is one this app does not
+            # accept anywhere, and on a visited link it was the one most at risk.
+            assert sheet.value(here, "font-weight") == "600", name
+            assert sheet.value(here, "border") == "1px solid var(--accent)", name
+            assert sheet.value(here, "background") == "var(--surface-2)", name
+            # And nothing hands a sibling the same box.
+            assert sheet.value(other, "border") is None, name
+            assert sheet.value(other, "background") is None, name
+
+        # The claim the `:visited` twin exists for, which every assertion above
+        # would pass without it — `nav a[aria-current="page"]` alone is (0,1,2),
+        # ties `nav a:visited`, and takes it on order. Order is what the frozen
+        # columns lost three rules to, so this asks that the winner is *heavier*
+        # than everything it beats and not merely later than it.
+        here = nav + [el("a", states="visited", aria_current="page")]
+        won = sheet.winner(here, "color")
+        for rule in sheet.selectors_reaching(here, "color"):
+            assert rule.selector == won.selector or rule.specificity < won.specificity, (
+                f"{name}: `{won.selector}` only beats `{rule.selector}` on source "
+                f"order — both are {won.specificity}, so moving either rule flips it"
+            )
+
+
 @pytest.mark.parametrize("kind", ["project", "pitch", "task"])
 def test_every_kind_chip_is_the_same_shape(index: Index, kind: str):
     """Three answers to one question, drawn three ways: a project chip carried
