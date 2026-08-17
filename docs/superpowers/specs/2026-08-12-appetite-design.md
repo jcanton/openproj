@@ -421,6 +421,9 @@ Written first, before any server, with property tests. **This is the product.**
 
    - **A pitch with children takes no duration of its own**; its span is the union of its children's,
      computed after them.
+   - **A project takes no duration ever, and an empty one takes no span at all.** It is a container:
+     with pitches its span is their rollup, and with none it drew a half-week bar off the default
+     size — a phantom on the timeline for a milestone whose pitches have not been shaped yet.
    - **Missing effort or appetite** — a validation error under §5, but the scheduler must still cope
      with grandfathered records: fall back to 0.5 weeks and draw the span **hatched with an
      "estimated" badge**. Guessing silently is worse than guessing loudly; refusing to schedule is
@@ -442,13 +445,29 @@ Written first, before any server, with property tests. **This is the product.**
 6. For each **leaf** node in that order:
 
    ```
-   workers(n) = [n.owner] + n.assignees
-   ready(n)   = max(today,
-                    n.assigned_on or today,
-                    *(next_working_day(end(b)) for b in blockers(n)))
-   start(n)   = next_free_slot(workers(n), ready(n), duration(n))
-   end(n)     = working_days_after(start(n), duration(n), config)
+   workers(n)  = [n.owner] + n.assignees
+   blockers(n) = n.depends_on + [b for a in ancestors(n) for b in a.depends_on]
+   ready(n)    = max(today,
+                     n.assigned_on or today,
+                     *(next_working_day(end(b)) for b in blockers(n)))
+   start(n)    = next_free_slot(workers(n), ready(n), duration(n))
+   end(n)      = working_days_after(start(n), duration(n), config)
    ```
+
+   **`blockers` is inherited down the tree**, and that line is the whole of it. A
+   dependency is written at the level people think at — "the land port waits for
+   turbulence" is a sentence about two pitches — and only a leaf is placed, so a
+   pitch-level edge used to move no date at all while the table's `blocked` filter
+   returned the same record. The demo shipped that way. The inherited edges go
+   into the ordering graph of step 5 as well: a task placed against its pitch's
+   blocker must be visited after that blocker has a span, and the written edge
+   only orders the pitch, which is placed *after* its own tasks.
+
+   Inheritance can close a loop neither edge kind closes alone — a pitch waiting
+   on another whose task waits on one of this pitch's. Both records are legal
+   separately and step 2 cannot see it, so the ordering pass drops the strongly
+   connected component and marks it `unscheduled`, on the same principle as the
+   containment contradiction above.
 
    Two details that decide most off-by-one arguments, so they are written down
    rather than rediscovered:

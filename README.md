@@ -57,6 +57,13 @@ Two invariants are load-bearing:
 An entity may not depend on its own ancestor or descendant. Containment already requires a child
 before its parent, so a dependency along the parent chain demands to be both before and after itself.
 
+**Dependencies cross kinds and are inherited down the tree.** A project may block a project, a task
+may wait on a whole pitch: any kind may block any kind, and the only forbidden direction is your own
+containment chain. A dependency written on a pitch is what every task inside it waits for — the edge
+stays written once, where somebody wrote it, and `blocks` still means what the page says. Without
+that, a pitch-level edge moved no date at all: only a leaf is placed against its blockers, and a
+parent's span is the rollup of children that had never heard of the edge.
+
 ## Required fields
 
 Requiredness is **status-gated** and enforced in three places: the create form, `openproj check` in

@@ -652,3 +652,99 @@ def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
 
     assert spans["task-aaa001"].unscheduled
     assert spans["task-aaa002"] == Span(start=MONDAY, end=date(2026, 8, 21))
+
+
+# --------------------------------------------------------------------------- #
+# A dependency written on a pitch is what its tasks wait for
+# --------------------------------------------------------------------------- #
+
+
+def test_a_pitch_level_dependency_delays_the_tasks_inside_the_dependent_pitch():
+    """"The land port waits for turbulence" is a sentence about two pitches, and
+    it moved nothing: only a leaf is placed against its blockers, and a parent's
+    span is the rollup of children who had never heard of the edge.
+
+    The demo shipped with exactly this — land starting a month before the
+    turbulence it declared it waited for, while the table's `blocked` filter
+    returned it. Two views of one record, disagreeing."""
+    spans, _ = run([
+        pitch("aaa001"),
+        pitch("aaa002", depends_on=["pitch-aaa001"]),
+        task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
+        task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
+    ])
+
+    blocker_ends = spans["pitch-aaa001"].end
+    assert spans["task-bbb002"].start > blocker_ends, "the task waits for its pitch's blocker"
+    assert spans["pitch-aaa002"].start > blocker_ends, "so the rollup does too"
+
+
+def test_a_dependency_is_inherited_down_the_whole_chain_not_just_one_level():
+    """A project's blocker reaches the tasks two levels below it. The edge stays
+    written once, where somebody wrote it."""
+    spans, _ = run([
+        task("aaa001", size=2.0, owner="cy"),
+        model.Project(id="proj-000001", kind="project", title="M",
+                      depends_on=["task-aaa001"]),
+        pitch("aaa002", parent="proj-000001"),
+        task("bbb002", parent="pitch-aaa002", size=1.0, owner="ann"),
+    ])
+
+    assert spans["task-bbb002"].start > spans["task-aaa001"].end
+
+
+def test_an_inherited_blocker_is_named_in_the_explanation():
+    """The first unexplained date is when a timeline stops being believed, and an
+    inherited blocker is the least obvious of them: the reason is written on a
+    record one level up from the bar somebody is pointing at."""
+    _, why = run([
+        pitch("aaa001"),
+        pitch("aaa002", depends_on=["pitch-aaa001"]),
+        task("bbb001", parent="pitch-aaa001", size=2.0, owner="ann"),
+        task("bbb002", parent="pitch-aaa002", size=2.0, owner="bo"),
+    ])
+
+    assert why["task-bbb002"].blocker_id == "pitch-aaa001"
+    assert "pitch-aaa001" in why["task-bbb002"].text
+
+
+def test_a_loop_that_only_inheritance_closes_costs_those_records_and_no_others():
+    """Neither edge is illegal on its own: a pitch waits for another, and one of
+    that other's tasks waits for one of this pitch's. Together they deadlock, and
+    `_unschedulable` cannot see it — it reads the written edges. The sort must not
+    raise, because one contradictory pair costing every date on the page is the
+    failure this scheduler is built to avoid."""
+    spans, _ = run([
+        pitch("aaa001", depends_on=["pitch-aaa002"]),
+        pitch("aaa002"),
+        task("bbb001", parent="pitch-aaa001", size=1.0, owner="ann"),
+        task("bbb002", parent="pitch-aaa002", size=1.0, owner="bo",
+             depends_on=["task-bbb001"]),
+        task("ccc001", size=1.0, owner="cy"),
+    ])
+
+    assert any(spans[i].unscheduled for i in ("pitch-aaa002", "task-bbb002"))
+    assert spans["task-ccc001"] == Span(start=MONDAY, end=date(2026, 8, 21)), (
+        "an unrelated task keeps its dates"
+    )
+
+
+def test_a_project_with_no_pitches_draws_nothing():
+    """It is a container, and an empty one contains nothing. Having no size field
+    it fell to the default and drew a half-week bar nobody had written."""
+    spans, _ = run([
+        model.Project(id="proj-000001", kind="project", title="Empty", owner="ann"),
+        task("aaa001", size=1.0, owner="ann"),
+    ])
+
+    assert "proj-000001" not in spans
+    assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21))
+
+
+def test_a_project_with_pitches_is_still_their_rollup():
+    spans, _ = run([
+        model.Project(id="proj-000001", kind="project", title="M"),
+        pitch("aaa001", parent="proj-000001", size=1.0, owner="ann"),
+    ])
+
+    assert spans["proj-000001"] == spans["pitch-aaa001"]
