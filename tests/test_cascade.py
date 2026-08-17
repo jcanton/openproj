@@ -54,14 +54,18 @@ def table(index: Index) -> Sheet:
 
 PAGE = [el("body"), el("main", id="main")]
 SCROLL = PAGE + [el("div", "table-scroll"), el("table", id="rows")]
+# The same table with the class its scroll handler adds once `scrollLeft > 0`.
+# The frozen pair's right edge is drawn from here and nowhere else, so the two
+# states are two different elements as far as this engine is concerned.
+SCROLLED = PAGE + [el("div", "table-scroll scrolled"), el("table", id="rows")]
 
 
-def header(column: str, classes: str = "") -> list[El]:
-    return SCROLL + [el("thead"), el("tr"), el("th", classes, data_col=column)]
+def header(column: str, classes: str = "", within: list[El] | None = None) -> list[El]:
+    return (within or SCROLL) + [el("thead"), el("tr"), el("th", classes, data_col=column)]
 
 
-def cell(column: str, classes: str = "") -> list[El]:
-    return SCROLL + [el("tbody"), el("tr"), el("td", classes, data_col=column)]
+def cell(column: str, classes: str = "", within: list[El] | None = None) -> list[El]:
+    return (within or SCROLL) + [el("tbody"), el("tr"), el("td", classes, data_col=column)]
 
 
 def says(sheet: Sheet, path: list[El], prop: str) -> str:
@@ -114,14 +118,46 @@ def test_the_frozen_headers_are_drawn_over_the_rows_that_pass_under_them(table: 
 def test_the_title_header_keeps_the_rule_along_its_bottom_edge(table: Sheet):
     """A collapsed border is not painted on a sticky cell, so the header's bottom
     rule is an inset shadow — and the title column overwrote it with the shadow
-    that draws the frozen pair's right edge. The cell needs both."""
-    drawn = table.value(header("title"), "box-shadow")
+    that draws the frozen pair's right edge. The cell needs both, and only in the
+    state that has a right edge to draw."""
+    drawn = table.value(header("title", within=SCROLLED), "box-shadow")
     assert drawn == "inset 0 -1px 0 var(--line), 1px 0 0 var(--line)", says(
+        table, header("title", within=SCROLLED), "box-shadow")
+    # Unscrolled it is a header like any other. This is the half that regressed:
+    # the right-edge shadow replaced the bottom rule wholesale, so naming one
+    # without the other is how the line along the bottom disappears again.
+    assert table.value(header("title"), "box-shadow") == "inset 0 -1px 0 var(--line)", says(
         table, header("title"), "box-shadow")
     # The id header has no right edge of its own — the title column carries it
     # for the pair — so it keeps the plain bottom rule every other header has.
     assert table.value(header("id"), "box-shadow") == "inset 0 -1px 0 var(--line)"
-    assert table.value(cell("title", "edit"), "box-shadow") == "1px 0 0 var(--line)"
+    assert table.value(header("id", within=SCROLLED), "box-shadow") == (
+        "inset 0 -1px 0 var(--line)"
+    )
+
+
+def test_the_frozen_edge_is_drawn_only_while_the_table_is_scrolled(table: Sheet):
+    """The rule down the right of the title column says "what is left of this is
+    being held still while the rest passes under it". At `scrollLeft === 0`
+    nothing passes under anything and the table has no other column separators,
+    so it read as one column having been singled out for a border — which is what
+    the first person to use this asked about.
+
+    It is the class, not the property, that decides: the rules that draw it are
+    all under `.scrolled`, so a body cell in the resting state has no rule
+    setting `box-shadow` at all.
+    """
+    assert table.value(cell("title", "edit"), "box-shadow") is None, says(
+        table, cell("title", "edit"), "box-shadow")
+    assert table.value(cell("title", "edit", within=SCROLLED), "box-shadow") == (
+        "1px 0 0 var(--line)"
+    ), says(table, cell("title", "edit", within=SCROLLED), "box-shadow")
+    # And the ground under it is unchanged by either state: `.scrolled` adds an
+    # edge, and must not win `background` off the severity rules below.
+    for path in (cell("title", "edit sev-cell-blocker"),
+                 cell("title", "edit sev-cell-blocker", within=SCROLLED)):
+        assert table.value(path, "background") == "var(--sev-blocker-soft)", says(
+            table, path, "background")
 
 
 @pytest.mark.parametrize("column", ["id", "title", "owner"])
@@ -255,6 +291,56 @@ def test_a_link_that_is_a_control_is_drawn_as_one_on_every_page(index: Index):
         assert sheet.value(hovered, "color") == "var(--accent)", (
             f"{name}: {says(sheet, hovered, 'color')}"
         )
+
+
+@pytest.mark.parametrize("kind", ["project", "pitch", "task"])
+def test_every_kind_chip_is_the_same_shape(index: Index, kind: str):
+    """Three answers to one question, drawn three ways: a project chip carried
+    the accent and extra weight, a pitch a plain hairline, and a task no border
+    at all — which reads as two of them being special rather than as three of a
+    kind, and was the first thing anybody said about the id column.
+
+    Asked of the resolved value and not of the rule text, because "one grouped
+    selector exists" says nothing about whether something later singles one of
+    them out again.
+    """
+    for name, page in pages(index).items():
+        sheet = sheet_of(page)
+        chip = PAGE + [el("span", f"chip kind-{kind}")]
+        assert sheet.value(chip, "border") == "1px solid var(--kind-line)", (
+            f"{name}: {says(sheet, chip, 'border')}"
+        )
+        assert sheet.value(chip, "color") == "var(--kind-ink)", f"{name}"
+        assert sheet.value(chip, "font-weight") is None, (
+            f"{name}: {says(sheet, chip, 'font-weight')}"
+        )
+
+
+def test_the_timeline_window_controls_stand_on_one_line(index: Index):
+    """FROM, TO, ZOOM, Apply and Reset are one row, and the ISO echo under each
+    date box must not push what is beside it out of line.
+
+    As a flex row it could not be both: the echo makes the two date labels a line
+    taller than the zoom label, so `align-items: end` dropped ZOOM and both
+    buttons a whole line below the boxes and the bar read as two rows. Three
+    explicit grid rows say it directly, and this asks which row each part of the
+    bar actually lands in.
+    """
+    sheet = sheet_of(render_timeline(index, ROUTES))
+    bar = PAGE + [el("form", "tl-controls")]
+
+    assert sheet.value(bar, "display") == "grid", says(sheet, bar, "display")
+    assert sheet.value(bar, "grid-auto-flow") == "column"
+    assert sheet.value(bar, "align-items") == "end"
+    for child, row in (
+        (el("label", "facet"), "1"),      # FROM, TO, ZOOM
+        (el("input"), "2"),               # the two date boxes
+        (el("select"), "2"),              # the zoom picker, level with them
+        (el("span", "acts"), "2"),        # and Apply and Reset, level with those
+        (el("span", "iso"), "3"),         # the echo, under the box it came from
+    ):
+        path = bar + [child]
+        assert sheet.value(path, "grid-row") == row, says(sheet, path, "grid-row")
 
 
 def test_the_timeline_still_says_which_of_its_two_controls_is_the_verb(index: Index):

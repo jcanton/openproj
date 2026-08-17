@@ -50,6 +50,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -77,7 +79,15 @@ from test_web import (
 from openproj.auth import sign_session
 from openproj.index import build_index
 from openproj.model import load_repo
-from openproj.render import EDITABLE, HUMAN, LABELS, PRIORITIES, STATUSES, render_static
+from openproj.render import (
+    _TABLE_COLUMNS,
+    EDITABLE,
+    HUMAN,
+    LABELS,
+    PRIORITIES,
+    STATUSES,
+    render_static,
+)
 from openproj.web import SESSION_COOKIE, create_app
 
 # The columns the table draws that nobody may type into. Kept as an expectation
@@ -772,17 +782,155 @@ def test_the_search_box_is_not_the_tenth_filter(page: str):
 def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
     """Measured on one line, so a column is as wide as its widest value needs.
 
-    Only prs and tags may wrap — a row with three PR references on one line is
-    wider than the window on its own — and they split whatever is left.
+    The arithmetic that turns those measurements into widths is checked by
+    running it, in `test_the_default_fit_never_needs_a_horizontal_scrollbar`
+    below. This one pins the things around it: the measuring pass, the identity a
+    width is stored against, and that a width somebody dragged is never overruled
+    by a fit.
     """
     assert ".measuring th, .measuring td { white-space: nowrap; }" in page
-    assert "const WRAPS = new Set(['prs', 'tags']);" in page
-    stored = r"if \(Object\.keys\(WIDTHS\)\.length\) applyWidths\(\); else fitWidths\(\);"
     assert "const keyOf = th => th.dataset.col;" in page, (
         "a width belongs to a column — not to a position in the row, and not to "
         "the word printed above it"
     )
-    assert re.search(stored, page), "a width somebody dragged must survive the automatic fit"
+    assert "if (automatic) fitWidths(); else applyWidths();" in page, (
+        "a width somebody dragged must survive the automatic fit"
+    )
+    assert re.search(r"localStorage\.setItem\(WIDTH_KEY[^\n]*\n\s*automatic = false;", page), (
+        "and letting go of a grip is what ends the automatic one"
+    )
+
+
+def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
+    """A first load and a reload must produce the same columns.
+
+    The face is a `data:` URI with `font-display: swap`, so the layout the widths
+    are measured from can still be the fallback's metrics — and then the first
+    paint fits to numbers the second one does not reproduce, which is what
+    "broken until I reloaded" looked like. `document.fonts.ready` is the moment
+    the metrics stop moving.
+
+    A browser is the only thing that can prove the two loads agree; what is
+    assertable here is that the second measurement is asked for at all, and that
+    it is skipped once the columns stop being the fit's to decide.
+    """
+    assert "document.fonts.ready.then(() => { if (automatic) fitWidths(); });" in page
+    assert re.search(
+        r"addEventListener\('resize', \(\) => \{\s*if \(automatic\) fitWidths\(\); "
+        r"else applyWidths\(\);",
+        page,
+    ), "a new window gets a new fit, and a dragged width only gets re-applied"
+
+
+# What each column needs with its widest cell on one line, measured in Chrome on
+# the demo corpus at the window the owner reported this from: a 1460px scroll
+# container. Numbers a browser produced, so they are written down rather than
+# derived — but the *columns* are the code's, so a column added without a
+# measurement fails here rather than being quietly left out of the arithmetic.
+MEASURED = {
+    "id": 110, "title": 304, "priority": 79, "status": 107, "owner": 100,
+    "assignees": 198, "reviewers": 161, "cycle": 63, "size": 81, "start": 101,
+    "end": 101, "blocked_by": 87, "prs": 172, "tags": 128,
+}
+WINDOW = 1460
+
+
+def _fit(page: str, natural: list[int], keys: list[str], room: int) -> list[int]:
+    """Run the served page's own `fitted()` over one set of measurements.
+
+    Lifted out of the page rather than copied into this file: a second copy of
+    the arithmetic is a test that goes on passing after the page stops agreeing
+    with it. Everything the function needs is four top-level declarations, so the
+    extraction is exact and fails loudly if the shape changes.
+    """
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - depends on the machine, not on the code
+        pytest.skip("no node on this machine, so the fit's arithmetic cannot be run here")
+    parts = [
+        re.search(r"^const SPARE_COLUMN = .*?;$", page, re.M),
+        re.search(r"^const SQUEEZABLE = new Set\(\[[^\]]*\]\);$", page, re.M),
+        re.search(r"^const FLOOR = \d+;", page, re.M),
+        re.search(r"^function fitted\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
+    ]
+    assert all(parts), "the fit is no longer the four declarations this lifts out"
+    source = "\n".join(found.group(0) for found in parts)
+    source += "\nconsole.log(JSON.stringify(fitted(...JSON.parse(process.argv[1]))));"
+    done = subprocess.run(
+        [node, "-e", source, json.dumps([natural, keys, room])],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(done.stdout)
+
+
+def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
+    """The table arrived scrolling sideways: 1792px of columns in a 1460px window
+    on a plan of seventeen rows, so the first thing anybody did on the page they
+    live in was drag it back into view.
+
+    Most of that was a 10% cushion — `Math.ceil(w * 1.1)` on twelve columns that
+    never wrap — which is why the first assertion here is the one that would have
+    caught it: given exactly as much room as the columns measured, every column
+    gets exactly what it measured and not a pixel more.
+    """
+    keys = [column for column, _ in _TABLE_COLUMNS]
+    assert set(MEASURED) == set(keys), "a column with no measurement is a column not fitted"
+    natural = [MEASURED[key] for key in keys]
+    squeezable = set(re.search(r"const SQUEEZABLE = new Set\(\[([^\]]*)\]\)", page).group(1)
+                     .replace("'", "").replace(" ", "").split(","))
+    floor = int(re.search(r"const FLOOR = (\d+);", page).group(1))
+    spare = re.search(r"const SPARE_COLUMN = '([^']+)';", page).group(1)
+
+    # No cushion. This is the whole of the reported defect.
+    assert _fit(page, natural, keys, sum(natural)) == natural
+
+    width = dict(zip(keys, _fit(page, natural, keys, WINDOW), strict=True))
+    assert sum(width.values()) <= WINDOW, width
+    assert sum(width.values()) == WINDOW, "and it fills the window rather than stopping short"
+
+    for key in keys:
+        if key in squeezable:
+            # Squeezed, but never past the width at which a column stops being
+            # readable — below the floor it scrolls instead, which is honest.
+            assert width[key] == MEASURED[key] or width[key] >= floor, key
+        elif key == spare:
+            # Never squeezed either, but it does take the pixel or two the
+            # levelling overshoots by, which is what makes the total exact.
+            assert width[key] >= MEASURED[key], key
+        else:
+            # A date, a count, a cycle number, and `prs`, which clamps to one
+            # line: every one of them has exactly one right width. A pixel under
+            # it and `prs` hides its first reference and the `+N` with it.
+            assert width[key] == MEASURED[key], key
+
+    # Worst-first: the sentence pays before the lists of logins do.
+    assert MEASURED["title"] - width["title"] > MEASURED["reviewers"] - width["reviewers"]
+
+
+def test_a_window_wider_than_the_plan_gives_the_slack_to_tags(page: str):
+    """Tags is the one column that can be handed space, or refused it, without
+    changing what any row says: it clamps to one line and hides the rest behind
+    the `+N`. Every other column would just be padded."""
+    keys = [column for column, _ in _TABLE_COLUMNS]
+    natural = [MEASURED[key] for key in keys]
+    room = sum(natural) + 300
+
+    width = dict(zip(keys, _fit(page, natural, keys, room), strict=True))
+
+    assert sum(width.values()) == room
+    assert width["tags"] == MEASURED["tags"] + 300
+    for key in keys:
+        if key != "tags":
+            assert width[key] == MEASURED[key], key
+
+
+def test_the_frozen_edge_is_painted_from_the_scroll_position(page: str):
+    """Never at `scrollLeft === 0`. Which rules draw it is
+    `test_cascade.test_the_frozen_edge_is_drawn_only_while_the_table_is_scrolled`;
+    this is the half that decides when the class is on, including on arrival —
+    a reload restores `scrollLeft` before any of this runs, so a handler that
+    only reacts to the event starts out wrong."""
+    assert "scroller.classList.toggle('scrolled', scroller.scrollLeft > 0)" in page
+    assert re.search(r"scroller\.addEventListener\('scroll', frozenEdge\);\nfrozenEdge\(\);", page)
 
 
 def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: TestClient):
@@ -940,13 +1088,19 @@ def test_a_status_column_sorts_the_way_work_moves(page: str):
 # --------------------------------------------------------------------------- #
 
 
-def test_a_status_is_a_chip_and_a_kind_rides_with_the_id(page: str):
+def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
     """The `--st-*` tokens were used by the graph and the timeline only, so the
-    one view people live in was the one view with no colour language at all. Kind
-    was worse: filterable in the control bar, visible nowhere, and readable only
-    by decoding the id's prefix.
+    one view people live in was the one view with no colour language at all.
 
-    The word is always inside the chip, so the colour is redundant encoding.
+    Kind is not a chip in this table. `pitch-0c0001` already says pitch, in a
+    prefix the model guarantees agrees with the kind, so the chip in the id cell
+    was restating the first word of the cell it sat in — seventeen times, in the
+    narrowest column on the row. The id is not boxed in its place either: it is
+    monospace, which is already what marks it as a token to be cited, and a
+    border round every id is the same noise wearing a different hat.
+
+    Kind stays a facet, which is where "show me only tasks" is actually asked,
+    and stays a chip on the pages where there is no id to carry it.
     """
     body = script(page)
 
@@ -954,12 +1108,22 @@ def test_a_status_is_a_chip_and_a_kind_rides_with_the_id(page: str):
     # attribute names a rule the stylesheet has, so a status nobody has heard of
     # gets the ready rung rather than putting its own text in the attribute.
     assert re.search(r'class="chip \$\{stClass\(row\.status\)\}"', body), "a status is a chip"
-    assert re.search(r'class="chip kind-\$\{esc\(row\.kind\)\}"', body), "so is a kind"
-    assert "esc(human(row.status))" in body and "esc(human(row.kind))" in body, (
-        "the chip carries the word, not the identifier"
-    )
-    for rule in (".chip.st-in_progress", ".chip.kind-project", ".chip.kind-task"):
-        assert rule in page, rule
+    assert "esc(human(row.status))" in body, "the chip carries the word, not the identifier"
+    assert ".chip.st-in_progress" in page
+
+    assert "chip kind-" not in body, "no kind chip is built for any cell of this table"
+    assert re.search(
+        r"""if \(key === 'id'\) return `<span class="eid">\$\{esc\(row\.id\)\}""", body
+    ), "and nothing is boxed in its place"
+    assert 'class="facet">Kind' in page, "and kind is still asked for in the facet bar"
+
+
+def test_no_kind_is_given_a_rule_of_its_own(page: str):
+    """One rule for all three, so none of them can drift. What the rule resolves
+    to on each of the three chips is
+    `test_cascade.test_every_kind_chip_is_the_same_shape`."""
+    assert ".chip.kind-project, .chip.kind-pitch, .chip.kind-task {" in page
+    assert page.count(".chip.kind-") == 3, "three mentions, all of them in that one selector"
 
 
 def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
@@ -1073,8 +1237,7 @@ def test_a_title_somebody_typed_never_becomes_markup():
         "${esc(row.title)}",            # the title cell, which is also a link
         "${esc(row.id)}",               # and the href it is a link to
         "return esc(stored(row, key));",  # owner, assignees, reviewers, dates
-        "${esc(human(row.status))}",
-        "${esc(human(row.kind))}",
+        "${esc(human(row.status))}",    # the kind is no longer drawn in any cell
         "${esc(ref)}",                  # a PR reference, repo and number both
         "${esc(was)}",                  # and the value the editor opens with
     ):

@@ -290,23 +290,26 @@ def test_a_static_page_opens_no_event_stream(tmp_path: Path):
     assert "EventSource" not in (tmp_path / "index.html").read_text()
 
 
-def test_the_editing_instructions_appear_with_the_mode(client: TestClient):
-    """Hidden until Edit dependencies is pressed, and hidden again on the way
-    out — an instruction for a mode you are not in is noise on every visit."""
-    page = client.get("/graph").text
+def test_the_graph_explains_its_mode_once_and_beside_the_button(client: TestClient):
+    """One mode had two explanations. A second paragraph swapped in under the
+    heading on entering edit mode and the standing hint swapped out to make room
+    for it, so pressing the button reflowed the canvas under the pointer — and
+    the status text beside the button already said the same thing, in the place
+    you are looking when you press it.
 
-    assert re.search(r'<p class="hint" id="howto" hidden>', page)
-    assert "getElementById('howto').hidden = !connecting" in page
-
-
-def test_the_graph_shows_one_hint_or_the_other_and_never_both(client: TestClient):
-    """The standing hint says drag a node to move it; edit mode says click what
-    must finish first. In edit mode a click picks a node, so the standing hint was
-    telling you to drag the thing you are being asked to click."""
+    The standing hint stays, in both modes: in edit mode you still pan, still
+    zoom, still drag a node to move it.
+    """
     page = client.get("/graph").text
 
     assert re.search(r'<p class="hint" id="panhint">', page)
-    assert "PANHINT.hidden = connecting" in page
+    assert "Double-click a node to open it" in page
+    assert "howto" not in page, "the second explanation is gone, not merely hidden"
+    assert "PANHINT" not in page, "and the standing one is no longer swapped out"
+    # What edit mode adds, said once, in the live region beside the button that
+    # turned it on.
+    assert "'click what must finish first, then what waits for it'" in page
+    assert re.search(r'<button type="button" id="connect">Edit dependencies</button>', page)
 
 
 def test_the_parent_control_still_holds_the_id(client: TestClient):
@@ -318,6 +321,42 @@ def test_the_parent_control_still_holds_the_id(client: TestClient):
 
     assert control, "parent must still be editable"
     assert control.group(1).startswith(("proj-", "pitch-", "task-")) or control.group(1) == ""
+
+
+def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: TestClient):
+    """What a thing *is* is the first question a page answers.
+
+    The kind was the middle item of a line under the title, between an id and a
+    status; it is now the eyebrow above the heading. The status chip stays in
+    that line, because a status is news about the thing and the kind is what the
+    thing is — one changes weekly and the other never.
+
+    Three headers have to agree, and this is what "agree" means: back link,
+    eyebrow, heading, meta line, in that order.
+    """
+    detail = client.get(f"/detail/{TASK}").text
+    kind = detail.index('<p class="eyebrow"><span class="chip kind-')
+    assert detail.index('<p class="back">') < kind < detail.index("<h1>")
+    meta = detail.index('<p class="meta">')
+    assert meta > detail.index("<h1>")
+    assert '<span class="chip st-' in detail[meta:detail.index("</p>", meta)], (
+        "the status chip stays in the meta line under the title"
+    )
+    assert 'class="chip kind-' not in detail[meta:], "and the kind is not said twice"
+
+    # The create form is the same document in another mode, so the picker that
+    # decides the kind sits where the kind chip sits.
+    new = client.get("/new").text
+    picker = new.index('<p class="eyebrow"><label class="kindpick">')
+    assert new.index('<p class="back">') < picker < new.index("<h1>")
+
+    # The cycle page has no eyebrow on purpose: its heading is "Cycle 37", so the
+    # kind is already the first word of the name and a chip above it would be the
+    # restatement the id column's kind chip was. What it does share is the shape.
+    cycle = client.get("/cycle/37").text
+    assert '<p class="back"><a href="/cycles">' in cycle
+    assert cycle.index('<p class="back">') < cycle.index("<h1>") < cycle.index('<p class="meta">')
+    assert 'class="eyebrow"' not in cycle
 
 
 def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):

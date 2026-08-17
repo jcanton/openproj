@@ -1042,12 +1042,15 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 {% for s in statuses %}
 .chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text); }
 {%- endfor %}
-/* Kind never competes with status for attention: no hue, only a weight and a
-   hairline. A project is the only one that gets the accent, because it is the
-   only one there are ever a handful of. */
-.chip.kind-project { color: var(--fg); font-weight: 650; border: 1px solid var(--accent); }
-.chip.kind-pitch { color: var(--kind-ink); border: 1px solid var(--kind-line); }
-.chip.kind-task { color: var(--kind-ink); }
+/* Kind never competes with status for attention: no hue, only a hairline. One
+   rule for all three, because three kinds drawn three ways read as two of them
+   being special rather than as three answers to one question — a project used to
+   carry the accent and extra weight, a pitch a plain hairline, and a task no
+   border at all, which is the first thing anybody noticed about the id column.
+   The word inside the chip is what says which kind it is. */
+.chip.kind-project, .chip.kind-pitch, .chip.kind-task {
+  color: var(--kind-ink); border: 1px solid var(--kind-line);
+}
 /* A problem reads the same on every page: a bar down the left of the row, a soft
    ground on the cell that caused it, a glyph carrying the message. Three classes
    rather than one, so a row can be marked without tinting every cell in it. */
@@ -1690,11 +1693,16 @@ function shown(row, key) {
   // is what silently turned the PR column into plain text.
   if (key === 'title') return `<a href="{{ links.entity }}${esc(row.id)}">${esc(row.title)}</a>`;
   if (key === 'prs') return clamped((value || []).map(prLink), 'pull request');
-  // Kind is filterable everywhere and visible nowhere. It rides with the id,
-  // which was already carrying it in a prefix nobody should have to decode.
-  if (key === 'id')
-    return `<span class="chip kind-${esc(row.kind)}">${esc(human(row.kind))}</span>` +
-      ` <span class="eid">${esc(row.id)}</span>`;
+  // No kind chip here. `pitch-0c0001` already says pitch, in a prefix the model
+  // guarantees agrees with the kind, so the chip was restating the first word of
+  // the cell it sat in — seventeen times, in a column that is otherwise the
+  // narrowest thing on the row. The id string is not boxed in its place either:
+  // it is monospace, which is already what marks it as a token to be cited, and a
+  // border round every id is the same noise wearing a different hat. Kind stays
+  // filterable in the KIND facet, which is where "show me only tasks" is asked,
+  // and stays a chip on the detail, people and cycle pages, where no id is
+  // present to carry it.
+  if (key === 'id') return `<span class="eid">${esc(row.id)}</span>`;
   if (key === 'status')
     return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
@@ -2091,17 +2099,34 @@ window.SHOWING = Object.keys(DATA.rows);
 // again when the cells did — id and status grew a chip and tags shrank to one
 // line, so a width dragged for the old contents clips the new ones, and a stored
 // width is exactly the thing the automatic fit is not allowed to overrule.
-const WIDTH_KEY = 'openproj:widths:3';
+// Bumped a third time when the kind chip left the id cell: a width dragged for
+// `PITCH pitch-0c0001` is 60px of empty column beside `pitch-0c0001`.
+const WIDTH_KEY = 'openproj:widths:4';
 const WIDTHS = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+// Whether the columns are still the fit's to decide. It goes false the moment a
+// grip is let go, and never comes back: after that the widths are a decision
+// somebody made, and a refit — on a resize, or when the real face lands — would
+// be the page quietly undoing it.
+let automatic = !Object.keys(WIDTHS).length;
 let dragging = false;
 const table = document.getElementById('rows');
 const headers = [...table.querySelectorAll('th')];
+// The box the rows scroll in. It is what the table is fitted to, and what says
+// whether the frozen columns are holding anything back yet.
+const scroller = table.parentElement;
 
-// The two columns allowed to be narrower than their content, because they are
-// the two that clamp to one line and hide the remainder behind a count. Every
-// other column is sized so it never has to wrap: one character narrower than its
-// widest value costs a second line on every row that holds that value.
-const WRAPS = new Set(['prs', 'tags']);
+// The one column that takes whatever is left over. It clamps to a single line
+// and hides the rest behind a `+N`, so it is the only column that can be handed
+// space, or refused it, without changing what the row says.
+const SPARE_COLUMN = 'tags';
+
+// The columns the fit is allowed to squeeze when the plan does not fit the
+// window: a sentence and three lists of logins. They degrade by wrapping, which
+// costs height and loses nothing. Every column not named here keeps exactly its
+// measured width — a date, a count and a cycle number have one right width, and
+// `prs` and `tags` clamp, so a pixel under their measured width hides the first
+// item and takes the `+N` badge off the end of the row with it.
+const SQUEEZABLE = new Set(['title', 'owner', 'assignees', 'reviewers']);
 
 // A column's identity is the field it stands for. It used to be the column's
 // POSITION for the two that do not sort, so inserting a column anywhere to their
@@ -2109,13 +2134,10 @@ const WRAPS = new Set(['prs', 'tags']);
 // then it was the header's own text, which tied a remembered width to the word
 // printed above it rather than to the column.
 const keyOf = th => th.dataset.col;
-const FLOOR = 110;      // narrower than this and a wrapping column is unreadable
-const LONGEST = 200;    // and this is as far as the borrowing may squeeze a sentence
+const FLOOR = 110;      // narrower than this and a squeezed column is unreadable
 
-// Size every column to its content and the table to the window, once, when
-// nothing has been dragged yet. Measured with every cell on one line, so a
-// column ends up as wide as its widest value needs and not one character more.
-// What each column would need with every cell on one line. Measured from a
+// What each column would need with every cell on one line, so a column ends up
+// as wide as its widest value needs and not one character more. Measured from a
 // layout that has forgotten the widths already applied, or a column can only
 // ever be measured wider than it currently is.
 function naturalWidths() {
@@ -2130,36 +2152,47 @@ function naturalWidths() {
   return natural;
 }
 
-function fitWidths() {
-  const scroll = table.parentElement;
-  const natural = naturalWidths();
-
-  const wrapping = headers.map(th => WRAPS.has(keyOf(th)));
-  const fixed = natural.map((w, i) => wrapping[i] ? 0 : Math.ceil(w * 1.1));
-  let spare = scroll.clientWidth - fixed.reduce((a, b) => a + b, 0);
-
-  // The columns that never wrap can want more than the window on their own, and
-  // then the wrapping ones are left with nothing. Take the difference out of the
-  // widest of them — in practice title, the only one whose content is a sentence
-  // — rather than letting prs and tags collapse to a column of one character.
-  const need = FLOOR * wrapping.filter(Boolean).length - spare;
-  if (need > 0) {
-    let widest = 0;
-    fixed.forEach((w, i) => { if (w > fixed[widest]) widest = i; });
-    const give = Math.min(need, Math.max(0, fixed[widest] - LONGEST));
-    fixed[widest] -= give;
-    spare += give;
+// The fit itself, as arithmetic over three numbers per column and nothing else:
+// what the column needs on one line, what it is called, and how much room there
+// is. Separate from the measuring because the browser is the only thing that
+// knows how wide `Second-order Miura least-squares coefficients` is, and the
+// decision made from that number needs no browser at all — which is how it gets
+// tested against a window it never has to be opened in.
+//
+// Every width here is the measured one. It used to be `Math.ceil(w * 1.1)`, a
+// 10% cushion on twelve columns that was most of a 1792px table inside a 1460px
+// window: the table arrived scrolling sideways, on a plan of seventeen rows.
+function fitted(natural, keys, room) {
+  const width = natural.map(w => Math.ceil(w));
+  let over = width.reduce((a, b) => a + b, 0) - room;
+  // Worst-first, by levelling: the widest squeezable column comes down to the
+  // second widest, then those two come down to the third, and so on until the
+  // overflow is paid for. A proportional cut instead takes the same 18% off a
+  // 300px sentence and a 110px login, so the column that was already the
+  // narrowest pays as much as the one that caused the overflow.
+  while (over > 0) {
+    const flex = keys.map((_, i) => i)
+                     .filter(i => SQUEEZABLE.has(keys[i]) && width[i] > FLOOR);
+    if (!flex.length) break;    // everything squeezable is at the floor: it scrolls
+    const worst = Math.max(...flex.map(i => width[i]));
+    const paying = flex.filter(i => width[i] === worst);
+    const next = Math.max(FLOOR, ...flex.filter(i => width[i] < worst).map(i => width[i]));
+    const step = Math.min(worst - next, Math.ceil(over / paying.length));
+    paying.forEach(i => { width[i] -= step; });
+    over -= step * paying.length;
   }
+  // What is left over — a window wider than the plan needs, or the pixel or two
+  // the levelling overshot by — goes to the one column that can hold it without
+  // changing what any row says.
+  const spare = keys.indexOf(SPARE_COLUMN);
+  if (over < 0 && spare !== -1 && width[spare] > 0) width[spare] -= over;
+  return width;
+}
 
-  // Floor first and split only what is over it. Taking the larger of the floor
-  // and a proportional share instead hands out more than there is: each column
-  // separately clears the floor, and their sum quietly exceeds the window.
-  const share = natural.filter((w, i) => wrapping[i]).reduce((a, b) => a + b, 0) || 1;
-  const extra = Math.max(0, spare - FLOOR * wrapping.filter(Boolean).length);
-  headers.forEach((th, i) => {
-    const key = keyOf(th);
-    WIDTHS[key] = wrapping[i] ? FLOOR + Math.floor(extra * natural[i] / share) : fixed[i];
-  });
+function fitWidths() {
+  const keys = headers.map(keyOf);
+  const width = fitted(naturalWidths(), keys, scroller.clientWidth);
+  keys.forEach((key, i) => { WIDTHS[key] = width[i]; });
   applyWidths();
 }
 
@@ -2203,6 +2236,7 @@ headers.forEach((th, i) => {
     const key = keyOf(th);
     WIDTHS[key] = Math.ceil(naturalWidths()[i]);
     localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
+    automatic = false;
     applyWidths();
   };
   grip.onpointerdown = event => {
@@ -2229,6 +2263,7 @@ headers.forEach((th, i) => {
       grip.classList.remove('dragging');
       setTimeout(() => { dragging = false; }, 0);   // after the click it caused
       localStorage.setItem(WIDTH_KEY, JSON.stringify(WIDTHS));
+      automatic = false;
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', stop);
     };
@@ -2256,11 +2291,31 @@ summarise();
 draw();
 // After the first draw, because there is nothing to measure before the rows
 // exist. Stored widths win: they were set by hand, on purpose.
-if (Object.keys(WIDTHS).length) applyWidths(); else fitWidths();
+if (automatic) fitWidths(); else applyWidths();
+// The typeface arrives as a `data:` URI with `font-display: swap`, so the layout
+// this was just measured against may still be the fallback's metrics — and then
+// a first load fits to widths a reload does not reproduce, which is exactly the
+// "broken until I reloaded" it looked like. Measured once more when the real
+// face is in, which is the moment the numbers stop moving.
+if (document.fonts) document.fonts.ready.then(() => { if (automatic) fitWidths(); });
 // The breakpoint drops columns as the window narrows, and the sticky title
 // column starts where the id column ends — both are facts about a layout that
-// only exists once it has been laid out.
-addEventListener('resize', () => { applyWidths(); stickyOffset(); });
+// only exists once it has been laid out. An automatic fit is a fit to *this*
+// window, so a new window gets a new one; a dragged width is a decision and is
+// only re-applied.
+addEventListener('resize', () => {
+  if (automatic) fitWidths(); else applyWidths();
+  stickyOffset();
+});
+// The rule down the right of the frozen title column says "what is to the left
+// of this is being held still while the rest passes under it". At scrollLeft 0
+// nothing is passing under anything and it reads as a stray separator between
+// title and priority, which is the first thing anybody asked about it. Set here
+// rather than only on the event, because a reload restores scrollLeft before any
+// of this runs.
+const frozenEdge = () => scroller.classList.toggle('scrolled', scroller.scrollLeft > 0);
+scroller.addEventListener('scroll', frozenEdge);
+frozenEdge();
 </script>
 """
 
@@ -2340,9 +2395,22 @@ thead th {
    need is the weight that loses to everything meant to correct them. */
 [data-col="id"] { position: sticky; left: 0; z-index: 1; background: var(--surface); }
 [data-col="title"] { position: sticky; left: var(--sticky-1, 0px); z-index: 1;
-                     background: var(--surface); box-shadow: 1px 0 0 var(--line); }
+                     background: var(--surface); }
 thead [data-col="id"], thead [data-col="title"] { z-index: 4; }
-thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line); }
+thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
+/* The edge of the frozen pair, drawn only while there is something passing under
+   it. Unconditionally it is a vertical rule between title and priority and
+   nothing else — the table has no other column separators, so at scrollLeft 0 it
+   reads as one column having been singled out for a border.
+   Two rules and not one: the header's own bottom rule is drawn *inside* its box
+   (a collapsed border is not painted on a sticky cell), so both shadows have to
+   be named together or setting one drops the other. `.scrolled td[…]` is (0,2,1)
+   and beats the bare (0,1,0) above it; `.scrolled thead th[…]` is (0,2,2) and
+   beats that in turn, whatever order this file ends up in. */
+.scrolled td[data-col="title"] { box-shadow: 1px 0 0 var(--line); }
+.scrolled thead th[data-col="title"] {
+  box-shadow: inset 0 -1px 0 var(--line), 1px 0 0 var(--line);
+}
 /* One weight heavier than the sticky rules above — an element and a class beats
    a bare attribute selector — so a problem in the id or the title column keeps
    its ground. It is the specificity that does it and not the order: written the
@@ -2389,13 +2457,13 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 
 _GRAPH = """
 <h1>Graph</h1>
+{#- One hint, in both modes. There used to be a second paragraph that swapped in
+    here on entering edit mode, saying what edit mode is for — but the status
+    text beside the button already says it, in the place you are looking when you
+    press the button, so the page explained one mode twice and moved the whole
+    canvas down a line to do it. -#}
 <p class="hint" id="panhint">Double-click a node to open it. Drag to pan, scroll to zoom,
   drag a node to move it.</p>
-{% if editable %}
-<p class="hint" id="howto" hidden>Click what must finish first and then what waits for
-  it. Draw as many as you like; nothing is written until you press Save.
-  <strong>Reset</strong> clears what you have drawn and stays in edit mode.</p>
-{% endif %}
 {{ facets }}
 {#- The one thing on this canvas that is not a word. Every swatch is the token
     the node is actually filled with and carries the glyph the node's title is
@@ -2720,7 +2788,6 @@ applyFilter();
 const CONNECT = document.getElementById('connect');
 const SAVE = document.getElementById('save');
 const DISCARD = document.getElementById('discard');
-const PANHINT = document.getElementById('panhint');
 let connecting = false;
 // `blocker`, not `source`: two classic scripts on one page share one global
 // scope, and the shell's `const source = new EventSource(...)` below threw on a
@@ -2762,11 +2829,11 @@ if (CONNECT) {
     blocker = null;
     cy.nodes().removeClass('picked');
     CONNECT.textContent = connecting ? 'Discard and exit' : 'Edit dependencies';
-    // Instructions for a mode you are not in are noise on every other visit.
-    document.getElementById('howto').hidden = !connecting;
-    // One hint or the other, never both: in edit mode a click picks a node, so
-    // the standing hint was telling you to drag what you are meant to click.
-    PANHINT.hidden = connecting;
+    // The hint under the heading stays put in both modes. It was swapped for a
+    // second paragraph on the way in and back again on the way out, so pressing
+    // the button reflowed the page under the pointer — and everything it says is
+    // still true in edit mode: you still pan, still zoom, still drag a node.
+    // What edit mode adds is said once, beside the button that turned it on.
     tally(connecting ? 'click what must finish first, then what waits for it'
                      : dropped ? `discarded ${dropped}` : '');
   };
@@ -2887,18 +2954,24 @@ _TIMELINE = """
       empty boxes under a sentence reading "Showing 2026-02-02 to 2026-11-27" ask
       the reader to believe the page over the controls; Reset is what says the
       window is the default one. -#}
-  <label class="facet">from <input type="date" name="from" value="{{ t.origin or '' }}"></label>
-  <label class="facet">to <input type="date" name="to" value="{{ t.last or '' }}"></label>
-  <label class="facet">zoom
-    <select name="zoom">
-      <option value="">fit to window</option>
-      {% for px, label in zooms %}
-      <option value="{{ px }}"{{ ' selected' if chosen == px else '' }}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <button type="submit" class="button primary">Apply</button>
-  <a class="button reset" href="{{ links.timeline }}">Reset</a>
+  {#- Each label is beside its control rather than wrapped around it, because the
+      row is laid out as a grid and the caption, the box and the ISO echo under
+      the box are three rows of it. A wrapping `<label>` is one grid item and
+      cannot put its own contents in three. `for`/`id` says the same thing to the
+      accessibility tree that wrapping said. -#}
+  <label class="facet" for="tl-from">from</label>
+  <input type="date" id="tl-from" name="from" value="{{ t.origin or '' }}">
+  <label class="facet" for="tl-to">to</label>
+  <input type="date" id="tl-to" name="to" value="{{ t.last or '' }}">
+  <label class="facet" for="tl-zoom">zoom</label>
+  <select id="tl-zoom" name="zoom">
+    <option value="">fit to window</option>
+    {% for px, label in zooms %}
+    <option value="{{ px }}"{{ ' selected' if chosen == px else '' }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <span class="acts"><button type="submit" class="button primary">Apply</button>
+    <a class="button reset" href="{{ links.timeline }}">Reset</a></span>
 </form>
 <p class="hint">{% if windowed %}Showing {{ t.origin }} to {{ t.last }}, a window of the
   plan — Reset goes back to all of it.{% else %}Showing the whole plan{% if t.origin %},
@@ -3220,10 +3293,33 @@ applyFilter();
 """
 
 _TIMELINE_STYLE = """
-.tl-controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: end;
+/* FROM, TO, ZOOM, Apply and Reset are one line, and the ISO echo stays under the
+   date box it belongs to. A flex row could not do both: the echo makes the two
+   date labels a line taller than the zoom label, so `align-items: end` dropped
+   ZOOM and both buttons a full line below the boxes and the bar read as two
+   rows. Three explicit grid rows — caption, control, echo — say it directly:
+   every caption on the first, every control on the second, an echo on the third
+   under the box it came from, with the zoom column and the buttons leaving the
+   third row empty. `grid-auto-flow: column` fills a column top to bottom before
+   starting the next, so the echo the shell inserts after each date input lands
+   in that input's own column and nothing here has to know it exists. */
+.tl-controls { display: grid; grid-auto-flow: column; grid-auto-columns: max-content;
+               align-items: end; column-gap: 1rem; row-gap: .15rem;
                margin: .75rem 0 .25rem; }
+.tl-controls > .facet { grid-row: 1; }
+.tl-controls > input, .tl-controls > select, .tl-controls > .acts { grid-row: 2; }
+.tl-controls > .iso { grid-row: 3; }
+.tl-controls .acts { display: flex; gap: .5rem; align-items: baseline; }
 .tl-controls input, .tl-controls select {
   display: block; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0;
+  color: inherit;
+}
+/* Narrower than the row itself, and one line is no longer on offer. The grid goes
+   rather than overflowing the page, and the same controls wrap as a flex row —
+   the echo beside its box instead of under it, which is the one thing that has
+   to give. */
+@media (max-width: 620px) {
+  .tl-controls { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .75rem; }
 }
 /* `.button` and `.button.primary` are the shell's. They were written here, in a
    rule scoped to this filter bar, and the table's create action wore the class
@@ -3747,22 +3843,26 @@ def _control_html(field: dict) -> Markup:
 _NEW = """
 <article class="entity editing">
   <p class="back"><a href="{{ links.table }}">← table</a></p>
+  {#- The kind sits where the detail page's kind chip sits, above the heading:
+      the two are the same document in two modes, and this is the control that
+      decides which of the three the reader will be looking at afterwards — the
+      first decision on the form, and it was the third thing on a line under the
+      title box. -#}
+  <p class="eyebrow"><label class="kindpick">kind
+      <select id="kind">
+        {% for k in kinds %}<option value="{{ k }}"
+          {% if k == kind %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
+      </select>
+    </label></p>
   {#- The heading names the page; the title box below it is a control. It used to
-      BE the heading — an `<h1>` whose only content was an empty input, which is
+      BE the heading — a heading whose only content was an empty input, which is
       a page with no name at all and a box with no name either. `aria-label`
       rather than a `<label for>` because the visible word is the placeholder,
       and a placeholder disappears the moment anything is typed. -#}
   <h1>New entity</h1>
   <input name="title" data-type="text" form="edit" value="" aria-label="Title"
          class="field title-field" placeholder="Title">
-  <p class="meta">
-    <label class="kindpick">kind
-      <select id="kind">
-        {% for k in kinds %}<option value="{{ k }}"
-          {% if k == kind %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
-      </select>
-    </label>
-    · the id and the file are the server's to choose</p>
+  <p class="meta">the id and the file are the server's to choose</p>
   <form id="edit" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <div class="panes">
@@ -3964,9 +4064,14 @@ _DETAIL = """
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
   <p class="back"><a href="{{ links.detail }}">← all</a></p>
+  {#- Above the title, not under it. What a thing *is* is the first question a
+      page answers, and the kind was the third item on a line below the name,
+      between an id and a status. It is also the one fact here that never
+      changes, which is why the status chip does not come with it: a status is
+      news about the thing and belongs with the rest of the news. -#}
+  <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
   <h1><span class="read">{{ e.title }}</span></h1>
   <p class="meta"><code>{{ e.id }}</code>
-     <span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span>
      <span class="chip {{ status_class(e.status) }}">{{ e.status|human }}</span>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
   {% if editable %}
@@ -4328,6 +4433,11 @@ article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
 .meta { color: var(--muted); margin-top: 0; display: flex; flex-wrap: wrap;
         gap: .4rem; align-items: baseline; }
 .meta code { font-family: var(--font-mono); font-size: 12px; }
+/* The line above the title. It carries the one fact that has to be read before
+   the name — on the detail page the kind, on the create form the picker that
+   decides it — and it is tucked tight against the heading so the two read as one
+   header rather than as a paragraph with a heading under it. */
+.eyebrow { margin: 0 0 .15rem; color: var(--muted); }
 .back { margin: 0 0 .5rem; font-size: 12px; }
 /* `.editbar` is the shell's. It was written here, and the table — which wears the
    class on the row holding its only create action — does not load this
@@ -4864,9 +4974,16 @@ def _suggestions(index: Index) -> dict:
 
 
 _CYCLE = """
-<p class="editbar">
-  <a href="{{ links.cycles }}">← all cycles</a>
-</p>
+{#- The same header the detail page and the create form wear: a way back, then
+    the name, then the meta line. `.back` and not `.editbar` — this is one link
+    out, not a row of controls, and it was the only one of the three sized
+    differently.
+
+    The eyebrow the other two carry is missing here on purpose. It says what the
+    thing is, and this heading is "Cycle 37": the kind is already its first word,
+    so a CYCLE chip above it would be the restatement the id column's kind chip
+    was. -#}
+<p class="back"><a href="{{ links.cycles }}">← all cycles</a></p>
 <h1>Cycle {{ c.number }}</h1>
 {% if c.recorded %}
 <p class="meta">{{ c.starts_on }} → builds until <b>{{ c.builds_until }}</b>
@@ -5694,8 +5811,17 @@ _PEOPLE_STYLE = """
 /* A ground, not only a bold name: the group row is the only thing separating one
    person's rows from the next person's now that they share a table, and a run of
    twelve review rows is long enough to lose the boundary in. */
-tr.group > th { font-weight: 400; background: var(--surface-2);
-                border-top: 1px solid var(--line-strong); }
+tr.group > th { font-weight: 400; background: var(--surface-2); }
+/* Air above each person, so a name does not begin on the line the previous
+   person's last row ended on. Space and not a rule: every row here already ends
+   in a hairline and the group row already has a ground of its own, and a third
+   boundary drawn between two things that are each already bounded is noise. It
+   is a thick border in the page's own colour because the table is collapsed —
+   a collapsed border resolves to the widest of the two it joins, so this eats
+   the row-hairline above it and leaves a clean gap rather than a gap with a line
+   in it. The sibling combinator and not `:first-of-type`: the gap belongs
+   *between* people, so the first group must not open with one. */
+tbody.person + tbody.person > tr.group > th { border-top: .7rem solid var(--bg); }
 .groupline { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .75rem; }
 .who { font-size: 15px; font-weight: 650; }
 .load { color: var(--muted); font-size: 12px; }

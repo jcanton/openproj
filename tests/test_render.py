@@ -855,6 +855,32 @@ def test_a_people_row_wears_the_chips_the_table_wears(rendered: Path):
     assert ">in_progress<" not in body
 
 
+def test_one_persons_rows_do_not_run_into_the_next(rendered: Path):
+    """Fifteen people share one table so the status column can be read down it,
+    and the price was that a person's name began on the line the previous
+    person's last row ended on.
+
+    Space, and not a rule: every row here already ends in a hairline and the
+    group row already has a ground of its own, so a third boundary between two
+    things that are each already bounded is noise. It is a thick border in the
+    page's own colour, which a collapsed table resolves in favour of the wider of
+    the two borders it joins — so it eats the hairline above it and leaves a
+    clean gap rather than a gap with a line in it.
+    """
+    body = read(rendered, "people.html")
+
+    assert body.count('<tbody class="person"') > 1, "there is something to sit between"
+    gap = re.search(
+        r"tbody\.person \+ tbody\.person > tr\.group > th \{ border-top: ([^;]+); \}", body
+    )
+    assert gap, "the gap belongs between people, so the first group must not open with one"
+    size, style, colour = gap.group(1).split()
+    assert (style, colour) == ("solid", "var(--bg)"), gap.group(1)
+    assert float(size.removesuffix("rem")) >= 0.5, "space somebody can actually see"
+    # And it is the only top border on the page, so nothing draws a line there.
+    assert re.findall(r"border-top: ([^;]+);", body) == [gap.group(1)]
+
+
 def test_a_person_is_weighed_in_weeks_and_not_in_things(demo_rendered: tuple[Path, Index]):
     """F23. "1 as owner, 2 as assignee, 12 as reviewer" adds a half-hour review to
     a six-week build and calls the sum a workload.
@@ -1923,13 +1949,17 @@ def test_a_persons_rows_lead_with_what_they_own(rendered: Path):
     assert _ROLE_ORDER[0] == "owner"
 
 
-def test_the_graph_explains_the_mode_only_inside_it(rendered: Path):
-    """Instructions for a mode you are not in are noise on every other visit."""
+def test_the_graph_carries_one_hint_and_no_mode_paragraph(rendered: Path):
+    """The standing hint is true of the rendered build as much as of the served
+    one: it pans, it zooms, and a double-click opens the entity. The paragraph
+    that used to swap in for edit mode is gone from both — the served page says
+    what edit mode is for beside the button that turns it on, and this build has
+    no such button."""
     graph = read(rendered, "graph.html")
-    editable = re.search(r'<p class="hint" id="howto"[^>]*>', graph)
 
     assert "Double-click a node to open it" in graph
-    assert editable is None, "the static build has no edit mode to explain"
+    assert "howto" not in graph, "there is no second hint to hide"
+    assert 'id="connect"' not in graph, "and no edit mode to explain"
 
 
 def test_the_parent_reads_as_a_title_and_edits_as_an_id(demo_rendered: tuple[Path, Index]):
