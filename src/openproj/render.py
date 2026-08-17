@@ -1919,6 +1919,12 @@ labelTheme();
 // carries the class the box carries, so it appears and disappears with it rather
 // than repeating a value that is already on screen in read mode.
 for (const box of document.querySelectorAll('input[type=date]')) {
+  // Except on the create form, where the two boxes are the only dates on screen
+  // and the echo under each label reads as a second, differently-formatted copy
+  // of a value you are in the middle of typing. The ambiguity this exists to
+  // settle is between a printed date and a box beside it; there is nothing to
+  // compare against there.
+  if (box.closest('#create')) continue;
   const echo = document.createElement('span');
   echo.className = box.classList.contains('field') ? 'iso field' : 'iso';
   const show = () => { echo.textContent = box.value || '—'; };

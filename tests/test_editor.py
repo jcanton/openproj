@@ -838,3 +838,18 @@ def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
     bound = "button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };"
     assert bound in page
     assert "button.onclick" not in page.split("const FORMATS")[1][:2000]
+
+
+def test_the_create_form_does_not_echo_the_dates_it_is_asking_for(page: str):
+    """Every `input[type=date]` gets an ISO echo beside it, because a date box is
+    drawn in the reader's locale and the same stored 2026-09-01 reads as
+    01/09/2026 here and 09/01/2026 one desk over.
+
+    On the create form that echo has nothing to disambiguate against — those two
+    boxes are the only dates on screen — so it read as a second, differently
+    formatted copy of a value somebody is in the middle of typing. Two dates,
+    four numbers.
+    """
+    assert "if (box.closest('#create')) continue;" in page
+    # And the echo itself is still there for every other date box on the page.
+    assert "echo.className = box.classList.contains('field') ? 'iso field' : 'iso'" in page
