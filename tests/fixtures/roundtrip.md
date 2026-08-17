@@ -6,7 +6,7 @@
 title: Überprüfung der Randbedingungen — αβγ
 kind: task
 status: in_progress
-effort_weeks: 1.5      # jcanton's guess; nobody measured it
+person_weeks: 1.5      # jcanton's guess; nobody measured it
 
 # Key order below is the human's business, not the tool's.
 id: task-f0e1d2

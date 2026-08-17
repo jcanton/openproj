@@ -138,9 +138,8 @@ body is where the sheet's `## Goal` goes.
 ```markdown
 ---
 cycle: 37
-starts_on: 2026-07-26
-build_weeks: 4
-cooldown_weeks: 2
+starts_on: 2026-07-14      # the betting table, and the first day of build
+reviews_on: 2026-08-11     # the review meeting; build ended the working day before
 # Fraction of the BUILD weeks, not of the whole window. 0.5 on a 4-week
 # cycle is 2 weeks of capacity.
 availability:
@@ -153,6 +152,14 @@ availability:
 
 Reproducibility and the land port are the two that cannot slip.
 ```
+
+**Amended 2026-08-17.** This slice shipped with `build_weeks` and `cooldown_weeks` and they are
+gone: the two boundaries are meetings somebody puts in a calendar, and a length is a prediction of
+one. The team's cadence says so plainly — the end of build is the brainstorm for the next cycle,
+and the end of cool-down is the next cycle's betting table — so both are dates that exist whether
+or not they are four and two weeks apart. Everything else is derived in `Config.with_plans`: the
+last build day, the cool-down end (the next cycle's `starts_on`, stored once), and the length in
+**working** weeks with the holidays taken out, which is what `capacity` is charged against.
 
 Not an `Entity` because of what `Entity` would drag in: a cycle has no `status` that is not
 derivable from its dates, `depends_on` between cycles is temporal rather than a dependency and

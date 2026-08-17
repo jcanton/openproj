@@ -9,13 +9,12 @@ assignees: [yiluchen1066]
 reviewers: [kotsaloscv, halungge]
 review_waived: false
 assigned_on: 2026-08-17
-cycle: 37
 priority: medium
 depends_on: [task-0e1001]
 tags: [radiation, longwave, no-scatter-solver, planck-source, gt4py]
 prs: []
 created_schema_version: 2
-effort_weeks: 2.5
+person_weeks: 2.5
 ---
 
 # Port ecRad longwave

@@ -3,7 +3,7 @@
 The two ends of every page here disagreed about what a payload was. Python's
 encoder writes `Infinity`, `-Infinity` and `NaN` for the three non-finite floats
 — they are JavaScript literals, not JSON — and every block on every page is read
-back with `JSON.parse`, which refuses all three. So one `effort_weeks: .inf`
+back with `JSON.parse`, which refuses all three. So one `person_weeks: .inf`
 edited into a file by hand answered 200 with a complete-looking page whose table
 said "The plan could not be loaded. This page arrived without its data", blaming
 the network for a number, and `/api/index.json` answered 500 to every reader.
@@ -47,11 +47,11 @@ from openproj.web import create_app
 
 ORDINARY = (
     "---\nid: task-e00001\nkind: task\ntitle: An ordinary task\n"
-    "status: ready\neffort_weeks: 1\nassigned_on: 2026-09-01\n---\n\nBody.\n"
+    "status: ready\nperson_weeks: 1\nassigned_on: 2026-09-01\n---\n\nBody.\n"
 )
 HAND_EDITED = (
     "---\nid: task-e00002\nkind: task\ntitle: A size somebody typed into a file\n"
-    "status: ready\neffort_weeks: {size}\nassigned_on: 2026-09-01\n---\n\nBody.\n"
+    "status: ready\nperson_weeks: {size}\nassigned_on: 2026-09-01\n---\n\nBody.\n"
 )
 
 # The three spellings YAML has for a number that is not one. `.nan` matters as
@@ -189,8 +189,8 @@ def test_the_index_route_answers_rather_than_faulting_on_such_a_size(
         # Null, not a clamp: JSON has no way to say this number, and every page
         # already draws an absent one as a dash. A clamp would put a figure
         # nobody wrote into a cell.
-        assert entities["task-e00002"]["effort_weeks"] is None
-        assert entities["task-e00001"]["effort_weeks"] == 1.0
+        assert entities["task-e00002"]["person_weeks"] is None
+        assert entities["task-e00001"]["person_weeks"] == 1.0
 
 
 @pytest.mark.parametrize("size", NOT_NUMBERS)

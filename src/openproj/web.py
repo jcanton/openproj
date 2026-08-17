@@ -105,13 +105,14 @@ CYCLE_DIR = "cycles"
 CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
 ISSUE_DIR = "issues"
 ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
-# The longest a build or a cool-down may be. Shape Up's cycle is six weeks and
-# the box beside it had no bound at all, so `build_weeks: 500000` — three
-# keystrokes and a confirmation — committed a cycle whose end date is past the
-# end of the calendar, and every page that reads a cycle answered 500 to
-# everybody, permanently, on a branch whose protection means the commit cannot
-# be force-pushed away. Ten years is not a cycle by any reading; the number is
-# refused here so it never reaches a file, and `Cycle._last_day` clamps anyway
+# The longest a cycle may be, betting table to review meeting. It was a length in
+# weeks with no bound at all, so `build_weeks: 500000` — three keystrokes and a
+# confirmation — committed a cycle whose end date is past the end of the
+# calendar, and every page that reads a cycle answered 500 to everybody,
+# permanently, on a branch whose protection means the commit cannot be
+# force-pushed away. The dates that replaced it can say the same thing with
+# `reviews_on: 9999-12-31`, so the bound moved with them. Ten years is not a
+# cycle by any reading; `Config.working_weeks` counts a week at a time anyway,
 # for the file somebody writes by hand.
 MAX_CYCLE_WEEKS = 520.0
 
@@ -204,17 +205,31 @@ def _reject_bad_cycle(fields: dict) -> None:
     it can quote the value — so this is where a word becomes a 422 instead of a
     date the record cannot hold.
     """
-    if "starts_on" in fields:
-        fields["starts_on"] = _as_iso_date(fields["starts_on"], "starts_on")
     # `in fields`, not `is not None`. Skipping a null let it through to the file,
-    # and `build_weeks: null` is a ValidationError inside `parse_cycle_text` —
-    # an unhandled 500 whose body is not even JSON, so the page could not say
-    # what was wrong. Null still arrives from anything that coerces before it
-    # sends — `Number('six')` is NaN and `JSON.stringify` writes NaN as null —
+    # and a null date is a ValidationError inside `parse_cycle_text` — an
+    # unhandled 500 whose body is not even JSON, so the page could not say what
+    # was wrong. Null still arrives from anything that coerces before it sends,
     # and this endpoint answers browsers it did not render.
-    for name in ("build_weeks", "cooldown_weeks"):
+    for name in ("starts_on", "reviews_on"):
         if name in fields:
-            fields[name] = _as_positive(fields[name], name, most=MAX_CYCLE_WEEKS)
+            fields[name] = _as_iso_date(fields[name], name)
+    # The review meeting is the day after the last day of build, so a cycle whose
+    # review is on or before its betting table has no build in it at all — every
+    # bet in it would overrun by definition, and its capacity would be zero.
+    both = fields.get("starts_on"), fields.get("reviews_on")
+    if all(both):
+        opens, reviews = (date.fromisoformat(one) for one in both)
+        if reviews <= opens:
+            raise HTTPException(
+                422, f"the review meeting is {reviews}, which is not after the betting "
+                f"table on {opens} — a cycle needs at least one day of build"
+            )
+        if (reviews - opens).days > MAX_CYCLE_WEEKS * 7:
+            raise HTTPException(
+                422, f"{(reviews - opens).days // 7} weeks from the betting table to the "
+                f"review meeting is not a cycle; the most this will hold is "
+                f"{MAX_CYCLE_WEEKS:g} weeks"
+            )
     rates = fields.get("availability")
     if rates is not None:
         if not isinstance(rates, dict):
@@ -261,8 +276,8 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
     return number
 
 
-_NUMERIC = ("cycle", "appetite_weeks", "effort_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on")
+_NUMERIC = ("cycle", "person_weeks")
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by")
 
 
 def _reject_bad_issue(fields: dict) -> None:
@@ -285,7 +300,7 @@ def _reject_bad_types(fields: dict) -> None:
             if name in fields and fields[name] is not None:
                 raise HTTPException(422, f"{name} must be a number, not {fields[name]!r}")
         # `Infinity` and `NaN` are valid JSON to Python's parser, so both arrive
-        # here as ordinary floats and pass every check above. `effort_weeks:
+        # here as ordinary floats and pass every check above. `person_weeks:
         # Infinity` committed, and then `math.ceil` raised inside the
         # scheduler's own end-of-calendar guard: every page 500, permanently.
         # The guard no longer raises; this stops the value at the door, the way
@@ -404,13 +419,26 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     `<id>.md` works on a corpus nobody has renamed and fails on every real one.
     """
     directory = _directory_for(entity_id)
+    found = []
     for path in store.paths(commit):
         if not path.startswith(f"{directory}/") or not path.endswith(".md"):
             continue
         stem = path[len(directory) + 1 : -len(".md")]
         if stem == entity_id or stem.startswith(f"{entity_id}--"):
-            return path
-    return None
+            found.append(path)
+    # Refuse rather than pick. This returned the first match, and "first match
+    # wins" is a coin toss about which record a save destroys — the index resolves
+    # the same collision the other way, so the file this chose was reliably not the
+    # record the page had shown. Two files claiming one id is a blocker the pages
+    # now draw; until a person resolves it, no write to that id is safe.
+    if len(found) > 1:
+        raise HTTPException(
+            409,
+            f"{', '.join(sorted(found))} both claim {entity_id}. "
+            "Rename or remove one in git, then reload — until then a save here "
+            "cannot tell which record you meant.",
+        )
+    return found[0] if found else None
 
 
 MODELS = {"project": Project, "pitch": Pitch, "task": Task}
@@ -455,6 +483,34 @@ def create_app(
 
     store = Store(Path(repo))
     app = FastAPI(title="openproj")
+
+    @app.middleware("http")
+    async def say_what_this_page_may_do(request: Request, call_next):
+        """The four headers, on every response including the JSON and the errors.
+
+        Written here rather than per route because the one that matters is the one
+        nobody remembered to add: a 500's body is a traceback, a 404's is a
+        sentence somebody typed, and both are documents a browser will render.
+
+        `X-Content-Type-Options` because an asset is bytes somebody uploaded and
+        the only thing standing between `image/png` and a document is that nobody
+        sniffed it. `Referrer-Policy` because an entity id in a path is the name of
+        a piece of internal planning and there is no reason to hand it to whatever
+        a body links out to. `frame-ancestors 'none'` here rather than in the page,
+        because a `<meta>` ignores it — and `X-Frame-Options` beside it for the
+        readers whose browser predates that.
+
+        The policy itself is `render.CSP`, the same string the pages carry in a
+        `<meta>`, so the served copy and the exported copy cannot drift into
+        disagreeing about what a page is allowed to do.
+        """
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = f"{render.CSP}; frame-ancestors 'none'"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
     watchers: set[asyncio.Queue] = set()
     # An event stream is a request that never ends, and uvicorn waits for in-flight
     # requests BEFORE it runs lifespan shutdown — so a flag set there arrives after
@@ -777,6 +833,30 @@ def create_app(
         if path is None:
             raise HTTPException(404, f"no entity {entity_id!r}")
         original = store.read(base, path)
+        # An id two files claim is an id this route cannot write to, and the check
+        # is a question to the index rather than a second derivation of it.
+        #
+        # Comparing this file against its own name is not enough, and the case that
+        # proves it has both halves innocent on their own: the file named for the
+        # id declares it, so it looks right from here, while a *different* file —
+        # named for something else — also declares it, and being later in tree
+        # order takes the id in the index. The page showed that one. The save lands
+        # on this one. Both answer 200 and neither file is individually wrong; the
+        # contest only exists across the two, which is exactly what the index
+        # already computed and drew a banner about.
+        contested = [
+            problem
+            for problem in index_now()[1].problems
+            if problem.entity_id == entity_id
+            and problem.field == "id"
+            and problem.severity == "blocker"
+        ]
+        if contested:
+            raise HTTPException(
+                409,
+                f"{contested[0].message}. Resolve it in git and reload — a save here "
+                "would edit a record that is not the one you were shown.",
+            )
 
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         _reject_bad_types(fields)

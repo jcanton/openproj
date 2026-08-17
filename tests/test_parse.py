@@ -35,7 +35,7 @@ def test_parse_file_reads_a_seed_pitch(seed_root: Path):
     assert pitch.id == "pitch-2a7f3e"
     assert pitch.title == "Tracer adv port LS coeffs"
     assert pitch.status == "done"
-    assert pitch.appetite_weeks is None
+    assert pitch.person_weeks is None
     assert pitch.assignees == ["nfarabullini", "DropD"]
     assert pitch.cycle == 34
     assert "tracer-advection" in pitch.tags
@@ -46,7 +46,7 @@ def test_parse_dispatches_to_the_subclass_named_by_kind(seed_root: Path):
     task = parse_file(seed_root / "tasks" / "task-53a9f0--reproduce-2gpu-equator-artefact.md")
     assert type(project) is Project
     assert type(task) is Task
-    assert task.effort_weeks == 2
+    assert task.person_weeks == 2
     assert task.assigned_on == date(2026, 8, 13)
 
 
@@ -118,6 +118,20 @@ def test_serialise_writes_one_edited_key_and_leaves_its_neighbours_alone():
     assert output.split("---\n")[1].count("\n") == text.split("---\n")[1].count("\n")
 
 
+def test_one_shaper_keeps_the_spelling_the_corpus_is_written_in():
+    """`shaped_by` grew from a scalar to a list, because shaping is usually done in
+    pairs. Every existing file writes one name as a bare string, and rewriting all
+    of them to `[jcanton]` on an unrelated save is a diff nobody asked for in a
+    file somebody else is reading."""
+    text = "---\nid: pitch-abc123\nkind: pitch\ntitle: P\nshaped_by: jcanton\n---\n\nb\n"
+    pitch = parse_text(text, "p.md")
+    assert pitch.shaped_by == ["jcanton"]
+    assert serialise(pitch, text) == text
+
+    pitch.shaped_by = ["jcanton", "msimberg"]
+    assert "shaped_by:\n  - jcanton\n  - msimberg\n" in serialise(pitch, text)
+
+
 def test_serialise_appends_a_field_the_file_never_had():
     text = "---\nid: task-abc123\nkind: task\ntitle: T\n---\n\nbody\n"
     entity = parse_text(text, "sparse.md")
@@ -132,7 +146,7 @@ def test_serialise_without_an_original_writes_the_whole_skeleton():
     output = serialise(task)
     assert output.startswith("---\nid: task-abc123\nkind: task\ntitle: T\nparent: null\n")
     assert output.endswith("---\n\nWhy this matters.\n")
-    assert "effort_weeks: null\n" in output
+    assert "person_weeks: null\n" in output
 
 
 def test_serialise_never_writes_the_body_into_the_frontmatter():
@@ -183,15 +197,15 @@ def test_size_weeks_defaults_when_no_size_is_stated():
 
 def test_size_weeks_reads_appetite_on_a_pitch_and_effort_on_a_task():
     config = Config()
-    pitch = Pitch(id="pitch-abc123", kind="pitch", title="P", appetite_weeks=3.0)
-    task = Task(id="task-abc123", kind="task", title="T", effort_weeks=3.0)
+    pitch = Pitch(id="pitch-abc123", kind="pitch", title="P", person_weeks=3.0)
+    task = Task(id="task-abc123", kind="task", title="T", person_weeks=3.0)
     assert size_weeks(pitch, config) == (3.0, False)
     assert size_weeks(task, config) == (3.0, False)
 
 
 def test_size_weeks_keeps_a_stated_zero():
     """Zero is a size somebody chose; only absence may be defaulted."""
-    task = Task(id="task-abc123", kind="task", title="T", effort_weeks=0)
+    task = Task(id="task-abc123", kind="task", title="T", person_weeks=0)
     assert size_weeks(task, Config()) == (0.0, False)
 
 

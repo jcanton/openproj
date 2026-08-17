@@ -15,7 +15,7 @@ rather than inventing one.
 
 | Field | Status |
 |---|---|
-| `effort_weeks` / `appetite_weeks` | Supplied by jcanton, 2026-08-12. Real intent, not measured. |
+| `person_weeks` | Supplied by jcanton, 2026-08-12. Real intent, not measured. |
 | `owner` / `reviewers` on `pitch-1b3f9a`, `task-53a9f0`, `task-5a4e39` | Chosen by jcanton. |
 | `owner` / `reviewers` on the other five | **Drawn at random from `C2SM/icon4py` contributors.** Nobody has agreed to any of this. |
 | `depends_on` marked `# synthetic` | **Invented** to exercise the scheduler. |

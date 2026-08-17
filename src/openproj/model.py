@@ -17,7 +17,7 @@ from typing import Literal
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, PrivateAttr, ValidationError, field_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
@@ -26,6 +26,11 @@ CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 _CYCLE_DIR = "cycles"
 _ISSUE_DIR = "issues"
+_WORKING_DAYS_PER_WEEK = 5
+# Calendar days from a betting table to the review meeting when a record does not
+# say. Four weeks is what the team runs; the point of storing the date is that
+# this number is only ever a guess, so it is used and then said out loud.
+_DEFAULT_BUILD_DAYS = 28
 
 # Python's `date` spans years 1 to 9999 and every way of leaving that range
 # raises instead of saturating, so this is the widest move any of the two
@@ -37,7 +42,7 @@ def within_the_calendar(days: float) -> float:
     """`days`, bounded by the length of the calendar so that rounding it cannot raise.
 
     `round()` and `math.ceil()` both raise on infinity, and a length in weeks is
-    a float that a hand-edited file may write as `.inf` — `effort_weeks: .inf`
+    a float that a hand-edited file may write as `.inf` — `person_weeks: .inf`
     reached `math.ceil` inside the scheduler's own calendar guard and took every
     page down, which is the guard falling over rather than guarding. So the
     bound goes before the rounding, never after it.
@@ -289,38 +294,43 @@ class Cycle(BaseModel):
     existing write path — per-key frontmatter merge, three-way body merge, scoped
     compare-and-swap. The body is where the cycle's goal goes.
 
-    Only `starts_on` is stored. An end date stored beside a length is a second
-    copy of one fact, and the two disagree the first time somebody moves a date.
+    **Two dates are stored, and both are meetings.** `starts_on` is the betting
+    table and the first day of build; `reviews_on` is the review meeting, which is
+    also the brainstorm for the next cycle — build ended the working day before
+    it. Everything else about the calendar is worked out from those two.
+
+    Lengths were stored instead, and a length is a prediction of a date somebody
+    picks: `starts_on + 4 weeks` cannot know that the review was moved for a
+    conference, that the team leaves a month between two cycles, or that a cycle
+    over the year-end closure holds a fortnight of building and not four weeks.
+    Capacity is `availability × build weeks`, so that last one was the betting
+    table's own number being wrong.
+
+    `builds_until`, `ends_on` and `build_weeks` are filled in by
+    `Config.with_plans`, which is where the holidays and the neighbouring cycles
+    can be seen. They are derived, never parsed and never written.
     """
 
     cycle: int
     starts_on: date
-    build_weeks: float = 4.0
-    cooldown_weeks: float = 2.0
+    # Optional at the type level like everything else: a record written before
+    # this field existed still loads, and the resolver assumes a length rather
+    # than taking the page down. See `_resolve`.
+    reviews_on: date | None = None
     # Fraction of the BUILD weeks, per person. Absent means nobody said
     # otherwise, which is not the same as unavailable — see `_availability_of`.
     availability: dict[str, float] = {}
     body: str = ""
 
-    def _last_day(self, weeks: float) -> date:
-        """The inclusive last day of `weeks` weeks beginning at `starts_on`.
-
-        Clamped, because these two properties are read while the config is being
-        assembled — before any rule has looked at the record — so raising here is
-        `openproj check`, `openproj render` and nine of the ten routes gone at
-        once. `build_weeks: 500000` typed into the Cycles form did exactly that.
-        The route refuses that number now; a file somebody edited in git never
-        passed the route, and this is what keeps the site up for that one.
-        """
-        return days_after(self.starts_on, round(within_the_calendar(weeks * 7)) - 1)
-
-    @property
-    def builds_until(self) -> date:
-        return self._last_day(self.build_weeks)
-
-    @property
-    def ends_on(self) -> date:
-        return self._last_day(self.build_weeks + self.cooldown_weeks)
+    # --- derived by Config.with_plans ---------------------------------------
+    builds_until: date | None = None
+    ends_on: date | None = None
+    build_weeks: float = 0.0
+    # Whether the two above were assumed rather than read: no `reviews_on` in the
+    # file, or no next cycle to end the cool-down. The page says so rather than
+    # printing a date it invented as though somebody had chosen it.
+    assumed_review: bool = False
+    assumed_end: bool = False
 
     def capacity(self, who: str, nominal: float = 1.0) -> float:
         """Weeks of work this person can hold in this cycle."""
@@ -362,11 +372,91 @@ class Config(BaseModel):
 
         Both exist on purpose: the YAML is how the dates were kept before there
         were records, and a repository part-way through will have some of each.
+
+        This is also where each record's derived dates are worked out, because it
+        is the only place that can see all three things they need: the holidays,
+        the record itself, and the cycle after it.
         """
-        windows = dict(self.cycles) | {c.cycle: (c.starts_on, c.ends_on) for c in plans}
+        resolved = [self._resolve(c, plans) for c in plans]
+        windows = dict(self.cycles) | {c.cycle: (c.starts_on, c.ends_on) for c in resolved}
         return self.model_copy(
-            update={"cycles": windows, "plans": {c.cycle: c for c in plans}}
+            update={"cycles": windows, "plans": {c.cycle: c for c in resolved}}
         )
+
+    def _resolve(self, plan: Cycle, plans: list[Cycle]) -> Cycle:
+        """One record's derived dates and its length in working weeks.
+
+        The cool-down runs from the review meeting to the next cycle's betting
+        table, and that date is stored once — on the next cycle. Two copies of one
+        date disagree the first time somebody moves a betting table, which is the
+        argument that keeps `blocks` derived too. With no next record it falls
+        back to a fortnight and says the date was assumed.
+        """
+        assumed_review = plan.reviews_on is None
+        # Build ends the working day BEFORE the review: you review what was
+        # finished before you walked in.
+        reviews_on = plan.reviews_on or days_after(plan.starts_on, _DEFAULT_BUILD_DAYS)
+        builds_until = max(plan.starts_on, self.previous_working_day(reviews_on))
+
+        after = sorted(c.starts_on for c in plans if c.starts_on > plan.starts_on)
+        assumed_end = not after
+        ends_on = (
+            days_after(after[0], -1)
+            if after
+            else days_after(reviews_on, round(self.cooldown_weeks * 7) - 1)
+        )
+        return plan.model_copy(
+            update={
+                "builds_until": builds_until,
+                # A cool-down cannot end before the build it follows: a next cycle
+                # starting inside this one is a planning mistake, and it must cost
+                # that date rather than every span drawn against the window.
+                "ends_on": max(builds_until, ends_on),
+                "build_weeks": self.working_weeks(plan.starts_on, builds_until),
+                "assumed_review": assumed_review,
+                "assumed_end": assumed_end,
+            }
+        )
+
+    def is_working_day(self, day: date) -> bool:
+        return day.weekday() < 5 and day not in self.holidays
+
+    def previous_working_day(self, day: date) -> date:
+        """The last working day strictly before `day`, floored at the calendar."""
+        day = days_after(day, -1)
+        while day > date.min and not self.is_working_day(day):
+            day = days_after(day, -1)
+        return day
+
+    def next_working_day(self, day: date) -> date:
+        """The first working day strictly after `day`, capped at the calendar."""
+        day = days_after(day, 1)
+        while day < date.max and not self.is_working_day(day):
+            day = days_after(day, 1)
+        return day
+
+    def working_weeks(self, first: date, last: date) -> float:
+        """Working days in an inclusive span, in weeks of five.
+
+        This is what capacity is charged against, so it is the one number that
+        has to know about Christmas: a cycle over the ETH closure holds less work
+        than one in March, and a length in weeks could not say so.
+
+        Counted a week at a time rather than a day at a time, because the walk is
+        over dates a person typed: `reviews_on: 9999-12-31` is one save away and
+        a day loop over it is 2.9 million iterations inside `load_config`, on the
+        read path of every page. Whole weeks contribute five days each whatever
+        they contain, so only the remainder and the holidays are looked at.
+        """
+        if last < first:
+            return 0.0
+        weeks, rest = divmod((last - first).days + 1, 7)
+        days = weeks * _WORKING_DAYS_PER_WEEK
+        days += sum(
+            days_after(first, weeks * 7 + offset).weekday() < 5 for offset in range(rest)
+        )
+        days -= sum(1 for one in self.holidays if first <= one <= last and one.weekday() < 5)
+        return round(max(0, days) / _WORKING_DAYS_PER_WEEK, 3)
 
 
 def _config_mapping(path: str, text: str) -> tuple[str, dict]:
@@ -441,6 +531,12 @@ class Entity(BaseModel):
     index down.
     """
 
+    # Where this record was read from, so its two names can be compared. A private
+    # attribute and not a field: `serialise` dumps the model, so anything declared
+    # here is written back into the file, and the path a record was found at is the
+    # one piece of information that must never become part of the record.
+    _source: str = PrivateAttr(default="")
+
     id: str
     kind: Literal["project", "pitch", "task"]
     title: str
@@ -486,12 +582,28 @@ class Project(Entity):
 
 
 class Pitch(Entity):
-    appetite_weeks: float | None = None
-    shaped_by: str | None = None
+    # PERSON-weeks: the work one person would need, which the people on it divide
+    # (D-C4). Named for its unit because the unit is what went wrong — D1 read the
+    # same number as elapsed weeks and the scheduler was wrong for as long as that
+    # stood. One field on both kinds, because a pitch's appetite and a task's
+    # effort were two names for one quantity that `size_weeks` already read as one.
+    person_weeks: float | None = None
+    # A list, because shaping is usually done in pairs — two of the four shaped
+    # pitches in the team's own corpus name two or three people. A bare string
+    # still parses and still writes back as a bare string, so no file has to
+    # change and `git blame` on the field survives.
+    shaped_by: list[str] = []
+
+    @field_validator("shaped_by", mode="before")
+    @classmethod
+    def _one_or_many(cls, value: object) -> object:
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else value
 
 
 class Task(Entity):
-    effort_weeks: float | None = None
+    person_weeks: float | None = None
 
 
 _MODELS: dict[str, type[Entity]] = {"project": Project, "pitch": Pitch, "task": Task}
@@ -561,7 +673,12 @@ def parse_text(text: str, source: str) -> Entity:
         # A hand-written `reviewers: null` means "absent", not "not a list".
         and not (value is None and model.model_fields[name].default is not None)
     }
-    return model.model_validate({"id": "", "title": "", **fields, "kind": kind, "body": body})
+    entity = model.model_validate({"id": "", "title": "", **fields, "kind": kind, "body": body})
+    # The record remembers the file it came from, because it is the only moment
+    # both halves of its identity are in the same place. `source` was already here
+    # and was only ever used to name the file in an error message.
+    entity._source = source
+    return entity
 
 
 def parse_file(path: Path) -> Entity:
@@ -607,6 +724,12 @@ def _in_the_style_of(old: object, new: object) -> object:
         styled = CommentedSeq(new)
         styled.fa.set_flow_style()
         return styled
+    # A field that grew from a scalar to a list keeps its scalar spelling while it
+    # holds one value. `shaped_by: jcanton` is what the corpus is written in, and
+    # rewriting every one of them to `[jcanton]` on an unrelated save is a diff
+    # nobody asked for in a file somebody else is reading.
+    if isinstance(old, str) and isinstance(new, list) and len(new) == 1:
+        return new[0]
     return new
 
 
@@ -717,15 +840,105 @@ def ancestors(entity_id: str, by_id: dict[str, Entity]) -> list[str]:
 def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
     """Weeks of work, and whether that number had to be invented.
 
-    A pitch's appetite and a task's effort are the same quantity to everything
-    downstream, so they are read in one place; the scheduler and the index both
-    call this rather than reaching for either field.
+    One field on a pitch and a task, and none on a project — a container has no
+    size of its own. Read here rather than reached for directly, so the scheduler,
+    the index and the pages cannot disagree about what a missing one means.
     """
-    for field in ("appetite_weeks", "effort_weeks"):
-        stated = getattr(entity, field, None)
-        if stated is not None:
-            return float(stated), False
+    stated = getattr(entity, "person_weeks", None)
+    if stated is not None:
+        return float(stated), False
     return config.default_task_effort, True
+
+
+# --------------------------------------------------------------------------- #
+# Reading the shaping document
+#
+# The body is prose and stays prose: nothing here validates it, rewrites it or
+# requires it. These two functions only read what the team's own pitch template
+# already asks people to write, so that a checklist somebody is keeping by hand
+# can be counted instead of retyped as a second set of records.
+# --------------------------------------------------------------------------- #
+
+_FENCE = re.compile(r"^\s{0,3}(```|~~~)")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s")
+# Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
+_FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
+
+
+def without_comments(body: str) -> str:
+    """A shaping document with its HTML comments taken out.
+
+    The team's pitch template carries its guidance in `<!-- … -->`, which is
+    invisible in HackMD and, with markdown-it's `html: false`, would print as
+    literal text — so every pitch pasted across would arrive with its own
+    instructions showing. Stripped rather than rendered: turning HTML on to hide
+    four comments would put every hand-edited body's markup into the page.
+
+    Here rather than in the renderer for two reasons. It reads a shaping document,
+    which is what this section of the module is for; and `render.py` is held to a
+    rule — `test_no_page_is_assembled_by_substitution` — that no page is assembled
+    by `replace` or `sub`. This runs on the source before the tokeniser sees it,
+    which is not that defect, but the rule is enforced as syntax on purpose and
+    the function was in the wrong module anyway.
+    """
+    if "<!--" not in body:
+        return body
+    return "".join(
+        part if part.lstrip("\n").startswith(("```", "~~~")) else _COMMENT.sub("", part)
+        for part in _FENCED.split(body)
+    )
+
+
+def _outside_code(body: str) -> Iterator[tuple[str, bool]]:
+    """Each line, and whether it is inside a fenced code block.
+
+    A pitch that quotes a markdown snippet would otherwise have its example
+    headings counted as its own.
+    """
+    fenced = False
+    for line in body.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+            yield line, True
+            continue
+        yield line, fenced
+
+
+def sections(body: str) -> dict[str, str]:
+    """The text under each heading, keyed by the heading itself, lowercased.
+
+    Flat, ignoring heading depth: the template is flat, and a reader asking for
+    "no-gos" does not care whether it was written as `##` or `###`.
+    """
+    found: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line, in_code in _outside_code(body):
+        heading = None if in_code else _HEADING.match(line)
+        if heading:
+            current = found.setdefault(heading.group(1).strip().lower(), [])
+        elif current is not None:
+            current.append(line)
+    return {name: "\n".join(lines).strip() for name, lines in found.items()}
+
+
+def checklist(body: str) -> tuple[int, int]:
+    """Ticked and total task-list items anywhere in the body.
+
+    Anywhere, not only under `## Progress`: the template puts them there, and
+    real notes also keep them under `## Solution`. Sub-items count as items,
+    which is what someone reading "7/12" means by it.
+    """
+    done = total = 0
+    for line, in_code in _outside_code(body):
+        if in_code:
+            continue
+        mark = _CHECKBOX.match(line)
+        if mark:
+            total += 1
+            done += mark.group(1) != " "
+    return done, total
 
 
 # --------------------------------------------------------------------------- #
@@ -745,13 +958,16 @@ _ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
 # gets lost by degrees.
 _ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 _PREFIX_FOR_KIND = {"project": "proj", "pitch": "pitch", "task": "task"}
-_SIZE_FIELD = {"pitch": "appetite_weeks", "task": "effort_weeks"}
+_SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
 
 # Statuses in the order work moves through them. `shaping` is an idea nobody has
 # committed to yet, so it demands nothing — the same reason `shelved` does not.
 # The gates are cumulative from `ready` onwards.
 STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
-PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
+# Five levels, because three were not enough to say the thing the team was already
+# writing: the HackMD table escalates past its top value as `High+`. A scale whose
+# top is used for everything urgent stops ordering anything.
+PRIORITY_RANK = {"very_high": 0, "high": 1, "medium": 2, "low": 3, "very_low": 4}
 
 
 def _cyclic_members(edges: dict[str, list[str]]) -> set[str]:
@@ -813,11 +1029,11 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
             yield "blocker", "reviewers", "a ready entity needs a reviewer, or review waived", 1
         field = _SIZE_FIELD.get(entity.kind)
         if field is not None and getattr(entity, field) is None:
-            # One word for both fields, because they are one quantity: a pitch
-            # stores it as appetite_weeks and a task as effort_weeks, and the
-            # reader is asked for an appetite either way.
+            # One field and one word now. It was `appetite_weeks` on a pitch and
+            # `effort_weeks` on a task — one quantity under two names, which
+            # `size_weeks` had to paper over on every read.
             yield "blocker", field, f"a ready {entity.kind} needs an appetite", 1
-        if entity.kind == "pitch" and entity.shaped_by is None:
+        if entity.kind == "pitch" and not entity.shaped_by:
             yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
     elif entity.status == "in_progress":
         if entity.assigned_on is None:
@@ -875,7 +1091,8 @@ def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str,
         yield (
             "blocker",
             "priority",
-            f"{entity.priority!r} is not a priority: expected high, medium or low",
+            f"{entity.priority!r} is not a priority: expected one of "
+            f"{', '.join(PRIORITY_RANK)}",
             1,
         )
 
@@ -897,10 +1114,149 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
                 yield "warning", field, f"{login} is not in config/people.yaml", 1
 
 
+# Which kind may contain which. A project is the top of the tree and holds
+# pitches; a pitch holds tasks and belongs to a project or to nothing; a task
+# belongs to a pitch, or to nothing when it is a chore nobody pitched.
+#
+# The spec claimed this from the first day and nothing enforced it, so the frozen
+# corpus already hangs a task straight off a project. Introduced at rule_version
+# 4, which means every record written before it warns rather than breaks.
+_PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch",)}
+
+
+def is_bettable(entity: Entity) -> bool:
+    """Whether a cycle can be bet on this record.
+
+    A pitch, or a task nobody pitched. Those are the two things a betting table
+    puts a name against: everything else either contains bets (a project) or is
+    part of one (a task under a pitch), and takes its cycle from what holds it.
+    """
+    return entity.kind == "pitch" or (entity.kind == "task" and entity.parent is None)
+
+
+def bet_of(entity: Entity, by_id: dict[str, Entity]) -> Entity | None:
+    """The record whose bet this one is part of — itself, or its pitch.
+
+    One place, because the cycle page, the scheduler's overrun and the capacity
+    sum all have to agree about which cycle a task is being done in, and three
+    walks up the parent chain are three chances to disagree.
+
+    A `parent` naming a file nobody wrote is deliberately allowed — a plan
+    half-way through an import has them — and such a task falls back to its own
+    `cycle`. There is no pitch to inherit from, and dropping the number it does
+    carry would take the work out of every capacity sum on the site over a
+    reference somebody has not written yet.
+    """
+    if is_bettable(entity):
+        return entity
+    if entity.parent is None:
+        return None
+    parent = by_id.get(entity.parent)
+    if parent is None:
+        return entity
+    return parent if is_bettable(parent) else None
+
+
+def cycle_of(entity: Entity, by_id: dict[str, Entity]) -> int | None:
+    """The cycle this entity's work belongs to: its own, or its pitch's."""
+    bet = bet_of(entity, by_id)
+    return bet.cycle if bet is not None else None
+
+
+def _containment_problems(
+    entity: Entity, by_id: dict[str, Entity]
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """A parent of the wrong kind.
+
+    Only when the parent resolves: a `parent` naming a file nobody wrote is
+    deliberately not a problem, so that a plan half-way through an import still
+    loads and still says what it can.
+    """
+    parent = by_id.get(entity.parent) if entity.parent else None
+    if parent is None:
+        return
+    allowed = _PARENT_KINDS.get(entity.kind, ())
+    if parent.kind not in allowed:
+        belongs = " or ".join(f"a {kind}" for kind in allowed) or "nothing"
+        yield (
+            "blocker",
+            "parent",
+            f"a {entity.kind} belongs to {belongs}, not to a {parent.kind}",
+            4,
+        )
+
+
+def _bet_problems(
+    entity: Entity, by_id: dict[str, Entity]
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """A cycle stamped on something nobody bets.
+
+    A bet is made on a pitch, or on a chore nobody pitched. A task under a pitch
+    is part of that bet and takes its cycle from it; a project is a container for
+    bets and is not one. Stored on both, the two are one fact in two files and
+    the copy is stale the first time somebody re-bets the pitch — which is the
+    same argument that keeps `blocks` derived.
+    """
+    if entity.cycle is None or is_bettable(entity):
+        return
+    # Nothing to inherit from: an unresolved parent leaves this record's own
+    # number the only one there is, and `bet_of` keeps it for that reason.
+    if entity.parent is not None and entity.parent not in by_id:
+        return
+    if entity.kind == "project":
+        yield (
+            "warning",
+            "cycle",
+            "a project is not bet — its pitches are, and its span is their rollup",
+            4,
+        )
+        return
+    parent = by_id.get(entity.parent) if entity.parent else None
+    named = f" from {parent.id}" if parent is not None else ""
+    yield (
+        "warning",
+        "cycle",
+        f"the bet is on the pitch, so this task takes its cycle{named}; "
+        "the number here is ignored",
+        4,
+    )
+
+
+def _rollup_problems(
+    entity: Entity, children: dict[str, list[Entity]], config: Config
+) -> Iterator[tuple[str, str | None, str, int]]:
+    """Children that add up to more than the bet they sit inside.
+
+    The appetite is the box, and its tasks are what somebody proposes to put in
+    it. Nothing compared the two, so a six-week bet holding seven and a half
+    weeks of tasks read as a six-week bet everywhere on the site — and the span,
+    which is the rollup of the children, quietly ran past it anyway.
+
+    A warning, never a blocker: the answer is to cut scope or to re-bet, and both
+    are decisions for a person. Only stated sizes are compared — a pitch whose
+    tasks are not written yet is under its appetite by definition, which is not
+    worth saying.
+    """
+    kids = children.get(entity.id, [])
+    stated, defaulted = size_weeks(entity, config)
+    if not kids or defaulted:
+        return
+    total = sum(size_weeks(kid, config)[0] for kid in kids)
+    if total > stated:
+        yield (
+            "warning",
+            _SIZE_FIELD.get(entity.kind),
+            f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
+            f"{stated:g} it was bet at — cut scope, or re-bet it",
+            4,
+        )
+
+
 def _problems_for(
     entity: Entity,
     config: Config,
     by_id: dict[str, Entity],
+    children: dict[str, list[Entity]],
     parent_cycles: set[str],
     dep_cycles: set[str],
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -916,6 +1272,15 @@ def _problems_for(
         yield "blocker", "parent", "part of a parent cycle", 1
     elif entity.kind == "task" and entity.parent is None:
         yield "warning", "parent", "a task should have a parent", 1
+
+    # Not while the chain is a loop: "part of a parent cycle" already says this
+    # record's containment is broken, and adding that its parent is the wrong
+    # kind is a second sentence about the same thing — in a set of records where
+    # every one of them is going to say it.
+    if entity.id not in parent_cycles:
+        yield from _containment_problems(entity, by_id)
+        yield from _bet_problems(entity, by_id)
+        yield from _rollup_problems(entity, children, config)
 
     if entity.cycle is not None and entity.cycle not in config.cycles:
         # `_overrun` looks the window up with `.get`, so a number nobody has dated
@@ -980,6 +1345,71 @@ def issue_problems(config: Config, entities: list[Entity]) -> list[Problem]:
             if issue.reported_by not in config.known_people:
                 note(issue, "warning", "reported_by", f"{issue.reported_by} is not in the roster")
     return problems
+def named_for(entity: Entity) -> bool:
+    """Whether the file this record was read from is named for the id it declares.
+
+    Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
+    only the half before `--` is the fact; the rest is decoration and renaming it
+    is legal.
+    """
+    stem = Path(entity._source).name.removesuffix(".md")
+    return stem == entity.id or stem.startswith(f"{entity.id}--")
+
+
+def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
+    """An entity says who it is twice, and here the two are made to agree.
+
+    The id is in the frontmatter and it is in the filename, and nothing compared
+    them — so the two halves of the application resolved a collision in opposite
+    directions. `build_index` keeps the LAST file in tree order for an id;
+    `_path_for` writes to the FIRST filename that matches. A file whose
+    frontmatter claimed an id belonging to another file therefore took that id in
+    the index and left the write pointing at the other one: a reader edited the
+    record on screen, pressed save, and a different record changed on disk, with
+    a 200 and no warning, while `openproj check` printed no problems at all.
+
+    Both halves are blockers and neither is grandfathered, which is the one place
+    this file makes that exception. Grandfathering exists so that a new rule about
+    what a record must *contain* does not invalidate a repository written before
+    it — a fair trade, because the cost of the warning is a missing field. This is
+    not a rule about content. It is the question of which record you are looking
+    at, and a warning here still lets the save land on the wrong file.
+
+    A record with no source is one built in memory rather than read from a file,
+    and it has no filename to disagree with.
+    """
+    claimants: dict[str, list[str]] = {}
+    for entity in entities:
+        if entity._source:
+            claimants.setdefault(entity.id, []).append(entity._source)
+
+    for entity in entities:
+        if not entity._source:
+            continue
+        if not named_for(entity):
+            yield Problem(
+                severity="blocker",
+                entity_id=entity.id,
+                field="id",
+                message=(
+                    f"this record says it is {entity.id} and its file is named "
+                    f"{Path(entity._source).name} — until they agree, a save can land "
+                    "on the wrong file"
+                ),
+                rule_version=1,
+            )
+        others = [path for path in claimants[entity.id] if path != entity._source]
+        if others:
+            yield Problem(
+                severity="blocker",
+                entity_id=entity.id,
+                field="id",
+                message=(
+                    f"{', '.join(sorted(others))} claims this id too, so which record "
+                    "this is depends on which half of the app you ask"
+                ),
+                rule_version=1,
+            )
 
 
 def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
@@ -991,13 +1421,17 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     by_id = {entity.id: entity for entity in entities}
     parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in entities})
     dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in entities})
+    children: dict[str, list[Entity]] = {}
+    for entity in entities:
+        if entity.parent in by_id and entity.status != "shelved":
+            children.setdefault(entity.parent, []).append(entity)
 
     problems: list[Problem] = []
     for entity in entities:
         if entity.status == "shelved":
             continue
         for severity, field, message, rule_version in _problems_for(
-            entity, config, by_id, parent_cycles, dep_cycles
+            entity, config, by_id, children, parent_cycles, dep_cycles
         ):
             grandfathered = rule_version > entity.created_schema_version
             problems.append(
@@ -1009,6 +1443,11 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
                     rule_version=rule_version,
                 )
             )
+    # Outside the loop above, and outside `shelved`'s exemption with it. Parked
+    # work is not broken work — but a shelved record can still be the one whose id
+    # a second file has taken, and the save that lands on the wrong file does not
+    # care that one of the two is parked.
+    problems.extend(_identity_problems(entities))
     return problems
 
 

@@ -19,6 +19,7 @@ from openproj.model import (
     Problem,
     Project,
     Task,
+    cycle_of,
     load_repo,
     parse_text,
     validate_all,
@@ -81,7 +82,7 @@ def task(**overrides: object) -> Task:
         "status": "ready",
         "owner": "jcanton",
         "reviewers": ["msimberg"],
-        "effort_weeks": 1.0,
+        "person_weeks": 1.0,
     }
     return Task(**(fields | overrides))
 
@@ -96,7 +97,7 @@ def pitch(**overrides: object) -> Pitch:
         "status": "ready",
         "owner": "jcanton",
         "reviewers": ["msimberg"],
-        "appetite_weeks": 2.0,
+        "person_weeks": 2.0,
         "shaped_by": "havogt",
     }
     return Pitch(**(fields | overrides))
@@ -121,9 +122,13 @@ def check(*entities: Entity, config: Config | None = None) -> list[Problem]:
     return validate_all(list(entities), config or Config())
 
 
-def only(problems: list[Problem], entity_id: str) -> Problem:
-    matching = [p for p in problems if p.entity_id == entity_id]
-    assert len(matching) == 1, f"expected exactly one problem for {entity_id}, got {matching}"
+def only(problems: list[Problem], entity_id: str, field: str | None = None) -> Problem:
+    matching = [
+        p for p in problems
+        if p.entity_id == entity_id and (field is None or p.field == field)
+    ]
+    named = entity_id if field is None else f"{entity_id}.{field}"
+    assert len(matching) == 1, f"expected exactly one problem for {named}, got {matching}"
     return matching[0]
 
 
@@ -208,15 +213,15 @@ def test_a_todo_entity_needs_a_reviewer_unless_review_is_waived():
 
 
 def test_a_todo_entity_needs_a_size():
-    assert summary(only(check(task(effort_weeks=None)), TASK_ID)) == (
+    assert summary(only(check(task(person_weeks=None)), TASK_ID)) == (
         "blocker",
-        "effort_weeks",
+        "person_weeks",
         NEEDS_EFFORT,
         1,
     )
-    assert summary(only(check(pitch(appetite_weeks=None)), PITCH_ID)) == (
+    assert summary(only(check(pitch(person_weeks=None)), PITCH_ID)) == (
         "blocker",
-        "appetite_weeks",
+        "person_weeks",
         NEEDS_APPETITE,
         1,
     )
@@ -255,7 +260,7 @@ def test_a_done_entity_needs_at_least_one_pr():
 def test_a_shelved_entity_has_no_requirements_at_all():
     """Shelved work is parked, not broken: nothing about it is worth reporting,
     not even the warnings that would fire on the same fields at any other status."""
-    parked = task(status="shelved", parent=None, owner=None, reviewers=[], effort_weeks=None)
+    parked = task(status="shelved", parent=None, owner=None, reviewers=[], person_weeks=None)
     assert check(parked) == []
 
 
@@ -290,6 +295,104 @@ def test_grandfathering_does_not_soften_a_rule_older_than_the_entity():
     assert summary(problem) == ("blocker", "owner", NEEDS_OWNER, 1)
 
 
+# --- what contains what, and what is bet ------------------------------------
+
+
+def test_a_parent_of_the_wrong_kind_is_named_as_such():
+    """The three levels the spec claimed from its first day and nothing checked,
+    which is how the frozen corpus came to hang a task off a project."""
+    entities = [
+        Project(id="proj-000001", kind="project", title="P"),
+        Pitch(id="pitch-000001", kind="pitch", title="Q", parent="proj-000001"),
+        Task(id="task-000001", kind="task", title="T", parent="proj-000001",
+             created_schema_version=4),
+    ]
+    problem = only(validate_all(entities, Config()), "task-000001", field="parent")
+    assert summary(problem) == (
+        "blocker", "parent", "a task belongs to a pitch, not to a project", 4
+    )
+
+
+def test_a_project_belongs_to_nothing():
+    entities = [
+        Project(id="proj-000001", kind="project", title="P"),
+        Project(id="proj-000002", kind="project", title="Q", parent="proj-000001",
+                created_schema_version=4),
+    ]
+    problem = only(validate_all(entities, Config()), "proj-000002", field="parent")
+    assert problem.message == "a project belongs to nothing, not to a project"
+
+
+def test_a_pitch_under_a_project_and_a_task_under_a_pitch_are_the_shape():
+    entities = [
+        Project(id="proj-000001", kind="project", title="P"),
+        Pitch(id="pitch-000001", kind="pitch", title="Q", parent="proj-000001"),
+        Task(id="task-000001", kind="task", title="T", parent="pitch-000001"),
+    ]
+    assert [p for p in validate_all(entities, Config()) if p.field == "parent"] == []
+
+
+def test_a_chore_nobody_pitched_keeps_its_own_cycle_and_a_parented_task_does_not():
+    """A bet is made on a pitch, or on a task nobody pitched. Both belong on a
+    betting table; a task inside a pitch came with the pitch, and a second cycle
+    number on it is one fact in two files."""
+    dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
+    entities = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", cycle=36),
+        Task(id="task-000001", kind="task", title="T", parent="pitch-000001", cycle=36,
+             created_schema_version=4),
+        Task(id="task-000002", kind="task", title="Chore", cycle=36),
+    ]
+    problems = [p for p in validate_all(entities, dated) if p.field == "cycle"]
+
+    assert [p.entity_id for p in problems] == ["task-000001"]
+    assert problems[0].severity == "warning", "it is ignored, not refused"
+    assert cycle_of(entities[1], {e.id: e for e in entities}) == 36, "inherited from its pitch"
+    assert cycle_of(entities[2], {e.id: e for e in entities}) == 36, "its own"
+
+
+def test_a_project_is_not_bet_because_it_holds_bets():
+    dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
+    entities = [Project(id="proj-000001", kind="project", title="P", cycle=36)]
+    problem = only(validate_all(entities, dated), "proj-000001", field="cycle")
+    assert problem.message.startswith("a project is not bet")
+    assert cycle_of(entities[0], {"proj-000001": entities[0]}) is None
+
+
+def test_tasks_that_add_up_to_more_than_the_bet_say_so():
+    """The appetite is the box and the tasks are what somebody proposes to put in
+    it. Nothing compared the two, so a six-week bet holding seven and a half
+    weeks of tasks read as a six-week bet on every page."""
+    entities = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
+        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=3.5),
+    ]
+    problem = only(validate_all(entities, Config()), "pitch-000001", field="person_weeks")
+    assert problem.severity == "warning", "cutting scope or re-betting is a decision"
+    assert "7.5 weeks, more than the 6" in problem.message
+
+
+def test_tasks_that_fit_inside_the_bet_say_nothing():
+    """Under the appetite is the normal state of a pitch whose tasks are still
+    being written, and saying so on every one of them is noise."""
+    entities = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
+    ]
+    assert [p for p in validate_all(entities, Config()) if p.field == "person_weeks"] == []
+
+
+def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
+    entities = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
+        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=4.0,
+             status="shelved"),
+    ]
+    assert [p for p in validate_all(entities, Config()) if p.field == "person_weeks"] == []
+
+
 # --- the seed corpus --------------------------------------------------------
 
 
@@ -299,9 +402,20 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
 
     Only pitch-1b3f9a is missing shaped_by *at status todo*, which is where that
     rule lives; the other four pitches are wip or done and so are not asked.
+
+    The version-4 warnings are the argument for those rules, made against real
+    files rather than invented ones. Every one of them is a thing the corpus
+    already does and nothing had ever said: nine tasks carrying a `cycle` that
+    belongs to the pitch they are part of, one task hung straight off a project
+    with the pitch level skipped — the containment the spec claimed from day one
+    and never enforced — and one pitch whose five tasks propose twice the work it
+    was bet at. All warnings: the corpus is created_schema_version 2 and these
+    rules are 4, so nothing written before them breaks.
     """
     entities, config, _ = load_repo(seed_root)
     assert len(entities) == 17
+    inherits = "the bet is on the pitch, so this task takes its cycle from {}; " \
+        "the number here is ignored"
     assert summaries(validate_all(entities, config)) == {
         # wip without a start date
         ("blocker", "proj-7e57a0", "assigned_on", NEEDS_ASSIGNED_ON, 1),
@@ -317,6 +431,27 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("blocker", "task-3e07b2", "prs", NEEDS_PR, 1),
         # grandfathered: the corpus is created_schema_version 1, the rule is 2
         ("warning", "pitch-1b3f9a", "shaped_by", NEEDS_SHAPED_BY, 2),
+        # v4: a bet is made on a pitch, and these tasks are part of one
+        ("warning", "task-2b6c94", "cycle", inherits.format("pitch-2a7f3e"), 4),
+        ("warning", "task-31f6c4", "cycle", inherits.format("pitch-3c9a41"), 4),
+        ("warning", "task-3a52d8", "cycle", inherits.format("pitch-3c9a41"), 4),
+        ("warning", "task-3e07b2", "cycle", inherits.format("pitch-3c9a41"), 4),
+        ("warning", "task-53a9f0", "cycle", inherits.format("pitch-5e7b1c"), 4),
+        ("warning", "task-58d7c6", "cycle", inherits.format("pitch-5e7b1c"), 4),
+        ("warning", "task-5a4e39", "cycle", inherits.format("pitch-5e7b1c"), 4),
+        ("warning", "task-5c1d84", "cycle", inherits.format("pitch-5e7b1c"), 4),
+        ("warning", "task-5f062b", "cycle", inherits.format("pitch-5e7b1c"), 4),
+        # v4: the migration hung this one straight off the project
+        ("warning", "task-0e4b7a", "parent", "a task belongs to a pitch, not to a project", 4),
+        # v4: 8.1 weeks of tasks inside a four-week bet
+        (
+            "warning",
+            "pitch-5e7b1c",
+            "person_weeks",
+            "its 5 tasks add up to 8.1 weeks, more than the 4 it was bet at — "
+            "cut scope, or re-bet it",
+            4,
+        ),
     }
 
 
@@ -433,11 +568,11 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     # shelved one, and a pair that depend on each other.
     loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
     entities = [
-        pitch(status="ready", owner=None, reviewers=[], appetite_weeks=None, shaped_by=None),
+        pitch(status="ready", owner=None, reviewers=[], person_weeks=None, shaped_by=None),
         task(status="in_progress", assigned_on=None, reviewers=["jcanton"], owner="jcanton"),
         project(status="ready", owner=None, reviewers=[]),
         Task(id=OTHER_TASK_ID, kind="task", title="T", status="ready", owner="jcanton",
-             reviewers=["msimberg"], effort_weeks=None, depends_on=["task-999999", SHELVED_ID]),
+             reviewers=["msimberg"], person_weeks=None, depends_on=["task-999999", SHELVED_ID]),
         Task(id=SHELVED_ID, kind="task", title="D", status="shelved", owner="jcanton"),
         Task(id=loop_a, kind="task", title="A", status="shaping", depends_on=[loop_b]),
         Task(id=loop_b, kind="task", title="B", status="shaping", depends_on=[loop_a]),

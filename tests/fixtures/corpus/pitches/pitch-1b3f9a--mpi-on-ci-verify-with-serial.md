@@ -6,7 +6,7 @@ parent: null
 status: ready
 owner: msimberg
 reviewers: [jcanton]
-appetite_weeks: 1
+person_weeks: 1
 shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees: []
 assigned_on: null
@@ -68,7 +68,7 @@ Related but distinct notes found (recorded here as context, **not** as this row'
 
 ## Fields left null and why
 
-- `appetite_weeks`: no appetite is stated for this row anywhere — not in the table, not in any
+- `person_weeks`: no appetite is stated for this row anywhere — not in the table, not in any
   note. Left null rather than guessed.
 - `assignees` / `assigned_on`: the Who cell is empty; no date is stated anywhere.
 - `cycle`: no shaping doc, therefore no cycle tag to read.

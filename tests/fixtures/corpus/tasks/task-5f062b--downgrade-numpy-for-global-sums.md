@@ -6,7 +6,7 @@ parent: pitch-5e7b1c
 status: ready
 owner: egparedes
 reviewers: [abishekg7]
-effort_weeks: 1
+person_weeks: 1
 assignees: []
 assigned_on: null
 cycle: 36
@@ -27,4 +27,4 @@ Migration notes:
 
 - The sub-item was kept inside this task rather than split out; the source marks it "just for fun"
   and it has no independent deliverable.
-- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source.
+- `person_weeks: null`, `priority: medium` (default): neither is stated in the source.

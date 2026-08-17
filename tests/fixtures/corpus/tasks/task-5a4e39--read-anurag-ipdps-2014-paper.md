@@ -6,7 +6,7 @@ parent: pitch-5e7b1c
 status: ready
 owner: jcanton
 reviewers: []          # REQUIRED from schema_version 1; not in source
-effort_weeks: 0.1
+person_weeks: 0.1
 assignees: []
 assigned_on: null
 cycle: 36
@@ -26,5 +26,5 @@ Migration notes:
 
 - The source gives only the DOI link and the first name "Anurag"; the paper's title was not stated
   in the note and has not been filled in here.
-- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source. This is a
+- `person_weeks: null`, `priority: medium` (default): neither is stated in the source. This is a
   background-reading item and a human may well want to lower its priority.

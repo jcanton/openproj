@@ -6,7 +6,7 @@ parent: pitch-5e7b1c
 status: ready
 owner: samkellerhals
 reviewers: [muellch]
-effort_weeks: 4
+person_weeks: 4
 assignees: []
 assigned_on: null
 cycle: 36
@@ -29,4 +29,4 @@ Migration notes:
 - The parent note remarks that the numpy downgrade item (`task-5f062b`) "in theory does not matter if
   we're using deterministic means". That is a conditional aside, not a stated dependency, so no
   `depends_on` edge was recorded in either direction.
-- `effort_weeks: null`, `priority: medium` (default): neither is stated in the source.
+- `person_weeks: null`, `priority: medium` (default): neither is stated in the source.

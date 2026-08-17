@@ -6,7 +6,7 @@ parent: null
 status: done
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
-appetite_weeks: 4.0
+person_weeks: 4.0
 shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees:
   - yiluchen1066
@@ -74,7 +74,7 @@ The *Appetite*, *Rabbit holes* and *No-gos* sections of the note are present but
 ## Migration notes
 
 - **Who.** The row's raw `Who` string is `Y`. Resolved to **Yilu Chen → `yiluchen1066`**: she is a contributor to `C2SM/icon4py`, her GitHub profile reads *ychen, ETH Zurich (CSCS)*, she is the author of the head commit of `C2SM/icon-exclaim@turbulence_1d` (2025-12-18) — the exact branch this row links — and the cycle-28 overview names her as the developer of this pitch. Christos Kotsalos is listed as *support* in the overview (and as a co-developer in the pitch header), but the row's `Who` is `Y` alone, so he is not in `assignees`.
-- **Appetite.** The note's own Appetite section is blank. The cycle-28 overview (https://hackmd.io/@gridtools/H1Up0S-Ake) lists this exact pitch with appetite **"full cycle"**. Cycle 28 ran from betting table **2025-04-08** to review meeting **2025-05-06** = **28 days = 4.0 elapsed weeks**; a full cycle is described elsewhere in the corpus as a "Full 4 week cycle". Hence `appetite_weeks: 4.0` (elapsed, not person-weeks).
+- **Appetite.** The note's own Appetite section is blank. The cycle-28 overview (https://hackmd.io/@gridtools/H1Up0S-Ake) lists this exact pitch with appetite **"full cycle"**. Cycle 28 ran from betting table **2025-04-08** to review meeting **2025-05-06** = **28 days = 4.0 elapsed weeks**; a full cycle is described elsewhere in the corpus as a "Full 4 week cycle". Hence `person_weeks: 4.0` (elapsed, not person-weeks).
 - **assigned_on.** `2025-04-08`, the cycle-28 betting-table date typed in the overview — the meeting at which this pitch was bet and Yilu named as its developer. No other date is stated anywhere for this row.
 - **PRs.** The row's PR column is empty and neither the shaping doc nor the cycle-28 overview cites a PR, so `prs` is empty. (The cycle-34 successor pitch cites `C2SM/icon-exclaim#437`, but that belongs to the later integration work, not this row.)
 - **Dependencies.** The row's *Depends on* cell is empty — `depends_on: []`. Inbound references from rows 23 and 99 are recorded on those rows, per the depends_on-only invariant.

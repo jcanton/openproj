@@ -9,13 +9,12 @@ assignees: [yiluchen1066, jcanton]
 reviewers: [jcanton, halungge]
 review_waived: false
 assigned_on: 2026-07-13
-cycle: 36
 priority: high
 depends_on: [task-0b1001]
 tags: [tmx, turbulence, surface, sea-ice, gt4py, verification]
 prs: ["C2SM/icon4py#1280"]
 created_schema_version: 2
-effort_weeks: 3.5
+person_weeks: 3.5
 ---
 
 # Port turbulence surface

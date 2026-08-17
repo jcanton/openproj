@@ -74,14 +74,14 @@ BREAKAGES = [
         "an assigned_on that is a phrase",
         "tasks/task-d00004.md",
         "---\nid: task-d00004\nkind: task\ntitle: A date somebody typed\n"
-        "status: ready\nowner: ann\nreviewers: [bo]\neffort_weeks: 1\n"
+        "status: ready\nowner: ann\nreviewers: [bo]\nperson_weeks: 1\n"
         "assigned_on: next tuesday\n---\n",
     ),
     (
         "a size that is a word",
         "tasks/task-d00005.md",
         "---\nid: task-d00005\nkind: task\ntitle: A size somebody typed\n"
-        "status: ready\nowner: ann\nreviewers: [bo]\neffort_weeks: three\n---\n",
+        "status: ready\nowner: ann\nreviewers: [bo]\nperson_weeks: three\n---\n",
     ),
     (
         "a frontmatter that is a list rather than a map",
@@ -294,7 +294,7 @@ BROKEN_ON_DISK = {
     "config/defaults.yaml": "schema_version: 2\n",
     "tasks/task-a00001.md": (
         "---\nid: task-a00001\nkind: task\ntitle: An ordinary task\nstatus: ready\n"
-        "owner: ann\nreviewers: [bo]\neffort_weeks: 1\n---\n\nBody.\n"
+        "owner: ann\nreviewers: [bo]\nperson_weeks: 1\n---\n\nBody.\n"
     ),
     "tasks/task-a00002.md": "Just some notes I pasted into the folder.\n",
     "cycles/0039.md": "---\ncycle: 39\nstarts_on: [oops\n---\n",

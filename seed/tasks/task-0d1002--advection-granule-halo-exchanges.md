@@ -9,13 +9,12 @@ assignees: [OngChia, nfarabullini]
 reviewers: [nfarabullini, halungge]
 review_waived: false
 assigned_on: 2026-06-29
-cycle: 36
 priority: high
 depends_on: [task-0d1001]
 tags: [greenline, tracer-advection, halo-exchange, mpi, icon4py]
 prs: ["C2SM/icon4py#1050"]
 created_schema_version: 2
-effort_weeks: 2.0
+person_weeks: 2.0
 ---
 
 # Halo exchanges in the advection granule

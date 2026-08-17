@@ -26,6 +26,27 @@ every view is a shareable URL, the back button works, and there are no saved vie
 One markdown file per entity: YAML frontmatter, then the shaping document as the body. Three kinds —
 `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree with the kind.
 
+Each kind is one thing and says so:
+
+- A **pitch** is the unit of the bet. It is what the betting table offers, what carries an appetite
+  and a `shaped_by`, and the only kind whose body the shaping hints read.
+- A **task** is a piece of a pitch. It carries its own size and its own people, and it takes its
+  cycle from the pitch it belongs to — a bet is made once, on the thing the room named. A task with
+  **no** parent is a chore nobody pitched: it is bettable in its own right, and then the cycle is
+  its own.
+- A **project** is a container for grouping pitches. It has no size, holds no capacity, is never
+  bet, and its span is the rollup of the pitches inside it.
+
+`project ← pitch ← task` is enforced, not just documented: a parent of the wrong kind is a blocker
+for anything written since the rule existed, and a warning for everything older.
+
+A size is **person-weeks** on both a pitch and a task — the work one person would need — and the
+people on it divide it, each at their own availability. Adding a second name halves the elapsed
+time. A pitch that has tasks takes its dates and its capacity from them, so its own appetite is the
+**bet**: what the room agreed to spend, kept as written. Where the tasks add up to more than it, the
+pitch says so on its own page and `openproj check` warns — cutting scope or re-betting is a decision
+for a person, so nothing here refuses the save.
+
 Two invariants are load-bearing:
 
 - **Only `depends_on` is stored, on the dependent.** `blocks` is derived by reversing it. A stored
@@ -36,15 +57,27 @@ Two invariants are load-bearing:
 An entity may not depend on its own ancestor or descendant. Containment already requires a child
 before its parent, so a dependency along the parent chain demands to be both before and after itself.
 
+**Dependencies cross kinds and are inherited down the tree.** A project may block a project, a task
+may wait on a whole pitch: any kind may block any kind, and the only forbidden direction is your own
+containment chain. A dependency written on a pitch is what every task inside it waits for — the edge
+stays written once, where somebody wrote it, and `blocks` still means what the page says. Without
+that, a pitch-level edge moved no date at all: only a leaf is placed against its blockers, and a
+parent's span is the rollup of children that had never heard of the edge.
+
 ## Required fields
 
 Requiredness is **status-gated** and enforced in three places: the create form, `openproj check` in
 CI, and the index validation gate.
 
+The five statuses are `shaping`, `ready`, `in_progress`, `done`, `shelved`, in the order work moves
+through them. Priority is one of `very_high`, `high`, `medium`, `low`, `very_low` — five rungs
+because three left the team writing `High+` in the margin of its own table.
+
 | status | additionally required |
 |---|---|
-| `todo` | `owner`; a reviewer or `review_waived`; a size; `shaped_by` on a pitch |
-| `wip` | `assigned_on`; a reviewer who is not the owner |
+| `shaping` | nothing — an idea nobody has bet on has no owner and no size by definition |
+| `ready` | `owner`; a reviewer or `review_waived`; a size; `shaped_by` on a pitch |
+| `in_progress` | `assigned_on`; a reviewer who is not the owner |
 | `done` | at least one PR |
 | `shelved` | nothing — parked work is not broken work |
 
@@ -56,6 +89,85 @@ down. Requiredness lives in `validate_all`, never in the parse types.
 *blocked* by rules that existed when it was created; a newer rule warns instead. Without this,
 adding one required field invalidates the whole repository at once and the rule gets reverted rather
 than adopted. `shaped_by` is the live example: a version 2 rule warning against a version 1 corpus.
+
+## What a cycle holds
+
+A cycle is `cycles/<n>.md` — a record, not an entity. It stores **two dates, and both are
+meetings**: `starts_on` is the betting table and the first day of build, `reviews_on` is the review
+meeting, which is also the brainstorm for the next cycle. Build ended the working day before it.
+Beside them sit an `availability` fraction per person and a body for the goal and for whatever came
+up at the betting table.
+
+Everything else about the calendar is worked out from those two: where the build ends, how many
+**working** weeks it holds with the holidays taken out, and where the cool-down ends — which is the
+next cycle's betting table, stored once, on the next cycle. A date the tool had to assume, because
+a record names no review or because there is no next cycle yet, is marked as assumed on the page
+rather than printed as though somebody had chosen it.
+
+Lengths were stored instead, and a length is a prediction of a date somebody picks. It could not
+know that a review moved for a conference, that the team leaves a month between two cycles, or that
+a cycle over the ETH year-end closure holds a fortnight of building rather than four weeks — and
+since `capacity = availability × build weeks`, that last one was the betting table's own number
+being wrong.
+
+`cycle:` records **where a bet was made** and is never re-stamped, so an overrun keeps accusing
+(D-C1). It lives on the thing that was bet — a pitch, or a chore nobody pitched — and everything
+under a pitch takes the pitch's. A project therefore has no cycle at all, which is why a milestone
+spanning two of them is no longer accused of overrunning either. Load is charged where the
+assignees are and split evenly among them (D-C2), and it
+counts **carryover**: work bet in an earlier cycle and still running is being done with this cycle's
+weeks, so the page that adds up who is full says so and names what it counted. An overrun is
+measured against the end of *build*, never the end of the window — the cool-down is for the mess
+afterwards, and the timeline draws both rules so the flag and the line agree.
+
+## The shaping document
+
+The body of a pitch is prose and stays prose. Nothing here validates it, rewrites it, or requires a
+word of it — but two things read it, because the team's own pitch template already asks for them:
+
+- **`## Progress`** — a task list, which is a **task's** business. A pitch's progress is its tasks:
+  a panel above the document, one line per task, each ticked from that task's own `status` and
+  weighted by its size, so `4/7.5 wk` is four weeks of a seven-and-a-half-week bet rather than a
+  count of rows. That is why the pitch template has no `## Progress` and the task template does —
+  the coarse list in a HackMD pitch becomes the tasks, and its sub-items become their checklists.
+  A pitch with no tasks yet still has its own list counted, and one that keeps both is told which
+  of the two the page is reading. Either way it is counted, never written: a checkbox stored beside
+  a task's status is the same stale copy `blocks` would be. `predicate=untracked` finds live work
+  that says nothing about how far along it is.
+- **`## For later`** — deferred scope. The only record the plan keeps of a bet trimmed to fit its
+  appetite, and it was invisible until it had a name.
+
+A **missing `## Rabbit holes` or `## No-gos`** on a live pitch prints a note on that pitch's page,
+and nowhere else. It is not a `Problem`: it never reaches `openproj check`, never fails CI and never
+blocks a save. A validator with an opinion about prose is one people route around.
+
+Creating an entity starts from a template — the team's own, with its guidance in HTML comments
+exactly as HackMD carries it. Those comments are stripped when the page renders, so a pitch drafted
+in either place is the same document. The three header lines of the HackMD template (`Shaped by`,
+`Appetite`, `Developers`) are fields here instead: a heading restating a field is the
+two-copies-of-one-fact problem this tool exists to end.
+
+## How this maps to what the team already keeps
+
+| in HackMD | in openproj |
+|---|---|
+| A pitch note | a `pitch` entity — frontmatter, and the shaping doc as the body |
+| `Shaped by: @a and @b` in the header | `shaped_by: [a, b]` |
+| `Appetite (FTEs, weeks)` | `person_weeks` — the work one person would need; the people on it divide it |
+| The cycle sheet's `Available people` | `availability:` in `cycles/<n>.md`, a fraction of the build weeks |
+| The cycle sheet's task table | the betting table on `/cycle/<n>` |
+| The sheet's `## Goal`, and what was said while betting | the cycle record's body, editable on that page |
+| `Support` | `reviewers` — the role includes support, and it makes somebody accountable |
+| The Greenline table's `Depends on` | `depends_on`, with `blocks` derived from it |
+| The Greenline table's `Shape doc` link | there is no link: the shaping doc *is* the record |
+
+**Where this departs from Shape Up as written**, deliberately and with the team's practice as the
+reason: a size is person-weeks and staffing divides it, so the tool forecasts dates the book would
+not; cycles are soft walls and the scheduler runs work past them rather than stopping (D2), because
+the circuit breaker is a human decision made at the review meeting; `project` is a milestone layer
+the book does not have, because the Greenline table already tracks cross-cycle dependencies; and
+progress is the body's own checklist rather than a hill chart, because a checklist is what the team
+actually keeps.
 
 ## Two repositories
 
@@ -139,6 +251,9 @@ written, so an edit to a different file retries invisibly and only a genuine ove
 The server and GitHub OAuth are next.
 
 Spec: `docs/superpowers/specs/2026-08-12-appetite-design.md`.
+Cycles, betting and capacity: `docs/superpowers/specs/2026-08-16-cycles-design.md`.
+What the team actually does, and what was tailored to it:
+`docs/superpowers/specs/2026-08-16-tailoring-plan.md`.
 Plan and gates: `docs/superpowers/plans/2026-08-12-phase1.md`.
 
 🤖 Written by an agent on behalf of @jcanton
