@@ -438,6 +438,34 @@ def create_app(
 
     store = Store(Path(repo))
     app = FastAPI(title="openproj")
+
+    @app.middleware("http")
+    async def say_what_this_page_may_do(request: Request, call_next):
+        """The four headers, on every response including the JSON and the errors.
+
+        Written here rather than per route because the one that matters is the one
+        nobody remembered to add: a 500's body is a traceback, a 404's is a
+        sentence somebody typed, and both are documents a browser will render.
+
+        `X-Content-Type-Options` because an asset is bytes somebody uploaded and
+        the only thing standing between `image/png` and a document is that nobody
+        sniffed it. `Referrer-Policy` because an entity id in a path is the name of
+        a piece of internal planning and there is no reason to hand it to whatever
+        a body links out to. `frame-ancestors 'none'` here rather than in the page,
+        because a `<meta>` ignores it — and `X-Frame-Options` beside it for the
+        readers whose browser predates that.
+
+        The policy itself is `render.CSP`, the same string the pages carry in a
+        `<meta>`, so the served copy and the exported copy cannot drift into
+        disagreeing about what a page is allowed to do.
+        """
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = f"{render.CSP}; frame-ancestors 'none'"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
     watchers: set[asyncio.Queue] = set()
     # An event stream is a request that never ends, and uvicorn waits for in-flight
     # requests BEFORE it runs lifespan shutdown — so a flag set there arrives after

@@ -697,6 +697,25 @@ class Links(BaseModel):
     asset: str = "assets/"  # a rendered file sits beside the assets it names
 
 
+# What a page may do, said once. The server sends it as a header and every page
+# carries it in a `<meta>`, because half of them are files with no server to speak
+# for them — and two spellings of one policy is two policies.
+#
+# Passed through `Markup` at the one place it is rendered, so the attribute holds
+# the policy and not an escaped copy of it. Autoescape turned every `'` into
+# `&#39;`, which a browser does unescape before parsing — so it worked, and the
+# page and the header then said textually different things, which is the drift
+# this constant exists to prevent. The assertion below is what makes that safe:
+# a policy is keywords, schemes and punctuation, and the day one needs escaping
+# is the day this stops being true rather than the day it silently breaks.
+CSP = (
+    "default-src 'none'; img-src 'self' data:; font-src data:; "
+    "style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+    "base-uri 'none'; form-action 'self'"
+)
+assert not set(CSP) & set('<>&"'), "a policy needing escaping cannot be written verbatim"
+
+
 STATIC = Links()
 ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
@@ -904,6 +923,31 @@ def _fragment(template: str, **values: object) -> Markup:
 _SHELL = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{#- The policy travels with the page, because half the pages this renders are
+    files. A header is the server's to send and `openproj render` has no server:
+    the static export is opened over `file://`, mailed as an attachment, kept on a
+    memory stick, and it carries the whole plan and every vendored library inside
+    it. A `<meta>` is the only way to say anything at all in that copy.
+
+    This is the second lock on a door already shut once. A remote image was
+    rewritten into a link at render time so a shaping document could not become a
+    tracking pixel aimed at everyone who opens it — one function, one spelling of
+    one rule. `img-src` closes that door for every spelling, including the ones
+    nobody has thought of, and `default-src 'none'` closes the doors nobody has
+    named: no fetch, no websocket, no worker, no object, no frame.
+
+    `'unsafe-inline'` for script and style, and it is worth being honest about
+    what that costs: it is most of what CSP is famous for. Every library is
+    inlined here by design — no npm, no CDN, no build step — so the alternatives
+    are a nonce, which a `file://` copy cannot have because there is no response
+    to put it in, or hashes for every block on every page, which is a build step
+    by another name. What is left is still the part this application needs: the
+    network, which is the one thing every page here is asserted never to touch.
+
+    `frame-ancestors` is deliberately absent: it is ignored in a `<meta>`, and a
+    directive that silently does nothing is worse than a missing one, because it
+    reads as covered. It is sent as a header instead, where it works. -#}
+<meta http-equiv="Content-Security-Policy" content="{{ csp }}">
 <title>{{ title }}</title>
 <script>
 // The only way in and out of localStorage, for every script on every page.
@@ -7925,6 +7969,7 @@ def _page(
         title=title,
         content=Markup(content),
         style=Markup(style),
+        csp=Markup(CSP),
         font=_font_uri(),
         links=links,
         unreadable=list(unreadable),
