@@ -305,13 +305,32 @@ missing and the service is up, it is serving an empty plan it made itself.
 
 ---
 
+## The service, as deployed
+
+**<https://openproj-392761827400.europe-west6.run.app>** — project
+`icon4py-plan-gcloud`, region `europe-west6`, serving
+`github.com/jcanton/icon4py-plan`.
+
+Cloud Run answers on a second hostname too,
+`https://openproj-perontl7xq-oa.a.run.app`. Both are permanent and both reach the
+same service; the project-number one above is the one the deploy prints and the
+one to hand round, because the other is a generated token nobody can retype.
+GitHub matches a redirect URI exactly, so **both** are registered on the OAuth
+App — otherwise sign-in would work or 404 depending on which link somebody had.
+
 ## Day one, before anybody else uses it
 
 - Branch protection on `icon4py-plan`'s `main` (step 1).
 - A nightly `git clone --mirror` of the plan somewhere off GitHub.
 - The runtime service account holding `secretAccessor` on three secrets and
   nothing else.
-- This file updated with the real service URL, so the next person does not have
-  to reconstruct it.
+- **The trial ends.** The CHF 246 of credit expires 16 November 2026, and Google
+  marks the project's resources for deletion when a trial lapses rather than
+  charging the card. The plan itself is safe — it lives in git on GitHub and the
+  container is a cache — but the service disappears, so activate the full account
+  before then or plan the move.
+- `config/people.yaml` in the plan is `known_people: []`. An unlisted login is a
+  warning rather than a refusal, so nothing breaks, but nothing autocompletes
+  either.
 - If the tool is adopted: move both repositories to `C2SM`, reinstall the App
   there, and change `OPENPROJ_REMOTE`. Nothing else changes.
