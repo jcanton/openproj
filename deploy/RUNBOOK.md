@@ -150,45 +150,49 @@ A token printed means the App, the key and the installation all line up:
 Separate from step 2 and doing a different job: step 2 lets the *server* write to
 one repository, this lets a *person* prove who they are.
 
-**A classic OAuth App, and not the GitHub App from step 2.** The two look alike
-in the settings and do different jobs: step 2's App writes to one repository and
-holds no user identity; this one identifies a person and touches no repository. A
-GitHub App *can* authorise users, but its user-to-server token carries the App's
-permissions rather than a scope — so `/user/memberships/orgs/{org}`, which is how
-`identify` decides who may write, would need an org-members permission this App
-deliberately does not have.
+**An OAuth App, and not the GitHub App from step 2.** The two do different jobs:
+step 2's App writes to one repository and holds no user identity; this one
+identifies a person and touches no repository. A GitHub App *can* authorise
+users, but its user-to-server token carries the App's permissions rather than a
+scope — so `/user/memberships/orgs/{org}`, which is how `identify` decides who
+may write, would need an org-members permission this App deliberately does not
+have.
 
-Go to **https://github.com/settings/developers**, the **OAuth Apps** tab (not
-GitHub Apps), then **New OAuth App**. If the URL in your browser reads
-`/settings/apps/…` you are editing the wrong thing.
+Register at **https://github.com/settings/applications/new**.
 
 - **Application name:** anything, e.g. `openproj`.
 - **Homepage URL:** `https://github.com/jcanton/openproj`. Cosmetic, like the
   App's in step 2.
-- **Authorization callback URL** — GitHub's newer form calls this field
-  **Redirect URI**; they are the same thing. It is **a URL on YOUR service, not
-  on github.com**, and it is the one field here that is load-bearing: it is where
-  GitHub sends the browser after somebody signs in, and it must reach openproj.
-  Pointed at a github.com address, sign-in lands on a 404 and no session is ever
-  created.
+- **Redirect URIs** — the field older docs call the authorization callback URL.
+  **A URL on YOUR service, not on github.com**, and the one field here that is
+  load-bearing: it is where GitHub sends the browser after somebody signs in, and
+  it must reach openproj. Pointed at a github.com address, sign-in lands on a 404
+  and no session is ever created.
+
+  The form takes up to ten, so **one app covers local and deployed both**. Add
+  the loopback one now and the service one after the first deploy:
 
   ```
-  https://<service>.<region>.run.app/auth/callback     for the deployment
-  http://127.0.0.1:8000/auth/callback                  for a local test
+  http://127.0.0.1:8000/auth/callback                  a local test, today
+  https://<service>.<region>.run.app/auth/callback     added after step 4
   ```
 
-  GitHub matches host and port exactly and requires the path to be at or under
-  what you registered. It special-cases loopback, so any port matches a
-  registered `127.0.0.1` callback.
+  The path is exactly `/auth/callback` — the server derives it from its own route
+  (`request.url_for("callback")`), so what it sends is whatever host it is served
+  on plus that path.
+
+  **Leave wildcard matching off.** It would let a token be sent to any subdomain
+  and any deeper path of a registered URI, which is a large blast radius bought
+  for nothing: the two exact URIs above are all this ever needs.
 
 - Record the **client ID** and generate a **client secret**.
 
-**The chicken and egg, and how to get out of it.** The callback needs the service
-URL and the service URL exists only after the first deploy. An OAuth App has one
-callback field, so one app cannot serve both localhost and Cloud Run. Two ways
-round it, and they are not exclusive:
+**The chicken and egg is smaller than it looks.** The deployed callback needs a
+URL that exists only after step 4 — but since the form takes ten, you register
+the loopback one now, test sign-in today, and come back to add the `*.run.app`
+one without touching the client id or secret.
 
-**A — test sign-in locally first, today.** Register the app with the loopback
+**Test sign-in locally first, today.** Register the app with the loopback
 callback above, then:
 
 ```bash
@@ -204,10 +208,10 @@ redirect, the code exchange, the `read:org` membership check — against real
 GitHub, with nothing deployed. Worth doing before the meeting: it is the one part
 of the stack that cannot be checked any other way.
 
-**B — deploy first with `OPENPROJ_AUTH=dev`**, read the `*.run.app` URL off the
-deploy output, then register a second OAuth App against it and redeploy with
-`OPENPROJ_AUTH=github`. The hostname is stable across revisions, so this is a
-one-time dance.
+After step 4, add the `*.run.app` URI to the same app. If you would rather not
+have sign-in in the way of the first deploy at all, deploy once with
+`OPENPROJ_AUTH=dev`, read the URL off the output, add the URI, and redeploy with
+`OPENPROJ_AUTH=github`. The hostname is stable across revisions either way.
 
 **The scope is `read:org` and nothing else.** Never `repo`: that would put a
 write-capable GitHub token in every session. The token here establishes identity
