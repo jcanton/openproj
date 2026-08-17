@@ -1,4 +1,4 @@
-"""One hostile plan, every page, both modes, and the shipped JavaScript driven.
+"""Two hostile plans, every page, both modes, and the shipped JavaScript driven.
 
 Every free-text field a signed-in member can type carries the same string, and
 that string is a payload: a double quote to end whatever attribute it lands in,
@@ -24,14 +24,24 @@ combobox popup and the cycle roster are built by the shipped JavaScript at
 runtime and appear in no rendered file, so `drive()` runs those exact scripts in
 node against the real payload and hands the strings they assign to `innerHTML`
 back to the same parser. Without that the four JS defects are invisible here.
+
+The second plan, at the bottom of the file, is the same census over a different
+kind of payload: not a character an escaper would touch, but a value that
+*equals* something the renderer used to substitute into its own finished output.
+Nothing about that payload is hostile to look at, which is exactly why the first
+corpus could not see it, and why the second one is read out of the renderer's
+source rather than written down here.
 """
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import shutil
 import subprocess
 from collections import Counter
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import quote
@@ -39,11 +49,13 @@ from urllib.parse import quote
 import pygit2
 import pytest
 from fastapi.testclient import TestClient
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 from test_store import commit_directly
 
 from openproj.index import build_index
 from openproj.model import load_repo
-from openproj.render import render_static
+from openproj.render import _json, render_static
 from openproj.web import create_app
 
 # The quote comes first so the payload escapes an attribute before it opens a
@@ -218,13 +230,11 @@ def assert_same_shape(hostile: str, benign: str, where: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def static_pages(root: Path, out: Path, text: str) -> dict[str, str]:
-    for path, content in corpus(text).items():
+def static_pages(root: Path, out: Path, plan: dict[str, str]) -> dict[str, str]:
+    for path, content in plan.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content, encoding="utf-8")
     entities, config = load_repo(root)
-    from datetime import date
-
     index = build_index(entities, config, date(2026, 8, 17))
     render_static(index, out)
     return {name: (out / name).read_text(encoding="utf-8") for name in STATIC_PAGES}
@@ -232,24 +242,30 @@ def static_pages(root: Path, out: Path, text: str) -> dict[str, str]:
 
 @pytest.fixture
 def hostile_static(tmp_path: Path) -> dict[str, str]:
-    return static_pages(tmp_path / "hostile", tmp_path / "hostile-out", PAYLOAD)
+    return static_pages(tmp_path / "hostile", tmp_path / "hostile-out", corpus(PAYLOAD))
 
 
 @pytest.fixture
 def benign_static(tmp_path: Path) -> dict[str, str]:
-    return static_pages(tmp_path / "benign", tmp_path / "benign-out", BENIGN)
+    return static_pages(tmp_path / "benign", tmp_path / "benign-out", corpus(BENIGN))
 
 
-def served(tmp_path: Path, text: str, name: str) -> dict[str, str]:
+def served(
+    tmp_path: Path, plan: dict[str, str], name: str, entity_ids: tuple[str, ...]
+) -> dict[str, str]:
     """Every page the server draws, including the three the export has not.
 
     The editable pages are the ones that matter most: they are what a signed-in
     member sees, and a page that offers a Save button is the worst possible place
     to run somebody else's script.
+
+    The plan and the ids to open are passed in, not derived from one string,
+    because the second corpus in this file has one entity per marker rather than
+    one payload in every field.
     """
     path = tmp_path / f"{name}.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
-    commit_directly(path, corpus(text), "seed a hostile plan")
+    commit_directly(path, plan, "seed a hostile plan")
     # Named rather than keyed by URL: the entity pages have the payload in their
     # path, so the hostile plan and the benign one address different URLs for the
     # same page and nothing could be compared against anything.
@@ -262,7 +278,7 @@ def served(tmp_path: Path, text: str, name: str) -> dict[str, str]:
         "every detail": "/detail",
         **{
             f"{ONE_ENTITY} {n}": f"/detail/{quote(entity_id, safe='')}"
-            for n, entity_id in enumerate(ids(text))
+            for n, entity_id in enumerate(entity_ids)
         },
     }
     pages = {}
@@ -276,12 +292,12 @@ def served(tmp_path: Path, text: str, name: str) -> dict[str, str]:
 
 @pytest.fixture
 def hostile_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, PAYLOAD, "hostile")
+    return served(tmp_path, corpus(PAYLOAD), "hostile", ids(PAYLOAD))
 
 
 @pytest.fixture
 def benign_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, BENIGN, "benign")
+    return served(tmp_path, corpus(BENIGN), "benign", ids(BENIGN))
 
 
 # --------------------------------------------------------------------------- #
@@ -478,3 +494,282 @@ def test_adding_somebody_whose_name_holds_a_quote_does_not_break_the_button(host
     answer = run_js(hostile_served["cycle 41"], ADD_TO_ROSTER)
     raised = [error for error in answer["errors"] if error.startswith("expression:")]
     assert not raised, f"the Add button threw rather than adding the row: {raised}"
+
+
+# --------------------------------------------------------------------------- #
+# The seventh site: values that used to be substituted into a finished page
+#
+# Every page was rendered and then `str.replace`d — `PAYLOAD_JSON`,
+# `ELEMENTS_JSON`, `BARS_JSON`, `HELD_JSON`, `ROSTER_JSON`, `ENTITY_HREF` and
+# three `@@library@@` markers — over text that by then already held every title,
+# owner, tag and login somebody had typed. So a value that merely *equalled* a
+# marker was substituted: a title of `BARS_JSON` and an owner of
+# `x onmouseover=alert(1) y`, neither containing one character an escaper would
+# touch, put a live event handler on every bar link on the timeline; a title of
+# `@@cytoscape.min.js@@` re-inlined 796 KB into the graph's data block and left
+# the graph with nothing to draw.
+#
+# The corpus above could not see any of it, because none of those words was in
+# it. The corpus below is the marker list itself, read out of the renderer's own
+# source so that a marker introduced tomorrow is in the corpus tomorrow.
+# --------------------------------------------------------------------------- #
+
+RENDER_PY = Path(__file__).resolve().parents[1] / "src" / "openproj" / "render.py"
+WEB_PY = RENDER_PY.with_name("web.py")
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+
+# A marker is a SHOUTING word or an `@@delimited@@` filename inside a template.
+_SHOUTED = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
+_DELIMITED = re.compile(r"@@[\w.-]+@@")
+
+# The nine that were really substituted, named because the fix deleted them from
+# the source: a derivation alone would now come back without the very strings
+# this is a regression test for.
+SUBSTITUTED = (
+    "PAYLOAD_JSON", "ELEMENTS_JSON", "BARS_JSON", "HELD_JSON", "ROSTER_JSON", "ENTITY_HREF",
+    "@@cytoscape.min.js@@", "@@dagre.min.js@@", "@@cytoscape-dagre.js@@",
+)
+
+
+def markers() -> tuple[str, ...]:
+    """Those nine, and every marker-shaped string the renderer's source still holds.
+
+    Derived and not merely listed. A list is a list that goes stale, and going
+    stale is precisely how this defect shipped: the nine were in the templates for
+    months and in no test's corpus. So anything shaped like a marker is taken —
+    every shouted word in every string constant, every `@@name@@`, and every
+    filename under `static/` with and without the delimiters. A tenth marker
+    cannot be introduced without landing in this corpus on the same commit.
+    """
+    found: set[str] = set(SUBSTITUTED)
+    for node in ast.walk(ast.parse(RENDER_PY.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found |= set(_SHOUTED.findall(node.value))
+            found |= set(_DELIMITED.findall(node.value))
+    for path in STATIC_DIR.iterdir():
+        found |= {path.name, f"@@{path.name}@@"}
+    return tuple(sorted(found))
+
+
+MARKERS = markers()
+
+
+def marker_plan(values: tuple[str, ...]) -> dict[str, str]:
+    """One task per value, carrying that value as its title, its owner and its tag,
+    and a cycle whose roster names every value as a login.
+
+    One entity per value rather than `corpus()`'s one payload in every field,
+    because what triggers this defect is a whole field *equalling* a marker —
+    thirty markers concatenated into one title is a title that equals nothing.
+    """
+    plan = {
+        "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
+        "cycles/41.md": (
+            "---\ncycle: 41\nstarts_on: 2026-08-17\nbuild_weeks: 4\ncooldown_weeks: 2\n"
+            "availability:\n"
+            + "".join(f"  '{text_yaml(value)}': 0.5\n" for value in values)
+            + "---\n\nThe goal of this cycle.\n"
+        ),
+    }
+    for n, value in enumerate(values):
+        quoted = text_yaml(value)
+        plan[f"tasks/{n:03d}.md"] = (
+            f"---\nid: task-c{n:05x}\nkind: task\ntitle: '{quoted}'\n"
+            f"status: ready\nowner: '{quoted}'\nreviewers: ['{quoted}']\n"
+            f"tags: ['{quoted}']\ncycle: 41\neffort_weeks: 0.5\npriority: medium\n"
+            "---\n\nA shaping document.\n"
+        )
+    return plan
+
+
+# Same shape, same count, same ids as the marker plan: only the words differ, so
+# any difference in the element census is a word that became markup.
+BENIGN_VALUES = tuple(f"an ordinary value number {n}" for n in range(len(MARKERS)))
+
+# The ids the marker plan uses, and the three of them whose own detail page is
+# opened. Three and not all of them: an entity's page carries the whole plan's
+# suggestions either way, so opening the hundred-and-somethingth adds nothing but
+# a hundred requests.
+MARKER_IDS = tuple(f"task-c{n:05x}" for n in range(3))
+
+JSON_BLOCK = re.compile(r'<script id="([\w-]+)" type="application/json">(.*?)</script>', re.S)
+# The two blocks that are a `const` rather than a `<script type>`: same data, same
+# `_json`, and they would fail the same way.
+JSON_CONST = re.compile(r"^const (HELD|ROSTER) = (.*);$", re.M)
+
+
+@pytest.fixture(scope="module")
+def marker_static(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str, str]]:
+    root = tmp_path_factory.mktemp("markers")
+    return {
+        "hostile": static_pages(root / "h", root / "h-out", marker_plan(MARKERS)),
+        "benign": static_pages(root / "b", root / "b-out", marker_plan(BENIGN_VALUES)),
+    }
+
+
+@pytest.fixture(scope="module")
+def marker_served(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str, str]]:
+    root = tmp_path_factory.mktemp("markers-served")
+    return {
+        "hostile": served(root, marker_plan(MARKERS), "hostile", MARKER_IDS),
+        "benign": served(root, marker_plan(BENIGN_VALUES), "benign", MARKER_IDS),
+    }
+
+
+def json_blocks(html: str) -> list[tuple[str, str]]:
+    return JSON_BLOCK.findall(html) + JSON_CONST.findall(html)
+
+
+def assert_json_parses(html: str, where: str) -> int:
+    """Every data block on the page reads back as JSON.
+
+    The census cannot see this one: a data block blown apart by a substitution is
+    text inside a `<script>`, so the element tree is unchanged and the page simply
+    arrives with no plan on it. `json.loads` on `<script id="elements">` is what
+    the page itself does, and what raised.
+    """
+    blocks = json_blocks(html)
+    for name, text in blocks:
+        try:
+            json.loads(text)
+        except ValueError as error:
+            raise AssertionError(f"{where}: the {name} block does not parse: {error}") from None
+    return len(blocks)
+
+
+def test_no_marker_string_reaches_a_static_page_as_anything_but_text(marker_static):
+    parsed = 0
+    for name, html in marker_static["hostile"].items():
+        assert_clean(html, f"static {name}")
+        assert_same_shape(html, marker_static["benign"][name], f"static {name}")
+        parsed += assert_json_parses(html, f"static {name}")
+    assert parsed >= 3, "no data block was checked, so nothing was tested"
+
+
+def test_no_marker_string_reaches_a_served_page_as_anything_but_text(marker_served):
+    parsed = 0
+    for route, html in marker_served["hostile"].items():
+        assert_clean(html, f"served {route}")
+        assert_same_shape(html, marker_served["benign"][route], f"served {route}")
+        parsed += assert_json_parses(html, f"served {route}")
+    assert parsed >= 6, "no data block was checked, so nothing was tested"
+
+
+def test_no_title_can_inline_a_library_a_second_time(marker_static, marker_served):
+    """`@@cytoscape.min.js@@` as a title inlined the whole library into the graph's
+    data block: 796 KB became 1.5–3.8 MB, `json.loads` on `<script id="elements">`
+    raised, and the graph drew nothing. Counted from the files rather than from a
+    size, because a size is a number somebody has to keep up to date."""
+    heads = {
+        path.name: path.read_text(encoding="utf-8")[:200]
+        for path in STATIC_DIR.iterdir()
+        if path.suffix == ".js"
+    }
+    assert len(heads) == 3, "the graph vendors three libraries"
+    for where, graph in (
+        ("static", marker_static["hostile"]["graph.html"]),
+        ("served", marker_served["hostile"]["graph"]),
+    ):
+        for name, head in heads.items():
+            times = graph.count(head)
+            assert times == 1, f"{where}: {name} is on the page {times} times, not once"
+
+
+def test_the_marker_corpus_really_holds_the_markers():
+    """A corpus that lost the strings it is named after proves nothing.
+
+    Both halves are checked: the nine are in it, and the derivation is doing work
+    — a `markers()` that silently stopped reading the source would leave a corpus
+    of exactly the nine, which is the stale list this is meant not to be.
+    """
+    assert set(SUBSTITUTED) <= set(MARKERS)
+    assert len(MARKERS) > 3 * len(SUBSTITUTED), "the derivation found next to nothing"
+    plan = marker_plan(MARKERS)
+    for value in ("BARS_JSON", "@@cytoscape.min.js@@"):
+        assert any(f"title: '{value}'" in text for text in plan.values()), value
+        assert any(f"owner: '{value}'" in text for text in plan.values()), value
+        assert any(f"tags: ['{value}']" in text for text in plan.values()), value
+        assert any(f"  '{value}': 0.5" in text for text in plan.values()), value
+
+
+def test_no_page_is_assembled_by_substitution():
+    """The mechanism itself, gone rather than escaped harder.
+
+    Post-render substitution over text that already holds user data is the defect;
+    any escaping scheme layered on top of it is a second thing to get right. Every
+    JSON block is a template variable now, rendered through Jinja, and the
+    libraries are inlined as values before user data is anywhere near the string —
+    so `str.replace` and `re.sub` have no business left in either module.
+
+    Read as syntax and not as text: `render.py` ships JavaScript that calls
+    `.replace()` on a string, inside a Python string constant, and a grep cannot
+    tell that from a Python call. The parser can.
+    """
+    offenders = []
+    for source in (RENDER_PY, WEB_PY):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            called = node.func
+            if isinstance(called, ast.Attribute) and called.attr in ("replace", "sub", "subn"):
+                offenders.append(f"{source.name}:{node.lineno}: {ast.unparse(node)[:80]}")
+    assert not offenders, (
+        "a page is being assembled by substitution again:\n" + "\n".join(offenders)
+    )
+
+
+def strings_in(data: object) -> int:
+    """How many strings a JSON document holds, keys included — which is how many
+    quote characters a correctly escaped rendering of it may contain."""
+    if isinstance(data, str):
+        return 1
+    if isinstance(data, list):
+        return sum(strings_in(item) for item in data)
+    if isinstance(data, dict):
+        return sum(strings_in(key) + strings_in(value) for key, value in data.items())
+    return 0
+
+
+_JSONABLE = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.text(),
+    lambda children: st.lists(children) | st.dictionaries(st.text(), children),
+    max_leaves=20,
+)
+
+
+# A string ending in a backslash is the case a blind replace of `\"` gets wrong:
+# `json.dumps` writes it `"a\\"`, and taking the last two characters for an
+# escaped quote eats the quote that closes the string.
+@example({"a\\": 'b"c'})
+@example(["a\\", '"', '\\"'])
+@example({'<img src=x onerror=alert(1)>': "</script>&amp;"})
+@settings(max_examples=200)
+@given(_JSONABLE)
+def test_the_json_a_page_ships_reads_back_and_can_end_nothing(data: object):
+    """What `_json` promises the templates, as a property rather than an example.
+
+    Every JSON block is written into the page as `Markup` — trusted, unescaped —
+    on the strength of exactly this: it reads back as what went in, and it carries
+    no character that can close a tag, a block or an attribute. The double quote
+    is belt and braces; nothing writes JSON into an attribute today, and the
+    guarantee is cheaper to keep than to check for at every site.
+    """
+    text = _json(data)
+
+    assert json.loads(text) == data, "the page would parse back something else"
+    assert not set("<>&") & set(text), f"a character that can end a block survived: {text}"
+    # Two per string, and not one more: a structural quote is unavoidable — it is
+    # what JSON is — and every other one has been respelled `\\u0022`. Counted
+    # rather than searched for, because `\\"` also spells an escaped backslash
+    # followed by the quote that closes the string, and the two look identical.
+    assert text.count('"') == 2 * strings_in(data), f"a raw quote survived: {text}"
+
+
+def test_no_vendored_library_can_end_the_block_it_is_written_into():
+    """`_library` hands the graph template a `Markup`, which is a claim that the
+    text is safe to write into a `<script>` unescaped. It is only true while no
+    vendored file contains a script terminator, and the files change when they are
+    re-vendored."""
+    for path in STATIC_DIR.iterdir():
+        if path.suffix == ".js":
+            assert "</script" not in path.read_text(encoding="utf-8").lower(), path.name

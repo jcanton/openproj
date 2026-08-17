@@ -491,6 +491,21 @@ def create_app(
         fields = {k: v for k, v in (payload.get("fields") or {}).items() if k != "id"}
         _reject_bad_types(fields)
         content = patch_text(original, fields, body)
+        # Parse before writing, the same refusal the cycle route beside this one
+        # makes, and for a worse reason: a record that fails to load takes `/`,
+        # `/detail/<id>` and `/api/index.json` down for everybody, on every read,
+        # and the file is already in git — on a protected branch, so the commit
+        # cannot be force-pushed away and the repair is a second crafted PATCH
+        # against a sha the 500ing pages will not give you. `_reject_bad_types`
+        # names numbers, lists and one bool; everything it does not name — a
+        # title that is a number, a date that is a word, a tag that is null —
+        # came through here and committed.
+        try:
+            parse_text(content, path)
+        except ValueError as error:
+            raise HTTPException(
+                422, f"that would not read back as an entity: {_why(error)}"
+            ) from None
         written = store.write(
             path=path,
             content=content,

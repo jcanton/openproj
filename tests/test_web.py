@@ -1289,6 +1289,70 @@ def test_a_cycle_field_the_record_cannot_hold_is_refused_not_raised(
     assert "\n" not in detail and "pydantic" not in detail, "a sentence, not a stack trace"
 
 
+# The same eleven a member can send to the endpoint beside the cycle one, which
+# had no parse-before-write at all. `_reject_bad_types` names numbers, lists and
+# one bool; none of these is any of those, so every one returned 200 and
+# committed — after which `/`, `/detail/<id>` and `/api/index.json` all answered
+# 500, for everybody, permanently. It is a commit on a protected main, so it
+# cannot be force-pushed away, and the only repair is a second crafted PATCH
+# against the poisoning commit's sha, which the 500ing pages will not give you.
+# Not reachable through the shipped UI, which is not a mitigation: it needs one
+# deliberate request from any signed-in member.
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("owner", {"a": 1}),
+        ("owner", ["a", "b"]),
+        ("title", {"a": 1}),
+        ("title", 5),
+        ("assigned_on", ""),
+        ("assigned_on", "six"),
+        ("assigned_on", 7),
+        ("tags", [None]),
+        ("tags", [{"a": 1}]),
+        ("parent", 3),
+        ("created_schema_version", "x"),
+    ],
+)
+def test_an_entity_the_server_could_not_read_back_is_never_committed(
+    client: TestClient, repo_path: Path, field: str, value: object
+):
+    """Parsed before writing, like the cycle beside it, and the pages prove it.
+
+    A fresh repository per case — the fixture gives one — because the whole
+    failure is that the bad value is *in git* afterwards, and a case that ran
+    second in a poisoned repository could not tell a refusal from a repository
+    that was already down.
+    """
+    before = git_head(repo_path)
+    refused = client.patch(
+        f"/api/entity/{TASK}",
+        json={"base_commit": before, "fields": {field: value}, "body": None},
+    )
+
+    assert refused.status_code == 422, refused.text
+    detail = refused.json()["detail"]
+    # Which field, in the words on the screen: `str(ValidationError)` is four
+    # lines and a documentation URL, and a person cannot act on that.
+    assert field.split(".")[0] in detail, detail
+    assert "\n" not in detail and "pydantic" not in detail, "a sentence, not a stack trace"
+
+    assert git_head(repo_path) == before, "the refusal committed anyway"
+    for route in ("/", f"/detail/{TASK}", "/api/index.json", "/graph", "/timeline"):
+        assert client.get(route).status_code == 200, route
+
+
+def test_an_entity_field_the_record_can_hold_is_still_written(
+    client: TestClient, repo_path: Path
+):
+    """The other half: the check must refuse what cannot be read back and nothing
+    else. A date, a list of tags and a title all still save."""
+    saved = save(client, TASK, {"title": "A title", "assigned_on": "2026-09-01", "tags": ["gpu"]})
+
+    assert saved.status_code == 200, saved.text
+    assert index_of(client)["entities"][TASK]["assigned_on"] == "2026-09-01"
+
+
 def test_a_date_the_record_can_hold_is_written_in_the_spelling_the_corpus_uses(
     client: TestClient, repo_path: Path
 ):
@@ -1743,6 +1807,38 @@ def test_the_preview_shows_what_the_page_will_show(client: TestClient):
     assert f'<img src="/{path}"' in stored
     assert '<a href="https://example.com/b.png">b (external image)</a>' in previewed
     assert "https://github.com/C2SM/icon4py/pull/1364" in previewed
+
+
+# A reference in prose, the same reference already inside a link, and one inside
+# a code span. The middle one is the defect: the substitution ran over
+# markdown-it's finished HTML with no idea what it was inside, so the reference
+# in the `href` was linked again — an anchor nested in an attribute, which a
+# tokeniser turns into one anchor wearing junk valueless attributes. The third is
+# the same blindness the other way: backticks mean "do not interpret this".
+PR_CONTEXTS = (
+    "Bare: C2SM/icon4py#1364.\n\n"
+    "[a pr link](https://github.com/org/repo#12)\n\n"
+    "In code: `org/repo#9`.\n"
+)
+
+
+def test_a_pr_reference_is_linked_in_prose_and_left_alone_everywhere_else(client: TestClient):
+    """Broken markup on the detail page, the static export and the preview alike,
+    and it broke the benign page as much as the hostile one — which is why a
+    hostile-versus-benign census could not see it."""
+    save(client, TASK, {}, body=PR_CONTEXTS)
+    previewed = client.post("/api/preview", json={"body": PR_CONTEXTS}).json()["html"]
+    stored = client.get(f"/detail/{TASK}").text
+
+    for where, html in (("preview", previewed), ("detail", stored)):
+        assert '<a href="https://github.com/C2SM/icon4py/pull/1364">C2SM/icon4py#1364</a>' in html
+        # Byte for byte: this anchor exists in one piece only if nothing linked
+        # the reference sitting inside its own href.
+        assert '<a href="https://github.com/org/repo#12">a pr link</a>' in html, where
+        assert "<code>org/repo#9</code>" in html, where
+    # The whole preview is one body, so its anchors can be counted: two links
+    # written by the document, and nothing else.
+    assert previewed.count("<a ") == 2, previewed
 
 
 def test_the_preview_renders_with_the_page_s_own_markdown(client: TestClient):

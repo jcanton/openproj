@@ -19,12 +19,16 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Sequence
 from datetime import date, timedelta
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 
 from jinja2 import Environment
 from markdown_it import MarkdownIt
+from markdown_it.renderer import RendererHTML
+from markdown_it.rules_core import StateCore
+from markdown_it.token import Token
 from markupsafe import Markup, escape
 from pydantic import BaseModel
 
@@ -111,6 +115,31 @@ def _inline(name: str) -> str:
     return (_static_dir() / name).read_text(encoding="utf-8")
 
 
+@cache
+def _library(name: str) -> Markup:
+    """A vendored library, read once, as the markup it is.
+
+    The three graph libraries used to arrive as `@@name@@` markers substituted
+    into the *finished* page, which is a substitution over text that by then held
+    every title, tag and login in the plan — so an entity titled
+    `@@cytoscape.min.js@@` re-inlined 796 KB into the graph's data block and the
+    page loaded with no plan at all. A template variable cannot do that: Jinja
+    renders a value, it does not rescan it.
+
+    `Markup` because this genuinely is trusted script text — a file shipped in
+    `static/`, pinned by `SHA256SUMS`, containing no `</script` (which
+    `test_injection` holds it to, because a re-vendoring could change it). Cached
+    because every graph page carries 670 KB of it and the read is not free.
+    """
+    return Markup(_inline(name))
+
+
+# The three characters that can end a `<script>` block, spelled as JSON escapes.
+# A translation table rather than a chain of `str.replace`: same result, and this
+# file no longer substitutes anything into text a person could have typed.
+_JSON_ESCAPES = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"})
+
+
 def _json(data: object) -> str:
     """JSON for a `<script>` block, with the characters that can end one escaped.
 
@@ -119,16 +148,51 @@ def _json(data: object) -> str:
     after it became live markup on the page. `\\u003c` is ordinary JSON: the parser
     reads back the same string, and the character never reaches the HTML tokeniser.
 
+    The double quote is spelled out too. Nothing writes JSON into an attribute
+    today, so this is belt and braces — but it costs one pass and it means the
+    result carries no character that can end anything it might be put inside.
+
     U+2028 and U+2029 need no handling here: they are line terminators in
     JavaScript source and legal inside a JSON string, and `json.dumps` escapes
     them already because it escapes everything outside ASCII.
     """
-    return (
-        json.dumps(data)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
+    dumped = json.dumps(data)
+    # The quote cannot be translated with the other three: the same character
+    # both delimits every string in the document and appears inside them as
+    # `\\"`, and only the second kind may be respelled. `\\` is the only place a
+    # backslash occurs in `json.dumps` output, so walking the escapes tells the
+    # two apart exactly — where a blind replace of `\\"` would eat the closing
+    # quote of any string ending in a backslash.
+    #
+    # Guarded, because the walk is a Python loop over the whole payload and most
+    # plans contain no quoted title at all: 0.6 ms against 17 for a 400 KB table.
+    # If the two characters never occur together there is nothing to respell.
+    if '\\"' in dumped:
+        out: list[str] = []
+        at = 0
+        while at < len(dumped):
+            if dumped[at] == "\\":
+                pair = dumped[at : at + 2]
+                out.append("\\u0022" if pair == '\\"' else pair)
+                at += 2
+                continue
+            out.append(dumped[at])
+            at += 1
+        dumped = "".join(out)
+    return dumped.translate(_JSON_ESCAPES)
+
+
+def _script_json(data: object) -> Markup:
+    """`_json`, typed as what it is, for a template to render as a data block.
+
+    Every JSON block on every page is a template variable now. Under autoescaping
+    a plain `str` would come out with its structural quotes spelled `&#34;`, and
+    a script element is raw text — the entities are not decoded, so `JSON.parse`
+    would fail on every page. `Markup` is the honest statement of what `_json`
+    guarantees: no `<`, `>`, `&` or bare `"` survives it, so there is nothing
+    left for an HTML escaper to do and nothing that can end the block.
+    """
+    return Markup(_json(data))
 
 
 def _inline_font(name: str) -> str:
@@ -556,10 +620,121 @@ def _pr_link(ref: str) -> Markup:
     return Markup('<a href="https://github.com/{}/pull/{}">{}</a>').format(repo, number, ref)
 
 
-_REMOTE_IMG = re.compile(r'<img\s+src="(https?://[^"]+)"(?:[^>]*?alt="([^"]*)")?[^>]*>')
 # Written as a repository-relative path so the markdown reads the same in git, on
 # GitHub and in the tool; only the prefix in front of it changes.
-_ASSET_IMG = re.compile(r'<img\s+src="assets/([0-9a-f]{16}\.(?:png|jpg|gif|webp))"')
+_ASSET_SRC = re.compile(r"assets/([0-9a-f]{16}\.(?:png|jpg|gif|webp))")
+
+
+def _pr_refs(state: StateCore) -> None:
+    """`org/repo#12`, in prose, becomes a link to the pull request.
+
+    A core rule over the token stream, because the substitution this replaces ran
+    over markdown-it's *finished* HTML and had no idea what it was inside. A
+    reference already inside a link — `[a pr link](https://github.com/org/repo#12)`
+    — came back as an anchor nested in an `href`, which a tokeniser turns into one
+    anchor wearing junk valueless attributes; a reference inside backticks became
+    a link, which is the opposite of what backticks are for.
+
+    Over tokens both contexts are skipped by construction rather than by a lookahead
+    that has to be got right: a code span is a `code_inline` token and never a
+    `text` one, a fenced block never reaches an inline token at all, and a link's
+    contents are exactly what sits between `link_open` and `link_close`.
+
+    Pushed last, after `text_join`, so the text tokens it walks are the final ones
+    and a reference cannot be split across two of them.
+    """
+    for token in state.tokens:
+        if token.type != "inline" or "#" not in token.content:
+            continue
+        depth = 0
+        children: list[Token] = []
+        for child in token.children or []:
+            if child.type == "link_open":
+                depth += 1
+            elif child.type == "link_close":
+                depth -= 1
+            if child.type == "text" and depth == 0 and _PR.search(child.content):
+                children.extend(_pr_tokens(child))
+            else:
+                children.append(child)
+        token.children = children
+
+
+def _pr_tokens(token: Token) -> list[Token]:
+    """One text token, split into the text around its PR references and the links.
+
+    `html_inline` is how a rule adds markup of its own: the renderer writes its
+    content out verbatim, and `html: false` is a statement about what the *parser*
+    accepts from a member, not about what this file may emit.
+    """
+    pieces: list[Token] = []
+    at = 0
+    for match in _PR.finditer(token.content):
+        if match.start() > at:
+            pieces.append(_inline_token("text", token.content[at : match.start()], token.level))
+        pieces.append(_inline_token("html_inline", str(_pr_link(match.group(0))), token.level))
+        at = match.end()
+    if at < len(token.content):
+        pieces.append(_inline_token("text", token.content[at:], token.level))
+    return pieces
+
+
+def _inline_token(kind: str, content: str, level: int) -> Token:
+    token = Token(kind, "", 0)
+    token.content = content
+    token.level = level
+    return token
+
+
+def _image(
+    self: RendererHTML, tokens: Sequence[Token], idx: int, options: object, env: dict
+) -> str:
+    """Where an image points, decided on the token rather than on the finished tag.
+
+    A remote image would make the page fetch from the network, which is exactly
+    what inlining every library was for. Remote images become links instead: the
+    reference survives, the dependency does not.
+
+    An image stored in the plan is a different thing — it is in the repository, it
+    travels with the clone, and it is served from the same origin as the page.
+    Those are drawn, with the one prefix that differs between a served page and a
+    rendered file put in front of the path the markdown states.
+
+    `env` carries the links because a renderer is shared and a prefix is not: the
+    preview, the detail page and the export all render the same document and only
+    this differs between them. `_markdown` always sets it; the default is the one
+    every other function in this file takes when nobody says.
+    """
+    token = tokens[idx]
+    source = token.attrGet("src") or ""
+    links = env.get("links", STATIC)
+    if source.startswith(("http://", "https://")):
+        alt = self.renderInlineAsText(token.children, options, env) if token.children else ""
+        return str(Markup('<a href="{}">{} (external image)</a>').format(source, alt or "image"))
+    asset = _ASSET_SRC.fullmatch(source)
+    if asset:
+        token.attrSet("src", links.asset + asset.group(1))
+    return RendererHTML.image(self, tokens, idx, options, env)
+
+
+_MD.core.ruler.push("openproj_pr_refs", _pr_refs)
+_MD.add_render_rule("image", _image)
+
+
+def _markdown(text: str, links: Links) -> Markup:
+    """A shaping document, rendered, exactly as every view of it renders.
+
+    One entry point because the preview has to show what the page will show.
+    Written twice, the preview drew an uploaded image against the current URL — so
+    a figure that renders fine on `/detail/task-x` was a broken image in the
+    preview of that same document, which is the one place somebody checks it.
+
+    `Markup` because `_MD` runs with `html: false`: everything a member typed
+    reached the tokeniser as text and left it escaped, and the only markup in the
+    result is markup this file put there. That is what lets `{{ e.body }}` render
+    without a `|safe` beside it.
+    """
+    return Markup(_MD.render(text, {"links": links}))
 
 
 # A leading `# Title` line, with the optional closing hashes ATX headings allow.
@@ -585,43 +760,16 @@ def _drop_repeated_title(body: str, title: str) -> str:
 
 
 def _body_html(entity: Entity, links: Links = STATIC) -> Markup:
-    """The shaping document, rendered, with PR references made clickable.
-
-    A remote image would make the page fetch from the network, which is exactly
-    what inlining every library was for. Remote images become links instead: the
-    reference survives, the dependency does not.
-
-    An image stored in the plan is a different thing — it is in the repository,
-    it travels with the clone, and it is served from the same origin as the page.
-    Those are drawn.
-    """
-    return _after_markdown(_MD.render(_drop_repeated_title(entity.body, entity.title)), links)
-
-
-def _after_markdown(html: str, links: Links) -> Markup:
-    """What every renderer does to markdown once it is HTML.
-
-    One function because the preview has to show what the page will show. Written
-    twice, the preview drew an uploaded image against the current URL — so a
-    figure that renders fine on `/detail/task-x` was a broken image in the preview
-    of that same document, which is the one place somebody checks it.
-
-    Everything here rewrites markup that markdown-it has *already* escaped —
-    `_MD` runs with `html: false`, so the body a member typed reached this
-    function as text — and the three patterns only match characters that survive
-    that escaping. Which is why these substitutions are the one place in the file
-    that composes markup without `Markup(...).format`: the input is not free
-    text, it is markdown-it's own output. `Markup` at the end says so, and is
-    what lets `{{ e.body }}` render without a `|safe` beside it.
-    """
-    html = _REMOTE_IMG.sub(
-        lambda m: f'<a href="{m.group(1)}">{m.group(2) or "image"} (external image)</a>', html
-    )
-    html = _ASSET_IMG.sub(lambda m: f'<img src="{links.asset}{m.group(1)}"', html)
-    return Markup(_PR.sub(lambda m: str(_pr_link(m.group(0))), html))
+    return _markdown(_drop_repeated_title(entity.body, entity.title), links)
 
 
 _ENV = Environment(autoescape=True)
+# Jinja ships a `tojson`, and it is nearly this: `htmlsafe_json_dumps` spells out
+# `<`, `>`, `&` and `\'` for the same reason `_json` does. Replaced rather than
+# added beside, because two JSON filters on one environment is two guarantees to
+# keep in step — and every `{{ x|tojson }}` already written on these pages is a
+# data block in a `<script>`, which is exactly what `_json` is for.
+_ENV.filters["tojson"] = _script_json
 
 
 def _fragment(template: str, **values: object) -> Markup:
@@ -1403,7 +1551,7 @@ _TABLE = """
     box that appeared, and nothing more. -#}
 <div id="row-conflict" role="status" aria-live="polite" hidden></div>
 {% endif %}
-<script id="payload" type="application/json">PAYLOAD_JSON</script>
+<script id="payload" type="application/json">{{ payload|tojson }}</script>
 {% if editable %}{{ combobox }}{% endif %}
 {{ filters }}
 <script>
@@ -1540,7 +1688,7 @@ function shown(row, key) {
   // The title is the way into the shaping doc; the id is the way to cite it.
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
-  if (key === 'title') return `<a href="ENTITY_HREF${esc(row.id)}">${esc(row.title)}</a>`;
+  if (key === 'title') return `<a href="{{ links.entity }}${esc(row.id)}">${esc(row.title)}</a>`;
   if (key === 'prs') return clamped((value || []).map(prLink), 'pull request');
   // Kind is filterable everywhere and visible nowhere. It rides with the id,
   // which was already carrying it in a prefix nobody should have to decode.
@@ -1738,7 +1886,12 @@ async function saveCell(cell, value) {
     // editing two different columns into a conflict field-level merge exists to
     // make invisible. No body: an empty string is a replacement, not an omission,
     // and would blank the shaping doc attached to the row.
-    const response = await fetch(`/api/entity/${cell.dataset.entity}`, {
+    //
+    // The id is encoded, here and at the three other write sites. A malformed id
+    // is a *reported* blocker and not a refusal, so an id with a `#` or a `?` in
+    // it does reach the page — and raw in a path, the first one truncates it, so
+    // the save somebody pressed on one record addresses something else entirely.
+    const response = await fetch(`/api/entity/${encodeURIComponent(cell.dataset.entity)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
     });
@@ -2280,10 +2433,10 @@ _GRAPH = """
   <input type="hidden" id="base" value="{{ base_commit }}">
 </div>
 {% endif %}
-<script id="elements" type="application/json">ELEMENTS_JSON</script>
-<script>@@cytoscape.min.js@@</script>
-<script>@@dagre.min.js@@</script>
-<script>@@cytoscape-dagre.js@@</script>
+<script id="elements" type="application/json">{{ elements|tojson }}</script>
+<script>{{ cytoscape }}</script>
+<script>{{ dagre }}</script>
+<script>{{ cytoscape_dagre }}</script>
 {{ filters }}
 <script>
 cytoscape.use(cytoscapeDagre);
@@ -2598,7 +2751,7 @@ function tally(extra) {
 // Opening is on double-click: a single tap is also the first half of drawing an
 // edge, and on a graph you drag around, one stray click should not navigate away.
 cy.on('dbltap', 'node', evt => {
-  if (!connecting) location.href = 'ENTITY_HREF' + evt.target.id();
+  if (!connecting) location.href = '{{ links.entity }}' + evt.target.id();
 });
 
 if (CONNECT) {
@@ -2648,7 +2801,7 @@ if (CONNECT) {
       dispatchEvent(new Event('openproj:writing'));
       let committed = null;
       try {
-        const response = await fetch(`/api/entity/${id}`, {
+        const response = await fetch(`/api/entity/${encodeURIComponent(id)}`, {
           method: 'PATCH', headers: {'content-type': 'application/json'},
           body: JSON.stringify({base_commit: base.value, fields, body: null}),
         });
@@ -2882,7 +3035,7 @@ _TIMELINE = """
     filters</button>
 </div>
 <div id="tip" role="tooltip" hidden></div>
-<script id="bars" type="application/json">BARS_JSON</script>
+<script id="bars" type="application/json">{{ bars|tojson }}</script>
 {{ filters }}
 <script>
 const scroller = document.querySelector('.scroll');
@@ -3217,7 +3370,7 @@ def _status_paint_css() -> str:
 # so it survived as a literal backslash and the widget worked — while emitting a
 # SyntaxWarning on every fresh compile, and Python 3.14 turns that into an error.
 _COMBOBOX = r"""
-<script id="suggest" type="application/json">SUGGEST_JSON</script>
+<script id="suggest" type="application/json">{{ suggest|tojson }}</script>
 <script>
 // Paste or drop an image and it goes into the plan repository, content-addressed,
 // and the markdown that names it is inserted where the cursor is. The path is
@@ -4059,7 +4212,7 @@ async function save() {
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
-    const response = await fetch(`/api/entity/${FORM.dataset.id}`, {
+    const response = await fetch(`/api/entity/${encodeURIComponent(FORM.dataset.id)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({
         base_commit: FORM.querySelector('[name=base_commit]').value, fields, body,
@@ -4991,7 +5144,7 @@ async function flush(quiet) {
     dispatchEvent(new Event('openproj:writing'));
     let committed = null;
     try {
-      const response = await fetch(`/api/entity/${id}`, {
+      const response = await fetch(`/api/entity/${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: {'content-type': 'application/json'},
         body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
       });
@@ -5108,7 +5261,7 @@ function dirty() {
 
 // The roster is edited in the page and written by Save, so adding somebody and
 // setting their availability is one decision and one commit rather than two.
-const HELD = HELD_JSON;
+const HELD = {{ c.held|tojson }};
 const JOINING = document.getElementById('joining');
 if (JOINING) attachSuggest(JOINING);
 
@@ -5326,7 +5479,7 @@ _CYCLES = """
     <button type="button" id="no">Cancel</button></p>
 </section>
 <script>
-const ROSTER = ROSTER_JSON;
+const ROSTER = {{ roster|tojson }};
 const START = document.getElementById('start');
 const CONFIRM = document.getElementById('confirm');
 const field = id => document.getElementById(id);
@@ -5579,7 +5732,7 @@ _ROLE_FILTER = {
 }
 
 
-def _cycle_view(index: Index, number: int) -> dict:
+def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     """Everything the cycle page shows, computed once so the markup only lays out.
 
     A person's scheduled end date sits beside their capacity bar deliberately: a
@@ -5687,17 +5840,18 @@ def _cycle_view(index: Index, number: int) -> dict:
         "strangers": strangers,
         "over": [p["login"] for p in people if p["over"]],
         "candidates": candidates,
-        # Markup, so the template renders it without `|safe`: the goal of a
-        # cycle is prose somebody typed, and `_MD` runs with HTML disabled, so
-        # what comes back is escaped already.
-        "body": Markup(_MD.render(plan.body)) if plan else Markup(""),
+        # `_markdown` and not a bare `_MD.render`: a cycle's goal is a shaping
+        # document like any other, and rendered its own way it was the one body
+        # on the site whose uploaded figures pointed at the wrong prefix and
+        # whose remote images still went to the network.
+        "body": _markdown(plan.body, links) if plan else Markup(""),
     }
 
 
 def render_cycle(
     index: Index, number: int, links: Links = ROUTES, base_commit: str | None = None
 ) -> str:
-    view = _cycle_view(index, number)
+    view = _cycle_view(index, number, links)
     body = _ENV.from_string(_CYCLE).render(
         c=view,
         links=links,
@@ -5705,7 +5859,6 @@ def render_cycle(
         base_commit=base_commit or "",
         combobox=_combobox_html(index),
     )
-    body = body.replace("HELD_JSON", _json(view["held"]))
     return _page(
         f"openproj — cycle {number}",
         body,
@@ -5832,9 +5985,7 @@ def render_cycles(
             if last
             else {},
         },
-    )
-    body = body.replace(
-        "ROSTER_JSON", _json(last.availability if last else {})
+        roster=last.availability if last else {},
     )
     return _page("openproj — cycles", body, _DETAIL_STYLE + _CYCLE_STYLE, links)
 
@@ -6035,10 +6186,7 @@ def _combobox_html(index: Index | None) -> Markup:
         if index
         else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
     )
-    # The marker is swapped before the result is typed as markup: `Markup.replace`
-    # escapes what it is handed, which would put `&#34;` through the middle of the
-    # JSON the widget parses.
-    return Markup(_COMBOBOX.replace("SUGGEST_JSON", _json(data)))
+    return _fragment(_COMBOBOX, suggest=data)
 
 
 def _page(title: str, content: str, style: str = "", links: Links = STATIC) -> str:
@@ -6078,7 +6226,7 @@ def preview_html(body: str, links: Links = ROUTES, title: str = "") -> str:
 
     Routes by default: the only thing that asks for a preview is the server.
     """
-    return _after_markdown(_MD.render(_drop_repeated_title(body, title)), links)
+    return _markdown(_drop_repeated_title(body, title), links)
 
 
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
@@ -6100,18 +6248,21 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
-    body = body.replace("PAYLOAD_JSON", _json(payload)).replace("ENTITY_HREF", links.entity)
     return _page("openproj — table", body, _TABLE_STYLE + _SUGGEST_STYLE, links)
 
 
 def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
-    """Inline the libraries in one pass, keyed by filename.
+    """The plan as nodes and edges, with the three libraries that draw it inlined.
 
-    Sequential `str.replace` calls were wrong here and silently so: `DAGRE_JS` is a
-    substring of `CYTOSCAPE_DAGRE_JS`, so replacing the shorter marker first ate
-    the tail of the longer one. dagre was inlined twice, cytoscape-dagre never,
-    and the page rendered blank with a stray identifier. One regex pass over
-    delimited markers cannot collide however the names are chosen.
+    The libraries are template variables, like the data is. They arrived as
+    `@@name@@` markers replaced in the finished page, which is a substitution over
+    text that already held every title in the plan: naming a marker was enough to
+    inline 796 KB a second time, blow the data block past what `json.loads` would
+    read, and leave the graph with nothing to draw. Before that the markers were
+    undelimited and replaced in sequence, and `DAGRE_JS` being a substring of
+    `CYTOSCAPE_DAGRE_JS` ate the tail of the longer one. Rendering them as values
+    ends both failures for the same reason: Jinja substitutes into the template,
+    never into what a value expanded to.
     """
     body = _ENV.from_string(_GRAPH).render(
         editable=base_commit is not None,
@@ -6121,17 +6272,12 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         statuses=STATUSES,
         glyphs=STATUS_GLYPH,
         total=len(index.entities),
+        links=links,
+        elements=_elements(index),
+        cytoscape=_library("cytoscape.min.js"),
+        dagre=_library("dagre.min.js"),
+        cytoscape_dagre=_library("cytoscape-dagre.js"),
     )
-    body = body.replace("ELEMENTS_JSON", _json(_elements(index)))
-    wanted = {"cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"}
-    body = re.sub(
-        r"@@([\w.-]+)@@",
-        # Only known filenames are substituted: minified sources contain things
-        # like `e["@@iterator"]`, and a blind pattern would try to inline them.
-        lambda m: _inline(m.group(1)) if m.group(1) in wanted else m.group(0),
-        body,
-    )
-    body = body.replace("ENTITY_HREF", links.entity)
     return _page("openproj — graph", body, _GRAPH_STYLE, links)
 
 
@@ -6164,11 +6310,10 @@ def render_timeline(
         glyph_dy=_GLYPH_DY,
         facets=_facets_html(index.facets),
         filters=_FILTER_JS,
+        # The rows the shared `matches()` reads, for the bars that were drawn. Not
+        # the whole plan: a bar that is not on this window cannot be filtered onto it.
+        bars={"rows": timeline["rows"], "human": HUMAN},
     )
-    # The rows the shared `matches()` reads, for the bars that were drawn. Not the
-    # whole plan: a bar that is not on this window cannot be filtered onto it.
-    payload = {"rows": timeline["rows"], "human": HUMAN}
-    body = body.replace("BARS_JSON", _json(payload))
     return _page("openproj — timeline", body, _timeline_css(), links)
 
 

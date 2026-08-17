@@ -384,3 +384,66 @@ def test_the_same_refusal_twice_is_still_read_out(pages):
 
     assert answer["value"]["between"] == "", "the region has to change to be read again"
     assert answer["value"]["state"] == 'appetite_weeks must be a number, not "two"'
+
+
+# --------------------------------------------------------------------------- #
+# Where a write goes
+# --------------------------------------------------------------------------- #
+
+# An id the pattern does not match is a *reported* blocker and not a refusal —
+# the entity loads, every page draws it, and the table offers to edit it — so an
+# id with a `#` in it does reach the browser. Raw in a path, the `#` starts a
+# fragment and the `?` a query, so the save somebody pressed on this row went to
+# `/api/entity/task-c0` and wrote to a different record or to none.
+BROKEN_ID = "task-c0#001?x"
+BROKEN_ID_URL = "/api/entity/task-c0%23001%3Fx"
+
+BROKEN_ID_PLAN = {
+    "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
+    "tasks/one.md": (
+        f"---\nid: '{BROKEN_ID}'\nkind: task\ntitle: A task whose id never validated\n"
+        "status: ready\nowner: ann\nreviewers: [bo]\neffort_weeks: 1\npriority: medium\n"
+        "---\n\nA shaping document.\n"
+    ),
+}
+
+SAVE_A_CELL = """
+(async () => {
+  const id = Object.keys(DATA.rows)[0];
+  const cell = document.createElement('td');
+  cell.className = 'edit';
+  cell.dataset.entity = id;
+  cell.dataset.field = 'owner';
+  await saveCell(cell, 'bo');
+  return id;
+})()
+"""
+
+
+@pytest.fixture(scope="module")
+def broken_id_table(tmp_path_factory: pytest.TempPathFactory) -> str:
+    repo = tmp_path_factory.mktemp("broken-id") / "plan.git"
+    pygit2.init_repository(str(repo), bare=True, initial_head="main")
+    commit_directly(repo, BROKEN_ID_PLAN, "a plan with an id nobody validated")
+    with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        answer = client.get("/")
+        assert answer.status_code == 200
+        return answer.text
+
+
+def test_a_save_addresses_the_row_it_was_pressed_on(broken_id_table):
+    """Encoded, the whole id reaches the endpoint and the endpoint refuses it —
+    an id that is not an id never becomes a path, which `test_web` holds it to.
+    Raw, the URL was `/api/entity/task-c0` and the save landed on whatever record
+    that turned out to be, with a 200 and a receipt saying it had worked."""
+    # Two answers: the save, and the re-read of the problems the save triggers.
+    answer = drive(
+        broken_id_table,
+        SAVE_A_CELL,
+        [{"status": 200, "json": {"commit": "a" * 40}}, {"status": 200, "json": {"problems": []}}],
+    )
+
+    assert answer["value"] == BROKEN_ID, "the table drew a different row from the one saved"
+    writes = [call for call in answer["calls"] if call["method"] == "PATCH"]
+    assert [call["url"] for call in writes] == [BROKEN_ID_URL]
