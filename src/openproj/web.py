@@ -359,13 +359,26 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     `<id>.md` works on a corpus nobody has renamed and fails on every real one.
     """
     directory = _directory_for(entity_id)
+    found = []
     for path in store.paths(commit):
         if not path.startswith(f"{directory}/") or not path.endswith(".md"):
             continue
         stem = path[len(directory) + 1 : -len(".md")]
         if stem == entity_id or stem.startswith(f"{entity_id}--"):
-            return path
-    return None
+            found.append(path)
+    # Refuse rather than pick. This returned the first match, and "first match
+    # wins" is a coin toss about which record a save destroys — the index resolves
+    # the same collision the other way, so the file this chose was reliably not the
+    # record the page had shown. Two files claiming one id is a blocker the pages
+    # now draw; until a person resolves it, no write to that id is safe.
+    if len(found) > 1:
+        raise HTTPException(
+            409,
+            f"{', '.join(sorted(found))} both claim {entity_id}. "
+            "Rename or remove one in git, then reload — until then a save here "
+            "cannot tell which record you meant.",
+        )
+    return found[0] if found else None
 
 
 MODELS = {"project": Project, "pitch": Pitch, "task": Task}
@@ -628,6 +641,30 @@ def create_app(
         if path is None:
             raise HTTPException(404, f"no entity {entity_id!r}")
         original = store.read(base, path)
+        # An id two files claim is an id this route cannot write to, and the check
+        # is a question to the index rather than a second derivation of it.
+        #
+        # Comparing this file against its own name is not enough, and the case that
+        # proves it has both halves innocent on their own: the file named for the
+        # id declares it, so it looks right from here, while a *different* file —
+        # named for something else — also declares it, and being later in tree
+        # order takes the id in the index. The page showed that one. The save lands
+        # on this one. Both answer 200 and neither file is individually wrong; the
+        # contest only exists across the two, which is exactly what the index
+        # already computed and drew a banner about.
+        contested = [
+            problem
+            for problem in index_now()[1].problems
+            if problem.entity_id == entity_id
+            and problem.field == "id"
+            and problem.severity == "blocker"
+        ]
+        if contested:
+            raise HTTPException(
+                409,
+                f"{contested[0].message}. Resolve it in git and reload — a save here "
+                "would edit a record that is not the one you were shown.",
+            )
 
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         _reject_bad_types(fields)

@@ -17,7 +17,7 @@ from typing import Literal
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, PrivateAttr, ValidationError, field_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
@@ -370,6 +370,12 @@ class Entity(BaseModel):
     index down.
     """
 
+    # Where this record was read from, so its two names can be compared. A private
+    # attribute and not a field: `serialise` dumps the model, so anything declared
+    # here is written back into the file, and the path a record was found at is the
+    # one piece of information that must never become part of the record.
+    _source: str = PrivateAttr(default="")
+
     id: str
     kind: Literal["project", "pitch", "task"]
     title: str
@@ -490,7 +496,12 @@ def parse_text(text: str, source: str) -> Entity:
         # A hand-written `reviewers: null` means "absent", not "not a list".
         and not (value is None and model.model_fields[name].default is not None)
     }
-    return model.model_validate({"id": "", "title": "", **fields, "kind": kind, "body": body})
+    entity = model.model_validate({"id": "", "title": "", **fields, "kind": kind, "body": body})
+    # The record remembers the file it came from, because it is the only moment
+    # both halves of its identity are in the same place. `source` was already here
+    # and was only ever used to name the file in an error message.
+    entity._source = source
+    return entity
 
 
 def parse_file(path: Path) -> Entity:
@@ -836,6 +847,73 @@ def _problems_for(
     yield from _people_problems(entity, config)
 
 
+def named_for(entity: Entity) -> bool:
+    """Whether the file this record was read from is named for the id it declares.
+
+    Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
+    only the half before `--` is the fact; the rest is decoration and renaming it
+    is legal.
+    """
+    stem = Path(entity._source).name.removesuffix(".md")
+    return stem == entity.id or stem.startswith(f"{entity.id}--")
+
+
+def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
+    """An entity says who it is twice, and here the two are made to agree.
+
+    The id is in the frontmatter and it is in the filename, and nothing compared
+    them — so the two halves of the application resolved a collision in opposite
+    directions. `build_index` keeps the LAST file in tree order for an id;
+    `_path_for` writes to the FIRST filename that matches. A file whose
+    frontmatter claimed an id belonging to another file therefore took that id in
+    the index and left the write pointing at the other one: a reader edited the
+    record on screen, pressed save, and a different record changed on disk, with
+    a 200 and no warning, while `openproj check` printed no problems at all.
+
+    Both halves are blockers and neither is grandfathered, which is the one place
+    this file makes that exception. Grandfathering exists so that a new rule about
+    what a record must *contain* does not invalidate a repository written before
+    it — a fair trade, because the cost of the warning is a missing field. This is
+    not a rule about content. It is the question of which record you are looking
+    at, and a warning here still lets the save land on the wrong file.
+
+    A record with no source is one built in memory rather than read from a file,
+    and it has no filename to disagree with.
+    """
+    claimants: dict[str, list[str]] = {}
+    for entity in entities:
+        if entity._source:
+            claimants.setdefault(entity.id, []).append(entity._source)
+
+    for entity in entities:
+        if not entity._source:
+            continue
+        if not named_for(entity):
+            yield Problem(
+                severity="blocker",
+                entity_id=entity.id,
+                field="id",
+                message=(
+                    f"this record says it is {entity.id} and its file is named "
+                    f"{Path(entity._source).name} — until they agree, a save can land "
+                    "on the wrong file"
+                ),
+                rule_version=1,
+            )
+        others = [path for path in claimants[entity.id] if path != entity._source]
+        if others:
+            yield Problem(
+                severity="blocker",
+                entity_id=entity.id,
+                field="id",
+                message=(
+                    f"{', '.join(sorted(others))} claims this id too, so which record "
+                    "this is depends on which half of the app you ask"
+                ),
+                rule_version=1,
+            )
+
+
 def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     """Check every entity against every rule it is old enough to be held to.
 
@@ -863,6 +941,11 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
                     rule_version=rule_version,
                 )
             )
+    # Outside the loop above, and outside `shelved`'s exemption with it. Parked
+    # work is not broken work — but a shelved record can still be the one whose id
+    # a second file has taken, and the save that lands on the wrong file does not
+    # care that one of the two is parked.
+    problems.extend(_identity_problems(entities))
     return problems
 
 
