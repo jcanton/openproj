@@ -715,6 +715,54 @@ def test_no_conflict_marker_ever_reaches_the_browser(client: TestClient):
     assert not [m for m in ("<<<<<<<", "=======", ">>>>>>>") if m in response.text]
 
 
+@pytest.mark.parametrize("field, value", [("parent", PROJECT), ("owner", "bo")])
+def test_a_save_onto_a_record_deleted_in_git_never_writes_it_back(
+    client: TestClient, repo_path: Path, field: str, value: str
+):
+    """A deletion is not an empty file, and the merge could not tell them apart.
+
+    `store.write` hands `_merge` whatever is stored `or ""`, so a record somebody
+    removed in git arrives as a frontmatter with no keys and a body with no
+    lines. Every key the save did not touch then reads as "only they moved it"
+    and is dropped; the one key it did touch reads as "only we moved it" and is
+    kept. What got committed was a *resurrection* of the record holding nothing
+    but the field being edited — `---\\nparent: proj-a10000\\n---\\n` over a task
+    with a title, an owner, an appetite and a body — answered 200, and announced
+    the move.
+
+    Two fields, because this is the write path's and not the drag's: `parent` is
+    simply the field that made it routine, since a row somebody drags is exactly
+    a row that is not inside anything yet, and the value has to be absent before
+    the edit for the merge to keep it. `owner` on an unowned task is the same
+    file, one field along.
+
+    Parsing the result would not have caught either. Every field is optional at
+    the type level on purpose, so that file loads perfectly well: it is a record
+    with no title and no kind, which the validator reports beside the row it
+    ruined, one commit too late.
+    """
+    # A person with a terminal, taking the task out of the pitch and leaving it
+    # unowned — the state a row is in when somebody reaches for its grip.
+    loose = HAND_FORMATTED.replace("parent: pitch-b20000\n", "").replace(
+        "owner: ann                 # ann has the DWD contacts\n", ""
+    )
+    commit_directly(repo_path, {**SEED, PATH: loose}, "take the task out of the pitch")
+    base = head(client)
+    # And the same person deleting it while the page is still open.
+    commit_directly(repo_path, {k: v for k, v in SEED.items() if k != PATH}, "drop the task")
+    deleted = git_head(repo_path)
+
+    response = save(client, TASK, {field: value}, base=base)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["commit"] is None
+    assert "deleted" in response.json()["conflict"] and PATH in response.json()["conflict"]
+    assert git_head(repo_path) == deleted, "nothing was committed"
+    assert PATH not in pygit2.Repository(str(repo_path))[deleted].tree, (
+        "and the record somebody deleted is still deleted"
+    )
+
+
 def test_saving_an_entity_that_does_not_exist_is_a_404(client: TestClient, repo_path: Path):
     """A well-formed id for a file that is not there. `PATCH` edits; it does not
     quietly create, or a typo in a URL becomes an entity nobody meant to make."""
@@ -897,7 +945,11 @@ def test_a_create_records_its_author_like_any_other_write(client: TestClient, re
 def test_the_content_stays_public_when_nobody_is_signed_in(secure_client: TestClient):
     """Reads need no login, by decision. Putting the plan behind the org would
     make it unlinkable from an issue, which is where most people meet it."""
-    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json", "/healthz"):
+    # `/api/table.json` is the table page re-reading itself, so it is as public
+    # as the page: a route that answered 401 would leave a signed-out reader with
+    # a table that draws once and then never moves.
+    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json",
+                  "/api/table.json", "/healthz"):
         assert secure_client.get(route).status_code == 200, route
 
 
