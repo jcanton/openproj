@@ -290,6 +290,30 @@ class Element {
 
   appendChild(node) { this.append(node); return node; }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+
+  // A structural copy. The icon picker is the one place these pages clone rather
+  // than build: the row it just chose already holds the exact `<svg>` the server
+  // would send back, so the new mark is a node this page rendered instead of a
+  // string crossing an escaping boundary. Without this the shim stopped inside
+  // `chooseRow`, one line after the write it was there to test and with the write
+  // already sent — a driver failure that looks exactly like a page bug.
+  cloneNode(deep) {
+    const copy = new Element(this.tagName, this.ownerDocument);
+    copy.attributes = {...this.attributes};
+    copy.dataset = {...this.dataset};
+    copy.textContent = this.textContent;
+    copy.hidden = this.hidden;
+    copy.value = this.value;
+    if (deep) {
+      copy.children = this.children.map(child => {
+        const under = child.cloneNode(true);
+        under.parentNode = copy;
+        return under;
+      });
+    }
+    return copy;
+  }
+
   insertAdjacentElement(_where, node) { node.parentNode = this.parentNode; return node; }
   insertAdjacentHTML(_where, html) { WRITTEN.push(String(html)); }
   remove() {}

@@ -553,6 +553,8 @@ def create_app(
     client_secret: str = "",
     remote: str = "",
     credentials: object | None = None,
+    dev_login: str = "dev",
+    today: date | None = None,
 ) -> FastAPI:
     if auth == "github":
         if secret in _DEV_SECRETS:
@@ -628,7 +630,13 @@ def create_app(
         return commit, build_index(
             entities,
             config,
-            date.today(),
+            # Pinned only where somebody pinned it, which today is `openproj
+            # demo`: the seed corpus is written around one day as "now", and
+            # served in December it draws a plan every date of which is in the
+            # past — a demo of a scheduler with nothing left to schedule. A write
+            # still stamps the real date, because a commit happens when it
+            # happens; this is the day the plan is DRAWN around.
+            today or date.today(),
             # Sorted by path, because a reader works through the list by opening
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted(
@@ -656,10 +664,17 @@ def create_app(
         In dev mode anybody may write, but the session still decides *who they
         are*: dev never invents an author, because a commit attributed to nobody
         is worse than no commit.
+
+        `dev_login` is who a dev run is when no session says otherwise. It is
+        `dev` for `openproj serve`, which is what it always was, and a name off
+        the plan's own roster for `openproj demo` — because the People page hangs
+        the icon picker off the signed-in person's ROW, and `dev` holds no work
+        in any plan, so it has no row. A demo signed in as nobody is a demo of
+        the People page with the one control on it missing.
         """
         user = viewer(request)
         if auth == "dev":
-            return user or User(login="dev", member=True)
+            return user or User(login=dev_login, member=True)
         if user is None:
             raise HTTPException(401, "sign in to make changes")
         if not user.member:
