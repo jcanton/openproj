@@ -161,6 +161,14 @@ class Index(BaseModel):
     # The roster from config/people.yaml, so a cycle nobody has been bet into yet
     # still has names to set availability against.
     known_people: list[str] = []
+    # The icon each person picked for themselves, login to icon name, from
+    # `people/<login>.md`. The choice and not the record: the one page that draws
+    # these wants the mark beside a name, and an index carrying the whole record
+    # would be carrying a body nothing reads. Keyed on every login that has a
+    # record — not on the roster — because the People page is built from who is
+    # named in the entity files, and a map keyed on the roster would draw nothing
+    # for whoever was added to the plan this morning.
+    icons: dict[str, str] = {}
     # How far along each entity is, counted once here rather than re-derived by
     # every column, panel and predicate that wants to say it. See `Progress`.
     progress: dict[str, Progress] = {}
@@ -400,6 +408,9 @@ def build_index(
         nominal_availability=config.nominal_availability,
         cooldown_weeks=config.cooldown_weeks,
         known_people=config.known_people,
+        icons={
+            login: person.icon for login, person in config.people.items() if person.icon
+        },
         issues=config.issues,
         issue_problems=issue_problems(config, entities),
         today=today,

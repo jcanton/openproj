@@ -6061,6 +6061,136 @@ STATUS_GLYPH = {
     "done": "✓",            # finished
     "shelved": "✕",         # struck out, not failed
 }
+# A person's own mark, drawn beside their name on the People page and nowhere
+# else. Inline SVG rather than emoji — which is the same answer STATUS_GLYPH
+# above gives, reached by a different argument, because the argument that
+# decided the status marks does not apply here.
+#
+# A status mark is text because it sits inside a 14px timeline bar and has to
+# arrive in the bar's own ink: an emoji is drawn by the platform's colour font,
+# so it ignores `currentColor` and lands at a different weight on every machine.
+# An avatar wants none of that. It is 20px of its own, it is allowed its own
+# colour, and being recognisable matters more than matching the ink — so on the
+# trade-off that settled the status marks, emoji would win here.
+#
+# What rules them out is the other promise this codebase makes. Everything a
+# page needs is inside the page: the typeface is a `data:` URI, every library is
+# inlined, and `test_no_page_reaches_the_network` is what keeps it so — because
+# `openproj render` writes a plan that has to be readable off a memory stick
+# with no network and nothing installed. An emoji is the one mark that is not in
+# the file. It is resolved by whatever colour-emoji font the reader happens to
+# have, which on an ordinary Linux workstation is none at all, and a login whose
+# icon is a tofu box is worse than a login with no icon: it looks like the tool
+# is broken rather than like nobody has chosen. The same file opened on three
+# machines would draw three different foxes, and the one thing on this page that
+# is a person's own choice is the last thing that should be a property of their
+# neighbour's font cache.
+#
+# So: paths, in the page, in `currentColor`. About 200 bytes each, they follow
+# the theme, they scale, and the drawing in the file IS the drawing on screen.
+# Stroked outlines at the interface's own weight rather than filled silhouettes,
+# and every feature is a whole shape — a head, two ears, two eyes — because at
+# 20px a whisker is not a line, it is a grey smudge. Twelve is enough for a team
+# to have one each and few enough that no two are confusable at that size.
+#
+# The four sky shapes come first and the eight creatures after, which is the
+# order the picker is read in. What is stored is the NAME, so these can be
+# redrawn without touching anybody's choice — see `model.Person`.
+_ICON_ART = {
+    "sun": (
+        '<circle cx="12" cy="12" r="4.3"/>'
+        '<path d="M12 2.4v2.6M12 19v2.6M2.4 12h2.6M19 12h2.6'
+        'M5.3 5.3 7.2 7.2M16.8 16.8l1.9 1.9M18.7 5.3 16.8 7.2M7.2 16.8l-1.9 1.9"/>'
+    ),
+    "moon": '<path d="M20 13.4A8.8 8.8 0 1 1 10.6 4 7 7 0 0 0 20 13.4Z"/>',
+    "star": (
+        '<path d="M12 3.3 14.2 9.2 20.6 9.5 15.6 13.5 17.3 19.6 12 16.1'
+        ' 6.7 19.6 8.4 13.5 3.4 9.5 9.8 9.2Z"/>'
+    ),
+    "cloud": (
+        '<path d="M7.4 18.6h9.8a4.2 4.2 0 0 0 .4-8 5.7 5.7 0 0 0-10.8-1.3'
+        'a4.8 4.8 0 0 0 .6 9.3Z"/>'
+    ),
+    "mountain": '<path d="M2.6 19.4 9.4 7.6l4 6.9 2.6-4.3 5.4 9.2Z"/>',
+    # Tilted, and fat enough to have two sides. Drawn upright and narrow it was a
+    # sliver with a line down it — at 20px indistinguishable from an eye, and the
+    # midrib was the whole of what made it a leaf rather than a lens.
+    "leaf": (
+        '<path d="M4.6 19.4a11.5 11.5 0 0 1 14.8-14.8 11.5 11.5 0 0 1-14.8 14.8Z"/>'
+        '<path d="M2.8 21.2 18 6"/>'
+    ),
+    "cat": (
+        # One outline for the head and both ears, so no chord is drawn across the
+        # face: the arc stops where each ear starts and picks up where it ends.
+        '<path d="M8.9 8.8A6.2 6.2 0 0 1 15.1 8.8L19.4 4.8 17.8 12.1'
+        'A6.2 6.2 0 1 1 6.2 12.1L4.6 4.8Z"/>'
+        '<circle cx="9.8" cy="14" r=".95" fill="currentColor" stroke="none"/>'
+        '<circle cx="14.2" cy="14" r=".95" fill="currentColor" stroke="none"/>'
+    ),
+    "fox": (
+        '<path d="M12 20.6 4.4 12.4 3.4 4.6 8.6 7.4h6.8l5.2-2.8-1 7.8Z"/>'
+        '<circle cx="8.8" cy="11.9" r=".95" fill="currentColor" stroke="none"/>'
+        '<circle cx="15.2" cy="11.9" r=".95" fill="currentColor" stroke="none"/>'
+    ),
+    "owl": (
+        '<path d="M12 3.6c-4.2 0-7 3.2-7 7.6 0 5.4 3.2 9.2 7 9.2s7-3.8 7-9.2'
+        'c0-4.4-2.8-7.6-7-7.6Z"/>'
+        '<path d="M8.8 4.8 7.2 2.4M15.2 4.8 16.8 2.4"/>'
+        '<circle cx="9.5" cy="10.6" r="2.1"/><circle cx="14.5" cy="10.6" r="2.1"/>'
+        '<circle cx="9.5" cy="10.6" r=".8" fill="currentColor" stroke="none"/>'
+        '<circle cx="14.5" cy="10.6" r=".8" fill="currentColor" stroke="none"/>'
+        '<path d="M12 12.4 10.9 14.3 13.1 14.3Z"/>'
+    ),
+    "rabbit": (
+        # The ears are open at the root rather than closed shapes: a closed ear
+        # draws its base across the top of the head, and two lines through the
+        # face is what a rabbit at 20px turns into.
+        '<circle cx="12" cy="16.2" r="4.9"/>'
+        '<path d="M9.3 12.6Q6 6.4 8.4 2.8 11.6 5.6 11.4 11.5"/>'
+        '<path d="M14.7 12.6Q18 6.4 15.6 2.8 12.4 5.6 12.6 11.5"/>'
+        '<circle cx="10.2" cy="15.7" r=".85" fill="currentColor" stroke="none"/>'
+        '<circle cx="13.8" cy="15.7" r=".85" fill="currentColor" stroke="none"/>'
+    ),
+    "fish": (
+        '<path d="M4.4 12a9 9 0 0 1 13.6 0 9 9 0 0 1-13.6 0Z"/>'
+        '<path d="M18 12 22.4 8.6 22.4 15.4Z"/>'
+        '<circle cx="7.9" cy="11.1" r=".9" fill="currentColor" stroke="none"/>'
+    ),
+    "turtle": (
+        '<path d="M4.6 15.6a7.4 7.4 0 0 1 14.8 0Z"/>'
+        '<circle cx="21" cy="13.6" r="1.7"/>'
+        '<path d="M7.6 15.6v2.4M12 15.6v2.6M16.4 15.6v2.4M4.6 15.2 2.4 16.4"/>'
+    ),
+}
+
+# The vocabulary, and the only thing that decides it. `web.py` refuses an icon
+# this map does not hold, the picker offers exactly these, and the stored value
+# is the key — so adding one is a line here and nothing anywhere else.
+ICONS = tuple(_ICON_ART)
+
+# 24 units square and drawn in the current ink, so an icon is the size of the
+# text beside it and takes the theme with it. `aria-hidden`, because the name it
+# sits next to is the person: a screen reader announcing "fox, jcanton" would be
+# reading out a decoration as though it were an identity.
+_ICON_SVG = (
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true" focusable="false">{}</svg>'
+)
+
+
+def icon_svg(name: str) -> Markup:
+    """The drawing for a stored icon name, or nothing at all.
+
+    Nothing, and not a placeholder, for a name this version does not draw: an
+    icon is a decoration beside a login that is already on screen, so a stored
+    `dragon` costs the drawing and nothing else. That is the same bargain
+    `_status_class` makes with a status nobody recognises, one rung down — there
+    is no rule to fold this onto, because there is nothing underneath a mark.
+    """
+    art = _ICON_ART.get(name)
+    return Markup(_ICON_SVG).format(Markup(art)) if art else Markup("")
+
 
 # Fields only one kind has, so the create form can hide the rest.
 # A project is a container and has no size of its own; `shaped_by` is asked of
@@ -7606,6 +7736,16 @@ _PEOPLE = """
   <tbody class="person" data-login="{{ person.login }}">
     <tr class="group{{ ' over' if person.over else '' }}">
       <th colspan="5" scope="colgroup"><div class="groupline">
+        {#- The person's own mark. A button for exactly one person on the page —
+            whoever is signed in — and a plain span for everybody else, because
+            the only icon anybody may set here is their own. -#}
+        {%- if person.mine %}
+        <button type="button" id="pick" class="avatar pick{{ ' unset' if not person.art else '' }}"
+                aria-haspopup="true" aria-expanded="false" aria-controls="picker"
+                aria-label="Your icon" title="Your icon">{{ person.art }}</button>
+        {%- elif person.art %}
+        <span class="avatar">{{ person.art }}</span>
+        {%- endif %}
         {%- if person.link %}
         <a class="who" href="{{ links.table }}?{{ person.link.field }}={{ person.login|urlencode }}"
            title="{{ person.link.says }}">{{ person.login }}</a>
@@ -7639,6 +7779,35 @@ _PEOPLE = """
             {{- ' · ' if not loop.last else '' -}}
           {%- endfor -%}
         </span>
+        {#- Inside the group line rather than floating over it. The line already
+            wraps, so a picker that claims a whole row of it opens underneath the
+            name with no positioning, no z-index and no argument to have with the
+            sticky header two rows up — which is this file's characteristic way
+            of breaking something else. -#}
+        {%- if person.mine %}
+        <div id="picker" class="picker" hidden>
+          {% for one in icons %}
+          <button type="button" class="avatar" data-icon="{{ one.name }}"
+                  aria-label="{{ one.name }}" title="{{ one.name }}">{{ one.art }}</button>
+          {%- endfor %}
+          <button type="button" class="clear" data-icon="">No icon</button>
+        </div>
+        {#- Where a refusal is read. `announce` writes into `#state` when a page
+            has one and into the shell's screen-reader region when it does not,
+            and this page had none — so the first version of this feature failed
+            silently for everybody who could see: the button did nothing, and the
+            only account of why went to a region carrying `.sr-only`, which is
+            `position: absolute; clip-path: inset(50%)`.
+
+            Under the picker, in the same group line, and drawn only where the
+            picker is. Not at the top of the page: the filter hides a whole
+            person's `tbody` at once, so a status line up there would be on screen
+            when the control it is about is not, and gone in exactly the case this
+            exists for. Anybody who can press the button can see this, because it
+            is two centimetres under their hand rather than at the far end of a
+            row that is a metre wide on this table. -#}
+        <span id="state" role="status"></span>
+        {%- endif %}
       </div></th>
     </tr>
     {% for row in person.rows %}
@@ -7708,6 +7877,91 @@ const CLEAR = document.getElementById('clear-filters');
 if (CLEAR) CLEAR.onclick = clearFilters;
 apply();
 </script>
+{#- Only where there is a server to write to. A static export carries no picker,
+    so shipping the script that drives one would put a `fetch` for a route that
+    does not exist into a file opened over `file://` — dead code in the one copy
+    of this plan that has to be readable with nothing else on the machine. -#}
+{% if editable %}
+<script>
+// Picking your own icon. Both are absent for somebody who may write and is named
+// nowhere in the plan: this page lists whoever holds work, so there is no row to
+// hang a picker off for a person who holds none. Guarded rather than assumed,
+// because that reader gets this script like everybody else who may write.
+const PICK = document.getElementById('pick');
+const PICKER = document.getElementById('picker');
+
+// One region for both sentences a write produces, told apart by colour rather
+// than by having two places to look. `announce` picks `#state` on a page that
+// has one — this page's is beside the button, and it is drawn only when the
+// button is, so the message is where the hand already is.
+// `report` and not `say`: two classic scripts on one page share one global
+// scope, and `say` is already taken twice in this file.
+function report(message, bad) {
+  const state = document.getElementById('state');
+  if (state) state.classList.toggle('bad', !!bad);
+  announce(message);
+}
+
+async function chooseIcon(name) {
+  // The whole request: one key, and the login is the server's own. There is
+  // nothing here to name somebody else with, and nothing to name a file with
+  // either — the path is `people/<your login>.md` and it is built on the server
+  // from the session. See the endpoint.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch('/api/icon', {
+      method: 'PUT', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({icon: name || null}),
+    });
+    // `answerOf` and not `.json()`: a refusal that arrives as plain text would
+    // otherwise reject here and leave the picker open with nothing said.
+    const answer = await answerOf(response);
+    if (!response.ok) { report(refusal(answer, response.status), true); return false; }
+    committed = answer.commit;
+    return true;
+  } finally {
+    // Announced even when the write was refused, or the shell holds every later
+    // event back and its banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+}
+
+function openPicker(open) {
+  PICKER.hidden = !open;
+  PICK.setAttribute('aria-expanded', String(open));
+  if (open) PICKER.querySelector('button').focus(); else PICK.focus();
+}
+
+if (PICK && PICKER) {
+  PICK.onclick = () => openPicker(PICKER.hidden);
+  // Escape closes it, because a popup that only closes by pressing the thing
+  // that opened it is a trap for anybody who got here with the keyboard.
+  PICKER.addEventListener('keydown', event => {
+    if (event.key === 'Escape') openPicker(false);
+  });
+  PICKER.addEventListener('click', async event => {
+    const button = event.target.closest('button[data-icon]');
+    if (!button) return;
+    const name = button.dataset.icon;
+    // The picker stays open on a refusal, with the reason beside it in `#state`:
+    // closing it would leave a page that looks exactly like one where nothing
+    // was pressed, which is the state this feature shipped in once already.
+    if (!await chooseIcon(name)) return;
+    // The drawing is moved, not rebuilt: the chosen button already holds the
+    // exact markup the server would send back, so the new mark is a clone of a
+    // node this page rendered rather than a string assembled from an answer.
+    // Nothing crosses an escaping boundary, and the page does not have to
+    // reload to show what it just saved.
+    const art = button.querySelector('svg');
+    PICK.replaceChildren(...(art ? [art.cloneNode(true)] : []));
+    PICK.classList.toggle('unset', !art);
+    openPicker(false);
+    report(name ? `Your icon is now ${name}.` : 'Your icon is cleared.', false);
+  });
+}
+</script>
+{% endif %}
 """
 
 _PEOPLE_STYLE = """
@@ -7755,6 +8009,48 @@ tr.group.over .load b.held { color: var(--danger); }
    column of teal words beside a column of teal links reads as twelve dead links. */
 td.role { color: var(--muted); font-size: 12px; text-transform: uppercase;
           letter-spacing: .04em; white-space: nowrap; }
+/* The person's mark, at the size of the name beside it and in the same ink. Not
+   allowed to shrink: the group line wraps, and an icon that collapsed to nothing
+   on a narrow window would take the one thing on this page a person chose for
+   themselves off the page at exactly the width where the name is all that is
+   left. */
+.avatar { flex: none; display: inline-flex; align-items: center; justify-content: center;
+          width: 1.6rem; height: 1.6rem; color: var(--fg); }
+.avatar svg { width: 100%; height: 100%; }
+button.avatar, .picker button.clear {
+  font: inherit; background: var(--surface); color: var(--fg); cursor: pointer;
+  border: 1px solid transparent; border-radius: 5px; padding: .1rem;
+}
+button.avatar:hover, .picker button.clear:hover { border-color: var(--accent); }
+/* Nothing chosen yet still has to be a target. An empty button is a control
+   nobody can find, and this one is the only way to the picker — so the unset
+   state is a dashed ring, which reads as a place something goes. */
+button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-radius: 50%;
+                            border: 1.5px dashed var(--muted); }
+/* A row of its own inside the wrapping group line. `.picker[hidden]` is (0,2,0)
+   against `.picker`'s (0,1,0), so the attribute wins on specificity and not on
+   source order — which matters because the shell's stylesheet is inlined before
+   this one and a rule that relied on order would be the loser there. */
+.picker { flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: center;
+          gap: .3rem; margin-top: .4rem; }
+.picker[hidden] { display: none; }
+.picker button.avatar { border-color: var(--line); }
+.picker button.clear { width: auto; height: 1.6rem; padding: 0 .5rem; font-size: 12px;
+                       color: var(--muted); border-color: var(--line); }
+/* What the picker said. A line of its own under the picker, the same way the
+   picker takes one under the name — and not a cell at the end of the row, where
+   `.tally`'s `margin-left: auto` had put it a full table's width away from the
+   button it is about. Empty it is a zero-height line and costs the row a 2px
+   gap; `display: none` on `:empty` would cost more than that, because a live
+   region has to be in the accessibility tree BEFORE its text changes or the
+   change is announced to nobody.
+
+   Two colours in one region, because it carries two kinds of sentence: a
+   receipt, which the mark changing beside it has already confirmed, and a
+   refusal, which is the whole reason this element exists and has to be findable
+   next to a button that otherwise looks like it did nothing. */
+.groupline #state { flex: 0 0 100%; color: var(--muted); font-size: 12px; }
+.groupline #state.bad { color: var(--warn); }
 """
 
 _ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"),
@@ -8318,12 +8614,22 @@ def _person_load(index: Index, logins: list[str]) -> dict:
     return {"cycle": number, "recorded": plan is not None, "people": people}
 
 
-def render_people(index: Index, links: Links = STATIC) -> str:
+def render_people(index: Index, links: Links = STATIC, editable: bool = False,
+                  me: str = "") -> str:
     """Everyone in the plan, and what they are on the hook for.
 
     Built from the fields rather than from a roster: a page that reads a separate
     list of members shows people who have nothing to do and misses whoever was
-    added this morning.
+    added this morning. That is also why `me` may be somebody with no row here,
+    and why there is then no picker: the only place to put one would be a row for
+    a person listed for holding nothing, which is the row this page does not draw.
+
+    `editable` is the server and `me` is who it says may pick an icon. Both are
+    needed for a picker and neither is inferred from the other — a static export
+    is editable by nobody no matter whose name is in it, and a served page read
+    by a stranger is the same. `me` is empty for anybody the write path would
+    refuse, decided by the same function the write path asks: a control that can
+    only answer 403 is a dead end you find by pressing it.
     """
     held: dict[str, list[dict]] = {}
     for entity_id, entity in sorted(index.entities.items()):
@@ -8365,6 +8671,12 @@ def render_people(index: Index, links: Links = STATIC) -> str:
         people.append(
             {
                 "login": login,
+                # The drawing, resolved here rather than in the template: an icon
+                # name this version no longer draws comes back as nothing at all,
+                # so the template asks whether there is a mark and never whether
+                # there is a name.
+                "art": icon_svg(index.icons.get(login, "")),
+                "mine": editable and login == me,
                 "rows": rows,
                 "tally": tally,
                 "link": {
@@ -8385,6 +8697,11 @@ def render_people(index: Index, links: Links = STATIC) -> str:
     body = _ENV.from_string(_PEOPLE).render(
         people=people,
         links=links,
+        # Every icon, drawn once, for the picker. In `ICONS` order, which puts the
+        # four sky shapes before the eight creatures: a grid sorted by nothing is
+        # a grid a reader has to search rather than scan.
+        icons=[{"name": name, "art": icon_svg(name)} for name in ICONS],
+        editable=editable,
         # The same bar the plan's three views draw, over this page's own three
         # fields. Which hat somebody is wearing is not a field of an entity, so
         # `role` is only ever offered here.

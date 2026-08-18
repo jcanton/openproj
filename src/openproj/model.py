@@ -26,6 +26,7 @@ CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _ENTITY_DIRS = ("projects", "pitches", "tasks")
 _CYCLE_DIR = "cycles"
 _ISSUE_DIR = "issues"
+PEOPLE_DIR = "people"
 _WORKING_DAYS_PER_WEEK = 5
 # Calendar days from a betting table to the review meeting when a record does not
 # say. Four weeks is what the team runs; the point of storing the date is that
@@ -347,6 +348,75 @@ class Cycle(BaseModel):
         return self.availability.get(who, nominal) * self.build_weeks
 
 
+class Person(BaseModel):
+    """One person's own settings, stored as `people/<login>.md`.
+
+    Frontmatter and a body, the same shape as an entity, a cycle and an issue —
+    and that shape is the whole argument for this record existing at all. The
+    first attempt at icons put them in `config/people.yaml`, which would have been
+    the first writable path in this repository that is YAML end to end, and
+    `store.write` merges a file as *frontmatter key-by-key plus a line merge of
+    the prose below it*. Route whole-file YAML through that and two edits nobody
+    would call a disagreement — they add a name to the roster, I clear my icon —
+    line-merge into something that is not YAML at all, commit with a 200, and take
+    the roster and everybody's icon down on every page at once. Here the settings
+    ARE the frontmatter, so the merge that runs over them is the structured one:
+    it cannot produce a file the model will not read, because it never produces
+    text — it dumps a map.
+
+    The second property is better still. One record per person means two people
+    picking an icon at the same moment write two different paths, and
+    compare-and-swap in `store.py` is scoped to the path. The concurrency that
+    killed the first attempt does not get handled here; it stops existing.
+
+    **The login is in the path and nowhere else**, which is a deliberate break
+    with the other three record types. They carry their id in the frontmatter too,
+    and they have to: an id there is minted, opaque and the join key other records
+    point at — `parent`, `depends_on`, `pitched_into` — while the filename carries
+    a slug that drifts as titles are edited. Nothing points at a person record. It
+    is looked up by the one thing that identifies it, which is the login, which is
+    the filename. Writing it a second time inside the file would buy nothing and
+    would buy in `_identity_problems`: two copies of one fact, resolved in
+    opposite directions by two halves of the app, a blocker rule to notice it and
+    a special case in the save to refuse over it. `parse_person_text` takes the
+    login from the path and ignores a `login:` somebody types into the
+    frontmatter, so there is no second answer to disagree with.
+
+    **The body is not a field.** A person record has one below the fence like
+    every other record here, and nothing in this codebase reads it or offers a box
+    to type it in. That is the decision, not an omission: a body is a good place
+    to say who somebody is, and a box nobody fills is furniture on a page — so the
+    file keeps the room and the app makes no promise about it. The bytes survive a
+    save anyway, and by construction rather than by care: `patch_text` writes the
+    fields back over the frontmatter alone, and `_merge_body` line-merges the
+    prose. Somebody who writes two sentences about themselves in git keeps them,
+    and the day this tool wants to draw them, they are already there.
+
+    Nothing here is a roster. `config/people.yaml`'s `known_people` is the roster,
+    it is read by the validator and by the cycle page, and this record neither
+    reads nor writes it: a record for somebody off the roster is one person's
+    preference, and a roster entry with no record is somebody who has not picked
+    an icon. Both are ordinary.
+    """
+
+    login: str
+    # The name of a drawing, not the drawing. `render.ICONS` decides what the
+    # picker offers and what the server accepts, so `git log` reads as a decision
+    # and the drawings can be redrawn without touching anybody's choice. A plain
+    # `str | None` and not an enum of the twelve, for the same reason `status` is
+    # a plain `str`: a file written before an icon was renamed has to survive
+    # being read, or renaming one takes the People page down for everybody.
+    icon: str | None = None
+
+    @field_validator("icon", mode="before")
+    @classmethod
+    def _as_written(cls, value: object) -> object:
+        """Parse permissively, validate strictly — the same bargain every other
+        record makes. `icon: 7` is somebody's hand edit, and the cost of it should
+        be a name nothing draws rather than a file that will not load."""
+        return value if value is None else str(value)
+
+
 class Config(BaseModel):
     """Repository-wide planning configuration.
 
@@ -370,6 +440,18 @@ class Config(BaseModel):
     # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
     plans: dict[int, Cycle] = {}
     issues: dict[str, Issue] = {}
+    # Keyed by login. Loaded from `people/*.md`, and deliberately not from the
+    # roster above: this is what each person chose for themselves, and the roster
+    # is who the team says is on it. Neither answers the other's question, and a
+    # login in one and not the other is the normal state of both.
+    people: dict[str, Person] = {}
+
+    def with_people(self, people: list[Person]) -> Config:
+        """Carried on the config for the same reason cycles and issues are:
+        nothing iterates people records, one page looks them up, and threading a
+        fourth value through every caller to be dropped by all but one of them is
+        the shape this already rejected twice."""
+        return self.model_copy(update={"people": {person.login: person for person in people}})
 
     def with_issues(self, issues: list[Issue]) -> Config:
         """Carried on the config for the same reason cycles are: nothing iterates
@@ -723,6 +805,75 @@ def parse_issue_file(path: Path) -> Issue:
     return parse_issue_text(path.read_text(encoding="utf-8"), str(path))
 
 
+# A GitHub login: 1 to 39 characters of `[A-Za-z0-9-]`, never opening or closing
+# with a hyphen. One pattern, used by both halves of this feature — the writer
+# below turns a login into the one path it may write, and `parse_person_text`
+# turns a path back into the login it is for. Written twice they would eventually
+# disagree, and the disagreement would be a file in `people/` that the server
+# wrote and the loader will not read.
+#
+# Not `[^/]+`, not `\w+`, and no path parameter anywhere near it: `people/` has to
+# be closed by construction the way `projects|pitches|tasks/<id>.md` is, because
+# branch protection means a write that escapes the directory cannot be
+# force-pushed away afterwards. Consecutive hyphens are legal here and are not at
+# GitHub — being narrower than the wire buys nothing this pattern is for, and
+# would refuse a login the day GitHub relaxes its own rule.
+#
+# `\A` and `\Z`, not `^` and `$`. In Python `$` also matches immediately BEFORE a
+# trailing newline, so `^...$` admits `ann\n` — which is a login this would have
+# happily turned into `people/ann\n.md`. Found by putting it in the parametrised
+# list rather than by reasoning about it, which is the only way this class of
+# thing gets found.
+LOGIN_PATTERN = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z")
+
+
+def person_path(login: str) -> str | None:
+    """`people/<login>.md`, or None for a name no file here may be called.
+
+    The only place a login becomes a path, and the only place `people/` is
+    spelled with something variable after it. Both callers ask this one question:
+    the icon write refuses what it answers None to, and the People page draws no
+    picker for it — because a control whose only answer is a refusal is a dead end
+    a person can only find by pressing it, which is what the cycle page that
+    rendered `/cycle/-1` was.
+    """
+    return f"{PEOPLE_DIR}/{login}.md" if LOGIN_PATTERN.match(login) else None
+
+
+def login_of(source: str) -> str:
+    """The login a person record is for, read off its path.
+
+    The path is the identity — see `Person` — so this is where identity comes
+    from, and it is checked rather than trusted: a `people/notes.md` somebody
+    dropped in by hand is one unreadable file with a reason beside it, not a
+    person called `notes` who quietly appears on a page.
+    """
+    login = Path(source).name.removesuffix(".md")
+    if not LOGIN_PATTERN.match(login):
+        raise ValueError(
+            f"{source}: a file in {PEOPLE_DIR}/ is named for a GitHub login, "
+            f"and {login!r} is not one"
+        )
+    return login
+
+
+def parse_person_text(text: str, source: str) -> Person:
+    """Parse one person record. `source` is the path, and is where the login is.
+
+    `login:` in the frontmatter is ignored on purpose. The path already says who
+    this is, and a second copy of that fact is a copy that can disagree with the
+    first — which for an id is `_identity_problems`, two blocker rules and a
+    special case in the entity save, all of it paid for a fact the filename
+    already carried.
+    """
+    frontmatter, _ = _split(text, source)
+    data = _round_trip_yaml().load(frontmatter) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{source}: the frontmatter has to be a map of fields, and this is not")
+    fields = {k: v for k, v in data.items() if k in Person.model_fields and k != "login"}
+    return Person.model_validate({**fields, "login": login_of(source)})
+
+
 def _in_the_style_of(old: object, new: object) -> object:
     """Keep a hand-written `tags: [a, b]` from becoming a three-line block list
     the moment somebody adds a tag from the web.
@@ -817,15 +968,31 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
             (root / relative).read_text(encoding="utf-8"), relative
         ),
     )
+    # And the person records, through the same door again. One file per person is
+    # what makes a bad one cost one person's icon instead of the whole page — the
+    # arrangement this replaced put every icon and the roster in one file, where a
+    # single hand edit took all of them at once.
+    people, unreadable_people = readable(
+        [f"{PEOPLE_DIR}/{path.name}" for path in sorted((root / PEOPLE_DIR).glob("*.md"))],
+        lambda relative: parse_person_text(
+            (root / relative).read_text(encoding="utf-8"), relative
+        ),
+    )
     config, unreadable_config = read_config(*_config_on_disk(root))
     return (
         entities,
-        config.with_plans(plans).with_issues(issues),
+        config.with_plans(plans).with_issues(issues).with_people(people),
         # Sorted by path, so the banner and `openproj check` list them in the
-        # order somebody would open them rather than in the order three separate
+        # order somebody would open them rather than in the order four separate
         # walks happened to finish.
         sorted(
-            [*unreadable, *unreadable_plans, *unreadable_issues, *unreadable_config],
+            [
+                *unreadable,
+                *unreadable_plans,
+                *unreadable_issues,
+                *unreadable_people,
+                *unreadable_config,
+            ],
             key=lambda one: one.path,
         ),
     )
