@@ -90,7 +90,10 @@ def test_schedule_accepts_an_explicit_today(seed_root: Path, capsys):
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["today"] == "2026-08-17"
-    assert payload["spans"]["task-53a9f0"]["start"] == "2026-08-17"
+    # 08-13 and not the 08-17 asked for: the task is in progress and was assigned
+    # on the 13th, so it starts when it started. `--today` still moves everything
+    # that has not begun, which is what this test is about.
+    assert payload["spans"]["task-53a9f0"]["start"] == "2026-08-13"
 
 
 def test_an_unknown_subcommand_fails_rather_than_doing_something(capsys):

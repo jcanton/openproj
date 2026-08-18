@@ -1126,12 +1126,21 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
 
 # Which kind may contain which. A project is the top of the tree and holds
 # pitches; a pitch holds tasks and belongs to a project or to nothing; a task
-# belongs to a pitch, or to nothing when it is a chore nobody pitched.
+# belongs to a pitch, or straight to a project, or to nothing.
 #
 # The spec claimed this from the first day and nothing enforced it, so the frozen
 # corpus already hangs a task straight off a project. Introduced at rule_version
 # 4, which means every record written before it warns rather than breaks.
-_PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch",)}
+#
+# A task may name a project because the first real cycle imported had two of
+# them: work reported at the review that nobody had pitched, and that belongs
+# with a milestone rather than nowhere. The alternative was a pitch invented to
+# hold them, which puts a bet in the corpus that no betting table ever made —
+# and a plan that lies about what was bet is worse than one whose tree is two
+# levels deep in places. `is_bettable` already says a parentless task is bet in
+# its own right; a task under a project takes the project's cycle, the same way
+# a task under a pitch takes the pitch's, so nothing downstream has to change.
+_PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch", "project")}
 
 
 def is_bettable(entity: Entity) -> bool:

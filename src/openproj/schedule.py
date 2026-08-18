@@ -476,7 +476,23 @@ def _place(
         if target in spans and spans[target].end >= blocker_ready:
             blocker_id, blocker_ready = target, _next_working_day(spans[target].end, config)
 
-    ready = max(floor, entity.assigned_on or floor, blocker_ready)
+    # Work in progress started when it was assigned, and today does not move it.
+    #
+    # The floor is `today`, and it exists so a plan never draws work starting in
+    # the past — which is right for a bet nobody has picked up and wrong for one
+    # somebody is holding. `in_progress` is a statement that the work HAS begun,
+    # so its start is a fact rather than a forecast. Importing a cycle after it
+    # ran is what showed this: every live bet in cycle 37 was drawn starting on
+    # the day of the import, weeks after the review meeting that closed the
+    # cycle, while the two `done` ones sat correctly back in July.
+    #
+    # Blockers do not hold it back either, for the same reason: if a thing is
+    # under way, it is under way, and a graph that draws it waiting is drawing a
+    # rule rather than the plan. An in-progress item whose blocker is unfinished
+    # is a real and visible state — `_ordering` and the problems list are where
+    # that gets said.
+    begun = entity.status == "in_progress" and entity.assigned_on is not None
+    ready = entity.assigned_on if begun else max(floor, entity.assigned_on or floor, blocker_ready)
     start = _first_working_day(ready, config)
     busy_worker, busy_until = None, None
     while True:
@@ -492,6 +508,16 @@ def _place(
         if not clash:
             break
         busy_worker, busy_until = max(clash, key=lambda pair: pair[1])
+        # One person does one thing at a time — unless they are already doing
+        # both. Contention is a forecast about work not yet picked up, and for a
+        # bet somebody is holding it is a prediction about the past: the first
+        # real cycle imported had one person on five live rows, and serialising
+        # them drew the last one starting in late September, six weeks after the
+        # review that closed the cycle. That someone is over capacity is true and
+        # worth saying, and the load column and the cycle's over-capacity line
+        # are where it is said, against the number rather than by moving a date.
+        if begun:
+            break
         start = _next_working_day(busy_until, config)
 
     return Span(start=start, end=end), _explain(

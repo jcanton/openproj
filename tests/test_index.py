@@ -751,7 +751,13 @@ def test_a_carried_parent_charges_nothing_because_its_children_already_did():
                status="in_progress", assigned_on=date(2026, 8, 3)),
     ]
     index = build_index(entities, _two_cycles(), TODAY)
-    assert index.load(37) == {"ann": 1.0}
+
+    # Charged to 36, which is the cycle the work is actually in: it is in
+    # progress and was assigned on 3 August, so it runs 08-03 to 08-07, inside
+    # 36's window. It used to charge 37 only because the floor at `today` pushed
+    # every live span forward into the next cycle — an artefact, not a carry.
+    assert index.load(36) == {"ann": 1.0}
+    assert index.load(37) == {}
 
 
 # --------------------------------------------------------------------------- #
