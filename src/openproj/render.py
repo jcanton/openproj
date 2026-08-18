@@ -3544,7 +3544,15 @@ td.clamp.open { white-space: normal; }
 td.clamp.open .clamped { display: block; }
 td.clamp.open .rest { display: inline; }
 td .sev-mark { margin-left: .25rem; }
-.eid { font-family: var(--font-mono); }
+/* A point smaller than the row it sits in, because a monospace face at the same
+   nominal size reads larger than the text beside it: wider glyphs, a taller
+   x-height, and no two characters closer together than any other pair. At 13px
+   the id was the loudest thing on a row where it is the least interesting — it
+   is a token to cite, not a heading — and the mono face is already what marks it
+   as one. 12px and not `.9em`: this column is what the frozen title column's
+   `left` is measured from, and a relative size compounds if anything above it
+   ever changes. */
+.eid { font-family: var(--font-mono); font-size: 12px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
 /* The column's `+`, in the header of every column that clamps. It is the badge
@@ -6175,12 +6183,27 @@ STATUS_GLYPH = {
 # the theme, they scale, and the drawing in the file IS the drawing on screen.
 # Stroked outlines at the interface's own weight rather than filled silhouettes,
 # and every feature is a whole shape — a head, two ears, two eyes — because at
-# 20px a whisker is not a line, it is a grey smudge. Twelve is enough for a team
-# to have one each and few enough that no two are confusable at that size.
+# 20px a whisker is not a line, it is a grey smudge.
 #
-# The four sky shapes come first and the eight creatures after, which is the
-# order the picker is read in. What is stored is the NAME, so these can be
-# redrawn without touching anybody's choice — see `model.Person`.
+# Twenty-four of them, which is a team's worth with room to choose rather than
+# one each. The count is not the constraint and never was: being told apart at
+# 20px is, and that is what decides how many there can be. Every candidate was
+# drawn, rendered at 20px beside the whole set, and looked at, because a shape
+# that reads in the source is not evidence about pixels. Seven did not survive
+# that and are deliberately absent — a WHALE and a SNAKE, which at that size are
+# the fish and the wave this set already has; a SNAIL and a PENGUIN, whose second
+# outline inside the first closed into a blot; a BEE, whose stripes did the same;
+# a RAINBOW, three concentric arcs that resolve into one thick arc; and a DOG,
+# which was a third round face after the cat and the bear. They are named here
+# because a shape is rejected for what it collides with rather than for being
+# badly drawn, and the next person to add one needs the collisions more than they
+# need the survivors.
+#
+# Three groups, in the order the picker is read: the sky, then the world, then
+# the creatures — and inside the creatures, the ones that walk before the ones
+# that swim. A list ordered by nothing is a list a reader has to search rather
+# than scan. What is stored is the NAME, so these can be redrawn, and this order
+# rearranged, without touching anybody's choice — see `model.Person`.
 _ICON_ART = {
     "sun": (
         '<circle cx="12" cy="12" r="4.3"/>'
@@ -6196,6 +6219,32 @@ _ICON_ART = {
         '<path d="M7.4 18.6h9.8a4.2 4.2 0 0 0 .4-8 5.7 5.7 0 0 0-10.8-1.3'
         'a4.8 4.8 0 0 0 .6 9.3Z"/>'
     ),
+    "bolt": '<path d="M13.8 2.6 5.8 13.8h4.8l-.8 7.6 8.4-11.4h-5Z"/>',
+    # Six spokes and a chevron at each tip, and nothing along them. The version
+    # with branches half way out was a blot at 20px: eighteen strokes inside 20
+    # pixels is a grey disc. The sun is the shape it has to stay clear of and
+    # does — the sun is a solid centre with detached rays, this is one open
+    # asterisk with a hole in the middle.
+    "snowflake": (
+        '<path d="M12 2.4v19.2M3.7 7.2l16.6 9.6M20.3 7.2 3.7 16.8"/>'
+        '<path d="M8.8 4.8 12 8l3.2-3.2M8.8 19.2 12 16l3.2 3.2"/>'
+    ),
+    # Upright and unmarked, which is the whole of what separates it from the leaf
+    # below: that one is tilted and carries a midrib, and a drop that leaned would
+    # be the same lens.
+    "drop": (
+        '<path d="M12 2.6c4.4 5.6 6.6 8.6 6.6 11.2a6.6 6.6 0 0 1-13.2 0'
+        'c0-2.6 2.2-5.6 6.6-11.2Z"/>'
+    ),
+    # The ring passes behind the body as two arcs that stop at its edge, rather
+    # than as one ellipse crossing it. An ellipse drawn over the disc lays two
+    # chords across the planet, and at 20px a circle with a line through it is a
+    # circle with a line through it.
+    "planet": (
+        '<circle cx="12" cy="12" r="5.6"/>'
+        '<path d="M7.1 14.7c-3.5 1.6-6.2 2-6.8.7-.6-1.3 1.2-3.5 4.4-5.5'
+        'M16.9 9.3c3.5-1.6 6.2-2 6.8-.7.6 1.3-1.2 3.5-4.4 5.5"/>'
+    ),
     "mountain": '<path d="M2.6 19.4 9.4 7.6l4 6.9 2.6-4.3 5.4 9.2Z"/>',
     # Tilted, and fat enough to have two sides. Drawn upright and narrow it was a
     # sliver with a line down it — at 20px indistinguishable from an eye, and the
@@ -6203,6 +6252,25 @@ _ICON_ART = {
     "leaf": (
         '<path d="M4.6 19.4a11.5 11.5 0 0 1 14.8-14.8 11.5 11.5 0 0 1-14.8 14.8Z"/>'
         '<path d="M2.8 21.2 18 6"/>'
+    ),
+    # The trunk is the whole of what tells this from the mountain at 20px, so it
+    # is drawn long enough to see. A bare triangle is a peak, and a triangle with
+    # a two-pixel stub under it is a peak somebody smudged.
+    "tree": '<path d="M12 2.8 4.4 16.4h15.2Z"/><path d="M12 16.4v4.6"/>',
+    # A tulip on a stem, not a rosette. Five petals round a centre is the same
+    # radial blob as the sun at this size — and the sun has the better claim to
+    # it — so the flower is the shape a flower has from the side instead.
+    "flower": (
+        '<path d="M6.2 8.2c0 4.2 2.6 7 5.8 7s5.8-2.8 5.8-7c0 0-2.2 1.8-2.9 1.8'
+        'S12 5.8 12 5.8s-2.2 4.2-2.9 4.2S6.2 8.2 6.2 8.2Z"/>'
+        '<path d="M12 15.2v6.2"/>'
+        '<path d="M12 18.4c-1.8-2.2-4-2.4-5.2-1.6-.2 2.4 2.6 3.6 5.2 1.6Z"/>'
+    ),
+    # Two lines and not three: a third crest closes the gaps between them into a
+    # hatched band, and two is already enough to say water rather than a squiggle.
+    "wave": (
+        '<path d="M2.4 9.8q2.4-3.2 4.8 0t4.8 0 4.8 0 4.8 0"/>'
+        '<path d="M2.4 16.2q2.4-3.2 4.8 0t4.8 0 4.8 0 4.8 0"/>'
     ),
     "cat": (
         # One outline for the head and both ears, so no chord is drawn across the
@@ -6236,10 +6304,66 @@ _ICON_ART = {
         '<circle cx="10.2" cy="15.7" r=".85" fill="currentColor" stroke="none"/>'
         '<circle cx="13.8" cy="15.7" r=".85" fill="currentColor" stroke="none"/>'
     ),
+    # Round ears standing outside the head, and a snout inside it. The cat's ears
+    # are points on the head's own outline; these break it, and the snout is the
+    # second difference — with neither of them this is the cat at 20px, which is
+    # what the first attempt was.
+    "bear": (
+        '<circle cx="6.1" cy="7.5" r="2.7"/><circle cx="17.9" cy="7.5" r="2.7"/>'
+        '<circle cx="12" cy="13.6" r="6.5"/>'
+        '<circle cx="9.6" cy="12.2" r=".9" fill="currentColor" stroke="none"/>'
+        '<circle cx="14.4" cy="12.2" r=".9" fill="currentColor" stroke="none"/>'
+        '<circle cx="12" cy="16.4" r="1.9"/>'
+    ),
+    # Head and body are two circles that touch rather than one silhouette. Drawn
+    # as a single outline a small bird is an egg with a beak on it; the notch
+    # where the two circles meet is the neck, and it is the only thing at this
+    # size that says which end is the front.
+    "bird": (
+        '<circle cx="14.8" cy="8.2" r="3.4"/>'
+        '<path d="M18 7.2 21.8 8.4 18 9.8Z"/>'
+        '<circle cx="15.2" cy="7.4" r=".85" fill="currentColor" stroke="none"/>'
+        '<circle cx="10.4" cy="15.6" r="5.6"/>'
+        '<path d="M5.8 19 1.8 21.8 2.4 17Z"/>'
+    ),
+    # One closed path per side, each carrying both of that side's wings, so the
+    # body is the seam where the two meet rather than a third shape drawn down
+    # the middle. Four separate wings put four strokes through the centre, and at
+    # 20px the middle filled in.
+    "butterfly": (
+        '<path d="M12 8.2C8.4 3.6 2.6 4.2 2.6 8.6c0 2.3 1.9 3.5 4.4 3.5'
+        '-2.5.6-4.4 2.1-4.4 4.4 0 3.7 5.6 4.4 9.4-.3Z"/>'
+        '<path d="M12 8.2c3.6-4.6 9.4-4 9.4.4 0 2.3-1.9 3.5-4.4 3.5'
+        '2.5.6 4.4 2.1 4.4 4.4 0 3.7-5.6 4.4-9.4-.3Z"/>'
+        '<path d="M12 8.2 9.8 4.2M12 8.2l2.2-4"/>'
+    ),
+    # The eyes sit on top of the head and break its outline, which is the whole
+    # of the difference from the owl — whose eyes are two rings inside a body
+    # that closes over them.
+    "frog": (
+        '<circle cx="8.4" cy="7.6" r="2.6"/><circle cx="15.6" cy="7.6" r="2.6"/>'
+        '<circle cx="8.4" cy="7.6" r=".9" fill="currentColor" stroke="none"/>'
+        '<circle cx="15.6" cy="7.6" r=".9" fill="currentColor" stroke="none"/>'
+        '<path d="M4.4 13.8c0-3 3.4-5.2 7.6-5.2s7.6 2.2 7.6 5.2c0 3.4-3.4 6.2-7.6 6.2'
+        's-7.6-2.8-7.6-6.2Z"/>'
+        '<path d="M8.6 15.6q3.4 2.4 6.8 0"/>'
+    ),
     "fish": (
         '<path d="M4.4 12a9 9 0 0 1 13.6 0 9 9 0 0 1-13.6 0Z"/>'
         '<path d="M18 12 22.4 8.6 22.4 15.4Z"/>'
         '<circle cx="7.9" cy="11.1" r=".9" fill="currentColor" stroke="none"/>'
+    ),
+    # Claws and eye stalks, both crossing the body's outline. A crab drawn as a
+    # shell with legs under it is a face at 20px — the things that stick out are
+    # what keep it out of the cat, fox, bear, frog corner of this set.
+    "crab": (
+        '<path d="M4.8 14.6a7.2 7.2 0 0 1 14.4 0 7.2 7.2 0 0 1-14.4 0Z"/>'
+        '<path d="M9.4 9.2V7.2M14.6 9.2V7.2"/>'
+        '<circle cx="9.4" cy="6" r="1" fill="currentColor" stroke="none"/>'
+        '<circle cx="14.6" cy="6" r="1" fill="currentColor" stroke="none"/>'
+        '<path d="M4.9 12.4 2 10.4a2 2 0 1 1 2.8-1.6"/>'
+        '<path d="M19.1 12.4 22 10.4a2 2 0 1 0-2.8-1.6"/>'
+        '<path d="M6.6 18.6 4.4 21M17.4 18.6l2.2 2.4"/>'
     ),
     "turtle": (
         '<path d="M4.6 15.6a7.4 7.4 0 0 1 14.8 0Z"/>'
@@ -7837,11 +7961,41 @@ _PEOPLE = """
       <th colspan="5" scope="colgroup"><div class="groupline">
         {#- The person's own mark. A button for exactly one person on the page —
             whoever is signed in — and a plain span for everybody else, because
-            the only icon anybody may set here is their own. -#}
+            the only icon anybody may set here is their own.
+
+            The button and its list are wrapped together because the list is
+            positioned against the wrapper: the group line wraps, so the button
+            has no fixed place in it, and a popup anchored to anything else opens
+            somewhere the button is not. -#}
         {%- if person.mine %}
+        <span class="pickwrap">
         <button type="button" id="pick" class="avatar pick{{ ' unset' if not person.art else '' }}"
-                aria-haspopup="true" aria-expanded="false" aria-controls="picker"
+                aria-haspopup="listbox" aria-expanded="false" aria-controls="picker"
                 aria-label="Your icon" title="Your icon">{{ person.art }}</button>
+        {#- A listbox and not a `<select>`: a native option cannot hold an SVG,
+            and picking your own mark by reading the word "fox" is not the
+            feature. Every row carries the drawing AND the name, because the name
+            is what is stored and what a refusal will say back.
+
+            "No icon" first, and not last where the old strip's clear button was:
+            it is the way out, and a way out you have to scroll twenty-four rows
+            to reach is the hardest row on the list to find.
+
+            `aria-selected` marks the one that is stored, which is a different
+            fact from the one the arrow keys are on — that one is named by
+            `aria-activedescendant` and drawn by `.on`. The suggestion combobox
+            conflates the two, and is right to: it has no stored value to mark. -#}
+        <ul id="picker" class="picker" role="listbox" aria-label="Your icon" tabindex="-1" hidden>
+          <li id="pick-none" class="option" role="option" data-icon=""
+              aria-selected="{{ 'true' if not person.icon else 'false' }}"><span
+              class="art"></span>No icon</li>
+          {% for one in icons %}
+          <li id="pick-{{ one.name }}" class="option" role="option" data-icon="{{ one.name }}"
+              aria-selected="{{ 'true' if one.name == person.icon else 'false' }}"><span
+              class="art">{{ one.art }}</span>{{ one.name }}</li>
+          {%- endfor %}
+        </ul>
+        </span>
         {%- elif person.art %}
         <span class="avatar">{{ person.art }}</span>
         {%- endif %}
@@ -7878,19 +8032,7 @@ _PEOPLE = """
             {{- ' · ' if not loop.last else '' -}}
           {%- endfor -%}
         </span>
-        {#- Inside the group line rather than floating over it. The line already
-            wraps, so a picker that claims a whole row of it opens underneath the
-            name with no positioning, no z-index and no argument to have with the
-            sticky header two rows up — which is this file's characteristic way
-            of breaking something else. -#}
         {%- if person.mine %}
-        <div id="picker" class="picker" hidden>
-          {% for one in icons %}
-          <button type="button" class="avatar" data-icon="{{ one.name }}"
-                  aria-label="{{ one.name }}" title="{{ one.name }}">{{ one.art }}</button>
-          {%- endfor %}
-          <button type="button" class="clear" data-icon="">No icon</button>
-        </div>
         {#- Where a refusal is read. `announce` writes into `#state` when a page
             has one and into the shell's screen-reader region when it does not,
             and this page had none — so the first version of this feature failed
@@ -7898,13 +8040,16 @@ _PEOPLE = """
             only account of why went to a region carrying `.sr-only`, which is
             `position: absolute; clip-path: inset(50%)`.
 
-            Under the picker, in the same group line, and drawn only where the
-            picker is. Not at the top of the page: the filter hides a whole
+            A line of its own at the end of the group line, and drawn only where
+            the button is. Not at the top of the page: the filter hides a whole
             person's `tbody` at once, so a status line up there would be on screen
             when the control it is about is not, and gone in exactly the case this
             exists for. Anybody who can press the button can see this, because it
             is two centimetres under their hand rather than at the far end of a
-            row that is a metre wide on this table. -#}
+            row that is a metre wide on this table. It stays in the flow of the
+            group line now that the list floats: a refusal is read after the list
+            has closed over it, and a message inside a popup is a message that
+            leaves with the popup. -#}
         <span id="state" role="status"></span>
         {%- endif %}
       </div></th>
@@ -8026,37 +8171,100 @@ async function chooseIcon(name) {
   }
 }
 
-function openPicker(open) {
+// The rows, read once from the markup the server rendered. Not rebuilt here: the
+// drawings are already in the page, and a script that assembled twenty-four
+// `<svg>` strings would be a second copy of `_ICON_ART` in a template literal —
+// an invariant written twice, which this codebase guards once or not at all.
+const OPTIONS = PICKER ? [...PICKER.querySelectorAll('[role="option"]')] : [];
+// Where the keyboard is, which is NOT which row is stored. `aria-selected` says
+// what you have; this says what you are looking at, and the listbox says so with
+// `aria-activedescendant` — the same arrangement the suggestion popup in this
+// file uses to keep focus on the control while the highlight moves in the list.
+// Named like this and not `at`, `highlight`, `choose`: two classic scripts on
+// one page share one global scope, which is why `report` is not called `say`.
+let AT_ROW = 0;
+
+function highlightRow(next) {
+  AT_ROW = (next + OPTIONS.length) % OPTIONS.length;
+  OPTIONS.forEach((option, i) => option.classList.toggle('on', i === AT_ROW));
+  PICKER.setAttribute('aria-activedescendant', OPTIONS[AT_ROW].id);
+  // `block: 'nearest'`, or every move scrolls the list to centre the row and the
+  // list appears to jump under a reader who pressed Down once.
+  OPTIONS[AT_ROW].scrollIntoView({block: 'nearest'});
+}
+
+// `back` is whether closing should hand focus to the button. Escape and a choice
+// both should — the button is where that person's hand is. Focus LEAVING the
+// list must not, because it left for somewhere the reader chose, and dragging it
+// back is the popup arguing with them.
+function openPicker(open, back = true) {
   PICKER.hidden = !open;
   PICK.setAttribute('aria-expanded', String(open));
-  if (open) PICKER.querySelector('button').focus(); else PICK.focus();
+  if (open) {
+    // Opened on the row that is already stored, so the first arrow press moves
+    // from your own mark rather than from the top of a list of twenty-five.
+    highlightRow(Math.max(0, OPTIONS.findIndex(o => o.getAttribute('aria-selected') === 'true')));
+    PICKER.focus();
+  } else if (back) {
+    PICK.focus();
+  }
+}
+
+async function chooseRow(option) {
+  const name = option.dataset.icon;
+  // The picker stays open on a refusal, with the reason beside it in `#state`:
+  // closing it would leave a page that looks exactly like one where nothing
+  // was pressed, which is the state this feature shipped in once already.
+  if (!await chooseIcon(name)) return;
+  // The drawing is moved, not rebuilt: the chosen row already holds the exact
+  // markup the server would send back, so the new mark is a clone of a node this
+  // page rendered rather than a string assembled from an answer. Nothing crosses
+  // an escaping boundary, and the page does not have to reload to show what it
+  // just saved.
+  const art = option.querySelector('svg');
+  PICK.replaceChildren(...(art ? [art.cloneNode(true)] : []));
+  PICK.classList.toggle('unset', !art);
+  // The list is open again one press later, and it has to open on what is now
+  // stored rather than on what was stored when the page was rendered.
+  OPTIONS.forEach(one => one.setAttribute('aria-selected', String(one === option)));
+  openPicker(false);
+  report(name ? `Your icon is now ${name}.` : 'Your icon is cleared.', false);
 }
 
 if (PICK && PICKER) {
   PICK.onclick = () => openPicker(PICKER.hidden);
-  // Escape closes it, because a popup that only closes by pressing the thing
-  // that opened it is a trap for anybody who got here with the keyboard.
   PICKER.addEventListener('keydown', event => {
-    if (event.key === 'Escape') openPicker(false);
+    // The listbox keys, in the order somebody reaches for them. Escape closes,
+    // because a popup that only closes by pressing the thing that opened it is a
+    // trap for anybody who got here with the keyboard; Home and End because this
+    // list is long enough to scroll and "No icon" is at the top of it.
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      highlightRow(AT_ROW + (event.key === 'ArrowDown' ? 1 : -1));
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      highlightRow(event.key === 'Home' ? 0 : OPTIONS.length - 1);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      // Space as well as Enter, and both prevented: Space on a focused element
+      // scrolls the page, so a listbox that ignored it would answer the second
+      // most obvious key by scrolling the list out from under the reader.
+      event.preventDefault();
+      chooseRow(OPTIONS[AT_ROW]);
+    } else if (event.key === 'Escape') {
+      openPicker(false);
+    }
   });
-  PICKER.addEventListener('click', async event => {
-    const button = event.target.closest('button[data-icon]');
-    if (!button) return;
-    const name = button.dataset.icon;
-    // The picker stays open on a refusal, with the reason beside it in `#state`:
-    // closing it would leave a page that looks exactly like one where nothing
-    // was pressed, which is the state this feature shipped in once already.
-    if (!await chooseIcon(name)) return;
-    // The drawing is moved, not rebuilt: the chosen button already holds the
-    // exact markup the server would send back, so the new mark is a clone of a
-    // node this page rendered rather than a string assembled from an answer.
-    // Nothing crosses an escaping boundary, and the page does not have to
-    // reload to show what it just saved.
-    const art = button.querySelector('svg');
-    PICK.replaceChildren(...(art ? [art.cloneNode(true)] : []));
-    PICK.classList.toggle('unset', !art);
-    openPicker(false);
-    report(name ? `Your icon is now ${name}.` : 'Your icon is cleared.', false);
+  PICKER.addEventListener('click', event => {
+    const option = event.target.closest('[role="option"]');
+    if (option) chooseRow(option);
+  });
+  // Clicking anywhere else closes it. `relatedTarget` is the button when the
+  // button is what was clicked, and closing here as well would let the click
+  // that follows reopen a list the reader was shutting.
+  PICKER.addEventListener('focusout', event => {
+    if (!PICKER.contains(event.relatedTarget) && event.relatedTarget !== PICK) {
+      openPicker(false, false);
+    }
   });
 }
 </script>
@@ -8116,28 +8324,70 @@ td.role { color: var(--muted); font-size: 12px; text-transform: uppercase;
 .avatar { flex: none; display: inline-flex; align-items: center; justify-content: center;
           width: 1.6rem; height: 1.6rem; color: var(--fg); }
 .avatar svg { width: 100%; height: 100%; }
-button.avatar, .picker button.clear {
+button.avatar {
   font: inherit; background: var(--surface); color: var(--fg); cursor: pointer;
   border: 1px solid transparent; border-radius: 5px; padding: .1rem;
 }
-button.avatar:hover, .picker button.clear:hover { border-color: var(--accent); }
+button.avatar:hover { border-color: var(--accent); }
 /* Nothing chosen yet still has to be a target. An empty button is a control
    nobody can find, and this one is the only way to the picker — so the unset
    state is a dashed ring, which reads as a place something goes. */
 button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-radius: 50%;
                             border: 1.5px dashed var(--muted); }
-/* A row of its own inside the wrapping group line. `.picker[hidden]` is (0,2,0)
-   against `.picker`'s (0,1,0), so the attribute wins on specificity and not on
-   source order — which matters because the shell's stylesheet is inlined before
-   this one and a rule that relied on order would be the loser there. */
-.picker { flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: center;
-          gap: .3rem; margin-top: .4rem; }
+/* What the list hangs off. `position: relative` and no z-index on purpose: a
+   positioned element with `z-index: auto` does NOT open a stacking context, so
+   the list's z-index below is weighed in the page's own context against the
+   sticky header's — and 3 beats 2. Given a z-index here the wrapper would become
+   the context, the list would be trapped inside it at the wrapper's own level,
+   and a list left open while the page scrolls would be painted over by the
+   header. `flex: none` for the same reason `.avatar` has it: this is the button's
+   place in a line that wraps. */
+.pickwrap { position: relative; flex: none; display: inline-flex; }
+/* A popup, and no longer a row inside the group line. Twenty-five rows of drawing
+   and name cannot be a line in a wrapping flex row: in flow they push every
+   person below down by the height of the list, which is an accordion rather than
+   a picker, and the reason the old arrangement could get away with a strip of
+   bare buttons was that twelve of them fitted on one line.
+   So it floats, and everything that arrangement bought — no positioning, no
+   z-index, no argument with the sticky header two rows up — is paid for by the
+   wrapper above and by the z-index here, both of them argued rather than tried.
+   `max-height` and not a row count, so a set that grows again still scrolls
+   inside itself rather than off the window. 15rem and not more because this
+   opens downward and only downward: a list that flipped above the button on the
+   rows near the bottom of the page and below it everywhere else is a list nobody
+   can aim at, so the overhang is bounded instead, and the page scrolls to it.
+   `.picker[hidden]` is (0,2,0) against `.picker`'s (0,1,0), so the attribute wins
+   on specificity and not on source order — which matters because the shell's
+   stylesheet is inlined before this one and a rule that relied on order would be
+   the loser there. */
+.picker { position: absolute; z-index: 3; top: calc(100% + .3rem); left: 0;
+          margin: 0; padding: .2rem; list-style: none; min-width: 11rem;
+          max-height: 15rem; overflow-y: auto; overscroll-behavior: contain;
+          background: var(--surface); color: var(--fg);
+          border: 1px solid var(--line-strong); border-radius: 3px;
+          box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px; }
 .picker[hidden] { display: none; }
-.picker button.avatar { border-color: var(--line); }
-.picker button.clear { width: auto; height: 1.6rem; padding: 0 .5rem; font-size: 12px;
-                       color: var(--muted); border-color: var(--line); }
-/* What the picker said. A line of its own under the picker, the same way the
-   picker takes one under the name — and not a cell at the end of the row, where
+.picker .option { display: flex; align-items: center; gap: .45rem; cursor: pointer;
+                  padding: .2rem .35rem; border-radius: 2px; white-space: nowrap; }
+/* The drawing keeps its own box, so the names all start at the same x whatever
+   width the drawing happens to use. A column of names that stepped in and out
+   with the art is a column nobody can scan, which is the whole reason the names
+   are here. */
+.picker .art { flex: none; display: inline-flex; width: 1.25rem; height: 1.25rem; }
+.picker .art svg { width: 100%; height: 100%; }
+/* Where the keyboard is, in the colour the suggestion popup already uses for the
+   same fact — one language for "this is the row you are on", on the two lists
+   this application has. The drawing follows because it is `currentColor`. */
+.picker .option.on { background: var(--accent); color: var(--on-accent); }
+.picker .option:hover { background: var(--surface-2); }
+.picker .option.on:hover { background: var(--accent); }
+/* And which row is already yours, which is a different fact from the one above
+   and so is drawn in a different channel: weight, not ground. Both at once is the
+   ordinary case — you open the list on your own mark — and two grounds would
+   have made that one row look like two states of the same thing. */
+.picker .option[aria-selected="true"] { font-weight: 650; }
+/* What the picker said. A line of its own under the group line, the same way the
+   picker used to take one under the name — and not a cell at the end of the row, where
    `.tally`'s `margin-left: auto` had put it a full table's width away from the
    button it is about. Empty it is a zero-height line and costs the row a 2px
    gap; `display: none` on `:empty` would cost more than that, because a live
@@ -9286,6 +9536,12 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
         # for somebody who owns nothing — and a link that lands on an empty table
         # teaches people the link is broken.
         opens = next((t["role"] for t in tally if t["field"]), None)
+        # What this person has stored, and only if this version can draw it: a
+        # `dragon` nobody has the art for must not mark a row in the picker, and
+        # must not stop "No icon" from being the row the list opens on. Same
+        # bargain as `icon_svg` one line down, said in the one place that has to
+        # agree with it.
+        chosen = index.icons.get(login, "")
         people.append(
             {
                 "login": login,
@@ -9293,7 +9549,8 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
                 # name this version no longer draws comes back as nothing at all,
                 # so the template asks whether there is a mark and never whether
                 # there is a name.
-                "art": icon_svg(index.icons.get(login, "")),
+                "art": icon_svg(chosen),
+                "icon": chosen if chosen in _ICON_ART else "",
                 "mine": editable and login == me,
                 "rows": rows,
                 "tally": tally,
@@ -9315,9 +9572,9 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
     body = _ENV.from_string(_PEOPLE).render(
         people=people,
         links=links,
-        # Every icon, drawn once, for the picker. In `ICONS` order, which puts the
-        # four sky shapes before the eight creatures: a grid sorted by nothing is
-        # a grid a reader has to search rather than scan.
+        # Every icon, drawn once, for the picker. In `ICONS` order, which is the
+        # sky, then the world, then the creatures: a list ordered by nothing is a
+        # list a reader has to search rather than scan.
         icons=[{"name": name, "art": icon_svg(name)} for name in ICONS],
         editable=editable,
         # The same bar the plan's three views draw, over this page's own three

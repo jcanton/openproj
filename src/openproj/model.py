@@ -456,9 +456,10 @@ class Person(BaseModel):
     # The name of a drawing, not the drawing. `render.ICONS` decides what the
     # picker offers and what the server accepts, so `git log` reads as a decision
     # and the drawings can be redrawn without touching anybody's choice. A plain
-    # `str | None` and not an enum of the twelve, for the same reason `status` is
-    # a plain `str`: a file written before an icon was renamed has to survive
-    # being read, or renaming one takes the People page down for everybody.
+    # `str | None` and not an enum of the names that exist today, for the same
+    # reason `status` is a plain `str`: a file written before an icon was renamed
+    # has to survive being read, or renaming one takes the People page down for
+    # everybody.
     icon: str | None = None
 
     @field_validator("icon", mode="before")
