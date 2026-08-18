@@ -1469,7 +1469,11 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    which the cycle pages load and the table does not, so on the table it was a
    `<p>` with the browser's default margin and the create action sat in it as a
    bare inline link. */
-.editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
+/* `flex-wrap`, because the row now ends in the control that acts on it rather
+   than in the last field: unwrapped, a narrow window squeezed three date boxes
+   to make room for a button instead of putting the button underneath them. */
+.editbar { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
+           margin: .4rem 0 1rem; }
 /* A link that is a control. The only rule was `.tl-controls .button`, scoped to
    the timeline's filter bar, so the table's create link — the one way to bring
    an entity into existence from the UI — rendered as underlined blue text.
@@ -7476,17 +7480,19 @@ _CYCLES = """
       <input id="starts" type="date" value="{{ next.starts_on }}"></label>
     <label class="facet">review meeting
       <input id="reviews" type="date" value="{{ next.reviews_on }}"></label>
+    {#- On the same line as the three boxes it acts on. It had a row to itself,
+        which reads as a second step and is not one: with the goal box gone this
+        form is three fields and the button that commits them, and `.editbar`
+        already wraps when the window is too narrow to hold them. -#}
+    <button type="button" id="start">Start it</button>
+    <span id="state" role="status"></span>
+    <input type="hidden" id="base" value="{{ base_commit }}">
   </p>
   {#- No goal box here. It was asked on this form for one round and belongs on
       the cycle's own page instead: this form's whole job is to bring a record
       into existence, and the goal is then edited where it is read, above the
       betting table it is about. Two places to write one field is one place too
       many. -#}
-  <p class="editbar">
-    <button type="button" id="start">Start it</button>
-    <span id="state" role="status"></span>
-    <input type="hidden" id="base" value="{{ base_commit }}">
-  </p>
   <p class="confirm" id="confirm" hidden>Start cycle <b id="confirm-number"></b> on
     <b id="confirm-starts"></b>, <b id="confirm-length"></b>, with
     <b id="confirm-people"></b>? This commits a cycle record.
