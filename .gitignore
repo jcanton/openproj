@@ -6,3 +6,8 @@ __pycache__/
 
 out/
 .worktrees/
+
+# The writer's flock (store.LOCK_FILE). A running server writes its pid into
+# one of these beside the plan it is serving, and a copy of seed/ was carrying a
+# committed one — see the commit that removed it.
+openproj.lock

@@ -69,6 +69,11 @@ git clone --bare https://github.com/jcanton/icon4py-plan.git plan.git
 uv run openproj serve --repo plan.git --auth dev
 ```
 
+That is the recipe for a **real** plan. For a look at the tool with nothing to point it at,
+`openproj demo` does the same five steps against the bundled `seed/` corpus in a temporary
+directory — it is the same server behind the same seam, with the clone replaced by a repository it
+builds for itself.
+
 A **bare** clone, and not a directory of files: there is no working copy to contend for and no index
 to lock, which is what makes one writer behind an `flock` a workable design. `--auth dev` skips
 sign-in and is for a local run only; the deployment runs `--auth github`, which refuses to start
@@ -87,7 +92,7 @@ src/openproj/index.py      the snapshot every view renders from
 src/openproj/render.py     the pages
 src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
 src/openproj/web.py        the server: routes, auth, the write endpoints
-src/openproj/cli.py        check / render / schedule / serve
+src/openproj/cli.py        check / render / schedule / serve / demo
 seed/                      the demo corpus
 tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md

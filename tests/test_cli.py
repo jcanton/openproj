@@ -236,3 +236,239 @@ def test_the_container_says_where_it_is_running(monkeypatch, tmp_path):
     monkeypatch.setenv("K_SERVICE", "openproj")
     boot.main()
     assert os.environ["OPENPROJ_FORWARDED_ALLOW_IPS"] == "*"
+
+
+# --- the demo -----------------------------------------------------------------
+#
+# `openproj demo` is the first command anybody runs, and the one nothing could
+# test before it existed: the answer to "how do I run this locally" was six lines
+# of shell in a README, one of which — `serve --repo seed` — pointed the server
+# at a directory that is not a git repository and served an empty plan. A recipe
+# is a thing that goes wrong silently; a subcommand is a thing with tests.
+
+
+def free_port() -> int:
+    """A port nothing is listening on. Asked of the operating system rather than
+    typed, because a number written into a test suite is a number that collides
+    with whatever else the machine running it happens to have open."""
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class _Instead:
+    """The server, replaced by whatever the test wants to do with the app.
+
+    `_demo` builds its repository inside a `with` and deletes it on the way out,
+    so everything worth asserting has to be asserted while the server would have
+    been running. This is that moment, handed to the test.
+    """
+
+    def __init__(self, doing):
+        self.doing = doing
+        self.app = None
+
+    def __call__(self, app, host, port):
+        self.app = app
+        return self
+
+    def run(self):
+        self.doing(self.app)
+
+
+def run_demo(monkeypatch, doing, argv: list[str] | None = None) -> int:
+    from openproj import cli
+
+    instead = _Instead(doing)
+    monkeypatch.setattr(cli, "_exit_aware_server", instead)
+    return main(["demo", "--port", str(free_port()), *(argv or [])])
+
+
+def test_demo_builds_a_repository_the_server_can_actually_serve(monkeypatch, capsys):
+    """The whole point of the command, asked of the server it starts rather than
+    of the directory it made: a bare repo with a commit in it can still be one
+    the reader finds empty, which is exactly what `--repo seed` did — 200 on
+    every route, and no pitches, tasks or projects on any of them."""
+    from fastapi.testclient import TestClient
+
+    seen = {}
+
+    def while_it_runs(app):
+        with TestClient(app) as client:
+            seen["table"] = client.get("/")
+            seen["people"] = client.get("/people")
+            seen["index"] = client.get("/api/index.json").json()
+
+    assert run_demo(monkeypatch, while_it_runs) == 0
+
+    assert seen["table"].status_code == 200
+    assert seen["people"].status_code == 200
+    kinds = {entity["kind"] for entity in seen["index"]["entities"].values()}
+    assert kinds == {"project", "pitch", "task"}, "a plan the reader would find empty"
+    assert "http://127.0.0.1:" in capsys.readouterr().out, "nothing told anybody where to look"
+
+
+def test_the_demo_leaves_the_corpus_it_was_built_from_exactly_as_it_found_it(monkeypatch):
+    """`demo` writes, and a demo that wrote into `seed/` would be a tracked
+    directory quietly filling up with whatever anybody clicked. The write is
+    proved rather than assumed: a real icon is stored through the real endpoint
+    while the server is up, and `seed/` is compared byte for byte afterwards."""
+    from fastapi.testclient import TestClient
+
+    from openproj.cli import _seed_dir
+
+    seed = _seed_dir()
+    before = {path: path.read_bytes() for path in sorted(seed.rglob("*")) if path.is_file()}
+    wrote = {}
+
+    def while_it_runs(app):
+        with TestClient(app) as client:
+            wrote["answer"] = client.put("/api/icon", json={"icon": "fox"})
+
+    assert run_demo(monkeypatch, while_it_runs) == 0
+
+    assert wrote["answer"].status_code == 200, wrote["answer"].text
+    after = {path: path.read_bytes() for path in sorted(seed.rglob("*")) if path.is_file()}
+    assert after == before, "the demo wrote into the corpus it is a copy of"
+
+
+def test_the_demo_repository_goes_when_the_server_does(monkeypatch, capsys):
+    """Nothing durable, on purpose. A stable path reused between runs keeps
+    yesterday's edits with nothing on screen saying which parts are the corpus
+    and which are yours, makes two runs fight over one writer lock, and turns a
+    demo into a repository nobody backs up.
+
+    The path is taken from what the command printed rather than from a glob of
+    the temp directory: another demo running on this machine is somebody else's
+    business, and a test that swept the whole of `/tmp` would fail on their
+    account and pass on a run where nothing was built at all.
+    """
+    alive = {}
+
+    def while_it_runs(app):
+        alive["repo"] = Path(capsys.readouterr().out.split()[1])
+        assert alive["repo"].is_dir(), "the repository was not there while it was serving"
+
+    assert run_demo(monkeypatch, while_it_runs) == 0
+    assert not alive["repo"].exists(), "a demo repository outlived the server that made it"
+    assert not alive["repo"].parent.exists()
+
+
+def test_the_writers_lock_is_not_copied_into_the_demo_repository(tmp_path: Path):
+    """A fossil, and the reason this is a function rather than a `cp -r`.
+
+    `openproj.lock` is `Store`'s flock and holds the pid of whoever last opened
+    one. A copy of it was committed to this repository — so the demo would have
+    started life holding a lock file naming a process that had been dead for
+    months, and a second run would have inherited the first run's pid. Asked of
+    `store.LOCK_FILE` rather than of the string, so a rename cannot make this
+    test pass by checking for a file that no longer exists.
+    """
+    from openproj.cli import _seed_files
+    from openproj.store import LOCK_FILE
+
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "task-000001--x.md").write_text("---\nid: task-000001\n---\n")
+    (tmp_path / LOCK_FILE).write_text("60008")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "defaults.yaml").write_text("schema_version: 4\n")
+
+    files = _seed_files(tmp_path)
+
+    assert LOCK_FILE not in files
+    assert set(files) == {"tasks/task-000001--x.md", "config/defaults.yaml"}
+
+
+def test_a_file_that_is_not_a_plan_file_is_not_copied_either(tmp_path: Path):
+    """A `.DS_Store` beside the records is not part of anybody's plan, and it is
+    not UTF-8 either — so "every file under here" would have made `openproj demo`
+    raise a UnicodeDecodeError on a Mac that had once opened the folder."""
+    from openproj.cli import _seed_files
+
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "task-000001--x.md").write_text("---\nid: task-000001\n---\n")
+    (tmp_path / ".DS_Store").write_bytes(b"\x00\x01\x82\xff not text")
+
+    assert set(_seed_files(tmp_path)) == {"tasks/task-000001--x.md"}
+
+
+def test_the_demo_is_drawn_around_the_day_its_own_corpus_calls_today(demo_root: Path):
+    """The seed corpus is written around one day as "now". Served in December
+    with the real clock it draws a plan every date of which is in the past, which
+    is a demonstration of a scheduler with nothing left to schedule.
+
+    The date is not typed in here either. `_demo_today` derives it from the
+    cycles table; this checks that against the sentence `seed/README.md` says to
+    a reader in prose. Two independent copies in the corpus, asserted to agree —
+    a test that read the same table the code reads would agree with itself.
+    """
+    import re
+
+    from openproj.cli import _demo_today
+    from openproj.model import load_repo
+
+    _, config, _ = load_repo(demo_root)
+    said = re.search(r'"Today" for the demo is \*\*(\d{4}-\d{2}-\d{2})\*\*',
+                     (demo_root / "README.md").read_text(encoding="utf-8"))
+
+    assert said, "seed/README.md no longer says which day the demo is written around"
+    assert _demo_today(config).isoformat() == said.group(1)
+
+
+def test_a_plan_with_no_cycles_falls_back_to_the_real_today():
+    """Every plan on its first day. `None` here rather than a guess, and the
+    caller uses the clock — a demo of an empty plan has no opinion about when
+    now is."""
+    from openproj.cli import _demo_today
+    from openproj.model import Config
+
+    assert _demo_today(Config()) is None
+
+
+def test_the_demo_refuses_a_port_that_is_taken_before_it_says_where_to_look(capsys):
+    """uvicorn finds this out at the end, after the command has already printed a
+    URL — which by then belongs to whatever else is on that port. A URL on screen
+    that opens somebody else's server is worse than a refusal, because it is a
+    refusal you go looking for in the wrong place."""
+    import socket
+
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        port = held.getsockname()[1]
+
+        assert main(["demo", "--port", str(port)]) == 1
+
+    printed = capsys.readouterr()
+    assert f"port {port} is already in use" in printed.err
+    assert "http://" not in printed.out, "it named a URL it had not managed to serve"
+
+
+def test_the_demo_signs_you_in_as_somebody_the_plan_names(monkeypatch):
+    """`--auth dev` used to be `dev`, who holds no work in any corpus — and the
+    People page draws a picker on the signed-in person's row, so a demo signed in
+    as `dev` demonstrated that feature by not showing it. The default is the
+    first name on the corpus's own roster; `--as` is the rest of the team."""
+    from fastapi.testclient import TestClient
+
+    from openproj.cli import _seed_dir
+    from openproj.model import load_repo
+
+    _, config, _ = load_repo(_seed_dir())
+    first, other = config.known_people[0], config.known_people[1]
+    pickers = []
+
+    def count_the_pickers(app):
+        with TestClient(app) as client:
+            pickers.append(client.get("/people").text.count('id="pick"'))
+
+    assert first != other
+    assert run_demo(monkeypatch, count_the_pickers) == 0
+    assert run_demo(monkeypatch, count_the_pickers, ["--as", other]) == 0
+    # And the other way, which is the claim underneath: the picker follows who
+    # you are, rather than being drawn for whoever asks.
+    assert run_demo(monkeypatch, count_the_pickers, ["--as", "nobody-in-this-plan"]) == 0
+
+    assert pickers == [1, 1, 0], "the picker is not on the signed-in person's row"

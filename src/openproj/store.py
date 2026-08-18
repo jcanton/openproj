@@ -36,7 +36,12 @@ _BRANCH = "refs/heads/main"
 _ORIGIN = "origin"
 _TRACKING = "refs/remotes/origin/main"
 _BOT = pygit2.Signature("openproj-bot", "openproj-bot@example.invalid")
-_LOCK = "openproj.lock"
+# The writer's flock, named here rather than in two places: `openproj demo`
+# builds a plan repository out of a directory that may have had a `Store` opened
+# against it, and the one file it must not copy is this one. A caller that spelt
+# the name itself would be a second copy of it, and this file's own rule is that
+# an invariant written twice is guarded once.
+LOCK_FILE = "openproj.lock"
 # How much happened to a write, least first. `write_all` reports the furthest one
 # any of its files reached, so a set is never described by its quietest member.
 _OUTCOMES = ("committed", "retried", "merged")
@@ -224,7 +229,7 @@ class Store:
         # interleave writes. Somebody will eventually try --workers 4.
         # "a+" rather than "w": opening for write truncates, and truncating would
         # erase the holder's pid before we even find out somebody else has the lock.
-        self._lock = open(self._path / _LOCK, "a+")
+        self._lock = open(self._path / LOCK_FILE, "a+")
         try:
             fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
@@ -524,3 +529,40 @@ class Store:
     def close(self) -> None:
         fcntl.flock(self._lock, fcntl.LOCK_UN)
         self._lock.close()
+
+
+def build_plan_repository(path: Path, files: dict[str, str], message: str) -> str:
+    """A bare repository holding exactly these files, in one commit.
+
+    Here rather than in `cli.py` because it is git, and `store.py` is where this
+    application knows how git stores things. `openproj demo` is the only caller
+    today; the alternative it replaces is six lines of shell in a README, which
+    is a recipe nothing tests and everyone gets wrong once.
+
+    Bare, and built with a `TreeBuilder`: `git init && git add .` needs an index
+    and a working copy, and the whole argument of this module is that the server
+    must have neither. The author is the bot, because nobody wrote these files
+    into this repository — a demo is a copy, and attributing it to whoever ran
+    the command would put a person's name on a commit they did not make.
+    """
+    repo = pygit2.init_repository(str(path), bare=True, initial_head="main")
+    root: dict = {}
+    for name, content in files.items():
+        node = root
+        *directories, leaf = name.split("/")
+        for directory in directories:
+            node = node.setdefault(directory, {})
+        node[leaf] = content
+
+    def tree(node: dict) -> pygit2.Oid:
+        builder = repo.TreeBuilder()
+        for name, value in node.items():
+            if isinstance(value, dict):
+                builder.insert(name, tree(value), pygit2.enums.FileMode.TREE)
+            else:
+                builder.insert(
+                    name, repo.create_blob(value.encode("utf-8")), pygit2.enums.FileMode.BLOB
+                )
+        return builder.write()
+
+    return str(repo.create_commit(_BRANCH, _BOT, _BOT, message, tree(root), []))

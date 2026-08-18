@@ -576,8 +576,8 @@ def test_a_bar_and_the_key_that_names_it_are_drawn_the_same_way(index: Index):
 
 
 # --------------------------------------------------------------------------- #
-# B6: the icon picker, which is a popup that does no positioning, and the one
-#     line on this page that says a write was refused
+# B6: the icon picker, which is a popup that has to beat a sticky header, and
+#     the one line on this page that says a write was refused
 # --------------------------------------------------------------------------- #
 
 
@@ -595,36 +595,74 @@ GROUP = PAGE + [el("table", id="roles"), el("tbody", "person"), el("tr", "group"
 LINE = GROUP + [el("div", "groupline")]
 
 
+WRAP = LINE + [el("span", "pickwrap")]
+SHUT = WRAP + [el("ul", "picker", id="picker", hidden="")]
+OPEN = WRAP + [el("ul", "picker", id="picker")]
+
+
 def test_the_picker_is_hidden_by_the_attribute_and_not_by_source_order(people: Sheet):
-    """`hidden` on an element `display: flex` also reaches is a popup that is
+    """A `display` that reaches an element carrying `hidden` is a popup that is
     always open.
 
     The two rules are `.picker` at (0,1,0) and `.picker[hidden]` at (0,2,0), so
     the attribute wins on specificity — which is the thing worth asserting,
     because the page's own stylesheet is inlined *after* the shell's and a rule
-    that relied on order would be the loser in the other direction. Asked of a
-    cascade engine and not by looking for the rule: a rule being in the sheet
-    says nothing about whether it wins, which is what three frozen-column rules
-    found out.
+    that relied on order would be the loser in the other direction. It matters
+    more now than it did: the popup went from twelve buttons on one line to
+    twenty-five rows of drawing and name, so a picker that failed to hide is not
+    a stray strip any more, it is a panel over the rows.
+
+    Asked of a cascade engine and not by looking for the rule: a rule being in
+    the sheet says nothing about whether it wins, which is what three
+    frozen-column rules found out.
     """
-    shut = LINE + [el("div", "picker", id="picker", hidden="")]
-    open_ = LINE + [el("div", "picker", id="picker")]
+    assert people.value(SHUT, "display") == "none", says(people, SHUT, "display")
+    # Nothing sets one on the open list, which is the point: it is a `<ul>` and
+    # block is what it wants. The rule above is what would have to be beaten if
+    # anybody ever gave it one.
+    assert people.value(OPEN, "display") is None, says(people, OPEN, "display")
 
-    assert people.value(shut, "display") == "none", says(people, shut, "display")
-    assert people.value(open_, "display") == "flex", says(people, open_, "display")
+
+def test_the_open_picker_is_painted_over_the_sticky_header_and_not_under_it(people: Sheet):
+    """The popup that replaced the strip has to win a fight the strip never had.
+
+    It floats now — twenty-five rows in the flow would push every person below
+    down by the height of the list — and the thing it floats near is a `position:
+    sticky` header with a z-index of its own. Left open while the page scrolls,
+    the header rides down over the list; the two numbers are resolved here, by
+    name, rather than assumed.
+
+    The wrapper is the other half of it and is the part that is easy to get
+    wrong: `position: relative` with NO z-index does not open a stacking context,
+    so the list's 3 is weighed against the header's 2 in the page's own context.
+    Given a z-index the wrapper would become the context, the list would be
+    trapped at the wrapper's level, and both assertions below would still pass
+    while the header painted over the list — so the absence is asserted too.
+    """
+    header = PAGE + [el("table", id="roles"), el("thead"), el("tr"), el("th")]
+
+    assert people.value(OPEN, "position") == "absolute", says(people, OPEN, "position")
+    assert people.value(WRAP, "position") == "relative", says(people, WRAP, "position")
+    assert people.value(WRAP, "z-index") is None, says(people, WRAP, "z-index")
+
+    over = people.value(OPEN, "z-index")
+    under = people.value(header, "z-index")
+    assert over and under and int(over) > int(under), (
+        f"the list is z-index {over} and the sticky header {under}\n"
+        + says(people, OPEN, "z-index")
+        + "\n"
+        + says(people, header, "z-index")
+    )
 
 
-def test_the_picker_takes_a_line_of_its_own_rather_than_floating_over_one(people: Sheet):
-    """It sits inside the group line, which is a wrapping flex row: `flex: 0 0
-    100%` is what makes it start a new line instead of squeezing in beside the
-    name. That is the whole reason it needs no `position`, no `z-index` and no
-    argument with the sticky header two rows up — this file's characteristic
-    failure is one page's positioning quietly beating another rule's."""
-    picker = LINE + [el("div", "picker", id="picker")]
-
-    assert people.value(picker, "flex") == "0 0 100%", says(people, picker, "flex")
-    assert people.value(picker, "position") is None, says(people, picker, "position")
-    assert people.value(picker, "z-index") is None, says(people, picker, "z-index")
+def test_the_picker_scrolls_inside_itself_rather_than_off_the_page(people: Sheet):
+    """Twenty-five rows at a row's height is taller than most windows have room
+    for under a button that can be anywhere on the page. The list is bounded and
+    scrolls; without the bound, choosing an icon near the bottom of the set means
+    scrolling the PAGE, and the page scrolling moves the button the list is
+    hanging off."""
+    assert people.value(OPEN, "max-height"), says(people, OPEN, "max-height")
+    assert people.value(OPEN, "overflow-y") == "auto", says(people, OPEN, "overflow-y")
 
 
 def test_a_mark_does_not_shrink_out_of_the_line_it_sits_in(people: Sheet):

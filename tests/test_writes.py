@@ -68,7 +68,12 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
                   "body": "## Goal\n\nShip it.\n"},
         )
         routes = {"cycle": "/cycle/41", "table": "/", "detail": f"/detail/{TASK}",
-                  "graph": "/graph", "cycles": "/cycles", "new": "/new?kind=task"}
+                  "graph": "/graph", "cycles": "/cycles", "new": "/new?kind=task",
+                  # ann owns a task in this corpus, so she has a row on the People
+                  # page and the row has her picker on it. A person who holds
+                  # nothing gets no row and no picker, which is the page's rule
+                  # and not an accident of this fixture.
+                  "people": "/people"}
         drawn = {}
         for name, route in routes.items():
             answer = client.get(route)
@@ -450,3 +455,153 @@ def test_a_save_addresses_the_row_it_was_pressed_on(broken_id_table):
     assert answer["value"] == BROKEN_ID, "the table drew a different row from the one saved"
     writes = [call for call in answer["calls"] if call["method"] == "PATCH"]
     assert [call["url"] for call in writes] == [BROKEN_ID_URL]
+
+
+# --------------------------------------------------------------------------- #
+# C7: the icon listbox, which is a popup nothing in a rendered file shows open
+# --------------------------------------------------------------------------- #
+#
+# The rows exist in the markup, but which one the keyboard is on, whether the
+# list is open and what happens when the server refuses are all things a script
+# decides at runtime — the same blind spot the combobox and the roster were in,
+# and the reason `drive.js` exists. The picker before this one was twelve buttons
+# and Escape; the assertions below are the contract the listbox took on when it
+# grew names, twenty-five rows and a scroll box.
+
+
+def picker_of(page: str) -> str:
+    """Fails loudly rather than testing nothing.
+
+    A People page drawn for somebody who may not write, or who holds no work, has
+    no picker in it at all — and every expression below would then run against a
+    `null` and come back as an error the assertions do not read.
+    """
+    assert 'id="picker"' in page and 'id="pick"' in page, "this page has no picker to drive"
+    return page
+
+
+# The listbox keys, in one run: open, down twice, up once, then Escape. Read back
+# through `aria-activedescendant`, because that attribute IS how this control
+# tells a screen reader where the keyboard is — a test that asserted on the `.on`
+# class would pass on a widget only a sighted reader can follow.
+WORK_THE_KEYS = """
+(() => {
+  const pick = document.getElementById('pick');
+  const picker = document.getElementById('picker');
+  const shut = {hidden: picker.hidden, expanded: pick.getAttribute('aria-expanded')};
+  pick.dispatchEvent(new Event('click'));
+  const opened = {hidden: picker.hidden, expanded: pick.getAttribute('aria-expanded'),
+                  at: picker.getAttribute('aria-activedescendant')};
+  const press = key => picker.dispatchEvent(new CustomEvent('keydown', {key}));
+  press('ArrowDown'); press('ArrowDown');
+  const down = picker.getAttribute('aria-activedescendant');
+  press('ArrowUp');
+  const up = picker.getAttribute('aria-activedescendant');
+  press('End');
+  const end = picker.getAttribute('aria-activedescendant');
+  press('Home');
+  const home = picker.getAttribute('aria-activedescendant');
+  press('Escape');
+  const closed = {hidden: picker.hidden, expanded: pick.getAttribute('aria-expanded')};
+  return {shut, opened, down, up, end, home, closed,
+          rows: [...picker.querySelectorAll('[role="option"]')].map(row => row.dataset.icon)};
+})()
+"""
+
+
+def test_the_listbox_opens_moves_under_the_arrows_and_closes_on_escape(pages):
+    """Escape is the one that has to work: a popup you can only close by finding
+    the button that opened it — now under a panel of twenty-five rows — is a trap
+    for exactly the reader this widget was rebuilt for."""
+    from openproj.render import ICONS
+
+    answer = drive(picker_of(pages["people"]), WORK_THE_KEYS)
+    seen = answer["value"]
+
+    assert seen["shut"] == {"hidden": True, "expanded": "false"}
+    assert seen["opened"]["hidden"] is False
+    assert seen["opened"]["expanded"] == "true"
+    # Opened on the row that is stored, which for somebody with no icon is the
+    # one that says so — and it is first, so Home and "no icon" are the same key.
+    assert seen["opened"]["at"] == "pick-none"
+    assert seen["down"] == f"pick-{ICONS[1]}", "two downs from the top is the second icon"
+    assert seen["up"] == f"pick-{ICONS[0]}"
+    assert seen["end"] == f"pick-{ICONS[-1]}"
+    assert seen["home"] == "pick-none"
+    assert seen["closed"] == {"hidden": True, "expanded": "false"}
+    # The vocabulary, in the vocabulary's own order, with the way out at the top.
+    assert seen["rows"] == ["", *ICONS]
+
+
+# Down to the second icon and Enter, then let the write settle. The microtask
+# loop and not a timer: `drive.js` queues timers rather than running them, on
+# purpose, so a page's autosave cannot fire against an answer nobody scripted —
+# and every promise in this chain is already resolved, so draining the microtask
+# queue is the whole of the wait.
+CHOOSE_WITH_THE_KEYBOARD = """
+(async () => {
+  const pick = document.getElementById('pick');
+  const picker = document.getElementById('picker');
+  pick.dispatchEvent(new Event('click'));
+  const press = key => picker.dispatchEvent(new CustomEvent('keydown', {key}));
+  press('ArrowDown'); press('ArrowDown');
+  const chosen = picker.getAttribute('aria-activedescendant');
+  press('Enter');
+  for (let i = 0; i < 50 && !picker.hidden; i++) await Promise.resolve();
+  return {chosen, hidden: picker.hidden, expanded: pick.getAttribute('aria-expanded'),
+          mark: !!pick.querySelector('svg'), unset: pick.classList.contains('unset'),
+          selected: [...picker.querySelectorAll('[role="option"]')]
+            .filter(row => row.getAttribute('aria-selected') === 'true')
+            .map(row => row.dataset.icon),
+          state: document.getElementById('state').textContent};
+})()
+"""
+
+
+def test_a_pick_made_with_the_keyboard_is_sent_stored_and_shown(pages):
+    """The whole path, without a mouse anywhere in it: the name that goes to the
+    server, the drawing that lands in the button, and the row that is marked as
+    yours afterwards — which is what decides where the list opens next time."""
+    from openproj.render import ICONS
+
+    answer = drive(
+        picker_of(pages["people"]),
+        CHOOSE_WITH_THE_KEYBOARD,
+        [{"status": 200, "json": {"commit": "b" * 40}}],
+    )
+    seen = answer["value"]
+
+    assert seen["chosen"] == f"pick-{ICONS[1]}"
+    writes = [call for call in answer["calls"] if call["method"] == "PUT"]
+    assert [(c["url"], json.loads(c["body"])) for c in writes] == [
+        ("/api/icon", {"icon": ICONS[1]})
+    ]
+    assert seen["hidden"] is True and seen["expanded"] == "false"
+    assert seen["mark"] is True and seen["unset"] is False
+    assert seen["selected"] == [ICONS[1]], "the stored row moved with the pick"
+    assert seen["state"] == f"Your icon is now {ICONS[1]}."
+
+
+REFUSED = CHOOSE_WITH_THE_KEYBOARD
+
+
+def test_a_refused_pick_leaves_the_list_open_with_the_reason_beside_it(pages):
+    """A picker that closed on a refusal would leave a page identical to one where
+    nothing was pressed — which is the state this feature shipped in once, and the
+    reason `#state` exists at all. The refusal is a 422 because that is the one
+    this endpoint really gives: `render.ICONS` is closed at the door."""
+    answer = drive(
+        picker_of(pages["people"]),
+        REFUSED,
+        [{"status": 422, "json": {"detail": "'dragon' is not an icon"}}],
+    )
+    seen = answer["value"]
+
+    assert seen["hidden"] is False, "the list closed over the only account of what happened"
+    assert seen["expanded"] == "true"
+    assert seen["mark"] is False, "the button took a mark the server refused to store"
+    # Still the row it was drawn with. ann has no icon, so "No icon" is what is
+    # stored and what the list must go on saying is stored — a refusal that
+    # moved the mark would be the page agreeing with a write that never landed.
+    assert seen["selected"] == [""], "a refused pick moved the row marked as stored"
+    assert seen["state"] == "'dragon' is not an icon"

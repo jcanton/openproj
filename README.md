@@ -42,16 +42,31 @@ argument, so pointing a deployment at a different plan is a flag rather than a f
 
 ## Locally
 
-`seed/` is a demo corpus and nobody's plan; `seed/README.md` says which parts of it are invented.
-
 ```bash
 uv sync
+uv run openproj demo
+```
+
+That is the whole of it. `demo` builds a plan repository out of the bundled demo corpus in a
+temporary directory, serves it with sign-in switched off, and prints the URL. No network, no
+credentials, and nothing to clean up: the repository is fresh every run and goes when you stop the
+server, so every button in it is safe to press. It draws the plan around the corpus's own "today"
+rather than around yours — `--today` moves it — and signs you in as somebody the corpus names, so
+the parts of the tool that are about a person are on screen too.
+
+`seed/` is that corpus and nobody's plan; `seed/README.md` says which parts of it are invented.
+Pointing the server at a real plan is `openproj serve --repo <a bare clone>`, and
+`docs/architecture.md` has the recipe.
+
+The same corpus, as static files:
+
+```bash
 uv run openproj render seed out --today 2026-08-17
 open out/index.html
 ```
 
-That writes the pages as static files, which is also the answer to what happens if the service goes
-away: the plan stays readable, and stays checkable, from any clone.
+That is also the answer to what happens if the service goes away: the plan stays readable, and
+stays checkable, from any clone.
 
 ```bash
 uv run openproj check seed        # every rule, exits non-zero only on blockers
