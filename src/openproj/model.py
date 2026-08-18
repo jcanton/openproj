@@ -12,6 +12,7 @@ import math
 import re
 from collections.abc import Callable, Iterable, Iterator
 from datetime import date, timedelta
+from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
@@ -923,22 +924,106 @@ def sections(body: str) -> dict[str, str]:
     return {name: "\n".join(lines).strip() for name, lines in found.items()}
 
 
-def checklist(body: str) -> tuple[int, int]:
-    """Ticked and total task-list items anywhere in the body.
+def checklist_items(body: str) -> list[tuple[bool, str]]:
+    """Every task-list item as (ticked, what it says), in the order written.
 
     Anywhere, not only under `## Progress`: the template puts them there, and
-    real notes also keep them under `## Solution`. Sub-items count as items,
-    which is what someone reading "7/12" means by it.
+    real notes also keep them under `## Solution`. Sub-items are items, and they
+    arrive flat — `checklist` counts them that way, which is what somebody
+    reading "7/12" means by it, and a list drawn with a hierarchy the number does
+    not have is the two-copies-of-one-fact problem in a new spelling.
+
+    The text is what follows the box, stripped. A point that is only a box —
+    `- [ ]` with nothing after it — keeps its place in the count and says nothing,
+    which is exactly what is on the page it came from.
     """
-    done = total = 0
+    found: list[tuple[bool, str]] = []
     for line, in_code in _outside_code(body):
         if in_code:
             continue
         mark = _CHECKBOX.match(line)
         if mark:
-            total += 1
-            done += mark.group(1) != " "
-    return done, total
+            found.append((mark.group(1) != " ", line[mark.end():].strip()))
+    return found
+
+
+def checklist(body: str) -> tuple[int, int]:
+    """Ticked and total task-list items anywhere in the body.
+
+    Counted from `checklist_items` rather than by a second walk of the same
+    lines. The deck draws those points beside this number: two parses of one
+    document is two chances for the tick on a slide and the "7/12" above it to
+    disagree about the same line.
+    """
+    items = checklist_items(body)
+    return sum(1 for ticked, _ in items if ticked), len(items)
+
+
+def without_checklist(body: str) -> str:
+    """The body with its task-list items taken out, and any heading they emptied.
+
+    For the deck, which lifts those points to the top of the slide and ticks
+    them. Left in place as well they print twice — the duplication the detail
+    page avoids by not lifting a leaf's checklist at all (`_progress_view`). A
+    slide cannot make that trade: it is read from the back of a room, and `[x]`
+    is not a tick.
+
+    The emptied heading is the second half and not a nicety. `## Progress` is
+    where the team's task template puts the list, so on nearly every task
+    removing the items leaves a heading with nothing whatever under it.
+
+    Here and not in `render.py` for the reason `without_comments` is here: it
+    reads a shaping document, and `render.py` is held to
+    `test_no_page_is_assembled_by_substitution`.
+    """
+    return _without_emptied_headings(
+        [
+            (line, in_code)
+            for line, in_code in _outside_code(body)
+            if in_code or not _CHECKBOX.match(line)
+        ]
+    )
+
+
+def _without_emptied_headings(kept: list[tuple[str, bool]]) -> str:
+    """Lines, minus every heading that now has nothing whatever under it."""
+    out: list[str] = []
+    for at, (line, in_code) in enumerate(kept):
+        if not in_code and _HEADING.match(line):
+            after = takewhile(
+                lambda pair: pair[1] or not _HEADING.match(pair[0]), kept[at + 1:]
+            )
+            if not any(text.strip() for text, _ in after):
+                continue
+        out.append(line)
+    return "\n".join(out).strip("\n")
+
+
+def without_sections(body: str, names: Iterable[str]) -> str:
+    """The body without these sections, heading and all.
+
+    Named the way `sections` keys them — lowercased, and flat regardless of
+    heading depth, because the template is flat and a reader asking for "no-gos"
+    does not care whether somebody wrote `##` or `###`.
+
+    For the deck, which asks for the sections the templates do NOT ask for: the
+    shaping argument is what was written before the work started, and a review
+    slide is about what happened. Passing the set in rather than knowing it here
+    is what lets the caller read it off `TEMPLATES` instead of listing it again.
+    """
+    wanted = {name.strip().lower() for name in names}
+    kept: list[str] = []
+    # Carried across the loop rather than recomputed, because what decides
+    # whether a line goes is the heading above it. A `##` inside a fence never
+    # reaches this, so a document quoting a template keeps its example whole.
+    dropping = False
+    for line, in_code in _outside_code(body):
+        heading = None if in_code else _HEADING.match(line)
+        if heading:
+            dropping = heading.group(1).strip().lower() in wanted
+        if not dropping:
+            kept.append(line)
+    return "\n".join(kept).strip("\n")
 
 
 # --------------------------------------------------------------------------- #

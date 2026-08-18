@@ -12,6 +12,14 @@ They render from one in-memory index, share one filter model, and keep their sta
 string — so every view is a shareable URL, the back button works, and there are no saved views to
 manage.
 
+`/deck/<n>` is the odd one out and is a route only. It is the deck for one cycle's review meeting —
+a title slide, then one slide per piece of work bet into that cycle, each with its ticked points,
+its percentage and its pull requests, and it prints one slide to a page. It takes a cycle number, so
+it has no place in a static export that writes one file per view of the whole plan; it is reached
+from that cycle's own page, and it is deliberately not a seventh tab. It is also the one page that
+carries its images inside itself as `data:` URIs, because it is the one page meant to be handed to
+somebody who was not in the room.
+
 ## Two repositories
 
 The tool and the plan are separate repositories, and stay separate in production.
