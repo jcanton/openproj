@@ -39,6 +39,7 @@
 'use strict';
 
 const vm = require('node:vm');
+const nodeCrypto = require('node:crypto');
 
 // --------------------------------------------------------------------------
 // A very small HTML parser, so that a script which sets innerHTML and then
@@ -526,6 +527,19 @@ async function run(html, expression, options) {
     location: {search: '', pathname: '/', href: 'http://localhost/'},
     history: {replaceState() {}, pushState() {}},
     localStorage: storage,
+    // Yjs's lib0 reads `crypto.subtle` and binds `crypto.getRandomValues` at the
+    // top of the module with nothing guarding either, so the detail page's
+    // editor now stops on its fourth line without one. node's real one is handed
+    // through rather than faked: a client id that is not actually random is a
+    // document that collides with another tab's, which is the one failure a CRDT
+    // cannot recover from.
+    crypto: nodeCrypto.webcrypto,
+    btoa: value => Buffer.from(value, 'binary').toString('base64'),
+    atob: value => Buffer.from(value, 'base64').toString('binary'),
+    // Deliberately no `WebSocket`. This shim is the reader whose browser refuses
+    // the socket — a `file://` copy, a proxy that drops the upgrade, a session
+    // that may not write — and every test in this suite that drives the editor
+    // is therefore a test that the page degrades to exactly what it was.
     matchMedia: () => ({matches: false, addEventListener() {}, addListener() {}}),
     getComputedStyle: () => ({getPropertyValue: () => ''}),
     // The escape the pages reach for when a selector has to hold typed text.

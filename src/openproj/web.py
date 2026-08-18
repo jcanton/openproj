@@ -33,6 +33,9 @@ textarea and is then saved back.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import contextlib
 import json
 import math
 import os
@@ -44,10 +47,11 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from starlette.websockets import WebSocketDisconnect
 
-from . import render
+from . import coedit, render
 from .auth import (
     OAuthError,
     User,
@@ -80,6 +84,7 @@ from .model import (
     read_config,
     readable,
     record_paths_in,
+    split_front_matter,
     validate_all,
     what_json_can_carry,
     why_it_will_not_read,
@@ -582,7 +587,22 @@ def create_app(
             "against the local repository."
         )
     store = Store(Path(repo), remote=remote or None, credentials=credentials)
-    app = FastAPI(title="openproj")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI):
+        """Hand the writer lock back when this server stops.
+
+        It used to be released only by the process ending, which is true of every
+        deployment and of nothing else: two servers over one repository in one
+        process — a test that restarts one, a script that opens a second — met
+        `StoreLocked` from a server that had already shut down. Single-writer is
+        a correctness invariant and stays one; what changes is that stopping now
+        counts as stopping.
+        """
+        yield
+        store.close()
+
+    app = FastAPI(title="openproj", lifespan=lifespan)
 
     @app.middleware("http")
     async def say_what_this_page_may_do(request: Request, call_next):
@@ -1415,6 +1435,327 @@ def create_app(
                 watchers.discard(queue)
 
         return StreamingResponse(stream(), media_type="text/event-stream")
+
+    # -- co-editing ---------------------------------------------------------
+    #
+    # A socket, and not the event stream beside it, because this traffic goes
+    # both ways: the stream exists to tell a page that the plan moved, and it
+    # can only ever do that. `connect-src 'self'` already permits the `ws`/`wss`
+    # variant of the page's own origin — CSP 3 matches the scheme by
+    # upgrade-equivalence rather than by spelling — so the policy is untouched,
+    # and `tests/browser.py` asks a real browser rather than trusting the
+    # sentence you just read.
+    #
+    # A room is a way of arriving at a commit, never a replacement for one.
+    # Everything below ends in exactly one `store.write`, against the room's
+    # base, with a person as the author — so somebody editing in git, in a
+    # second tab, or through the API is still handled by the same three-way
+    # merge, and a genuine overlap still comes back as the same refusal.
+
+    rooms = coedit.Rooms()
+    # The socket per connection, kept out of `Room` so `coedit.py` has nothing to
+    # say about transport and can be tested without one.
+    sockets: dict[int, WebSocket] = {}
+    watching: dict[str, asyncio.Task] = {}
+    connections = 0
+
+    def _b64(raw: bytes) -> str:
+        return base64.b64encode(raw).decode("ascii")
+
+    def _raw(value: object) -> bytes | None:
+        """Base64 off the wire, or None. Never an exception: a frame this cannot
+        decode is one client's mistake and must not close anybody else's room."""
+        if not isinstance(value, str) or len(value) > 4 * coedit.MAX_UPDATE_BYTES:
+            return None
+        try:
+            return base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+
+    async def _to_room(room: coedit.Room, message: dict, skip: int | None = None) -> None:
+        for connection in list(room.members):
+            if connection == skip:
+                continue
+            socket = sockets.get(connection)
+            if socket is None:
+                continue
+            # A send that fails is a socket that has gone; the loop reading it is
+            # what removes it from the room, and shouting about it here would
+            # take down the send to everybody after it in the list.
+            with contextlib.suppress(Exception):
+                await socket.send_json(message)
+
+    def _body_at(commit: str, path: str) -> str:
+        """The body as the editor shows it, which is not the bytes after the
+        frontmatter.
+
+        `parse_text` drops the blank line a closing `---` leaves behind, and the
+        detail page renders what `parse_text` returned — so a room seeded from
+        the raw split opened one character different from the textarea it was
+        drawn beside. Every editor said "1 unsaved change" before anybody typed,
+        and twenty seconds later the room committed that character. The room and
+        the page have to be looking at the same text or the room is arguing with
+        the page it is on.
+        """
+        text = store.read(commit, path) or ""
+        try:
+            return parse_text(text, path).body
+        except ValueError:
+            # A file in git can be anything, and a room over one that is not a
+            # record goes nowhere — the gate in `_commit_room` refuses it. But it
+            # must not fail here, where there is nobody yet to tell.
+            return split_front_matter(text)[1]
+
+    async def _commit_room(
+        room: coedit.Room, presser: str = "", fields: dict | None = None
+    ) -> None:
+        """One `store.write` for everything the room has typed since the last one.
+
+        Fires on Save, on the last participant leaving, and after twenty seconds
+        of quiet. The people in it are computed rather than declared — see
+        `Room.credits`.
+
+        The path is the room's, resolved once when it opened, and is deliberately
+        not re-derived here. `PATCH /api/entity` refuses when two files claim one
+        id because it cannot know which record the page had shown; a room does
+        know — it is holding that record's text — so a second claimant appearing
+        in git mid-session is a blocker the pages draw, not a reason to strand
+        everybody typing.
+        """
+        fields = fields or {}
+        author, others = room.credits(presser)
+        if not author or (not fields and not room.pending()):
+            return
+        body = room.body()
+        try:
+            # The same ceiling `_body_in` holds a PATCH to. A room has no other:
+            # every frame is bounded, and a document is unbounded exactly because
+            # it is the sum of them.
+            if len(body.encode("utf-8")) > MAX_BODY_BYTES:
+                raise ValueError("this document is too large to commit")
+            original = store.read(room.base, room.path)
+            if original is None:
+                raise ValueError(f"{room.path} is not in the plan any more")
+            content = _patched(original, fields, body, room.path)
+            # The same gate the PATCH route stands behind, and for the same
+            # reason: a record that will not read back takes every page down for
+            # everybody, on a branch where the commit cannot be force-pushed away.
+            parse_text(content, room.path)
+        except (HTTPException, ValueError) as error:
+            why = error.detail if isinstance(error, HTTPException) else str(error)
+            room.refusal = why
+            await _to_room(room, {"t": "refused", "why": why})
+            return
+
+        # Said before the write, not after it: a commit is announced to the event
+        # stream before the request that made it is answered, so the shell's "somebody
+        # else changed this" banner has to know a write is in the air first — otherwise
+        # the room's own commit arrives as news that a stranger moved the plan.
+        await _to_room(room, {"t": "saving"})
+        message = f"{room.entity_id}: {', '.join(fields) or 'body'}"
+        if others:
+            # The trailer git itself reads. `store._commit` puts the author in the
+            # author field, so `git log --format='%an'` is unchanged and
+            # `git shortlog` sees both halves.
+            trailers = "\n".join(
+                f"Co-authored-by: {login} <{login}@users.noreply.github.com>"
+                for login in others
+            )
+            message = f"{message}\n\n{trailers}"
+        written = store.write(
+            path=room.path,
+            content=content,
+            base_commit=room.base,
+            author=author,
+            message=message,
+        )
+        if written.outcome == "conflict":
+            # Into the room's own box, never into the editing surface: text pasted
+            # into a textarea is text somebody saves back. The room keeps the base
+            # it had and tries again once the text moves.
+            room.refusal = written.conflict
+            await _to_room(room, {"t": "refused", "why": written.conflict})
+            return
+        # Whatever actually landed, which is not what was sent when `_merge` folded
+        # in somebody's git commit. Applied back into the document so the room sees
+        # their paragraph arrive as text rather than diverging from the file.
+        #
+        # Nothing can have been typed in between: `store.write` is synchronous, so
+        # no other coroutine ran while it was in there.
+        landed = _body_at(written.commit, room.path)
+        update = room.absorb(landed)
+        room.settled(written.commit, room.body())
+        await _to_room(
+            room,
+            {
+                "t": "saved",
+                "commit": written.commit,
+                "outcome": written.outcome,
+                "pushed": written.pushed,
+                "update": _b64(update) if update else None,
+            },
+        )
+        await announce(written.commit, [room.entity_id])
+
+    async def _watch(room: coedit.Room) -> None:
+        """The quiet window, and the last second before a shutdown.
+
+        One task per occupied room rather than one for all of them: it starts
+        when somebody arrives and ends when the room empties, so a process that
+        nobody is editing on holds no timers, and a test that opens a socket does
+        not leave one running after it.
+        """
+        while room.members:
+            await asyncio.sleep(1)
+            if closing.is_set():
+                # The floor the design promises is the debounce window, and this
+                # is the second that gets most of it back. Same hook the event
+                # stream uses — uvicorn's exit fires it before it waits.
+                if room.pending():
+                    await _commit_room(room)
+                return
+            if room.refusal is None and room.pending() and room.quiet_for() >= coedit.QUIET_SECONDS:
+                await _commit_room(room)
+
+    @app.websocket("/api/coedit/{entity_id}")
+    async def coedit_socket(socket: WebSocket, entity_id: str) -> None:
+        nonlocal connections
+        # `writer` and not a second reading of the session. It reads one thing
+        # off what it is handed — the cookies — and a WebSocket has them under
+        # the same name, so it is handed the socket. Two spellings of "who may
+        # write" is how a page comes to offer a control whose only answer is a
+        # refusal, and this is the control that has to agree with `PATCH
+        # /api/entity` exactly: the room writes through the same gate.
+        try:
+            user = writer(socket)  # type: ignore[arg-type]
+            head = store.head()
+            path = _path_for(store, head, entity_id)
+        except HTTPException:
+            # Not signed in, not a member, no such entity, or two files claiming
+            # one id. Refused before the handshake, which the browser sees as a
+            # socket that would not open — and a socket that would not open is
+            # the case this whole feature is designed to degrade into, so a
+            # reader who may not write gets exactly today's editor.
+            path = None
+        if path is None:
+            await socket.close(code=1008)
+            return
+
+        await socket.accept()
+        connections += 1
+        connection = connections
+        room = rooms.get(entity_id)
+        arriving: bytes | None = None
+        if room is None:
+            room = rooms.add(coedit.Room(entity_id, path, head, _body_at(head, path)))
+        elif not room.pending():
+            # A room kept warm through a disconnection can have been overtaken by
+            # a commit made in git or through the API. Folded in here while there
+            # is nothing of anybody's to lose; when there is, the three-way merge
+            # in `store.write` does it at the next commit instead.
+            arriving = room.absorb(_body_at(head, path))
+            room.settled(head, room.body())
+        rooms.enter(room, connection, user.login)
+        sockets[connection] = socket
+
+        try:
+            hello = await socket.receive_json()
+            if not isinstance(hello, dict):
+                raise ValueError("a hello is a JSON object")
+            # The seed, not the base. Two documents built independently from the
+            # same text share no history and merge into that text *twice*, so a
+            # returning client whose document was seeded from a different commit
+            # is answered with a reload rather than with a merge. The base moves
+            # every time the room commits; the seed does not, which is what lets
+            # somebody reconnect through Cloud Run's five-minute teardown without
+            # noticing it happened.
+            seed = hello.get("seed")
+            if isinstance(seed, str) and seed != room.seed:
+                await socket.send_json(
+                    {
+                        "t": "reload",
+                        "why": "this document was rebuilt on the server while you were "
+                        "away — reload the page to join the room again",
+                    }
+                )
+                return
+            await socket.send_json(
+                {
+                    "t": "welcome",
+                    "seed": room.seed,
+                    "base": room.base,
+                    "you": user.login,
+                    "sv": _b64(room.state()),
+                    "update": _b64(room.since(_raw(hello.get("sv")))),
+                }
+            )
+            if arriving:
+                await _to_room(room, {"t": "update", "u": _b64(arriving)}, skip=connection)
+            await _to_room(room, {"t": "who", "people": room.people()})
+            if room.refusal:
+                await socket.send_json({"t": "refused", "why": room.refusal})
+
+            if watching.get(entity_id) is None or watching[entity_id].done():
+                watching[entity_id] = asyncio.create_task(_watch(room))
+
+            while True:
+                message = await socket.receive_json()
+                if not isinstance(message, dict):
+                    continue
+                kind = message.get("t")
+                if kind == "update":
+                    update = _raw(message.get("u"))
+                    if update is None or len(update) > coedit.MAX_UPDATE_BYTES:
+                        continue
+                    try:
+                        room.apply(update, user.login)
+                    except Exception:  # noqa: BLE001 - anything at all off a socket
+                        # An update this document cannot read leaves the two
+                        # copies unable to converge, and the only honest answer to
+                        # that is to start again from the file.
+                        await socket.send_json(
+                            {
+                                "t": "reload",
+                                "why": "this tab and the server stopped agreeing about "
+                                "the document — reload the page",
+                            }
+                        )
+                        return
+                    await _to_room(room, {"t": "update", "u": message["u"]}, skip=connection)
+                elif kind == "save":
+                    fields = message.get("fields")
+                    fields = dict(fields) if isinstance(fields, dict) else {}
+                    fields.pop("id", None)
+                    try:
+                        _reject_bad_types(fields)
+                    except HTTPException as refused:
+                        await socket.send_json({"t": "refused", "why": refused.detail})
+                        continue
+                    await _commit_room(room, presser=user.login, fields=fields)
+        except (WebSocketDisconnect, ValueError, KeyError, RuntimeError):
+            # Every way a socket ends: closed politely, closed rudely, or handed
+            # a frame that is not the JSON this speaks.
+            pass
+        finally:
+            sockets.pop(connection, None)
+            rooms.exit(room, connection)
+            if room.empty():
+                # The last person out commits, so a room that nobody comes back to
+                # has already put its work in git — the twenty-second window is
+                # the floor for a crash, not for leaving.
+                with contextlib.suppress(Exception):
+                    await _commit_room(room)
+                # Cancelled rather than left to notice on its next tick: a timer
+                # outliving the last socket is a task still pending when the loop
+                # closes, which is a warning in every test that opens one.
+                task = watching.pop(entity_id, None)
+                if task is not None:
+                    task.cancel()
+            else:
+                await _to_room(room, {"t": "who", "people": room.people()})
+            rooms.sweep()
+            with contextlib.suppress(Exception):
+                await socket.close()
 
     # -- sign in ------------------------------------------------------------
 

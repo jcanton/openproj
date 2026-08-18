@@ -169,6 +169,67 @@ def _library(name: str) -> Markup:
     return Markup(_inline(name))
 
 
+# The two lines of `yjs.bundle.mjs` that are not JavaScript this page can run,
+# spelled out so a re-vendoring that changes either fails here rather than
+# shipping a page whose only script is a SyntaxError.
+_YJS_IMPORT = 'import __Process$ from "/node/process.mjs";'
+_YJS_EXPORT = "export{"
+
+
+@cache
+def _yjs() -> Markup:
+    """Yjs as a classic script — the one form nobody publishes.
+
+    Every other vendored library here is inlined byte for byte. This one cannot
+    be, and it is worth saying exactly why rather than leaving it to look like
+    carelessness. Yjs 13.6.32 ships `dist/yjs.mjs` with twenty bare `lib0/*`
+    imports; jsDelivr's `+esm` rewrites those to CDN paths, which is precisely
+    what `test_no_page_reaches_the_network` exists to catch. The one published
+    artifact with lib0 bundled in is esm.sh's `es2020/yjs.bundle.mjs`, and it is
+    still a module: it opens with one `import` and closes with one `export{…}`,
+    and a page assembled from inlined `<script>` blocks has no module graph to
+    hand either to. The bytes in `static/` stay upstream's and stay checksummed;
+    those two lines become an IIFE here, and
+    `test_the_yjs_bundle_inlines_as_a_classic_script` asserts the result holds no
+    `import` and no `export` at all.
+
+    The import is bound to `undefined`, and that is not a stub standing in for
+    the real thing — it *is* the real answer. The bundle dereferences
+    `__Process$` in one place that is not already guarded, lib0's
+    `typeof __Process$ < "u" && __Process$.release && /node|io\\.js/.test(...)`,
+    which asks one question: am I running under Node? In a page the answer is no,
+    and every other use of the binding sits behind that answer. The design
+    costed vendoring esm.sh's `node/process.mjs` beside the bundle; measuring it
+    showed it is not a leaf — it imports `node/events.mjs` and `node/tty.mjs`,
+    another 12,807 bytes, and joining four modules by rewriting each one's
+    imports is a bundler, written here, at render time. Its `release()` returns
+    `{}` in any case, so the polyfill answers the same "no" that `undefined`
+    does, twenty kilobytes later.
+    """
+    source = _inline("yjs.bundle.mjs")
+    before, found, after = source.partition(_YJS_IMPORT)
+    if not found:
+        raise ValueError(f"static/yjs.bundle.mjs no longer opens with {_YJS_IMPORT!r}")
+    body = f"{before}const __Process$ = undefined;{after}"
+    start = body.rindex(_YJS_EXPORT)
+    end = body.index("};", start)
+    trailing = body[end + 2 :].strip()
+    if trailing and not trailing.startswith("//# sourceMappingURL="):
+        raise ValueError("static/yjs.bundle.mjs has code after its export clause")
+    # `export{a as b}` becomes `{b: a}`, so the names the page uses are upstream's
+    # names and a bundle exporting something new needs no edit here.
+    exported = []
+    for part in body[start + len(_YJS_EXPORT) : end].split(","):
+        halves = part.split(" as ")
+        exported.append(f"{halves[-1].strip()}:{halves[0].strip()}")
+    # `YJS` and not `Y`, which lib0 uses for `Array.from` inside the closure and
+    # which a second `const` of on this page would make a SyntaxError for the
+    # whole document rather than for one line.
+    return Markup(
+        f"const YJS = (() => {{\n{body[:start]}\nreturn {{{','.join(exported)}}};\n}})();"
+    )
+
+
 # The three characters that can end a `<script>` block, spelled as JSON escapes.
 # A translation table rather than a chain of `str.replace`: same result, and this
 # file no longer substitutes anything into text a person could have typed.
@@ -5546,6 +5607,11 @@ _DETAIL = """
       <div class="doc read">{{ e.body }}</div>
       {% if editable %}
       <p class="field bodybar">
+        {#- Who else is in this document, by name. A name is the channel that
+            survives every reader; a colour is not, and a caret drawn one line
+            off a `<textarea>` through a mirror element is worse than no caret at
+            all. Empty when nobody else is here, which is most of the time. -#}
+        <span id="together" class="together" role="status" aria-live="polite"></span>
         <span id="marks" class="marks"></span>
         <button type="button" id="preview">Preview the body</button>
         <span class="hint">paste or drop an image to put it in the plan</span>
@@ -5664,7 +5730,10 @@ function read(control) {
 }
 
 for (const control of CONTROLS) ORIGINAL[control.name] = JSON.stringify(read(control));
-const ORIGINAL_BODY = BODY.value;
+// `let`, because a room can commit this body without this tab pressing anything:
+// after that commit the saved text IS the baseline, and a `const` here left the
+// bar claiming one unsaved change forever over text that is already in git.
+let ORIGINAL_BODY = BODY.value;
 
 function changed() {
   const fields = {};
@@ -5752,6 +5821,11 @@ async function save() {
     announce(error.message);
     return;
   }
+  // While a room is live the body is not this tab's to send: it is the room's,
+  // and Save is one commit made over the socket against the room's base, with
+  // the fields from this form. Sending both down this path would be two commits
+  // for one press, and the second would be racing the first.
+  if (COEDIT.live()) { COEDIT.save(fields); return; }
   const body = BODY.value === ORIGINAL_BODY ? null : BODY.value;
   if (!Object.keys(fields).length && body === null) {
     announce('nothing changed');
@@ -5841,6 +5915,8 @@ if (typeof draft.text === 'string' && draft.text !== BODY.value) {
   show(true);
 }
 </script>{% endif %}
+{% if editable %}<script>{{ yjs }}</script>
+<script>{{ coedit }}</script>{% endif %}
 {% if not single %}<script>
 // One page, hash-routed: a stable shareable link per entity without a file each.
 // With no hash you get an index; with a hash you get exactly one document. Never
@@ -5863,6 +5939,281 @@ addEventListener('hashchange', show);
 show();
 </script>{% endif %}
 """
+
+_COEDIT = Markup(r"""
+// Several people typing in one shaping document, arriving at one commit.
+//
+// The floor is a page with no socket at all, and it is the ordinary case rather
+// than the edge: the static export is opened over `file://`, which has an opaque
+// origin and no server; a proxy may drop the upgrade; Cloud Run tears every
+// socket down at five minutes; and a reader who is not signed in is refused the
+// handshake. Every path below ends at the same place — a `<textarea>`, a draft,
+// a `base_commit`, Save, and a 409 — which is exactly this page without this
+// script. Nothing here is allowed to be a prerequisite for editing.
+//
+// The socket needs no change to the policy. `connect-src 'self'` matches the
+// `ws`/`wss` variant of this document's origin under CSP 3, which is a claim
+// about browsers rather than about this code, so `tests/browser.py` asks Chrome
+// instead of believing this comment.
+const COEDIT = (() => {
+  // What every refusal returns: an object that says it is not live, so `save()`
+  // above takes the path it took before any of this existed.
+  const asleep = {live: () => false, save: () => {}};
+  if (typeof YJS === 'undefined' || typeof WebSocket === 'undefined') return asleep;
+
+  const doc = new YJS.Doc();
+  // Never zero. The room seeds its document with client id 0 so that a browser
+  // seeding itself from the same commit produces the same bytes — that equality
+  // is what makes a server restart a reconnection rather than a document merged
+  // into itself twice — and a second writer sharing that id would be
+  // indistinguishable from the seed.
+  if (doc.clientID === 0) doc.clientID = 1;
+  const text = doc.getText('body');
+  const together = document.getElementById('together');
+  const box = document.getElementById('conflict');
+
+  let socket = null;
+  let seed = null;      // the commit this tab's document was built from
+  let me = '';
+  let bound = false;    // the textarea and the document are wired together
+  let dead = false;     // asked to reload, or given up on: stay degraded
+  let saving = false;   // an `openproj:writing` this owes an `openproj:wrote`
+  let arrived = false;  // the socket has worked at least once
+  let attempts = 0;
+
+  // `btoa` over a spread argument list throws on a document of any size, and a
+  // full state update is tens of kilobytes. In chunks, which is the only reason
+  // this is not one line.
+  function b64(bytes) {
+    let out = '';
+    for (let at = 0; at < bytes.length; at += 0x8000)
+      out += String.fromCharCode.apply(null, bytes.subarray(at, at + 0x8000));
+    return btoa(out);
+  }
+  const raw = held => Uint8Array.from(atob(held), letter => letter.charCodeAt(0));
+
+  function send(message) {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+  }
+
+  function live() {
+    return bound && !dead && socket !== null && socket.readyState === WebSocket.OPEN;
+  }
+
+  // The textarea into the document. A textarea reports its whole value, so the
+  // edit has to be recovered from it: the common prefix and suffix bound what
+  // changed, which is one delete, one insert, or one of each. Recovered rather
+  // than replaced wholesale, because replacing the text would delete every
+  // character somebody else is standing in and reinsert it — their caret would
+  // jump to the top of the document on every keystroke of mine, and the commit
+  // would credit whoever typed last with the whole file.
+  function typed() {
+    const now = BODY.value, was = text.toString();
+    if (now === was) return;
+    let head = 0;
+    while (head < now.length && head < was.length && now[head] === was[head]) head++;
+    let tail = 0;
+    while (tail < now.length - head && tail < was.length - head
+           && now[now.length - 1 - tail] === was[was.length - 1 - tail]) tail++;
+    doc.transact(() => {
+      if (was.length - head - tail > 0) text.delete(head, was.length - head - tail);
+      if (now.length - head - tail > 0) text.insert(head, now.slice(head, now.length - tail));
+    }, 'typed');
+  }
+
+  // The document back into the textarea, with the caret left where the reader
+  // put it. Setting `.value` collapses the selection to the end, which on a page
+  // where somebody else is typing means the caret walks to the bottom of the
+  // document once a second.
+  function reflect() {
+    const want = text.toString(), was = BODY.value;
+    if (want === was) return;
+    let head = 0;
+    while (head < want.length && head < was.length && want[head] === was[head]) head++;
+    const shift = want.length - was.length;
+    const start = BODY.selectionStart, end = BODY.selectionEnd;
+    const moved = at => at <= head ? at : Math.max(head, at + shift);
+    BODY.value = want;
+    // Only when this box has the caret: `setSelectionRange` on an unfocused
+    // textarea also scrolls it, and a page scrolling itself because somebody
+    // else typed is the thing nobody asked for.
+    if (document.activeElement === BODY) BODY.setSelectionRange(moved(start), moved(end));
+    dirty();
+  }
+
+  doc.on('update', (update, origin) => {
+    // What came down the socket does not go back up it.
+    if (origin !== 'remote') send({t: 'update', u: b64(update)});
+  });
+  text.observe(() => reflect());
+
+  function names(people) {
+    if (!together) return;
+    const others = people.filter(login => login !== me);
+    // `textContent`, so a login off the wire is text and stays text.
+    together.textContent = others.length ? `also editing: ${others.join(', ')}` : '';
+  }
+
+  // The shell counts these in pairs, so they are announced from one place each
+  // and guarded by the same flag. Pressing Save both dispatches here and hears
+  // the room say `saving` a moment later; two writings against one wrote left
+  // the counter permanently above zero, which holds every later event back and
+  // means the banner never appears again for the life of the page.
+  function writing() {
+    if (saving) return;
+    saving = true;
+    dispatchEvent(new Event('openproj:writing'));
+  }
+
+  function settle(commit) {
+    if (!saving) return;
+    saving = false;
+    // Announced even when the write was refused, and from `onclose` when the
+    // socket goes mid-write: this is what a `finally` is on the paths that have
+    // a request to end.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: commit}));
+  }
+
+  function stop(why) {
+    dead = true;
+    bound = false;
+    settle(null);
+    names([]);
+    if (why) {
+      // Into its own box, never into the textarea: text put into the editing
+      // surface is text somebody saves back.
+      box.hidden = false;
+      box.textContent = why;
+    }
+    if (socket) socket.close();
+  }
+
+  function welcomed(message) {
+    const first = !bound;
+    if (seed && seed !== message.seed) return stop(message.why || 'reload this page');
+    seed = message.seed;
+    BASE.value = message.base;
+    me = message.you;
+    if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
+    if (first) {
+      // The first arrival is the one moment there is no shared history to
+      // reason with, so the three answers are decided by hand. `ORIGINAL_BODY`
+      // is what the server rendered into this page, which is the only marker of
+      // whether anything here is unsent work.
+      const mine = BODY.value !== ORIGINAL_BODY;
+      const theirs = text.toString() !== ORIGINAL_BODY;
+      if (mine && theirs) {
+        // Two edits and no common base — a restored draft against a room that
+        // has already moved. Refuse to guess: the room's text is what is in the
+        // box, and the draft goes in the conflict report to be pasted back by
+        // the person who wrote it.
+        const draft = BODY.value;
+        reflect();
+        box.hidden = false;
+        box.textContent = 'Somebody is editing this document, and it has moved since your '
+          + 'unsaved draft was written. The document is what is in the box now; your draft '
+          + 'was:\n\n' + draft;
+      } else if (mine) {
+        typed();
+      } else {
+        reflect();
+      }
+      bound = true;
+      BODY.addEventListener('input', typed);
+    } else {
+      // A reconnection. The document already merged everything typed while the
+      // socket was down, so there is nothing to decide.
+      reflect();
+    }
+    // Whatever this tab has that the room has not seen: nothing on a first
+    // connection to a room that seeded it, every keystroke made while the socket
+    // was down on a reconnection.
+    send({t: 'update', u: b64(YJS.encodeStateAsUpdate(doc, raw(message.sv)))});
+  }
+
+  function heard(message) {
+    if (message.t === 'welcome') return welcomed(message);
+    if (message.t === 'update') return YJS.applyUpdate(doc, raw(message.u), 'remote');
+    if (message.t === 'who') return names(message.people);
+    if (message.t === 'reload') return stop(message.why);
+    if (message.t === 'saving') {
+      // The shell's banner has to know a write is in the air before it lands:
+      // the server announces a commit to the event stream before this socket
+      // hears about it, and without this a room commit that nobody pressed
+      // arrives as news that a stranger moved the plan.
+      writing();
+      return;
+    }
+    if (message.t === 'saved') {
+      if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
+      BASE.value = message.commit;
+      ORIGINAL_BODY = text.toString();
+      remembered.forget(DRAFT);
+      box.hidden = true;
+      settle(message.commit);
+      dirty();
+      announce(message.outcome === 'merged'
+        ? 'saved, and somebody else’s change to this file was merged in'
+        : (message.pushed === false ? 'saved here, not yet pushed' : 'saved'));
+      return;
+    }
+    if (message.t === 'refused') {
+      box.hidden = false;
+      box.textContent = message.why;
+      settle(null);
+      announce('not saved');
+    }
+  }
+
+  function connect() {
+    if (dead) return;
+    const where = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
+      + '/api/coedit/' + encodeURIComponent(FORM.dataset.id);
+    try {
+      socket = new WebSocket(where);
+    } catch (error) {
+      return stop('');
+    }
+    socket.onopen = () => {
+      arrived = true;
+      attempts = 0;
+      send({t: 'hello', seed: seed, sv: b64(YJS.encodeStateVector(doc))});
+    };
+    socket.onmessage = event => {
+      let message;
+      try { message = JSON.parse(event.data); } catch (error) { return; }
+      heard(message);
+    };
+    // Nothing to say here: a failed handshake fires this and then `onclose`,
+    // which is where the one decision lives.
+    socket.onerror = () => {};
+    socket.onclose = () => {
+      settle(null);
+      names([]);
+      if (dead) return;
+      // A socket that has worked once and then closed is the normal case, not a
+      // fault: Cloud Run closes every one of them at five minutes. A socket that
+      // has never worked is a deployment without websockets, a proxy that drops
+      // the upgrade, or a reader who may not write — and asking it again forever
+      // is a red line in the console of a page that is working as designed.
+      if (!arrived && attempts >= 4) return stop('');
+      setTimeout(connect, Math.min(30000, 500 * Math.pow(2, attempts++)));
+    };
+  }
+
+  connect();
+  return {live, save(fields) {
+    // Anything typed since the last input event, then one commit over the
+    // socket: the fields from this form, the body from the room, one
+    // `store.write` against the room's base.
+    typed();
+    writing();
+    announce('saving…');
+    send({t: 'save', fields});
+  }};
+})();
+""")
+
 
 _DETAIL_STYLE = """
 .tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
@@ -5973,6 +6324,13 @@ article.entity:not(.editing) .req { display: none; }
 .entity.editing .field[hidden] { display: none; }
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
 .entity.editing .bodybar { display: flex; }
+/* Who else is typing in this document, first in the bar because it is the one
+   thing here that changes what you are about to do. `:empty` and not a `hidden`
+   attribute somebody has to remember to set: the list is written with
+   `textContent`, an empty string is the honest spelling of "nobody else", and a
+   flex gap around an empty span is .6rem of nothing between two controls. */
+.together { color: var(--accent); font-weight: 600; }
+.together:empty { display: none; }
 .editing-only { display: none; }
 .entity.editing .editing-only { display: block; }
 .entity.editing .read { display: none; }
@@ -8770,6 +9128,12 @@ def render_detail(
         statuses=STATUSES,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        # Only where there is a server to talk to. The static export renders the
+        # same template with `editable` false, so it carries neither the library
+        # nor the script — a page opened from a memory stick has no socket to
+        # open and nothing in it that would try.
+        yjs=_yjs() if base_commit is not None else Markup(""),
+        coedit=_COEDIT if base_commit is not None else Markup(""),
     )
     return _page(
         "openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail",

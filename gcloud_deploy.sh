@@ -286,6 +286,14 @@ gcloud builds submit \
 #                             which means one instance per in-flight request.
 #   --cpu-boost               a cold start clones the plan; this makes that fast
 #                             without paying for a warm instance.
+#   --timeout 300             the request deadline, and a co-editing socket is a
+#                             request — so every one of them is closed after five
+#                             minutes, whoever is typing. Reconnection is the
+#                             normal case rather than the exception, which is most
+#                             of why the editor uses a CRDT: a room is kept warm
+#                             for longer than this (coedit.LINGER_SECONDS) so a
+#                             tab that comes back joins the room it left instead
+#                             of being told to reload every five minutes.
 #
 # And never --no-cpu-throttling: two to three orders of magnitude more expensive,
 # from a flag whose name mentions neither billing nor instances. Google's

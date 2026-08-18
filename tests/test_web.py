@@ -388,16 +388,22 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     banner was dead on that one page and nowhere else. Nothing in the page says
     so — it fails silently, in the console, on one route.
     """
-    from openproj.render import _static_dir
-
     # Only the scripts this app writes. The vendored bundles declare their own
     # names at column 0 inside their own module wrappers — cytoscape-dagre has
     # two `defaults` in two webpack modules — and they are not ours to police.
     # Matched by content rather than by size: the smallest of them is 12 KB.
+    from openproj.render import _static_dir, _yjs
+
     vendored = {
         (_static_dir() / name).read_text()
         for name in ("cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js")
     }
+    # Yjs too, and by the text the page actually carries rather than by the file:
+    # it is the one vendored library that cannot be inlined verbatim, so its
+    # block is upstream's bytes with two lines rewritten. Compared against
+    # `_yjs()` and not against `yjs.bundle.mjs`, or the transformed copy reads as
+    # ours and this test starts policing lib0's minifier.
+    vendored.add(str(_yjs()))
     ours = "\n".join(
         block
         for block in re.findall(r"<script[^>]*>(.*?)</script>", client.get(route).text, re.S)
@@ -432,24 +438,36 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(
 
     # A write is a POST, PATCH or PUT. `/api/preview` renders markdown and commits
     # nothing, and `/api/index.json` is a GET.
-    writes = [
+    fetches = [
         url
         for url, _ in re.findall(
             r"fetch\(\s*(`[^`]*`|'[^']*')[^)]*?method: '(POST|PATCH|PUT)'", scripts, re.S
         )
         if "/api/preview" not in url
     ]
-    assert writes, route
+    assert fetches, route
+    # And a write that is not a fetch at all. The detail page's Save goes over
+    # the co-editing socket when a room is live, and the room commits on its own
+    # after twenty seconds of quiet — which is the write that needs this rule
+    # most, because nobody pressed anything and the news is otherwise
+    # indistinguishable from a stranger moving the plan.
+    over_socket = re.findall(r"send\(\{t: 'save'", scripts)
+    writes = len(fetches) + len(over_socket)
 
-    assert scripts.count("dispatchEvent(new Event('openproj:writing'));") == len(writes), (
-        f"{route}: {writes}"
+    assert scripts.count("dispatchEvent(new Event('openproj:writing'));") == writes, (
+        f"{route}: {fetches}"
     )
-    assert scripts.count("dispatchEvent(new CustomEvent('openproj:wrote'") == len(writes), (
-        f"{route}: {writes}"
+    assert scripts.count("dispatchEvent(new CustomEvent('openproj:wrote'") == writes, (
+        f"{route}: {fetches}"
     )
     # In a `finally`, or one refusal holds every later event back forever and the
-    # banner never appears again.
-    assert scripts.count("} finally {") >= len(writes), route
+    # banner never appears again. A socket write has no request to end, so what
+    # closes the pair there is `onclose` settling whatever was in the air —
+    # however the socket goes, and Cloud Run takes every one of them at five
+    # minutes.
+    assert scripts.count("} finally {") >= len(fetches), route
+    if over_socket:
+        assert "socket.onclose" in scripts and "settle(null)" in scripts, route
 
 
 def test_the_detail_page_says_which_entity_it_is_looking_at(client: TestClient):
