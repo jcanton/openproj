@@ -178,3 +178,118 @@ def test_the_goal_is_a_field_and_the_notes_are_the_body():
     # A record written before the field existed still loads, with an empty goal
     # rather than a refusal — every field here is optional at the type level.
     assert parse_cycle_text("---\ncycle: 1\nstarts_on: 2026-01-05\n---\n", "c.md").goal == ""
+
+
+# --------------------------------------------------------------------------- #
+# A person's own record: `people/<login>.md`
+#
+# The identity is the path and only the path. Every other record here carries its
+# id in the frontmatter as well, and has to — an id is minted, opaque and pointed
+# at by other records, while the filename carries a slug that drifts. Nothing
+# points at a person record, so a second copy of the login would buy nothing and
+# would buy `_identity_problems`: two answers to "which record is this", resolved
+# in opposite directions by two halves of the app.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "login",
+    ("jcanton", "a", "a" * 39, "OngChia", "yiluchen1066", "abishekg7", "a-b", "a--b"),
+)
+def test_a_login_becomes_the_one_path_it_may_be_written_at(login: str):
+    """1 to 39 of `[A-Za-z0-9-]`, no hyphen at either end — every one of these is
+    a real login from the team's own roster or the edge of the rule. `a--b` is
+    admitted although GitHub itself refuses it: being narrower than the wire buys
+    nothing this pattern exists for, and would refuse somebody the day GitHub
+    relaxes its own rule."""
+    from openproj.model import person_path
+
+    assert person_path(login) == f"people/{login}.md"
+
+
+@pytest.mark.parametrize(
+    "login",
+    (
+        "",                      # nobody
+        "-ann",                  # a leading hyphen
+        "ann-",                  # and a trailing one
+        "a" * 40,                # one over the limit
+        "../config/defaults",    # the reason this is a pattern and not a check
+        "a/b",
+        "ann.md",
+        "ann name",
+        ".",
+        "..",
+        "ann\n",                 # a trailing newline is not the end of a match
+        "ann\nbo",
+    ),
+)
+def test_a_name_that_is_not_a_login_gets_no_path_at_all(login: str):
+    """The writable surface is closed by construction, and this is the
+    construction. `people/` gains one file per person and there is no path
+    parameter anywhere near it: a login that does not match is not sanitised, not
+    escaped and not written — it has nowhere to arrive.
+
+    `ann\\n` is here because `$` in a Python pattern matches before a trailing
+    newline, which is how a path check comes to admit a name with a line break in
+    it. `\\Z` is what this one uses.
+    """
+    from openproj.model import person_path
+
+    assert person_path(login) is None
+
+
+def test_a_person_record_takes_its_login_from_the_path():
+    """The path is the identity. The record itself says only what was chosen."""
+    from openproj.model import parse_person_text
+
+    person = parse_person_text("---\nicon: fox\n---\n", "people/jcanton.md")
+
+    assert person.login == "jcanton"
+    assert person.icon == "fox"
+
+
+def test_a_login_typed_into_the_frontmatter_is_ignored_rather_than_believed():
+    """The one thing a second copy of the identity could do is disagree with the
+    first, and then which record this is depends on which half of the app you
+    ask. That is `_identity_problems`, two blocker rules and a special case in
+    the entity save, all paid for a fact the filename already carried — so here
+    the frontmatter simply has no say."""
+    from openproj.model import parse_person_text
+
+    person = parse_person_text("---\nlogin: bo\nicon: owl\n---\n", "people/ann.md")
+
+    assert person.login == "ann"
+
+
+def test_a_file_in_people_that_is_not_named_for_a_login_is_refused():
+    """A `people/notes.md` somebody dropped in by hand is one unreadable file
+    with a reason beside it — not a person called `notes` who quietly appears on
+    a page beside the real ones."""
+    from openproj.model import parse_person_text
+
+    with pytest.raises(ValueError, match="is not one"):
+        parse_person_text("---\nicon: fox\n---\n", "people/some notes.md")
+
+
+@pytest.mark.parametrize("written", ("icon: 7", "icon: [fox]", "icon: {a: b}"))
+def test_an_icon_nobody_can_draw_still_reads(written: str):
+    """Parse permissively, validate strictly — the same bargain `status` makes.
+    A hand edit should cost the drawing beside one name, never the file: a person
+    record that will not load is one that takes its login's mark off the page and
+    a line of the unreadable banner with it."""
+    from openproj.model import parse_person_text
+
+    assert parse_person_text(f"---\n{written}\n---\n", "people/ann.md").login == "ann"
+
+
+def test_a_sentence_somebody_wrote_about_themselves_survives_a_pick():
+    """The body is not a field and nothing here reads it — and it still has to
+    come back byte for byte, because the file is one a person may write in git.
+    That is `patch_text`'s promise rather than this record's, which is the point:
+    the record shape inherits it instead of restating it."""
+    original = "---\nicon: fox\n---\n\nAnn, who works on the dycore.\n"
+
+    patched = patch_text(original, {"icon": "owl"})
+
+    assert patched == "---\nicon: owl\n---\n\nAnn, who works on the dycore.\n"

@@ -33,7 +33,7 @@ from pathlib import Path
 import pygit2
 import pytest
 
-from openproj.model import parse_text
+from openproj.model import parse_person_text, parse_text
 from openproj.store import Store, StoreLocked, WriteResult
 
 PATH = "tasks/task-c00001.md"
@@ -756,3 +756,101 @@ def test_a_path_that_is_not_a_repository_is_refused_rather_than_searched_upwards
 
     assert "not a git repository" in str(refusal.value)
     assert "--bare" in str(refusal.value), "the message has to say what to do instead"
+
+
+# --------------------------------------------------------------------------- #
+# 8. One record per person, which is a decision about this file
+#
+# The icons feature is the reason `people/<login>.md` exists, and the shape was
+# chosen against the merge in this module rather than for tidiness. The version
+# that was abandoned kept every icon in `config/people.yaml` — the first writable
+# path that would have been YAML end to end — and everything in `_merge` above
+# treats a file as frontmatter plus prose: a per-key merge of the map at the top,
+# a three-way LINE merge of everything under it. Two edits nobody would call a
+# disagreement (they add a name to the roster, I clear my icon) therefore
+# line-merged into text that is not YAML, committed as `outcome: "merged"` with a
+# 200, and took the roster and every icon down on every page at once, on a branch
+# whose protection means the commit cannot be force-pushed away.
+#
+# So the two tests below are the two halves of the fix, and neither of them
+# mocks anything: they are the store, writing the files the endpoint writes.
+# --------------------------------------------------------------------------- #
+
+ANN_RECORD = "people/ann.md"
+BO_RECORD = "people/bo.md"
+
+ANN_ABOUT = "\nAnn, who works on the dycore.\n"
+
+
+def person(icon: str, body: str = "") -> str:
+    return f"---\nicon: {icon}\n---\n{body}"
+
+
+def test_two_people_choosing_at_once_write_two_files_and_neither_is_merged(
+    store: Store, repo_path: Path
+):
+    """The collision this feature invents, and the shape that makes it not one.
+
+    Both read the same HEAD and both write. Compare-and-swap here is scoped to
+    the path, so the second write finds HEAD moved, finds its OWN path untouched
+    by the move, and is retried silently — there is no merge to get right,
+    because the two people were never editing the same file. That is the whole
+    argument for a record per person: in the arrangement this replaced these two
+    writes were two edits of one YAML file, and the merge of them is what could
+    not be read back.
+    """
+    base = store.head()
+
+    first = store.write(
+        path=ANN_RECORD, content=person("fox"), base_commit=base,
+        author="ann", message="ann: icon fox",
+    )
+    second = store.write(
+        path=BO_RECORD, content=person("owl"), base_commit=base,
+        author="bo", message="bo: icon owl",
+    )
+
+    assert first.outcome == "committed"
+    assert second.outcome == "retried", second.conflict
+    head = store.head()
+    # Both landed, and both still read. Asked of the parser and not of the bytes:
+    # what went wrong last time was a file that still looked like a file.
+    assert parse_person_text(store.read(head, ANN_RECORD), ANN_RECORD).icon == "fox"
+    assert parse_person_text(store.read(head, BO_RECORD), BO_RECORD).icon == "owl"
+    # And bo's write left ann's file exactly as ann wrote it. Nothing merged,
+    # nothing re-serialised, nothing to disagree about.
+    assert store.read(head, ANN_RECORD) == person("fox")
+
+
+def test_a_merge_inside_one_persons_record_still_reads_back_as_a_person(
+    store: Store, repo_path: Path
+):
+    """The other half: when a merge does happen here, it happens over frontmatter.
+
+    Two tabs, or a person and an admin with a terminal. One side clears the icon,
+    the other rewrites the sentence under the fence — non-overlapping, which is
+    exactly the case the old arrangement answered with unparseable YAML. Here the
+    map is merged key by key and dumped, and the prose is merged as lines, so the
+    merge cannot produce a frontmatter the model will not read.
+    """
+    started = person("fox", ANN_ABOUT)
+    commit_directly(repo_path, {**SEED, ANN_RECORD: started}, "ann writes herself down")
+    base = store.head()
+    commit_directly(
+        repo_path,
+        {**SEED, ANN_RECORD: person("fox", "\nAnn, who works on the dycore and the halo.\n")},
+        "a longer sentence about ann",
+    )
+
+    written = store.write(
+        path=ANN_RECORD,
+        content=person("null", ANN_ABOUT),
+        base_commit=base,
+        author="ann",
+        message="ann: no icon",
+    )
+
+    assert written.outcome == "merged", written.conflict
+    landed = store.read(store.head(), ANN_RECORD)
+    assert parse_person_text(landed, ANN_RECORD).icon is None
+    assert "halo" in landed, "the other side's sentence survived"

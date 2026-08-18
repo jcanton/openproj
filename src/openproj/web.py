@@ -14,9 +14,13 @@ guarantee that nobody can name themselves in a request body.
 
 **The writable surface is closed by construction.** An id is admitted against a
 regex before anything is concatenated, and the directory comes from its prefix.
-`projects|pitches|tasks/<id>.md` is therefore the whole writable surface — which
-matters more than usual because branch protection means a bad write cannot be
-force-pushed away afterwards.
+`projects|pitches|tasks/<id>.md` is the shape of it, and every path added since
+is admitted the same way and by nothing else: `cycles/<n>.md` by a number,
+`issues/<id>.md` by its own pattern, `assets/<sha>` by the hash of the bytes, and
+`people/<login>.md` by `model.LOGIN_PATTERN` (see `PUT /api/icon`). No route
+takes a path, a directory or a file name from a request. This matters more than
+usual because branch protection means a bad write cannot be force-pushed away
+afterwards.
 
 **A save preserves the file.** Only touched fields travel, and `patch_text` applies
 them through a round-trip loader so comments, key order and list style survive.
@@ -57,20 +61,25 @@ from .index import build_index
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
+    PEOPLE_DIR,
     Config,
     Cycle,
     Entity,
     Issue,
+    Person,
     Pitch,
     Project,
     Task,
     Unreadable,
     parse_cycle_text,
     parse_issue_text,
+    parse_person_text,
     parse_text,
     patch_text,
+    person_path,
     read_config,
     readable,
+    record_paths_in,
     validate_all,
     what_json_can_carry,
     why_it_will_not_read,
@@ -151,14 +160,9 @@ MAX_GOAL_CHARS = 400
 
 
 def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] == CYCLE_DIR
-        ],
-        lambda path: parse_cycle_text(store.read(commit, path), path),
-    )
+    paths, too_deep = record_paths_in([CYCLE_DIR], store.paths(commit))
+    plans, refused = readable(paths, lambda path: parse_cycle_text(store.read(commit, path), path))
+    return plans, [*refused, *too_deep]
 
 
 def _cycle_path(number: int) -> str:
@@ -166,14 +170,9 @@ def _cycle_path(number: int) -> str:
 
 
 def _issues_at(store: Store, commit: str) -> tuple[list[Issue], list[Unreadable]]:
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] == ISSUE_DIR
-        ],
-        lambda path: parse_issue_text(store.read(commit, path), path),
-    )
+    paths, too_deep = record_paths_in([ISSUE_DIR], store.paths(commit))
+    issues, refused = readable(paths, lambda path: parse_issue_text(store.read(commit, path), path))
+    return issues, [*refused, *too_deep]
 
 
 def _issue_path(issue_id: str) -> str:
@@ -186,6 +185,44 @@ def _issue_path(issue_id: str) -> str:
     if not ISSUE_ID_PATTERN.match(issue_id):
         raise HTTPException(400, f"{issue_id!r} is not an issue id")
     return f"{ISSUE_DIR}/{issue_id}.md"
+
+
+def _people_at(store: Store, commit: str) -> tuple[list[Person], list[Unreadable]]:
+    """The person records at this commit, through the same door as everything else.
+
+    One file per person, so a file somebody broke by hand costs that person's
+    icon and nothing more. The arrangement this replaced kept every icon and the
+    roster in one YAML file, where the same hand edit cost all of them and the
+    roster check with them.
+
+    `record_paths_in` and not a filter of its own. The filter here asked whether
+    the FIRST segment of the path was `people`, which is true of
+    `people/team/ann.md`, and `login_of` then read `ann` off the filename and
+    handed back a second record for a login that already had one. Whichever of
+    the two paths sorted last was the icon on the page, and it was the one the
+    CLI could not see.
+    """
+    paths, too_deep = record_paths_in([PEOPLE_DIR], store.paths(commit))
+    people, refused = readable(
+        paths, lambda path: parse_person_text(store.read(commit, path), path)
+    )
+    return people, [*refused, *too_deep]
+
+
+def _person_or_why(text: str, path: str) -> tuple[Person | None, str]:
+    """One person record, or one line saying why these bytes are not one.
+
+    Through `readable` rather than a `try` of its own, and that is not ceremony:
+    `readable` is the one place in this codebase that catches `Exception`, and it
+    earns it because the ways a plan file fails are not one family — a ValueError
+    from the split, a ruamel ParserError, a pydantic ValidationError, a
+    UnicodeDecodeError. A tuple of the ones seen so far, written out here, would
+    be a denylist, and the icon route is asked this question three times: about
+    the file it is patching, about the candidate, and about what the commit
+    actually landed.
+    """
+    people, refused = readable([path], lambda source: parse_person_text(text, source))
+    return (people[0], "") if people else (None, refused[0].why)
 
 
 def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
@@ -210,21 +247,17 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
     # same way it does under the CLI.
     plans, refused_plans = _cycles_at(store, commit)
     issues, refused_issues = _issues_at(store, commit)
+    people, refused_people = _people_at(store, commit)
     return (
-        config.with_plans(plans).with_issues(issues),
-        [*refused, *refused_plans, *refused_issues],
+        config.with_plans(plans).with_issues(issues).with_people(people),
+        [*refused, *refused_plans, *refused_issues, *refused_people],
     )
 
 
 def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] in DIRECTORY.values()
-        ],
-        lambda path: parse_text(store.read(commit, path), path),
-    )
+    paths, too_deep = record_paths_in(DIRECTORY.values(), store.paths(commit))
+    entities, refused = readable(paths, lambda path: parse_text(store.read(commit, path), path))
+    return entities, [*refused, *too_deep]
 
 
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
@@ -464,10 +497,15 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     `<id>.md` works on a corpus nobody has renamed and fails on every real one.
     """
     directory = _directory_for(entity_id)
+    # Through `record_paths_in`, like every other reader of the tree, so the
+    # candidates are the files this directory actually keeps records in. Walking
+    # it recursively made `tasks/task-a00001--notes/notes.md` a candidate for
+    # `task-a00001`: its stem is `task-a00001--notes/notes`, which starts with
+    # the id, so a folder somebody made to keep notes in put a second claim on
+    # the id and the record above it answered 409 to every save.
+    candidates, _ = record_paths_in([directory], store.paths(commit))
     found = []
-    for path in store.paths(commit):
-        if not path.startswith(f"{directory}/") or not path.endswith(".md"):
-            continue
+    for path in candidates:
         stem = path[len(directory) + 1 : -len(".md")]
         if stem == entity_id or stem.startswith(f"{entity_id}--"):
             found.append(path)
@@ -627,6 +665,31 @@ def create_app(
         if not user.member:
             raise HTTPException(403, f"{user.login} is not a member of {org}")
         return user
+
+    def picker_for(request: Request) -> str:
+        """The login this request may set an icon for, or "" for nobody.
+
+        The same two questions `PUT /api/icon` asks, asked before a control is
+        drawn rather than after it is pressed: may this request write at all, and
+        is its login one a file in `people/` can be named for. Answered here by
+        calling `writer` rather than by a second reading of the session, because
+        two spellings of "who may write" is how a page comes to offer a button
+        whose only answer is 403 — the same defect as the cycle page that rendered
+        every number and refused every Save.
+
+        The roster is deliberately not one of the questions. `known_people` is the
+        validator's list and a name missing from it is a warning there, never a
+        refusal; making it decide who may pick an icon would put a hand-maintained
+        file on the write path of something it does not validate — and the version
+        of this that did exactly that drew a picker for everybody the moment
+        `config/people.yaml` stopped parsing, because an unreadable roster reads
+        as an empty one and an empty roster means "no check".
+        """
+        try:
+            user = writer(request)
+        except HTTPException:
+            return ""
+        return user.login if person_path(user.login) else ""
 
     def secure_for(request: Request) -> bool:
         """Whether cookies are marked Secure, from the scheme actually in use.
@@ -809,8 +872,11 @@ def create_app(
         return page(render.render_cycle(index, number, render.ROUTES, commit))
 
     @app.get("/people", response_class=HTMLResponse)
-    def people() -> HTMLResponse:
-        return page(render.render_people(index_now()[1], render.ROUTES))
+    def people(request: Request) -> HTMLResponse:
+        me = picker_for(request)
+        return page(
+            render.render_people(index_now()[1], render.ROUTES, editable=bool(me), me=me)
+        )
 
     @app.get("/new", response_class=HTMLResponse)
     def new(kind: str = "task") -> HTMLResponse:
@@ -1029,6 +1095,161 @@ def create_app(
         )
         if written.commit:
             await announce(written.commit, [f"cycle-{number}"])
+        return _result(written, base)
+
+    @app.put("/api/icon")
+    async def choose_icon(request: Request) -> JSONResponse:
+        """Your own icon, in your own record, and nothing else anywhere.
+
+        The writable surface is closed by construction — an id is admitted against
+        a regex and the directory comes from its prefix — and this adds a fourth
+        directory to it rather than a general config writer. `PUT /api/config/…`,
+        or a file name in the body, is the version where the bound stops being a
+        property of the shape and becomes a check inside a handler that somebody
+        can be talked out of, forget on the second door, or relax by one case.
+        `POST /api/entity` had no type check at all for as long as its sibling
+        did, because the closed surface was closed on one of two ways in.
+
+        So four things are not parameters here:
+
+        * **The directory.** `people/` is a constant in `model.person_path`, which
+          is the only function that puts anything after it.
+        * **The file name.** `LOGIN_PATTERN` is 1–39 of `[A-Za-z0-9-]` with no
+          hyphen at either end, so no spelling of `..` and no encoding of `/` has
+          anywhere to arrive. The same function answers the People page, so a
+          login this refuses is a login that gets no picker drawn.
+        * **The login.** It is `writer(request)`: the signed session, and the same
+          name that becomes the commit's author. A body that could name somebody
+          would make this an impersonation the route then has to defend against;
+          with no such field there is nothing to defend. That is also the answer
+          to "may somebody set another person's icon": no. It is a personal mark,
+          nobody else has a reason to choose it, and the version that admits an
+          admin is the version that takes a login off the wire. Somebody with
+          commit access edits the file, which is a first-class way to use this
+          tool rather than a workaround.
+        * **The value.** `render.ICONS` is the vocabulary and it is closed. An
+          icon the page cannot draw is refused here rather than stored and drawn
+          as nothing later, because a stored value nothing renders is the failure
+          this codebase keeps having: empty must not look like broken.
+
+        **One record per person is the whole design, and it is about the merge.**
+        The first attempt wrote everybody's icon into `config/people.yaml` — the
+        one writable path that would have been YAML end to end — and `store.write`
+        merges a file as frontmatter key-by-key plus a *line* merge of the prose
+        under it. Two edits nobody would call a disagreement therefore produced
+        text that is not YAML, committed as `outcome: "merged"` with a 200, and
+        took the roster and every icon down on every page at once, on a protected
+        branch. Here the settings are the frontmatter, so the merge over them is
+        the structured one and cannot make something the model will not read; and
+        two people picking at the same moment write two different paths, where
+        compare-and-swap is scoped, so there is no merge to get right. The
+        concurrency is not handled. It is absent.
+
+        The roster is not consulted. `known_people` is the validator's list, a
+        name missing from it is a warning there and never a refusal, and the live
+        plan's is empty on purpose — making it decide who may pick a picture would
+        put a hand-maintained file on this write path and let an unreadable one
+        decide it for everybody, which is exactly how the last version came to
+        draw a picker for people it would then refuse.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        # An allowlist of one key, and a refusal that names what else arrived. A
+        # request carrying `login` or `path` is a client written against the
+        # endpoint this deliberately is not, and answering 200 while quietly
+        # ignoring the extra field is how that client ships believing it works.
+        extra = sorted(set(payload) - {"icon"})
+        if extra:
+            raise HTTPException(
+                422, f"an icon request carries an icon and nothing else, not {', '.join(extra)}"
+            )
+        # `in`, not `.get`. An absent key is a client that never sent one, and
+        # reading it as "clear my icon" makes a destructive default out of the
+        # exact mistake the guard two lines above exists to catch:
+        # `JSON.stringify({icon: someUndefinedVar})` is `{}`, which arrived here
+        # as 200, `outcome: committed`, and somebody's icon gone. Clearing is a
+        # thing you ask for — `{"icon": null}` — not a thing you fail to say.
+        if "icon" not in payload:
+            raise HTTPException(422, "an icon request carries an icon; send null to clear it")
+        icon = payload["icon"]
+        if icon is not None and icon not in render.ICONS:
+            raise HTTPException(
+                422, f"{icon!r} is not an icon: expected one of {', '.join(render.ICONS)}, "
+                     "or null to clear it"
+            )
+        path = person_path(user.login)
+        if path is None:
+            raise HTTPException(
+                422,
+                f"{user.login!r} is not a name this plan can keep a file under; a login is "
+                "1 to 39 letters, digits and hyphens, and does not start or end with one",
+            )
+
+        base = store.head()
+        original = store.read(base, path)
+        # A record already there and already broken is not written over: the write
+        # would bury somebody's hand edit inside a commit that reads like a person
+        # choosing a picture. Refused with the reason, which is what a reader needs
+        # to fix it in git — and it costs one person's icon, because it is one
+        # person's file.
+        before, why = (
+            _person_or_why(original, path)
+            if original is not None
+            else (Person(login=user.login), "")
+        )
+        if before is None:
+            raise HTTPException(
+                422,
+                f"{path} does not read as a person right now, so nothing may be written "
+                f"over it: {why}",
+            )
+        # Nothing to do is not a commit. Pressing the icon you already have, or
+        # clearing one nobody set, would otherwise put a commit into the plan's
+        # history that changes no byte anybody can see — and `git log` on a plan is
+        # meant to be a record of decisions. A picker is a control people press
+        # twice.
+        if before.icon == icon:
+            return JSONResponse(
+                {"outcome": "unchanged", "commit": None, "conflict": None, "head": base}
+            )
+
+        # Only the one field travels, over a file that may have a body somebody
+        # wrote in git: `patch_text` rewrites the frontmatter alone and hands the
+        # prose back byte for byte. Through `_patched`, the same helper the entity
+        # and cycle saves use, because a file in git can be anything and an
+        # unguarded `patch_text` over one is a ruamel error under the router — a
+        # 500 whose body is plain text, which is the one answer the picker cannot
+        # read back to say what happened.
+        content = _patched(original or "---\n---\n", {"icon": icon}, None, path)
+        candidate, why = _person_or_why(content, path)
+        if candidate is None:
+            raise HTTPException(422, f"that would not read back as a person: {why}")
+
+        written = store.write(
+            path=path,
+            content=content,
+            base_commit=base,
+            author=user.login,
+            message=f"{user.login}: {f'icon {icon}' if icon else 'no icon'}",
+        )
+        if written.commit:
+            # Read back what LANDED, not what was offered. The check above is on
+            # the candidate, and the candidate is not what is committed the moment
+            # `store.write` merges — which is precisely where the last version of
+            # this feature wrote a file no page could read afterwards, past a guard
+            # that had already passed on text the merge then replaced. It costs one
+            # tree read and it is the only check here that can see a merge.
+            landed, why = _person_or_why(store.read(written.commit, path) or "", path)
+            if landed is None:
+                raise HTTPException(
+                    500,
+                    f"{path} was committed as {written.commit[:7]} and does not read back: "
+                    f"{why} — fix it in git",
+                )
+            # No ids: nothing on any page is named `people/<login>.md`, so every
+            # reader is told the plan moved rather than being told something they
+            # are looking at did.
+            await announce(written.commit, [])
         return _result(written, base)
 
     @app.post("/api/asset")

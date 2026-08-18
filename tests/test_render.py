@@ -3675,3 +3675,122 @@ def test_a_remembered_width_of_nothing_is_thrown_away(rendered: Path):
     assert "trustworthy(remembered.map(WIDTH_KEY))" in page
     # And the fit that writes them never writes a nothing in the first place.
     assert "WIDTHS[key] = Math.max(1, Math.round(width[i]))" in page
+
+
+# --------------------------------------------------------------------------- #
+# The icon a person picks for themselves
+#
+# Drawn on the People page and nowhere else. What is under test here is mostly
+# the choice of medium: an inline path is in the file, and the emoji it is not
+# would be resolved by whatever colour font the reader's machine happens to have
+# — which for a static export mailed to somebody, opened over `file://` with no
+# network, is the one thing on the page that would not arrive.
+# --------------------------------------------------------------------------- #
+
+
+def with_icons(root: Path, chosen: dict[str, str]) -> Index:
+    """The corpus, plus a person record for each login named here.
+
+    Built through `Config.with_people`, which is the door `load_repo` and the
+    server both use, so this cannot pass over an index shape the loaders do not
+    produce.
+    """
+    from openproj.model import Person
+
+    entities, config, unreadable = load_repo(root)
+    people = [Person(login=login, icon=icon) for login, icon in chosen.items()]
+    return build_index(
+        entities, config.with_people(people), date(2026, 8, 17), unreadable
+    )
+
+
+def someone(index: Index) -> str:
+    """A login the People page actually draws a row for, taken from the corpus
+    rather than written down: the page is built from who holds work, so a name
+    chosen by hand here is a name the page is free to stop listing."""
+    return sorted(entity.owner for entity in index.entities.values() if entity.owner)[0]
+
+
+def test_a_persons_icon_is_drawn_in_the_page_and_not_fetched(seed_root: Path):
+    """The whole argument for inline SVG over an emoji or an image, asserted in
+    one place: the mark is an element with a path in it, on the row of the person
+    who chose it, and the page asks nothing of the network to draw it.
+
+    An `<img>` would need a server or a directory beside the file; an emoji would
+    need a font, and on an ordinary Linux workstation with no colour-emoji font
+    it is a tofu box — a login whose icon is a box looks like the tool is broken
+    rather than like nobody has chosen.
+    """
+    from openproj.render import render_people
+
+    who = someone(with_icons(seed_root, {}))
+    page = render_people(with_icons(seed_root, {who: "fox"}))
+
+    row = page.split(f'data-login="{who}"')[1].split("</tbody>")[0]
+    assert '<svg class="icon"' in row, row[:400]
+    assert "<path" in row
+    assert "<img" not in row
+    assert "src=" not in row
+
+
+def test_a_plan_where_nobody_has_picked_one_draws_the_page_as_it_was(seed_root: Path):
+    """The ordinary case, and the live one: no `people/` directory at all. A
+    feature that needs somebody to have used it before the page works is a
+    feature that ships broken."""
+    from openproj.render import render_people
+
+    page = render_people(with_icons(seed_root, {}))
+
+    assert '<svg class="icon"' not in page
+    assert 'class="who"' in page, "the names are still there"
+    assert 'id="picker"' not in page
+
+
+def test_an_icon_nothing_draws_costs_the_drawing_and_nothing_else(seed_root: Path):
+    """`Person.icon` is a plain `str | None` and deliberately not an enum of the
+    twelve, for the same reason `status` is a plain `str`: a file written before
+    an icon was renamed has to survive being read. So a stored `dragon` is a name
+    the page has no drawing for, and the row is otherwise exactly the row."""
+    from openproj.render import render_people
+
+    who = someone(with_icons(seed_root, {}))
+    page = render_people(with_icons(seed_root, {who: "dragon"}))
+
+    assert '<svg class="icon"' not in page
+    assert f'data-login="{who}"' in page
+
+
+def test_no_icon_is_a_character_the_reader_has_to_own_a_font_for():
+    """The decision, guarded where it can be undone in one edit.
+
+    Twelve emoji would be a shorter constant and a worse page: an emoji is drawn
+    by the platform's colour font, so the same file draws a different fox on
+    every machine and no fox at all on one with no such font — and every other
+    thing these pages need is inside them, down to the typeface being a `data:`
+    URI. Read out of `render.py` rather than restated, so a thirteenth icon is
+    checked on the commit that adds it.
+    """
+    from openproj import render
+
+    for name, art in render._ICON_ART.items():
+        assert name.isascii() and name.islower(), name
+        assert art.isascii(), f"{name} is drawn with a character and not with a path"
+        assert "<path" in art or "<circle" in art, name
+
+
+def test_the_static_export_carries_the_drawings_and_offers_no_picker(
+    seed_root: Path, tmp_path: Path
+):
+    """`openproj render` is what happens if the service goes away, and a plan
+    read off a memory stick has to still say who is who. It also has no server,
+    so a control that posts to one would be a button that does nothing — the
+    export's own version of a dead end you can only find by pressing it."""
+    who = someone(with_icons(seed_root, {}))
+    render_static(with_icons(seed_root, {who: "owl"}), tmp_path)
+
+    page = read(tmp_path, "people.html")
+
+    assert '<svg class="icon"' in page
+    assert 'id="picker"' not in page
+    assert 'id="pick"' not in page
+    assert "/api/icon" not in page

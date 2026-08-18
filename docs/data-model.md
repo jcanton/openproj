@@ -3,6 +3,13 @@
 One markdown file per entity: YAML frontmatter, then the shaping document as the body. Three kinds —
 `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree with the kind.
 
+**A plan directory is flat.** `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/` and `people/`
+hold one file per record and nothing below them, because every reader here takes an identity off the
+filename. A `people/team/ann.md` is therefore not a record filed tidily — it is a second `ann`, and
+one that only half the application can see. A markdown file below one of these directories is
+reported as a file that is not a record, with the move that fixes it, on every page and by
+`openproj check`.
+
 Each kind is one thing and says so:
 
 - A **pitch** is the unit of the bet. It is what the betting table offers, what carries an appetite
@@ -109,6 +116,55 @@ earlier cycle and still running is being done with this cycle's weeks, so the pa
 is full says so and names what it counted. An overrun is measured against the end of *build*, never
 the end of the window — the cool-down is for the mess afterwards, and the timeline draws both rules
 so the flag and the line agree.
+
+## Who is on the team, and what each person picked
+
+Two separate things, in two separate places, and they answer different questions.
+
+`config/people.yaml` holds `known_people`, the **roster**. Empty means the check is off, which is the
+right default: a tracker that refuses a name because nobody has written a roster yet is a tracker
+nobody finishes setting up. When it does name people, an owner, assignee, reviewer or shaper who is
+not on it is a **warning** and never a blocker — the roster is maintained by hand, so it is always
+slightly behind reality and a new colleague must not be unassignable on their first day.
+
+`people/<login>.md` is one **record per person**, frontmatter and a body like every other record
+here, and it holds what that person chose for themselves:
+
+```yaml
+---
+icon: fox
+---
+```
+
+The two do not constrain each other. A record for somebody who is not on the roster is one person's
+preference; a roster entry with no record is somebody who has not picked anything. Both are ordinary,
+and nothing validates one against the other.
+
+**The login is the filename and is not a field.** Every other record here carries its id in the
+frontmatter as well, and has to: an id is minted, opaque, and pointed at by other records
+(`parent`, `depends_on`, `pitched_into`), while the filename carries a slug that drifts as titles are
+edited. Nothing points at a person record — it is looked up by the login, which is the filename — so
+a second copy would only give the two halves of the app something to disagree about.
+
+**The body is not a field either.** A person record has one, nothing reads it, and no page offers a
+box to type it in. It is a place to say who somebody is, in git, for whoever opens the file; a save
+rewrites the frontmatter and hands the prose back byte for byte, the same promise every record makes.
+
+**Why a file each rather than a map in the config.** `store.write` merges a file as frontmatter
+key-by-key plus a three-way *line* merge of the prose under it. A whole-YAML file put through that
+turns two edits nobody would call a disagreement into text that is not YAML — and one file holding
+everybody's icons is a file two people edit at once. One record per person means the settings *are*
+the frontmatter, so the merge over them is the structured one, and two people picking at the same
+moment write two different paths, where compare-and-swap is scoped. There is no merge to get right.
+
+The drawings are inline SVG paths in `render.py` — not emoji, which are resolved by whatever colour
+font the reader's machine happens to own and are a box on one that owns none, and this is a plan that
+has to render off a memory stick with no network. What is stored is the **name**, so `git log` reads
+as a decision and a drawing can be redrawn without touching anybody's choice.
+
+Somebody sets **their own** icon and no one else's: the endpoint that writes this takes no path, no
+file name and no login, so the only sentence it can express is "this session's login now has this
+icon". Setting somebody else's is a git edit, which is a first-class way to use this tool.
 
 ## The shaping document
 

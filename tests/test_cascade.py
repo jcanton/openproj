@@ -573,3 +573,95 @@ def test_a_bar_and_the_key_that_names_it_are_drawn_the_same_way(index: Index):
         # The key is the same 20x11 as every other key: on content-box a border
         # would have made the bordered ones two pixels taller than the rules.
         assert sheet.value(swatch, "box-sizing") == "border-box", status
+
+
+# --------------------------------------------------------------------------- #
+# B6: the icon picker, which is a popup that does no positioning, and the one
+#     line on this page that says a write was refused
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def people(index: Index) -> Sheet:
+    """The People page as the server draws it for the person signed in — the only
+    reader who gets a picker at all."""
+    from openproj.render import render_people
+
+    who = sorted(e.owner for e in index.entities.values() if e.owner)[0]
+    return sheet_of(render_people(index, ROUTES, editable=True, me=who))
+
+
+GROUP = PAGE + [el("table", id="roles"), el("tbody", "person"), el("tr", "group"), el("th")]
+LINE = GROUP + [el("div", "groupline")]
+
+
+def test_the_picker_is_hidden_by_the_attribute_and_not_by_source_order(people: Sheet):
+    """`hidden` on an element `display: flex` also reaches is a popup that is
+    always open.
+
+    The two rules are `.picker` at (0,1,0) and `.picker[hidden]` at (0,2,0), so
+    the attribute wins on specificity — which is the thing worth asserting,
+    because the page's own stylesheet is inlined *after* the shell's and a rule
+    that relied on order would be the loser in the other direction. Asked of a
+    cascade engine and not by looking for the rule: a rule being in the sheet
+    says nothing about whether it wins, which is what three frozen-column rules
+    found out.
+    """
+    shut = LINE + [el("div", "picker", id="picker", hidden="")]
+    open_ = LINE + [el("div", "picker", id="picker")]
+
+    assert people.value(shut, "display") == "none", says(people, shut, "display")
+    assert people.value(open_, "display") == "flex", says(people, open_, "display")
+
+
+def test_the_picker_takes_a_line_of_its_own_rather_than_floating_over_one(people: Sheet):
+    """It sits inside the group line, which is a wrapping flex row: `flex: 0 0
+    100%` is what makes it start a new line instead of squeezing in beside the
+    name. That is the whole reason it needs no `position`, no `z-index` and no
+    argument with the sticky header two rows up — this file's characteristic
+    failure is one page's positioning quietly beating another rule's."""
+    picker = LINE + [el("div", "picker", id="picker")]
+
+    assert people.value(picker, "flex") == "0 0 100%", says(people, picker, "flex")
+    assert people.value(picker, "position") is None, says(people, picker, "position")
+    assert people.value(picker, "z-index") is None, says(people, picker, "z-index")
+
+
+def test_a_mark_does_not_shrink_out_of_the_line_it_sits_in(people: Sheet):
+    """The group line wraps. A flex item defaults to `flex-shrink: 1`, so an icon
+    beside a long name and a load meter would be squeezed first — and the width
+    where it disappears is exactly the width where the name is all that is
+    left."""
+    mark = LINE + [el("span", "avatar")]
+
+    assert people.value(mark, "flex") == "none", says(people, mark, "flex")
+
+
+def test_a_refusal_lands_somewhere_a_sighted_reader_can_read_it(people: Sheet):
+    """This page had no `#state`, and that is a defect rather than a detail.
+
+    `announce` writes into `#state` where a page has one and into the shell's
+    `#announce` otherwise — and `#announce` carries `.sr-only`, which is
+    `position: absolute; clip-path: inset(50%)`. So every refusal this feature
+    could produce went to a screen reader and nowhere else: somebody sighted
+    pressed a picture and the button did nothing, silently, for good.
+
+    The region here is in the ordinary flow of the group line, which is what
+    makes it visible; asserted by asking for the two properties that hide the
+    other one rather than by looking for a class name.
+    """
+    state = LINE + [el("span", id="state")]
+
+    assert people.value(state, "position") is None, says(people, state, "position")
+    assert people.value(state, "clip-path") is None, says(people, state, "clip-path")
+    assert people.value(state, "color") == "var(--muted)", says(people, state, "color")
+
+
+def test_a_refusal_is_coloured_as_one_and_a_receipt_is_not(people: Sheet):
+    """One region carries both sentences a write produces, so the refusal has to
+    be told apart from the receipt by something. `.groupline #state.bad` is
+    (1,2,0) against `.groupline #state`'s (1,1,0) and wins on specificity — not
+    on order, which is the tie this file keeps losing."""
+    bad = LINE + [el("span", "bad", id="state")]
+
+    assert people.value(bad, "color") == "var(--warn)", says(people, bad, "color")

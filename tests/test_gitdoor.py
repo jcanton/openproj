@@ -133,6 +133,19 @@ BREAKAGES = [
         "tasks/task-d00009.md",
         "---\n# nothing but a note to myself\n---\n\nBody\n",
     ),
+    # The sixteenth, and the only one whose bytes are a perfectly good record.
+    # What is wrong with it is where it is: a plan directory holds one file per
+    # record and does not nest, because `login_of` and `_path_for` read an
+    # identity off the filename. The server matched on the FIRST segment of the
+    # path and drew it; `load_repo` globbed one level and never saw it. Reported
+    # for the same reason as the fifteen above — a file somebody committed that
+    # nothing reads is exactly the thing you cannot see is missing.
+    (
+        "a record filed one directory deeper than records live",
+        "tasks/archive/task-d00010.md",
+        "---\nid: task-d00010\nkind: task\ntitle: A record somebody filed away\n"
+        "status: ready\nowner: ann\nreviewers: [bo]\nperson_weeks: 1\n---\n",
+    ),
 ]
 
 NAMES = [name for name, _, _ in BREAKAGES]
@@ -285,6 +298,38 @@ def test_saving_a_file_that_will_not_parse_is_a_refusal_naming_it(door):
         assert PATH in answer.json()["detail"]
 
 
+def test_a_file_below_the_directory_does_not_claim_the_id_above_it(door):
+    """The write path walked `tasks/` recursively too, and it matched on a stem.
+
+    A directory somebody made to keep notes in — `tasks/task-c00001--notes/` —
+    puts a file whose stem is `task-c00001--notes/notes`, which starts with
+    `task-c00001--`, so `_path_for` found two files claiming one id and answered
+    409: the record itself became unsaveable, from a page that said nothing about
+    why, because of a file no read path had ever loaded. The read side and the
+    write side have to agree about which file is the record.
+    """
+    from test_web import SECRET, head
+
+    from openproj.auth import User, sign_session
+
+    path, _ = door
+    orphan = f"tasks/{TASK}--notes/notes.md"
+    commit_directly(path, SEED | {orphan: "---\ntitle: Notes\n---\n"}, "a folder of notes")
+
+    with TestClient(create_app(path, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(
+            "__Host-openproj_session", sign_session(User(login="ann", member=True), SECRET)
+        )
+        answer = client.patch(
+            f"/api/entity/{TASK}",
+            json={"base_commit": head(client), "fields": {"priority": "high"}},
+        )
+
+        assert answer.status_code == 200, answer.text
+        # And the file is still named, because it is still a file nothing reads.
+        assert any(orphan in line for line in unreadable_in(client.get("/").text))
+
+
 # --------------------------------------------------------------------------- #
 # The diagnostic tools, which is where you go once a page has said something
 # --------------------------------------------------------------------------- #
@@ -329,6 +374,35 @@ def test_check_names_every_file_it_could_not_read_and_fails(on_disk: Path, capsy
     assert "tasks/task-a00002.md" in out
     assert "cycles/0039.md" in out
     assert "\n2 blockers, " in out, out
+
+
+def test_check_names_a_record_filed_one_directory_too_deep(on_disk: Path, capsys):
+    """The half of this a page cannot show for you.
+
+    `load_repo` globbed each plan directory one level, so a `people/team/ann.md`
+    was not merely skipped — it was never looked at, and `check` said "0
+    blockers" about a file the served page was drawing as somebody's icon. That
+    is the diagnostic tool agreeing that everything is fine while the two halves
+    of the application disagree about which record is which, which is the exact
+    shape of the round that ended with `check` reporting nothing on a plan that
+    500ed every route. It walks the whole directory now and names what is down
+    there.
+    """
+    from openproj.cli import main
+
+    (on_disk / "people" / "team").mkdir(parents=True)
+    (on_disk / "people" / "team" / "ann.md").write_text(
+        "---\nicon: turtle\n---\n", encoding="utf-8"
+    )
+
+    code = main(["check", str(on_disk)])
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "people/team/ann.md" in out
+    # And what to do about it, which is the half of a message that gets acted on.
+    assert "move it up into people/" in out
+    assert "\n3 blockers, " in out, out
 
 
 def test_check_still_reports_the_records_that_did_read(on_disk: Path, capsys):

@@ -2360,6 +2360,7 @@ WRITE_ROUTES = (
     ("PUT", "/api/cycle/3"),
     ("POST", "/api/entity"),
     ("POST", "/api/preview"),
+    ("PUT", "/api/icon"),
 )
 
 
@@ -2510,3 +2511,389 @@ def test_a_cycle_number_no_save_would_accept_is_not_a_page(client: TestClient, n
     exist, and a dead end a person can only find by filling the form in first."""
     assert client.get(f"/cycle/{number}").status_code == 404
     assert client.get("/cycle/9999").status_code == 200, "a real cycle number still is one"
+
+
+# --- the icon a person picks for themselves ---------------------------------
+#
+# The first path this server writes that is not named for an id it minted, so
+# most of what is checked here is what the endpoint CANNOT do rather than what it
+# does. `PUT /api/icon` may express one sentence — this session's login now has
+# this icon — and the shape it writes it into is the other half of the feature:
+# one record per person, so that two people picking at once touch two paths and
+# the merge that destroyed `config/people.yaml` has nothing to run on. The store
+# suite owns that claim (`test_two_people_choosing_at_once_...`); what is here is
+# the door.
+
+ROSTER_FILE = "config/people.yaml"
+ANN_RECORD = "people/ann.md"
+ZOE = User(login="zoe", member=True)
+
+
+def record_of(repo_path: Path, login: str) -> str:
+    return file_at(repo_path, git_head(repo_path), f"people/{login}.md")
+
+
+def paths_at(repo_path: Path) -> list[str]:
+    repo = pygit2.Repository(str(repo_path))
+    found: list[str] = []
+
+    def walk(tree, prefix: str) -> None:
+        for entry in tree:
+            name = f"{prefix}{entry.name}"
+            if entry.type_str == "tree":
+                walk(repo[entry.id], f"{name}/")
+            else:
+                found.append(name)
+
+    walk(repo[git_head(repo_path)].tree, "")
+    return sorted(found)
+
+
+def test_an_icon_is_written_to_the_record_named_for_the_session(
+    client: TestClient, repo_path: Path
+):
+    """One file per person, named for the login the session carries, and the
+    commit authored by the same name — which is the team's only audit trail and
+    is worth as much here as on the four routes that already had it."""
+    response = client.put("/api/icon", json={"icon": "fox"})
+
+    assert response.status_code == 200, response.text
+    assert record_of(repo_path, "ann") == "---\nicon: fox\n---\n"
+    commit = commit_at(repo_path, git_head(repo_path))
+    assert commit.author.name == "ann"
+    assert commit.message == "ann: icon fox"
+
+
+def test_the_roster_is_not_touched_by_somebody_choosing_a_picture(
+    client: TestClient, repo_path: Path
+):
+    """`config/people.yaml` is the roster, four call sites read it, and the icon
+    write does not go near it.
+
+    This is the whole reason the record exists. The abandoned version kept the
+    icons in that file, and two people picking at the same moment merged it into
+    something that is not YAML — which does not fail loudly: `known_people` falls
+    back to empty, the roster check is silently off for everybody, and every
+    later icon write answers 422 on a branch nobody can force-push.
+    """
+    before = file_at(repo_path, git_head(repo_path), ROSTER_FILE)
+
+    assert client.put("/api/icon", json={"icon": "owl"}).status_code == 200
+
+    assert file_at(repo_path, git_head(repo_path), ROSTER_FILE) == before
+    # And it still reads as a roster afterwards, asked of a page that shows one
+    # rather than of the bytes: what went wrong last time was a file that still
+    # looked like a file while `known_people` had quietly fallen back to empty.
+    page = client.get("/cycle/37").text
+    assert re.findall(r'<tr data-login="([^"]+)"', page) == ["ann", "bo", "cy"]
+
+
+def test_a_second_person_picking_leaves_the_first_persons_record_alone(
+    client: TestClient, repo_path: Path
+):
+    """Two people, two files, and the second write is not an edit of the first.
+
+    In the arrangement this replaced these two were two keys in one map in one
+    file, which is a merge; here it is two paths, which is not. The store suite
+    proves the merge is gone — this is the same claim seen from the API, on the
+    bytes in git.
+    """
+    client.put("/api/icon", json={"icon": "fox"})
+    ann = record_of(repo_path, "ann")
+
+    client.cookies.set(SESSION_COOKIE, sign_session(ZOE, SECRET))
+    assert client.put("/api/icon", json={"icon": "owl"}).status_code == 200
+
+    assert record_of(repo_path, "ann") == ann
+    assert record_of(repo_path, "zoe") == "---\nicon: owl\n---\n"
+
+
+def test_nothing_in_the_request_can_name_somebody_else(
+    client: TestClient, repo_path: Path
+):
+    """A body that could name a login would make this an impersonation the route
+    then has to defend against; with no such field there is nothing to defend.
+
+    Refused rather than ignored, and that is the point of the test: a client
+    written against the endpoint this deliberately is not would otherwise get a
+    200, see its own icon change, and ship believing `login` works.
+    """
+    was = git_head(repo_path)
+
+    response = client.put("/api/icon", json={"icon": "fox", "login": "bo"})
+
+    assert response.status_code == 422, response.text
+    assert "login" in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
+@pytest.mark.parametrize("route", ("/api/icon/bo", "/api/icon/ann", "/api/icon/config"))
+def test_there_is_no_icon_route_that_takes_a_name(client: TestClient, route: str):
+    """The other half of the sentence above. A body cannot carry a login, and
+    there is no path that carries one either — asked of the router rather than
+    read off the source, because a route added later is exactly what this is
+    here to notice."""
+    assert client.put(route, json={"icon": "fox"}).status_code in (404, 405)
+
+
+@pytest.mark.parametrize("icon", ("dragon", "", "sun ", "SUN", "../config/defaults", 7, []))
+def test_an_icon_the_page_cannot_draw_is_refused_rather_than_stored(
+    client: TestClient, repo_path: Path, icon: object
+):
+    """`render.ICONS` is the vocabulary and it is closed at the door.
+
+    Stored and drawn as nothing later would be the failure this codebase keeps
+    having: a person picks something, the page shows no mark, and there is
+    nothing on screen to tell "nobody chose" from "the tool is broken".
+    """
+    was = git_head(repo_path)
+
+    response = client.put("/api/icon", json={"icon": icon})
+
+    assert response.status_code == 422, response.text
+    assert "is not an icon" in response.json()["detail"]
+    assert git_head(repo_path) == was
+
+
+def test_an_icon_is_one_of_the_ones_the_picker_offers(client: TestClient):
+    """Asked of `render.ICONS` rather than of a list written down here, so a
+    thirteenth icon is accepted by the server on the commit that draws it. A list
+    restated in a test is a list that goes stale."""
+    from openproj.render import ICONS
+
+    assert ICONS, "there is a vocabulary"
+    for name in ICONS:
+        assert client.put("/api/icon", json={"icon": name}).status_code == 200, name
+
+
+@pytest.mark.parametrize(
+    "login", ("../../etc/passwd", "a/b", "-ann", "ann.md", "a" * 40, "ann name")
+)
+def test_a_session_login_no_file_can_be_named_for_writes_nothing(
+    client: TestClient, repo_path: Path, login: str
+):
+    """The path is `people/<login>.md` and the login is the session's, so the
+    session is the only thing that could ever aim it somewhere else.
+
+    `model.person_path` is the whole of the bound — one pattern, one directory,
+    nothing concatenated before the match — and this is that claim asked through
+    the door rather than of the function. It cannot happen with a GitHub login,
+    which is exactly why it is worth a test: the guarantee has to hold because of
+    the shape and not because of who happens to be signing the sessions today.
+    """
+    client.cookies.set(SESSION_COOKIE, sign_session(User(login=login, member=True), SECRET))
+    was = paths_at(repo_path)
+
+    response = client.put("/api/icon", json={"icon": "fox"})
+
+    assert response.status_code == 422, response.text
+    assert "is not a name this plan can keep a file under" in response.json()["detail"]
+    assert paths_at(repo_path) == was
+
+
+def test_picking_the_icon_you_already_have_is_not_a_commit(
+    client: TestClient, repo_path: Path
+):
+    """`git log` on a plan is meant to be a record of decisions. A commit that
+    changes no byte anybody can see is not one, and a picker is a control people
+    press twice."""
+    client.put("/api/icon", json={"icon": "fox"})
+    was = git_head(repo_path)
+
+    response = client.put("/api/icon", json={"icon": "fox"})
+
+    assert response.json()["outcome"] == "unchanged"
+    assert git_head(repo_path) == was
+
+
+def test_clearing_an_icon_says_so_in_the_record_rather_than_deleting_it(
+    client: TestClient, repo_path: Path
+):
+    """A cleared icon is `icon: null` and the record stays.
+
+    Nothing here deletes a file — `store.write` inserts blobs and there is no
+    reason to teach it otherwise for this — and a record saying "no icon" is a
+    truer answer than one that never existed: it is what a person chose. Pressing
+    it twice is then the unchanged case above, so it costs no commit either.
+    """
+    client.put("/api/icon", json={"icon": "fox"})
+
+    assert client.put("/api/icon", json={"icon": None}).status_code == 200
+
+    assert record_of(repo_path, "ann") == "---\nicon: null\n---\n"
+    # On the row, not on the page: the picker below it is a row of twelve
+    # drawings and is always there for whoever may write.
+    row = client.get("/people").text.split('data-login="ann"')[1].split("</tbody>")[0]
+    assert '<svg class="icon"' not in row.split('id="picker"')[0]
+
+
+def test_a_sentence_somebody_wrote_about_themselves_survives_a_pick(
+    client: TestClient, repo_path: Path
+):
+    """The body is nobody's field and this tool offers no box for one — and it is
+    still a file a person may write in git, so a pick rewrites the frontmatter
+    and hands the prose back byte for byte. That is `patch_text`'s promise, which
+    this record gets by being the same shape as every other record here rather
+    than by making it again."""
+    commit_directly(
+        repo_path,
+        {**SEED, ANN_RECORD: "---\nicon: fox\n---\n\nAnn, who works on the dycore.\n"},
+        "ann writes herself down",
+    )
+
+    assert client.put("/api/icon", json={"icon": "owl"}).status_code == 200
+
+    assert record_of(repo_path, "ann") == (
+        "---\nicon: owl\n---\n\nAnn, who works on the dycore.\n"
+    )
+
+
+def test_a_record_that_does_not_read_is_not_written_over_and_costs_one_person(
+    client: TestClient, repo_path: Path
+):
+    """The file is already broken; a write on top would bury the break in a commit
+    that also looks like somebody picking a picture.
+
+    The second half is the reason for the whole shape. One person's record is
+    unreadable and the People page still draws every other person, says which file
+    is wrong, and answers 200 — where one file holding everybody's icons took the
+    roster and every mark down together.
+    """
+    commit_directly(
+        repo_path, {**SEED, ANN_RECORD: "---\nicon: [fox\n---\n"}, "a hand edit that broke"
+    )
+    was = git_head(repo_path)
+
+    response = client.put("/api/icon", json={"icon": "owl"})
+
+    assert response.status_code == 422, response.text
+    assert "does not read as a person" in response.json()["detail"]
+    assert git_head(repo_path) == was
+    page = client.get("/people")
+    assert page.status_code == 200
+    assert ANN_RECORD in page.text, "the banner names the file"
+    assert 'data-login="bo"' in page.text, "everybody else is still on the page"
+
+
+def test_a_stranger_and_a_non_member_are_both_refused(secure_client: TestClient):
+    """The gate is `writer`, per request, exactly as on the routes that already
+    had it. The non-member holds a *valid* session, which is the case a server
+    that only asks about membership at the callback would let through."""
+    assert secure_client.put("/api/icon", json={"icon": "fox"}).status_code == 401
+
+    secure_client.cookies.set(SESSION_COOKIE, sign_session(MALLORY, SECRET))
+
+    assert secure_client.put("/api/icon", json={"icon": "fox"}).status_code == 403
+
+
+def test_the_people_page_offers_the_picker_only_to_whoever_may_use_it(client: TestClient):
+    """A control that answers 403 is worse than no control: it is a dead end you
+    can only find by using it, which is the defect the `/cycle/-1` page had.
+
+    So the page asks the same function the endpoint does — `writer`, and then
+    `person_path` on the login it gives back. Signed in as ann there is exactly
+    one picker, on ann's own row and on nobody else's.
+    """
+    page = client.get("/people").text
+
+    assert page.count('id="picker"') == 1
+    assert page.count('id="pick"') == 1
+    ann = page.split('data-login="ann"')[1].split("</tbody>")[0]
+    assert 'id="pick"' in ann
+
+
+def test_a_reader_who_cannot_write_is_shown_no_picker(secure_client: TestClient):
+    """Reads are public, so this page answers a stranger — and answering them
+    with a control they cannot use is the same dead end from the other side."""
+    page = secure_client.get("/people").text
+
+    assert 'id="picker"' not in page
+    assert 'id="pick"' not in page
+
+
+def test_a_refusal_has_somewhere_on_this_page_to_be_read(client: TestClient):
+    """`announce` writes into `#state` where a page has one and into the shell's
+    `.sr-only` region otherwise. This page had none, so the first version of this
+    feature failed silently for every sighted reader: the picker was pressed, the
+    server said 422, and the button appeared to do nothing.
+
+    Drawn with the picker and inside the same group line, so it is never the case
+    that the control is on screen and the sentence about it is not — the filter
+    hides a whole person's `tbody` at once.
+    """
+    page = client.get("/people").text
+
+    ann = page.split('data-login="ann"')[1].split("</tbody>")[0]
+    assert page.count('id="state"') == 1
+    assert '<span id="state" role="status">' in ann
+    # Inside the group line, under the picker: the filter hides a person's whole
+    # `tbody` at once, so a region anywhere else on the page can be on screen
+    # while the control it speaks for is not.
+    line = ann.split('class="groupline"')[1]
+    assert line.index('id="picker"') < line.index('id="state"') < line.index("</div></th>")
+
+
+def test_the_page_a_stranger_reads_has_no_live_region_to_lose(secure_client: TestClient):
+    """The other side of it: `#state` exists exactly where a write can be made,
+    and the shell's own region is what everything else on the page uses."""
+    assert 'id="state"' not in secure_client.get("/people").text
+
+
+def test_an_icon_request_with_no_icon_in_it_is_not_a_clear(client: TestClient, repo_path: Path):
+    """`payload.get("icon")` read a body with no icon key as "clear mine", which
+    makes a destructive default out of the exact mistake the extra-key guard
+    beside it exists to catch: `JSON.stringify({icon: someUndefinedVar})` is
+    `{}`. It answered 200, committed, and somebody's icon was gone.
+
+    Clearing is a thing you ask for and not a thing you fail to say.
+    """
+    assert client.put("/api/icon", json={"icon": "fox"}).status_code == 200
+
+    refused = client.put("/api/icon", json={})
+
+    assert refused.status_code == 422
+    assert "send null to clear it" in refused.json()["detail"]
+    # And the explicit ask still works.
+    assert client.put("/api/icon", json={"icon": None}).status_code == 200
+
+
+def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient, repo_path: Path):
+    """`login_of` reads the login off the FILENAME and `load_repo` globs this
+    directory without recursing, so matching on the first path segment alone let
+    a hand-committed `people/team/ann.md` become a second record for `ann`: the
+    served page drew it, the CLI never saw it, and `check` said nothing. Two
+    halves of one application disagreeing about which record is which — and the
+    one a reader gets decided by which of two paths sorts last.
+
+    The version of this test written with the fix asserted `"turtle" not in
+    page`, which is a sentence about no version of this code: the picker below
+    the table draws all twelve icons by name, so that string is in the page
+    whatever `_people_at` does, and the test failed against a correct fix. Both
+    halves are asked here instead — on ann's own `<tbody>`, which is where an
+    icon says whose it is, and in the banner, which is where a file that is not a
+    record has to be named.
+    """
+    from pages import unreadable_in
+
+    from openproj.render import icon_svg
+
+    commit_directly(
+        repo_path,
+        {
+            **SEED,
+            ANN_RECORD: "---\nicon: fox\n---\n",
+            "people/team/ann.md": "---\nicon: turtle\n---\n",
+        },
+        "somebody files a second record for ann one directory down",
+    )
+
+    page = client.get("/people").text
+
+    # Ann's own mark: her `<tbody>`, up to the picker that sits inside it —
+    # twelve drawings, one per icon name, present on every version of this page.
+    ann = page.split('data-login="ann"')[1].split("</tbody>")[0].split('id="picker"')[0]
+    assert icon_svg("fox") in ann, "the record in people/ is the one that is drawn"
+    assert icon_svg("turtle") not in ann, "the nested file is not a second record for ann"
+    assert any("people/team/ann.md" in line for line in unreadable_in(page)), (
+        "a file somebody committed and nothing reads has to be named, not skipped"
+    )
