@@ -50,6 +50,7 @@ from .model import (
     cycle_of,
     days_after,
     is_bettable,
+    only_sections,
     required_at,
     sections,
     size_weeks,
@@ -8250,7 +8251,13 @@ _DECK_STYLE = """
   margin: 0 0 .35rem; font-size: 12px; font-weight: 600; letter-spacing: .06em;
   text-transform: uppercase; color: var(--paper-muted);
 }
-.slide h2 { font-size: 1.9rem; line-height: 1.15; margin: 0 0 .6rem; }
+/* The slide's OWN heading, and a child combinator rather than a descendant one.
+   `.slide h2` and `_DETAIL_STYLE`'s `.doc h2` are both (0,1,1); this stylesheet
+   is inlined second, so it took the tie and drew every heading inside the notes
+   at the size of the slide's title — a `## Solution` shouting over the line it
+   belongs under. Scoped to the direct child it does not enter `.doc` at all, and
+   `.doc h2`'s 1rem wins by being the only rule that matches. */
+.slide > h2 { font-size: 1.9rem; line-height: 1.15; margin: 0 0 .6rem; }
 .slide .who { display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: center;
               margin: 0 0 1rem; }
 .slide .who .tally { color: var(--paper-muted); font-size: 13px; }
@@ -8301,49 +8308,75 @@ _DECK_STYLE = """
 """
 
 
+# The section of the team's own task template that is about what HAPPENED. It is
+# the one heading a review is written under, so it is the one heading the deck
+# keeps out of the set below rather than dropping with the rest of the template.
+# Its checklist is already lifted to the points at the top of the slide; what is
+# left under it is the sentence somebody wrote about how the week went.
+_REVIEW_HEADINGS = frozenset({"progress"})
+
+# The plan, and therefore the only part of the bet a review can be measured
+# against: Problem is why, Appetite is how long, Rabbit holes and No-gos are the
+# edges. Solution is what was going to be done, which is the question the room
+# is in fact asking. Read out when the record says nothing else.
+_PLAN_HEADINGS = frozenset({"solution"})
+
+
 @lru_cache(maxsize=1)
-def _template_headings() -> frozenset[str]:
-    """Every heading the three templates ask for, read out of the templates.
+def _bet_headings() -> frozenset[str]:
+    """The sections that argue for the work, read out of the templates.
 
     Read and not listed, so a section added to `TEMPLATES` reaches this on the
     commit that adds it. A list written down by hand is a list that goes stale,
     and going stale here means the deck putting a whole shaping argument on a
     slide again.
+
+    Minus the review headings, which are in the template too and are the exact
+    thing a review slide is for. Subtracting them here rather than at the call
+    site is what keeps "which sections are the bet" one answer: `_review_html`
+    asks for what is not the bet, and the fallback asks for one section of it.
     """
-    return frozenset(name for body in TEMPLATES.values() for name in sections(body))
+    every = frozenset(name for body in TEMPLATES.values() for name in sections(body))
+    return every - _REVIEW_HEADINGS
 
 
-def _notes_html(entity: Entity, links: Links, assets: dict[str, str]) -> Markup:
-    """What is left of a shaping document once the slide has drawn the rest.
+def _review_html(entity: Entity, links: Links, assets: dict[str, str]) -> Markup:
+    """What the slide says under its points: what happened, and never nothing.
 
-    Two things come out, and both because a slide is not a document.
+    The team stands up and says how the work went, so the slide is built out of
+    the record in the order a person would say it: the title, the points with
+    their ticks, the pull requests, and then whatever the document says that the
+    room has not already heard.
 
-    The **checklist**, because the slide lifts those points to the top and ticks
-    them; left here as well they print twice. The detail page avoids that
+    **Not the shaping argument.** Problem, Appetite, Solution, Rabbit holes,
+    No-gos were written before the work started, to win the bet at the betting
+    table, and everybody in the room argued them there. Printed on a slide they
+    are two pages of 11px prose nobody can read from the third row, and three of
+    seven slides ran onto a second sheet.
+
+    **Not the checklist**, because the slide lifts those points to the top and
+    ticks them; left here as well they print twice. The detail page avoids that
     duplication by not lifting a leaf's checklist at all (`_progress_view`), and
     a deck cannot make that trade — `[x]` read from the back of a room is not a
     tick.
 
-    The **sections the templates ask for**, because they are the bet and not the
-    review. Problem, Appetite, Solution, Rabbit holes, No-gos: written before the
-    work started, to argue for it. Printed on a slide they are two pages of 11px
-    prose that nobody in the room can read and that the person presenting is not
-    going to talk through — three of seven slides ran onto a second sheet before
-    this, which is the one thing a deck must not do. What is left is what
-    somebody wrote *in addition* to the template: a note, a table, a figure.
-    That is the "body for additional notes and screenshots", and the shaping
-    document is one click away on the record's own page.
+    **But never nothing.** Selecting by *taking the template away* was upside
+    down: a well-shaped record IS the template, so the sections it names were the
+    whole document and five of the seven slides in the demo's own cycle 37 came
+    out as a heading, a chip, a size, an owner and an id over blank paper. A deck
+    of blank paper is worse than a deck that says too much, because there is
+    nothing on the sheet to talk from. So when a record kept no notes, the slide
+    falls back to its Solution: the plan, in the team's own words, which is what
+    the presenter is about to say happened or did not. It carries its own heading
+    so that nobody mistakes the plan for a report of it.
     """
-    return _markdown(
-        without_comments(
-            without_sections(
-                without_checklist(_drop_repeated_title(entity.body, entity.title)),
-                _template_headings(),
-            )
-        ),
-        links,
-        assets,
-    )
+    said = without_checklist(without_comments(_drop_repeated_title(entity.body, entity.title)))
+    # Comments are stripped BEFORE the emptied-heading prune inside
+    # `without_checklist`, or a `## Solution` holding nothing but the template's
+    # own guidance survives as a heading over a blank — which is the same defect
+    # in a smaller place.
+    happened = without_sections(said, _bet_headings())
+    return _markdown(happened or only_sections(said, _PLAN_HEADINGS), links, assets)
 
 
 def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -> dict:
@@ -8378,7 +8411,7 @@ def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -
             for done, said in checklist_items(entity.body)
         ],
         "prs": [_pr_link(ref) for ref in entity.prs],
-        "body": _notes_html(entity, links, assets),
+        "body": _review_html(entity, links, assets),
     }
 
 

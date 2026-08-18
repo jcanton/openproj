@@ -272,6 +272,11 @@ def served(
     routes = {
         "table": "/", "graph": "/graph", "timeline": "/timeline", "people": "/people",
         "cycles": "/cycles", "cycle 41": "/cycle/41",
+        # The deck was left out of a census that says it covers every page the
+        # server draws, and it is the page a field is most likely to leave the
+        # building on: a deck is printed and handed to somebody who was not in
+        # the room. Same cycle as the one above, so both read the same plan.
+        "deck 41": "/deck/41",
         "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
         # `/detail` is the whole plan and read-only; an entity's own page is the
         # editable one, and the only one that carries the combobox.

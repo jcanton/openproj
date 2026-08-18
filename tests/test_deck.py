@@ -301,12 +301,13 @@ def test_the_points_are_drawn_once_and_not_twice(deck: str):
 
 
 def test_a_slide_carries_the_notes_and_not_the_shaping_argument(deck: str):
-    """Problem, Appetite, Solution, Rabbit holes and No-gos are the bet: written
-    before the work started, to argue for it. Printed on a slide they are two
-    pages of prose nobody in the room can read and nobody is going to talk
-    through — three of seven slides ran onto a second sheet before this, which is
-    the one thing a deck must not do. What is left is what somebody wrote in
-    addition to the template."""
+    """Problem, Appetite, Rabbit holes and No-gos are the bet: written before the
+    work started, to argue for it at the betting table where everybody in the
+    room already argued them. Printed on a slide they are two pages of prose
+    nobody can read from the third row and nobody is going to talk through —
+    three of seven slides ran onto a second sheet before this, which is the one
+    thing a deck must not do. What leads is what somebody wrote about what
+    happened."""
     slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
 
     assert "JSBACH is Fortran" not in slide["doc"], "the Problem section is the bet"
@@ -320,15 +321,41 @@ def test_the_sections_a_slide_leaves_out_are_read_off_the_templates():
     """Derived from the code rather than listed beside it: a section added to
     `TEMPLATES` reaches the deck on the commit that adds it. A list written by
     hand is a list that goes stale, and going stale here means a whole shaping
-    argument back on a slide."""
-    from openproj.render import TEMPLATES, _template_headings
+    argument back on a slide.
 
-    found = _template_headings()
+    Minus `## Progress`, which is in the task template and is the one heading a
+    review is written under. Dropping it with the rest is what made the deck
+    delete the only section it existed to show."""
+    from openproj.render import TEMPLATES, _bet_headings
+
+    found = _bet_headings()
 
     assert {"problem", "appetite", "solution", "rabbit holes", "no-gos",
-            "for later", "progress"} == found
+            "for later"} == found
+    assert "progress" not in found
     for body in TEMPLATES.values():
-        assert not without_sections(body, found).strip("# \n"), body[:40]
+        assert not without_sections(body, found | {"progress"}).strip("# \n"), body[:40]
+
+
+def test_the_progress_section_is_what_a_review_slide_is_for(index: Index):
+    """The checklist is lifted to the points at the top, and whatever else
+    somebody wrote under `## Progress` is the sentence they are about to say out
+    loud. It was being deleted along with the rest of the template."""
+    said = Task(id="task-0c1001", kind="task", title="Port JSBACH", owner="ann",
+                person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
+                assigned_on=TODAY, reviewers=["bo"],
+                body="## Problem\n\nFortran.\n\n## Progress\n\n- [x] Bindings\n\n"
+                     "Blocked on a savepoint nobody has generated yet.\n")
+    other = [e for e in corpus() if e.id != "task-0c1001"]
+    config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
+    found = slides_in(render_deck(build_index([*other, said], config, TODAY), 37, ROUTES))
+    slide = next(s for s in found if s["heading"] == "Port JSBACH")
+
+    assert "Blocked on a savepoint nobody has generated yet." in slide["doc"]
+    assert "Fortran" not in slide["doc"]
+    # Lifted to the points, so it is not printed twice.
+    assert [p["text"] for p in slide["points"]] == ["Bindings"]
+    assert "Bindings" not in slide["doc"]
 
 
 def test_a_pull_request_on_a_slide_is_a_link_to_the_pull_request(deck: str):
@@ -497,16 +524,68 @@ def test_the_cycle_page_offers_the_deck_only_where_there_is_one(index: Index):
     assert "deck" not in re.findall(r'href="([^"]*)"', render_cycle(index, 37, STATIC))
 
 
-def test_the_demo_renders_a_deck_for_the_cycle_it_ships(demo_index: Index):
-    """The demo corpus is the first thing anybody points this at, and it keeps no
-    checklist anywhere — which is the case a deck must survive rather than draw
-    an empty box for: a slide with no points is a title, a status and whatever
-    notes there are."""
+def test_no_slide_in_the_shipped_demo_is_a_heading_over_an_empty_page(demo_index: Index):
+    """The defect this whole design was rewritten for, asked of the corpus the
+    commit itself names.
+
+    A well-shaped record IS the shaping template — Problem, Appetite, Solution,
+    Rabbit holes, No-gos and nothing else — so selecting a slide's body by taking
+    the template away took the whole document away with it. Rendering `seed/` at
+    cycle 37 produced seven slides of which FIVE carried a heading, a status
+    chip, a size, an owner and an id over blank paper, and printed to A4 they
+    were five empty sheets. The demo keeps no checklist anywhere, which is why it
+    is the corpus that finds this: there were no points to fall back on either.
+
+    So the assertion is not that a page was returned. It is that every slide has
+    something on it a person could stand up and read out — a sentence of prose,
+    or ticked points, or a pull request — and enough of it to be worth a sheet of
+    paper."""
     found = slides_in(render_deck(demo_index, 37, ROUTES))
+    work = found[1:]
 
     assert len(found) == 7, [s["heading"] for s in found]
-    assert all(not s["points"] for s in found[1:])
     assert "CI for the standalone driver v1.5" in [s["heading"] for s in found]
+
+    blank = [
+        s["heading"] for s in work
+        if not s["points"] and not s["prs"] and len(s["doc"]) < 80
+    ]
+    assert blank == [], f"{len(blank)} of {len(work)} slides have nothing to present"
+    for slide in work:
+        # Words, and the record's own words: the heading, the chip and the id are
+        # already excluded by reading `doc` rather than `text`.
+        assert len(slide["doc"].split()) >= 20, slide["heading"]
+
+
+def test_a_record_that_is_only_its_bet_falls_back_to_what_it_was_going_to_do(
+    demo_index: Index,
+):
+    """Nobody wrote a note under any of these, so the Solution is what is left:
+    the plan, in the team's own words, which is exactly what the presenter is
+    about to say happened or did not. Problem is why, Appetite is how long,
+    Rabbit holes and No-gos are the edges — none of them is the question the room
+    is asking.
+
+    It keeps its own heading so that nobody in the room mistakes the plan for a
+    report of it."""
+    slide = next(s for s in slides_in(render_deck(demo_index, 37, ROUTES))
+                 if s["heading"] == "Port JSBACH")
+
+    assert slide["doc"].startswith("Solution")
+    assert "Finish the forward-elimination half" in slide["doc"]
+    # And still not the rest of the argument.
+    assert "The first slice of ICON-Land" not in slide["doc"], "Problem is the bet"
+    assert "Do not write a fourth TDMA" not in slide["doc"], "Rabbit holes are the bet"
+
+
+def test_a_note_somebody_wrote_beats_the_plan_it_would_have_fallen_back_to(deck: str):
+    """The fallback is a floor and not a preference. Where there is a note about
+    what happened, that is the slide; the Solution appears only where the record
+    said nothing else at all."""
+    slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
+
+    assert "The gather/scatter seam is the one to watch." in slide["doc"]
+    assert "Solution" not in slide["doc"]
 
 
 def test_a_hand_written_checklist_reaches_the_slide_it_belongs_to(golden_index: Index):
@@ -728,6 +807,25 @@ def test_a_point_is_a_line_of_markdown_and_is_rendered_as_one(index: Index):
     assert "https://github.com/C2SM/icon4py/pull/1409" in page
     # And it stays on the row with its own tick rather than starting a paragraph.
     assert "<li class=\"\"><span class=\"box\" aria-hidden=\"true\">☐</span><p>" not in page
+
+
+def test_a_heading_inside_the_notes_is_not_drawn_at_the_size_of_the_slides_own(deck: str):
+    """`.slide h2` and `_DETAIL_STYLE`'s `.doc h2` are both (0,1,1), and this
+    stylesheet is inlined second, so the descendant selector took the tie and
+    drew every heading in the body at 1.9rem — a `## Solution` shouting over the
+    title it is written under. It matters now that a slide falls back to a
+    section of the record and prints that section's own heading.
+
+    Fixed by scoping and not by weight: `.slide > h2` does not enter `.doc` at
+    all, so `.doc h2` wins by being the only rule that matches it."""
+    sheet = sheet_of(deck)
+    own = SLIDE + [el("h2")]
+    inside = SLIDE + [el("div", "doc"), el("h2")]
+
+    assert sheet.value(own, "font-size") == "1.9rem", sheet.selectors_reaching(own, "font-size")
+    assert sheet.value(inside, "font-size") == "1rem", (
+        sheet.selectors_reaching(inside, "font-size")
+    )
 
 
 def test_a_status_on_a_slide_is_a_word_and_not_the_ladder(deck: str):

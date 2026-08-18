@@ -12,7 +12,6 @@ import math
 import re
 from collections.abc import Callable, Iterable, Iterator
 from datetime import date, timedelta
-from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
@@ -871,7 +870,10 @@ def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
 # --------------------------------------------------------------------------- #
 
 _FENCE = re.compile(r"^\s{0,3}(```|~~~)")
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+# The hashes are a group of their own because a section's NAME is flat and its
+# EXTENT is not: `sections` keys on group 2 and ignores depth, while the two
+# functions that carve a section out of a body have to know where it ends.
+_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 _CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s")
 # Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
 _FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
@@ -928,7 +930,7 @@ def sections(body: str) -> dict[str, str]:
     for line, in_code in _outside_code(body):
         heading = None if in_code else _HEADING.match(line)
         if heading:
-            current = found.setdefault(heading.group(1).strip().lower(), [])
+            current = found.setdefault(heading.group(2).strip().lower(), [])
         elif current is not None:
             current.append(line)
     return {name: "\n".join(lines).strip() for name, lines in found.items()}
@@ -995,45 +997,91 @@ def without_checklist(body: str) -> str:
     )
 
 
+def _under(kept: list[tuple[str, bool]], at: int, level: int) -> Iterator[tuple[str, bool]]:
+    """Everything under the heading at `at`: down to the next one as shallow."""
+    for line, in_code in kept[at + 1:]:
+        heading = None if in_code else _HEADING.match(line)
+        if heading and len(heading.group(1)) <= level:
+            return
+        yield line, in_code
+
+
 def _without_emptied_headings(kept: list[tuple[str, bool]]) -> str:
-    """Lines, minus every heading that now has nothing whatever under it."""
+    """Lines, minus every heading whose whole subtree is now empty.
+
+    Its subtree, and not the lines up to the next heading of any depth at all. A
+    `## Progress` holding nothing but the checklist and a `### Still to do` under
+    it has no text of its OWN once the boxes are lifted, and deleting it on that
+    reading left `### Still to do` on the page under nothing — a subsection
+    orphaned from the heading that said what it was part of.
+
+    Headings inside the subtree do not count as text either. Otherwise `## A`
+    over an empty `### B` keeps A alive on the strength of a line that is about
+    to be deleted by this same rule, and A is left as a heading over a blank.
+    """
     out: list[str] = []
     for at, (line, in_code) in enumerate(kept):
-        if not in_code and _HEADING.match(line):
-            after = takewhile(
-                lambda pair: pair[1] or not _HEADING.match(pair[0]), kept[at + 1:]
-            )
-            if not any(text.strip() for text, _ in after):
+        heading = None if in_code else _HEADING.match(line)
+        if heading:
+            under = _under(kept, at, len(heading.group(1)))
+            if not any(
+                text.strip()
+                for text, nested in under
+                if nested or not _HEADING.match(text)
+            ):
                 continue
         out.append(line)
     return "\n".join(out).strip("\n")
 
 
-def without_sections(body: str, names: Iterable[str]) -> str:
-    """The body without these sections, heading and all.
+def _by_section(body: str, names: Iterable[str], keep: bool) -> str:
+    """The named sections with everything nested under them, kept or dropped.
 
-    Named the way `sections` keys them — lowercased, and flat regardless of
-    heading depth, because the template is flat and a reader asking for "no-gos"
-    does not care whether somebody wrote `##` or `###`.
+    Named the way `sections` keys them — lowercased, and matched at any depth,
+    because the template is flat and a reader asking for "no-gos" does not care
+    whether somebody wrote `##` or `###`.
 
-    For the deck, which asks for the sections the templates do NOT ask for: the
-    shaping argument is what was written before the work started, and a review
-    slide is about what happened. Passing the set in rather than knowing it here
-    is what lets the caller read it off `TEMPLATES` instead of listing it again.
+    The *extent* is not flat, and reading it flatly was a bug: every heading
+    ended the section above it, so a `### Second rabbit hole` written under
+    `## Rabbit holes` escaped a drop of "rabbit holes" and arrived on a slide
+    with nothing above it to say what it belonged to. A section runs to the next
+    heading of its own level or shallower, which is what a reader means by it.
     """
     wanted = {name.strip().lower() for name in names}
-    kept: list[str] = []
-    # Carried across the loop rather than recomputed, because what decides
-    # whether a line goes is the heading above it. A `##` inside a fence never
-    # reaches this, so a document quoting a template keeps its example whole.
-    dropping = False
+    out: list[str] = []
+    # The level of the matched heading whose subtree this is inside, or None.
+    # Carried across the loop rather than recomputed, because what decides a line
+    # is the heading above it. A `##` inside a fence never reaches this, so a
+    # document quoting a template keeps its example whole.
+    depth: int | None = None
     for line, in_code in _outside_code(body):
         heading = None if in_code else _HEADING.match(line)
-        if heading:
-            dropping = heading.group(1).strip().lower() in wanted
-        if not dropping:
-            kept.append(line)
-    return "\n".join(kept).strip("\n")
+        if heading and (depth is None or len(heading.group(1)) <= depth):
+            named = heading.group(2).strip().lower() in wanted
+            depth = len(heading.group(1)) if named else None
+        if (depth is not None) is keep:
+            out.append(line)
+    return "\n".join(out).strip("\n")
+
+
+def without_sections(body: str, names: Iterable[str]) -> str:
+    """The body without these sections, heading and subsections and all.
+
+    For the deck, which asks a shaping document for the part of it a review is
+    about. Passing the set in rather than knowing it here is what lets the caller
+    read it off `TEMPLATES` instead of listing it again.
+    """
+    return _by_section(body, names, keep=False)
+
+
+def only_sections(body: str, names: Iterable[str]) -> str:
+    """Just these sections, heading and subsections and all.
+
+    The other half of the same walk. The deck needs both: a review slide leads
+    with what happened, and falls back to the one section of the bet that says
+    what was going to happen when nobody wrote anything else down.
+    """
+    return _by_section(body, names, keep=True)
 
 
 # --------------------------------------------------------------------------- #

@@ -14,7 +14,11 @@ manage.
 
 `/deck/<n>` is the odd one out and is a route only. It is the deck for one cycle's review meeting —
 a title slide, then one slide per piece of work bet into that cycle, each with its ticked points,
-its percentage and its pull requests, and it prints one slide to a page. It takes a cycle number, so
+its percentage, its pull requests and what the record says about what happened, and it prints one
+slide to a page. That last part is a floor and not a filter: the shaping argument stays off the
+sheet because the room argued it at the betting table, but a slide that has nothing else falls back
+to the record's Solution, because a heading over blank paper is nothing to present from. It takes a
+cycle number, so
 it has no place in a static export that writes one file per view of the whole plan; it is reached
 from that cycle's own page, and it is deliberately not a seventh tab. It is also the one page that
 carries its images inside itself as `data:` URIs, because it is the one page meant to be handed to

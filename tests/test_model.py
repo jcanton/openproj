@@ -9,10 +9,13 @@ from openproj.model import (
     Project,
     Task,
     checklist,
+    only_sections,
     parse_cycle_text,
     patch_text,
     sections,
     split_front_matter,
+    without_checklist,
+    without_sections,
 )
 
 
@@ -133,6 +136,42 @@ def test_an_empty_section_is_present_and_empty_so_a_reader_can_tell_them_apart()
     """`## No-gos` with nothing under it is the corpus's most common state, and it
     is not the same as never having written the heading."""
     assert sections("## No-gos\n\n## Progress\n\n- [ ] a\n")["no-gos"] == ""
+
+
+def test_a_section_is_dropped_with_everything_written_underneath_it():
+    """A section's NAME is flat and its EXTENT is not. Ending a section at the
+    next heading of any depth at all let a `### Second one` written under
+    `## Rabbit holes` escape a drop of "rabbit holes" — and arrive on a review
+    slide with nothing above it to say what it was part of, which is worse than
+    printing the whole section."""
+    body = (
+        "## Rabbit holes\n\nThe TDMA.\n\n### Second one\n\nThe savepoints.\n\n"
+        "## Notes\n\nKept.\n"
+    )
+    assert without_sections(body, {"rabbit holes"}) == "## Notes\n\nKept."
+    assert "The savepoints." in only_sections(body, {"rabbit holes"})
+    assert "Kept." not in only_sections(body, {"rabbit holes"})
+
+
+def test_a_heading_survives_a_subsection_that_survives_it():
+    """Emptying a heading of its own lines is not emptying it. `## Progress` that
+    held the checklist and a `### Still to do` under it has no text of its own
+    once the boxes are lifted, and deleting it on that reading left the
+    subsection on the page under nothing."""
+    kept = without_checklist("## Progress\n\n- [x] one\n\n### Still to do\n\nThe halo.\n")
+
+    assert "### Still to do" in kept
+    assert "## Progress" in kept, "the subsection was left with no heading over it"
+    assert "- [x] one" not in kept
+
+
+def test_a_heading_over_nothing_but_another_empty_heading_goes_too():
+    """The other half of the same rule: a heading inside the subtree does not
+    count as content, or `## A` stays alive on the strength of a `### B` that
+    this same pass is about to delete, and prints as a heading over a blank."""
+    kept = without_checklist("## A\n\n### B\n\n- [ ] gone\n\n## C\n\nReal text.\n")
+
+    assert kept == "## C\n\nReal text."
 
 
 def test_an_empty_frontmatter_block_is_frontmatter_and_not_body():
