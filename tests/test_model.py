@@ -9,6 +9,7 @@ from openproj.model import (
     Project,
     Task,
     checklist,
+    checklist_items,
     only_sections,
     parse_cycle_text,
     patch_text,
@@ -104,6 +105,28 @@ def test_a_checklist_is_counted_including_its_sub_items():
         "- [ ] Task 2\n"
     )
     assert checklist(body) == (2, 4)
+
+
+def test_a_box_at_the_end_of_a_file_is_a_box():
+    """The end of a line is as good as a space after `]`, and this is not a
+    corner: `_TASK_TEMPLATE` ends `## Progress\\n\\n- [ ]` with nothing after the
+    bracket, so it was the shape of every task this tool creates. Wanting real
+    whitespace there meant that line was not a point at all — `checklist` did not
+    count it, so a fresh task reported nothing about its own progress, and
+    `without_checklist` did not lift it, so a review slide printed the literal
+    characters `[ ]` under a `## Progress` nothing had emptied.
+
+    This is the half of that fix which is not about the deck: a point with no
+    words is a point wherever progress is counted, which is what `checklist_items`
+    already said it was."""
+    assert checklist_items("- [ ]") == [(False, "")]
+    assert checklist_items("## Progress\n\n- [x]") == [(True, "")]
+    assert checklist("- [x] Gather to rank 0\n- [ ]") == (1, 2)
+    assert without_checklist("## Progress\n\n- [ ]") == ""
+    # Still a marker and not a prefix: what follows the bracket has to be the end
+    # of the line or a space, or `[ ]` is somebody's prose about a box.
+    assert checklist_items("- [ ]x nothing ticked here") == []
+    assert checklist_items("- [] no room in it") == []
 
 
 def test_a_body_with_no_checklist_counts_nothing_rather_than_zero_of_zero():

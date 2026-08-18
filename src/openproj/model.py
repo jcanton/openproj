@@ -874,7 +874,23 @@ _FENCE = re.compile(r"^\s{0,3}(```|~~~)")
 # EXTENT is not: `sections` keys on group 2 and ignores depth, while the two
 # functions that carve a section out of a body have to know where it ends.
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
-_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s")
+# A box, and the end of a line is as good as a space after it. Demanding real
+# whitespace there dropped exactly one line, and it is the line this tool writes
+# itself: `_TASK_TEMPLATE` (`render.py`) ends `## Progress\n\n- [ ]` with nothing
+# after the bracket, so every task created from it held an unticked point that
+# `checklist` did not count and `without_checklist` did not take away — and it
+# reached a review slide as the literal characters `[ ]` under a `## Progress`
+# heading that nothing had emptied.
+#
+# The regex was the defect and not the template. An empty box at the end of a
+# file is a box; a reader sees one, GitHub ticks one, and the fix on the other
+# side — a trailing space in a template — is invisible, and the next editor,
+# formatter or pre-commit hook to touch the file deletes it and puts this back.
+# Widening it is deliberately not deck-local: a point with no words now counts
+# wherever progress is counted, which is what `checklist_items` already says it
+# means — "a point that is only a box keeps its place in the count and says
+# nothing, which is exactly what is on the page it came from".
+_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\](?=\s|$)")
 # Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
 _FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -1032,6 +1048,19 @@ def _without_emptied_headings(kept: list[tuple[str, bool]]) -> str:
                 continue
         out.append(line)
     return "\n".join(out).strip("\n")
+
+
+def without_emptied_headings(body: str) -> str:
+    """The body, minus every heading whose whole subtree is empty.
+
+    The same prune `without_checklist` finishes with, reachable on its own,
+    because taking a checklist away is not the only way to empty a heading. The
+    deck also takes whole sections away — and a `## Notes` whose only content was
+    a `### Solution` under it came out of that drop as a heading over blank paper,
+    which is the exact thing the prune exists to stop, arriving one step after
+    `without_checklist` had already run and could no longer see it.
+    """
+    return _without_emptied_headings(list(_outside_code(body)))
 
 
 def _by_section(body: str, names: Iterable[str], keep: bool) -> str:

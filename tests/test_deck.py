@@ -71,7 +71,8 @@ class _Slides(HTMLParser):
             self._depth = 1
             self.found.append(
                 {"classes": frozenset(classes), "under": "", "heading": "",
-                 "points": [], "prs": [], "images": [], "doc": "", "text": []}
+                 "points": [], "prs": [], "images": [], "doc": "", "note": "",
+                 "text": []}
             )
             return
         if not self._depth:
@@ -87,6 +88,12 @@ class _Slides(HTMLParser):
             self._where, self._text = "heading", []
         elif tag == "p" and "under" in classes:
             self._where, self._text = "under", []
+        # The line about the slide rather than about the work: what was cut, or
+        # that the record says nothing. Read as its own field, because a slide
+        # saying it was cut and a slide that simply is short are two different
+        # sheets and `text` cannot tell them apart.
+        elif tag == "p" and "note" in classes:
+            self._where, self._text = "note", []
         elif tag == "ul" and "points" in classes:
             self._where = "points"
         elif tag == "ul" and "prs" in classes:
@@ -105,6 +112,8 @@ class _Slides(HTMLParser):
             self._slide()["heading"], self._where = said, ""
         elif tag == "p" and self._where == "under":
             self._slide()["under"], self._where = said, ""
+        elif tag == "p" and self._where == "note":
+            self._slide()["note"], self._where = said, ""
         elif tag == "li" and self._where == "points":
             point = self._slide()["points"][-1]
             # The box is the first character and is the tick itself: a test that
@@ -358,6 +367,63 @@ def test_the_progress_section_is_what_a_review_slide_is_for(index: Index):
     assert "Bindings" not in slide["doc"]
 
 
+def test_a_task_that_is_still_this_tools_own_template_has_a_slide_to_present():
+    """Built from `_TASK_TEMPLATE` and deliberately not from a body written here,
+    because a hand-written body is what kept this out of sight for a whole round:
+    a body typed into a test gets a trailing space after `- [ ]` without anybody
+    deciding to put one there, and that space was the whole difference.
+
+    The template ends `## Progress\\n\\n- [ ]` at the end of the file. Every check
+    that reads a checklist wanted whitespace after the bracket, so that line was
+    not a point — not counted, and not lifted out of the notes — and `## Progress`
+    was therefore never emptied. It is the one template heading the deck keeps, so
+    a task nobody has typed a word into printed as a heading over the literal
+    characters `[ ]`: the blank slide of the round before, respelt."""
+    from openproj.render import _TASK_TEMPLATE
+
+    fresh = Task(id="task-0f0002", kind="task", title="Nobody wrote this one down",
+                 owner="cy", person_weeks=1.0, status="ready", cycle=37,
+                 reviewers=["ann"], body=_TASK_TEMPLATE)
+    config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
+    page = render_deck(build_index([*corpus(), fresh], config, TODAY), 37, ROUTES)
+    slide = next(s for s in slides_in(page) if s["heading"] == "Nobody wrote this one down")
+
+    assert "[ ]" not in slide["text"], "a checkbox printed as its own source"
+    assert "Progress" not in slide["text"], "a heading with nothing left under it"
+    assert slide["doc"] == ""
+    # Empty is not broken and it is not a failure: the sheet says which it is,
+    # because the person holding it cannot go and look.
+    assert slide["note"] == "Nothing is written on this record."
+    # And the box the template ships is a point like any other, everywhere the
+    # points are counted — which is the part of this that is not about the deck.
+    assert slide["points"] == [{"done": False, "text": ""}]
+    assert "0/1" in slide["text"]
+
+
+def test_a_heading_the_bet_emptied_is_not_printed_over_blank_paper():
+    """The prune that takes away a heading with nothing under it runs inside
+    `without_checklist`, one step BEFORE the sections that are the bet come out —
+    so a heading emptied by *that* drop was never pruned at all. A `## Notes`
+    whose only content was a `### Solution` written under it arrived as
+    `<h2>Notes</h2>` and nothing else, and was truthy enough to suppress the
+    fallback that exists to stop exactly this."""
+    only = Task(id="task-0c1001", kind="task", title="Port JSBACH", owner="ann",
+                person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
+                assigned_on=TODAY, reviewers=["bo"],
+                body="## Notes\n\n### Solution\n\nThe plan lives here.\n")
+    others = [e for e in corpus() if e.id != "task-0c1001"]
+    config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
+    page = render_deck(build_index([*others, only], config, TODAY), 37, ROUTES)
+    slide = next(s for s in slides_in(page) if s["heading"] == "Port JSBACH")
+
+    assert "Notes" not in slide["doc"], "a heading whose whole content was the bet"
+    assert slide["doc"], "and therefore nothing at all was left to print"
+    # What is left of this record IS its plan, so the plan is what it says — under
+    # the heading that stops the room mistaking it for a report.
+    assert slide["doc"].startswith("Solution")
+    assert "The plan lives here." in slide["doc"]
+
+
 def test_a_pull_request_on_a_slide_is_a_link_to_the_pull_request(deck: str):
     """A dead reference teaches people the field is decorative, and the deck is
     where the field is most read: the real one links a PR on nearly every slide.
@@ -551,10 +617,31 @@ def test_no_slide_in_the_shipped_demo_is_a_heading_over_an_empty_page(demo_index
         if not s["points"] and not s["prs"] and len(s["doc"]) < 80
     ]
     assert blank == [], f"{len(blank)} of {len(work)} slides have nothing to present"
-    for slide in work:
-        # Words, and the record's own words: the heading, the chip and the id are
-        # already excluded by reading `doc` rather than `text`.
-        assert len(slide["doc"].split()) >= 20, slide["heading"]
+
+
+def test_every_slide_of_the_frozen_corpus_is_worth_the_sheet_it_prints_on(
+    golden_index: Index,
+):
+    """The same claim as the demo's above, made where it can be held to. `seed/`
+    is the demo and conftest says in as many words that it is free to be
+    rewritten, so a count of words asserted against it is a count that goes stale
+    on somebody's copy edit. The frozen corpus is the one that has to stop
+    moving, and it is the only prose in this suite nobody wrote for a test.
+
+    What it holds is that every slide gives the presenter something: enough of
+    the record's own words to stand up and read out, or points to walk, or a pull
+    request to open. The cycles come off the corpus rather than being listed, so
+    a cycle added to it is covered by the commit that adds it."""
+    for number in sorted({e.cycle for e in golden_index.entities.values() if e.cycle}):
+        found = slides_in(render_deck(golden_index, number, ROUTES))
+
+        assert len(found) > 1, number
+        for slide in found[1:]:
+            # Words, and the record's own words: the heading, the chip and the id
+            # are already excluded by reading `doc` rather than `text`.
+            assert (
+                len(slide["doc"].split()) >= 20 or slide["points"] or slide["prs"]
+            ), (number, slide["heading"])
 
 
 def test_a_record_that_is_only_its_bet_falls_back_to_what_it_was_going_to_do(
@@ -576,6 +663,49 @@ def test_a_record_that_is_only_its_bet_falls_back_to_what_it_was_going_to_do(
     # And still not the rest of the argument.
     assert "The first slice of ICON-Land" not in slide["doc"], "Problem is the bet"
     assert "Do not write a fourth TDMA" not in slide["doc"], "Rabbit holes are the bet"
+
+
+def long_plan(paragraphs: int = 12) -> str:
+    """A Solution nobody ever wrote a note against, at the length people write
+    them: the frozen corpus already carries two of 232 and 301 words."""
+    said = "The savepoint interface is the seam nobody has looked at yet."
+    return "## Solution\n\n" + "\n\n".join(
+        f"Step {n}. " + " ".join([said] * 4) for n in range(paragraphs)
+    )
+
+
+def test_the_plan_a_slide_falls_back_to_is_cut_to_the_sheet_and_says_so(tmp_path: Path):
+    """The fallback is a floor and not a licence to print a whole section. Left
+    unbounded it hands back the one thing a deck must not do — `_review`'s own
+    docstring is where that phrase comes from — and the corpus is already close:
+    printed with Chrome, a slide carrying six points and two pull requests
+    crosses onto a second sheet between 201 and 211 rendered words, and the
+    frozen corpus is at 206 on one slide of cycle 28.
+
+    So it is bounded, and because a slide that silently prints half a section is
+    its own lie, the sheet says so. Asked of paper, because the claim is about
+    paper: this record's Solution is five hundred words and its slide is one
+    sheet with a line on it saying where the rest is."""
+    from browser import chrome, printed
+
+    plan = long_plan()
+    unread = Task(id="task-0c1002", kind="task", title="Coordinate with MPI-M", owner="bo",
+                  person_weeks=1.0, parent="pitch-0c0001", status="done",
+                  assigned_on=TODAY, reviewers=["ann"], body=plan)
+    others = [e for e in corpus() if e.id != "task-0c1002"]
+    config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
+    page = render_deck(build_index([*others, unread], config, TODAY), 37, ROUTES)
+    slide = next(s for s in slides_in(page) if s["heading"] == "Coordinate with MPI-M")
+    where = tmp_path / "long.html"
+    where.write_text(page, encoding="utf-8")
+
+    assert len(plan.split()) > 500, "the case is a section that cannot fit"
+    assert printed(chrome(), where, tmp_path / "long.pdf") == len(slides_in(page))
+    assert slide["note"] == "Cut to fit the sheet — the rest of the plan is on the record."
+    # Cut, and still the plan: the top of the section is what the room is read.
+    assert slide["doc"].startswith("Solution")
+    assert "Step 0." in slide["doc"]
+    assert "Step 11." not in slide["doc"]
 
 
 def test_a_note_somebody_wrote_beats_the_plan_it_would_have_fallen_back_to(deck: str):
@@ -773,17 +903,35 @@ def test_paper_is_defined_where_every_reader_matches_it(deck: str):
     ), "a paper token is defined somewhere a reader can fail to match"
 
 
-def test_the_deck_prints_one_slide_to_a_page(deck: str, tmp_path: Path):
+def test_every_deck_this_suite_can_reach_prints_one_slide_to_a_page(
+    deck: str, demo_index: Index, golden_index: Index, tmp_path: Path
+):
     """The claim is about paper, so it is asked of paper. A `break-after: page`
     that resolves is a promise a stylesheet cannot keep on its own — the same
     trap the frozen column's edge fell into, where the asserted value resolved
-    exactly and Chrome painted nothing at all."""
+    exactly and Chrome painted nothing at all.
+
+    Of every corpus and not only of the fixture above, which is three lines a
+    record and could not overflow a sheet if it tried. `seed/` is what anybody
+    points this at first, and the frozen corpus is the only prose in the suite
+    nobody wrote for a test: 206 rendered words on one slide of cycle 28, which
+    is about where the cliff turns out to be. A bound argued from a measurement
+    is worth what the measurement is re-run against."""
     from browser import chrome, printed
 
-    where = tmp_path / "deck.html"
-    where.write_text(deck, encoding="utf-8")
+    browser = chrome()
+    decks = {"the fixture": deck, "seed 37": render_deck(demo_index, 37, ROUTES)}
+    decks |= {
+        f"corpus {number}": render_deck(golden_index, number, ROUTES)
+        for number in sorted({e.cycle for e in golden_index.entities.values() if e.cycle})
+    }
 
-    assert printed(chrome(), where, tmp_path / "deck.pdf") == len(slides_in(deck))
+    for name, page in decks.items():
+        where = tmp_path / f"{name.replace(' ', '-')}.html"
+        where.write_text(page, encoding="utf-8")
+        slides = len(slides_in(page))
+
+        assert printed(browser, where, where.with_suffix(".pdf")) == slides, name
 
 
 def test_a_point_is_a_line_of_markdown_and_is_rendered_as_one(index: Index):

@@ -57,6 +57,7 @@ from .model import (
     what_json_can_carry,
     without_checklist,
     without_comments,
+    without_emptied_headings,
     without_sections,
 )
 from .schedule import build_end
@@ -8173,6 +8174,11 @@ _DECK = """
   {% endif %}
 
   {% if s.body %}<div class="doc">{{ s.body }}</div>{% endif %}
+  {#- What the slide did, when what it did is not simply "printed the record":
+      the plan cut to fit, or a record with nothing written on it. On the sheet,
+      because the sheet is the copy that leaves the room and a slide that
+      silently dropped half a section looks exactly like a finished one. -#}
+  {% if s.note %}<p class="note">{{ s.note }}</p>{% endif %}
 </article>
 {% else %}
 {#- Empty is not broken, and it is not a failure either: this cycle exists and
@@ -8277,6 +8283,10 @@ _DECK_STYLE = """
 .slide .prs { list-style: none; margin: 0 0 1rem; padding: 0; font-size: 1.15rem; }
 .slide .prs li { margin: .2rem 0; }
 .slide .doc img { max-width: 100%; height: auto; }
+/* The line about the slide rather than about the work. Muted and at label size,
+   because it is not what the presenter is there to say — but printed, because
+   the alternative is a sheet that cannot be told from a complete one. */
+.slide .note { margin: .6rem 0 0; color: var(--paper-muted); font-size: 13px; }
 .slide.empty { display: flex; flex-direction: column; justify-content: center; }
 
 @page { size: A4 landscape; margin: 12mm; }
@@ -8321,6 +8331,38 @@ _REVIEW_HEADINGS = frozenset({"progress"})
 # is in fact asking. Read out when the record says nothing else.
 _PLAN_HEADINGS = frozenset({"solution"})
 
+# How much of a sheet the plan may take when it is standing in for a review
+# nobody wrote. Measured rather than guessed, with Chrome `--print-to-pdf` at the
+# A4 landscape this stylesheet asks for: a slide carrying six points and two pull
+# requests crosses onto a second sheet between 201 and 211 rendered words, and
+# one carrying neither holds more than 300. 120 leaves the rest of the sheet to
+# the points and the pull requests, which are the record's own report of the
+# cycle and outrank a quotation of what was going to happen.
+#
+# Bounded here and deliberately nowhere else. What somebody wrote under
+# `## Progress` is their report and the words they are about to say, so all of it
+# prints and `@media print` already says what happens if it does not fit — it
+# spills, honestly, because clipping a person's own report is the worse failure.
+# The Solution is not that. It was written for the betting table, and the deck is
+# quoting it only because the record said nothing else; a quotation has no
+# business pushing the presenter's slide onto a second sheet.
+_PLAN_WORDS = 120
+
+# Where one sentence ends and the next begins, with the gap captured so the text
+# goes back together exactly as it was written. Cutting on a word instead lands
+# inside `[the driver](assets/0123…)` or a pair of backticks often enough to
+# matter, and a slide printing broken markdown is a worse lie than one that runs
+# long; rejoining a list's items with a plain space would silently make them a
+# paragraph.
+_SENTENCE = re.compile(r"(?<=[.!?])(\s+)")
+
+# The one line on a slide that is about the slide rather than about the work.
+# Both are on the SHEET and not merely in the app: the sheet is what leaves the
+# room, and a slide that quietly printed half a section, or nothing at all, is a
+# lie nobody in the room is in a position to catch.
+_PLAN_CUT = "Cut to fit the sheet — the rest of the plan is on the record."
+_NOTHING_SAID = "Nothing is written on this record."
+
 
 @lru_cache(maxsize=1)
 def _bet_headings() -> frozenset[str]:
@@ -8340,7 +8382,44 @@ def _bet_headings() -> frozenset[str]:
     return every - _REVIEW_HEADINGS
 
 
-def _review_html(entity: Entity, links: Links, assets: dict[str, str]) -> Markup:
+def _to_fit(text: str, budget: int) -> tuple[str, bool]:
+    """As much of `text` as `budget` words buys, and whether any was left behind.
+
+    Cut between blocks, and inside a block too long to fit on its own between
+    sentences — the two boundaries markdown survives being cut on. The first
+    block goes in whatever it costs, because it is the section's own heading and
+    a heading with the paragraph under it cut away is the blank slide again.
+
+    So this is a bound and not a limit: the last block admitted may run over it.
+    That is the trade. A hard cut at the 120th word is a cut inside whatever the
+    120th word was part of, and a link sawn in half prints as its own source.
+    """
+    blocks = [block for block in text.split("\n\n") if block.strip()]
+    kept: list[str] = []
+    spent = 0
+    for block in blocks:
+        if kept and spent >= budget:
+            break
+        words = len(block.split())
+        if not kept or spent + words <= budget:
+            kept.append(block)
+            spent += words
+            continue
+        # sentence, gap, sentence, gap, … so every gap goes back where it was.
+        pieces = _SENTENCE.split(block)
+        said = ""
+        for at in range(0, len(pieces), 2):
+            count = len(pieces[at].split())
+            if said and spent + count > budget:
+                break
+            said += (pieces[at - 1] if said else "") + pieces[at]
+            spent += count
+        kept.append(said)
+        break
+    return "\n\n".join(kept), spent < sum(len(block.split()) for block in blocks)
+
+
+def _review(entity: Entity, links: Links, assets: dict[str, str]) -> tuple[Markup, str]:
     """What the slide says under its points: what happened, and never nothing.
 
     The team stands up and says how the work went, so the slide is built out of
@@ -8368,15 +8447,41 @@ def _review_html(entity: Entity, links: Links, assets: dict[str, str]) -> Markup
     nothing on the sheet to talk from. So when a record kept no notes, the slide
     falls back to its Solution: the plan, in the team's own words, which is what
     the presenter is about to say happened or did not. It carries its own heading
-    so that nobody mistakes the plan for a report of it.
+    so that nobody mistakes the plan for a report of it — bounded, because a
+    fallback that re-admits the overflow re-admits the thing a deck must not do.
+
+    **And it says which of those it did.** The second return is the line printed
+    under the document: that the plan was cut and where the rest is, or that the
+    record has nothing written on it at all. A slide that silently drops half a
+    section, or that comes out blank because there was nothing to draw, looks
+    exactly like a slide that is finished — and the person holding the sheet is
+    the one person who cannot go and check.
     """
     said = without_checklist(without_comments(_drop_repeated_title(entity.body, entity.title)))
     # Comments are stripped BEFORE the emptied-heading prune inside
     # `without_checklist`, or a `## Solution` holding nothing but the template's
     # own guidance survives as a heading over a blank — which is the same defect
     # in a smaller place.
-    happened = without_sections(said, _bet_headings())
-    return _markdown(happened or only_sections(said, _PLAN_HEADINGS), links, assets)
+    #
+    # And pruned AGAIN after the bet comes out, because dropping a section is the
+    # other way to empty a heading and `without_checklist` has already run by
+    # then: a `## Notes` whose only content was a `### Solution` under it was
+    # left as `<h2>Notes</h2>` over nothing, which is truthy enough to suppress
+    # the fallback below.
+    happened = without_emptied_headings(without_sections(said, _bet_headings()))
+    if happened:
+        return _markdown(happened, links, assets), ""
+    plan, cut = _to_fit(only_sections(said, _PLAN_HEADINGS), _PLAN_WORDS)
+    if plan:
+        return _markdown(plan, links, assets), _PLAN_CUT if cut else ""
+    # `checklist_items` and not a second reading of the same lines: the points at
+    # the top of the slide are this exact call, so the sentence and the sheet
+    # cannot disagree about whether anything up there has words on it. A box with
+    # nothing beside it is what the empty template ships and is not something a
+    # person can stand up and read out.
+    if any(text for _, text in checklist_items(entity.body)):
+        return Markup(""), ""
+    return Markup(""), _NOTHING_SAID
 
 
 def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -> dict:
@@ -8390,6 +8495,7 @@ def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -
     counted = index.progress.get(entity.id)
     size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
     bet = bet_of(entity, index.entities)
+    body, note = _review(entity, links, assets)
     return {
         "id": entity.id,
         "title": entity.title,
@@ -8411,7 +8517,8 @@ def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -
             for done, said in checklist_items(entity.body)
         ],
         "prs": [_pr_link(ref) for ref in entity.prs],
-        "body": _review_html(entity, links, assets),
+        "body": body,
+        "note": note,
     }
 
 
