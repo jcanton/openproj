@@ -334,7 +334,7 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
     that lit the item whose `href` matched the current URL would leave both of
     them dark, which is the state every page on this app was in before this round.
 
-    `/new` marks nothing, on purpose: it is not one of the six, and pressing Table
+    `/new` marks nothing, on purpose: it is not one of them, and pressing Table
     from it abandons the form rather than staying put. `render_new`'s docstring is
     where that is argued; this is where it is held.
     """
@@ -346,13 +346,20 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
         ("/timeline", "Timeline"),
         ("/cycles", "Cycles"),
         ("/cycle/37", "Cycles"),
+        # A deck is one cycle's handout and deliberately not a seventh tab, so it
+        # lights the item that got you there — the same argument `/cycle/37` makes.
+        ("/deck/37", "Cycles"),
         ("/people", "People"),
-        ("/detail", "Detail"),
-        (f"/detail/{TASK}", "Detail"),
     ):
         assert lit(client.get(route).text) == [item], route
 
-    assert lit(client.get("/new?kind=task").text) == []
+    # Off the nav and still served. `/detail` was the table with none of its
+    # controls, so the tab went and the page stayed — every title links to it,
+    # and in the export `detail.html` is the whole corpus in one file. A page
+    # that lights nothing is a state the nav must draw, not a page that forgot
+    # to say where it is. `/new` has always been in that position.
+    for route in ("/detail", f"/detail/{TASK}", "/new?kind=task"):
+        assert lit(client.get(route).text) == [], route
 
 
 def test_a_detail_route_serves_one_entity_and_not_the_whole_corpus(client: TestClient):
@@ -377,7 +384,7 @@ def test_an_entity_that_does_not_exist_is_a_404_and_not_an_empty_page(client: Te
 
 @pytest.mark.parametrize(
     "route", ["/", f"/detail/{TASK}", "/detail", "/graph", "/timeline", "/people",
-              "/cycles", "/new?kind=task"]
+              "/cycles", "/deck/37", "/new?kind=task"]
 )
 def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     """Several `<script>` blocks, one global scope between them.
@@ -726,6 +733,54 @@ def test_no_conflict_marker_ever_reaches_the_browser(client: TestClient):
     assert not [m for m in ("<<<<<<<", "=======", ">>>>>>>") if m in response.text]
 
 
+@pytest.mark.parametrize("field, value", [("parent", PROJECT), ("owner", "bo")])
+def test_a_save_onto_a_record_deleted_in_git_never_writes_it_back(
+    client: TestClient, repo_path: Path, field: str, value: str
+):
+    """A deletion is not an empty file, and the merge could not tell them apart.
+
+    `store.write` hands `_merge` whatever is stored `or ""`, so a record somebody
+    removed in git arrives as a frontmatter with no keys and a body with no
+    lines. Every key the save did not touch then reads as "only they moved it"
+    and is dropped; the one key it did touch reads as "only we moved it" and is
+    kept. What got committed was a *resurrection* of the record holding nothing
+    but the field being edited — `---\\nparent: proj-a10000\\n---\\n` over a task
+    with a title, an owner, an appetite and a body — answered 200, and announced
+    the move.
+
+    Two fields, because this is the write path's and not the drag's: `parent` is
+    simply the field that made it routine, since a row somebody drags is exactly
+    a row that is not inside anything yet, and the value has to be absent before
+    the edit for the merge to keep it. `owner` on an unowned task is the same
+    file, one field along.
+
+    Parsing the result would not have caught either. Every field is optional at
+    the type level on purpose, so that file loads perfectly well: it is a record
+    with no title and no kind, which the validator reports beside the row it
+    ruined, one commit too late.
+    """
+    # A person with a terminal, taking the task out of the pitch and leaving it
+    # unowned — the state a row is in when somebody reaches for its grip.
+    loose = HAND_FORMATTED.replace("parent: pitch-b20000\n", "").replace(
+        "owner: ann                 # ann has the DWD contacts\n", ""
+    )
+    commit_directly(repo_path, {**SEED, PATH: loose}, "take the task out of the pitch")
+    base = head(client)
+    # And the same person deleting it while the page is still open.
+    commit_directly(repo_path, {k: v for k, v in SEED.items() if k != PATH}, "drop the task")
+    deleted = git_head(repo_path)
+
+    response = save(client, TASK, {field: value}, base=base)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["commit"] is None
+    assert "deleted" in response.json()["conflict"] and PATH in response.json()["conflict"]
+    assert git_head(repo_path) == deleted, "nothing was committed"
+    assert PATH not in pygit2.Repository(str(repo_path))[deleted].tree, (
+        "and the record somebody deleted is still deleted"
+    )
+
+
 def test_saving_an_entity_that_does_not_exist_is_a_404(client: TestClient, repo_path: Path):
     """A well-formed id for a file that is not there. `PATCH` edits; it does not
     quietly create, or a typo in a URL becomes an entity nobody meant to make."""
@@ -908,7 +963,11 @@ def test_a_create_records_its_author_like_any_other_write(client: TestClient, re
 def test_the_content_stays_public_when_nobody_is_signed_in(secure_client: TestClient):
     """Reads need no login, by decision. Putting the plan behind the org would
     make it unlinkable from an issue, which is where most people meet it."""
-    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json", "/healthz"):
+    # `/api/table.json` is the table page re-reading itself, so it is as public
+    # as the page: a route that answered 401 would leave a signed-out reader with
+    # a table that draws once and then never moves.
+    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json",
+                  "/api/table.json", "/healthz"):
         assert secure_client.get(route).status_code == 200, route
 
 
@@ -2739,8 +2798,8 @@ def test_clearing_an_icon_says_so_in_the_record_rather_than_deleting_it(
     assert client.put("/api/icon", json={"icon": None}).status_code == 200
 
     assert record_of(repo_path, "ann") == "---\nicon: null\n---\n"
-    # On the row, not on the page: the picker below it is a row of twelve
-    # drawings and is always there for whoever may write.
+    # On the row, not on the page: the list below it holds a drawing for every
+    # icon there is and is always there for whoever may write.
     row = client.get("/people").text.split('data-login="ann"')[1].split("</tbody>")[0]
     assert '<svg class="icon"' not in row.split('id="picker"')[0]
 
@@ -2885,7 +2944,7 @@ def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient,
 
     The version of this test written with the fix asserted `"turtle" not in
     page`, which is a sentence about no version of this code: the picker below
-    the table draws all twelve icons by name, so that string is in the page
+    the table draws every icon by name, so that string is in the page
     whatever `_people_at` does, and the test failed against a correct fix. Both
     halves are asked here instead — on ann's own `<tbody>`, which is where an
     icon says whose it is, and in the banner, which is where a file that is not a
@@ -2908,7 +2967,7 @@ def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient,
     page = client.get("/people").text
 
     # Ann's own mark: her `<tbody>`, up to the picker that sits inside it —
-    # twelve drawings, one per icon name, present on every version of this page.
+    # one drawing per icon name, present on every version of this page.
     ann = page.split('data-login="ann"')[1].split("</tbody>")[0].split('id="picker"')[0]
     assert icon_svg("fox") in ann, "the record in people/ is the one that is drawn"
     assert icon_svg("turtle") not in ann, "the nested file is not a second record for ann"

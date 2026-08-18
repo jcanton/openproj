@@ -21,6 +21,11 @@ proj-000001  warm_bubble
 └── pitch-0e0001  Radiation port                  (cycle 37)
 ```
 
+Beside them: three issues and three notes. Two of the notes are still ideas — one is
+being turned over, one was thought about and dropped — and the third was promoted into
+`pitch-0e0001`, which says so in its own shaping document. That is the whole shape of a
+note's life, in three files.
+
 "Today" for the demo is **2026-08-17**, the first working day of cycle 37. Everything
 `done` sits in cycles 34–36; everything live sits in 36–37. At least one live chain runs
 past the end of its cycle, on purpose — a scheduler that never shows an overrun is not

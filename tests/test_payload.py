@@ -133,7 +133,10 @@ _ROWS = """
   try { JSON.parse(block.textContent); parses = true; } catch (e) { parses = false; }
   return {
     parses,
-    ids: [...document.querySelectorAll('#rows tbody tr')].map(r => r.dataset.id || ''),
+    // Every row but the last one, which is the `+` control rather than a record.
+    // `:not(.adder)` and not `tr[data-id]`: a row that lost its id is exactly
+    // what this is watching for, and selecting on the attribute would hide it.
+    ids: [...document.querySelectorAll('#rows tbody tr:not(.adder)')].map(r => r.dataset.id || ''),
     text: (document.querySelector('#rows') || document.body).innerText,
   };
 """

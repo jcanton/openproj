@@ -56,6 +56,30 @@ def screenshot(browser: str, html: Path, png: Path) -> bytes:
     return png.read_bytes()
 
 
+# A page object in a PDF's object table. `/Type /Page` and not `/Type /Pages`,
+# which is the tree node above them and would add one to every count.
+_PDF_PAGE = re.compile(rb"/Type\s*/Page(?![sA-Za-z])")
+
+
+def printed(browser: str, html: Path, pdf: Path) -> int:
+    """How many sheets this page prints on.
+
+    The one question about paper in the suite, and the only medium that can
+    answer it: `break-after: page` resolving in a stylesheet says nothing about
+    where Chrome puts the cut, which is the same gap the frozen column's
+    unpainted edge fell through. `--no-pdf-header-footer` because the default
+    stamps a URL and a date on every sheet — which changes no count, but a
+    printed deck with a `file:///var/folders/...` across the bottom of every
+    slide is not the artefact this is about.
+    """
+    subprocess.run(
+        [browser, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+         f"--print-to-pdf={pdf}", "--virtual-time-budget=2500", str(html)],
+        capture_output=True, check=True,
+    )
+    return len(_PDF_PAGE.findall(pdf.read_bytes()))
+
+
 def measured_in(
     browser: str,
     page: str,

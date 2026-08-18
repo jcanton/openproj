@@ -3,8 +3,8 @@
 One markdown file per entity: YAML frontmatter, then the shaping document as the body. Three kinds —
 `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree with the kind.
 
-**A plan directory is flat.** `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/` and `people/`
-hold one file per record and nothing below them, because every reader here takes an identity off the
+**A plan directory is flat.** `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/`, `notes/` and
+`people/` hold one file per record and nothing below them, because every reader here takes an identity off the
 filename. A `people/team/ann.md` is therefore not a record filed tidily — it is a second `ann`, and
 one that only half the application can see. A markdown file below one of these directories is
 reported as a file that is not a record, with the move that fixes it, on every page and by
@@ -32,6 +32,54 @@ timeline by construction, rather than by an exclusion in each of them that someb
 It has no `shaping` status, because a shaped issue is a pitch, and that is its whole lifecycle:
 somebody reads the open issues at the betting table and writes a pitch for what matters. What it was
 pitched into is stored on the issue and in that direction only.
+
+A **note** is the second inbox, and the distinction that pays for having two is one sentence:
+
+> an issue is "we found something existing that is broken", a note is "we are thinking of creating
+> something that does not exist and our ideas are confused".
+
+A note is therefore not a pitch in `shaping`, which is what it most looks like from a distance. A
+pitch presupposes that you know what you are shaping — it has a problem, a solution and an appetite,
+and it sits on the betting table as something a room could take. A note precedes all three. Putting
+one in the table as a `shaping` pitch would make the plan look like it holds bets nobody has made.
+
+So a note has **no appetite, no owner, no size, no cycle and no dependencies**, and it is on the
+notes page and nowhere else. It carries a title, a body, `written_by` — who to ask, not who owns it
+— `written_on`, `tags`, and `became`.
+
+**Two statuses, and the count is the design.** `thinking` and `dropped` are the only two things a
+person decides about a note; `promoted` is a third *state* and is derived from `became`, never
+stored, for the reason `blocks` is derived from `depends_on`. There is no `in_progress`, because
+there is no such thing as working on a note — the moment there is work there is a record that is
+work, and the note points at it. There is no `ready`, because "ready to be shaped" is a promise
+about a document the Promote button writes in one press. And there is no `done`: a note is not
+finished, it is answered.
+
+## Promotion
+
+**An inbox that cannot become work is a second inbox nobody empties.** A note graduates into a
+project, a pitch or a task; an issue graduates into a pitch, which is the lifecycle its own record
+already describes.
+
+- **The source survives.** It is the only record of the thinking that led to the bet. It gains
+  `became` (or `pitched_into` on an issue) — one direction, on the record where the decision was
+  made, the same rule `depends_on` follows.
+- **The new record says where it came from in its own shaping document**, in prose, above
+  everything. Not a field: a `from_note` on `Entity` would put a note id into the type every view
+  of the plan is built from, and the table, the graph and the detail page would each have to decide
+  what to do with it — which is the coupling that keeping notes out of `Entity` exists to prevent.
+  So "where did this pitch come from" is answerable from the pitch alone, in `git show`, with no
+  index and no server.
+- **One commit**, because it is one decision. Two files go into it through `Store.write_all`, each
+  compared-and-swapped on its own path; written as two commits, the second can fail after the first
+  has landed and leave a pitch nothing points at.
+- **Title, tags and body cross. Nothing else does.** The new record is created in `shaping`, which
+  is the one status whose required-field gate is empty, so a promotion always produces a record
+  that validates without inventing an owner, a size or a cycle that nobody agreed to. Its body is
+  the kind's template with the note's text under `## Problem` — which is exactly what that heading
+  asks for — and every other heading empty. Nothing nags about that yet: a `shaping` pitch owes
+  nothing, and the missing Rabbit holes and No-gos are named the moment somebody moves it to
+  `ready`, which is the moment it claims to be shaped.
 
 ## Sizes
 

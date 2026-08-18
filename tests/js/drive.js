@@ -295,6 +295,30 @@ class Element {
 
   appendChild(node) { this.append(node); return node; }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+
+  // A structural copy. The icon picker is the one place these pages clone rather
+  // than build: the row it just chose already holds the exact `<svg>` the server
+  // would send back, so the new mark is a node this page rendered instead of a
+  // string crossing an escaping boundary. Without this the shim stopped inside
+  // `chooseRow`, one line after the write it was there to test and with the write
+  // already sent — a driver failure that looks exactly like a page bug.
+  cloneNode(deep) {
+    const copy = new Element(this.tagName, this.ownerDocument);
+    copy.attributes = {...this.attributes};
+    copy.dataset = {...this.dataset};
+    copy.textContent = this.textContent;
+    copy.hidden = this.hidden;
+    copy.value = this.value;
+    if (deep) {
+      copy.children = this.children.map(child => {
+        const under = child.cloneNode(true);
+        under.parentNode = copy;
+        return under;
+      });
+    }
+    return copy;
+  }
+
   insertAdjacentElement(_where, node) { node.parentNode = this.parentNode; return node; }
   insertAdjacentHTML(_where, html) { WRITTEN.push(String(html)); }
   remove() {}
@@ -353,15 +377,26 @@ function makeDocument(inlined, markup) {
     createTextNode(text) { return {textContent: text}; },
     createDocumentFragment() { return new Element('fragment', document); },
     getElementById(id) {
+      // Asked of the page every time, and never remembered. A script that writes
+      // to `innerHTML` replaces the elements inside it, and a remembered answer
+      // is an element that is no longer on the page: the table rebuilds its whole
+      // body on every draw and the sticky row at the bottom of it is rebuilt with
+      // it, so a shim that kept the first answer was reading and writing a
+      // detached node while the page in front of the reader said something else
+      // entirely. That is precisely the defect this had to be able to see, and it
+      // could not see it — the cache made the check pass vacuously.
+      const real = root && root._descendants().find(element => element.id === id);
+      if (real) return real;
+      // In page mode a miss is a miss, the way it is in a browser: the pages
+      // ask for `#over` and `#strangers` and then check what came back. The
+      // exception is a `<script type=application/json>` payload — `#suggest`,
+      // `#payload` — which has been lifted out of the markup to be run and is
+      // still on the page as far as the page is concerned.
+      if (root && !inlined.has(id)) return null;
+      // Phantoms and payloads stay remembered: a script asking twice for the
+      // furniture it is about to write into has to get the same box back.
       if (!byId.has(id)) {
-        const real = root && root._descendants().find(element => element.id === id);
-        // In page mode a miss is a miss, the way it is in a browser: the pages
-        // ask for `#over` and `#strangers` and then check what came back. The
-        // exception is a `<script type=application/json>` payload — `#suggest`,
-        // `#payload` — which has been lifted out of the markup to be run and is
-        // still on the page as far as the page is concerned.
-        if (root && !real && !inlined.has(id)) return null;
-        const element = real || new Element('div', document, true);
+        const element = new Element('div', document, true);
         element.id = id;
         if (inlined.has(id)) element.textContent = inlined.get(id);
         byId.set(id, element);
@@ -522,8 +557,17 @@ async function run(html, expression, options) {
   let ticket = 1;
 
   class DriverEvent {
-    constructor(type, init) { this.type = type; Object.assign(this, init || {}); }
-    preventDefault() {}
+    constructor(type, init) {
+      this.type = type;
+      this.defaultPrevented = false;
+      Object.assign(this, init || {});
+    }
+    // Recorded, because on one of these events the call IS the behaviour: a row
+    // says a drop may land on it by calling `preventDefault` on `dragover` and
+    // refuses by not calling it. A shim that swallowed the call could not tell a
+    // table that accepts every drop from one that accepts the legal ones, which
+    // is the entire question about a move.
+    preventDefault() { this.defaultPrevented = true; }
     stopPropagation() {}
   }
 

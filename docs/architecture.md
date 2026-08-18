@@ -4,13 +4,37 @@
 
 `index.html` is a filterable, searchable table and the one people live in. `graph.html` is the
 dependency DAG, grouped by project and pitch. `timeline.html` is the derived Gantt. `cycles.html`,
-`people.html` and `issues.html` are the cycle records with their betting tables, who is on what and
-who is full, and the pile of things somebody noticed; `detail.html` is one record on its own page,
-and under the server it is also where a record is edited.
+`people.html`, `issues.html` and `notes.html` are the cycle records with their betting tables, who
+is on what and who is full, the pile of things somebody noticed and the pile of things somebody is
+still thinking about; `detail.html` is one record on its own page, and under the server it is also
+where a record is edited.
+
+The last two are inboxes rather than views of the plan. Neither an issue nor a note is an entity, so
+neither reaches the table, the graph, the timeline or the people page — by construction, because
+nothing there ever sees one. They share a stylesheet and one `attachRecordTable`, because they are
+the same table over two kinds of record; they do not share a template, because the records differ
+and are meant to. `POST /api/promote` is the door out of both: it writes the entity and marks the
+source in one commit.
 
 They render from one in-memory index, share one filter model, and keep their state in the query
 string — so every view is a shareable URL, the back button works, and there are no saved views to
 manage.
+
+`/deck/<n>` is the odd one out and is a route only. It is the deck for one cycle's review meeting —
+a title slide, then one slide per piece of work bet into that cycle, each with its ticked points,
+its percentage, its pull requests and what the record says about what happened, and it prints one
+slide to a page. That last part is a floor and not a filter: the shaping argument stays off the
+sheet because the room argued it at the betting table, but a slide that has nothing else falls back
+to the record's Solution, because a heading over blank paper is nothing to present from. The
+fallback is bounded — 120 words, measured against Chrome's own pagination — since a quotation of the
+plan has no business pushing the presenter's slide onto a second sheet; and where it was cut, or
+where the record turned out to have nothing written on it at all, the slide says so in a line of its
+own. A sheet that silently dropped half a section cannot be told from a finished one, and the person
+holding it is the one person who cannot go and check. It takes a cycle number, so
+it has no place in a static export that writes one file per view of the whole plan; it is reached
+from that cycle's own page, and it is deliberately not a seventh tab. It is also the one page that
+carries its images inside itself as `data:` URIs, because it is the one page meant to be handed to
+somebody who was not in the room.
 
 ## Two repositories
 
@@ -45,6 +69,11 @@ git clone --bare https://github.com/jcanton/icon4py-plan.git plan.git
 uv run openproj serve --repo plan.git --auth dev
 ```
 
+That is the recipe for a **real** plan. For a look at the tool with nothing to point it at,
+`openproj demo` does the same five steps against the bundled `seed/` corpus in a temporary
+directory — it is the same server behind the same seam, with the clone replaced by a repository it
+builds for itself.
+
 A **bare** clone, and not a directory of files: there is no working copy to contend for and no index
 to lock, which is what makes one writer behind an `flock` a workable design. `--auth dev` skips
 sign-in and is for a local run only; the deployment runs `--auth github`, which refuses to start
@@ -64,7 +93,7 @@ src/openproj/render.py     the pages
 src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
 src/openproj/coedit.py     the co-editing rooms — one Y.Text per entity, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
-src/openproj/cli.py        check / render / schedule / serve
+src/openproj/cli.py        check / render / schedule / serve / demo
 seed/                      the demo corpus
 tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md
