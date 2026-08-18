@@ -5545,7 +5545,11 @@ _DETAIL = """
 </div>{% endif %}
 {% for e in entities %}
 <article id="{{ e.id }}" class="entity">
-  <p class="back"><a href="{{ links.detail }}">← all</a></p>
+  {#- Back to the table, which is where you came from and where everything is.
+      It pointed at the detail index, which was the same list with none of the
+      controls — and that index is no longer in the nav, so a link to it now
+      lands somewhere a reader has no other route to. -#}
+  <p class="back"><a href="{{ links.table }}">← all entities</a></p>
   {#- Above the title, not under it. What a thing *is* is the first question a
       page answers, and the kind was the third item on a line below the name,
       between an id and a status. It is also the one fact here that never
@@ -9858,9 +9862,21 @@ body.editing .read { display: none; }
 _NAV = (
     ("table", "Table"), ("graph", "Graph"), ("timeline", "Timeline"),
     ("cycles", "Cycles"), ("people", "People"), ("issues", "Issues"),
-    ("detail", "Detail"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
+# Pages that exist and are not in the nav, and may still say which item to light.
+#
+# `detail` was the seventh nav item and was the table with fewer features: the
+# same records, grouped by status, with no filter, no search, no sort and no
+# inline editing. It is still the page every title links to, and in the static
+# export `detail.html` is the whole corpus in one file — so the page stays and
+# only the nav slot goes.
+#
+# The distinction is worth encoding rather than deleting the guard: `/deck/<n>`
+# is in the same position already, and the next page will be too. A `current`
+# that is neither a nav item nor a page is still a typo and still raises.
+_OFF_NAV = frozenset({"detail"})
+_PAGE_KEYS = _NAV_KEYS | _OFF_NAV
 
 
 def _page(
@@ -9894,8 +9910,8 @@ def _page(
     entry points is eight places to forget, and the one page that forgot would be
     a page that silently draws a plan short.
     """
-    if current and current not in _NAV_KEYS:
-        raise ValueError(f"{current!r} is not a nav item: {sorted(_NAV_KEYS)}")
+    if current and current not in _PAGE_KEYS:
+        raise ValueError(f"{current!r} is not a page: {sorted(_PAGE_KEYS)}")
     return _ENV.from_string(_SHELL).render(
         title=title,
         content=Markup(content),
