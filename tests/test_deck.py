@@ -573,7 +573,7 @@ def test_the_deck_reaches_no_network(index: Index):
 
 
 def test_the_deck_is_not_in_the_nav_and_lights_the_cycle_it_is_of(deck: str):
-    """The nav names the six views of the whole plan. A deck is one cycle's
+    """The nav names the views of the whole plan. A deck is one cycle's
     handout, reached from that cycle's page — the same reasoning `/cycle/<n>`
     already carries, which lights Cycles rather than growing a seventh tab."""
     from pages import lit, nav_of

@@ -20,7 +20,7 @@ from openproj.model import Config, load_repo
 from openproj.render import STATUS_GLYPH, STATUSES, render_static
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
-         "issues.html", "graph.html", "timeline.html")
+         "issues.html", "notes.html", "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -2529,7 +2529,7 @@ def test_the_nav_says_which_page_you_are_on(rendered: Path, server_pages: dict[s
     assert lit(server_pages["entity"]) == []
 
     # And the one page that marks nothing, on purpose: the create form is not one
-    # of the six, and pressing Table from it abandons the form rather than staying
+    # of them, and pressing Table from it abandons the form rather than staying
     # put. `aria-current="page"` claims a page *within* the set.
     assert lit(server_pages["new"]) == []
 

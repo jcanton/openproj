@@ -42,6 +42,9 @@ _BOT = pygit2.Signature("openproj-bot", "openproj-bot@example.invalid")
 # the name itself would be a second copy of it, and this file's own rule is that
 # an invariant written twice is guarded once.
 LOCK_FILE = "openproj.lock"
+# How much happened to a write, least first. `write_all` reports the furthest one
+# any of its files reached, so a set is never described by its quietest member.
+_OUTCOMES = ("committed", "retried", "merged")
 
 
 class WriteResult(BaseModel):
@@ -383,25 +386,72 @@ class Store:
     def write(
         self, path: str, content: str, base_commit: str, author: str, message: str
     ) -> WriteResult:
+        """One file, one commit. The overwhelming majority of writes here."""
+        return self.write_all({path: content}, base_commit, author, message)
+
+    def write_all(
+        self, files: dict[str, str], base_commit: str, author: str, message: str
+    ) -> WriteResult:
+        """Several files in ONE commit, each compared-and-swapped on its own path.
+
+        Written for promotion, which creates a record and marks the record it came
+        from. Those are two files and one decision, and two commits would say two
+        things that are not true: that somebody minted a pitch out of nowhere, and
+        that somebody then separately edited a note. `git log` on a plan is the
+        team's record of decisions, and one decision is one line of it.
+
+        It also removes the half-done state. Written as two calls, the second can
+        conflict after the first has landed — leaving a pitch in the plan and a
+        note that does not know what it became, on a protected branch where the
+        first commit cannot be taken back. There is no order of the two that fixes
+        that; there is only not having two.
+
+        The compare-and-swap is unchanged and still per path, which is the point:
+        a promotion touches one brand-new file that nobody can have edited and one
+        existing note, so the usual "somebody saved something else" case still
+        retries silently and only a genuine overlap on the note itself refuses.
+        A conflict on ANY path writes nothing at all — a partial commit is exactly
+        the half-done state above, arriving through the other door.
+
+        `write` is this function with one entry, so the swap logic exists once. It
+        was copied in the first draft of promotion, which is how three lines of it
+        came to disagree about which commit `stored` is read at.
+        """
         with self._writing:
             # Whatever the remote has is part of "current": writing on top of a
             # stale local view would push a commit that silently reverts somebody.
             if self._remote:
                 self._absorb_remote()
             current = self.head()
-            if current == base_commit:
-                return self._finish(self._commit(path, content, author, message), "committed")
-
-            was = self.read(base_commit, path)
-            stored = self.read(current, path)
-            if was == stored:
-                # Somebody edited a different file. Nobody needs to hear about it.
-                return self._finish(self._commit(path, content, author, message), "retried")
-
-            merged, conflict = _merge(path, was or "", content, stored or "")
-            if conflict is not None:
-                return WriteResult(commit=None, outcome="conflict", conflict=conflict)
-            return self._finish(self._commit(path, merged, author, message), "merged")
+            resolved: dict[str, str] = {}
+            outcomes: list[str] = []
+            conflicts: list[str] = []
+            for path, content in files.items():
+                if current == base_commit:
+                    resolved[path] = content
+                    outcomes.append("committed")
+                    continue
+                was, stored = self.read(base_commit, path), self.read(current, path)
+                if was == stored:
+                    # Somebody edited a different file. Nobody needs to hear.
+                    resolved[path] = content
+                    outcomes.append("retried")
+                    continue
+                merged, conflict = _merge(path, was or "", content, stored or "")
+                if conflict is not None:
+                    conflicts.append(conflict)
+                    continue
+                resolved[path] = merged
+                outcomes.append("merged")
+            if conflicts:
+                return WriteResult(
+                    commit=None, outcome="conflict", conflict="\n".join(conflicts)
+                )
+            # The most eventful thing that happened to any of them. A caller shown
+            # "committed" for a set in which one file had to be merged has been
+            # told the quiet half of what happened.
+            worst = max(outcomes, key=_OUTCOMES.index, default="committed")
+            return self._finish(self._commit(resolved, author, message), worst)
 
     def _absorb_remote(self) -> None:
         """Fast-forward onto anything the remote gained since the last write.
@@ -442,10 +492,17 @@ class Store:
                 pushed = False
         return WriteResult(commit=commit, outcome=outcome, pushed=pushed)
 
-    def _commit(self, path: str, content: str, author: str, message: str) -> str:
+    def _commit(self, files: dict[str, str], author: str, message: str) -> str:
         parent = self.head()
-        blob = self._repo.create_blob(content.encode("utf-8"))
-        tree = self._insert(self._tree(parent), path.split("/"), blob)
+        tree = self._tree(parent).id
+        for path, content in files.items():
+            blob = self._repo.create_blob(content.encode("utf-8"))
+            # Read the tree back between files. Each insert rewrites the path's
+            # spine from the bottom up and hands back a new root, so the second
+            # file has to go into the root the first one produced — inserted into
+            # the parent commit's instead, it writes a tree that has silently
+            # dropped the first file, and the commit still succeeds.
+            tree = self._insert(self._repo[tree].peel(pygit2.Tree), path.split("/"), blob)
         # Author is the person, committer is the bot: `git log --format='%an'` is
         # then a per-person audit trail for free, while a future push credential
         # stays a bot that no human's departure invalidates.

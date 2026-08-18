@@ -21,6 +21,8 @@ shaped_by: jcanton
 
 # Radiation port
 
+> Promoted from note-55cc66 — a note by dastrm on 2026-07-06.
+
 ## Problem
 
 The warm-bubble driver runs with radiation off: no radiative cooling, no destabilisation, a hole
