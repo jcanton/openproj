@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
 from .model import (
     ISSUE_STATUS,
+    PARENT_KINDS,
     Config,
     Cycle,
     Entity,
@@ -306,6 +307,12 @@ def _row(index: Index, entity_id: str) -> dict:
         "id": entity.id,
         "title": entity.title,
         "kind": entity.kind,
+        # Not a column — the tree is drawn by the graph and the project facet —
+        # and the row needs it anyway, because a row is now something you can
+        # drop another one onto. Without it the page cannot tell a move from a
+        # gesture that changes nothing, and cannot offer to take a row out of
+        # something it is not in.
+        "parent": entity.parent,
         "status": entity.status,
         "owner": entity.owner,
         "assignees": entity.assignees,
@@ -404,6 +411,26 @@ def _payload(index: Index) -> dict:
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
         "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
+        # What a row that does not exist yet can be typed into, per kind.
+        "new_row": _new_row_fields(),
+        # And what it holds before anybody types anything, read off the model
+        # rather than written down here. The row being filled in shows the status
+        # and the priority it will be created with: a blank cell that turns into
+        # `shaping` on save is the row lying about what it is about to write.
+        "defaults": {
+            name: _KIND_MODELS["task"].model_fields[name].default
+            for name in ("status", "priority")
+        },
+        # Which kind may hold which, from the model's own map. It decides what a
+        # drop does *before* the drop: a row that cannot take this one is drawn
+        # as refusing it while the mouse is still down, which is the difference
+        # between a rule and a 422.
+        "parent_kinds": {kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
+        # The same three templates `/new` offers. An entity created from the
+        # table is the same document as one created from the form — a plan where
+        # a pitch has a shaping template only if you happened to make it on the
+        # other page is a plan with two kinds of pitch in it.
+        "templates": TEMPLATES,
         # The word a reader gets, shipped rather than baked into the cells: the
         # rows are drawn by script, and a status the script renders has to reach
         # the same map the server-rendered pages read.
@@ -2238,8 +2265,13 @@ _TABLE = """
     is the last row it has to offer. The instruction beside New entity was already
     inline and already costs nothing, so it stays where it is: it belongs next to
     the control it shares a subject with. -#}
+{#- Three gestures in one line, because a page that teaches them one at a time
+    teaches the third to nobody: a drag has no name written on it anywhere, and
+    the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
+    what it is by being a control. -#}
 <p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New entity</a>
-   <span class="hint">double-click a cell, or press Enter on it, to edit it</span>
+   <span class="hint">double-click a cell, or press Enter on it, to edit it ·
+     drag a row by the grip beside its id onto another to file it there</span>
    {% endif %}<span id="state" role="status"></span><span id="summary">
   {#- Two numbers, because the count is of problems and the link filters
       entities: "3 blocking problems" opening a table of 2 rows is the exact way
@@ -2249,8 +2281,17 @@ _TABLE = """
     }}</strong> <span id="blocker-word">blocking problem{{
     "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
     "entity" if blocked == 1 else "entities" }}{% endif %}</span></a> ·
-  <span id="shown" class="num">{{ payload.rows|length }}</span> of {{ payload.rows|length
-  }} shown</span></p>
+  {# Both numbers are written by the script as well as rendered here. The second
+     used to be the template's alone, which was true until the page could add a
+     row to the plan without reloading: creating one read "18 of 17 shown", and a
+     count that contradicts itself inside one sentence is the whole of what a
+     count is for.
+     Neither delimiter here strips the whitespace around it, unlike every other
+     comment in this file: the separator above is a lone middle dot at the end of
+     its line, and eating that newline glued it to the digit — the bar read
+     "0 blocking problems ·9". A comment must not be able to do that. #}
+  <span id="shown" class="num">{{ payload.rows|length }}</span> of <span
+    id="total">{{ payload.rows|length }}</span> shown</span></p>
 {{ facets }}
 {#- role="grid" only where the cells are editable. It is a claim about who owns
     the arrow keys — a screen reader hands them to the page inside a grid and
@@ -2360,6 +2401,9 @@ function regroup(problems) {
 
 function summarise() {
   document.getElementById('blocker-count').textContent = BLOCKERS;
+  // How many rows there are to be shown *of*. It moves when a row is created
+  // here, which is the only thing that changes it without a reload.
+  document.getElementById('total').textContent = Object.keys(DATA.rows).length;
   // The count is of problems and the link filters entities. One entity can hold
   // three of them, so the population the link opens is named as well — a count
   // that opens a table of a different size is a count nobody trusts again.
@@ -2388,6 +2432,30 @@ function stored(row, key) {
 // withholds an editor for — written out again here, a fifth derived column would
 // have arrived with no class and no sentence.
 const WHY = {{ why|tojson }};
+
+// Which kind may hold which — `model.PARENT_KINDS`, shipped rather than retyped.
+// It decides three things on this page: which rows grow a handle, which rows
+// light up as a drop would land, and which refuse before anything is sent.
+const PARENT_KINDS = DATA.parent_kinds || {};
+// Whether this row has anywhere to go. A project belongs to nothing, so it can
+// neither be filed under something nor taken out of it, and every control that
+// would say otherwise is left undrawn rather than drawn and then refused.
+const movable = row => (PARENT_KINDS[row.kind] || []).length > 0;
+// What a kind may be filed under, in the validator's own words. `a pitch or a
+// project`, `nothing` — the sentence `_containment_problems` builds when it has
+// already happened, said here before it can.
+const holders = kind =>
+  (PARENT_KINDS[kind] || []).map(one => 'a ' + one).join(' or ') || 'nothing';
+const moveTip = row => movable(row)
+  ? `Drag by the grip, or press Enter, to file this under ${holders(row.kind)}`
+  : `A ${row.kind} belongs to nothing, so there is nothing to file it under`;
+// The handle itself. Two dotted rules drawn by the stylesheet and not a glyph:
+// `⠿` is the conventional one and is not in the vendored face's latin subset, so
+// on a machine with no webfont it is a tofu box — which is the same argument
+// STATUS_GLYPH settles the other way, because those five had to be text.
+// `aria-hidden`, because the keyboard does not reach for this: the cell it sits
+// in is the tab stop and Enter on that cell is the same move (see `startMoving`).
+const GRIP = '<span class="rowgrip" draggable="true" aria-hidden="true"></span>';
 
 // Five tags wrapped to five lines and every row on screen grew to match, so one
 // line and a count. The count is exact: "+2" means two you cannot see, not two
@@ -2452,7 +2520,17 @@ function shown(row, key) {
   // filterable in the KIND facet, which is where "show me only tasks" is asked,
   // and stays a chip on the detail, people and cycle pages, where no id is
   // present to carry it.
-  if (key === 'id') return `<span class="eid">${esc(row.id)}</span>`;
+  //
+  // The grip in front of it is where a row is picked up from. Not the row
+  // itself: a `draggable` row cannot have its text selected, and an id is the
+  // one thing on this page people copy out of it — and the cell editor puts an
+  // `<input>` inside a cell, which a draggable ancestor interferes with. So the
+  // handle is a thing of its own, in the column that is the row's own name, and
+  // it is in the frozen pair, so it is on screen however far the table is
+  // scrolled sideways. A row that can go nowhere gets none: a project is the top
+  // of the tree, and the missing handle is that said without a sentence.
+  if (key === 'id')
+    return (EDITABLE && movable(row) ? GRIP : '') + `<span class="eid">${esc(row.id)}</span>`;
   if (key === 'status')
     return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
   if (key === 'priority') return esc(human(row.priority));
@@ -2551,8 +2629,14 @@ function cell(row, key) {
   //
   // A cell hiding nothing gets no second line: every tooltip in the table growing
   // a redundant sentence is how a tooltip stops being read at all.
+  //
+  // The id column's line is what the handle beside it cannot say: a drag is a
+  // gesture with no name on it, and the same cell is where Enter picks the row
+  // up. A row that can go nowhere says that instead, which is also why it has no
+  // handle to explain.
   const tip = [note, hiddenBy(row, key),
-               editable ? 'Double-click to edit ' + named : WHY[key] || '']
+               editable ? 'Double-click to edit ' + named
+                        : key === 'id' && EDITABLE ? moveTip(row) : WHY[key] || '']
     .filter(Boolean).join('\\n');
   // Reachable without a mouse. This table is the app's primary editing surface
   // and it was double-click-only, so half the room could not change a single
@@ -2560,7 +2644,11 @@ function cell(row, key) {
   // the grid is one tab stop with the arrows moving inside it — fourteen columns
   // times forty rows is 560 stops if every cell takes one, which is not a
   // keyboard path, it is a maze.
-  const reachable = EDITABLE && (editable || key in WHY);
+  //
+  // The id cell joins them, and it is not editable: it is the one place a move
+  // can be started without a mouse, and a gesture that only a mouse can make is
+  // a gesture half the room does not have.
+  const reachable = EDITABLE && (editable || key in WHY || key === 'id');
   // `row.id` is escaped like anything else here. An id that fails its pattern is
   // a *reported* blocker and not a refusal, so the entity still loads and still
   // draws a row: one shaped `task-000001"><img src=x onerror=…>` put ten
@@ -2640,8 +2728,15 @@ function draw() {
     ? document.activeElement.closest('td[tabindex]') : null;
   const held = EDITABLE && (RETURN || !!focused);
   if (focused && !RETURN) rove(focused);
-  tbody.innerHTML = rows.length ? rows.map(rowHtml).join('') : emptyRow();
-  if (EDITABLE) { rove(null, held); RETURN = false; }
+  // The `+` row is drawn after whatever the filters left, including after the
+  // three empty states: a plan with nothing in it is exactly when the way to put
+  // something in it has to be on screen. It is never filtered — it stands for a
+  // row that does not exist yet, and nothing that does not exist can match a
+  // filter — and on a rendered file it is not drawn at all, because a file has
+  // no server to create anything with.
+  tbody.innerHTML = (rows.length ? rows.map(rowHtml).join('') : emptyRow())
+    + (EDITABLE ? adderHtml() : '');
+  if (EDITABLE) { rove(null, held); RETURN = false; sayDraft(); markTargets(); }
   document.getElementById('shown').textContent = rows.length;
   // Sorting redraws without reloading, so the marker has to move with it. Set
   // once at load, it stayed on whatever the URL said when the page opened.
@@ -2801,7 +2896,13 @@ function openEditor(cell) {
   if (cell.querySelector('input, select')) return;
   rove(cell);
   const field = cell.dataset.field;
-  const was = stored(DATA.rows[cell.dataset.entity], field);
+  // The record this cell is part of, or the one that does not exist yet: a cell
+  // with no `data-entity` is a cell of the row being typed, and there is exactly
+  // one of those. One editor for both, because a second one is a second set of
+  // rules about what a list separator is and which values get selected on open —
+  // and the create form is already proof that a differently-shaped way to write
+  // the same fields is how a tool comes to feel like two tools.
+  const was = stored(cell.dataset.entity ? DATA.rows[cell.dataset.entity] : DRAFT.fields, field);
   const suggest = SUGGESTS[field];
   const closed = CHOICES[EDITABLE[field]];
   // The name the editor answers to. The cell it replaces carries its column in
@@ -2834,8 +2935,12 @@ function openEditor(cell) {
 
   let abandoned = false;
   input.onblur = () => {
+    // A stored cell writes a commit; a draft cell writes into the row nobody has
+    // created yet, which is a change to a variable and not to the repository.
+    // Same editor, same key handling, one branch at the end of it.
     if (abandoned || input.value === was) draw();
-    else saveCell(cell, input.value);
+    else if (cell.dataset.entity) saveCell(cell, input.value);
+    else stage(field, input.value);
   };
   input.onkeydown = e => {
     if (e.key === 'Enter') { RETURN = true; input.blur(); }
@@ -2862,7 +2967,496 @@ function openEditor(cell) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// A row you type into
+// ---------------------------------------------------------------------------
+
+// Which stored field each column of a new row writes to, per kind, and the
+// values a record starts life with. Both are built on the server from the models
+// themselves — see `_new_row_fields` — so what a project has no box for here and
+// what the create form hides there are one answer to one question.
+const NEW_ROW = DATA.new_row || {};
+const DEFAULTS = DATA.defaults || {};
+const TEMPLATES = DATA.templates || {};
+// What the row being typed answers to in the grid. `+` is not an id and cannot
+// become one — an id is a prefix and six hex digits — so nothing that walks the
+// rows can confuse the draft with a record.
+const DRAFT_ID = '+';
+
+// The row that is not an entity yet: null while there is none, otherwise the
+// kind (null until it is chosen), what has been typed so far, and whatever the
+// last refusal said.
+//
+// One variable, and it is the whole of the draft. That is what makes it survive
+// a sort — `draw()` rebuilds every row from state, so re-sorting or filtering
+// redraws this one with everything in it — and what makes it not survive a
+// reload, which is a decision and not an oversight. A half-filled row kept in
+// `localStorage` is a record of the plan that is not in git, that nobody can
+// review and that no `base_commit` covers; the one draft this app does keep, on
+// the detail page, has to carry the commit it was drafted against precisely so
+// it can say it has gone stale. That is worth paying for a shaping document
+// somebody spent an hour on. It is not worth paying for four short fields with
+// Create sitting directly underneath them, and a draft that outlives the page is
+// a draft somebody creates twice.
+let DRAFT = null;
+
+// What a draft cell shows: exactly what will be committed and nothing that is
+// only true of a stored row. `shown()` links the title (there is no page to link
+// to yet), turns PR references into links and clamps four columns behind a `+N`
+// — none of which applies to a row whose entire content is what was just typed
+// into it. The one thing it keeps is the status chip, because a status is a rung
+// and reads as one everywhere else on the page.
+function draftShown(field) {
+  const value = DRAFT.fields[field];
+  const text = Array.isArray(value) ? value.join(', ') : (value ?? '');
+  if (text === '') return '';
+  if (field === 'status') return `<span class="chip ${stClass(text)}">${esc(human(text))}</span>`;
+  // `human` only where the value is one of a closed set. A title of `done` is a
+  // title, and running every cell through the map would print it as "Done".
+  return esc(CHOICES[EDITABLE[field]] ? human(text) : text);
+}
+
+function draftRowHtml() {
+  const fields = NEW_ROW[DRAFT.kind] || {};
+  const cells = keys.map(key => {
+    // Where the id will be. It says which kind is about to be written rather
+    // than standing empty: the id itself is the server's to mint — a browser
+    // that names an id names a path — and this is the column that will carry it.
+    // In the tooltip and not beside the word, because this is the narrowest
+    // column on the row and the sentence took the draft to two lines: a row that
+    // is twice the height of every other row reads as a different kind of thing.
+    if (key === 'id')
+      return `<td data-col="id" class="draft-id"` +
+        ` title="The id and the file are the server's to choose">new ${esc(DRAFT.kind)}</td>`;
+    const field = fields[key];
+    const named = (FIELD_LABELS[key] || key).toLowerCase();
+    if (!field) {
+      // Two different reasons a column takes nothing, and the cell says which:
+      // some kind can type into it and this one cannot — a project has no
+      // appetite of its own — or nobody can, because it is the scheduler's
+      // output. Asked of the map rather than listed here, so a column that
+      // becomes kind-only later explains itself without this line changing.
+      const anyKind = Object.keys(NEW_ROW).some(kind => key in NEW_ROW[kind]);
+      const why = anyKind ? `A ${DRAFT.kind} has no ${named}` : WHY[key] || '';
+      return `<td data-col="${key}" class="draft-none"` +
+        `${why ? ` title="${esc(why)}"` : ''}></td>`;
+    }
+    return `<td data-col="${key}" class="edit draft-cell" data-field="${esc(field)}"` +
+      ` data-hint="${esc(named)}" tabindex="-1"` +
+      ` title="${esc('Double-click to edit ' + named)}">${draftShown(field)}</td>`;
+  });
+  return `<tr class="draft" data-id="${DRAFT_ID}">${cells.join('')}</tr>`;
+}
+
+// The last row of the table, in both of its states: the control that starts a
+// row, and — once one is started — the kind picker, Create, Cancel and wherever
+// the server's refusal lands.
+//
+// It is one row and not two because it is one thing: the place at the bottom
+// where a plan grows. While a move is in the air it is also where a row goes to
+// belong to nothing (see `startMoving`), which is the same place said the same
+// way — under everything, outside the tree.
+function adderHtml() {
+  const wide = ` colspan="${keys.length}"`;
+  if (!DRAFT) {
+    // "New row" and not "New entity", although an entity is what it makes: the
+    // control beside the heading is already called that and goes to the form
+    // that writes one properly. Two controls with one name on one page is how a
+    // person learns to trust neither, and what this one does when you press it
+    // is put a row on the table.
+    return `<tr class="adder"><td${wide}>` +
+      `<button type="button" id="add-row" class="add">+ New row</button>` +
+      `<button type="button" id="unparent" hidden></button>` +
+      `</td></tr>`;
+  }
+  const kinds = Object.keys(NEW_ROW).map(kind =>
+    `<option value="${esc(kind)}"${kind === DRAFT.kind ? ' selected' : ''}>` +
+    `${esc(human(kind))}</option>`).join('');
+  // The kind first, and it stays: it is the decision that says which fields the
+  // row even has, and switching it after typing must not cost the typing — the
+  // create form learned that one already. The row itself appears only once the
+  // kind is chosen, because until then there is no answer to which columns it
+  // has — which is the whole reason the kind is asked first.
+  return (DRAFT.kind ? draftRowHtml() : '') +
+    `<tr class="adder open"><td${wide}>` +
+    `<label class="kindpick">kind <select id="draft-kind">` +
+    `<option value=""${DRAFT.kind ? '' : ' selected'}>choose…</option>${kinds}</select></label>` +
+    (DRAFT.kind ? `<button type="button" id="draft-create" class="primary">Create</button>` : '') +
+    `<button type="button" id="draft-cancel">Cancel</button>` +
+    `<span class="hint">Nothing is written until you press Create</span>` +
+    `<ul id="draft-problems" role="status" aria-live="polite" hidden></ul>` +
+    `</td></tr>`;
+}
+
+// Whatever the last attempt was refused with, put in as text.
+//
+// `replaceChildren` with text nodes and never `innerHTML`: every one of these
+// sentences comes back from the server quoting a field this plan holds, and a
+// title is a sentence somebody typed. The list is also why the refusal is drawn
+// *in* the bar rather than in `#row-conflict` — a create has no row to sit
+// beside, and a refusal with nowhere to land is a refusal that gets swallowed.
+function sayDraft() {
+  const list = document.getElementById('draft-problems');
+  if (!list) return;
+  const said = (DRAFT && DRAFT.said) || [];
+  list.hidden = !said.length;
+  list.replaceChildren(...said.map(text => {
+    const item = document.createElement('li');
+    item.textContent = text;
+    return item;
+  }));
+}
+
+function refused(lines) {
+  if (DRAFT) DRAFT.said = lines;
+  draw();
+  announce(lines.join(' '));
+}
+
+// What the server refused a create with, one sentence per line. The create route
+// answers 422 with a `problems` list and everything else with a `detail`, and
+// the shell's `refusal` already knows which — this only keeps them apart so that
+// three blockers read as three lines instead of one long one. It is not
+// `refusals()` from the detail form: that one names the control each problem is
+// about, and there are no named controls on a table.
+function refusalLines(answer, status) {
+  const problems = answer.problems || [];
+  return problems.length ? problems.map(problem => problem.message)
+                         : [refusal(answer, status)];
+}
+
+function openDraft() {
+  DRAFT = {kind: null, fields: {}, said: []};
+  draw();
+  const picker = document.getElementById('draft-kind');
+  if (picker) picker.focus();
+}
+
+function closeDraft(said) {
+  DRAFT = null;
+  draw();
+  if (said) announce(said);
+  const add = document.getElementById('add-row');
+  if (add) add.focus();
+}
+
+function chooseKind(kind) {
+  if (!NEW_ROW[kind]) { DRAFT.kind = null; draw(); return; }
+  DRAFT.kind = kind;
+  // What was typed stays. Except a field this kind has not got: a size typed
+  // while the row was a task is not a project's to carry, and sending it is a
+  // 422 quoting a field that is no longer on the screen.
+  const owned = new Set(Object.values(NEW_ROW[kind]));
+  for (const name of Object.keys(DRAFT.fields)) if (!owned.has(name)) delete DRAFT.fields[name];
+  // The status and the priority a record is created with, shown rather than left
+  // blank. A blank cell that turns into `shaping` on save is the row lying about
+  // what it is going to write, and these two are the columns somebody scanning
+  // the table reads first.
+  for (const [name, value] of Object.entries(DEFAULTS))
+    if (owned.has(name) && !(name in DRAFT.fields)) DRAFT.fields[name] = value;
+  DRAFT.said = [];
+  draw();
+  // Straight into the one field the row cannot be created without, so the whole
+  // flow is: press +, pick the kind, type, press Create.
+  const title = tbody.querySelector('tr.draft td[data-field="title"]');
+  if (title) openEditor(title);
+}
+
+// A typed value into the draft. The same coercion the save path uses, because
+// `1, 2` has to mean the same two tags whichever row it was typed into.
+function stage(field, value) {
+  let coerced;
+  try {
+    coerced = coerce(EDITABLE[field], value);
+  } catch (error) {
+    announce(`${field} ${error.message}`);
+    draw();
+    return;
+  }
+  if (coerced === null || (Array.isArray(coerced) && !coerced.length)) delete DRAFT.fields[field];
+  else DRAFT.fields[field] = coerced;
+  draw();
+}
+
+async function createDraft() {
+  const fields = {kind: DRAFT.kind, ...DRAFT.fields};
+  // A title, at minimum. The server refuses a titleless record too, but it
+  // refuses it as YAML that will not read back — and the reason a row needs one
+  // is not about YAML: an entity with no title is a row nobody can find again,
+  // in a table whose first column is a mint-fresh id nobody has seen before.
+  // Everything else the status demands is left to `validate_all`, which is the
+  // only thing that knows the rules and which of them this record is old enough
+  // to be held to.
+  if (!String(fields.title || '').trim()) {
+    refused(['A row needs a title — it is how anybody finds it again.']);
+    const cell = tbody.querySelector('tr.draft td[data-field="title"]');
+    if (cell) openEditor(cell);
+    return;
+  }
+  // The banner in the shell has to know a write is in the air before it starts,
+  // exactly as a cell save does: the server announces a commit to the event
+  // stream before it answers the request that made it.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch('/api/entity', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      // One way in, and it is the one the create form uses: the id, the path and
+      // every rule about what a new record must carry are the server's, and two
+      // ways to create an entity is two sets of rules that disagree by Thursday.
+      // The body is the kind's own template — the same map `/new` offers — so a
+      // pitch made here is the same document as a pitch made there.
+      body: JSON.stringify({base_commit: BASE.value, fields,
+                            body: TEMPLATES[DRAFT.kind] ?? ''}),
+    });
+    const answer = await answerOf(response);
+    if (!response.ok) { refused(refusalLines(answer, response.status)); return; }
+    committed = answer.commit;
+    BASE.value = answer.commit;
+    DRAFT = null;
+    // Re-read rather than invented. A new row's dates, its size, what it blocks
+    // and which project it counts against are all the server's arithmetic, and a
+    // row drawn from what was posted would be a row missing every column the
+    // scheduler fills in.
+    const fresh = await refreshRows();
+    draw();
+    announce(fresh ? `Created ${answer.id}` : `Created ${answer.id} — reload to see it in place`);
+    const add = document.getElementById('add-row');
+    if (add) add.focus();
+  } finally {
+    // Announced even when refused, or one rejected create leaves every event
+    // after it held back and the banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A row you move
+// ---------------------------------------------------------------------------
+
+// Which row is being moved, whether it is being dragged or carried by the
+// keyboard. One variable for both, because they are one act: what is legal, what
+// is drawn and what is written are the same three answers whichever hand is on it.
+let MOVING = null;
+
+// Why that row may not hold this one, in words, or '' when it may.
+//
+// The rule is `PARENT_KINDS`, which is the model's, so this cannot drift from
+// what the validator would say about the record afterwards. The sentence is this
+// page's own — it is said *before* the write, about a gesture, where the
+// validator's is said about a record that already exists.
+function refuses(childId, parentId) {
+  const child = DATA.rows[childId];
+  const parent = DATA.rows[parentId];
+  if (!child || !parent) return 'that row is not in this plan';
+  // Dropping a row on itself is where it started, not a move, and the kind rule
+  // would refuse it anyway — but "a task belongs to a pitch, not to a task" is
+  // an odd thing to be told about the row under your own hand.
+  if (childId === parentId) return `${childId} cannot hold itself`;
+  if (!(PARENT_KINDS[child.kind] || []).includes(parent.kind))
+    return `a ${child.kind} belongs to ${holders(child.kind)}, not to a ${parent.kind}`;
+  if (child.parent === parentId) return `${childId} is already in ${parentId}`;
+  return '';
+}
+
+// Why this row may not be dropped on that target, in words, or '' when it may.
+// The `+` row is the one target that is not a record: dropping on it means
+// belonging to nothing, which is only a move when there is something to leave.
+function whyNotOnto(childId, target) {
+  if (target.classList.contains('adder'))
+    return (DATA.rows[childId] || {}).parent ? '' : `${childId} is not inside anything`;
+  return refuses(childId, target.dataset.id);
+}
+
+// Every row says whether it would take the one being moved, before the mouse
+// gets anywhere near it. This is the whole of "refused while dragging": a row
+// that cannot hold it is drawn refusing it from the moment it is picked up, and
+// `dragover` never lets go of the drop on one of them, so a move that breaks
+// containment is not a request that gets a 422 — it is a request that is never
+// made.
+function markTargets() {
+  for (const tr of tbody.querySelectorAll('tr[data-id]')) {
+    tr.classList.remove('can-hold', 'no-hold', 'over');
+    if (!MOVING || tr.dataset.id === MOVING || tr.dataset.id === DRAFT_ID) continue;
+    tr.classList.add(refuses(MOVING, tr.dataset.id) ? 'no-hold' : 'can-hold');
+  }
+}
+
+function startMoving(id) {
+  const row = DATA.rows[id];
+  if (!row) return;
+  MOVING = id;
+  // On the table and not on each row: the stylesheet needs one switch to change
+  // what the last row offers, and the marks below are per row.
+  table.classList.add('moving');
+  markTargets();
+  // The `+` row's second job, and it only has it while a move is in the air. Its
+  // words are set here rather than drawn by `adderHtml`, because redrawing the
+  // table in the middle of a native drag detaches the element being dragged and
+  // the browser cancels the drag with it.
+  const out = document.getElementById('unparent');
+  if (out) {
+    out.hidden = !row.parent;
+    out.textContent = row.parent ? `Take ${id} out of ${row.parent}` : '';
+  }
+  announce(`Moving ${id}. Drop it on ${holders(row.kind)}, or press Enter on one. ` +
+           (row.parent ? 'The row at the bottom takes it out of ' + row.parent + '. ' : '') +
+           'Escape leaves it where it is.');
+}
+
+function stopMoving(said) {
+  MOVING = null;
+  table.classList.remove('moving');
+  markTargets();
+  const out = document.getElementById('unparent');
+  if (out) { out.hidden = true; out.textContent = ''; }
+  if (said) announce(said);
+}
+
+// The write. A parent is a field like any other, so this is the same PATCH, the
+// same base commit, the same 409 and the same announcement as typing into a cell
+// — the gesture is new, the save path is not.
+async function reparent(childId, parentId) {
+  const box = document.getElementById('row-conflict');
+  box.hidden = true;
+  box.textContent = '';
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: BASE.value, fields: {parent: parentId}, body: null}),
+    });
+    const answer = await answerOf(response);
+    if (response.status === 409) {
+      box.hidden = false;
+      box.textContent = refusal(answer, 409);
+      return;
+    }
+    if (!response.ok) { announce(refusal(answer, response.status)); return; }
+    committed = answer.commit;
+    BASE.value = answer.commit;
+    // The rows, re-read, and not `DATA.rows[childId].parent = parentId`.
+    //
+    // `parent` is the one field on this page that nothing on this page can work
+    // out the consequences of: it moves the row's cycle, its dates, what it
+    // waits for and which project it counts against, and every one of those is a
+    // column somebody is looking at. The rule one screen up — that a save
+    // re-reads the problems and never the forecast — is about not moving dates
+    // under somebody who is mid-edit; a drop is a gesture that is over, and a
+    // table that does not move after one looks like a drop that did nothing.
+    const fresh = await refreshRows();
+    draw();
+    announce(!fresh ? `${childId} was moved — reload to see where it landed`
+             : parentId ? `${childId} is now in ${parentId}`
+                        : `${childId} is no longer inside anything`);
+  } finally {
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+}
+
+// The plan as it is now, in the shape this page was built from.
+//
+// `/api/table.json` and not `/api/index.json`: the second answers with entities
+// and spans, and turning those into rows means writing `_row` a second time in
+// JavaScript — a progress fraction counted out of a body, a blocker count, a
+// project walked up the tree. The route hands back the very payload the page was
+// rendered with, so the table after a write is built exactly like the table
+// before it.
+async function refreshRows() {
+  const response = await fetch('/api/table.json');
+  if (!response.ok) return false;
+  const fresh = await response.json();
+  if (!fresh || !fresh.rows) return false;
+  DATA.rows = fresh.rows;
+  regroup(fresh.problems || []);
+  summarise();
+  // The shell's banner compares somebody else's commit against what this page is
+  // showing. A row created here and left out of that list is a change to a row in
+  // front of you that reads as news about somewhere else.
+  window.SHOWING = Object.keys(DATA.rows);
+  return true;
+}
+
 if (EDITABLE) {
+  tbody.addEventListener('click', event => {
+    const control = event.target.closest('button');
+    if (!control) return;
+    if (control.id === 'add-row') openDraft();
+    else if (control.id === 'draft-cancel') closeDraft('The row was not created');
+    else if (control.id === 'draft-create') createDraft();
+    else if (control.id === 'unparent' && MOVING) {
+      const child = MOVING;
+      stopMoving();
+      reparent(child, null);
+    }
+  });
+
+  tbody.addEventListener('change', event => {
+    if (event.target.id === 'draft-kind' && DRAFT) chooseKind(event.target.value);
+  });
+
+  // Dragging a row lives in `tbody` and resizing a column lives in `thead`, and
+  // neither can fire the other: the column grips are `pointerdown` handlers on a
+  // `<th>`, this is a native drag that only starts on a handle inside a `<td>`,
+  // and there is no element that carries both. The narrower rule — that a row is
+  // picked up by its grip rather than anywhere in its body — is the same rule
+  // said more strictly, and it is what keeps a cell's text selectable and its
+  // editor usable.
+  tbody.addEventListener('dragstart', event => {
+    const row = event.target.closest('tr[data-id]');
+    if (!event.target.closest('.rowgrip') || !row || row.dataset.id === DRAFT_ID) {
+      // A selection dragged out of a cell is not a move. Refusing it here is
+      // what stops it looking like one.
+      event.preventDefault();
+      return;
+    }
+    startMoving(row.dataset.id);
+    const carried = event.dataTransfer;
+    if (carried) {
+      // The id, because a drag that ends outside this table ends in whatever
+      // takes text, and the id is the thing worth handing it.
+      carried.setData('text/plain', row.dataset.id);
+      carried.effectAllowed = 'move';
+      if (carried.setDragImage) carried.setDragImage(row, 16, 12);
+    }
+  });
+
+  tbody.addEventListener('dragover', event => {
+    if (!MOVING) return;
+    const over = event.target.closest('tr[data-id], tr.adder');
+    for (const tr of tbody.querySelectorAll('tr.over')) tr.classList.remove('over');
+    if (!over || whyNotOnto(MOVING, over)) return;
+    // `preventDefault` is the whole of "you may drop here". Not calling it is
+    // how a row refuses: the browser draws its own no-drop cursor over it and
+    // `drop` never fires, so the refusal is structural rather than a check
+    // somebody has to remember to write at the other end.
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    over.classList.add('over');
+  });
+
+  tbody.addEventListener('drop', event => {
+    event.preventDefault();
+    const over = event.target.closest('tr[data-id], tr.adder');
+    const child = MOVING;
+    stopMoving();
+    if (!child || !over) return;
+    // Asked again here, although `dragover` already refused to let a drop land
+    // on a row that cannot take it. What enforces that refusal is the browser,
+    // and this file's standing rule is that the browser is assumed to refuse:
+    // one implementation that delivers a drop nobody permitted is a blocker
+    // committed into the corpus by a hand gesture. `whyNotOnto` is the one
+    // answer both handlers ask for, so the two cannot disagree about it.
+    const why = whyNotOnto(child, over);
+    if (why) { announce(why); return; }
+    reparent(child, over.classList.contains('adder') ? null : over.dataset.id);
+  });
+
+  // Fires however the drag ended — dropped, cancelled with Escape, let go over
+  // the desktop — so it is the one place the marks have to come off.
+  tbody.addEventListener('dragend', () => stopMoving());
+
   tbody.addEventListener('dblclick', event => {
     const cell = event.target.closest('td.edit');
     // The tag reveal is a control inside an editable cell, so a double-click on
@@ -2876,6 +3470,38 @@ if (EDITABLE) {
     // Only a cell's own keys. Once an editor is open the keys belong to it — its
     // Escape discards and its Tab commits — and the grid must not act as well.
     if (!cell || event.target !== cell) return;
+    // A move in the air owns Enter and Escape until it lands. The arrows keep
+    // working, because moving to the row you mean is the whole of the gesture —
+    // this is the drag, walked instead of dragged, and the same rows are lit and
+    // the same rows refuse.
+    if (MOVING) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        stopMoving(`${MOVING} was left where it was`);
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const onto = cell.parentNode.dataset.id;
+        const why = refuses(MOVING, onto);
+        // The same sentence the drawn refusal is drawn from, said out loud —
+        // because the drawn one is the half a keyboard reader does not get.
+        if (why) { refuse(cell, why); return; }
+        const child = MOVING;
+        stopMoving();
+        reparent(child, onto);
+        return;
+      }
+    }
+    // The id cell is the handle's keyboard equal: it is the cell that is the
+    // row's own name, and it is where the grip is drawn.
+    if (event.key === 'Enter' && cell.dataset.col === 'id') {
+      event.preventDefault();
+      const row = DATA.rows[cell.parentNode.dataset.id];
+      if (row && movable(row)) startMoving(row.id);
+      else if (row) refuse(cell, moveTip(row));
+      return;
+    }
     if (event.key === 'Enter' || event.key === 'F2') {
       // F2 as well as Enter, because that is the key every spreadsheet uses and
       // Enter is the one everybody tries first.
@@ -2932,8 +3558,11 @@ tbody.addEventListener('click', event => {
 // A derived cell that ignores a double-click looks exactly like a cell that is
 // broken. It answers instead, in the same place a refused save answers — and
 // through `announce`, so the answer reaches a reader who cannot see that place.
-function refuse(cell) {
-  announce(cell.dataset.why);
+// `why` is a parameter and not only the cell's own: a row refusing to hold
+// another one is the same event — a cell answering instead of acting — and the
+// sentence belongs to the pair rather than to the cell.
+function refuse(cell, why) {
+  announce(why || cell.dataset.why);
   cell.classList.add('refused');
   setTimeout(() => cell.classList.remove('refused'), 1500);
 }
@@ -3601,6 +4230,105 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 .shed-reviewers [data-col="reviewers"],
 .shed-prs [data-col="prs"],
 .shed-tags [data-col="tags"] { display: none; }
+
+/* Where a row is picked up. Two dotted rules and not a `⠿`: that glyph is not in
+   the vendored face's latin subset, so on a machine with no webfont it is a tofu
+   box — the same argument the status marks settle the other way, because those
+   five had to be text inside a 14px bar. Drawn, it follows the theme and cannot
+   be the one character a reader's font does not have.
+   `cursor: grab` is the only thing on the page that says a row can be picked up
+   before somebody tries. */
+.rowgrip {
+  display: inline-block; width: 6px; height: 11px; margin-right: .4rem;
+  vertical-align: -1px; cursor: grab;
+  border-left: 2px dotted var(--line-strong); border-right: 2px dotted var(--line-strong);
+}
+.rowgrip:hover { border-left-color: var(--accent); border-right-color: var(--accent); }
+/* While a move is in the air the table answers one question, and it answers it
+   in the ground of every cell: this row would take it, this one would not.
+   On the cells and not on the `<tr>`, because the two frozen columns paint a
+   background of their own — a row-level colour is drawn underneath them and the
+   id and the title would be the two cells that did not answer.
+   `tr.can-hold > td` is (0,1,2) and beats `[data-col="id"]` at (0,1,0), the
+   severity grounds at (0,1,1) and `td.edit:hover` at (0,1,1), whatever order
+   this file ends up in. Beating the severity grounds is deliberate and it is
+   worth saying so: for the length of one gesture the only thing worth knowing
+   about a row is whether it can take the one in your hand, and the problem
+   grounds come back the moment it is over. */
+table.moving tr.can-hold > td { background: var(--surface-2); }
+table.moving tr.no-hold > td { background: var(--surface); color: var(--muted); }
+table.moving tr.no-hold > td a, table.moving tr.no-hold > td .chip { color: var(--muted); }
+/* The row the cursor is actually over, drawn as a box the row is going into.
+   Inset, and that is not a style choice: Chrome does not paint an *outset*
+   box-shadow on a cell in a `border-collapse: collapse` table, which is how the
+   frozen column's edge came to be a rule that resolved perfectly and drew
+   nothing at all for a whole round. */
+table.moving tr.over > td {
+  background: var(--surface-2);
+  box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent);
+}
+/* The last row: where a plan grows, and — while a move is in the air — where a
+   row goes to belong to nothing.
+   Sticky, so that on a plan of two hundred rows the way to add one more is not
+   two hundred rows down. z-index 2 puts it over the cells passing under it
+   (z-index 1, the frozen columns) and under the header (3, and 4 for its own
+   frozen pair), which is the order they are in on screen. */
+tr.adder > td {
+  position: sticky; bottom: 0; z-index: 2;
+  background: var(--surface); border-top: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 var(--line);
+}
+tr.adder button {
+  font: inherit; font-size: 12px; padding: .1rem .5rem; margin-right: .5rem;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: none; color: inherit; cursor: pointer;
+}
+tr.adder button:hover { border-color: var(--accent); color: var(--accent); }
+tr.adder button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+tr.adder .hint { font-size: 12px; color: var(--muted); }
+tr.adder .kindpick { display: inline; font-size: 12px; color: var(--muted); margin-right: .5rem; }
+tr.adder .kindpick select { font: inherit; }
+/* The `+` and the way out swap places, because at any moment exactly one of them
+   is a thing you can do. `:not([hidden])` because `table.moving #unparent` is
+   (1,1,1) and the browser's own `[hidden] { display: none }` is (0,1,0): without
+   it, the button that has nothing to take a row out of is shown anyway. */
+tr.adder #unparent { display: none; }
+table.moving tr.adder #add-row { display: none; }
+table.moving tr.adder #unparent:not([hidden]) { display: inline-block; }
+table.moving tr.adder > td { box-shadow: inset 0 2px 0 var(--accent); }
+table.moving tr.adder.over > td { background: var(--surface-2); }
+/* The row being typed. It is a form laid out as a row, so an empty cell has to
+   look like a box to fill in rather than like a value nobody has written: the
+   column's own word, in the muted ink every hint on this page uses.
+   `attr()` in `content` and not a text node, because the hint is furniture — a
+   screen reader on the cell hears its column header and the editor's own
+   `aria-label`, which is the name of the thing, said once. */
+tr.draft > td { background: var(--surface-2); }
+tr.draft .draft-id { color: var(--muted); }
+td.draft-cell:empty::after { content: attr(data-hint); color: var(--empty); }
+/* A column this kind has not got, or one nothing may type into. Hatched rather
+   than merely empty: every other cell in this row carries its column's word in
+   the muted ink, so an empty one would read as a box nobody has filled in yet —
+   and this is a box nobody can.
+   Drawn at `--line-strong` and at full strength, which is not a taste: at
+   `--line` under `opacity: .5` the stripes were, on the screen, nothing at all.
+   A hatch nobody can see is an empty cell with a comment attached.
+   `tr.draft > td.draft-none` is (0,2,2) because it has to beat the row's own
+   ground at (0,2,0) two rules up — and that rule uses the `background`
+   SHORTHAND, which resets `background-image` to none. Written as `td.draft-none`
+   this resolved perfectly and painted nothing, which is this file's
+   characteristic failure and was caught by looking at the pixels. What it now
+   outranks is exactly that one rule: nothing else in this stylesheet reaches a
+   cell of the draft row. */
+tr.draft > td.draft-none {
+  background-image: repeating-linear-gradient(-45deg, transparent, transparent 3px,
+                    var(--line-strong) 3px, var(--line-strong) 4px);
+}
+/* The create refusal, beside the row it refused. `#row-conflict` is styled in
+   the shell and this is the same kind of news, but a create has no row to sit
+   next to — so it lands in the bar, where the button that caused it is. */
+#draft-problems { margin: .25rem 0 0; padding-left: 1.1rem; color: var(--sev-blocker);
+                  font-size: 12px; }
 """
 
 # One hint, in both modes, and at the far end of the search box's line rather
@@ -6763,6 +7491,11 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
 _DEFAULT_CYCLE_DAYS = 28
 
 KINDS = ("project", "pitch", "task")
+# The model behind each of them, once. This was a dict literal inside `_new_rows`
+# and is now asked two more questions — which fields a kind has, for the create
+# form and for the row a person types straight into the table — and three copies
+# of "these are the three kinds" is three places to forget a fourth.
+_KIND_MODELS: dict[str, type[Entity]] = {"project": Project, "pitch": Pitch, "task": Task}
 
 # The body a new entity starts from, per kind.
 #
@@ -6845,7 +7578,7 @@ def _new_rows() -> list[dict]:
     """
     rows: dict[str, dict] = {}
     for kind in KINDS:
-        blank = {"project": Project, "pitch": Pitch, "task": Task}[kind](
+        blank = _KIND_MODELS[kind](
             id=f"{PREFIX[kind]}-000000",
             kind=kind,
             title="",
@@ -6865,6 +7598,40 @@ def _new_rows() -> list[dict]:
             )
             row["kinds"].append(kind)
     return [{**row, "kinds": " ".join(row["kinds"])} for row in rows.values()]
+
+
+def _new_row_fields() -> dict[str, dict[str, str]]:
+    """Per kind, which stored field each column of a new row writes to.
+
+    The table's own answer to the question `_new_rows` answers for the create
+    form — what a person may type into a record that does not exist yet — and it
+    is asked of the same two places rather than written down a third time:
+    `EDITABLE` says which fields a person owns at all, and `model_fields` says
+    which of them this kind has. A project has no `person_weeks`, so it gets no
+    box under Appetite; a pitch's `shaped_by` would be here if the table had a
+    column for it, and the day it does this map grows the entry on its own.
+
+    A column missing from a kind's map is a column that kind cannot be typed into
+    — which is three different sentences and all of them true: `id` is the
+    server's, `start` is the scheduler's, and Appetite is a thing a project does
+    not have. The row draws each of them differently and says which it is.
+
+    `size` is the one column that is not simply its own field. It *shows*
+    person_weeks or an assumed default, which is why no stored row lets it be
+    typed into (`_TABLE_WHY`) — but a row that does not exist yet has no assumed
+    value standing in for a decision, so there is nothing here to commit by
+    accident. Typing 3 into it writes `person_weeks: 3`, and the cell goes back
+    to being the scheduler's the moment the row is a record.
+    """
+    per_kind: dict[str, dict[str, str]] = {}
+    for kind, model in _KIND_MODELS.items():
+        fields = {}
+        for column, _ in _TABLE_COLUMNS:
+            field = _SIZE_FIELD_NAME if column == "size" else column
+            if field in EDITABLE and field in model.model_fields:
+                fields[column] = field
+        per_kind[kind] = fields
+    return per_kind
 
 
 def render_new(

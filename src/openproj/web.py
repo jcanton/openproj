@@ -995,6 +995,27 @@ def create_app(
             )
         )
 
+    @app.get("/api/table.json")
+    def table_json() -> JSONResponse:
+        """The table's own payload, exactly as the page was rendered with it.
+
+        A write that moves a row in the tree changes columns nothing in the
+        browser can recompute — the dates, the size, the blocker count, which
+        project a row counts against — so the page re-reads them rather than
+        guessing. It re-reads them through the same function that built the page,
+        because the alternative is `_row` written a second time in JavaScript,
+        and the copy that only runs after a save is the copy nobody would ever
+        have looked at again.
+
+        Not folded into `/api/index.json` beside it: that route answers with
+        entities and spans, which is the index, and a view of the index shaped
+        for one page does not belong inside it. `what_json_can_carry` for the
+        same reason the route above uses it — a `person_weeks` somebody
+        hand-edited to `.inf` is a 500 in plain text on a route whose only
+        readers are scripts.
+        """
+        return JSONResponse(what_json_can_carry(render._payload(index_now()[1])))
+
     # -- writing ------------------------------------------------------------
 
     def _result(written, commit_before: str) -> JSONResponse:

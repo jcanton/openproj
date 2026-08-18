@@ -897,7 +897,11 @@ def test_a_create_records_its_author_like_any_other_write(client: TestClient, re
 def test_the_content_stays_public_when_nobody_is_signed_in(secure_client: TestClient):
     """Reads need no login, by decision. Putting the plan behind the org would
     make it unlinkable from an issue, which is where most people meet it."""
-    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json", "/healthz"):
+    # `/api/table.json` is the table page re-reading itself, so it is as public
+    # as the page: a route that answered 401 would leave a signed-out reader with
+    # a table that draws once and then never moves.
+    for route in ("/", "/detail", "/graph", "/timeline", "/api/index.json",
+                  "/api/table.json", "/healthz"):
         assert secure_client.get(route).status_code == 200, route
 
 

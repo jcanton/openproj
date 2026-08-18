@@ -1551,7 +1551,14 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
 # levels deep in places. `is_bettable` already says a parentless task is bet in
 # its own right; a task under a project takes the project's cycle, the same way
 # a task under a pitch takes the pitch's, so nothing downstream has to change.
-_PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch", "project")}
+#
+# Public, and it was `_PARENT_KINDS`: the table ships this map to the browser so
+# that dragging a row onto one that cannot hold it is refused while the mouse is
+# still down, rather than after a save. Three lines of JavaScript saying the same
+# thing would be the copy that goes stale — this map was widened only yesterday,
+# and a page still refusing a task on a project would be the tool arguing with
+# its own validator.
+PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch", "project")}
 
 
 def is_bettable(entity: Entity) -> bool:
@@ -1605,7 +1612,7 @@ def _containment_problems(
     parent = by_id.get(entity.parent) if entity.parent else None
     if parent is None:
         return
-    allowed = _PARENT_KINDS.get(entity.kind, ())
+    allowed = PARENT_KINDS.get(entity.kind, ())
     if parent.kind not in allowed:
         belongs = " or ".join(f"a {kind}" for kind in allowed) or "nothing"
         yield (

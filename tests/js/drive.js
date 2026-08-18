@@ -490,8 +490,17 @@ async function run(html, expression, options) {
   let ticket = 1;
 
   class DriverEvent {
-    constructor(type, init) { this.type = type; Object.assign(this, init || {}); }
-    preventDefault() {}
+    constructor(type, init) {
+      this.type = type;
+      this.defaultPrevented = false;
+      Object.assign(this, init || {});
+    }
+    // Recorded, because on one of these events the call IS the behaviour: a row
+    // says a drop may land on it by calling `preventDefault` on `dragover` and
+    // refuses by not calling it. A shim that swallowed the call could not tell a
+    // table that accepts every drop from one that accepts the legal ones, which
+    // is the entire question about a move.
+    preventDefault() { this.defaultPrevented = true; }
     stopPropagation() {}
   }
 
