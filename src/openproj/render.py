@@ -6913,9 +6913,13 @@ _CYCLE = """
     so it renders like every other shaping document here. -#}
 <div class="doc read">{{ c.body }}</div>
 {% if editable %}
-<p class="hint">What came up at the betting table. Saved with the setup.</p>
-<textarea id="notes" class="notes" rows="8"
-          aria-label="Cycle notes">{{ c.raw_body }}</textarea>
+{#- The sentence that was here is inside the box now, the way the goal's is. A
+    hint under a heading explaining what Notes are for is a line every reader
+    pays for once per visit to learn something they knew from the heading; a
+    placeholder is paid for only by the person looking at an empty box. -#}
+<textarea id="notes" class="notes" rows="8" aria-label="Cycle notes"
+  placeholder="What came up at the betting table — why a pitch was left out,
+what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
 {% endif %}
 
 {% if editable %}
@@ -7342,6 +7346,13 @@ textarea.notes { display: block; width: 100%; max-width: 52rem; box-sizing: bord
    and read better in mono, a goal is a sentence somebody says out loud. Wider
    measure than prose wants, because it sits above a table and a goal that wraps
    three times stops being the one line the room agreed on. */
+/* No rule above the cycle's prose. `.doc`'s border-top comes from _DETAIL_STYLE,
+   where it separates a shaping document from the facts pane above it; here the
+   block sits directly under its own `<h2>`, so the same rule drew a stray line
+   between a heading and the text it heads. Unscoped and relying on order: this
+   sheet is concatenated after _DETAIL_STYLE and is loaded by the two cycle pages
+   only, so there is no third page for it to reach. */
+.doc { border-top: 0; padding-top: 0; }
 textarea.goal { display: block; width: 100%; max-width: 52rem; box-sizing: border-box;
                 font: inherit; font-size: 15px; line-height: 1.5; padding: .4rem;
                 border: 1px solid var(--line-strong); border-radius: 3px;
