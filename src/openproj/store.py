@@ -158,6 +158,37 @@ def _merge_body(base: str, mine: str, theirs: str) -> tuple[str | None, list[str
     return "".join(merged), []
 
 
+def _deleted(path: str) -> str:
+    """What a save is answered with when the file it edits is gone.
+
+    A deletion is not an empty file, and the merge below cannot tell them apart:
+    it is handed `theirs or ""`, so a record somebody removed in git arrives as a
+    frontmatter with no keys and a body with no lines. Every key the save did not
+    touch then reads as "only they moved it" and is dropped, every key it did
+    touch reads as "only we moved it" and is kept — and the merge that comes out
+    is a *resurrection* of the record with nothing in it but the field that was
+    being edited. A drag onto a row deleted under you committed
+    `---\\nparent: proj-a10000\\n---\\n` over a task, answered 200, and announced
+    the move; the same happened to an `owner`, a `status` or anything else whose
+    value was empty before the edit.
+
+    Parsing the result would not have caught it. Every field is optional at the
+    type level on purpose, so that file loads perfectly well — it is a record
+    with no title and no kind, which `validate_all` reports beside the row it
+    ruined, one commit too late to stop.
+
+    So the answer is the one git gives for modify/delete: refuse, and say which
+    file and what to do. A person deleting a record and a person editing it have
+    genuinely disagreed, and there is no third text that is both of their
+    intentions.
+    """
+    return (
+        f"{path} — somebody deleted this while you were editing it.\n"
+        "  Nothing was written. Restore it in git if it should not have gone, "
+        "or make the record again."
+    )
+
+
 def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, str | None]:
     """Structured merge of one entity file. Returns (merged_text, conflict_report)."""
     base_front, base_body = _split(base)
@@ -392,6 +423,8 @@ class Store:
             if was == stored:
                 # Somebody edited a different file. Nobody needs to hear about it.
                 return self._finish(self._commit(path, content, author, message), "retried")
+            if was is not None and stored is None:
+                return WriteResult(commit=None, outcome="conflict", conflict=_deleted(path))
 
             merged, conflict = _merge(path, was or "", content, stored or "")
             if conflict is not None:

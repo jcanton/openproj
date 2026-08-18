@@ -348,15 +348,26 @@ function makeDocument(inlined, markup) {
     createTextNode(text) { return {textContent: text}; },
     createDocumentFragment() { return new Element('fragment', document); },
     getElementById(id) {
+      // Asked of the page every time, and never remembered. A script that writes
+      // to `innerHTML` replaces the elements inside it, and a remembered answer
+      // is an element that is no longer on the page: the table rebuilds its whole
+      // body on every draw and the sticky row at the bottom of it is rebuilt with
+      // it, so a shim that kept the first answer was reading and writing a
+      // detached node while the page in front of the reader said something else
+      // entirely. That is precisely the defect this had to be able to see, and it
+      // could not see it — the cache made the check pass vacuously.
+      const real = root && root._descendants().find(element => element.id === id);
+      if (real) return real;
+      // In page mode a miss is a miss, the way it is in a browser: the pages
+      // ask for `#over` and `#strangers` and then check what came back. The
+      // exception is a `<script type=application/json>` payload — `#suggest`,
+      // `#payload` — which has been lifted out of the markup to be run and is
+      // still on the page as far as the page is concerned.
+      if (root && !inlined.has(id)) return null;
+      // Phantoms and payloads stay remembered: a script asking twice for the
+      // furniture it is about to write into has to get the same box back.
       if (!byId.has(id)) {
-        const real = root && root._descendants().find(element => element.id === id);
-        // In page mode a miss is a miss, the way it is in a browser: the pages
-        // ask for `#over` and `#strangers` and then check what came back. The
-        // exception is a `<script type=application/json>` payload — `#suggest`,
-        // `#payload` — which has been lifted out of the markup to be run and is
-        // still on the page as far as the page is concerned.
-        if (root && !real && !inlined.has(id)) return null;
-        const element = real || new Element('div', document, true);
+        const element = new Element('div', document, true);
         element.id = id;
         if (inlined.has(id)) element.textContent = inlined.get(id);
         byId.set(id, element);

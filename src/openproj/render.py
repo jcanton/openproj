@@ -1241,6 +1241,15 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
   --kind-ink: var(--muted); --kind-line: var(--line-strong);
   --sev-blocker: #9a3327; --sev-blocker-soft: #f9e9e6;
   --sev-warn: #8a5308; --sev-warn-soft: #f8eedc;
+  /* Where a dragged row would land. Its own token and not `--st-done-soft`,
+     which is the same kind of pale green: a status ground borrowed to mean
+     something that is not a status is a colour that means two things, and the
+     ladder is the one palette on this page that is load-bearing. Green because
+     the edge drawn on it is `--ok`, which is the only thing on the page that
+     already means "this will work" — and because the two other grounds a row
+     can take during a move are the panel tint and the severity fills, neither of
+     which may be mistaken for it. */
+  --drop: #e2f2e8;
   /* The ground a cycle runs over on the timeline. It was --surface-2, which is
      1.07:1 against the page — a band nobody could see, keyed in the legend by a
      different token again. One token, 1.50:1 against the page in both themes,
@@ -1286,6 +1295,7 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
     --st-shelved-soft: #242b30; --st-shelved-text: #a6b1ba;
     --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
     --sev-warn: #d9a557; --sev-warn-soft: #332409;
+    --drop: #1e3a2b;
     --band: #2a3941;
   }
 }
@@ -1308,6 +1318,7 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
   --st-shelved-soft: #242b30; --st-shelved-text: #a6b1ba;
   --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
   --sev-warn: #d9a557; --sev-warn-soft: #332409;
+  --drop: #1e3a2b;
   --band: #2a3941;
 }
 /* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
@@ -2588,7 +2599,25 @@ function hiddenBy(row, key) {
   return `+${rest.length} more: ${fits.join(', ')}${over ? ` … and ${over} not shown` : ''}`;
 }
 
-function cell(row, key) {
+// The four shapes a level of the tree can be drawn as. An allowlist and not a
+// pass-through, because `treeHtml` is called a second time with a value read
+// back off the DOM — see `openEditor` — and this page's rule is that a value
+// crossing back into markup is checked against what it is allowed to be rather
+// than against what it must not.
+const TREE_RUNGS = new Set(['line', 'blank', 'tee', 'end']);
+
+// One space-separated rung name per level, as the drawing. One function, because
+// the cell editor has to put the drawing back: `openEditor` replaces the whole
+// of a cell's contents with an input, and a connector that disappears for as
+// long as somebody is typing a title reads as the tree having lost the row.
+function treeHtml(rungs) {
+  const each = String(rungs || '').split(' ').filter(one => TREE_RUNGS.has(one));
+  if (!each.length) return '';
+  return '<span class="tree" aria-hidden="true">' +
+    each.map(one => `<span class="rung ${one}"></span>`).join('') + '</span>';
+}
+
+function cell(row, key, place) {
   const mark = (MARKS[row.id] || {})[key];
   const note = mark ? mark.messages.join(' · ') : '';
   const ground = mark ? 'sev-cell-' + SEV_CLASS[mark.severity] : '';
@@ -2604,9 +2633,24 @@ function cell(row, key) {
   // without ceasing to be a table cell — and it holds the glyph too, or the mark
   // that says which cell is wrong drops to a second line and takes the row's
   // height with it.
-  const body = CLAMPED.has(key)
+  // The tree, in the column that holds the row's own words. Not the id column
+  // beside it: an id is a token to be cited, monospace and the same width on
+  // every row, and indenting it would make the one column that is a straight
+  // list of names into a ragged one. The title is a sentence and already ragged.
+  //
+  // `aria-hidden`, and it is a wrapper around empty spans rather than characters:
+  // there is nothing here to read out. A screen reader gets the tree from the
+  // rows themselves — the parent is a field of the record and the title opens it
+  // — and what it would get from the drawing is "box drawings light up and
+  // right" in front of every child's title.
+  //
+  // Drawn first inside the cell and taken out of flow by the stylesheet, so the
+  // link keeps the whole of the cell's content box: the indent is padding on the
+  // cell, which is what puts it in the fit's measurement of the column.
+  const rungs = key === 'title' && place ? place.rungs.join(' ') : '';
+  const body = treeHtml(rungs) + (CLAMPED.has(key)
     ? `<span class="clamped">${shown(row, key)}${glyph}</span>`
-    : shown(row, key) + glyph;
+    : shown(row, key) + glyph);
   const editable = EDITABLE && key in EDITABLE;
   // One class list rather than three returns. The tags clamp used to be written
   // only into the editable branch, so on a rendered file the column kept the
@@ -2656,6 +2700,7 @@ function cell(row, key) {
   return `<td data-col="${key}"` +
     `${editable ? ` data-entity="${esc(row.id)}" data-field="${key}"` : ''}` +
     `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
+    `${rungs ? ` data-rungs="${esc(rungs)}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
     ` class="${classes}"${tip ? ` title="${esc(tip)}"` : ''}>${body}</td>`;
 }
@@ -2674,13 +2719,21 @@ function prLink(ref) {
     ` title="${esc(ref)}">#${esc(number)}</a>`;
 }
 
-function rowHtml(row) {
+function rowHtml(place) {
+  const row = place.row;
   // The stripe says "something on this row is wrong" before a single cell is
   // read; the glyph in the cell says which thing. The message used to live only
   // in a native tooltip on the row, where it was found by accident or not at all.
+  // Both survive the dimming below: a row kept only as context can still be the
+  // row with the problem on it.
   const worst = TROUBLE[row.id];
-  return `<tr data-id="${esc(row.id)}"${worst ? ` class="sev-row-${SEV_CLASS[worst]}"` : ''}>` +
-    keys.map(key => cell(row, key)).join('') + '</tr>';
+  const classes = [
+    worst ? 'sev-row-' + SEV_CLASS[worst] : '',
+    place.depth ? 'd' + place.depth : '',
+    place.context ? 'context' : '',
+  ].filter(Boolean).join(' ');
+  return `<tr data-id="${esc(row.id)}"${classes ? ` class="${classes}"` : ''}>` +
+    keys.map(key => cell(row, key, place)).join('') + '</tr>';
 }
 
 // Three ways for a table to be empty, and they rendered identically: a header
@@ -2705,6 +2758,120 @@ function emptyRow() {
     '</td></tr>';
 }
 
+// --------------------------------------------------------------------------
+// The tree
+//
+// A plan is a tree — a project holds pitches, a pitch holds tasks, and a task
+// can hang straight off a project — and the table drew it as a flat list of
+// seventeen rows sorted by id, which is the tree's own order with the shape
+// rubbed off it. Three things put the shape back, and each is narrower than it
+// first looks.
+// --------------------------------------------------------------------------
+
+// The deepest indent drawn. `PARENT_KINDS` bounds the real answer at two — a
+// task under a pitch under a project — and a task hanging off a project is one,
+// so this is a cap on a hand-edited file rather than a design for four levels.
+// A row deeper than this is drawn at this depth: the indent is a hint about
+// where a row sits, and it is not worth a title column's width to be exact about
+// a shape the validator is already complaining about.
+const TREE_DEPTH = 3;
+
+// Every ancestor of every match, whether or not it matched.
+//
+// An entity that is not an answer to what was asked but *holds* one stays on the
+// table, dimmed: filtering to `owner=ann` and getting three tasks with no pitch
+// over them is a list of tasks, not a plan, and the row that says which pitch
+// they are part of is the one a person is about to want. It is a record like any
+// other while it is there — its title still opens it, its cells still edit — it
+// simply is not an answer, and `summarise` never counts it as one.
+function withAncestors(rows) {
+  const kept = new Map(rows.map(row => [row.id, row]));
+  for (const row of rows) {
+    // Guarded, because a parent chain somebody hand-edited into a loop is a hang
+    // rather than a blocker, and the page would take the whole plan with it.
+    const seen = new Set([row.id]);
+    let at = DATA.rows[row.parent];
+    while (at && !seen.has(at.id)) {
+      seen.add(at.id);
+      kept.set(at.id, at);
+      at = DATA.rows[at.parent];
+    }
+  }
+  return [...kept.values()];
+}
+
+// Roots in id order, children in id order under each root, depth first.
+//
+// A childless project sits exactly where its id puts it: this is one rule and
+// not five buckets, and "projects with children, then projects without" would be
+// a second ordering nobody asked for on top of the one that is on screen.
+//
+// Descending reverses the siblings at every level and never the walk: a tree
+// with the children above their parent is not the same tree upside down, it is a
+// list of rows in an order that means nothing.
+function ordered(rows, descending) {
+  const by = new Map(rows.map(row => [row.id, row]));
+  const kids = new Map();
+  const roots = [];
+  for (const row of rows) {
+    const parent = by.has(row.parent) ? row.parent : null;
+    if (parent) kids.set(parent, (kids.get(parent) || []).concat(row.id));
+    else roots.push(row.id);
+  }
+  const order = ids =>
+    [...ids].sort((a, b) => a.localeCompare(b) * (descending ? -1 : 1));
+  const out = [];
+  const drawn = new Set();
+  const walk = (id, depth) => {
+    if (drawn.has(id)) return;
+    drawn.add(id);
+    out.push({row: by.get(id), depth: Math.min(depth, TREE_DEPTH), rungs: [], context: false});
+    for (const child of order(kids.get(id) || [])) walk(child, depth + 1);
+  };
+  for (const id of order(roots)) walk(id, 0);
+  // A loop in the parent chain leaves its members with no root to be reached
+  // from. They are drawn flat at the end rather than dropped: a row missing from
+  // the table is a row nobody can use the table to fix the loop with.
+  for (const id of order(by.keys())) walk(id, 0);
+  return out;
+}
+
+// Which connector each row draws, computed from the rows that are actually being
+// drawn and never from the plan.
+//
+// That is the whole of this function's difficulty. A pitch whose last task the
+// filter removed would otherwise keep a `├─`, promising a sibling under a row
+// that ends the branch, and the row above the gap would carry a `└─` that is
+// simply untrue. What is on screen is what the connectors describe.
+//
+// `line` is a level whose branch continues past this row, `blank` one whose
+// branch is finished, `tee` a child with a sibling still to come and `end` the
+// last child drawn. They are class names: the glyphs are drawn as borders in the
+// stylesheet, because `├─` and `└─` only line up in a monospace face — this
+// column is proportional — and a screen reader says "box drawings light up and
+// right" before every child's title.
+function connectors(placed) {
+  // Whether each row is the last one drawn at its own level. Depth first means a
+  // row's own subtree is the run of deeper rows after it, so the next row that
+  // is not deeper answers it.
+  const last = placed.map((one, i) => {
+    for (let j = i + 1; j < placed.length; j++) {
+      if (placed[j].depth < one.depth) return true;
+      if (placed[j].depth === one.depth) return false;
+    }
+    return true;
+  });
+  const continues = [];
+  placed.forEach((one, i) => {
+    const rungs = [];
+    for (let level = 1; level < one.depth; level++)
+      rungs.push(continues[level] ? 'line' : 'blank');
+    if (one.depth) rungs.push(last[i] ? 'end' : 'tee');
+    continues[one.depth] = !last[i];
+    one.rungs = rungs;
+  });
+}
+
 function draw() {
   const sort = params.get('sort') || 'id';
   const descending = params.get('desc') === '1';
@@ -2715,9 +2882,25 @@ function draw() {
   const key = rank
     ? row => String(rank.indexOf(row[sort])).padStart(3, '0')
     : row => String(row[sort] ?? '');
-  const rows = Object.values(DATA.rows).filter(matches)
-    .sort((a, b) => key(a).localeCompare(key(b)));
-  if (descending) rows.reverse();
+  const found = Object.values(DATA.rows).filter(matches);
+  // The tree is the id sort's, and no other column's. Sorted by owner, a parent
+  // is wherever its owner's name falls and its children are three screens away:
+  // an indent that does not point at the row above it is a decoration, and a
+  // connector drawn between two rows that are not related is a lie about the
+  // plan. So every other column sorts flat — no indent, no connectors, and no
+  // ancestors kept for a context they could not provide — which is what those
+  // columns were always for.
+  let placed;
+  if (sort === 'id') {
+    placed = ordered(withAncestors(found), descending);
+    connectors(placed);
+    const answers = new Set(found.map(row => row.id));
+    for (const one of placed) one.context = !answers.has(one.row.id);
+  } else {
+    const rows = found.slice().sort((a, b) => key(a).localeCompare(key(b)));
+    if (descending) rows.reverse();
+    placed = rows.map(row => ({row, depth: 0, rungs: [], context: false}));
+  }
   // Where the keyboard is, asked before `innerHTML` detaches the cell holding
   // it. A save redraws twice, so without this every commit dropped a keyboard
   // reader at the top of the page. Asked of the document rather than assumed:
@@ -2734,10 +2917,22 @@ function draw() {
   // row that does not exist yet, and nothing that does not exist can match a
   // filter — and on a rendered file it is not drawn at all, because a file has
   // no server to create anything with.
-  tbody.innerHTML = (rows.length ? rows.map(rowHtml).join('') : emptyRow())
+  tbody.innerHTML = (placed.length ? placed.map(rowHtml).join('') : emptyRow())
     + (EDITABLE ? adderHtml() : '');
-  if (EDITABLE) { rove(null, held); RETURN = false; sayDraft(); markTargets(); }
-  document.getElementById('shown').textContent = rows.length;
+  if (EDITABLE) {
+    rove(null, held);
+    RETURN = false;
+    sayDraft();
+    markTargets();
+    // Every element the last row holds is new, so what it is saying has to be
+    // said again — this is the redraw that used to blank it mid-move.
+    sayMoveOut();
+  }
+  // How many rows answered the question, which is not how many are drawn: an
+  // ancestor kept for context is on screen because of something else that
+  // matched, and counting it would make "4 of 17 shown" mean two things at once
+  // — the second of which nobody asked for.
+  document.getElementById('shown').textContent = found.length;
   // Sorting redraws without reloading, so the marker has to move with it. Set
   // once at load, it stayed on whatever the URL said when the page opened.
   for (const th of headers) {
@@ -2915,12 +3110,15 @@ function openEditor(cell) {
   // still writes `in_progress`.
   // Every interpolation escaped, including the ones that are a closed set today.
   // A rule with an exception in it is a rule nobody applies to the next line.
-  cell.innerHTML = closed
+  // The tree first, rebuilt from the cell's own `data-rungs` rather than kept:
+  // this is the one cell whose contents are replaced without a redraw, and the
+  // connector belongs to the row rather than to what is in the cell at the time.
+  cell.innerHTML = treeHtml(cell.dataset.rungs) + (closed
     ? `<select data-type="text" aria-label="${named}">${closed.map(o =>
         `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>${esc(human(o))}</option>`
       ).join('')}</select>`
     : `<input value="${esc(was)}" data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
-      `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`;
+      `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`);
   const input = cell.querySelector('select, input');
   // The table gets the autocomplete the detail page has. Suggestions that only
   // appear in one of the two places are suggestions nobody relies on.
@@ -3064,9 +3262,15 @@ function adderHtml() {
     // that writes one properly. Two controls with one name on one page is how a
     // person learns to trust neither, and what this one does when you press it
     // is put a row on the table.
+    // Both of the last row's jobs are drawn every time, and `sayMoveOut` decides
+    // which of them is showing. Emitted empty and filled in afterwards rather
+    // than written out here, because the words are the same words `startMoving`
+    // needs mid-drag, when the table must not be redrawn at all: one function
+    // owns them, and a redraw and a pick-up leave this row saying the same thing.
     return `<tr class="adder"><td${wide}>` +
       `<button type="button" id="add-row" class="add">+ New row</button>` +
       `<button type="button" id="unparent" hidden></button>` +
+      `<span class="hint" id="rootless" hidden></span>` +
       `</td></tr>`;
   }
   const kinds = Object.keys(NEW_ROW).map(kind =>
@@ -3280,6 +3484,93 @@ function markTargets() {
     if (!MOVING || tr.dataset.id === MOVING || tr.dataset.id === DRAFT_ID) continue;
     tr.classList.add(refuses(MOVING, tr.dataset.id) ? 'no-hold' : 'can-hold');
   }
+  // The label goes with the mark, because they are one answer said twice — the
+  // ground under the cursor and the words beside it. No row is `over` after this
+  // runs, so a label still naming one is a label naming a row that is not lit,
+  // and a redraw mid-drag is exactly when that happens.
+  sayInto('');
+}
+
+// The row a drop would land in, named, next to the cursor.
+//
+// Not a dialog. A modal on every drag is a toll on a gesture that is already
+// deliberate — you have to pick the row up, carry it and let go on the right one
+// — and a reparent is one field and one commit that dragging it back undoes. The
+// answer belongs where the hand already is, before the drop, rather than as a
+// question after it.
+//
+// The title and not the id, because the ground under the cursor already says
+// which row it is and what a person is checking at that moment is that it is the
+// *right* row. `textContent`, so a title somebody typed is text here as it is
+// everywhere else on this page.
+//
+// Parked on the body and positioned fixed, like the cells' suggestion popups:
+// `.table-scroll` scrolls and clips its contents, and a label that scrolls out
+// from under the cursor is worse than no label at all.
+let INTO = null;
+function sayInto(text, x, y) {
+  // Nothing to say and nothing drawn yet is the state every table opens in, so
+  // a page nobody drags anything on never grows the element at all.
+  if (!INTO && !text) return;
+  if (!INTO) {
+    INTO = document.createElement('div');
+    INTO.id = 'into';
+    INTO.hidden = true;
+    document.body.append(INTO);
+  }
+  INTO.hidden = !text;
+  INTO.textContent = text || '';
+  if (!text) return;
+  // Below and right of the pointer, which is where the drag image is not.
+  INTO.style.left = Math.round(x + 16) + 'px';
+  INTO.style.top = Math.round(y + 18) + 'px';
+}
+
+// A row's own word for itself. The id is the fallback and not the label: a row
+// with no title is a row nobody can find again, which the create path already
+// refuses, but a plan hand-written in git can hold one.
+const titleOf = id => (DATA.rows[id] || {}).title || id;
+
+// What the label says over each of the two kinds of target. The `+` row is not a
+// parent — it is the way out of the tree — so it says so in the other direction
+// rather than naming itself.
+function intoWords(target) {
+  if (target.classList.contains('adder')) {
+    const parent = (DATA.rows[MOVING] || {}).parent;
+    return parent ? `→ out of ${titleOf(parent)}` : '';
+  }
+  return `→ into ${titleOf(target.dataset.id)}`;
+}
+
+// What the last row says while a move is in the air, and the whole of it.
+//
+// It was set imperatively in `startMoving` and nowhere else, which held exactly
+// until something redrew the table underneath the move: `draw()` rebuilds the
+// whole tbody, `adderHtml` emits the button hidden and wordless, and `moving` is
+// still on the table — so `+ New row` stayed hidden, `#unparent:not([hidden])`
+// stopped matching, and the sticky bar at the bottom of the plan painted as an
+// empty strip while the live region still said "The row at the bottom takes it
+// out of pitch-0a0001". Typing one character into the search box did it, as did
+// any facet, any sort, and every keyboard move — which is the half of the
+// gesture that redraws by design. Empty must not look like broken, and least of
+// all while the page is telling somebody the opposite.
+//
+// So the answer is derived from `MOVING` wherever it is asked for: after every
+// redraw, and again when a move starts or ends, which is when a native drag
+// forbids a redraw. Both states are drawn, because a row that is already outside
+// everything has nothing to be taken out of and the bar has to say so rather
+// than go blank — the one control it would otherwise offer is the `+`, and
+// pressing that in the middle of a move is not what anybody meant.
+function sayMoveOut() {
+  const out = document.getElementById('unparent');
+  const rootless = document.getElementById('rootless');
+  if (!out || !rootless) return;
+  const row = MOVING ? DATA.rows[MOVING] : null;
+  const parent = row ? row.parent : null;
+  out.hidden = !parent;
+  out.textContent = parent ? `Take ${MOVING} out of ${parent}` : '';
+  rootless.hidden = !row || !!parent;
+  rootless.textContent = row && !parent ? `${MOVING} is not inside anything` : '';
 }
 
 function startMoving(id) {
@@ -3290,15 +3581,7 @@ function startMoving(id) {
   // what the last row offers, and the marks below are per row.
   table.classList.add('moving');
   markTargets();
-  // The `+` row's second job, and it only has it while a move is in the air. Its
-  // words are set here rather than drawn by `adderHtml`, because redrawing the
-  // table in the middle of a native drag detaches the element being dragged and
-  // the browser cancels the drag with it.
-  const out = document.getElementById('unparent');
-  if (out) {
-    out.hidden = !row.parent;
-    out.textContent = row.parent ? `Take ${id} out of ${row.parent}` : '';
-  }
+  sayMoveOut();
   announce(`Moving ${id}. Drop it on ${holders(row.kind)}, or press Enter on one. ` +
            (row.parent ? 'The row at the bottom takes it out of ' + row.parent + '. ' : '') +
            'Escape leaves it where it is.');
@@ -3308,8 +3591,7 @@ function stopMoving(said) {
   MOVING = null;
   table.classList.remove('moving');
   markTargets();
-  const out = document.getElementById('unparent');
-  if (out) { out.hidden = true; out.textContent = ''; }
+  sayMoveOut();
   if (said) announce(said);
 }
 
@@ -3426,7 +3708,9 @@ if (EDITABLE) {
     if (!MOVING) return;
     const over = event.target.closest('tr[data-id], tr.adder');
     for (const tr of tbody.querySelectorAll('tr.over')) tr.classList.remove('over');
-    if (!over || whyNotOnto(MOVING, over)) return;
+    // The label goes with the mark, both ways: a row that refuses this one is
+    // drawn refusing it and is not named as somewhere it could land.
+    if (!over || whyNotOnto(MOVING, over)) { sayInto(''); return; }
     // `preventDefault` is the whole of "you may drop here". Not calling it is
     // how a row refuses: the browser draws its own no-drop cursor over it and
     // `drop` never fires, so the refusal is structural rather than a check
@@ -3434,6 +3718,7 @@ if (EDITABLE) {
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     over.classList.add('over');
+    sayInto(intoWords(over), event.clientX || 0, event.clientY || 0);
   });
 
   tbody.addEventListener('drop', event => {
@@ -4124,6 +4409,75 @@ thead [data-col="title"] { box-shadow: inset 0 -1px 0 var(--line); }
 .scrolled thead th[data-col="title"] {
   box-shadow: inset 0 -1px 0 var(--line), inset -1px 0 0 var(--line);
 }
+/* The tree.
+
+   The indent is the cell's own padding, which is what puts it into
+   `naturalWidths()` — a drawing that overlapped the title would be a column
+   measured at a width the words do not fit in. 14px a level and three levels at
+   most: `PARENT_KINDS` bounds the real depth at two, a task hanging off a
+   project is one, and 42px is what the deepest possible plan costs the one
+   column that is a sentence. `tr.dN > td[…]` is (0,2,2) and beats the `th, td`
+   padding at (0,0,2) and the frozen column's (0,1,0), which is the whole of what
+   it has to beat: nothing else on this page sets padding on a cell.
+
+   The connectors are borders, not characters. `├─` and `└─` line up only in a
+   monospace face and this column is proportional — and a screen reader announces
+   "box drawings light up and right" before every child's title, which is why the
+   wrapper is `aria-hidden` and holds nothing to read.
+
+   Absolute, against the title cell's own `position: sticky`. That is a real
+   dependency and it is worth writing down: sticky is a positioned value, so it
+   is the containing block for these, and it is set by the rule fifteen lines up
+   that freezes the column. If that ever stops being sticky the connectors are
+   the second thing to go — they would hang off the scroll container and slide
+   away from their rows — and this comment is the note that they go together.
+   `top: 0; bottom: 0` is the reason to do it this way at all: the vertical line
+   is then exactly the height of the row it is in, whatever that row holds, which
+   an inline box guessing at a line height cannot promise. */
+tr.d1 > td[data-col="title"] { padding-left: calc(.5rem + 14px); }
+tr.d2 > td[data-col="title"] { padding-left: calc(.5rem + 28px); }
+tr.d3 > td[data-col="title"] { padding-left: calc(.5rem + 42px); }
+.tree { position: absolute; left: .25rem; top: 0; bottom: 0; display: flex; }
+.tree .rung { position: relative; width: 14px; }
+/* The vertical: full height where the branch carries on past this row, and half
+   of it on the last child drawn, which is the whole difference between `├` and
+   `└`. `blank` draws neither, and it is a rung rather than a margin so that the
+   levels stay in step down the column. */
+.tree .line::before, .tree .tee::before, .tree .end::before {
+  content: ""; position: absolute; left: 6px; top: 0; width: 1px;
+  background: var(--line-strong);
+}
+.tree .line::before, .tree .tee::before { bottom: 0; }
+.tree .end::before { height: 50%; }
+/* The stub, stopping short of the title so the word is not touched by a rule. */
+.tree .tee::after, .tree .end::after {
+  content: ""; position: absolute; left: 6px; top: 50%; width: 6px; height: 1px;
+  background: var(--line-strong);
+}
+/* A row that is not an answer to what was asked, kept because something under it
+   is: the pitch over three tasks that matched, so that a filtered table is still
+   a plan and not a list of orphans. It is a record like any other — its title
+   opens it, its cells still edit, a drop still lands on it — so it is dimmed
+   rather than disabled, and `summarise` does not count it.
+
+   `tr.context > td` is (0,1,2), which beats the frozen columns' (0,1,0) and the
+   severity grounds' (0,1,1): a dimmed row with a blocker on it loses the fill in
+   its cell and keeps both of the other two channels that say so — the stripe,
+   which is a border on the `<tr>` and nothing here touches, and the ⚠ in the
+   cell, which is text. `table.moving tr.can-hold > td` is (0,2,3) and beats this
+   in turn, which is the right way round: for the length of a drag the only thing
+   worth knowing about a row is whether it would take the one in your hand.
+
+   The dimming is ink and a ground rather than `opacity` on the row. Opacity
+   below 1 makes a stacking context of whatever carries it, and what carries it
+   here would be two sticky cells whose whole job is to be opaque while the rest
+   of the table passes underneath them — a see-through frozen column is a worse
+   defect than the one this is drawing. The chips take theirs on the inside,
+   where there is nothing behind them to show through. */
+tr.context > td { background: var(--surface-2); color: var(--muted); }
+tr.context > td a { color: var(--muted); }
+tr.context .chip, tr.context .meter { opacity: .6; }
+tr.context .tree .rung::before, tr.context .tree .rung::after { background: var(--line); }
 /* One weight heavier than the sticky rules above — an element and a class beats
    a bare attribute selector — so a problem in the id or the title column keeps
    its ground. It is the specificity that does it and not the order: written the
@@ -4258,14 +4612,35 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
 table.moving tr.can-hold > td { background: var(--surface-2); }
 table.moving tr.no-hold > td { background: var(--surface); color: var(--muted); }
 table.moving tr.no-hold > td a, table.moving tr.no-hold > td .chip { color: var(--muted); }
-/* The row the cursor is actually over, drawn as a box the row is going into.
+/* The row the drop would land in: the would-be parent, in green, and the only
+   green on the page. Every other row a drop could legally land on is on the
+   panel tint above, so the two questions a hand is asking — where may this go,
+   and where is it going right now — are answered in two different channels
+   rather than in two shades of one. A row that cannot be a parent is never
+   given it: `dragover` returns before the class is added.
    Inset, and that is not a style choice: Chrome does not paint an *outset*
    box-shadow on a cell in a `border-collapse: collapse` table, which is how the
    frozen column's edge came to be a rule that resolved perfectly and drew
    nothing at all for a whole round. */
 table.moving tr.over > td {
-  background: var(--surface-2);
-  box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent);
+  background: var(--drop);
+  box-shadow: inset 0 2px 0 var(--ok), inset 0 -2px 0 var(--ok);
+}
+/* What the drop would do, named, beside the cursor.
+   No dialog: a modal on every drag is a toll on a gesture that is already
+   deliberate, and a reparent is one field and one commit that dragging back
+   undoes. `position: fixed` and parked on the body, because `.table-scroll`
+   clips its contents and a label that scrolls out from under the pointer is
+   worse than none. z-index 5 clears the whole table — the header is 3, its own
+   frozen pair 4 — and `pointer-events: none` keeps it out of the way of the very
+   `dragover` that positions it. One line, because it names a title and a title
+   is a sentence: two-line labels move under the cursor as they rewrap. */
+#into {
+  position: fixed; z-index: 5; pointer-events: none;
+  font-size: 12px; padding: .1rem .4rem; max-width: 22rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid var(--ok); border-radius: 3px;
+  background: var(--drop); color: var(--fg);
 }
 /* The last row: where a plan grows, and — while a move is in the air — where a
    row goes to belong to nothing.

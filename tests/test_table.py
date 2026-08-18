@@ -81,7 +81,7 @@ from test_web import (
 
 from openproj.auth import sign_session
 from openproj.index import build_index
-from openproj.model import PARENT_KINDS, load_repo
+from openproj.model import PARENT_KINDS, Config, Pitch, Project, Task, load_repo
 from openproj.render import (
     _TABLE_COLUMNS,
     EDITABLE,
@@ -91,6 +91,7 @@ from openproj.render import (
     STATUSES,
     _new_row_fields,
     render_static,
+    render_table,
 )
 from openproj.web import SESSION_COOKIE, create_app
 
@@ -2011,7 +2012,7 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """
     body = script(page)
 
-    assert "sev-row-${SEV_CLASS[worst]}" in body, "the row carries its worst severity"
+    assert "'sev-row-' + SEV_CLASS[worst]" in body, "the row carries its worst severity"
     assert "sev-cell-' + SEV_CLASS[mark.severity]" in body
     glyph = r'class="sev-mark sev-mark-\$\{SEV_CLASS\[mark\.severity\]\}" role="img"'
     assert re.search(glyph, body)
@@ -2533,7 +2534,9 @@ def test_the_editor_discards_on_escape_and_commits_on_tab(page: str):
     assert re.search(r"AT = \{id: cell\.parentNode\.dataset\.id,\s*\n\s*col:", editor)
     assert "const held = EDITABLE && (RETURN || !!focused);" in body
     assert "if (focused && !RETURN) rove(focused);" in body, "back to where it is, not where it was"
-    assert "if (EDITABLE) { rove(null, held); RETURN = false; sayDraft(); markTargets(); }" in body
+    after = re.search(r"if \(EDITABLE\) \{\n(.*?)\n  \}", body, re.S).group(1)
+    for put_back in ("rove(null, held);", "RETURN = false;", "sayDraft();", "markTargets();"):
+        assert put_back in after, put_back
 
 
 def test_the_editor_a_cell_opens_says_what_it_is_editing(page: str):
@@ -3084,8 +3087,12 @@ def test_a_drop_that_breaks_containment_is_refused_before_it_is_sent(page: str):
         "(() => {"
         + PICK_UP % {"id": TASK}
         + OVER % {"where": f'tr[data-id="{OTHER}"] td'}
-        + f'  const drawn = tbody.querySelector(\'tr[data-id="{OTHER}"]\')'
-        + "    .getAttribute('class');"
+        # The mark this gesture adds, not the whole class list: a row also
+        # carries how deep in the tree it is drawn, and reading the attribute
+        # made this test fail on a row moving one level in.
+        + f'  const target = tbody.querySelector(\'tr[data-id="{OTHER}"]\');'
+        + "  const drawn = ['can-hold', 'no-hold']"
+        + "    .filter(one => target.classList.contains(one)).join(' ');"
         + "  const drop = new Event('drop');"
         + f'  drop.target = tbody.querySelector(\'tr[data-id="{OTHER}"] td\');'
         + "  tbody.dispatchEvent(drop);"
@@ -3457,6 +3464,371 @@ def test_the_count_says_how_many_rows_there_are_to_be_shown_of(page: str, client
     assert [str(one) for one in answer["value"]] == ["2", "2"], (
         "one plan, one number of rows in it"
     )
+
+
+def test_a_redraw_in_the_middle_of_a_move_leaves_the_last_row_saying_what_it_says(page: str):
+    """The sticky bar at the bottom of the plan went blank in the middle of a move.
+
+    `startMoving` set the way-out button's words and its `hidden` on the element,
+    and `draw()` rebuilds the whole tbody: `adderHtml` emits the button hidden
+    and wordless, `moving` is still on the table so `+ New row` stays hidden, and
+    `#unparent:not([hidden])` stops matching the button that was just re-hidden.
+    Typing one character into the search box did it, as did any facet and any
+    sort — and the keyboard move redraws by design. What was on screen was an
+    empty strip, while the live region went on saying "The row at the bottom
+    takes it out of pitch-b20000".
+
+    Both states are checked, because the row that has nowhere to go out of is the
+    other way to end up with nothing drawn there — and it is the commoner one: a
+    row is usually dragged INTO something, which means it was in nothing.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        "  const bar = () => {"
+        "    const out = document.getElementById('unparent');"
+        "    const rootless = document.getElementById('rootless');"
+        "    return {said: out.hidden ? '' : out.textContent,"
+        "            rootless: rootless.hidden ? '' : rootless.textContent};"
+        "  };"
+        + PICK_UP % {"id": TASK}
+        + "  const held = bar();"
+        "  draw();"
+        "  const redrawn = bar();"
+        # The other state, on the same row: one nothing holds. There is no such
+        # row in this corpus that may also be moved — every task is in the pitch
+        # — so it is made by taking this one out, which is what the page itself
+        # does the moment an unparent lands.
+        f" DATA.rows['{TASK}'].parent = null;"
+        + f"  startMoving('{TASK}');"
+        + "  const loose = bar();"
+        "  draw();"
+        "  return {held, redrawn, loose, looseRedrawn: bar()};"
+        "})()",
+    )
+    got = answer["value"]
+
+    assert got["held"]["said"] == f"Take {TASK} out of {PITCH}"
+    assert got["redrawn"] == got["held"], "a redraw mid-move does not change what it offers"
+    assert got["loose"]["rootless"] == f"{TASK} is not inside anything"
+    assert got["looseRedrawn"] == got["loose"]
+    for state in got.values():
+        assert state["said"] or state["rootless"], "and it is never an empty strip"
+
+
+def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
+    """A drop names its target rather than asking about it.
+
+    No modal: a dialog on every drag is a toll on a gesture that is already
+    deliberate — pick the row up, carry it, let go on the right one — and a
+    reparent is one field and one commit that dragging back undoes. So the answer
+    is drawn where the hand already is, before the drop rather than after it, and
+    it is the row's title, because the ground under the cursor already says which
+    row it is.
+
+    A row that cannot hold this one is named nowhere: `dragover` refuses it
+    before the label is written, which is the same refusal that stops the drop.
+    """
+    answer = drive_table(
+        page,
+        "(() => {"
+        + PICK_UP % {"id": TASK}
+        # Each drag-over in a block of its own: the snippet names the event, and
+        # three of them in one scope is a redeclaration rather than three moves.
+        + "{" + OVER % {"where": f'tr[data-id="{PROJECT}"] td'} + "}"
+        # Parked on the body, so that is where it is asked for — the same place
+        # the cells' suggestion popups are found, and for the same reason.
+        + "  const into = document.body.querySelector('#into');"
+        "  const onto = {said: into.textContent, hidden: into.hidden};"
+        + "{" + OVER % {"where": f'tr[data-id="{OTHER}"] td'} + "}"
+        + "  const refused = {said: into.textContent, hidden: into.hidden};"
+        + "{" + OVER % {"where": "tr.adder"} + "}"
+        + "  const out = {said: into.textContent, hidden: into.hidden};"
+        "  stopMoving();"
+        "  return {onto, refused, out, after: into.hidden};"
+        "})()",
+    )
+    got = answer["value"]
+
+    assert got["onto"] == {"said": "→ into Distributed driver", "hidden": False}, (
+        "the title, which is the answer to 'is that the right row'"
+    )
+    assert got["refused"] == {"said": "", "hidden": True}, (
+        "a task holds nothing, so it is not named as anywhere this could land"
+    )
+    assert got["out"]["said"] == "→ out of Verify the tracer advection port"
+    assert got["after"] is True, "and the label goes when the move does"
+    assert "#into {" in page and "position: fixed" in page
+    assert "table.moving tr.over > td {\n  background: var(--drop);" in page, (
+        "the would-be parent's row is the green one"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 10. A plan is a tree, and the table draws one
+#
+# A project holds pitches, a pitch holds tasks, and a task can hang straight off
+# a project. The table drew that as a flat list sorted by id — the tree's own
+# order with the shape rubbed off it — so the one view that shows every field of
+# every record was the one view that did not show how they are arranged.
+#
+# Three decisions, and each is narrower than it looks:
+#
+# * **Depth first, and only in the id sort.** A tree ordered by owner is not a
+#   tree: the parent is wherever its owner's name falls and its children are
+#   three screens away. Every other column sorts flat, and draws no connectors,
+#   because there is nothing there for a connector to be true about.
+# * **Filtering keeps the whole tree.** An entity that would be filtered out but
+#   holds something that matched stays, dimmed — a filtered table is still a plan
+#   and not a list of orphans — and it must not be counted, because the count is
+#   of answers.
+# * **The connectors are computed from what is drawn.** A sibling the filter
+#   removed would otherwise leave a `└─` lying about which row ends the branch.
+# --------------------------------------------------------------------------- #
+
+
+# Two projects, so that depth-first order and id order are not the same list:
+# flat, `pitch-b10000` sorts above every project, and in the tree it is the last
+# thing on the table. `task-c90000` hangs straight off its project, which is the
+# depth the map allows and the corpus in `test_web` has no example of.
+#
+# The owners are the filter this corpus exists to be filtered by: under
+# `owner=ann` the pitch survives only as context, one project survives only as
+# context, one pitch goes entirely, and the last task drawn under the pitch is
+# NOT the last one in the plan — which is the only arrangement that can tell a
+# connector computed from the rows apart from one computed from the records.
+TREE = [
+    Project(id="proj-a10000", kind="project", title="Porting land", owner="ann"),
+    Pitch(id="pitch-b90000", kind="pitch", title="Tracer advection", parent="proj-a10000",
+          owner="bo", person_weeks=3),
+    Task(id="task-c10000", kind="task", title="Least squares", parent="pitch-b90000", owner="ann"),
+    Task(id="task-c20000", kind="task", title="Serialbox reference", parent="pitch-b90000",
+         owner="ann"),
+    Task(id="task-c30000", kind="task", title="Equator artefact", parent="pitch-b90000",
+         owner="bo"),
+    Project(id="proj-a90000", kind="project", title="Distributed driver", owner="bo"),
+    Pitch(id="pitch-b10000", kind="pitch", title="Halo exchange", parent="proj-a90000",
+          owner="bo", person_weeks=2),
+    Task(id="task-c90000", kind="task", title="One rank", parent="proj-a90000", owner="ann"),
+]
+
+# What each row of the table is: its id, how deep it is drawn, whether it is
+# there only as context, and the connector it draws at each level. Read off the
+# drawn rows and never off the payload, because every claim in this section is
+# about the drawing.
+DRAWN = """
+  const rungs = tr => [...tr.querySelectorAll('.rung')]
+    .map(one => one.className.split(' ').filter(w => w !== 'rung').join(''));
+  const drawn = () => [...tbody.querySelectorAll('tr[data-id]')].map(tr => ({
+    id: tr.dataset.id,
+    depth: ['d1', 'd2', 'd3'].findIndex(one => tr.classList.contains(one)) + 1,
+    context: tr.classList.contains('context'),
+    rungs: rungs(tr),
+  }));
+"""
+
+
+@pytest.fixture
+def tree_page() -> str:
+    """The table over `TREE`, editable, rendered by the real renderer."""
+    return render_table(build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee")
+
+
+def test_the_id_sort_draws_the_plan_depth_first(tree_page: str):
+    """Roots in id order, children in id order under each root.
+
+    Not a second ordering on top of that one: a childless project sits exactly
+    where its id puts it, rather than being grouped after the projects that have
+    children. One rule, and it is the rule the ids were already sorted by.
+
+    The corpus is arranged so that this cannot pass by accident — flat, the two
+    pitches sort above both projects and every task below them, which is not this
+    list in any order.
+    """
+    answer = drive_table(tree_page, "(() => {" + DRAWN + "  return drawn();})()")
+    rows = answer["value"]
+
+    assert [one["id"] for one in rows] == [
+        "proj-a10000",
+        "pitch-b90000",
+        "task-c10000",
+        "task-c20000",
+        "task-c30000",
+        "proj-a90000",
+        "pitch-b10000",
+        "task-c90000",
+    ]
+    assert [one["depth"] for one in rows] == [0, 1, 2, 2, 2, 0, 1, 1], (
+        "a task hanging off a project is one level in, not two"
+    )
+    assert sorted(one["id"] for one in rows) != [one["id"] for one in rows], (
+        "which is not the flat order, or this test proves nothing"
+    )
+
+
+def test_every_other_column_sorts_flat(tree_page: str):
+    """A tree ordered by owner is not a tree.
+
+    The parent is wherever its owner's name falls and its children are three
+    screens away, so an indent would point at the row above it and mean nothing,
+    and a connector between two unrelated rows is a claim about the plan that is
+    simply false. Those columns sort the way they always did, and they keep no
+    ancestors for a context they cannot provide.
+    """
+    answer = drive_table(
+        tree_page,
+        "(() => {" + DRAWN + "  params.set('sort', 'owner'); draw(); return drawn();})()",
+    )
+    rows = answer["value"]
+
+    assert {one["depth"] for one in rows} == {0}, "nothing is indented"
+    assert not any(one["rungs"] for one in rows), "and nothing draws a connector"
+    assert len(rows) == len(TREE), "every row is there, in one flat list"
+
+
+def test_a_filtered_table_keeps_the_tree_and_counts_only_the_answers(tree_page: str):
+    """An ancestor of a match stays, dimmed, and is not counted.
+
+    Filtering to `owner=ann` and getting three tasks with no pitch over them is a
+    list of tasks, not a plan: the row that says which pitch they are part of is
+    the one a person is about to want. It stays a record while it is there — it
+    opens, it edits, a drop lands on it — it simply is not an answer to what was
+    asked, which is what the dimming says and what the count has to agree with.
+
+    "4 of 8 shown" over six rows, and both numbers are right: the first is how
+    many matched, and it is the number the sentence promises.
+    """
+    answer = drive_table(
+        tree_page,
+        "(() => {" + DRAWN + "  params.set('owner', 'ann'); draw();"
+        "  return {rows: drawn(),"
+        "          shown: document.getElementById('shown').textContent,"
+        "          total: document.getElementById('total').textContent};})()",
+    )
+    got = answer["value"]
+    rows = got["rows"]
+
+    assert [one["id"] for one in rows] == [
+        "proj-a10000",
+        "pitch-b90000",
+        "task-c10000",
+        "task-c20000",
+        "proj-a90000",
+        "task-c90000",
+    ], "the matches, and every ancestor that holds one"
+    assert [one["id"] for one in rows if one["context"]] == ["pitch-b90000", "proj-a90000"], (
+        "the two that are there for what is under them"
+    )
+    assert "pitch-b10000" not in [one["id"] for one in rows], (
+        "a pitch that neither matched nor holds a match is gone"
+    )
+    assert [str(got["shown"]), str(got["total"])] == ["4", "8"], (
+        "the count is of answers, and a row kept as context is not one"
+    )
+    assert "tr.context > td { background: var(--surface-2); color: var(--muted); }" in tree_page
+
+
+def test_the_connector_that_ends_a_branch_is_the_last_row_drawn(tree_page: str):
+    """Not the last record, which is a different row the moment anything is filtered.
+
+    In the plan, `task-c30000` is the last task under the pitch. Under
+    `owner=ann` it is filtered out, and the row that ends the branch on screen is
+    `task-c20000` — so `task-c20000` draws the `└` and `task-c10000` keeps its
+    `├`. Computed from the records instead, `task-c20000` would draw a `├`
+    promising a sibling under a row that ends the branch, and the drawing would
+    be describing a table nobody is looking at.
+
+    The connectors are class names on empty spans and the shapes are borders. Box
+    drawing characters line up only in a monospace face — this column is
+    proportional — and a screen reader announces "box drawings light up and
+    right" before every child's title, which is why the wrapper is `aria-hidden`.
+    """
+    answer = drive_table(
+        tree_page,
+        "(() => {" + DRAWN + "  const whole = drawn();"
+        "  params.set('owner', 'ann'); draw();"
+        "  return {whole, filtered: drawn(),"
+        "          hidden: tbody.querySelector('.tree').getAttribute('aria-hidden')};})()",
+    )
+    got = answer["value"]
+    whole = {one["id"]: one["rungs"] for one in got["whole"]}
+    filtered = {one["id"]: one["rungs"] for one in got["filtered"]}
+
+    assert whole["proj-a10000"] == [], "a root has no connector to draw"
+    assert whole["pitch-b90000"] == ["end"], "the only pitch its project holds"
+    assert whole["task-c10000"] == ["blank", "tee"]
+    assert whole["task-c30000"] == ["blank", "end"], "the last task, unfiltered"
+    assert whole["pitch-b10000"] == ["tee"] and whole["task-c90000"] == ["end"]
+
+    assert filtered["task-c10000"] == ["blank", "tee"], "still a sibling to come"
+    assert filtered["task-c20000"] == ["blank", "end"], (
+        "and the row that ends the branch on screen is the one that says so"
+    )
+    assert got["hidden"] == "true", "there is nothing here to read out"
+    # The markup the script actually wrote, and not the page: the stylesheet's
+    # own comment says which glyphs these rungs stand for, in prose, which is
+    # where a box-drawing character is a fine thing to be.
+    drawn = "".join(answer["written"])
+    assert "class=\"rung " in drawn, "or the next line is asserting about nothing"
+    assert not set(drawn) & set("├└│─"), "drawn as borders, never typed"
+
+
+def test_the_indent_never_takes_the_drop_target_with_it(tree_page: str):
+    """Small, capped, and paid for out of the cell's padding.
+
+    `PARENT_KINDS` bounds the real depth at two, so three is a cap on a
+    hand-edited file rather than a design for four levels — a row deeper than
+    that is drawn at that depth, because the indent is a hint about where a row
+    sits and it is not worth the title column's width to be exact about a shape
+    the validator is already complaining about.
+
+    The drawing is taken out of flow and the indent is padding on the cell, which
+    is what keeps the row's own box the whole width of the table: a drop lands on
+    the row, and a target that shrinks as it goes deeper into the tree would make
+    the rows that are hardest to reach the hardest to hit.
+    """
+    assert "const TREE_DEPTH = 3;" in script(tree_page)
+    assert "tr.d3 > td[data-col=\"title\"] { padding-left: calc(.5rem + 42px); }" in tree_page
+    assert "tr.d4" not in tree_page, "capped, and the cap is drawn as well as computed"
+    assert ".tree { position: absolute;" in tree_page, "so it costs the words nothing"
+
+    answer = drive_table(
+        tree_page,
+        "(() => {" + DRAWN + "  return {"
+        "    cells: [...tbody.querySelectorAll('tr[data-id]')]"
+        "      .map(tr => tr.querySelectorAll('td').length),"
+        "    tree: [...tbody.querySelectorAll('tr[data-id]')]"
+        "      .map(tr => (tr.querySelector('td[data-col=\\'title\\'] .tree') ? 1 : 0)),"
+        "  };})()",
+    )
+    got = answer["value"]
+
+    assert len(set(got["cells"])) == 1, "every row is the same number of cells deep or shallow"
+    assert got["tree"] == [0, 1, 1, 1, 1, 0, 1, 1], "and the drawing is in the title column"
+
+
+def test_a_row_kept_for_context_is_still_a_record(tree_page: str):
+    """Dimmed is not disabled.
+
+    It is a row of the plan that is on screen: its title opens it, its cells
+    still edit, and a drop still lands on it — which is the whole reason the
+    ancestor is worth keeping, since filing something under the pitch you can now
+    see is exactly what a person does next.
+    """
+    answer = drive_table(
+        tree_page,
+        "(() => {  params.set('owner', 'ann'); draw();"
+        "  const pitch = tbody.querySelector('tr[data-id=\"pitch-b90000\"]');"
+        "  startMoving('task-c90000');"
+        "  return {editable: !!pitch.querySelector('td[data-col=\"status\"].edit'),"
+        "          opens: !!pitch.querySelector('td[data-col=\"title\"] a'),"
+        "          holds: pitch.classList.contains('can-hold'),"
+        "          refused: refuses('task-c90000', 'pitch-b90000')};})()",
+    )
+    got = answer["value"]
+
+    assert got["editable"] is True and got["opens"] is True
+    assert got["refused"] == "" and got["holds"] is True, "and a task may still be filed under it"
 
 
 @pytest.mark.parametrize("route", ["/", "/graph", "/timeline", "/cycles", "/people", "/new"])
