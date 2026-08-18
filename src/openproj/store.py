@@ -29,6 +29,7 @@ from typing import Literal
 
 import pygit2
 from pydantic import BaseModel
+from pygit2.enums import RepositoryOpenFlag
 from ruamel.yaml import YAML
 
 _BRANCH = "refs/heads/main"
@@ -46,6 +47,11 @@ class WriteResult(BaseModel):
     # unpushed commit is a lost commit, so a caller that reports success without
     # looking at this is how a team finds out on Monday that Friday is gone.
     pushed: bool = False
+
+
+class NotAPlanRepository(RuntimeError):
+    """The path given is not a git repository, and must not be searched upwards for
+    one — see the note in `Store.__init__`."""
 
 
 class StoreLocked(RuntimeError):
@@ -183,7 +189,25 @@ class Store:
         None for a remote that needs none — a `file://` path, or no remote at all,
         which is every test and every development run."""
         self._path = Path(repo_path)
-        self._repo = pygit2.Repository(str(repo_path))
+        # NO_SEARCH, because the default is to walk UP until it finds a
+        # repository. Pointed at a directory that is not one — `--repo seed`, as
+        # the README told people to do — it found the openproj checkout instead,
+        # answered 200 on every route, and served an empty plan: 126 paths
+        # visible, none of them under `pitches/`, `tasks/` or `projects/`,
+        # because those live one directory down. Nothing said so. A tool that
+        # draws a plan with nothing in it is indistinguishable from a plan with
+        # nothing in it, which is the failure this codebase keeps having to
+        # relearn — empty must not look like broken, and broken must not look
+        # like empty.
+        try:
+            self._repo = pygit2.Repository(str(repo_path), RepositoryOpenFlag.NO_SEARCH)
+        except pygit2.GitError as exc:
+            raise NotAPlanRepository(
+                f"{repo_path} is not a git repository. A plan lives in its own "
+                "repository, and this is the path to that repository — usually a "
+                "bare clone: `git clone --bare <url> plan.git`, then "
+                "`--repo plan.git`."
+            ) from exc
         self._remote = remote
         self._credentials = credentials
         if remote:

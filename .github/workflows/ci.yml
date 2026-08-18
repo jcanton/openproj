@@ -1,0 +1,62 @@
+name: CI
+
+# Pull requests before the merge, and `main` after it. Gating only the PR leaves
+# the branch everything is cut from unverified the moment two separately-green
+# PRs land and interact.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A PR's third push makes the first two runs' answers worthless, and they go on
+# holding a runner while the answer that matters queues behind them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to an exact release rather than a major, and alone in that: astral
+      # stopped publishing moving major tags after v7, so `@v10` is a 404 and not
+      # a pin. Bump this deliberately; the other two follow their major.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          # 3.12 because that is what the Dockerfile ships and what ruff targets.
+          # A gate that is green on a version the deploy never runs is not a gate.
+          python-version: "3.12"
+          enable-cache: true
+
+      # Thirty-four tests drive the shipped JavaScript through `tests/js/drive.js`
+      # and skip themselves when node is missing, so without this step the suite
+      # goes green by not running them — green for the wrong reason, which is the
+      # one failure a gate must never have. node is needed to test, never to
+      # build or run: nothing here is a build step, and there is no npm.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # `--locked`, as in the Dockerfile: it fails on a `pyproject.toml` edited
+      # without relocking, instead of quietly testing a resolution that will
+      # never be the one deployed.
+      - run: uv sync --locked --group dev
+
+      - run: uv run ruff check .
+
+      # No `ruff format --check` yet, on purpose: 32 of the 103 files predate any
+      # formatter and would fail it today, so adding it now commits a gate that
+      # is red on arrival — and a gate that is red on arrival teaches everybody
+      # to read past red. One `uv run ruff format .`, as its own commit touching
+      # nothing else, is what makes this line safe to add.
+
+      # The pixel tests look for `google-chrome` on PATH and ubuntu-latest ships
+      # one, so headless Chrome needs no step of its own here. If that stops
+      # being true they skip with a stated reason rather than fail, and `-ra`
+      # (set in pyproject, deliberately not `-q`) prints every skip — so a suite
+      # that has quietly stopped checking pixels says so in the log instead of
+      # just looking green.
+      - run: uv run pytest -q

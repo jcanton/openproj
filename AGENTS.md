@@ -257,4 +257,40 @@ Anything written on jcanton's behalf ends with exactly this line, and nothing af
 
 No `Co-Authored-By`, no `Claude-Session` trailers.
 
+## Type checking: measured, not adopted
+
+Measured on 2026-08-18, with `ty` 0.0.72 and `mypy` 2.3.1:
+
+```bash
+uvx ty check src/     # 41 diagnostics
+uvx ty check          # 419, once the tests are included
+uvx mypy src/         # 44 errors in 9 files
+```
+
+Neither is in CI. The reason is not "too many to fix" — it is what the errors turn out to be when
+you read them. They do not scatter across the code; they fall in two heaps, and the larger heap is a
+rule this file argues for.
+
+**Most of them are `validate_all` seen from outside.** Every field is optional at the type level and
+requiredness lives in one function, so nothing reading a signature can know that a gate already ran.
+`build_end` is `date | None` where `_matches_predicate` (`index.py`) compares it against `span.end`,
+although that function returned already if the cycle's window was missing — the guard is real, it
+just lives in a different expression than the call, and no checker connects the two. `Entity` has no
+`shaped_by` at all, because `kind == "pitch"` is a runtime discriminator rather than a tagged union.
+Going green on this heap means an `assert` or a `cast` at each site, which takes the guarantee out
+of the one place this file says it lives and scatters copies of it across the callers. That is the
+trade the number is quietly asking for, and by the rule above — an invariant written twice will be
+guarded once — it is the wrong one.
+
+**The rest is the shape of other people's stubs.** Thirteen of the 41 are one call, in `app_jwt`
+(`github.py`): `load_pem_private_key` returns a union of fifteen key types, and every one of them
+files its own complaint about the `key.sign` beneath it. Most of what is left is pygit2's
+`Tree | Blob` and `None | Object` in `store.py`, and a missing `uvicorn` stub in `cli.py`. Six files,
+and nothing like 41 separate problems.
+
+So: not wired in, and the number written down instead. A gate nobody can go green against is a gate
+that gets switched off, and a config carrying a hundred ignores is a worse lie than an honest count.
+Re-run the three commands before arguing about this — the first heap is the kind of narrowing `ty` is
+still growing, and some of it will go away without anybody editing a line of `src/`.
+
 🤖 Written by an agent on behalf of @jcanton

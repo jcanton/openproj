@@ -167,7 +167,9 @@ def test_a_save_refuses_when_the_file_does_not_declare_the_id_it_is_named_for(tm
 
     plan = tmp_path / "plan"
     plan.mkdir()
-    repo = pygit2.init_repository(str(plan))
+    # See the note in `tests/test_headers.py`: without this the branch is the
+    # machine's default and `Store` only ever reads `refs/heads/main`.
+    repo = pygit2.init_repository(str(plan), initial_head="main")
     (plan / "tasks").mkdir()
     # Named for the id it declares. The honest one.
     (plan / "tasks" / "task-0a1001--the-real-record.md").write_text(

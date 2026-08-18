@@ -2417,7 +2417,7 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
     and only ever one of them is displayed."""
     body = read(rendered, "detail.html")
 
-    assert "<h1>Every entity in this plan</h1>" in body
+    assert "<h1>Every entity in this plan except for issues</h1>" in body
     for entity in seed_index.entities.values():
         article = re.search(rf'<article id="{entity.id}".*?</article>', body, re.S).group(0)
         named = escape(entity.title)
@@ -2453,7 +2453,7 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
         assert "sr-only" in classes, f"{page}: the nav says this already, twice over"
 
     seen = {text: classes for classes, text in headings(read(rendered, "detail.html"))}
-    listing = "Every entity in this plan"
+    listing = "Every entity in this plan except for issues"
     assert "sr-only" not in seen[listing], "the listing is what is on the screen, not a route"
     for entity in seed_index.entities.values():
         assert entity.title in seen, entity.id

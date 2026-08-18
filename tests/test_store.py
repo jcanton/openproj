@@ -732,3 +732,27 @@ def test_a_second_writer_does_not_erase_the_holders_pid(store: Store, repo_path:
         Store(repo_path)
 
     assert (repo_path / "openproj.lock").read_text().strip() == str(os.getpid())
+
+
+def test_a_path_that_is_not_a_repository_is_refused_rather_than_searched_upwards(tmp_path):
+    """pygit2 walks UP by default until it finds a repository, and openproj's own
+    checkout is upwards of almost everywhere somebody runs this.
+
+    `--repo seed` — which the README told people to use — therefore opened the
+    openproj repository itself: 126 paths visible, none of them under `pitches/`,
+    `tasks/` or `projects/`, because the seed corpus lives one directory down.
+    Every route answered 200 over an empty plan, and nothing anywhere said so. A
+    tool drawing a plan with nothing in it is indistinguishable from a plan with
+    nothing in it.
+    """
+    from openproj.store import NotAPlanRepository
+
+    not_a_repo = tmp_path / "corpus"
+    not_a_repo.mkdir()
+    (not_a_repo / "tasks").mkdir()
+
+    with pytest.raises(NotAPlanRepository) as refusal:
+        Store(not_a_repo)
+
+    assert "not a git repository" in str(refusal.value)
+    assert "--bare" in str(refusal.value), "the message has to say what to do instead"
