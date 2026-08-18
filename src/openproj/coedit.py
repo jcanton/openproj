@@ -32,6 +32,10 @@ forgeable from the page.
 text, and a CRDT blob the tool cannot read back is not a source of truth. The
 floor under a lost room is the twenty-second quiet window, and under that the
 draft the page already keeps in `localStorage`.
+
+**The document is addressed in bytes and this file is written in strings.** See
+`byte_offset`: the two index spaces are not the same, mixing them raises
+nothing, and what it costs is somebody's sentence.
 """
 
 from __future__ import annotations
@@ -68,6 +72,33 @@ LINGER_SECONDS = 420.0
 # update is normally tens of bytes, and this stops a client from making the
 # server hold a megabyte per frame.
 MAX_UPDATE_BYTES = 256 * 1024
+
+
+def byte_offset(text: str, at: int) -> int:
+    """Where an offset into a Python string lands in the document's index space.
+
+    They are two index spaces and they are not the same one. A Python string is
+    counted in code points; `pycrdt.Text` is addressed in UTF-8 bytes —
+    `len(Text("a—b"))` is 5 where `len("a—b")` is 3 — and nothing raises when
+    the two are mixed. An index that falls *inside* a character is not an error
+    either: `insert` silently puts the text at the end of the document instead.
+
+    So a splice computed on the string and applied to the document rewrote a
+    word somewhere it was not, dropped part of it and left the rest stranded at
+    the bottom of the file, and the room committed that, and the next `absorb`
+    on reconnection mangled what was left. `contraction-off run.` came back as
+    `contraction-oun.` with a stray `un.` at the end of the document.
+
+    This is not an edge case, it is the ordinary document: em dashes are this
+    corpus's house style — fifteen of the twenty-one records in `seed/` carry
+    one, counted on 2026-08-18 — so most real bodies have a character before the
+    splice point that makes the two numbers differ.
+
+    One conversion, at the one boundary, rather than arithmetic at each call
+    site: `test_every_index_into_the_document_is_converted` reads this module as
+    syntax and holds every index handed to `pycrdt` to coming from here.
+    """
+    return len(text[:at].encode("utf-8"))
 
 
 def seeded(body: str) -> Doc:
@@ -137,6 +168,9 @@ class Room:
         """
         if self._who is None:
             return
+        # Characters, deliberately not the bytes the document is addressed in:
+        # an em dash is one thing a person typed, not three, and this number is
+        # only ever compared against another person's.
         inserted = sum(len(part["insert"]) for part in event.delta if "insert" in part)
         self.typed[self._who] = self.typed.get(self._who, 0) + inserted
 
@@ -162,6 +196,10 @@ class Room:
         A minimal splice rather than clear-and-reinsert, because a reader whose
         caret is in the second half of the document should not have it thrown to
         the end because somebody fixed a typo in the first line.
+
+        The prefix and the suffix are found in the string, where the text is;
+        the splice is made in bytes, where the document is. `byte_offset` is
+        that boundary and the only place the two spaces meet.
         """
         was, now = self.body(), body
         if was == now:
@@ -177,9 +215,12 @@ class Room:
             tail += 1
         with self.doc.transaction():
             if len(was) - head - tail:
-                del self.text[head : len(was) - tail]
+                del self.text[byte_offset(was, head) : byte_offset(was, len(was) - tail)]
             if len(now) - head - tail:
-                self.text.insert(head, now[head : len(now) - tail])
+                # `was[:head] == now[:head]` by construction, so converting
+                # against either string gives the same byte — and the deletion
+                # above started at it, so it is still where the insert goes.
+                self.text.insert(byte_offset(now, head), now[head : len(now) - tail])
         return self.doc.get_update(before)
 
     # -- who is in it -------------------------------------------------------

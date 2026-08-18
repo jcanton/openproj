@@ -15,6 +15,7 @@ Chrome in `test_the_browser_opens_the_socket_under_this_policy` below.
 
 from __future__ import annotations
 
+import ast
 import base64
 import gc
 import json
@@ -361,6 +362,56 @@ def test_a_commit_made_in_git_arrives_in_the_room_as_text(client: TestClient, pl
     assert "A LINE TYPED IN THE ROOM" in stored_body(plan)
 
 
+def test_a_commit_made_in_git_arrives_whole_in_a_body_written_in_house_style(
+    client: TestClient, plan: Path
+):
+    """The same fold as the test above, on the body this corpus actually has.
+
+    That one passes on an ASCII record and would pass with the splice computed
+    in any index space at all. Put one em dash in the line above the change —
+    which is how fifteen of the twenty-one records in `seed/` are written — and
+    the fold rewrote the wrong span: the room ended up holding a
+    document neither person typed, and committed it twenty seconds later.
+
+    A code-point offset and a UTF-8 byte offset are both ints, so the two spaces
+    could be mixed without a word from anything, and the corpus is where the
+    difference between them lives.
+    """
+    front, _ = split_front_matter(stored(plan))
+    house = (
+        "The artefact shows up on the equator only — and only with two ranks.\n"
+        "It is not visible in the serialbox reference data.\n"
+    )
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{house}"}, "the way people write", author="ann"
+    )
+
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        assert ann.body() == house, "the room did not open on the file"
+
+        theirs = house.replace("reference data.", "reference data — yet.")
+        commit_directly(
+            plan,
+            {**SEED, PATH: f"---\n{front}\n---\n\n{theirs}"},
+            "a person with a terminal",
+            author="cy",
+        )
+
+        ann.type(0, "A LINE TYPED IN THE ROOM\n")
+        ann.save()
+        saved = ann.take("saved")
+        assert saved["outcome"] == "merged", "a non-overlapping outside edit is a merge"
+        # Whole, and equal — not `in`. The corruption left every marker a
+        # substring test would look for still present somewhere in the document.
+        assert ann.body() == "A LINE TYPED IN THE ROOM\n" + theirs, (
+            f"the room is holding a document nobody typed: {ann.body()!r}"
+        )
+
+    assert stored_body(plan).strip() == ("A LINE TYPED IN THE ROOM\n" + theirs).strip()
+
+
 def test_an_overlap_is_still_the_same_refusal_it_has_always_been(
     client: TestClient, plan: Path
 ):
@@ -572,6 +623,129 @@ def test_absorbing_keeps_the_untouched_half_of_the_document():
     room.absorb("FIRST\nmiddle\nlast\n")
     # The update carries the one line that changed, not the file.
     assert len(room.doc.get_update(before)) < 60
+
+
+# --------------------------------------------------------------------------- #
+# The two index spaces
+# --------------------------------------------------------------------------- #
+
+
+def test_a_string_offset_is_not_a_document_offset():
+    """The fact the splice above stands on, stated on its own.
+
+    `pycrdt.Text` is addressed in UTF-8 bytes and a Python string is counted in
+    code points, and nothing anywhere raises when the two are swapped. Pinned
+    here so that a version of pycrdt that changed its mind about this breaks one
+    small test with a name that says what happened, rather than the room.
+    """
+    doc = coedit.seeded("a—b")
+    assert len(str(doc[coedit.BODY])) == 3, "a Python string counts characters"
+    assert len(doc[coedit.BODY]) == 5, "the document counts UTF-8 bytes"
+    assert [coedit.byte_offset("a—b", at) for at in range(4)] == [0, 1, 4, 5]
+    # Empty, an offset past the end, and a character outside the basic plane:
+    # the conversion is the whole encoded prefix and has no cases of its own.
+    assert coedit.byte_offset("", 0) == 0
+    assert coedit.byte_offset("a—b", 99) == 5
+    assert coedit.byte_offset("🎉x", 1) == 4
+
+
+def test_a_body_with_an_em_dash_is_absorbed_exactly():
+    """The ordinary record, not a contrived one.
+
+    Em dashes are this corpus's house style — fifteen of the twenty-one records
+    in `seed/` carry one — so a body with a character before the splice point is
+    the normal case and not the edge. Computing the splice
+    in code points and applying it in bytes rewrote the wrong span and appended
+    what was left of it to the end of the document, silently, and then the room
+    committed it. Reproduced: `contraction-off run.` came back as
+    `contraction-oun.` with a stray `un.` at the bottom of the file.
+
+    It compounds, which is the second half of this: the next `absorb` — the one
+    a reconnection makes — starts from the mangled text and mangles it again.
+    """
+    body = (
+        "The artefact shows up on the equator only — and only with two ranks.\n"
+        "\n"
+        "We are still on the contraction-off run.\n"
+    )
+    room = coedit.Room(TASK, PATH, "0" * 40, body)
+
+    landed = body.replace("contraction-off run.", "contraction-on run.")
+    room.absorb(landed)
+    assert room.body() == landed, "a fix after an em dash rewrote the wrong span"
+
+    again = landed.replace("two ranks", "two ranks exactly")
+    room.absorb(again)
+    assert room.body() == again, "and the second absorb mangled what the first left"
+
+
+def test_absorbing_holds_for_every_shape_of_edit_in_a_body_that_is_not_ascii():
+    """Insert, delete, replace and clear, at the top, in the middle and at the
+    end, on a body carrying an em dash, an accent, an ellipsis and an emoji.
+
+    A splice is four numbers and a slice, and the defect was visible in exactly
+    one of the four combinations, so each is asked rather than the one that
+    happened to be reported. The emoji is here because it is the case where the
+    two spaces differ by three rather than by two.
+    """
+    body = "Ann — who ran it — says…\nthe 🎉 case is fine.\nAnd the last line.\n"
+    room = coedit.Room(TASK, PATH, "0" * 40, body)
+    for landed in (
+        "PREPENDED\n" + body,                                    # at the top
+        body.replace("the 🎉 case", "the 🎉 CASE"),              # in the middle
+        body + "APPENDED\n",                                     # at the end
+        body.replace("\nthe 🎉 case is fine.", ""),              # a line taken out
+        body.replace("says…", "says… and then said it again"),   # after the ellipsis
+        "",                                                      # cleared
+        body,                                                    # and back again
+    ):
+        room.absorb(landed)
+        assert room.body() == landed, f"absorbing {landed!r} left {room.body()!r}"
+
+
+def test_every_index_into_the_document_is_converted():
+    """`byte_offset` is the boundary, and this is what keeps it the only one.
+
+    The defect was not that the arithmetic was hard — it was that a Python
+    string offset and a document offset are both `int`, so nothing about the
+    call site says which one is being handed over and no checker can be asked.
+    So the module is read as syntax and every index into the text has to come
+    from the conversion by name. Written the way
+    `test_no_page_is_assembled_by_substitution` is, and for the same reason: a
+    rule a person has to remember is a rule that comes back.
+    """
+    source = Path(coedit.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    indexes: list[ast.expr] = []
+    for node in ast.walk(tree):
+        # `del self.text[a:b]`
+        if isinstance(node, ast.Delete):
+            for target in node.targets:
+                if isinstance(target, ast.Subscript) and "text" in ast.unparse(target.value):
+                    piece = target.slice
+                    parts = [piece.lower, piece.upper] if isinstance(piece, ast.Slice) else [piece]
+                    indexes.extend(part for part in parts if part is not None)
+        # `self.text.insert(at, ...)`, and any sibling of it that grows here.
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("insert", "delete")
+            and "text" in ast.unparse(node.func.value)
+            and node.args
+        ):
+            indexes.append(node.args[0])
+
+    assert len(indexes) >= 3, "this stopped finding the splice it was written to guard"
+    for index in indexes:
+        assert (
+            isinstance(index, ast.Call)
+            and isinstance(index.func, ast.Name)
+            and index.func.id == "byte_offset"
+        ), (
+            f"coedit.py:{index.lineno}: `{ast.unparse(index)}` indexes the document with "
+            "something that did not come from `byte_offset`. A Python string offset and a "
+            "UTF-8 byte offset are both ints and differ on every body with an em dash in it."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -842,4 +1016,166 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
     )
     # And said nothing about the policy on the way. A refusal is a console line
     # naming the directive, and nothing else on this page can produce one.
+    assert not [line for line in said if "Content Security Policy" in line], said
+
+
+def test_a_restored_draft_survives_the_welcome_and_is_offered_to_the_room(
+    serving: int, tmp_path: Path
+):
+    """The one thing git cannot get back, asked of the browser that holds it.
+
+    A draft in `localStorage` is somebody's unsaved writing after a crash or a
+    closed tab, and the page restores it into the textarea before this script
+    runs. Then the welcome arrives carrying the room's whole text, `applyUpdate`
+    fires the observer, and an unconditional reflect wrote the room over that
+    draft — so `BODY.value !== ORIGINAL_BODY` a line later was reading the value
+    it had just been overwritten with, was false, and the branch written for
+    exactly this case could never be reached. The draft was gone from the box,
+    and gone from `localStorage` at the room's next commit, with nothing said.
+
+    Asked here and not in node, because the sequence is the defect: a stored
+    draft, a page load that restores it, and a socket welcome landing on top of
+    it. Only a browser has all three, and any harness that stands one of them up
+    by hand is a harness that decides the order the bug is about.
+
+    `bo` is in the room first so that the welcome carries a document and a
+    presence list — the presence list is what says the welcome has landed, and
+    `bo`'s copy of the document is what says the draft was *offered* rather than
+    merely left sitting in the box.
+    """
+    from browser import chrome, in_a_live_page
+    from wsclient import Client
+
+    token = sign_session(User(login="bo", member=True), SECRET)
+    with Client("127.0.0.1", serving, f"/api/coedit/{TASK}",
+                cookie=f"{SESSION_COOKIE}={token}") as bo:
+        bo.send_json({"t": "hello", "seed": None, "sv": None})
+        welcome = bo.receive_json()
+        assert welcome["t"] == "welcome"
+        # Bo reads the room the way the page does: a document, not a string.
+        his = coedit.Doc(client_id=7)
+        his[coedit.BODY] = coedit.Text()
+        his.apply_update(base64.b64decode(welcome["update"]))
+
+        mark = "A SENTENCE NOBODY HAS SAVED YET"
+        drawn, said = in_a_live_page(
+            chrome(),
+            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # Two loads in one expression, because a draft has to be in storage
+            # *before* the page that restores it starts. The first pass writes
+            # one and asks for a reload; `window.__staged` marks the document on
+            # its way out, so the poll that lands between the two answers about
+            # neither. The second pass waits for the presence list — the one
+            # thing on this page that cannot be drawn before a welcome — and
+            # then reports what is in the editing surface after it.
+            "(() => {"
+            "  if (window.__staged) return '';"
+            f" const key = 'openproj:draft:2:{TASK}';"
+            "  const box = document.querySelector('[name=body]');"
+            "  if (!localStorage.getItem(key)) {"
+            "    localStorage.setItem(key, JSON.stringify({"
+            "      base: document.querySelector('[name=base_commit]').value,"
+            f"     text: {mark!r} + '\\n' + box.value}}));"
+            "    window.__staged = true;"
+            "    setTimeout(() => location.reload(), 0);"
+            "    return '';"
+            "  }"
+            "  if (!document.getElementById('together').textContent) return '';"
+            "  return box.value;"
+            "})()",
+            tmp_path / "profile",
+        )
+
+        assert drawn.startswith(mark), (
+            "the welcome overwrote a restored draft: somebody's unsaved writing was "
+            f"replaced by the room's copy of the file. The box holds {drawn!r}"
+        )
+        assert not [line for line in said if "Content Security Policy" in line], said
+
+        # And offered, not merely survived. The draft has to reach the room, or
+        # the next commit writes the file back over it from the other side.
+        for _ in range(60):
+            if mark in str(his[coedit.BODY]):
+                break
+            message = bo.receive_json()
+            if message["t"] == "update":
+                his.apply_update(base64.b64decode(message["u"]))
+        assert mark in str(his[coedit.BODY]), (
+            "the draft stayed in the box and never reached the room, so the next "
+            "commit would have written the file back over it"
+        )
+
+
+def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
+    serving: int, tmp_path: Path
+):
+    """The other half of the same branch, which was just as unreachable.
+
+    A draft written offline against a document somebody else has since changed
+    has no common base to merge from, so the page refuses to guess: the room's
+    text is what goes in the editing surface and the draft goes in the conflict
+    report, to be pasted back by the person who wrote it. That branch is chosen
+    by the same `mine` the welcome used to overwrite, so it could never be taken
+    either — the page fell through to the same silent reflect.
+
+    Bo types before the browser arrives, so the room and the page's rendered
+    body genuinely differ. Nothing is committed here: the claim is only about
+    what the page does with two edits and no ground between them.
+    """
+    from browser import chrome, in_a_live_page
+    from wsclient import Client
+
+    token = sign_session(User(login="bo", member=True), SECRET)
+    with Client("127.0.0.1", serving, f"/api/coedit/{TASK}",
+                cookie=f"{SESSION_COOKIE}={token}") as bo:
+        bo.send_json({"t": "hello", "seed": None, "sv": None})
+        welcome = bo.receive_json()
+        assert welcome["t"] == "welcome"
+        his = coedit.Doc(client_id=7)
+        his[coedit.BODY] = coedit.Text()
+        his.apply_update(base64.b64decode(welcome["update"]))
+        before = his.get_state()
+        his[coedit.BODY].insert(0, "BO WROTE THIS WHILE YOU WERE AWAY\n")
+        bo.send_json(
+            {"t": "update", "u": base64.b64encode(his.get_update(before)).decode()}
+        )
+
+        mark = "MY DRAFT FROM THE TRAIN"
+        drawn, said = in_a_live_page(
+            chrome(),
+            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # Staged and reloaded exactly as above. What is reported is the two
+            # surfaces at once, joined, because the point is that they hold
+            # different things: the room in the box, the draft in the report.
+            "(() => {"
+            "  if (window.__staged) return '';"
+            f" const key = 'openproj:draft:2:{TASK}';"
+            "  const box = document.querySelector('[name=body]');"
+            "  if (!localStorage.getItem(key)) {"
+            "    localStorage.setItem(key, JSON.stringify({"
+            "      base: document.querySelector('[name=base_commit]').value,"
+            f"     text: {mark!r} + '\\n' + box.value}}));"
+            "    window.__staged = true;"
+            "    setTimeout(() => location.reload(), 0);"
+            "    return '';"
+            "  }"
+            "  if (!document.getElementById('together').textContent) return '';"
+            "  const said = document.getElementById('conflict');"
+            "  if (said.hidden) return '';"
+            "  return JSON.stringify({box: box.value, said: said.textContent});"
+            "})()",
+            tmp_path / "profile",
+        )
+
+    answer = json.loads(drawn)
+    assert answer["box"].startswith("BO WROTE THIS WHILE YOU WERE AWAY"), (
+        f"the box should hold the room, and holds {answer['box']!r}"
+    )
+    assert mark in answer["said"], (
+        f"the draft was neither kept nor reported, only lost: {answer['said']!r}"
+    )
+    assert mark not in answer["box"], (
+        "a draft pasted into the editing surface is a draft somebody saves back "
+        "over the document it could not be merged with"
+    )
     assert not [line for line in said if "Content Security Policy" in line], said

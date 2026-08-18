@@ -6045,7 +6045,17 @@ const COEDIT = (() => {
     // What came down the socket does not go back up it.
     if (origin !== 'remote') send({t: 'update', u: b64(update)});
   });
-  text.observe(() => reflect());
+  // Only once the box and the document have been wired together, which is what
+  // `bound` means. The welcome carries the room's whole text, and applying it
+  // fires this observer *synchronously* — so an unconditional reflect wrote the
+  // room over a restored draft before `welcomed` had looked at it, and the
+  // `mine` test below then read the value it had just been overwritten with.
+  // `mine` was therefore always false on exactly the first connection it was
+  // written for, the draft branch was unreachable, and somebody's unsaved
+  // writing went into the box and then out of `localStorage` at the next
+  // commit, silently. The document does not own this textarea until the one
+  // decision that can lose work has been made.
+  text.observe(() => { if (bound) reflect(); });
 
   function names(people) {
     if (!together) return;

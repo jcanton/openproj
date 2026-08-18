@@ -140,7 +140,7 @@ there is no working copy, and why a single `repo.index` anywhere in that file gi
 
 ## How to find bugs here
 
-**This is the section worth the file.** Nine rounds of adversarial audit ran on this branch, and a
+**This is the section worth the file.** Ten rounds of adversarial audit ran on this branch, and a
 green test suite missed every defect they found. Each round was cracked by exactly one question.
 
 | Ask this | What it found |
@@ -154,8 +154,10 @@ green test suite missed every defect they found. Each round was cracked by exact
 | What do the diagnostic tools say when the thing is broken? | `openproj check` reported "0 blockers, 0 warnings" and `openproj render` wrote no files, on a plan that 500ed every page. |
 | What does a person with a terminal commit that this never tries to parse? | Fifteen files that are not records — a pasted note with no `---` among them. Each took ten of eleven routes down permanently; `/healthz` alone answered, and `openproj check` died with a traceback on the first one and never mentioned the second. |
 | Two readers walk the same tree — do they agree on which files are records? | `_people_at` matched on the first path segment while `load_repo` globbed one level, so a hand-committed `people/team/ann.md` was a second record for `ann` on every served page, invisible to the CLI, and `openproj check` said nothing. |
+| Which index space is that `int` in, and would anything say if it were the other one? | `Room.absorb` measured a splice in Python code points and applied it to `pycrdt`, which addresses UTF-8 bytes. Both are `int`, an index inside a character silently appends at the end instead of raising, and every body with an em dash before the edit was rewritten in the wrong place — and committed. |
+| What has already run by the time this line reads that value? | The Yjs observer wrote the room's text over a restored draft *before* the branch that checks for one compared the textarea against what the server rendered. The check was therefore always false in exactly the case it was written for, and somebody's unsaved writing went into the box and then out of `localStorage`. |
 
-Behind all nine is one habit: **ask the question in the medium where the answer lives.** In
+Behind all ten is one habit: **ask the question in the medium where the answer lives.** In
 practice that means:
 
 - **Render pages and parse them in a real DOM.** A substring cannot tell markup from text; a parser
@@ -232,9 +234,10 @@ claim is about pixels, look at the pixels.
 - **Test the behaviour in the medium where it happens.** If the claim is about pixels, the test has
   to tell painted from unpainted, or say in its own words why it cannot.
 - **A test that would not have caught the defect it is written for is not a test.** Delete the fix,
-  watch the test fail, put the fix back. Eight rounds have each shipped one defect a green suite
-  missed; the last survived because a test asserted a stylesheet resolved to a value while nothing
-  was painted.
+  watch the test fail, put the fix back. Ten rounds have each shipped one defect a green suite
+  missed; the last two both destroyed somebody's writing without a word, under 1153 passing tests —
+  a splice measured in code points and applied in bytes, and an observer that overwrote a restored
+  draft before the line written to protect it could read the box.
 - **Derive fixtures from the code where the code is what varies.** `markers()` reads `render.py`;
   `required_at()` runs the gate over a blank entity rather than restating it, so it cannot drift
   from the rule it mirrors — it *is* the rule.
