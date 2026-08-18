@@ -266,11 +266,17 @@ forever. The App ID and installation id are *not* secret and are fine as env var
 
 **The flags that are not decoration:**
 
-- **`--max-instances 1` with `--concurrency 80`.** High concurrency is deliberate
+- **`--max-instances 1` with `--concurrency 200`.** High concurrency is deliberate
   and is the opposite of the usual instinct. One instance is what makes the
   `flock` mean anything; high concurrency is what keeps the count at one.
   Lowering concurrency here does not increase safety, it destroys it. Note
   max-instances *can* be briefly exceeded, so the `flock` is the real guard.
+  The budget is **open connections, not requests a second**: every page holds an
+  `/api/events` stream for as long as it is open and a detail page holds a
+  WebSocket beside it, so a reader costs one slot and somebody editing costs two.
+  At 80 the wall stood at forty open editors, and with one instance there is
+  nowhere for the overflow to go — it queues. The reasoning, and the alternative
+  that was rejected, is written out beside the flags in `gcloud_deploy.sh`.
 - **`--min-instances 0`.** One instance for a month is 2,592,000 instance-seconds
   against a 180,000 vCPU-second grant — **14× the free tier**.
 - **Never `--no-cpu-throttling`.** Two to three orders of magnitude more expensive,

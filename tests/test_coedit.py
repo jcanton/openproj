@@ -39,7 +39,8 @@ from openproj.auth import User, sign_session
 from openproj.index import build_index
 from openproj.model import load_repo, split_front_matter
 from openproj.render import _yjs
-from openproj.web import SESSION_COOKIE, create_app
+from openproj.store import Store, StoreDiverged
+from openproj.web import MAX_BODY_BYTES, MAX_UPDATE_BYTES, SESSION_COOKIE, create_app
 
 # --------------------------------------------------------------------------- #
 # The repository, read without taking the writer's lock
@@ -447,6 +448,107 @@ def test_an_overlap_is_still_the_same_refusal_it_has_always_been(
     assert "MY VERSION OF THAT LINE" not in stored_body(plan)
 
 
+def until(true_of_the_world, complaint: str, seconds: float = 12.0) -> None:
+    """Poll rather than block, for the claims a broken server answers with silence.
+
+    The failure this exists for is a timer task that died: nothing arrives, so a
+    test that waits on a frame waits for ever. A deadline turns that into a
+    sentence.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if true_of_the_world():
+            return
+        time.sleep(0.05)
+    raise AssertionError(complaint)
+
+
+def waited_for(session: Session, *kinds: str, most: int = 40) -> dict:
+    """The next frame of one of these kinds, without `take`'s refusal to wait.
+
+    `take` treats `refused` and `reload` as the end of the exchange, which is
+    right everywhere it is used and wrong here: these are the tests about what a
+    refusal says.
+    """
+    for _ in range(most):
+        message = session.socket.receive_json()
+        session.heard.append(message)
+        if message["t"] in kinds:
+            return message
+    raise AssertionError(f"{session.login} never heard {kinds}: {session.heard}")
+
+
+def test_a_save_with_nothing_to_commit_is_answered(client: TestClient, plan: Path):
+    """Or the page never stops saving, and the shell never draws a banner again.
+
+    `COEDIT.save()` always sends `save` and always says "saving…", and this
+    answered nothing at all when there was nothing to write: `saving` stayed
+    true, `openproj:wrote` never fired, and the shell's counter — which holds
+    every "somebody else changed this" until the write it is paired with lands —
+    stayed above zero for the life of the page. `onclose` puts it back in five
+    minutes on Cloud Run and never on a server with no request deadline.
+
+    The path with no room says "nothing changed" and stops. This is the same
+    sentence, said down the socket.
+    """
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.save()
+        # And a second Save that certainly does answer, so that a room which has
+        # gone quiet fails this test rather than hanging it.
+        ann.save({"status": "in_progress"})
+        first = waited_for(ann, "nothing", "saving", "saved", "refused")
+        assert first["t"] == "nothing", (
+            "the first Save was never answered, so the page is still saving"
+        )
+        ann.take("saved")
+    assert len(log_of(plan)) == before + 1, "one of the two Saves had something to write"
+
+
+def test_the_page_stops_saving_when_the_room_says_there_was_nothing_to_save(
+    client: TestClient, plan: Path
+):
+    """The other half, in the browser, because the jam is the browser's.
+
+    The shell counts `openproj:writing` against `openproj:wrote` and queues every
+    banner in between. What matters is not that a frame arrives but that the
+    counter comes back to zero when it does — so that is what is read, out of the
+    shell's own script, on the page that ships it.
+    """
+    page = client.get(f"/detail/{TASK}").text
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        "  await save();"
+        "  const saving = movedWriting;"
+        "  __socket.hear({t: 'nothing'});"
+        "  return saving + ' then ' + movedWriting;"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] == "1 then 0", (
+        "the shell is still holding every banner back, so nobody is told the plan "
+        f"moved again for the life of this page: {answer['value']}"
+    )
+
+
 def test_the_last_person_out_commits(client: TestClient, plan: Path):
     """Leaving is a commit, so a room nobody comes back to has already put its
     work in git. The twenty-second window is the floor for a crash, not for
@@ -459,6 +561,176 @@ def test_the_last_person_out_commits(client: TestClient, plan: Path):
     assert len(log_of(plan)) == before + 1
     assert "Typed and never saved by hand." in stored_body(plan)
     assert log_of(plan)[0][0] == "ann"
+
+
+def test_a_paste_the_api_would_accept_fits_down_the_socket(client: TestClient, plan: Path):
+    """The transport ceiling has to sit above the policy one, or it decides policy.
+
+    `MAX_UPDATE_BYTES` and `MAX_BODY_BYTES` were both 262144, and a Yjs update is
+    always larger than the text it carries — so a body that `PATCH` would have
+    accepted could never be pasted into a live room. The frame was dropped in
+    silence, the quiet window committed the text from before the paste, and
+    pasting an export out of HackMD is the migration this whole feature exists
+    for.
+    """
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        # An export pasted over the whole document, one byte under the ceiling
+        # `PATCH` holds a body to — so this is a body the API would accept.
+        paste = "P" * (MAX_BODY_BYTES - 1)
+        was = ann.doc.get_state()
+        del ann.text[0 : len(ann.body().encode("utf-8"))]
+        ann.text.insert(0, paste)
+        update = ann.doc.get_update(was)
+        assert len(update) > MAX_BODY_BYTES, (
+            "the premise of this test: an update is larger than the text in it, so "
+            "one ceiling for both is a transport that decides policy"
+        )
+        assert len(update) <= MAX_UPDATE_BYTES, "and the transport bound has room for it"
+        ann.send(update)
+        ann.save()
+        assert ann.take("saved")["outcome"] in ("committed", "retried")
+
+    assert len(log_of(plan)) == before + 1
+    assert stored_body(plan).startswith(paste), "the paste is not what was committed"
+
+
+def test_a_frame_the_room_cannot_take_is_said_out_loud(client: TestClient):
+    """It was dropped with `continue`, which is the worst of the three answers.
+
+    An update the room did not apply is an edit this tab made and the room did
+    not, so the two can never converge again — and nothing was sent back: no
+    refusal, no reload, nothing. A Save beside it then answered `saved`, moved
+    `ORIGINAL_BODY` to the room's stale text and dropped the draft, so the work
+    existed in one textarea and died with the tab.
+    """
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.socket.send_json(
+            {"t": "update", "u": base64.b64encode(b"\x00" * (MAX_UPDATE_BYTES + 1)).decode()}
+        )
+        # A Save behind it, which is always answered — so a room that says
+        # nothing about the frame fails this test instead of hanging it.
+        ann.save()
+        answer = waited_for(ann, "reload", "refused", "saved", "nothing")
+    assert answer["t"] == "reload", answer
+    assert "could not take" in answer["why"]
+    # And says what still works, because the page it is talking to has the only
+    # copy of whatever was just typed.
+    assert "Save" in answer["why"]
+
+
+def test_a_write_that_fails_is_a_refusal_and_not_an_escape(
+    client: TestClient, plan: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`store.write` raises three things this never caught.
+
+    `StoreLocked` and `StoreDiverged` are `RuntimeError`s and `_commit` goes
+    through pygit2, which raises `GitError`; the net was `(HTTPException,
+    ValueError)`. An escape took the socket with it here and the timer task in
+    `_watch`, which has no try of its own — and a dead timer has one symptom,
+    which is that nothing is committed any more.
+
+    Driven with the quiet window set to nothing, so the second half is the timer
+    itself: the write fails on the tick, and the tick after it has to still be
+    running.
+    """
+    monkeypatch.setattr(coedit, "QUIET_SECONDS", 0.0)
+    failed = []
+    real = Store.write
+
+    def write(self, **asked):
+        if not failed:
+            failed.append(asked)
+            raise StoreDiverged("local 1234567 and remote 89abcde have both moved")
+        return real(self, **asked)
+
+    monkeypatch.setattr(Store, "write", write)
+
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.type(0, "typed while the remote had moved\n")
+        # Waited for in git and not on the socket: a `_watch` that died says
+        # nothing at all, and a test that reads a frame it will never be sent
+        # hangs instead of failing.
+        until(lambda: bool(failed), "the quiet window never tried to write")
+        assert len(log_of(plan)) == before, "a failed write commits nothing"
+
+        # The timer has to have survived it. Typing again clears the refusal, so
+        # the next quiet window is allowed to try — and this time the write works.
+        ann.type(0, "and typed again once it had stopped\n")
+        until(
+            lambda: len(log_of(plan)) > before,
+            "the quiet window never came back: the timer died with the failed write",
+        )
+        # And the reason reached the room. Read after the fact, from frames that
+        # are already queued, so this cannot wait on anything either.
+        why = waited_for(ann, "refused")
+        assert "have both moved" in why["why"], "the reason has to reach the room"
+
+    assert "typed while the remote had moved" in stored_body(plan)
+
+
+def test_a_room_whose_record_is_gone_says_to_copy_the_document_out(
+    client: TestClient, plan: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The refusal is right and the sentence was not.
+
+    A room's text lives in no `localStorage` but the typist's own: everybody
+    else's copy arrived over the socket and was never an `input` event, so
+    "there is nothing to write this against" with no instruction beside it is a
+    message that ends with the document being lost. It repeats every quiet
+    window until somebody acts on it, so it has to say what to do.
+    """
+    monkeypatch.setattr(Store, "read", lambda self, commit, path: None)
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.type(0, "a paragraph two people wrote\n")
+        ann.save()
+        why = waited_for(ann, "refused", "saved")
+    assert why["t"] == "refused", why
+    assert "not in the plan any more" in why["why"]
+    assert "Copy the document out of the editor" in why["why"], why["why"]
+
+
+def test_nothing_reaches_a_socket_before_its_welcome(client: TestClient):
+    """A frame that arrives first lands on a document that has not been seeded.
+
+    This socket was in `sockets` from the moment it was accepted, so a second tab
+    could be handed somebody else's `update` before its own welcome. The update
+    went into an empty document, and the welcome then compared what the room held
+    against what the server had rendered into the page — which is the test a
+    restored draft is judged by, so a clean merge came back as the conflict
+    report instead.
+
+    `cy` is here to make the order a fact rather than a hope: what she has heard
+    is proof the server processed ann's keystroke before bo said hello.
+    """
+    with open_room(client, "ann") as one, open_room(client, "cy") as three:
+        ann, cy = Session(one, "ann"), Session(three, "cy")
+        ann.hello()
+        cy.hello()
+        with open_room(client, "bo") as two:
+            ann.type(0, "ANN TYPED BEFORE BO SAID HELLO\n")
+            cy.until("ANN TYPED BEFORE BO SAID HELLO")
+
+            bo = Session(two, "bo")
+            two.send_json({"t": "hello", "seed": None, "sv": None})
+            first = two.receive_json()
+            assert first["t"] == "welcome", (
+                f"bo was handed a {first['t']} before being told what document this is"
+            )
+            bo.doc.apply_update(base64.b64decode(first["update"]))
+            assert "ANN TYPED BEFORE BO SAID HELLO" in bo.body(), (
+                "nothing may be lost by waiting: the welcome carries everything the "
+                "room had when it was composed"
+            )
 
 
 def test_a_restart_loses_nothing_that_was_committed(plan: Path):
@@ -748,6 +1020,157 @@ def test_every_index_into_the_document_is_converted():
         )
 
 
+def _document_indexes(script: str) -> list[str]:
+    """Every first argument handed to `text.delete(` / `text.insert(` in a script.
+
+    A regex finds the call and then the parentheses are balanced by hand, because
+    the index is itself a call with a comma in it and `[^,]+` stops in the middle
+    of it. There is no JavaScript parser here and adding one would mean npm.
+    """
+    found = []
+    for match in re.finditer(r"\btext\.(?:insert|delete)\(", script):
+        depth, at = 0, match.end()
+        while at < len(script):
+            letter = script[at]
+            if letter in "([{":
+                depth += 1
+            elif letter in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif letter == "," and depth == 0:
+                break
+            at += 1
+        found.append(script[match.end() : at].strip())
+    return found
+
+
+def typed_in_the_page(client: TestClient, shown: str, edits: list[str]) -> coedit.Room:
+    """Type each of these into the shipped editor, and hand the room what it sent.
+
+    The page's own script, driven through its own `input` handler, over a socket
+    the test moves frame by frame — because the claim is about what the browser
+    puts on the wire and what the server's document makes of it, and that
+    crosses two implementations. A copy of `typed()` written here would only
+    prove this file agrees with itself.
+    """
+    page = client.get(f"/detail/{TASK}").text
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    answer = run_js(
+        page,
+        "(() => {"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  const box = document.querySelector('[name=body]');"
+        "  const opened = box.value;"
+        f" for (const value of {json.dumps(edits)}) {{"
+        "    box.value = value;"
+        "    box.dispatchEvent(new Event('input'));"
+        "  }"
+        "  return {opened, sent: __socket.sent()};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"]["opened"] == shown, (
+        "the welcome did not reach the editing surface, so nothing below was driven"
+    )
+    for frame in answer["value"]["sent"]:
+        if frame["t"] == "update":
+            room.apply(base64.b64decode(frame["u"]), "ann")
+    return room
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # Replacing one emoji with another: they share a leading half, so the
+        # common prefix ends *between* the two halves of the pair.
+        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
+        # Backspacing the first of two adjacent emoji: both boundaries land
+        # inside a pair at once.
+        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
+        # A flag is two regional indicators, so it is two pairs and the boundary
+        # falls inside the second one.
+        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
+        # The two below are the controls, and they are here to say what the case
+        # actually is: both have an emoji in them, neither puts a splice boundary
+        # inside one, and both passed with the defect in place. A corpus that
+        # merely contains an emoji proves nothing — this repository's own
+        # mandated footer, edited after the robot rather than through it, is the
+        # shape that always worked.
+        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
+        # And an emoji typed in from the picker, which lands whole between two
+        # characters that are not halves of anything.
+        ("a fine result\n", "a fine \U0001f389 result\n"),
+    ],
+)
+def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
+    client: TestClient, plan: Path, was: str, now: str
+):
+    """The splice the browser makes, asked of the browser and of the room at once.
+
+    `typed()` found the common prefix and suffix a UTF-16 code unit at a time and
+    handed those to `Y.Text`, which is counted the same way — so nothing was
+    converted and nothing looked wrong. But a character can be two code units,
+    and two emoji that share a leading half stop that scan between them: the
+    splice then deleted and inserted half a character at each end. A thumb up
+    edited to a thumb down left this document holding one thing and the room
+    holding another, silently, because a lone surrogate cannot be encoded and
+    the update carried a replacement character in its place. Committed twenty
+    seconds later, and `PATCH` — which sends the whole body — could never have
+    done it, so the socket made emoji strictly worse than no socket at all.
+
+    Asserted as equality on both sides. A substring test would have passed on
+    every one of these: the corruption is one character wide.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert shown == was, "the page is not showing the body this test is about"
+
+    room = typed_in_the_page(client, shown, [now])
+    assert room.body() == now, (
+        f"the browser typed {now!r} and the room ended up holding {room.body()!r}"
+    )
+
+
+def test_the_browser_splices_on_a_whole_character():
+    """`test_every_index_into_the_document_is_converted`, on the other side.
+
+    The same invariant is written twice, once per language, and it was guarded
+    once — which is the failure this file's own rule names. A JS string and
+    `Y.Text` are both counted in UTF-16 code units while a character can be two
+    of them, so an index taken from a code-unit scan is a different index space
+    from the characters it was measured against, exactly as a code point offset
+    was a different space from a UTF-8 byte.
+
+    So the shipped script is read and every index handed to the document has to
+    come from `units` by name.
+    """
+    from openproj.render import _COEDIT
+
+    indexes = _document_indexes(str(_COEDIT))
+    assert len(indexes) >= 2, "this stopped finding the splice it was written to guard"
+    for index in indexes:
+        assert index.startswith("units("), (
+            f"`text.insert/delete({index}, …)` in `_COEDIT` indexes the document with "
+            "something that did not come from `units`. A count of characters and a count "
+            "of UTF-16 code units are both numbers, and they differ on every emoji."
+        )
+
+
 # --------------------------------------------------------------------------- #
 # The vendored library
 # --------------------------------------------------------------------------- #
@@ -818,6 +1241,38 @@ def test_the_vendored_yjs_and_the_server_write_the_same_seed():
     ours = base64.b64encode(coedit.seeded(body).get_update()).decode()
     assert theirs["text"] == body
     assert theirs["seed"] == ours, "the browser and the server seed different documents"
+
+
+def test_the_two_implementations_agree_about_a_body_that_is_not_ascii():
+    """The three tests around this one all use ASCII bodies, and that is the gap.
+
+    A Python string is counted in code points, a `pycrdt.Text` in UTF-8 bytes, a
+    JS string and a `Y.Text` in UTF-16 code units — four counts that are the same
+    number for every character in `one\\ntwo\\n` and different for every character
+    that matters here. So the seed equality above proves the two libraries agree
+    about ASCII and nothing more, while this corpus is em dashes, ellipses, and
+    now the robot this repository signs its own commits with.
+
+    Both directions, because the bytes cross both ways on every keystroke.
+    """
+    body = "An em dash — a flag \U0001f1e9\U0001f1ea, the robot \U0001f916 and an ellipsis…\n"
+    theirs = in_node({"body": body})
+    ours = base64.b64encode(coedit.seeded(body).get_update()).decode()
+    assert theirs["text"] == body, "the browser did not read back what it was seeded with"
+    assert theirs["seed"] == ours, (
+        "the browser and the server seed different documents for a body with an "
+        "astral character in it, so every update between them is a guess"
+    )
+
+    # And an edit made in the browser lands where it was meant to. The offset is
+    # written out in UTF-16 code units rather than as `len(body) - 1`, because
+    # `Y.Text` is addressed that way and a Python length is not — which is this
+    # test's whole subject, and worth stepping on once here rather than in a room.
+    before_the_newline = len(body.encode("utf-16-le")) // 2 - 1
+    answer = in_node({"body": body, "insert": {"at": before_the_newline, "what": " and more."}})
+    server = coedit.seeded(body)
+    server.apply_update(base64.b64decode(answer["update"]))
+    assert str(server[coedit.BODY]) == body[:-1] + " and more.\n"
 
 
 def test_an_update_from_the_vendored_yjs_lands_in_the_servers_document():

@@ -68,10 +68,11 @@ QUIET_SECONDS = 20.0
 # a reconnection lands in the room it left.
 LINGER_SECONDS = 420.0
 
-# The largest update one socket frame may carry. A guard, not a policy: an
-# update is normally tens of bytes, and this stops a client from making the
-# server hold a megabyte per frame.
-MAX_UPDATE_BYTES = 256 * 1024
+# The frame size a socket may carry is deliberately not here. It is a transport
+# bound and this file has nothing to say about transport — and it only means
+# anything beside the bound on what may be committed, which is `web.py`'s. The
+# two were separately-written copies of one number, which is how the transport
+# came to refuse a body the policy would have accepted.
 
 
 def byte_offset(text: str, at: int) -> int:

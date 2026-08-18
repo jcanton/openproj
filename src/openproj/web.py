@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
+import pygit2
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.websockets import WebSocketDisconnect
@@ -89,7 +90,16 @@ from .model import (
     what_json_can_carry,
     why_it_will_not_read,
 )
-from .store import Store
+from .store import Store, StoreDiverged, StoreLocked
+
+# What a write can fail with, as one name so the two callers of `store.write`
+# cannot disagree about it. `StoreLocked` and `StoreDiverged` are `RuntimeError`s
+# and `_commit` goes through pygit2, which raises `GitError`; a net woven from
+# `(HTTPException, ValueError)` alone therefore let three of the five past it. A
+# tuple and not `Exception`, because `readable` (`model.py`) is the one place in
+# this codebase that catches everything, and everywhere else the list of what has
+# actually been seen is the honest one.
+WRITE_FAILURES = (HTTPException, ValueError, StoreLocked, StoreDiverged, pygit2.GitError)
 
 # Two names for one session, chosen by the scheme the request actually arrived
 # on, because the `__Host-` prefix is not a hint — it is a rule the browser
@@ -121,6 +131,20 @@ PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 # A blob committed to git is permanent and branch protection blocks the force-push
 # that would take it back out, so the only place to stop it is before the commit.
 MAX_BODY_BYTES = 256 * 1024
+# The largest update one socket frame may carry, which is a different kind of
+# bound and has to be derived from that one rather than written out beside it.
+# `MAX_BODY_BYTES` is policy — what this tool will put in git for ever. This is
+# transport — what the process will hold while it decides what a frame is. They
+# were two spellings of 262144, and a Yjs update is always larger than the text
+# it carries (an item header per run, and every character anybody has deleted
+# still travelling as a tombstone until the room is rebuilt), so the transport
+# bound bit first and a body a PATCH would have accepted could never be pasted
+# into a live room. Four times, so a document sitting at the policy ceiling can
+# still be sent whole — which is what a reconnection sends, and what a paste
+# into an empty room sends — with its edit history on top of it. Past this the
+# frame is refused out loud: a document that large could not be committed
+# either way, and a frame dropped in silence is how a paste disappeared.
+MAX_UPDATE_BYTES = 4 * MAX_BODY_BYTES
 # A screenshot of a plot is well under this; a photograph pasted by accident is
 # not. Every byte here is a byte in the plan repository forever — git keeps it
 # after the markdown that referenced it is deleted.
@@ -1464,8 +1488,15 @@ def create_app(
 
     def _raw(value: object) -> bytes | None:
         """Base64 off the wire, or None. Never an exception: a frame this cannot
-        decode is one client's mistake and must not close anybody else's room."""
-        if not isinstance(value, str) or len(value) > 4 * coedit.MAX_UPDATE_BYTES:
+        decode is one client's mistake and must not close anybody else's room.
+
+        Bounded before decoding, on the string, because the string is what this
+        process is holding while it decides — and bounded at what
+        `MAX_UPDATE_BYTES` actually encodes to (four characters per three bytes)
+        rather than at a round multiple, so raising the frame ceiling raises the
+        memory the ceiling admits by the same amount and not by more.
+        """
+        if not isinstance(value, str) or len(value) > (MAX_UPDATE_BYTES + 2) // 3 * 4 + 4:
             return None
         try:
             return base64.b64decode(value, validate=True)
@@ -1521,10 +1552,29 @@ def create_app(
         know — it is holding that record's text — so a second claimant appearing
         in git mid-session is a blocker the pages draw, not a reason to strand
         everybody typing.
+
+        **This never raises for a write that failed, and `_watch` depends on that
+        rather than guarding it a second time.** A timer task that dies takes the
+        quiet window with it for as long as the room lives, and the only symptom
+        is that nothing is committed any more. Every failure leaves by the same
+        door instead: `refused`, into the room's own box, said to everybody in it.
         """
         fields = fields or {}
         author, others = room.credits(presser)
         if not author or (not fields and not room.pending()):
+            # A Save with nothing to commit is still a Save, and it has to be
+            # answered. `COEDIT.save()` has already said "saving…" and dispatched
+            # `openproj:writing`, and the shell holds every "somebody else
+            # changed this" banner until the matching `openproj:wrote` — so
+            # returning in silence left that counter above zero for the life of
+            # the page and no banner was ever drawn again. `onclose` puts it back
+            # in five minutes on Cloud Run and never on a server with no request
+            # deadline. The path without a room says "nothing changed" and stops;
+            # this is the same sentence, and only when somebody pressed the
+            # button, because the quiet window and the last person out are owed
+            # nothing.
+            if presser:
+                await _to_room(room, {"t": "nothing"})
             return
         body = room.body()
         try:
@@ -1535,54 +1585,75 @@ def create_app(
                 raise ValueError("this document is too large to commit")
             original = store.read(room.base, room.path)
             if original is None:
-                raise ValueError(f"{room.path} is not in the plan any more")
+                # Said with what to do about it. A room's text lives in no
+                # `localStorage` but the typist's own — everybody else's copy
+                # arrived over the socket and was never an `input` event — so
+                # "this is gone" without "copy it out" is an instruction to lose
+                # the document, and this refusal repeats every twenty seconds
+                # until somebody acts on it.
+                raise ValueError(
+                    f"{room.path} is not in the plan any more, so there is nothing to "
+                    "write this against. Copy the document out of the editor before "
+                    "closing this tab — the room is the only place it exists."
+                )
             content = _patched(original, fields, body, room.path)
             # The same gate the PATCH route stands behind, and for the same
             # reason: a record that will not read back takes every page down for
             # everybody, on a branch where the commit cannot be force-pushed away.
             parse_text(content, room.path)
-        except (HTTPException, ValueError) as error:
+
+            # Said before the write, not after it: a commit is announced to the
+            # event stream before the request that made it is answered, so the
+            # shell's "somebody else changed this" banner has to know a write is
+            # in the air first — otherwise the room's own commit arrives as news
+            # that a stranger moved the plan.
+            await _to_room(room, {"t": "saving"})
+            message = f"{room.entity_id}: {', '.join(fields) or 'body'}"
+            if others:
+                # The trailer git itself reads. `store._commit` puts the author
+                # in the author field, so `git log --format='%an'` is unchanged
+                # and `git shortlog` sees both halves.
+                trailers = "\n".join(
+                    f"Co-authored-by: {login} <{login}@users.noreply.github.com>"
+                    for login in others
+                )
+                message = f"{message}\n\n{trailers}"
+            # Inside the try, which is the whole of this change: the write is
+            # what actually fails, and it was the one step standing outside the
+            # net. Everything after it only reports.
+            written = store.write(
+                path=room.path,
+                content=content,
+                base_commit=room.base,
+                author=author,
+                message=message,
+            )
+            if written.outcome == "conflict":
+                # Into the room's own box, never into the editing surface: text
+                # pasted into a textarea is text somebody saves back. The room
+                # keeps the base it had and tries again once the text moves.
+                room.refusal = written.conflict
+                await _to_room(room, {"t": "refused", "why": written.conflict})
+                return
+            # Whatever actually landed, which is not what was sent when `_merge`
+            # folded in somebody's git commit. Applied back into the document so
+            # the room sees their paragraph arrive as text rather than diverging
+            # from the file.
+            #
+            # Nothing can have been typed in between: `store.write` is
+            # synchronous, so no other coroutine ran while it was in there.
+            landed = _body_at(written.commit, room.path)
+        except WRITE_FAILURES as error:
+            # Everything a write is documented to fail with, not the two that had
+            # been thought of — see `WRITE_FAILURES`. This is also the only handler
+            # between a failed write and `_watch`, which has no try of its own: an
+            # escape from here cancelled that task, and the quiet-window commit for
+            # that entity then stopped for as long as the room stayed open, with
+            # nothing anywhere saying so.
             why = error.detail if isinstance(error, HTTPException) else str(error)
             room.refusal = why
             await _to_room(room, {"t": "refused", "why": why})
             return
-
-        # Said before the write, not after it: a commit is announced to the event
-        # stream before the request that made it is answered, so the shell's "somebody
-        # else changed this" banner has to know a write is in the air first — otherwise
-        # the room's own commit arrives as news that a stranger moved the plan.
-        await _to_room(room, {"t": "saving"})
-        message = f"{room.entity_id}: {', '.join(fields) or 'body'}"
-        if others:
-            # The trailer git itself reads. `store._commit` puts the author in the
-            # author field, so `git log --format='%an'` is unchanged and
-            # `git shortlog` sees both halves.
-            trailers = "\n".join(
-                f"Co-authored-by: {login} <{login}@users.noreply.github.com>"
-                for login in others
-            )
-            message = f"{message}\n\n{trailers}"
-        written = store.write(
-            path=room.path,
-            content=content,
-            base_commit=room.base,
-            author=author,
-            message=message,
-        )
-        if written.outcome == "conflict":
-            # Into the room's own box, never into the editing surface: text pasted
-            # into a textarea is text somebody saves back. The room keeps the base
-            # it had and tries again once the text moves.
-            room.refusal = written.conflict
-            await _to_room(room, {"t": "refused", "why": written.conflict})
-            return
-        # Whatever actually landed, which is not what was sent when `_merge` folded
-        # in somebody's git commit. Applied back into the document so the room sees
-        # their paragraph arrive as text rather than diverging from the file.
-        #
-        # Nothing can have been typed in between: `store.write` is synchronous, so
-        # no other coroutine ran while it was in there.
-        landed = _body_at(written.commit, room.path)
         update = room.absorb(landed)
         room.settled(written.commit, room.body())
         await _to_room(
@@ -1655,8 +1726,6 @@ def create_app(
             # in `store.write` does it at the next commit instead.
             arriving = room.absorb(_body_at(head, path))
             room.settled(head, room.body())
-        rooms.enter(room, connection, user.login)
-        sockets[connection] = socket
 
         try:
             hello = await socket.receive_json()
@@ -1679,16 +1748,29 @@ def create_app(
                     }
                 )
                 return
-            await socket.send_json(
-                {
-                    "t": "welcome",
-                    "seed": room.seed,
-                    "base": room.base,
-                    "you": user.login,
-                    "sv": _b64(room.state()),
-                    "update": _b64(room.since(_raw(hello.get("sv")))),
-                }
-            )
+            # Composed, then joined, then sent, with no `await` between the first
+            # two. This socket used to be in `sockets` from the moment it was
+            # accepted, so a second tab could be handed somebody else's `update`
+            # *before* its welcome: the frame landed on a document that had not
+            # been seeded yet, and the welcome then found a document that no
+            # longer matched what the server had rendered into the page — which
+            # is the test a restored draft is judged by, so a clean merge came
+            # back as the conflict report instead. Joining after the frame is
+            # built and before it is sent is the only order with no gap in it:
+            # anything applied to the room earlier is inside this update, and
+            # anything applied later is broadcast to a socket that is already
+            # listed, behind bytes that are already queued.
+            welcome = {
+                "t": "welcome",
+                "seed": room.seed,
+                "base": room.base,
+                "you": user.login,
+                "sv": _b64(room.state()),
+                "update": _b64(room.since(_raw(hello.get("sv")))),
+            }
+            sockets[connection] = socket
+            rooms.enter(room, connection, user.login)
+            await socket.send_json(welcome)
             if arriving:
                 await _to_room(room, {"t": "update", "u": _b64(arriving)}, skip=connection)
             await _to_room(room, {"t": "who", "people": room.people()})
@@ -1705,8 +1787,28 @@ def create_app(
                 kind = message.get("t")
                 if kind == "update":
                     update = _raw(message.get("u"))
-                    if update is None or len(update) > coedit.MAX_UPDATE_BYTES:
-                        continue
+                    if update is None or len(update) > MAX_UPDATE_BYTES:
+                        # Not `continue`. A frame the room did not take is an
+                        # edit this tab made and the room did not, so the two can
+                        # never converge again — and this said nothing at all. A
+                        # 263 kB paste produced no frame back, the quiet window
+                        # committed the text from before it, and a Save beside it
+                        # then answered `saved`, moved `ORIGINAL_BODY` to the
+                        # room's stale text and dropped the draft, so the paste
+                        # existed in one textarea and died with the tab. Answered
+                        # the way an update that will not apply is answered,
+                        # because it is the same condition: two copies that
+                        # cannot converge.
+                        await socket.send_json(
+                            {
+                                "t": "reload",
+                                "why": "this tab sent a change the room could not take, so "
+                                "it has left the room. Nothing in this tab is lost: Save "
+                                "writes the whole document, the way it did before rooms "
+                                "existed.",
+                            }
+                        )
+                        return
                     try:
                         room.apply(update, user.login)
                     except Exception:  # noqa: BLE001 - anything at all off a socket

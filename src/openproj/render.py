@@ -6000,6 +6000,22 @@ const COEDIT = (() => {
     return bound && !dead && socket !== null && socket.readyState === WebSocket.OPEN;
   }
 
+  // Where an offset counted in characters lands in the document's index space.
+  //
+  // Two index spaces, and they are not the same one. `[...text]` walks code
+  // points — characters, the things a person typed — while `Y.Text`, `.length`
+  // and `.slice` are all counted in UTF-16 code units, and every emoji, every
+  // flag and this repository's own robot is one of the first and two of the
+  // second. This is the browser's `byte_offset` (`coedit.py`): the same rule
+  // for the same reason, one conversion at one boundary rather than arithmetic
+  // at each call site, and `test_the_browser_splices_on_a_whole_character`
+  // holds every index handed to the document to coming from here.
+  function units(chars, at) {
+    let n = 0;
+    for (let i = 0; i < at; i++) n += chars[i].length;
+    return n;
+  }
+
   // The textarea into the document. A textarea reports its whole value, so the
   // edit has to be recovered from it: the common prefix and suffix bound what
   // changed, which is one delete, one insert, or one of each. Recovered rather
@@ -6010,14 +6026,33 @@ const COEDIT = (() => {
   function typed() {
     const now = BODY.value, was = text.toString();
     if (now === was) return;
+    // Scanned a character at a time and not a code unit at a time. Two emoji
+    // that share a leading half — a thumb up and a thumb down differ only in
+    // their second unit — stop a unit-at-a-time scan *between* the halves of a
+    // surrogate pair, and the splice then took out and put back half a
+    // character at each end. This document was left holding one thing and the
+    // room another, silently: a lone surrogate cannot be encoded, so the update
+    // carried a replacement character where the half was, and the two copies
+    // never converged again. An emoji picker, a flag, replacing one emoji or
+    // backspacing one of two adjacent ones is all it takes — and a PATCH, which
+    // sends the whole body, cannot do it, so the socket made emoji strictly
+    // worse than the editor it replaced.
+    const nowChars = [...now], wasChars = [...was];
     let head = 0;
-    while (head < now.length && head < was.length && now[head] === was[head]) head++;
+    while (head < nowChars.length && head < wasChars.length
+           && nowChars[head] === wasChars[head]) head++;
     let tail = 0;
-    while (tail < now.length - head && tail < was.length - head
-           && now[now.length - 1 - tail] === was[was.length - 1 - tail]) tail++;
+    while (tail < nowChars.length - head && tail < wasChars.length - head
+           && nowChars[nowChars.length - 1 - tail]
+              === wasChars[wasChars.length - 1 - tail]) tail++;
     doc.transact(() => {
-      if (was.length - head - tail > 0) text.delete(head, was.length - head - tail);
-      if (now.length - head - tail > 0) text.insert(head, now.slice(head, now.length - tail));
+      // `wasChars.slice(0, head)` and `nowChars.slice(0, head)` are the same
+      // characters by construction, so converting against either gives the same
+      // unit — and the delete starts at it, so it is still where the insert goes.
+      const cut = units(wasChars, wasChars.length - tail) - units(wasChars, head);
+      if (cut > 0) text.delete(units(wasChars, head), cut);
+      const put = nowChars.slice(head, nowChars.length - tail).join('');
+      if (put) text.insert(units(nowChars, head), put);
     }, 'typed');
   }
 
@@ -6152,6 +6187,16 @@ const COEDIT = (() => {
       // hears about it, and without this a room commit that nobody pressed
       // arrives as news that a stranger moved the plan.
       writing();
+      return;
+    }
+    if (message.t === 'nothing') {
+      // A Save with nothing to commit. The room answers nothing else, and
+      // without this the page stayed in `saving` for ever: `settle` never ran,
+      // `openproj:wrote` never fired, and the shell's counter never came back to
+      // zero — so every "somebody else changed this" banner after it was queued
+      // and never drawn. Said only by the tab that pressed the button, because
+      // this frame goes to everybody in the room and nobody else asked.
+      if (saving) { settle(null); announce('nothing changed'); }
       return;
     }
     if (message.t === 'saved') {
