@@ -1912,8 +1912,17 @@ def test_the_unsaved_count_and_the_receipt_count_the_same_thing(client: TestClie
     # changed both is two edits before it and two after it.
     assert "for (const fields of PENDING.values()) edits += Object.keys(fields).length;" in mark
     assert "saved += Object.keys(fields).length;" in flush
-    assert "let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0);" in mark
-    assert "const edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0);" in flush
+    # Three flags now: the goal became a field of its own, above the betting
+    # table, and an unsaved goal has to be counted like an unsaved roster or the
+    # bar says "nothing to save" over an edit.
+    assert (
+        "let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);"
+        in mark
+    )
+    assert (
+        "const edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);"
+        in flush
+    )
     assert "saved += edits;" in flush
     # The one thing that must never come back: a per-commit tally in the receipt.
     assert "saved += 1;" not in flush, "one write can still be two edits"

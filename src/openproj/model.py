@@ -292,7 +292,8 @@ class Cycle(BaseModel):
 
     Stored as `cycles/<number>.md`, frontmatter and a body, so it reuses the whole
     existing write path — per-key frontmatter merge, three-way body merge, scoped
-    compare-and-swap. The body is where the cycle's goal goes.
+    compare-and-swap. `goal` is the field the betting table settles; the body is
+    the notes that accumulate under it.
 
     **Two dates are stored, and both are meetings.** `starts_on` is the betting
     table and the first day of build; `reviews_on` is the review meeting, which is
@@ -320,6 +321,15 @@ class Cycle(BaseModel):
     # Fraction of the BUILD weeks, per person. Absent means nobody said
     # otherwise, which is not the same as unavailable — see `_availability_of`.
     availability: dict[str, float] = {}
+    # What the cycle is FOR, in a sentence or two, and a field rather than the
+    # first line of the body — because the two are written at different moments
+    # by different people. The goal is settled at the betting table and then does
+    # not move; the notes below it accumulate all cycle. Sharing one box meant the
+    # goal was whatever happened to be at the top of a growing document, and
+    # nothing could put it above the table where the room is looking.
+    goal: str = ""
+    # Everything else the room said: why a pitch was left out, what would make it
+    # a bet next time. Prose, so it is the body and not a field.
     body: str = ""
 
     # --- derived by Config.with_plans ---------------------------------------
@@ -1452,10 +1462,26 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
 
 
 def split_front_matter(text: str) -> tuple[str, str]:
-    """The frontmatter block and the body, without reformatting either."""
+    """The frontmatter block and the body, without reformatting either.
+
+    The empty block is its own case and has to be, because the closing delimiter
+    of `---\n---\n` is not preceded by a newline of its own: partitioning the
+    opening `---\n` away leaves `---\n`, which contains no `\n---\n`, so the
+    whole document was reported as body with no frontmatter at all.
+
+    That is not a curiosity. `web.py` starts a record that does not exist yet from
+    exactly that string, so `patch_text` copied it into the body — and every cycle
+    started without a goal was committed with a literal `---` and `---` as its
+    text. The page then drew two horizontal rules under a heading with nothing in
+    it, which is what it was asked to draw. Found from a screenshot of that.
+    """
     if not text.startswith("---"):
         return "", text
     _, _, rest = text.partition("---\n")
+    if rest.startswith("---\n"):
+        return "", rest[len("---\n") :]
+    if rest.rstrip("\n") == "---":
+        return "", ""
     front, sep, body = rest.partition("\n---\n")
     return (front, body) if sep else ("", text)
 

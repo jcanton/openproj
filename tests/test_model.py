@@ -3,7 +3,17 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from openproj.model import Entity, Pitch, Project, Task, checklist, sections
+from openproj.model import (
+    Entity,
+    Pitch,
+    Project,
+    Task,
+    checklist,
+    parse_cycle_text,
+    patch_text,
+    sections,
+    split_front_matter,
+)
 
 
 def test_an_entity_needs_only_id_kind_and_title():
@@ -123,3 +133,48 @@ def test_an_empty_section_is_present_and_empty_so_a_reader_can_tell_them_apart()
     """`## No-gos` with nothing under it is the corpus's most common state, and it
     is not the same as never having written the heading."""
     assert sections("## No-gos\n\n## Progress\n\n- [ ] a\n")["no-gos"] == ""
+
+
+def test_an_empty_frontmatter_block_is_frontmatter_and_not_body():
+    """`---\\n---\\n` has no newline of its own before the closing delimiter, so
+    partitioning the opening `---\\n` away leaves `---\\n`, which contains no
+    `\\n---\\n` — and the whole document came back as body with no frontmatter.
+
+    `web.py` starts a record that does not exist yet from exactly that string, so
+    `patch_text` copied it into the body: every cycle started without a goal was
+    committed with a literal `---` and `---` as its text, and the page drew two
+    horizontal rules under an empty heading, which is what it was asked to draw.
+    """
+    assert split_front_matter("---\n---\n") == ("", "")
+    assert split_front_matter("---\n---") == ("", "")
+    assert split_front_matter("---\n---\n\nreal body\n") == ("", "\nreal body\n")
+    # And the ordinary cases are untouched.
+    assert split_front_matter("---\ncycle: 1\n---\nbody\n") == ("cycle: 1", "body\n")
+    assert split_front_matter("no frontmatter\n") == ("", "no frontmatter\n")
+
+
+def test_a_record_created_from_nothing_carries_no_delimiters_in_its_body():
+    """The end-to-end shape of the bug above: this is the exact call `web.py`
+    makes for a cycle that does not exist yet."""
+    written = patch_text("---\n---\n", {"cycle": 90, "starts_on": "2026-09-28"}, None)
+
+    assert written == "---\ncycle: 90\nstarts_on: '2026-09-28'\n---\n"
+    assert "---\n---" not in written.removeprefix("---\n")
+
+
+def test_the_goal_is_a_field_and_the_notes_are_the_body():
+    """Two things written at different moments by different people: the goal is
+    settled at the betting table and then does not move, the notes accumulate all
+    cycle. Sharing one box put the cycle's whole point wherever the growing half
+    of the document happened to leave it."""
+    cycle = parse_cycle_text(
+        "---\ncycle: 38\nstarts_on: 2026-09-28\ngoal: Ship the dycore port\n---\n"
+        "Turbulence was left out: no reviewer free.\n",
+        "cycles/0038.md",
+    )
+
+    assert cycle.goal == "Ship the dycore port"
+    assert cycle.body == "Turbulence was left out: no reviewer free.\n"
+    # A record written before the field existed still loads, with an empty goal
+    # rather than a refusal — every field here is optional at the type level.
+    assert parse_cycle_text("---\ncycle: 1\nstarts_on: 2026-01-05\n---\n", "c.md").goal == ""
