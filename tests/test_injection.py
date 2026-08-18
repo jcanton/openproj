@@ -82,7 +82,7 @@ OURS = ("form", "onsubmit", "return false")
 ONE_ENTITY = "one entity"
 
 STATIC_PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
-                "graph.html", "timeline.html")
+                "issues.html", "notes.html", "graph.html", "timeline.html")
 
 
 def ids(text: str) -> tuple[str, str, str]:
@@ -105,6 +105,12 @@ def corpus(text: str) -> dict[str, str]:
 
     All three are bet into a cycle whose roster names the same hostile login, so
     the cycle page, the people page and the cycles index come with the fixture.
+
+    And one issue and one note, because the two inboxes are pages this app draws
+    and a corpus that does not hold the one string that matters proves nothing
+    about them. They are not entities and they are drawn by different code, and
+    each links at the hostile pitch — so one record's id reaching another
+    record's markup is under test on those pages too.
 
     The ids are hostile too. A malformed id is a *reported* blocker and not a
     refusal — the entity still loads and every page still draws it — so an id is
@@ -139,6 +145,19 @@ def corpus(text: str) -> dict[str, str]:
             f"---\nid: '{text_yaml(second_id)}'\nkind: task\n{common}"
             f"parent: '{text_yaml(pitch_id)}'\n"
             f"depends_on: ['{text_yaml(first_id)}']\nperson_weeks: 1\n---\n{body}"
+        ),
+        # Neither inbox record carries a well-formed id, for the reason the
+        # entities do not: a malformed one is a reported blocker rather than a
+        # refusal, so the record loads and the page still draws it.
+        "issues/i.md": (
+            f"---\nid: 'issue-{text_yaml(id_text(text))}'\ntitle: '{quoted}'\n"
+            f"status: '{quoted}'\nreported_by: '{quoted}'\nopened_on: 2026-08-11\n"
+            f"tags: ['{quoted}']\npitched_into: ['{text_yaml(pitch_id)}']\n---\n{body}"
+        ),
+        "notes/n.md": (
+            f"---\nid: 'note-{text_yaml(id_text(text))}'\ntitle: '{quoted}'\n"
+            f"status: '{quoted}'\nwritten_by: '{quoted}'\nwritten_on: 2026-08-11\n"
+            f"tags: ['{quoted}']\nbecame: ['{text_yaml(pitch_id)}']\n---\n{body}"
         ),
         "cycles/41.md": (
             f"---\ncycle: 41\nstarts_on: 2026-08-17\nbuild_weeks: 4\ncooldown_weeks: 2\n"
@@ -277,6 +296,10 @@ def served(
         # building on: a deck is printed and handed to somebody who was not in
         # the room. Same cycle as the one above, so both read the same plan.
         "deck 41": "/deck/41",
+        # The two inboxes. Their list pages only: an individual issue or note is
+        # addressed by an id this corpus deliberately malforms, and a route that
+        # refuses the path never renders the page under test.
+        "issues": "/issues", "notes": "/notes",
         "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
         # `/detail` is the whole plan and read-only; an entity's own page is the
         # editable one, and the only one that carries the combobox.
@@ -368,10 +391,16 @@ def test_the_fixture_really_is_hostile(hostile_static):
     Every assertion above passes trivially against a plan whose values were
     dropped on the floor, so this one insists the text is there — escaped, as
     text — on the page that shows the most of it.
+
+    The two inbox pages are named as well, and not because they show the most:
+    they were added to this corpus in the round that added notes, and a page
+    added to a census that never sees the payload is a page nobody is checking
+    while the count in the fixture's docstring says otherwise.
     """
-    detail = hostile_static["detail.html"]
-    assert "&lt;img src=x onerror=alert(1)&gt;" in detail
-    assert census(detail).tags["img"] == 0
+    for name in ("detail.html", "issues.html", "notes.html"):
+        page = hostile_static[name]
+        assert "&lt;img src=x onerror=alert(1)&gt;" in page, name
+        assert census(page).tags["img"] == 0, name
 
 
 # --------------------------------------------------------------------------- #

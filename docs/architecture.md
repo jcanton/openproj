@@ -4,9 +4,17 @@
 
 `index.html` is a filterable, searchable table and the one people live in. `graph.html` is the
 dependency DAG, grouped by project and pitch. `timeline.html` is the derived Gantt. `cycles.html`,
-`people.html` and `issues.html` are the cycle records with their betting tables, who is on what and
-who is full, and the pile of things somebody noticed; `detail.html` is one record on its own page,
-and under the server it is also where a record is edited.
+`people.html`, `issues.html` and `notes.html` are the cycle records with their betting tables, who
+is on what and who is full, the pile of things somebody noticed and the pile of things somebody is
+still thinking about; `detail.html` is one record on its own page, and under the server it is also
+where a record is edited.
+
+The last two are inboxes rather than views of the plan. Neither an issue nor a note is an entity, so
+neither reaches the table, the graph, the timeline or the people page — by construction, because
+nothing there ever sees one. They share a stylesheet and one `attachRecordTable`, because they are
+the same table over two kinds of record; they do not share a template, because the records differ
+and are meant to. `POST /api/promote` is the door out of both: it writes the entity and marks the
+source in one commit.
 
 They render from one in-memory index, share one filter model, and keep their state in the query
 string — so every view is a shareable URL, the back button works, and there are no saved views to
