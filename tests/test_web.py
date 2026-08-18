@@ -350,12 +350,16 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
         # lights the item that got you there — the same argument `/cycle/37` makes.
         ("/deck/37", "Cycles"),
         ("/people", "People"),
-        ("/detail", "Detail"),
-        (f"/detail/{TASK}", "Detail"),
     ):
         assert lit(client.get(route).text) == [item], route
 
-    assert lit(client.get("/new?kind=task").text) == []
+    # Off the nav and still served. `/detail` was the table with none of its
+    # controls, so the tab went and the page stayed — every title links to it,
+    # and in the export `detail.html` is the whole corpus in one file. A page
+    # that lights nothing is a state the nav must draw, not a page that forgot
+    # to say where it is. `/new` has always been in that position.
+    for route in ("/detail", f"/detail/{TASK}", "/new?kind=task"):
+        assert lit(client.get(route).text) == [], route
 
 
 def test_a_detail_route_serves_one_entity_and_not_the_whole_corpus(client: TestClient):

@@ -2509,15 +2509,24 @@ def test_the_nav_says_which_page_you_are_on(rendered: Path, server_pages: dict[s
     A rendered export is the case with no server to ask. It marks its own item out
     of what it knew when it wrote the file, which is the only source there is.
     """
-    for page, name in (*PAGE_NAMES.items(), ("detail.html", "Detail")):
+    for page, name in PAGE_NAMES.items():
         assert lit(read(rendered, page)) == [name], page
+
+    # `detail.html` is off the nav now — it was the table with none of its
+    # controls — so it lights nothing, and that is a state the nav has to be able
+    # to draw rather than a page that forgot to say where it is. In the export
+    # this file is still the whole corpus, and every title in the table links
+    # into it.
+    assert lit(read(rendered, "detail.html")) == []
 
     # The two routes that are not the href of the link that leads to them. Nothing
     # about `/cycle/37` matches `cycles.html` or `/cycles`, so an implementation
     # that compared the current URL against the hrefs would light nothing on
     # either of these — and both are pages somebody arrives at from the nav.
     assert lit(server_pages["cycle"]) == ["Cycles"]
-    assert lit(server_pages["entity"]) == ["Detail"]
+    # An entity page lights nothing now: it is reached from the table and goes
+    # back there, and the tab it used to light no longer exists.
+    assert lit(server_pages["entity"]) == []
 
     # And the one page that marks nothing, on purpose: the create form is not one
     # of the six, and pressing Table from it abandons the form rather than staying
