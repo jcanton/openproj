@@ -502,14 +502,20 @@ GOLDEN_TODAY = date(2026, 8, 17)
 # by hand against the definition rather than copied out of the run:
 #   task-53a9f0  size 2.0, one worker  -> 2 elapsed weeks, 08-17 .. 08-28
 #   pitch-48ea9e size 2.0, two workers -> 1 elapsed week,  08-17 .. 08-21
+# Three of these moved when work already in progress stopped being floored at
+# today. `task-53a9f0` is `in_progress` and assigned 2026-08-13, four days before
+# GOLDEN_TODAY, so it now starts on the day it actually started; `pitch-5e7b1c`
+# is its parent and rolls up to it; `pitch-1b3f9a` is `ready` with no
+# `assigned_on` and moves earlier only because a worker comes free sooner. Each
+# was re-derived by hand against the new rule, not copied out of a failure.
 GOLDEN_SPANS = {
     "proj-7e57a0": (date(2026, 8, 24), date(2026, 8, 28)),
-    "pitch-1b3f9a": (date(2026, 8, 31), date(2026, 9, 4)),
+    "pitch-1b3f9a": (date(2026, 8, 27), date(2026, 9, 2)),
     "pitch-48ea9e": (date(2026, 8, 17), date(2026, 8, 21)),
-    "pitch-5e7b1c": (date(2026, 8, 17), date(2026, 9, 21)),
+    "pitch-5e7b1c": (date(2026, 8, 13), date(2026, 9, 21)),
     "task-0e4b7a": (date(2026, 8, 24), date(2026, 8, 28)),
     "task-2b6c94": (date(2026, 8, 24), date(2026, 8, 26)),
-    "task-53a9f0": (date(2026, 8, 17), date(2026, 8, 28)),
+    "task-53a9f0": (date(2026, 8, 13), date(2026, 8, 26)),
     "task-58d7c6": (date(2026, 9, 15), date(2026, 9, 21)),
     "task-5a4e39": (date(2026, 8, 17), date(2026, 8, 17)),
     "task-5c1d84": (date(2026, 8, 18), date(2026, 9, 14)),
@@ -534,7 +540,9 @@ GOLDEN_OVERRUNS = {
     "pitch-48ea9e": 15.0,
     "pitch-5e7b1c": 52 / 7,
     "task-2b6c94": 166 / 7,
-    "task-53a9f0": 4.0,
+    # 26/7, not 4.0: it starts four days earlier now, so it ends four days
+    # earlier and overruns its cycle by that much less.
+    "task-53a9f0": 26 / 7,
     "task-58d7c6": 52 / 7,
     "task-5a4e39": 17 / 7,
     "task-5c1d84": 45 / 7,
@@ -748,3 +756,51 @@ def test_a_project_with_pitches_is_still_their_rollup():
     ])
 
     assert spans["proj-000001"] == spans["pitch-aaa001"]
+
+
+def test_work_in_progress_starts_when_it_started_and_not_today():
+    """`in_progress` is a statement that the work HAS begun, so its start is a
+    fact rather than a forecast — and the floor at `today` exists to stop a plan
+    drawing work starting in the past, which is right for a bet nobody has picked
+    up and wrong for one somebody is holding.
+
+    Importing a cycle after it ran is what showed this: every live bet in the
+    team's real cycle 37 was drawn beginning on the day of the import, weeks
+    after the review meeting that closed the cycle, while the two `done` ones sat
+    correctly back in July.
+    """
+    began = task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22))
+    waiting = task("aaa002", owner="bo", status="ready", assigned_on=date(2026, 6, 22))
+    spans, _ = schedule([began, waiting], CONFIG, date(2026, 8, 17))
+
+    assert spans["task-aaa001"].start == date(2026, 6, 22)
+    # The one nobody has started is still floored at today, which is the rule
+    # this change deliberately leaves alone.
+    assert spans["task-aaa002"].start == date(2026, 8, 17)
+
+
+def test_two_things_one_person_is_already_doing_are_drawn_at_once():
+    """One person does one thing at a time — unless they are already doing both.
+
+    Serialising is a forecast about work not yet picked up; applied to bets
+    somebody is holding it becomes a prediction about the past. The first real
+    cycle imported had one person on five live rows, and serialising them drew
+    the last starting six weeks after the review meeting that closed the cycle.
+
+    That the person is over capacity is true and worth saying — the load column
+    and the cycle's over-capacity line say it, against the number, rather than by
+    moving a date that has already happened.
+    """
+    both = [
+        task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22)),
+        task("aaa002", status="in_progress", assigned_on=date(2026, 6, 22)),
+    ]
+    spans, _ = schedule(both, CONFIG, date(2026, 8, 17))
+
+    assert spans["task-aaa001"].start == spans["task-aaa002"].start == date(2026, 6, 22)
+
+    # Work nobody has started is still serialised, which is the rule this leaves
+    # alone: a forecast that books one person twice is a forecast that is wrong.
+    queued = [task("bbb001"), task("bbb002")]
+    later, _ = schedule(queued, CONFIG, date(2026, 8, 17))
+    assert later["task-bbb001"].start != later["task-bbb002"].start

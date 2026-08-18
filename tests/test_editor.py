@@ -508,8 +508,12 @@ def test_a_new_cycle_starts_from_the_last_one_s_roster(client: TestClient, repo_
     carried = re.search(r"const ROSTER = (\{.*?\});", page).group(1)
 
     assert json.loads(carried) == {"cy": 0.5, "ann": 1.0}
-    hint = re.search(r"(\d+) people carried from cycle\s+(\d+)", page)
-    assert hint and (hint.group(1), hint.group(2)) == ("2", "50")
+    # The roster is carried, and the form no longer says so. It said "2 people
+    # carried from cycle 50" beside a button, which is a fact about a page you
+    # are about to leave: the roster is on the new cycle's own page, editable,
+    # the moment the button is pressed. The behaviour asserted above is what
+    # matters and it is unchanged.
+    assert "people carried from cycle" not in page
 
 
 def test_an_image_can_be_pasted_or_dropped_into_the_body(client: TestClient):
@@ -853,3 +857,42 @@ def test_the_create_form_does_not_echo_the_dates_it_is_asking_for(page: str):
     assert "if (box.closest('#create')) continue;" in page
     # And the echo itself is still there for every other date box on the page.
     assert "echo.className = box.classList.contains('field') ? 'iso field' : 'iso'" in page
+
+
+def test_the_goal_is_above_the_bet_and_the_notes_are_below_it(client: TestClient, repo_path: Path):
+    """There is no arrangement of one box that is both above the table where the
+    room is looking and below it where the room is writing, which is why the goal
+    became a field and the notes stayed the body."""
+    from test_web import git_head
+
+    client.put(
+        "/api/cycle/51",
+        json={
+            "base_commit": git_head(repo_path),
+            "fields": {"starts_on": "2027-06-07", "reviews_on": "2027-07-05",
+                       "goal": "Ship the dycore port"},
+            "body": "Turbulence was left out: no reviewer free.\n",
+        },
+    )
+    page = client.get("/cycle/51").text
+
+    goal, bet, notes = (page.index(f"<h2>{h}</h2>") for h in ("Goal", "The bet", "Notes"))
+    assert goal < bet < notes
+    assert 'id="goal"' in page and 'id="notes"' in page
+    assert "Ship the dycore port" in page
+    assert "Turbulence was left out" in page
+    # An untouched box must not be sent: `patch_text` leaves a field alone only
+    # if it is absent, so a roster save would otherwise rewrite the goal too.
+    assert "if (GOAL_DIRTY) fields.goal = GOAL.value.trim();" in page
+
+
+def test_starting_a_cycle_asks_for_dates_and_nothing_else(client: TestClient):
+    """The goal box was on this form for one round. It belongs on the cycle's own
+    page, above the betting table it is about — this form's whole job is to bring
+    a record into existence, and two places to write one field is one too many."""
+    page = client.get("/cycles").text
+    create = page[page.index('<section id="create">'):page.index("</section>")]
+
+    assert 'id="number"' in create and 'id="starts"' in create and 'id="reviews"' in create
+    assert 'id="start"' in create
+    assert "<textarea" not in create, "no goal box here any more"

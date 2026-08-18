@@ -1548,7 +1548,11 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    which the cycle pages load and the table does not, so on the table it was a
    `<p>` with the browser's default margin and the create action sat in it as a
    bare inline link. */
-.editbar { display: flex; gap: .4rem; align-items: center; margin: .4rem 0 1rem; }
+/* `flex-wrap`, because the row now ends in the control that acts on it rather
+   than in the last field: unwrapped, a narrow window squeezed three date boxes
+   to make room for a button instead of putting the button underneath them. */
+.editbar { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
+           margin: .4rem 0 1rem; }
 /* A link that is a control. The only rule was `.tl-controls .button`, scoped to
    the timeline's filter bar, so the table's create link — the one way to bring
    an entity into existence from the UI — rendered as underlined blue text.
@@ -6936,21 +6940,20 @@ _CYCLE = """
   }}</a> (bet in {{ row.cycle }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
 {% endif %}
 
+{#- The goal above the table, the notes below it, and they are two fields now.
+    One box served as both for as long as the goal was the body, which put the
+    cycle's whole point wherever the growing half of the document happened to
+    leave it — and there is no arrangement of one box that is both above the
+    table where the room is looking and below it where the room is writing. -#}
 <h2>Goal</h2>
-{#- Above the betting table, because it is what the betting table is FOR: the
-    question the room is answering while it ticks rows, not a note somebody adds
-    afterwards. It sat under the table for as long as it was called Notes, which
-    is a fair name for the second half of what goes in here — why a pitch was
-    left out, what would make it a bet next time — and the wrong name for the
-    first line, which is the cycle's whole point.
-
-    One field either way: this is the cycle record's own markdown body. -#}
-<div class="doc read">{{ c.body }}</div>
 {% if editable %}
-<p class="hint">What this cycle is for, and what came up at the betting table.
-  Saved with the setup.</p>
-<textarea id="notes" class="notes" rows="8"
-          aria-label="Cycle goal">{{ c.raw_body }}</textarea>
+<p class="editbar goalbar">
+  <textarea id="goal" class="goal" rows="2"
+    aria-label="What this cycle is for"
+    placeholder="What this cycle is for. Settled at the betting table.">{{ c.goal }}</textarea>
+</p>
+{% elif c.goal %}
+<p class="goal read">{{ c.goal }}</p>
 {% endif %}
 
 <h2>The bet</h2>
@@ -6992,6 +6995,30 @@ _CYCLE = """
   </tr>
   {% endfor %}
 </tbody></table>
+
+<h2>Notes</h2>
+{#- Below the table on purpose: this is what the room said while it was ticking
+    rows — why a pitch was left out, what would make it a bet next time — and it
+    was going into a HackMD note nobody linked. Still the record's markdown body,
+    so it renders like every other shaping document here. -#}
+{#- Rendered OR editable, never both. The detail page draws prose above the box
+    that edits it because the two are far apart there and the rendered copy is
+    the thing you came to read. Here they are adjacent, so the page printed the
+    notes twice — once as markdown and once as the same text in a box directly
+    beneath it — which reads as a bug rather than as a preview.
+
+    The hint that used to sit between them is the box's placeholder now, for the
+    same reason: a line under a heading explaining what Notes are for is paid for
+    by every reader on every visit; a placeholder is paid for only by the person
+    looking at an empty box. -#}
+{% if editable %}
+<textarea id="notes" class="notes" rows="8" aria-label="Cycle notes"
+  placeholder="What came up at the betting table — why a pitch was left out,
+what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
+{% else %}
+<div class="doc read">{{ c.body }}</div>
+{% endif %}
+
 {% if editable %}
 <div class="commitbar" id="commitbar">
   <span id="unsaved">Nothing to save</span>
@@ -7044,9 +7071,17 @@ async function put(fields, body = null) {
 
 const SAVE = document.getElementById('save');
 const NOTES = document.getElementById('notes');
+const GOAL = document.getElementById('goal');
 let ROSTER_DIRTY = false;
 let NOTES_DIRTY = false;
+// The goal is a frontmatter field, so it travels with the roster and the dates
+// rather than with the body — but it is dirty-tracked like the notes, because an
+// untouched box must not be sent: a cycle whose goal nobody edited would
+// otherwise be rewritten on every roster save, and `patch_text` only leaves a
+// field alone if it is absent from the payload.
+let GOAL_DIRTY = false;
 const NOTES_WERE = NOTES ? NOTES.value : '';
+const GOAL_WAS = GOAL ? GOAL.value : '';
 
 // The receipt has to outlive the reload that proves it. Saving reloads, because
 // half the numbers on this page — capacity, load, the scheduled-until column —
@@ -7091,16 +7126,23 @@ async function saveSetup() {
     reviews_on: setup.querySelector('[name=reviews_on]').value.trim(),
     availability,
   };
+  if (GOAL_DIRTY) fields.goal = GOAL.value.trim();
   // `null` and not the unchanged text: the write path merges a body three ways,
   // and sending one nobody edited makes every roster save a body edit too.
   if (!(await put(fields, NOTES_DIRTY ? NOTES.value : null))) return false;
   ROSTER_DIRTY = false;
   NOTES_DIRTY = false;
+  GOAL_DIRTY = false;
   return true;
 }
 
 if (NOTES) NOTES.oninput = () => {
   NOTES_DIRTY = NOTES.value !== NOTES_WERE;
+  mark();
+};
+
+if (GOAL) GOAL.oninput = () => {
+  GOAL_DIRTY = GOAL.value !== GOAL_WAS;
   mark();
 };
 
@@ -7132,7 +7174,7 @@ function pend(id, field, value) {
 function mark() {
   // Counted in edits rather than in commits: two fields on one row is two things
   // somebody changed, even though it is one write.
-  let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0);
+  let edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);
   for (const fields of PENDING.values()) edits += Object.keys(fields).length;
   SAVE.disabled = edits === 0;
   SAVE.textContent = edits ? `Save ${edits} change${edits === 1 ? '' : 's'}` : 'Save';
@@ -7147,24 +7189,24 @@ function mark() {
 
 // The browser's own warning, which is the only one that can stop a tab closing.
 addEventListener('beforeunload', event => {
-  if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY) return;
+  if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY && !GOAL_DIRTY) return;
   event.preventDefault();
   event.returnValue = '';
 });
 
 async function flush(quiet) {
-  if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY) return true;
+  if (!PENDING.size && !ROSTER_DIRTY && !NOTES_DIRTY && !GOAL_DIRTY) return true;
   SAVE.disabled = true;
   // Counted in edits, the unit `mark()` counts, and not in commits. Two fields on
   // one row is one write, so counting writes said "2 unsaved changes" and then
   // "Saved 1 change" about the same two edits — and a save you have to reconcile
   // against its own receipt is a save you do not believe.
   let saved = 0;
-  if (ROSTER_DIRTY || NOTES_DIRTY) {
+  if (ROSTER_DIRTY || NOTES_DIRTY || GOAL_DIRTY) {
     // Counted before the save clears the flags. The roster and the notes go in
     // one PUT and are two edits to `mark()`, so a receipt saying "1" after
     // changing both is the reconciliation problem this counter exists to avoid.
-    const edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0);
+    const edits = (ROSTER_DIRTY ? 1 : 0) + (NOTES_DIRTY ? 1 : 0) + (GOAL_DIRTY ? 1 : 0);
     if (!(await saveSetup())) { mark(); return false; }
     saved += edits;
   }
@@ -7397,6 +7439,23 @@ textarea.notes { display: block; width: 100%; max-width: 52rem; box-sizing: bord
                  font-size: 13px; line-height: 1.55; padding: .4rem;
                  border: 1px solid var(--line-strong); border-radius: 3px;
                  background: var(--surface); color: inherit; resize: vertical; }
+/* The goal box wears the notes' shape and not its typeface: notes are markdown
+   and read better in mono, a goal is a sentence somebody says out loud. Wider
+   measure than prose wants, because it sits above a table and a goal that wraps
+   three times stops being the one line the room agreed on. */
+/* No rule above the cycle's prose. `.doc`'s border-top comes from _DETAIL_STYLE,
+   where it separates a shaping document from the facts pane above it; here the
+   block sits directly under its own `<h2>`, so the same rule drew a stray line
+   between a heading and the text it heads. Unscoped and relying on order: this
+   sheet is concatenated after _DETAIL_STYLE and is loaded by the two cycle pages
+   only, so there is no third page for it to reach. */
+.doc { border-top: 0; padding-top: 0; }
+textarea.goal { display: block; width: 100%; max-width: 52rem; box-sizing: border-box;
+                font: inherit; font-size: 15px; line-height: 1.5; padding: .4rem;
+                border: 1px solid var(--line-strong); border-radius: 3px;
+                background: var(--surface); color: inherit; resize: vertical; }
+p.goal.read { font-size: 15px; max-width: 52rem; margin: 0 0 1rem; }
+.goalbar { margin: 0 0 1rem; }
 #setup .field, table.load .field { display: inline-block; }
 #setup .field { width: 12rem; }
 #setup .read, table.load .read { display: none; }
@@ -7514,30 +7573,19 @@ _CYCLES = """
       <input id="starts" type="date" value="{{ next.starts_on }}"></label>
     <label class="facet">review meeting
       <input id="reviews" type="date" value="{{ next.reviews_on }}"></label>
-  </p>
-  {#- The goal, asked here rather than only afterwards. A cycle was created with
-      `body: null` and the goal could only be written by finding the new cycle's
-      own page, which is the one moment the goal is actually in somebody's head:
-      the betting table has just finished. Optional, because a cycle with dates
-      and no goal is still a cycle, and refusing to start one over a paragraph
-      would send people back to editing YAML. -#}
-  <p class="editbar goalbar">
-    <label class="facet" for="goal">goal</label>
-    <textarea id="goal" rows="3"
-      placeholder="What this cycle is for. Markdown; editable afterwards."></textarea>
-  </p>
-  <p class="editbar">
+    {#- On the same line as the three boxes it acts on. It had a row to itself,
+        which reads as a second step and is not one: with the goal box gone this
+        form is three fields and the button that commits them, and `.editbar`
+        already wraps when the window is too narrow to hold them. -#}
     <button type="button" id="start">Start it</button>
-    {% if next.roster %}
-    <span class="hint">{{ next.roster|length }} people carried from cycle
-      {{ next.from_cycle }}</span>
-    {% else %}
-    <span class="hint">no roster to carry over — set availability on the new
-      cycle's own page</span>
-    {% endif %}
     <span id="state" role="status"></span>
     <input type="hidden" id="base" value="{{ base_commit }}">
   </p>
+  {#- No goal box here. It was asked on this form for one round and belongs on
+      the cycle's own page instead: this form's whole job is to bring a record
+      into existence, and the goal is then edited where it is read, above the
+      betting table it is about. Two places to write one field is one place too
+      many. -#}
   <p class="confirm" id="confirm" hidden>Start cycle <b id="confirm-number"></b> on
     <b id="confirm-starts"></b>, <b id="confirm-length"></b>, with
     <b id="confirm-people"></b>? This commits a cycle record.
@@ -7601,11 +7649,10 @@ document.getElementById('yes').onclick = async () => {
           reviews_on: field('reviews').value,
           availability: ROSTER,
         },
-        // The goal as typed, or null for a cycle started without one — null and
-        // not "", because the write path treats a null body as "leave it alone"
+        // null, not "": the write path treats a null body as "leave it alone"
         // and an empty string as "set it to empty", and those differ the day
         // somebody starts a cycle whose record already exists.
-        body: field('goal').value.trim() || null,
+        body: null,
       }),
     });
     const answer = await answerOf(response);
@@ -8011,6 +8058,11 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # The source, for the box somebody types in. Rendered above it, edited
         # below it — the same two views of one field the detail page has.
         "raw_body": plan.body if plan else "",
+        # The goal is a field and not prose, so it is drawn as text rather than
+        # put through the markdown renderer: a sentence the room agreed on does
+        # not want a heading level, and running it through `_markdown` would wrap
+        # it in a paragraph that the layout above the table has to undo.
+        "goal": plan.goal if plan else "",
     }
 
 
