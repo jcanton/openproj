@@ -79,6 +79,7 @@ from .model import (
     person_path,
     read_config,
     readable,
+    record_paths_in,
     validate_all,
     what_json_can_carry,
     why_it_will_not_read,
@@ -159,14 +160,9 @@ MAX_GOAL_CHARS = 400
 
 
 def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] == CYCLE_DIR
-        ],
-        lambda path: parse_cycle_text(store.read(commit, path), path),
-    )
+    paths, too_deep = record_paths_in([CYCLE_DIR], store.paths(commit))
+    plans, refused = readable(paths, lambda path: parse_cycle_text(store.read(commit, path), path))
+    return plans, [*refused, *too_deep]
 
 
 def _cycle_path(number: int) -> str:
@@ -174,14 +170,9 @@ def _cycle_path(number: int) -> str:
 
 
 def _issues_at(store: Store, commit: str) -> tuple[list[Issue], list[Unreadable]]:
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] == ISSUE_DIR
-        ],
-        lambda path: parse_issue_text(store.read(commit, path), path),
-    )
+    paths, too_deep = record_paths_in([ISSUE_DIR], store.paths(commit))
+    issues, refused = readable(paths, lambda path: parse_issue_text(store.read(commit, path), path))
+    return issues, [*refused, *too_deep]
 
 
 def _issue_path(issue_id: str) -> str:
@@ -203,15 +194,19 @@ def _people_at(store: Store, commit: str) -> tuple[list[Person], list[Unreadable
     icon and nothing more. The arrangement this replaced kept every icon and the
     roster in one YAML file, where the same hand edit cost all of them and the
     roster check with them.
+
+    `record_paths_in` and not a filter of its own. The filter here asked whether
+    the FIRST segment of the path was `people`, which is true of
+    `people/team/ann.md`, and `login_of` then read `ann` off the filename and
+    handed back a second record for a login that already had one. Whichever of
+    the two paths sorted last was the icon on the page, and it was the one the
+    CLI could not see.
     """
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] == PEOPLE_DIR
-        ],
-        lambda path: parse_person_text(store.read(commit, path), path),
+    paths, too_deep = record_paths_in([PEOPLE_DIR], store.paths(commit))
+    people, refused = readable(
+        paths, lambda path: parse_person_text(store.read(commit, path), path)
     )
+    return people, [*refused, *too_deep]
 
 
 def _person_or_why(text: str, path: str) -> tuple[Person | None, str]:
@@ -260,14 +255,9 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
 
 
 def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
-    return readable(
-        [
-            path
-            for path in store.paths(commit)
-            if path.endswith(".md") and path.split("/")[0] in DIRECTORY.values()
-        ],
-        lambda path: parse_text(store.read(commit, path), path),
-    )
+    paths, too_deep = record_paths_in(DIRECTORY.values(), store.paths(commit))
+    entities, refused = readable(paths, lambda path: parse_text(store.read(commit, path), path))
+    return entities, [*refused, *too_deep]
 
 
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
@@ -507,10 +497,15 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     `<id>.md` works on a corpus nobody has renamed and fails on every real one.
     """
     directory = _directory_for(entity_id)
+    # Through `record_paths_in`, like every other reader of the tree, so the
+    # candidates are the files this directory actually keeps records in. Walking
+    # it recursively made `tasks/task-a00001--notes/notes.md` a candidate for
+    # `task-a00001`: its stem is `task-a00001--notes/notes`, which starts with
+    # the id, so a folder somebody made to keep notes in put a second claim on
+    # the id and the record above it answered 409 to every save.
+    candidates, _ = record_paths_in([directory], store.paths(commit))
     found = []
-    for path in store.paths(commit):
-        if not path.startswith(f"{directory}/") or not path.endswith(".md"):
-            continue
+    for path in candidates:
         stem = path[len(directory) + 1 : -len(".md")]
         if stem == entity_id or stem.startswith(f"{entity_id}--"):
             found.append(path)
@@ -1168,7 +1163,15 @@ def create_app(
             raise HTTPException(
                 422, f"an icon request carries an icon and nothing else, not {', '.join(extra)}"
             )
-        icon = payload.get("icon")
+        # `in`, not `.get`. An absent key is a client that never sent one, and
+        # reading it as "clear my icon" makes a destructive default out of the
+        # exact mistake the guard two lines above exists to catch:
+        # `JSON.stringify({icon: someUndefinedVar})` is `{}`, which arrived here
+        # as 200, `outcome: committed`, and somebody's icon gone. Clearing is a
+        # thing you ask for — `{"icon": null}` — not a thing you fail to say.
+        if "icon" not in payload:
+            raise HTTPException(422, "an icon request carries an icon; send null to clear it")
+        icon = payload["icon"]
         if icon is not None and icon not in render.ICONS:
             raise HTTPException(
                 422, f"{icon!r} is not an icon: expected one of {', '.join(render.ICONS)}, "

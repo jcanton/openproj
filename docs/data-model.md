@@ -3,6 +3,13 @@
 One markdown file per entity: YAML frontmatter, then the shaping document as the body. Three kinds —
 `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree with the kind.
 
+**A plan directory is flat.** `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/` and `people/`
+hold one file per record and nothing below them, because every reader here takes an identity off the
+filename. A `people/team/ann.md` is therefore not a record filed tidily — it is a second `ann`, and
+one that only half the application can see. A markdown file below one of these directories is
+reported as a file that is not a record, with the move that fixes it, on every page and by
+`openproj check`.
+
 Each kind is one thing and says so:
 
 - A **pitch** is the unit of the bet. It is what the betting table offers, what carries an appetite

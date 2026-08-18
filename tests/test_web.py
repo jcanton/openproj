@@ -2837,3 +2837,63 @@ def test_the_page_a_stranger_reads_has_no_live_region_to_lose(secure_client: Tes
     """The other side of it: `#state` exists exactly where a write can be made,
     and the shell's own region is what everything else on the page uses."""
     assert 'id="state"' not in secure_client.get("/people").text
+
+
+def test_an_icon_request_with_no_icon_in_it_is_not_a_clear(client: TestClient, repo_path: Path):
+    """`payload.get("icon")` read a body with no icon key as "clear mine", which
+    makes a destructive default out of the exact mistake the extra-key guard
+    beside it exists to catch: `JSON.stringify({icon: someUndefinedVar})` is
+    `{}`. It answered 200, committed, and somebody's icon was gone.
+
+    Clearing is a thing you ask for and not a thing you fail to say.
+    """
+    assert client.put("/api/icon", json={"icon": "fox"}).status_code == 200
+
+    refused = client.put("/api/icon", json={})
+
+    assert refused.status_code == 422
+    assert "send null to clear it" in refused.json()["detail"]
+    # And the explicit ask still works.
+    assert client.put("/api/icon", json={"icon": None}).status_code == 200
+
+
+def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient, repo_path: Path):
+    """`login_of` reads the login off the FILENAME and `load_repo` globs this
+    directory without recursing, so matching on the first path segment alone let
+    a hand-committed `people/team/ann.md` become a second record for `ann`: the
+    served page drew it, the CLI never saw it, and `check` said nothing. Two
+    halves of one application disagreeing about which record is which — and the
+    one a reader gets decided by which of two paths sorts last.
+
+    The version of this test written with the fix asserted `"turtle" not in
+    page`, which is a sentence about no version of this code: the picker below
+    the table draws all twelve icons by name, so that string is in the page
+    whatever `_people_at` does, and the test failed against a correct fix. Both
+    halves are asked here instead — on ann's own `<tbody>`, which is where an
+    icon says whose it is, and in the banner, which is where a file that is not a
+    record has to be named.
+    """
+    from pages import unreadable_in
+
+    from openproj.render import icon_svg
+
+    commit_directly(
+        repo_path,
+        {
+            **SEED,
+            ANN_RECORD: "---\nicon: fox\n---\n",
+            "people/team/ann.md": "---\nicon: turtle\n---\n",
+        },
+        "somebody files a second record for ann one directory down",
+    )
+
+    page = client.get("/people").text
+
+    # Ann's own mark: her `<tbody>`, up to the picker that sits inside it —
+    # twelve drawings, one per icon name, present on every version of this page.
+    ann = page.split('data-login="ann"')[1].split("</tbody>")[0].split('id="picker"')[0]
+    assert icon_svg("fox") in ann, "the record in people/ is the one that is drawn"
+    assert icon_svg("turtle") not in ann, "the nested file is not a second record for ann"
+    assert any("people/team/ann.md" in line for line in unreadable_in(page)), (
+        "a file somebody committed and nothing reads has to be named, not skipped"
+    )

@@ -4,7 +4,7 @@ Git-backed appetite planning for the icon4py team. `README.md` has the shape of 
 markdown file per entity, the shaping document *is* the record, every date derived from one typed
 `assigned_on` and one size, the tool and the plan kept in two repositories on purpose. Read it
 first. This file is the part it does not say — the invariants that fail loudly when you step on
-them, the rules that eight rounds of audit paid for, and how to find the bug that is already here.
+them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
 
 ## This branch's history does not move
 
@@ -48,6 +48,15 @@ tasks and looks completely normal is a thing you cannot act on. `readable` catch
 it is the only place that does — the failures are a ValueError, a ruamel ParserError, a pydantic
 ValidationError, a UnicodeDecodeError and an AttributeError, and a tuple of the ones seen so far is
 the denylist this file refuses to write everywhere else.
+
+**A plan directory is flat, and one place decides that for both halves of the app.**
+`record_paths_in` (`model.py`) turns a tree — `store.paths` at a commit, or an `rglob` of the disk —
+into the record paths plus one `Unreadable` per markdown file below them. Every reader in `web.py`
+had a filter of its own asking whether the *first* path segment was `people`, which is true of
+`people/team/ann.md`: `login_of` read `ann` off the filename and handed back a second record for a
+login that already had one, drawn on every served page, invisible to `openproj check`, and picked
+between by which of the two paths sorted last. Nested files are named rather than skipped, for the
+same reason the fifteen above are.
 
 **A rule blocks only entities created after it existed.** Each rule carries the `schema_version`
 that introduced it, and `validate_all` demotes a rule newer than the entity it is judging to a
@@ -131,7 +140,7 @@ there is no working copy, and why a single `repo.index` anywhere in that file gi
 
 ## How to find bugs here
 
-**This is the section worth the file.** Eight rounds of adversarial audit ran on this branch, and a
+**This is the section worth the file.** Nine rounds of adversarial audit ran on this branch, and a
 green test suite missed every defect they found. Each round was cracked by exactly one question.
 
 | Ask this | What it found |
@@ -144,8 +153,9 @@ green test suite missed every defect they found. Each round was cracked by exact
 | Can the test tell the difference between the value resolving and the pixel appearing? | An outset `box-shadow` on a cell in a `border-collapse: collapse` table is never painted by Chrome. The test asserted the stylesheet resolved correctly, and it did, while nothing was drawn. |
 | What do the diagnostic tools say when the thing is broken? | `openproj check` reported "0 blockers, 0 warnings" and `openproj render` wrote no files, on a plan that 500ed every page. |
 | What does a person with a terminal commit that this never tries to parse? | Fifteen files that are not records — a pasted note with no `---` among them. Each took ten of eleven routes down permanently; `/healthz` alone answered, and `openproj check` died with a traceback on the first one and never mentioned the second. |
+| Two readers walk the same tree — do they agree on which files are records? | `_people_at` matched on the first path segment while `load_repo` globbed one level, so a hand-committed `people/team/ann.md` was a second record for `ann` on every served page, invisible to the CLI, and `openproj check` said nothing. |
 
-Behind all eight is one habit: **ask the question in the medium where the answer lives.** In
+Behind all nine is one habit: **ask the question in the medium where the answer lives.** In
 practice that means:
 
 - **Render pages and parse them in a real DOM.** A substring cannot tell markup from text; a parser
@@ -222,7 +232,7 @@ claim is about pixels, look at the pixels.
 - **Test the behaviour in the medium where it happens.** If the claim is about pixels, the test has
   to tell painted from unpainted, or say in its own words why it cannot.
 - **A test that would not have caught the defect it is written for is not a test.** Delete the fix,
-  watch the test fail, put the fix back. Seven rounds have each shipped one defect a green suite
+  watch the test fail, put the fix back. Eight rounds have each shipped one defect a green suite
   missed; the last survived because a test asserted a stylesheet resolved to a value while nothing
   was painted.
 - **Derive fixtures from the code where the code is what varies.** `markers()` reads `render.py`;

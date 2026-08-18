@@ -288,6 +288,59 @@ def readable[T](
     return records, refused
 
 
+def record_paths_in(
+    directories: Iterable[str], paths: Iterable[str]
+) -> tuple[list[str], list[Unreadable]]:
+    """The record paths in these plan directories, and one `Unreadable` for every
+    markdown file below them that is nested too deep to be one.
+
+    A plan directory holds one file per record and does not nest. That is not a
+    convention, it is what the rest of the code already assumes: `login_of` reads
+    a person's login off the filename, `_path_for` (`web.py`) reads an entity's id
+    off it, and `person_path` and `_cycle_path` write one flat name. The server
+    read the same tree by asking whether the FIRST path segment was `people` —
+    which is true of `people/team/ann.md` — so a file one directory down became a
+    second record for `ann` on every page the server drew, while the CLI globbed
+    one level and never saw it. Two halves of one application disagreeing about
+    which record is which is worse than either answer on its own, and the one the
+    reader gets is decided by which of two paths sorts last.
+
+    Both halves ask this now, so the disagreement cannot come back: `web.py` hands
+    it the tree at a commit and `load_repo` hands it an `rglob` of the disk.
+
+    **Reported, not skipped**, which is why it lives here beside `readable` and
+    returns the same type. A plan file that is not a record costs that file and
+    nothing else, and every page says which file — because the failure that rule
+    exists to prevent is not the 500, it is the page that draws fifteen of sixteen
+    records and looks completely normal. Ignoring a nested file is that page
+    again: somebody committed it on purpose and is waiting to see their icon, and
+    nothing anywhere would ever tell them the file is not in the plan. So it is
+    named, with the move that fixes it, on every page and in `openproj check`.
+    """
+    wanted = tuple(directories)
+    record_paths: list[str] = []
+    too_deep: list[Unreadable] = []
+    for path in paths:
+        if not path.endswith(".md"):
+            continue
+        # The directory the file is IN, not the first segment of its path. That
+        # substitution is the whole defect.
+        below = path.rpartition("/")[0]
+        if below in wanted:
+            record_paths.append(path)
+            continue
+        deeper = next((one for one in wanted if below.startswith(f"{one}/")), None)
+        if deeper:
+            too_deep.append(
+                Unreadable(
+                    path=path,
+                    why=f"{deeper}/ holds one file per record and does not nest, so nothing "
+                    f"reads this — move it up into {deeper}/ or out of the plan",
+                )
+            )
+    return record_paths, too_deep
+
+
 class Cycle(BaseModel):
     """One cycle, as the betting table sets it up.
 
@@ -921,6 +974,29 @@ def serialise(entity: Entity, original_text: str | None = None) -> str:
     return f"---\n{stream.getvalue()}---\n" + (f"\n{entity.body}" if entity.body else "")
 
 
+def _plan_files(root: Path, *directories: str) -> tuple[list[str], list[Unreadable]]:
+    """The record paths under these directories on disk, and the nested files.
+
+    `rglob`, not `glob`, and that is the point of it: a file one directory too
+    deep has to be FOUND before `record_paths_in` can name it. Globbing one level
+    skipped it silently, which is how `openproj check` reported "0 blockers" over
+    a `people/team/ann.md` the served page was drawing as somebody's icon.
+
+    Repo-relative and POSIX-spelled, because the path in an `Unreadable` is what
+    the banner prints and what somebody greps a build log for — the absolute path
+    this walk actually produced would put `/private/var/…/tasks/x.md` beside
+    `tasks/x.md` in one list.
+    """
+    return record_paths_in(
+        directories,
+        [
+            found.relative_to(root).as_posix()
+            for directory in directories
+            for found in sorted((root / directory).rglob("*.md"))
+        ],
+    )
+
+
 def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     """Everything in a plan repository: the records, the configuration, and the
     files that are neither.
@@ -939,12 +1015,9 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     a whole team can push to will contain a file that is not a record; that is
     not an exceptional condition, it is Tuesday.
     """
+    entity_paths, nested_entities = _plan_files(root, *_ENTITY_DIRS)
     entities, unreadable = readable(
-        [
-            f"{directory}/{path.name}"
-            for directory in _ENTITY_DIRS
-            for path in sorted((root / directory).glob("*.md"))
-        ],
+        entity_paths,
         # Read here rather than through `parse_file`, so the name in the message
         # is the name in `Unreadable.path`. `parse_file` names its source by the
         # absolute path it was handed, and the banner prints the path beside the
@@ -953,8 +1026,9 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
         # would answer differently to somebody grepping a build log for a file.
         lambda relative: parse_text((root / relative).read_text(encoding="utf-8"), relative),
     )
+    cycle_paths, nested_plans = _plan_files(root, _CYCLE_DIR)
     plans, unreadable_plans = readable(
-        [f"{_CYCLE_DIR}/{path.name}" for path in sorted((root / _CYCLE_DIR).glob("*.md"))],
+        cycle_paths,
         lambda relative: parse_cycle_text(
             (root / relative).read_text(encoding="utf-8"), relative
         ),
@@ -962,8 +1036,9 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     # Issues through the same door: a file somebody hand-edited in git is how
     # every one of these fails, and an issue file is no different from a cycle
     # file in that respect.
+    issue_paths, nested_issues = _plan_files(root, _ISSUE_DIR)
     issues, unreadable_issues = readable(
-        [f"{_ISSUE_DIR}/{path.name}" for path in sorted((root / _ISSUE_DIR).glob("*.md"))],
+        issue_paths,
         lambda relative: parse_issue_text(
             (root / relative).read_text(encoding="utf-8"), relative
         ),
@@ -972,8 +1047,9 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     # what makes a bad one cost one person's icon instead of the whole page — the
     # arrangement this replaced put every icon and the roster in one file, where a
     # single hand edit took all of them at once.
+    people_paths, nested_people = _plan_files(root, PEOPLE_DIR)
     people, unreadable_people = readable(
-        [f"{PEOPLE_DIR}/{path.name}" for path in sorted((root / PEOPLE_DIR).glob("*.md"))],
+        people_paths,
         lambda relative: parse_person_text(
             (root / relative).read_text(encoding="utf-8"), relative
         ),
@@ -992,6 +1068,12 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
                 *unreadable_issues,
                 *unreadable_people,
                 *unreadable_config,
+                # A record filed one directory too deep is a file that is not a
+                # record, and lands in the same list for the same reason.
+                *nested_entities,
+                *nested_plans,
+                *nested_issues,
+                *nested_people,
             ],
             key=lambda one: one.path,
         ),
