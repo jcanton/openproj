@@ -508,6 +508,16 @@ def _place(
         if not clash:
             break
         busy_worker, busy_until = max(clash, key=lambda pair: pair[1])
+        # One person does one thing at a time — unless they are already doing
+        # both. Contention is a forecast about work not yet picked up, and for a
+        # bet somebody is holding it is a prediction about the past: the first
+        # real cycle imported had one person on five live rows, and serialising
+        # them drew the last one starting in late September, six weeks after the
+        # review that closed the cycle. That someone is over capacity is true and
+        # worth saying, and the load column and the cycle's over-capacity line
+        # are where it is said, against the number rather than by moving a date.
+        if begun:
+            break
         start = _next_working_day(busy_until, config)
 
     return Span(start=start, end=end), _explain(

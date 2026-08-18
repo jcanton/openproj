@@ -777,3 +777,30 @@ def test_work_in_progress_starts_when_it_started_and_not_today():
     # The one nobody has started is still floored at today, which is the rule
     # this change deliberately leaves alone.
     assert spans["task-aaa002"].start == date(2026, 8, 17)
+
+
+def test_two_things_one_person_is_already_doing_are_drawn_at_once():
+    """One person does one thing at a time — unless they are already doing both.
+
+    Serialising is a forecast about work not yet picked up; applied to bets
+    somebody is holding it becomes a prediction about the past. The first real
+    cycle imported had one person on five live rows, and serialising them drew
+    the last starting six weeks after the review meeting that closed the cycle.
+
+    That the person is over capacity is true and worth saying — the load column
+    and the cycle's over-capacity line say it, against the number, rather than by
+    moving a date that has already happened.
+    """
+    both = [
+        task("aaa001", status="in_progress", assigned_on=date(2026, 6, 22)),
+        task("aaa002", status="in_progress", assigned_on=date(2026, 6, 22)),
+    ]
+    spans, _ = schedule(both, CONFIG, date(2026, 8, 17))
+
+    assert spans["task-aaa001"].start == spans["task-aaa002"].start == date(2026, 6, 22)
+
+    # Work nobody has started is still serialised, which is the rule this leaves
+    # alone: a forecast that books one person twice is a forecast that is wrong.
+    queued = [task("bbb001"), task("bbb002")]
+    later, _ = schedule(queued, CONFIG, date(2026, 8, 17))
+    assert later["task-bbb001"].start != later["task-bbb002"].start
