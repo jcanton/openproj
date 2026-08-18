@@ -143,6 +143,11 @@ ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 # cycle by any reading; `Config.working_weeks` counts a week at a time anyway,
 # for the file somebody writes by hand.
 MAX_CYCLE_WEEKS = 520.0
+# The goal is one or two sentences the room agreed on, drawn above the betting
+# table. Long enough for a real one, short enough that nobody pastes a shaping
+# document into a field whose whole value is being short — the notes below the
+# table are where prose goes, and they are unbounded.
+MAX_GOAL_CHARS = 400
 
 
 def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
@@ -258,6 +263,18 @@ def _reject_bad_cycle(fields: dict) -> None:
                 f"review meeting is not a cycle; the most this will hold is "
                 f"{MAX_CYCLE_WEEKS:g} weeks"
             )
+    # A sentence, and bounded — this reaches a `<h2>`-adjacent line on a page and
+    # a line in a YAML file, and neither wants a pasted document. Coerced to a
+    # string rather than refused for not being one, because a form sends what was
+    # typed and a goal of `2026` is a person writing a year, not an error.
+    if "goal" in fields:
+        goal = "" if fields["goal"] is None else str(fields["goal"]).strip()
+        if len(goal) > MAX_GOAL_CHARS:
+            raise HTTPException(
+                422, f"a cycle goal is {MAX_GOAL_CHARS} characters at most; that one is "
+                f"{len(goal)}. The rest belongs in the notes under the betting table."
+            )
+        fields["goal"] = goal
     rates = fields.get("availability")
     if rates is not None:
         if not isinstance(rates, dict):
