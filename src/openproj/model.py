@@ -1119,8 +1119,27 @@ def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
 # --------------------------------------------------------------------------- #
 
 _FENCE = re.compile(r"^\s{0,3}(```|~~~)")
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
-_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s")
+# The hashes are a group of their own because a section's NAME is flat and its
+# EXTENT is not: `sections` keys on group 2 and ignores depth, while the two
+# functions that carve a section out of a body have to know where it ends.
+_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+# A box, and the end of a line is as good as a space after it. Demanding real
+# whitespace there dropped exactly one line, and it is the line this tool writes
+# itself: `_TASK_TEMPLATE` (`render.py`) ends `## Progress\n\n- [ ]` with nothing
+# after the bracket, so every task created from it held an unticked point that
+# `checklist` did not count and `without_checklist` did not take away — and it
+# reached a review slide as the literal characters `[ ]` under a `## Progress`
+# heading that nothing had emptied.
+#
+# The regex was the defect and not the template. An empty box at the end of a
+# file is a box; a reader sees one, GitHub ticks one, and the fix on the other
+# side — a trailing space in a template — is invisible, and the next editor,
+# formatter or pre-commit hook to touch the file deletes it and puts this back.
+# Widening it is deliberately not deck-local: a point with no words now counts
+# wherever progress is counted, which is what `checklist_items` already says it
+# means — "a point that is only a box keeps its place in the count and says
+# nothing, which is exactly what is on the page it came from".
+_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\](?=\s|$)")
 # Fenced blocks, kept whole so that a pitch quoting markdown keeps its example.
 _FENCED = re.compile(r"((?:^|\n)(?:```|~~~).*?(?:\n(?:```|~~~)[^\n]*|\Z))", re.S)
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -1176,28 +1195,171 @@ def sections(body: str) -> dict[str, str]:
     for line, in_code in _outside_code(body):
         heading = None if in_code else _HEADING.match(line)
         if heading:
-            current = found.setdefault(heading.group(1).strip().lower(), [])
+            current = found.setdefault(heading.group(2).strip().lower(), [])
         elif current is not None:
             current.append(line)
     return {name: "\n".join(lines).strip() for name, lines in found.items()}
 
 
-def checklist(body: str) -> tuple[int, int]:
-    """Ticked and total task-list items anywhere in the body.
+def checklist_items(body: str) -> list[tuple[bool, str]]:
+    """Every task-list item as (ticked, what it says), in the order written.
 
     Anywhere, not only under `## Progress`: the template puts them there, and
-    real notes also keep them under `## Solution`. Sub-items count as items,
-    which is what someone reading "7/12" means by it.
+    real notes also keep them under `## Solution`. Sub-items are items, and they
+    arrive flat — `checklist` counts them that way, which is what somebody
+    reading "7/12" means by it, and a list drawn with a hierarchy the number does
+    not have is the two-copies-of-one-fact problem in a new spelling.
+
+    The text is what follows the box, stripped. A point that is only a box —
+    `- [ ]` with nothing after it — keeps its place in the count and says nothing,
+    which is exactly what is on the page it came from.
     """
-    done = total = 0
+    found: list[tuple[bool, str]] = []
     for line, in_code in _outside_code(body):
         if in_code:
             continue
         mark = _CHECKBOX.match(line)
         if mark:
-            total += 1
-            done += mark.group(1) != " "
-    return done, total
+            found.append((mark.group(1) != " ", line[mark.end():].strip()))
+    return found
+
+
+def checklist(body: str) -> tuple[int, int]:
+    """Ticked and total task-list items anywhere in the body.
+
+    Counted from `checklist_items` rather than by a second walk of the same
+    lines. The deck draws those points beside this number: two parses of one
+    document is two chances for the tick on a slide and the "7/12" above it to
+    disagree about the same line.
+    """
+    items = checklist_items(body)
+    return sum(1 for ticked, _ in items if ticked), len(items)
+
+
+def without_checklist(body: str) -> str:
+    """The body with its task-list items taken out, and any heading they emptied.
+
+    For the deck, which lifts those points to the top of the slide and ticks
+    them. Left in place as well they print twice — the duplication the detail
+    page avoids by not lifting a leaf's checklist at all (`_progress_view`). A
+    slide cannot make that trade: it is read from the back of a room, and `[x]`
+    is not a tick.
+
+    The emptied heading is the second half and not a nicety. `## Progress` is
+    where the team's task template puts the list, so on nearly every task
+    removing the items leaves a heading with nothing whatever under it.
+
+    Here and not in `render.py` for the reason `without_comments` is here: it
+    reads a shaping document, and `render.py` is held to
+    `test_no_page_is_assembled_by_substitution`.
+    """
+    return _without_emptied_headings(
+        [
+            (line, in_code)
+            for line, in_code in _outside_code(body)
+            if in_code or not _CHECKBOX.match(line)
+        ]
+    )
+
+
+def _under(kept: list[tuple[str, bool]], at: int, level: int) -> Iterator[tuple[str, bool]]:
+    """Everything under the heading at `at`: down to the next one as shallow."""
+    for line, in_code in kept[at + 1:]:
+        heading = None if in_code else _HEADING.match(line)
+        if heading and len(heading.group(1)) <= level:
+            return
+        yield line, in_code
+
+
+def _without_emptied_headings(kept: list[tuple[str, bool]]) -> str:
+    """Lines, minus every heading whose whole subtree is now empty.
+
+    Its subtree, and not the lines up to the next heading of any depth at all. A
+    `## Progress` holding nothing but the checklist and a `### Still to do` under
+    it has no text of its OWN once the boxes are lifted, and deleting it on that
+    reading left `### Still to do` on the page under nothing — a subsection
+    orphaned from the heading that said what it was part of.
+
+    Headings inside the subtree do not count as text either. Otherwise `## A`
+    over an empty `### B` keeps A alive on the strength of a line that is about
+    to be deleted by this same rule, and A is left as a heading over a blank.
+    """
+    out: list[str] = []
+    for at, (line, in_code) in enumerate(kept):
+        heading = None if in_code else _HEADING.match(line)
+        if heading:
+            under = _under(kept, at, len(heading.group(1)))
+            if not any(
+                text.strip()
+                for text, nested in under
+                if nested or not _HEADING.match(text)
+            ):
+                continue
+        out.append(line)
+    return "\n".join(out).strip("\n")
+
+
+def without_emptied_headings(body: str) -> str:
+    """The body, minus every heading whose whole subtree is empty.
+
+    The same prune `without_checklist` finishes with, reachable on its own,
+    because taking a checklist away is not the only way to empty a heading. The
+    deck also takes whole sections away — and a `## Notes` whose only content was
+    a `### Solution` under it came out of that drop as a heading over blank paper,
+    which is the exact thing the prune exists to stop, arriving one step after
+    `without_checklist` had already run and could no longer see it.
+    """
+    return _without_emptied_headings(list(_outside_code(body)))
+
+
+def _by_section(body: str, names: Iterable[str], keep: bool) -> str:
+    """The named sections with everything nested under them, kept or dropped.
+
+    Named the way `sections` keys them — lowercased, and matched at any depth,
+    because the template is flat and a reader asking for "no-gos" does not care
+    whether somebody wrote `##` or `###`.
+
+    The *extent* is not flat, and reading it flatly was a bug: every heading
+    ended the section above it, so a `### Second rabbit hole` written under
+    `## Rabbit holes` escaped a drop of "rabbit holes" and arrived on a slide
+    with nothing above it to say what it belonged to. A section runs to the next
+    heading of its own level or shallower, which is what a reader means by it.
+    """
+    wanted = {name.strip().lower() for name in names}
+    out: list[str] = []
+    # The level of the matched heading whose subtree this is inside, or None.
+    # Carried across the loop rather than recomputed, because what decides a line
+    # is the heading above it. A `##` inside a fence never reaches this, so a
+    # document quoting a template keeps its example whole.
+    depth: int | None = None
+    for line, in_code in _outside_code(body):
+        heading = None if in_code else _HEADING.match(line)
+        if heading and (depth is None or len(heading.group(1)) <= depth):
+            named = heading.group(2).strip().lower() in wanted
+            depth = len(heading.group(1)) if named else None
+        if (depth is not None) is keep:
+            out.append(line)
+    return "\n".join(out).strip("\n")
+
+
+def without_sections(body: str, names: Iterable[str]) -> str:
+    """The body without these sections, heading and subsections and all.
+
+    For the deck, which asks a shaping document for the part of it a review is
+    about. Passing the set in rather than knowing it here is what lets the caller
+    read it off `TEMPLATES` instead of listing it again.
+    """
+    return _by_section(body, names, keep=False)
+
+
+def only_sections(body: str, names: Iterable[str]) -> str:
+    """Just these sections, heading and subsections and all.
+
+    The other half of the same walk. The deck needs both: a review slide leads
+    with what happened, and falls back to the one section of the bet that says
+    what was going to happen when nobody wrote anything else down.
+    """
+    return _by_section(body, names, keep=True)
 
 
 # --------------------------------------------------------------------------- #

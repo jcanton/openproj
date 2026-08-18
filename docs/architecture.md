@@ -12,6 +12,22 @@ They render from one in-memory index, share one filter model, and keep their sta
 string — so every view is a shareable URL, the back button works, and there are no saved views to
 manage.
 
+`/deck/<n>` is the odd one out and is a route only. It is the deck for one cycle's review meeting —
+a title slide, then one slide per piece of work bet into that cycle, each with its ticked points,
+its percentage, its pull requests and what the record says about what happened, and it prints one
+slide to a page. That last part is a floor and not a filter: the shaping argument stays off the
+sheet because the room argued it at the betting table, but a slide that has nothing else falls back
+to the record's Solution, because a heading over blank paper is nothing to present from. The
+fallback is bounded — 120 words, measured against Chrome's own pagination — since a quotation of the
+plan has no business pushing the presenter's slide onto a second sheet; and where it was cut, or
+where the record turned out to have nothing written on it at all, the slide says so in a line of its
+own. A sheet that silently dropped half a section cannot be told from a finished one, and the person
+holding it is the one person who cannot go and check. It takes a cycle number, so
+it has no place in a static export that writes one file per view of the whole plan; it is reached
+from that cycle's own page, and it is deliberately not a seventh tab. It is also the one page that
+carries its images inside itself as `data:` URIs, because it is the one page meant to be handed to
+somebody who was not in the room.
+
 ## Two repositories
 
 The tool and the plan are separate repositories, and stay separate in production.

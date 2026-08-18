@@ -871,6 +871,32 @@ def create_app(
         commit, index = index_now()
         return page(render.render_cycle(index, number, render.ROUTES, commit))
 
+    @app.get("/deck/{number}", response_class=HTMLResponse)
+    def deck(number: int) -> HTMLResponse:
+        """The review deck for one cycle, printable to one slide a page.
+
+        Bounded the same way `/cycle/{number}` is, and by the same pattern: two
+        routes taking one number that disagreed about which numbers exist is the
+        dead end that one already has a comment about.
+
+        Read at `commit` and not at `store.head()`. The index and the pictures on
+        the same slides have to be the same snapshot — a screenshot fetched from
+        a commit later than the record beside it is a deck that quietly mixes two
+        states of the plan, and this page's whole job is to be handed to somebody
+        who cannot check.
+        """
+        if not CYCLE_PATTERN.match(str(number)):
+            raise HTTPException(404, "a cycle is numbered 0 to 9999")
+        commit, index = index_now()
+        return page(
+            render.render_deck(
+                index,
+                number,
+                render.ROUTES,
+                lambda name: store.read_asset(commit, f"assets/{name}"),
+            )
+        )
+
     @app.get("/people", response_class=HTMLResponse)
     def people(request: Request) -> HTMLResponse:
         me = picker_for(request)

@@ -346,6 +346,9 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
         ("/timeline", "Timeline"),
         ("/cycles", "Cycles"),
         ("/cycle/37", "Cycles"),
+        # A deck is one cycle's handout and deliberately not a seventh tab, so it
+        # lights the item that got you there — the same argument `/cycle/37` makes.
+        ("/deck/37", "Cycles"),
         ("/people", "People"),
         ("/detail", "Detail"),
         (f"/detail/{TASK}", "Detail"),
@@ -377,7 +380,7 @@ def test_an_entity_that_does_not_exist_is_a_404_and_not_an_empty_page(client: Te
 
 @pytest.mark.parametrize(
     "route", ["/", f"/detail/{TASK}", "/detail", "/graph", "/timeline", "/people",
-              "/cycles", "/new?kind=task"]
+              "/cycles", "/deck/37", "/new?kind=task"]
 )
 def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     """Several `<script>` blocks, one global scope between them.
