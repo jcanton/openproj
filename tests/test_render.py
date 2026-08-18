@@ -142,7 +142,9 @@ def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, se
     )
     assert set(payload["rows"]) == set(seed_index.entities)
     scheduled = payload["rows"]["task-53a9f0"]
-    assert scheduled["start"] == "2026-08-17"
+    # Its own `assigned_on`, because it is in progress: work under way started
+    # when it started, and the floor at today applies to what has not begun.
+    assert scheduled["start"] == "2026-08-13"
     assert scheduled["derived"] is True
     # And nothing beyond what the script reads. `facets` and `predicates` were the
     # whole facet index inlined into every table page for a control bar that is

@@ -299,18 +299,34 @@ def test_grandfathering_does_not_soften_a_rule_older_than_the_entity():
 
 
 def test_a_parent_of_the_wrong_kind_is_named_as_such():
-    """The three levels the spec claimed from its first day and nothing checked,
-    which is how the frozen corpus came to hang a task off a project."""
+    """The levels the spec claimed from its first day and nothing checked."""
     entities = [
         Project(id="proj-000001", kind="project", title="P"),
         Pitch(id="pitch-000001", kind="pitch", title="Q", parent="proj-000001"),
+        Task(id="task-000001", kind="task", title="T", parent="pitch-000001"),
+        Task(id="task-000002", kind="task", title="U", parent="task-000001",
+             created_schema_version=4),
+    ]
+    problem = only(validate_all(entities, Config()), "task-000002", field="parent")
+    assert summary(problem) == (
+        "blocker", "parent", "a task belongs to a pitch or a project, not to a task", 4
+    )
+
+
+def test_a_task_may_hang_straight_off_a_project():
+    """Work nobody pitched still belongs somewhere. The first real cycle imported
+    had two of them — reported at the review, never bet — and the alternative was
+    a pitch invented to hold them, which puts a bet in the corpus that no betting
+    table ever made. A plan that lies about what was bet is worse than a tree
+    that is two levels deep in places."""
+    entities = [
+        Project(id="proj-000001", kind="project", title="P"),
         Task(id="task-000001", kind="task", title="T", parent="proj-000001",
              created_schema_version=4),
     ]
-    problem = only(validate_all(entities, Config()), "task-000001", field="parent")
-    assert summary(problem) == (
-        "blocker", "parent", "a task belongs to a pitch, not to a project", 4
-    )
+
+    assert not [p for p in validate_all(entities, Config())
+                if p.entity_id == "task-000001" and p.field == "parent"]
 
 
 def test_a_project_belongs_to_nothing():
@@ -406,11 +422,11 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     The version-4 warnings are the argument for those rules, made against real
     files rather than invented ones. Every one of them is a thing the corpus
     already does and nothing had ever said: nine tasks carrying a `cycle` that
-    belongs to the pitch they are part of, one task hung straight off a project
-    with the pitch level skipped — the containment the spec claimed from day one
-    and never enforced — and one pitch whose five tasks propose twice the work it
-    was bet at. All warnings: the corpus is created_schema_version 2 and these
-    rules are 4, so nothing written before them breaks.
+    belongs to the pitch they are part of, one task hung straight off a project —
+    which is allowed now, and was the shape the first real import needed — and
+    one pitch whose five tasks propose twice the work it was bet at. All
+    warnings: the corpus is created_schema_version 2 and these rules are 4, so
+    nothing written before them breaks.
     """
     entities, config, _ = load_repo(seed_root)
     assert len(entities) == 17
@@ -442,7 +458,6 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("warning", "task-5c1d84", "cycle", inherits.format("pitch-5e7b1c"), 4),
         ("warning", "task-5f062b", "cycle", inherits.format("pitch-5e7b1c"), 4),
         # v4: the migration hung this one straight off the project
-        ("warning", "task-0e4b7a", "parent", "a task belongs to a pitch, not to a project", 4),
         # v4: 8.1 weeks of tasks inside a four-week bet
         (
             "warning",

@@ -7045,15 +7045,22 @@ _CYCLE = """
     rows — why a pitch was left out, what would make it a bet next time — and it
     was going into a HackMD note nobody linked. Still the record's markdown body,
     so it renders like every other shaping document here. -#}
-<div class="doc read">{{ c.body }}</div>
+{#- Rendered OR editable, never both. The detail page draws prose above the box
+    that edits it because the two are far apart there and the rendered copy is
+    the thing you came to read. Here they are adjacent, so the page printed the
+    notes twice — once as markdown and once as the same text in a box directly
+    beneath it — which reads as a bug rather than as a preview.
+
+    The hint that used to sit between them is the box's placeholder now, for the
+    same reason: a line under a heading explaining what Notes are for is paid for
+    by every reader on every visit; a placeholder is paid for only by the person
+    looking at an empty box. -#}
 {% if editable %}
-{#- The sentence that was here is inside the box now, the way the goal's is. A
-    hint under a heading explaining what Notes are for is a line every reader
-    pays for once per visit to learn something they knew from the heading; a
-    placeholder is paid for only by the person looking at an empty box. -#}
 <textarea id="notes" class="notes" rows="8" aria-label="Cycle notes"
   placeholder="What came up at the betting table — why a pitch was left out,
 what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
+{% else %}
+<div class="doc read">{{ c.body }}</div>
 {% endif %}
 
 {% if editable %}
