@@ -20,7 +20,7 @@ from openproj.model import Config, load_repo
 from openproj.render import STATUS_GLYPH, STATUSES, render_static
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
-         "issues.html", "graph.html", "timeline.html")
+         "issues.html", "notes.html", "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -2529,7 +2529,7 @@ def test_the_nav_says_which_page_you_are_on(rendered: Path, server_pages: dict[s
     assert lit(server_pages["entity"]) == []
 
     # And the one page that marks nothing, on purpose: the create form is not one
-    # of the six, and pressing Table from it abandons the form rather than staying
+    # of them, and pressing Table from it abandons the form rather than staying
     # put. `aria-current="page"` claims a page *within* the set.
     assert lit(server_pages["new"]) == []
 
@@ -3757,7 +3757,8 @@ def test_a_plan_where_nobody_has_picked_one_draws_the_page_as_it_was(seed_root: 
 
 def test_an_icon_nothing_draws_costs_the_drawing_and_nothing_else(seed_root: Path):
     """`Person.icon` is a plain `str | None` and deliberately not an enum of the
-    twelve, for the same reason `status` is a plain `str`: a file written before
+    the ones that exist today, for the same reason `status` is a plain `str`: a file
+    written before
     an icon was renamed has to survive being read. So a stored `dragon` is a name
     the page has no drawing for, and the row is otherwise exactly the row."""
     from openproj.render import render_people
@@ -3776,8 +3777,8 @@ def test_no_icon_is_a_character_the_reader_has_to_own_a_font_for():
     by the platform's colour font, so the same file draws a different fox on
     every machine and no fox at all on one with no such font — and every other
     thing these pages need is inside them, down to the typeface being a `data:`
-    URI. Read out of `render.py` rather than restated, so a thirteenth icon is
-    checked on the commit that adds it.
+    URI. Read out of `render.py` rather than restated, so the next icon is checked
+    on the commit that adds it.
     """
     from openproj import render
 
@@ -3785,6 +3786,86 @@ def test_no_icon_is_a_character_the_reader_has_to_own_a_font_for():
         assert name.isascii() and name.islower(), name
         assert art.isascii(), f"{name} is drawn with a character and not with a path"
         assert "<path" in art or "<circle" in art, name
+
+
+def test_no_two_icons_are_the_same_mark(seed_root: Path):
+    """A set of marks is worth having only if each one is somebody's own.
+
+    The names cannot collide — they are dict keys — so the collision this guards
+    against is the other one: a drawing pasted twice under two names, which is
+    the ordinary way a set doubles in size. Two people would then have the same
+    mark under different words, and nothing anywhere would say so.
+
+    What it cannot do is tell two DIFFERENT paths apart at 20px, which is the
+    real constraint. That question has no test in this suite and is not pretended
+    to have one: every candidate was rendered at 20px beside the whole set and
+    looked at, and the seven that failed are named in the comment above
+    `_ICON_ART`. A test that resolved a path to pixels and compared them would be
+    a worse version of a person's eye, not a better one.
+    """
+    from openproj.render import _ICON_ART, ICONS
+
+    drawings = {}
+    for name, art in _ICON_ART.items():
+        assert art not in drawings, f"{name} is drawn exactly like {drawings.get(art)}"
+        drawings[art] = name
+
+    assert tuple(drawings.values()) == ICONS, "the vocabulary is the drawings and nothing else"
+
+
+def test_every_icon_is_a_row_in_the_picker_with_its_name_beside_it(seed_root: Path):
+    """A `<select>` cannot hold an SVG and a strip of bare buttons cannot hold
+    twenty-five rows, so the picker is a listbox — and what makes it one is that
+    every row carries both the drawing and the word.
+
+    The word is not decoration: it is what is stored, what `PUT /api/icon` will
+    refuse by name, and the only thing a reader can use to tell two marks apart
+    when they cannot see either. Parsed rather than searched for, because a
+    substring cannot tell a `data-icon` attribute from the same letters in a
+    title, and every row's id has to be unique — `aria-activedescendant` is a
+    reference by id, and two rows sharing one is a keyboard that lands on the
+    wrong drawing.
+    """
+    from html.parser import HTMLParser
+
+    from openproj.render import ICONS, render_people
+
+    class Rows(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.rows: list[dict] = []
+            self.depth = 0
+
+        def handle_starttag(self, tag, attrs):
+            got = dict(attrs)
+            if got.get("role") == "option":
+                self.rows.append({"id": got.get("id"), "icon": got.get("data-icon"),
+                                  "svg": 0, "name": ""})
+                self.depth = 1
+            elif self.depth:
+                self.depth += 1
+                self.rows[-1]["svg"] += tag == "svg"
+
+        def handle_endtag(self, tag):
+            self.depth = max(0, self.depth - 1)
+
+        def handle_data(self, data):
+            if self.depth and data.strip():
+                self.rows[-1]["name"] += data.strip()
+
+    who = someone(with_icons(seed_root, {}))
+    reader = Rows()
+    reader.feed(render_people(with_icons(seed_root, {}), editable=True, me=who))
+
+    # The way out first, and it is the one row with no drawing: nothing is what
+    # it sets, so a mark beside it would be a mark it does not mean.
+    assert reader.rows[0] == {"id": "pick-none", "icon": "", "svg": 0, "name": "No icon"}
+    assert [row["icon"] for row in reader.rows[1:]] == list(ICONS)
+    for row, name in zip(reader.rows[1:], ICONS, strict=True):
+        assert row["name"] == name, f"{name} has no name beside its drawing"
+        assert row["svg"] == 1, f"{name} has no drawing beside its name"
+        assert row["id"] == f"pick-{name}"
+    assert len({row["id"] for row in reader.rows}) == len(reader.rows)
 
 
 def test_the_static_export_carries_the_drawings_and_offers_no_picker(

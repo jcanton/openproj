@@ -25,12 +25,14 @@ from .model import (
     Cycle,
     Entity,
     Issue,
+    Note,
     Problem,
     Unreadable,
     ancestors,
     checklist,
     cycle_of,
     issue_problems,
+    note_problems,
     sections,
     size_weeks,
     validate_all,
@@ -151,6 +153,11 @@ class Index(BaseModel):
     # them needs nothing but the index, the same way every other page does.
     issues: dict[str, Issue] = {}
     issue_problems: list[Problem] = []
+    # And the notes, carried here for the same reason and drawn on one page for
+    # the same reason. Nothing else on the index may reach for them: a note that
+    # appears in a second view is a note that has become a bet nobody made.
+    notes: dict[str, Note] = {}
+    note_problems: list[Problem] = []
     # Carried for the same reason the windows are: the timeline has to draw where
     # a cycle stops building, and it is handed no Config to ask.
     cooldown_weeks: float = 2.0
@@ -413,6 +420,8 @@ def build_index(
         },
         issues=config.issues,
         issue_problems=issue_problems(config, entities),
+        notes=config.notes,
+        note_problems=note_problems(config, entities),
         today=today,
         default_task_effort=config.default_task_effort,
         holidays=config.holidays,

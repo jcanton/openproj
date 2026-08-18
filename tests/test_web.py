@@ -334,7 +334,7 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
     that lit the item whose `href` matched the current URL would leave both of
     them dark, which is the state every page on this app was in before this round.
 
-    `/new` marks nothing, on purpose: it is not one of the six, and pressing Table
+    `/new` marks nothing, on purpose: it is not one of them, and pressing Table
     from it abandons the form rather than staying put. `render_new`'s docstring is
     where that is argued; this is where it is held.
     """
@@ -2780,8 +2780,8 @@ def test_clearing_an_icon_says_so_in_the_record_rather_than_deleting_it(
     assert client.put("/api/icon", json={"icon": None}).status_code == 200
 
     assert record_of(repo_path, "ann") == "---\nicon: null\n---\n"
-    # On the row, not on the page: the picker below it is a row of twelve
-    # drawings and is always there for whoever may write.
+    # On the row, not on the page: the list below it holds a drawing for every
+    # icon there is and is always there for whoever may write.
     row = client.get("/people").text.split('data-login="ann"')[1].split("</tbody>")[0]
     assert '<svg class="icon"' not in row.split('id="picker"')[0]
 
@@ -2926,7 +2926,7 @@ def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient,
 
     The version of this test written with the fix asserted `"turtle" not in
     page`, which is a sentence about no version of this code: the picker below
-    the table draws all twelve icons by name, so that string is in the page
+    the table draws every icon by name, so that string is in the page
     whatever `_people_at` does, and the test failed against a correct fix. Both
     halves are asked here instead — on ann's own `<tbody>`, which is where an
     icon says whose it is, and in the banner, which is where a file that is not a
@@ -2949,7 +2949,7 @@ def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient,
     page = client.get("/people").text
 
     # Ann's own mark: her `<tbody>`, up to the picker that sits inside it —
-    # twelve drawings, one per icon name, present on every version of this page.
+    # one drawing per icon name, present on every version of this page.
     ann = page.split('data-login="ann"')[1].split("</tbody>")[0].split('id="picker"')[0]
     assert icon_svg("fox") in ann, "the record in people/ is the one that is drawn"
     assert icon_svg("turtle") not in ann, "the nested file is not a second record for ann"

@@ -36,11 +36,14 @@ from pydantic import BaseModel
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
 from .model import (
     ISSUE_STATUS,
+    NOTE_STATES,
+    NOTE_STATUS,
     PARENT_KINDS,
     Config,
     Cycle,
     Entity,
     Issue,
+    Note,
     Pitch,
     Project,
     Task,
@@ -763,6 +766,8 @@ class Links(BaseModel):
     cycle: str = "cycles.html#"  # prefix, then the cycle number
     issues: str = "issues.html"
     issue: str = "issues.html#"  # prefix, then the issue id
+    notes: str = "notes.html"
+    note: str = "notes.html#"  # prefix, then the note id
     asset: str = "assets/"  # a rendered file sits beside the assets it names
     # Prefix, then the cycle number. Empty for the same reason `new` is empty:
     # a deck is of ONE cycle, and the static export writes one file per view of
@@ -802,6 +807,7 @@ ROUTES = Links(
     table="/", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
     cycles="/cycles", cycle="/cycle/", issues="/issues", issue="/issue/",
+    notes="/notes", note="/note/",
     asset="/assets/", deck="/deck/",
 )
 
@@ -4527,7 +4533,15 @@ td.clamp.open { white-space: normal; }
 td.clamp.open .clamped { display: block; }
 td.clamp.open .rest { display: inline; }
 td .sev-mark { margin-left: .25rem; }
-.eid { font-family: var(--font-mono); }
+/* A point smaller than the row it sits in, because a monospace face at the same
+   nominal size reads larger than the text beside it: wider glyphs, a taller
+   x-height, and no two characters closer together than any other pair. At 13px
+   the id was the loudest thing on a row where it is the least interesting — it
+   is a token to cite, not a heading — and the mono face is already what marks it
+   as one. 12px and not `.9em`: this column is what the frozen title column's
+   `left` is measured from, and a relative size compounds if anything above it
+   ever changes. */
+.eid { font-family: var(--font-mono); font-size: 12px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
 /* The column's `+`, in the header of every column that clamps. It is the badge
@@ -7191,6 +7205,15 @@ textarea.body-field {
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
+/* Where a promoted record says where it came from. It is the first thing in the
+   document and it is not part of the problem statement, so it is set apart
+   rather than left as an indented paragraph that reads like one. Here as well as
+   in `_RECORD_STYLE`: this is the page those lines are mostly read on, and a
+   rule in the other file is a rule this page never loads. The two are the same
+   declaration on the same selector, so there is no cascade to resolve — no page
+   loads both. */
+.doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
+                  border-left: 2px solid var(--line-strong); }
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
@@ -7278,12 +7301,27 @@ STATUS_GLYPH = {
 # the theme, they scale, and the drawing in the file IS the drawing on screen.
 # Stroked outlines at the interface's own weight rather than filled silhouettes,
 # and every feature is a whole shape — a head, two ears, two eyes — because at
-# 20px a whisker is not a line, it is a grey smudge. Twelve is enough for a team
-# to have one each and few enough that no two are confusable at that size.
+# 20px a whisker is not a line, it is a grey smudge.
 #
-# The four sky shapes come first and the eight creatures after, which is the
-# order the picker is read in. What is stored is the NAME, so these can be
-# redrawn without touching anybody's choice — see `model.Person`.
+# Twenty-four of them, which is a team's worth with room to choose rather than
+# one each. The count is not the constraint and never was: being told apart at
+# 20px is, and that is what decides how many there can be. Every candidate was
+# drawn, rendered at 20px beside the whole set, and looked at, because a shape
+# that reads in the source is not evidence about pixels. Seven did not survive
+# that and are deliberately absent — a WHALE and a SNAKE, which at that size are
+# the fish and the wave this set already has; a SNAIL and a PENGUIN, whose second
+# outline inside the first closed into a blot; a BEE, whose stripes did the same;
+# a RAINBOW, three concentric arcs that resolve into one thick arc; and a DOG,
+# which was a third round face after the cat and the bear. They are named here
+# because a shape is rejected for what it collides with rather than for being
+# badly drawn, and the next person to add one needs the collisions more than they
+# need the survivors.
+#
+# Three groups, in the order the picker is read: the sky, then the world, then
+# the creatures — and inside the creatures, the ones that walk before the ones
+# that swim. A list ordered by nothing is a list a reader has to search rather
+# than scan. What is stored is the NAME, so these can be redrawn, and this order
+# rearranged, without touching anybody's choice — see `model.Person`.
 _ICON_ART = {
     "sun": (
         '<circle cx="12" cy="12" r="4.3"/>'
@@ -7299,6 +7337,32 @@ _ICON_ART = {
         '<path d="M7.4 18.6h9.8a4.2 4.2 0 0 0 .4-8 5.7 5.7 0 0 0-10.8-1.3'
         'a4.8 4.8 0 0 0 .6 9.3Z"/>'
     ),
+    "bolt": '<path d="M13.8 2.6 5.8 13.8h4.8l-.8 7.6 8.4-11.4h-5Z"/>',
+    # Six spokes and a chevron at each tip, and nothing along them. The version
+    # with branches half way out was a blot at 20px: eighteen strokes inside 20
+    # pixels is a grey disc. The sun is the shape it has to stay clear of and
+    # does — the sun is a solid centre with detached rays, this is one open
+    # asterisk with a hole in the middle.
+    "snowflake": (
+        '<path d="M12 2.4v19.2M3.7 7.2l16.6 9.6M20.3 7.2 3.7 16.8"/>'
+        '<path d="M8.8 4.8 12 8l3.2-3.2M8.8 19.2 12 16l3.2 3.2"/>'
+    ),
+    # Upright and unmarked, which is the whole of what separates it from the leaf
+    # below: that one is tilted and carries a midrib, and a drop that leaned would
+    # be the same lens.
+    "drop": (
+        '<path d="M12 2.6c4.4 5.6 6.6 8.6 6.6 11.2a6.6 6.6 0 0 1-13.2 0'
+        'c0-2.6 2.2-5.6 6.6-11.2Z"/>'
+    ),
+    # The ring passes behind the body as two arcs that stop at its edge, rather
+    # than as one ellipse crossing it. An ellipse drawn over the disc lays two
+    # chords across the planet, and at 20px a circle with a line through it is a
+    # circle with a line through it.
+    "planet": (
+        '<circle cx="12" cy="12" r="5.6"/>'
+        '<path d="M7.1 14.7c-3.5 1.6-6.2 2-6.8.7-.6-1.3 1.2-3.5 4.4-5.5'
+        'M16.9 9.3c3.5-1.6 6.2-2 6.8-.7.6 1.3-1.2 3.5-4.4 5.5"/>'
+    ),
     "mountain": '<path d="M2.6 19.4 9.4 7.6l4 6.9 2.6-4.3 5.4 9.2Z"/>',
     # Tilted, and fat enough to have two sides. Drawn upright and narrow it was a
     # sliver with a line down it — at 20px indistinguishable from an eye, and the
@@ -7306,6 +7370,25 @@ _ICON_ART = {
     "leaf": (
         '<path d="M4.6 19.4a11.5 11.5 0 0 1 14.8-14.8 11.5 11.5 0 0 1-14.8 14.8Z"/>'
         '<path d="M2.8 21.2 18 6"/>'
+    ),
+    # The trunk is the whole of what tells this from the mountain at 20px, so it
+    # is drawn long enough to see. A bare triangle is a peak, and a triangle with
+    # a two-pixel stub under it is a peak somebody smudged.
+    "tree": '<path d="M12 2.8 4.4 16.4h15.2Z"/><path d="M12 16.4v4.6"/>',
+    # A tulip on a stem, not a rosette. Five petals round a centre is the same
+    # radial blob as the sun at this size — and the sun has the better claim to
+    # it — so the flower is the shape a flower has from the side instead.
+    "flower": (
+        '<path d="M6.2 8.2c0 4.2 2.6 7 5.8 7s5.8-2.8 5.8-7c0 0-2.2 1.8-2.9 1.8'
+        'S12 5.8 12 5.8s-2.2 4.2-2.9 4.2S6.2 8.2 6.2 8.2Z"/>'
+        '<path d="M12 15.2v6.2"/>'
+        '<path d="M12 18.4c-1.8-2.2-4-2.4-5.2-1.6-.2 2.4 2.6 3.6 5.2 1.6Z"/>'
+    ),
+    # Two lines and not three: a third crest closes the gaps between them into a
+    # hatched band, and two is already enough to say water rather than a squiggle.
+    "wave": (
+        '<path d="M2.4 9.8q2.4-3.2 4.8 0t4.8 0 4.8 0 4.8 0"/>'
+        '<path d="M2.4 16.2q2.4-3.2 4.8 0t4.8 0 4.8 0 4.8 0"/>'
     ),
     "cat": (
         # One outline for the head and both ears, so no chord is drawn across the
@@ -7339,10 +7422,66 @@ _ICON_ART = {
         '<circle cx="10.2" cy="15.7" r=".85" fill="currentColor" stroke="none"/>'
         '<circle cx="13.8" cy="15.7" r=".85" fill="currentColor" stroke="none"/>'
     ),
+    # Round ears standing outside the head, and a snout inside it. The cat's ears
+    # are points on the head's own outline; these break it, and the snout is the
+    # second difference — with neither of them this is the cat at 20px, which is
+    # what the first attempt was.
+    "bear": (
+        '<circle cx="6.1" cy="7.5" r="2.7"/><circle cx="17.9" cy="7.5" r="2.7"/>'
+        '<circle cx="12" cy="13.6" r="6.5"/>'
+        '<circle cx="9.6" cy="12.2" r=".9" fill="currentColor" stroke="none"/>'
+        '<circle cx="14.4" cy="12.2" r=".9" fill="currentColor" stroke="none"/>'
+        '<circle cx="12" cy="16.4" r="1.9"/>'
+    ),
+    # Head and body are two circles that touch rather than one silhouette. Drawn
+    # as a single outline a small bird is an egg with a beak on it; the notch
+    # where the two circles meet is the neck, and it is the only thing at this
+    # size that says which end is the front.
+    "bird": (
+        '<circle cx="14.8" cy="8.2" r="3.4"/>'
+        '<path d="M18 7.2 21.8 8.4 18 9.8Z"/>'
+        '<circle cx="15.2" cy="7.4" r=".85" fill="currentColor" stroke="none"/>'
+        '<circle cx="10.4" cy="15.6" r="5.6"/>'
+        '<path d="M5.8 19 1.8 21.8 2.4 17Z"/>'
+    ),
+    # One closed path per side, each carrying both of that side's wings, so the
+    # body is the seam where the two meet rather than a third shape drawn down
+    # the middle. Four separate wings put four strokes through the centre, and at
+    # 20px the middle filled in.
+    "butterfly": (
+        '<path d="M12 8.2C8.4 3.6 2.6 4.2 2.6 8.6c0 2.3 1.9 3.5 4.4 3.5'
+        '-2.5.6-4.4 2.1-4.4 4.4 0 3.7 5.6 4.4 9.4-.3Z"/>'
+        '<path d="M12 8.2c3.6-4.6 9.4-4 9.4.4 0 2.3-1.9 3.5-4.4 3.5'
+        '2.5.6 4.4 2.1 4.4 4.4 0 3.7-5.6 4.4-9.4-.3Z"/>'
+        '<path d="M12 8.2 9.8 4.2M12 8.2l2.2-4"/>'
+    ),
+    # The eyes sit on top of the head and break its outline, which is the whole
+    # of the difference from the owl — whose eyes are two rings inside a body
+    # that closes over them.
+    "frog": (
+        '<circle cx="8.4" cy="7.6" r="2.6"/><circle cx="15.6" cy="7.6" r="2.6"/>'
+        '<circle cx="8.4" cy="7.6" r=".9" fill="currentColor" stroke="none"/>'
+        '<circle cx="15.6" cy="7.6" r=".9" fill="currentColor" stroke="none"/>'
+        '<path d="M4.4 13.8c0-3 3.4-5.2 7.6-5.2s7.6 2.2 7.6 5.2c0 3.4-3.4 6.2-7.6 6.2'
+        's-7.6-2.8-7.6-6.2Z"/>'
+        '<path d="M8.6 15.6q3.4 2.4 6.8 0"/>'
+    ),
     "fish": (
         '<path d="M4.4 12a9 9 0 0 1 13.6 0 9 9 0 0 1-13.6 0Z"/>'
         '<path d="M18 12 22.4 8.6 22.4 15.4Z"/>'
         '<circle cx="7.9" cy="11.1" r=".9" fill="currentColor" stroke="none"/>'
+    ),
+    # Claws and eye stalks, both crossing the body's outline. A crab drawn as a
+    # shell with legs under it is a face at 20px — the things that stick out are
+    # what keep it out of the cat, fox, bear, frog corner of this set.
+    "crab": (
+        '<path d="M4.8 14.6a7.2 7.2 0 0 1 14.4 0 7.2 7.2 0 0 1-14.4 0Z"/>'
+        '<path d="M9.4 9.2V7.2M14.6 9.2V7.2"/>'
+        '<circle cx="9.4" cy="6" r="1" fill="currentColor" stroke="none"/>'
+        '<circle cx="14.6" cy="6" r="1" fill="currentColor" stroke="none"/>'
+        '<path d="M4.9 12.4 2 10.4a2 2 0 1 1 2.8-1.6"/>'
+        '<path d="M19.1 12.4 22 10.4a2 2 0 1 0-2.8-1.6"/>'
+        '<path d="M6.6 18.6 4.4 21M17.4 18.6l2.2 2.4"/>'
     ),
     "turtle": (
         '<path d="M4.6 15.6a7.4 7.4 0 0 1 14.8 0Z"/>'
@@ -7433,6 +7572,13 @@ HUMAN = {
     "in_progress": "In progress",
     "done": "Done",
     "shelved": "Shelved",
+    # A note's two, and the third it is only ever given by what it became. They
+    # are here rather than left to print as themselves for the reason the map
+    # exists: five pages inventing their own capitalisation is how `in_progress`
+    # came to be spelled three ways on one screen.
+    "thinking": "Thinking",
+    "dropped": "Dropped",
+    "promoted": "Promoted",
     # priorities
     "very_high": "Very high",
     "high": "High",
@@ -8019,7 +8165,7 @@ def render_new(
     the same stylesheet — a blank entity rather than a stored one.
 
     The only page that marks no nav item. `aria-current="page"` claims a page
-    within a set of pages and this form is not in the six: pressing Table from it
+    within a set of pages and this form is not in that set: pressing Table from it
     abandons the form rather than staying put, so lighting Table would be a claim
     the link does not keep. That is also why `<h1>New entity</h1>` is the one page
     label still on the screen — with nothing lit in the nav, the heading is all
@@ -8127,7 +8273,7 @@ _CYCLE = """
     meeting, which is the other thing `reviews_on` is a date for. Drawn only where
     `links.deck` is set, which is the server — a static export has no per-cycle
     page and nothing to number a deck with. It is not in the nav: the nav names
-    the six views of the whole plan, and this is one cycle's handout. -#}
+    the views of the whole plan, and this is one cycle's handout. -#}
 {% if links.deck %}<p class="back"><a href="{{ links.deck }}{{ c.number }}"
   >Review deck →</a></p>{% endif %}
 {% if c.recorded %}
@@ -8979,11 +9125,41 @@ _PEOPLE = """
       <th colspan="5" scope="colgroup"><div class="groupline">
         {#- The person's own mark. A button for exactly one person on the page —
             whoever is signed in — and a plain span for everybody else, because
-            the only icon anybody may set here is their own. -#}
+            the only icon anybody may set here is their own.
+
+            The button and its list are wrapped together because the list is
+            positioned against the wrapper: the group line wraps, so the button
+            has no fixed place in it, and a popup anchored to anything else opens
+            somewhere the button is not. -#}
         {%- if person.mine %}
+        <span class="pickwrap">
         <button type="button" id="pick" class="avatar pick{{ ' unset' if not person.art else '' }}"
-                aria-haspopup="true" aria-expanded="false" aria-controls="picker"
+                aria-haspopup="listbox" aria-expanded="false" aria-controls="picker"
                 aria-label="Your icon" title="Your icon">{{ person.art }}</button>
+        {#- A listbox and not a `<select>`: a native option cannot hold an SVG,
+            and picking your own mark by reading the word "fox" is not the
+            feature. Every row carries the drawing AND the name, because the name
+            is what is stored and what a refusal will say back.
+
+            "No icon" first, and not last where the old strip's clear button was:
+            it is the way out, and a way out you have to scroll twenty-four rows
+            to reach is the hardest row on the list to find.
+
+            `aria-selected` marks the one that is stored, which is a different
+            fact from the one the arrow keys are on — that one is named by
+            `aria-activedescendant` and drawn by `.on`. The suggestion combobox
+            conflates the two, and is right to: it has no stored value to mark. -#}
+        <ul id="picker" class="picker" role="listbox" aria-label="Your icon" tabindex="-1" hidden>
+          <li id="pick-none" class="option" role="option" data-icon=""
+              aria-selected="{{ 'true' if not person.icon else 'false' }}"><span
+              class="art"></span>No icon</li>
+          {% for one in icons %}
+          <li id="pick-{{ one.name }}" class="option" role="option" data-icon="{{ one.name }}"
+              aria-selected="{{ 'true' if one.name == person.icon else 'false' }}"><span
+              class="art">{{ one.art }}</span>{{ one.name }}</li>
+          {%- endfor %}
+        </ul>
+        </span>
         {%- elif person.art %}
         <span class="avatar">{{ person.art }}</span>
         {%- endif %}
@@ -9020,19 +9196,7 @@ _PEOPLE = """
             {{- ' · ' if not loop.last else '' -}}
           {%- endfor -%}
         </span>
-        {#- Inside the group line rather than floating over it. The line already
-            wraps, so a picker that claims a whole row of it opens underneath the
-            name with no positioning, no z-index and no argument to have with the
-            sticky header two rows up — which is this file's characteristic way
-            of breaking something else. -#}
         {%- if person.mine %}
-        <div id="picker" class="picker" hidden>
-          {% for one in icons %}
-          <button type="button" class="avatar" data-icon="{{ one.name }}"
-                  aria-label="{{ one.name }}" title="{{ one.name }}">{{ one.art }}</button>
-          {%- endfor %}
-          <button type="button" class="clear" data-icon="">No icon</button>
-        </div>
         {#- Where a refusal is read. `announce` writes into `#state` when a page
             has one and into the shell's screen-reader region when it does not,
             and this page had none — so the first version of this feature failed
@@ -9040,13 +9204,16 @@ _PEOPLE = """
             only account of why went to a region carrying `.sr-only`, which is
             `position: absolute; clip-path: inset(50%)`.
 
-            Under the picker, in the same group line, and drawn only where the
-            picker is. Not at the top of the page: the filter hides a whole
+            A line of its own at the end of the group line, and drawn only where
+            the button is. Not at the top of the page: the filter hides a whole
             person's `tbody` at once, so a status line up there would be on screen
             when the control it is about is not, and gone in exactly the case this
             exists for. Anybody who can press the button can see this, because it
             is two centimetres under their hand rather than at the far end of a
-            row that is a metre wide on this table. -#}
+            row that is a metre wide on this table. It stays in the flow of the
+            group line now that the list floats: a refusal is read after the list
+            has closed over it, and a message inside a popup is a message that
+            leaves with the popup. -#}
         <span id="state" role="status"></span>
         {%- endif %}
       </div></th>
@@ -9168,37 +9335,100 @@ async function chooseIcon(name) {
   }
 }
 
-function openPicker(open) {
+// The rows, read once from the markup the server rendered. Not rebuilt here: the
+// drawings are already in the page, and a script that assembled twenty-four
+// `<svg>` strings would be a second copy of `_ICON_ART` in a template literal —
+// an invariant written twice, which this codebase guards once or not at all.
+const OPTIONS = PICKER ? [...PICKER.querySelectorAll('[role="option"]')] : [];
+// Where the keyboard is, which is NOT which row is stored. `aria-selected` says
+// what you have; this says what you are looking at, and the listbox says so with
+// `aria-activedescendant` — the same arrangement the suggestion popup in this
+// file uses to keep focus on the control while the highlight moves in the list.
+// Named like this and not `at`, `highlight`, `choose`: two classic scripts on
+// one page share one global scope, which is why `report` is not called `say`.
+let AT_ROW = 0;
+
+function highlightRow(next) {
+  AT_ROW = (next + OPTIONS.length) % OPTIONS.length;
+  OPTIONS.forEach((option, i) => option.classList.toggle('on', i === AT_ROW));
+  PICKER.setAttribute('aria-activedescendant', OPTIONS[AT_ROW].id);
+  // `block: 'nearest'`, or every move scrolls the list to centre the row and the
+  // list appears to jump under a reader who pressed Down once.
+  OPTIONS[AT_ROW].scrollIntoView({block: 'nearest'});
+}
+
+// `back` is whether closing should hand focus to the button. Escape and a choice
+// both should — the button is where that person's hand is. Focus LEAVING the
+// list must not, because it left for somewhere the reader chose, and dragging it
+// back is the popup arguing with them.
+function openPicker(open, back = true) {
   PICKER.hidden = !open;
   PICK.setAttribute('aria-expanded', String(open));
-  if (open) PICKER.querySelector('button').focus(); else PICK.focus();
+  if (open) {
+    // Opened on the row that is already stored, so the first arrow press moves
+    // from your own mark rather than from the top of a list of twenty-five.
+    highlightRow(Math.max(0, OPTIONS.findIndex(o => o.getAttribute('aria-selected') === 'true')));
+    PICKER.focus();
+  } else if (back) {
+    PICK.focus();
+  }
+}
+
+async function chooseRow(option) {
+  const name = option.dataset.icon;
+  // The picker stays open on a refusal, with the reason beside it in `#state`:
+  // closing it would leave a page that looks exactly like one where nothing
+  // was pressed, which is the state this feature shipped in once already.
+  if (!await chooseIcon(name)) return;
+  // The drawing is moved, not rebuilt: the chosen row already holds the exact
+  // markup the server would send back, so the new mark is a clone of a node this
+  // page rendered rather than a string assembled from an answer. Nothing crosses
+  // an escaping boundary, and the page does not have to reload to show what it
+  // just saved.
+  const art = option.querySelector('svg');
+  PICK.replaceChildren(...(art ? [art.cloneNode(true)] : []));
+  PICK.classList.toggle('unset', !art);
+  // The list is open again one press later, and it has to open on what is now
+  // stored rather than on what was stored when the page was rendered.
+  OPTIONS.forEach(one => one.setAttribute('aria-selected', String(one === option)));
+  openPicker(false);
+  report(name ? `Your icon is now ${name}.` : 'Your icon is cleared.', false);
 }
 
 if (PICK && PICKER) {
   PICK.onclick = () => openPicker(PICKER.hidden);
-  // Escape closes it, because a popup that only closes by pressing the thing
-  // that opened it is a trap for anybody who got here with the keyboard.
   PICKER.addEventListener('keydown', event => {
-    if (event.key === 'Escape') openPicker(false);
+    // The listbox keys, in the order somebody reaches for them. Escape closes,
+    // because a popup that only closes by pressing the thing that opened it is a
+    // trap for anybody who got here with the keyboard; Home and End because this
+    // list is long enough to scroll and "No icon" is at the top of it.
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      highlightRow(AT_ROW + (event.key === 'ArrowDown' ? 1 : -1));
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      highlightRow(event.key === 'Home' ? 0 : OPTIONS.length - 1);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      // Space as well as Enter, and both prevented: Space on a focused element
+      // scrolls the page, so a listbox that ignored it would answer the second
+      // most obvious key by scrolling the list out from under the reader.
+      event.preventDefault();
+      chooseRow(OPTIONS[AT_ROW]);
+    } else if (event.key === 'Escape') {
+      openPicker(false);
+    }
   });
-  PICKER.addEventListener('click', async event => {
-    const button = event.target.closest('button[data-icon]');
-    if (!button) return;
-    const name = button.dataset.icon;
-    // The picker stays open on a refusal, with the reason beside it in `#state`:
-    // closing it would leave a page that looks exactly like one where nothing
-    // was pressed, which is the state this feature shipped in once already.
-    if (!await chooseIcon(name)) return;
-    // The drawing is moved, not rebuilt: the chosen button already holds the
-    // exact markup the server would send back, so the new mark is a clone of a
-    // node this page rendered rather than a string assembled from an answer.
-    // Nothing crosses an escaping boundary, and the page does not have to
-    // reload to show what it just saved.
-    const art = button.querySelector('svg');
-    PICK.replaceChildren(...(art ? [art.cloneNode(true)] : []));
-    PICK.classList.toggle('unset', !art);
-    openPicker(false);
-    report(name ? `Your icon is now ${name}.` : 'Your icon is cleared.', false);
+  PICKER.addEventListener('click', event => {
+    const option = event.target.closest('[role="option"]');
+    if (option) chooseRow(option);
+  });
+  // Clicking anywhere else closes it. `relatedTarget` is the button when the
+  // button is what was clicked, and closing here as well would let the click
+  // that follows reopen a list the reader was shutting.
+  PICKER.addEventListener('focusout', event => {
+    if (!PICKER.contains(event.relatedTarget) && event.relatedTarget !== PICK) {
+      openPicker(false, false);
+    }
   });
 }
 </script>
@@ -9258,28 +9488,70 @@ td.role { color: var(--muted); font-size: 12px; text-transform: uppercase;
 .avatar { flex: none; display: inline-flex; align-items: center; justify-content: center;
           width: 1.6rem; height: 1.6rem; color: var(--fg); }
 .avatar svg { width: 100%; height: 100%; }
-button.avatar, .picker button.clear {
+button.avatar {
   font: inherit; background: var(--surface); color: var(--fg); cursor: pointer;
   border: 1px solid transparent; border-radius: 5px; padding: .1rem;
 }
-button.avatar:hover, .picker button.clear:hover { border-color: var(--accent); }
+button.avatar:hover { border-color: var(--accent); }
 /* Nothing chosen yet still has to be a target. An empty button is a control
    nobody can find, and this one is the only way to the picker — so the unset
    state is a dashed ring, which reads as a place something goes. */
 button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-radius: 50%;
                             border: 1.5px dashed var(--muted); }
-/* A row of its own inside the wrapping group line. `.picker[hidden]` is (0,2,0)
-   against `.picker`'s (0,1,0), so the attribute wins on specificity and not on
-   source order — which matters because the shell's stylesheet is inlined before
-   this one and a rule that relied on order would be the loser there. */
-.picker { flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: center;
-          gap: .3rem; margin-top: .4rem; }
+/* What the list hangs off. `position: relative` and no z-index on purpose: a
+   positioned element with `z-index: auto` does NOT open a stacking context, so
+   the list's z-index below is weighed in the page's own context against the
+   sticky header's — and 3 beats 2. Given a z-index here the wrapper would become
+   the context, the list would be trapped inside it at the wrapper's own level,
+   and a list left open while the page scrolls would be painted over by the
+   header. `flex: none` for the same reason `.avatar` has it: this is the button's
+   place in a line that wraps. */
+.pickwrap { position: relative; flex: none; display: inline-flex; }
+/* A popup, and no longer a row inside the group line. Twenty-five rows of drawing
+   and name cannot be a line in a wrapping flex row: in flow they push every
+   person below down by the height of the list, which is an accordion rather than
+   a picker, and the reason the old arrangement could get away with a strip of
+   bare buttons was that twelve of them fitted on one line.
+   So it floats, and everything that arrangement bought — no positioning, no
+   z-index, no argument with the sticky header two rows up — is paid for by the
+   wrapper above and by the z-index here, both of them argued rather than tried.
+   `max-height` and not a row count, so a set that grows again still scrolls
+   inside itself rather than off the window. 15rem and not more because this
+   opens downward and only downward: a list that flipped above the button on the
+   rows near the bottom of the page and below it everywhere else is a list nobody
+   can aim at, so the overhang is bounded instead, and the page scrolls to it.
+   `.picker[hidden]` is (0,2,0) against `.picker`'s (0,1,0), so the attribute wins
+   on specificity and not on source order — which matters because the shell's
+   stylesheet is inlined before this one and a rule that relied on order would be
+   the loser there. */
+.picker { position: absolute; z-index: 3; top: calc(100% + .3rem); left: 0;
+          margin: 0; padding: .2rem; list-style: none; min-width: 11rem;
+          max-height: 15rem; overflow-y: auto; overscroll-behavior: contain;
+          background: var(--surface); color: var(--fg);
+          border: 1px solid var(--line-strong); border-radius: 3px;
+          box-shadow: 0 4px 14px rgba(0,0,0,.12); font-size: 13px; }
 .picker[hidden] { display: none; }
-.picker button.avatar { border-color: var(--line); }
-.picker button.clear { width: auto; height: 1.6rem; padding: 0 .5rem; font-size: 12px;
-                       color: var(--muted); border-color: var(--line); }
-/* What the picker said. A line of its own under the picker, the same way the
-   picker takes one under the name — and not a cell at the end of the row, where
+.picker .option { display: flex; align-items: center; gap: .45rem; cursor: pointer;
+                  padding: .2rem .35rem; border-radius: 2px; white-space: nowrap; }
+/* The drawing keeps its own box, so the names all start at the same x whatever
+   width the drawing happens to use. A column of names that stepped in and out
+   with the art is a column nobody can scan, which is the whole reason the names
+   are here. */
+.picker .art { flex: none; display: inline-flex; width: 1.25rem; height: 1.25rem; }
+.picker .art svg { width: 100%; height: 100%; }
+/* Where the keyboard is, in the colour the suggestion popup already uses for the
+   same fact — one language for "this is the row you are on", on the two lists
+   this application has. The drawing follows because it is `currentColor`. */
+.picker .option.on { background: var(--accent); color: var(--on-accent); }
+.picker .option:hover { background: var(--surface-2); }
+.picker .option.on:hover { background: var(--accent); }
+/* And which row is already yours, which is a different fact from the one above
+   and so is drawn in a different channel: weight, not ground. Both at once is the
+   ordinary case — you open the list on your own mark — and two grounds would
+   have made that one row look like two states of the same thing. */
+.picker .option[aria-selected="true"] { font-weight: 650; }
+/* What the picker said. A line of its own under the group line, the same way the
+   picker used to take one under the name — and not a cell at the end of the row, where
    `.tally`'s `margin-left: auto` had put it a full table's width away from the
    button it is about. Empty it is a zero-height line and costs the row a 2px
    gap; `display: none` on `:empty` would cost more than that, because a live
@@ -9558,7 +9830,7 @@ def render_cycle(
 # were a heading over an empty page. A generated deck is the floor somebody edits
 # up from, not the ceiling.
 #
-# Not in the nav. The nav names the six views of the whole plan; a deck is of one
+# Not in the nav. The nav names the views of the whole plan; a deck is of one
 # cycle and is reached from that cycle's page, where the person who is about to
 # present it already is.
 # --------------------------------------------------------------------------- #
@@ -10163,20 +10435,36 @@ def render_issues(
             }
         )
 
+    columns = (
+        ("state", "state"), ("title", "title"), ("reported_by", "reported by"),
+        ("opened", "opened"), ("pitched", "pitched into"), ("tags", "tags"),
+    )
     body = _fragment(
         _ISSUES,
         issues=rows,
-        statuses=list(ISSUE_STATUS),
-        columns=(
-            ("state", "state"), ("title", "title"), ("reported_by", "reported by"),
-            ("opened", "opened"), ("pitched", "pitched into"), ("tags", "tags"),
-        ),
+        # An issue's state and its status are the same four words, which is why
+        # one list serves the filter, the sort rank and the edit control here and
+        # the notes page needs two.
+        states=list(ISSUE_STATUS),
+        closed=["done", "shelved"],
+        columns=columns,
         human=_human,
         links=links,
         editable=base_commit is not None,
+        record_table=Markup(_RECORD_TABLE),
+        nothing=_nothing_rows(
+            len(columns),
+            empty=not rows,
+            headline="No issues are open.",
+            hint="An issue is something somebody noticed and nobody has fixed. "
+                 "There is nothing here, which on a plan this size is good news.",
+            filtered="No issue matches.",
+            href=f"{links.issue}new" if base_commit is not None else "",
+            button="Open an issue",
+        ),
     )
     return _page(
-        "Issues", body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues",
+        "Issues", body, _RECORD_STYLE + _SUGGEST_STYLE, links, "issues",
         unreadable=index.unreadable,
     )
 
@@ -10210,6 +10498,24 @@ def render_issue(
         base_commit=base_commit or "",
         signed_in=signed_in,
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        # The same machinery the notes page uses, with one kind on offer. An issue
+        # that is worth doing is worth a bet, and the bet is what the betting
+        # table reads — so the button says that rather than "promote", which is a
+        # word about this tool and not about the room.
+        promote=(
+            _promote_html(
+                view["id"],
+                PROMOTABLE["issue"],
+                "The pitch starts in Shaping, carrying this issue\u2019s title, its tags "
+                "and its text, and saying in its own document that it came from here. "
+                "The issue stays open until the pitch is done.",
+                "Shape it into a pitch",
+                base_commit or "",
+                links,
+            )
+            if base_commit is not None and not creating
+            else Markup("")
+        ),
         original={
             "title": view["title"],
             "status": view["status"],
@@ -10221,7 +10527,7 @@ def render_issue(
     )
     title = "A new issue" if creating else view["title"] or view["id"]
     return _page(
-        title, body, _ISSUES_STYLE + _SUGGEST_STYLE, links, "issues",
+        title, body, _RECORD_STYLE + _SUGGEST_STYLE, links, "issues",
         unreadable=index.unreadable,
     )
 
@@ -10261,6 +10567,205 @@ def _blank_issue() -> dict:
         "id": "", "title": "", "status": "ready", "state": "ready", "derived": False,
         "reported_by": "", "opened": "", "tags": "", "tag_list": [],
         "pitched_into": "", "pitched_list": [], "pitched": Markup(""),
+        "body": "", "rendered": Markup(""), "problems": [], "search": "",
+    }
+
+
+# What a promotion offers, per inbox, and the word for each.
+#
+# A note gets all three because a note is genuinely unshaped: nobody knows yet
+# whether the thing being thought about is a milestone, a bet or half a day's
+# work, and asking the person who is still confused to decide is the whole
+# service this button provides.
+#
+# An issue gets only `pitch`, and that is the lifecycle the data model already
+# describes: somebody reads the open issues at the betting table and writes a
+# pitch for what matters. Promoting one straight to a task would mint a chore
+# nobody pitched — legal to write by hand, and not a thing a button should make
+# out of "something is broken" without the room agreeing it is worth doing.
+PROMOTABLE = {"note": ("pitch", "task", "project"), "issue": ("pitch",)}
+_ARTICLE = {"pitch": "a pitch", "task": "a task", "project": "a project"}
+
+
+def _promote_html(
+    source_id: str, kinds: Sequence[str], hint: str, button: str, base_commit: str,
+    links: Links = ROUTES,
+) -> Markup:
+    """The promotion control, for either inbox.
+
+    One fragment because the two differ in exactly two things — how many kinds
+    they offer and the sentence above the button — and in nothing else. Written
+    twice, the second copy is where the base commit stops being sent.
+    """
+    return _fragment(
+        _PROMOTE,
+        source=source_id,
+        kinds=[(kind, _ARTICLE[kind]) for kind in kinds],
+        only=kinds[0],
+        hint=hint,
+        button=button,
+        base_commit=base_commit,
+        entity=links.entity,
+    )
+
+
+def render_notes(
+    index: Index, links: Links = STATIC, base_commit: str | None = None
+) -> str:
+    """The one page notes live on.
+
+    Like the issues page, and for the same reason: a note is not an entity, so
+    the table, the graph, the timeline and the people page never see one. The
+    difference between the two pages is the difference between the two records —
+    an issue is something that is broken, a note is something that does not exist
+    yet — and the whole of that difference is in the copy and in the columns.
+    """
+    problems: dict[str, list[str]] = {}
+    for problem in index.note_problems:
+        problems.setdefault(problem.entity_id, []).append(problem.message)
+
+    # Through `_note_view`, which the note's own page also uses: the issues page
+    # builds its row dict and its detail dict separately and they have already
+    # gained fields at different times.
+    rows = [
+        _note_view(note, index, links, problems)
+        for note in sorted(
+            index.notes.values(), key=lambda n: (n.written_on or date.min, n.id), reverse=True
+        )
+    ]
+
+    columns = (
+        ("state", "state"), ("title", "title"), ("written_by", "written by"),
+        ("written", "written"), ("became", "became"), ("tags", "tags"),
+    )
+    body = _fragment(
+        _NOTES,
+        notes=rows,
+        # Two lists where the issues page needs one: `NOTE_STATUS` is what the
+        # edit control may set, and `NOTE_STATES` is what a note may be found in
+        # — they differ by `promoted`, which is derived from the link and can
+        # therefore be filtered and sorted by but never chosen.
+        states=list(NOTE_STATES),
+        closed=["promoted", "dropped"],
+        columns=columns,
+        human=_human,
+        links=links,
+        editable=base_commit is not None,
+        record_table=Markup(_RECORD_TABLE),
+        nothing=_nothing_rows(
+            len(columns),
+            empty=not rows,
+            headline="Nothing has been written down yet.",
+            hint="A note is where an idea goes before anybody knows what it is: half "
+                 "a thought, a name for something, a question nobody has answered. It "
+                 "needs no owner, no size and no cycle \u2014 write it down now and find "
+                 "out what it is later.",
+            filtered="No note matches.",
+            href=f"{links.note}new" if base_commit is not None else "",
+            button="Write a note",
+        ),
+    )
+    return _page(
+        "Notes", body, _RECORD_STYLE + _SUGGEST_STYLE, links, "notes",
+        unreadable=index.unreadable,
+    )
+
+
+def render_note(
+    index: Index,
+    note_id: str | None = None,
+    links: Links = ROUTES,
+    base_commit: str | None = None,
+    signed_in: str = "",
+) -> str:
+    """One note, or a blank one. The same page either way, for the reason the
+    issue page gives: a second, differently-shaped form for writing one down is
+    what made the tool feel like two tools."""
+    creating = note_id is None
+    note = index.notes.get(note_id or "") if not creating else None
+    if not creating and note is None:
+        raise KeyError(note_id)
+    view = _note_view(note, index, links) if note else _blank_note()
+    body = _fragment(
+        _NOTE,
+        note=view,
+        creating=creating,
+        statuses=list(NOTE_STATUS),
+        human=_human,
+        links=links,
+        editable=base_commit is not None,
+        base_commit=base_commit or "",
+        signed_in=signed_in,
+        combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        promote=(
+            _promote_html(
+                view["id"],
+                PROMOTABLE["note"],
+                "The new record starts in Shaping, carrying this note\u2019s title, its "
+                "tags and its text, and saying in its own document that it came from "
+                "here. Nothing else is carried: a note has no owner and no size to "
+                "give it. This note stays, and points at what it became.",
+                "Promote",
+                base_commit or "",
+                links,
+            )
+            if base_commit is not None and not creating
+            else Markup("")
+        ),
+        original={
+            "title": view["title"],
+            "status": view["status"],
+            "written_by": view["written_by"] or "",
+            "became": view["became_list"],
+            "tags": view["tag_list"],
+            "body": view["body"],
+        },
+    )
+    title = "A new note" if creating else view["title"] or view["id"]
+    return _page(
+        title, body, _RECORD_STYLE + _SUGGEST_STYLE, links, "notes",
+        unreadable=index.unreadable,
+    )
+
+
+def _note_view(
+    note: Note, index: Index, links: Links, problems: dict[str, list[str]] | None = None
+) -> dict:
+    if problems is None:
+        problems = {}
+        for problem in index.note_problems:
+            problems.setdefault(problem.entity_id, []).append(problem.message)
+    return {
+        "id": note.id,
+        "title": note.title,
+        "status": note.status,
+        "state": note.state(index.entities),
+        # A note whose link decides its state cannot also be set by hand: two ways
+        # to say one thing disagree the moment one of them is used. `dropped` is
+        # exempt, because a link does not un-say a decision.
+        "derived": bool(note.became) and note.status != "dropped",
+        "written_by": note.written_by,
+        "written": note.written_on.isoformat() if note.written_on else "",
+        "tags": ", ".join(note.tags),
+        "tag_list": list(note.tags),
+        "became": ", ".join(note.became),
+        "became_list": list(note.became),
+        "became_links": _links(note.became, index, links) or Markup("\u2014"),
+        "body": note.body,
+        # `_markdown` and not a bare render: a note is a shaping document in the
+        # making, and it gets the same image and PR handling as one.
+        "rendered": _markdown(note.body, links) if note.body else Markup(""),
+        "problems": problems.get(note.id, []),
+        "search": f"{note.id} {note.title} {' '.join(note.tags)} "
+        f"{note.written_by or ''} {note.body}".lower(),
+    }
+
+
+def _blank_note() -> dict:
+    return {
+        "id": "", "title": "", "status": "thinking", "state": "thinking", "derived": False,
+        "written_by": "", "written": "", "tags": "", "tag_list": [],
+        "became": "", "became_list": [], "became_links": Markup(""),
         "body": "", "rendered": Markup(""), "problems": [], "search": "",
     }
 
@@ -10428,6 +10933,12 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
         # for somebody who owns nothing — and a link that lands on an empty table
         # teaches people the link is broken.
         opens = next((t["role"] for t in tally if t["field"]), None)
+        # What this person has stored, and only if this version can draw it: a
+        # `dragon` nobody has the art for must not mark a row in the picker, and
+        # must not stop "No icon" from being the row the list opens on. Same
+        # bargain as `icon_svg` one line down, said in the one place that has to
+        # agree with it.
+        chosen = index.icons.get(login, "")
         people.append(
             {
                 "login": login,
@@ -10435,7 +10946,8 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
                 # name this version no longer draws comes back as nothing at all,
                 # so the template asks whether there is a mark and never whether
                 # there is a name.
-                "art": icon_svg(index.icons.get(login, "")),
+                "art": icon_svg(chosen),
+                "icon": chosen if chosen in _ICON_ART else "",
                 "mine": editable and login == me,
                 "rows": rows,
                 "tally": tally,
@@ -10457,9 +10969,9 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
     body = _ENV.from_string(_PEOPLE).render(
         people=people,
         links=links,
-        # Every icon, drawn once, for the picker. In `ICONS` order, which puts the
-        # four sky shapes before the eight creatures: a grid sorted by nothing is
-        # a grid a reader has to search rather than scan.
+        # Every icon, drawn once, for the picker. In `ICONS` order, which is the
+        # sky, then the world, then the creatures: a list ordered by nothing is a
+        # list a reader has to search rather than scan.
         icons=[{"name": name, "art": icon_svg(name)} for name in ICONS],
         editable=editable,
         # The same bar the plan's three views draw, over this page's own three
@@ -10569,6 +11081,216 @@ def _combobox_html(index: Index | None) -> Markup:
 # list, because the mark for "you are here" has to be decided once: six links
 # written out by hand were six places for a seventh page to be added and marked
 # nowhere.
+_RECORD_TABLE = """
+<script>
+// The list machinery both inboxes use: search, a state filter, sortable columns
+// and columns you can drag by their edge.
+//
+// One copy, and the argument for sharing it is the same one that says NOT to
+// share the entity table's. That table's version is wound through sticky
+// columns, a narrow breakpoint and per-column expanders, none of which either
+// inbox has — so it was written small a second time on purpose. Between the
+// issues table and the notes table there is no such difference: they are one
+// table over two kinds of record, and the second copy of a hundred and fifty
+// lines is a hundred and fifty lines that drift.
+function attachRecordTable(config) {
+  const TABLE = config.table;
+  // `tr[data-id]`, not every row: the empty-state rows live in the same tbody,
+  // and one sorted, hidden and counted among the records is a page that says
+  // "1 of 0" over a sentence explaining that there is nothing here.
+  const ROWS = [...TABLE.querySelectorAll('tbody tr[data-id]')];
+  const BODY_ROWS = TABLE.querySelector('tbody');
+  const QUERY = config.search;
+  const STATE = config.state;
+  const RANK = config.rank;
+  const WIDTH_KEY = config.widths;
+  const WIDTHS = remembered.map(WIDTH_KEY);
+
+  // Open records are the question these pages exist to answer, so they are what
+  // each shows until somebody asks for more.
+  function apply() {
+    const text = QUERY.value.trim().toLowerCase();
+    const wanted = STATE.value;
+    let shown = 0;
+    for (const row of ROWS) {
+      const state = row.dataset.state;
+      const open = !config.closed.includes(state);
+      const matches =
+        (wanted === '*' ? true : wanted ? state === wanted : open) &&
+        (!text || row.dataset.text.includes(text));
+      row.hidden = !matches;
+      shown += matches ? 1 : 0;
+    }
+    config.shown.textContent = shown;
+    // A header row over nothing reads as a broken page whichever emptiness it
+    // is. This is the one the controls caused, so it is the one that can offer a
+    // way out; the other two — no records at all, and a plan that would not load
+    // — are drawn by the server and by the shell, because neither is something
+    // pressing a button here could undo.
+    if (config.nothing) config.nothing.hidden = shown > 0;
+  }
+  QUERY.oninput = apply;
+  STATE.onchange = apply;
+  if (config.clear) {
+    config.clear.onclick = () => {
+      QUERY.value = '';
+      // Both controls, because a Clear that leaves the state select set is a
+      // Clear that did not clear — the entity table already learned this one.
+      STATE.value = '';
+      apply();
+    };
+  }
+  apply();
+
+  // Sorting, the way the table view sorts: click to sort, click again to
+  // reverse. `state` is a sequence rather than a word, so it gets a rank.
+  let sorted = null;
+  let reversed = false;
+  const HEADS = [...TABLE.querySelectorAll('th[data-sort]')];
+
+  const keyOf = head => head.dataset.sort;
+
+  function applyWidths() {
+    if (!Object.keys(WIDTHS).length) return;
+    TABLE.style.tableLayout = 'fixed';
+    let total = 0;
+    for (const head of HEADS) {
+      const width = WIDTHS[keyOf(head)];
+      if (width) { head.style.width = width + 'px'; total += width; }
+    }
+    // A fixed layout divides the space it is given, so at 100% widening one
+    // column silently squeezes every other — which is what freezing them was
+    // meant to prevent. The table is as wide as its columns and scrolls in its
+    // own box.
+    TABLE.style.width = total + 'px';
+  }
+
+  // What each column needs with every cell on one line. Measured from a layout
+  // that has forgotten the widths already applied, or a column can only ever be
+  // measured wider than it currently is.
+  function naturalWidths() {
+    const applied = HEADS.map(head => head.style.width);
+    HEADS.forEach(head => { head.style.width = ''; });
+    TABLE.classList.add('measuring');
+    TABLE.style.tableLayout = 'auto';
+    TABLE.style.width = 'max-content';
+    const natural = HEADS.map(head => head.getBoundingClientRect().width);
+    TABLE.classList.remove('measuring');
+    HEADS.forEach((head, i) => { head.style.width = applied[i]; });
+    return natural;
+  }
+
+  HEADS.forEach((head, i) => {
+    const grip = document.createElement('span');
+    grip.className = 'grip';
+    head.append(grip);
+    // Double-click a grip and the column shrinks to what its widest cell needs
+    // on one line — the width you would have dragged to, without the dragging.
+    grip.ondblclick = event => {
+      event.stopPropagation();
+      WIDTHS[keyOf(head)] = Math.ceil(naturalWidths()[i]);
+      remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
+      applyWidths();
+    };
+    grip.onpointerdown = event => {
+      event.preventDefault();
+      grip.classList.add('dragging');
+      // Freeze every column first, or resizing one reflows all the others.
+      for (const other of HEADS) {
+        const key = keyOf(other);
+        WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
+      }
+      TABLE.style.tableLayout = 'fixed';
+      const key = keyOf(head);
+      const from = event.clientX;
+      const was = WIDTHS[key];
+      const move = e => {
+        WIDTHS[key] = Math.max(40, was + e.clientX - from);
+        applyWidths();
+      };
+      const stop = () => {
+        grip.classList.remove('dragging');
+        remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
+        removeEventListener('pointermove', move);
+        removeEventListener('pointerup', stop);
+      };
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', stop);
+    };
+  });
+  applyWidths();
+
+  function mark() {
+    for (const head of HEADS) {
+      const here = head.dataset.sort === sorted;
+      head.classList.toggle('sorted', here);
+      // The direction was invisible, so a column looked the same sorted either
+      // way. Announced as well as drawn: aria-sort is all a screen reader has.
+      head.setAttribute('aria-sort', here ? (reversed ? 'descending' : 'ascending') : 'none');
+      head.querySelector('.dir').textContent = here ? (reversed ? '▾' : '▴') : '';
+    }
+  }
+
+  for (const head of HEADS) {
+    head.querySelector('button').addEventListener('click', () => {
+      const key = head.dataset.sort;
+      reversed = sorted === key ? !reversed : false;
+      sorted = key;
+      const value = row => key === 'state'
+        ? String(RANK.indexOf(row.dataset.state)).padStart(3, '0')
+        : (row.dataset[key] || '');
+      const order = [...ROWS].sort((a, b) => value(a).localeCompare(value(b)));
+      if (reversed) order.reverse();
+      // Inserted before the empty-state row rather than appended past it.
+      // Appended, every record ends up BELOW "there is nothing here" the first
+      // time somebody sorts a table that has records in it.
+      const tail = BODY_ROWS.querySelector('tr.nothing');
+      order.forEach(row => BODY_ROWS.insertBefore(row, tail));
+      mark();
+    });
+  }
+}
+</script>
+"""
+
+# The two ways a record table can be empty that a script cannot undo, and the
+# one it can. Drawn INSIDE the table body, with the control that gets you out of
+# it, because an empty table with the message somewhere else is still a header
+# row over a void — finding F1, which keeps coming back through new mechanisms.
+_NOTHING = """
+{% if empty %}
+<tr class="nothing"><td colspan="{{ columns }}">
+  <p class="headline">{{ headline }}</p>
+  <p class="hint">{{ hint }}</p>
+  {% if href %}<a class="button primary" href="{{ href }}">{{ button }}</a>{% endif %}
+</td></tr>
+{% else %}
+<tr class="nothing" id="nomatch" hidden><td colspan="{{ columns }}">
+  <p class="headline">{{ filtered }}</p>
+  <p class="hint">Every one of them is hidden by the controls above.</p>
+  <button type="button" id="clear-search">Clear the search</button>
+</td></tr>
+{% endif %}
+"""
+
+
+def _nothing_rows(
+    columns: int, empty: bool, headline: str, hint: str, filtered: str,
+    href: str = "", button: str = "",
+) -> Markup:
+    """The empty state for one record table, as table rows.
+
+    Both cases are rendered here and only one of them can ever be on a page: with
+    no records at all the server draws the sentence about the plan, and with some
+    it draws the hidden row the filter reveals. The one that cannot happen is not
+    rendered, so there is no chance of a page showing both.
+    """
+    return _fragment(
+        _NOTHING, columns=columns, empty=empty, headline=headline, hint=hint,
+        filtered=filtered, href=href, button=button,
+    )
+
+
 _ISSUES = """
 <h1 class="sr-only">Issues</h1>
 <p class="hint">Something somebody noticed. At the betting table somebody reads what
@@ -10581,7 +11303,7 @@ _ISSUES = """
   <div class="facets">
     <label class="facet">state
       <select id="state-filter"><option value="">all open</option>
-        {% for value in statuses %}<option value="{{ value }}">{{ human(value) }}</option>
+        {% for value in states %}<option value="{{ value }}">{{ human(value) }}</option>
         {% endfor %}
         <option value="*">everything</option>
       </select>
@@ -10589,7 +11311,7 @@ _ISSUES = """
   </div>
 </div>
 <div id="summary"><span id="shown">{{ issues|length }}</span> of {{ issues|length }}</div>
-<div class="table-scroll"><table id="issues"><thead><tr>
+<div class="table-scroll"><table id="issues" class="records"><thead><tr>
   {#- A real button inside every header, the way the entity table does it: there
       is no way to tab to a table cell, so a click handler on the cell alone made
       sorting mouse-only. The direction glyph has its own reserved box so that
@@ -10612,145 +11334,21 @@ _ISSUES = """
     <td>{{ issue.tags or '—' }}</td>
   </tr>
   {% endfor %}
+  {{ nothing }}
 </tbody></table></div>
+{{ record_table }}
 <script>
-// Open issues are the question the page exists to answer, so they are what it
-// shows until somebody asks for more.
-const ROWS = [...document.querySelectorAll('#issues tbody tr')];
-const QUERY = document.getElementById('q');
-const STATE = document.getElementById('state-filter');
-const BODY_ROWS = document.querySelector('#issues tbody');
-
-function apply() {
-  const text = QUERY.value.trim().toLowerCase();
-  const wanted = STATE.value;
-  let shown = 0;
-  for (const row of ROWS) {
-    const state = row.dataset.state;
-    const open = state !== 'done' && state !== 'shelved';
-    const matches =
-      (wanted === '*' ? true : wanted ? state === wanted : open) &&
-      (!text || row.dataset.text.includes(text));
-    row.hidden = !matches;
-    shown += matches ? 1 : 0;
-  }
-  document.getElementById('shown').textContent = shown;
-}
-QUERY.oninput = apply;
-STATE.onchange = apply;
-apply();
-
-// Sorting, the way the table view sorts: click to sort, click again to reverse.
-// `state` is a sequence rather than a word, so it gets a rank like status does.
-const RANK = {{ statuses|tojson }};
-let sorted = null;
-let reversed = false;
-const HEADS = [...document.querySelectorAll('#issues th[data-sort]')];
-const TABLE = document.getElementById('issues');
-
-// Columns you can drag, the way the entity table's are. Its own machinery is
-// wound through sticky columns, a narrow breakpoint and the per-column expanders,
-// none of which this table has — so this is the same behaviour written small,
-// against the same shared `remembered` and the same `.grip` and `.measuring`
-// rules, rather than the same code made general.
-const WIDTH_KEY = 'openproj:issue-widths:1';
-const WIDTHS = remembered.map(WIDTH_KEY);
-const keyOf = head => head.dataset.sort;
-
-function applyWidths() {
-  if (!Object.keys(WIDTHS).length) return;
-  TABLE.style.tableLayout = 'fixed';
-  let total = 0;
-  for (const head of HEADS) {
-    const width = WIDTHS[keyOf(head)];
-    if (width) { head.style.width = width + 'px'; total += width; }
-  }
-  // A fixed layout divides the space it is given, so at 100% widening one column
-  // silently squeezes every other — which is what freezing them was meant to
-  // prevent. The table is as wide as its columns and scrolls in its own box.
-  TABLE.style.width = total + 'px';
-}
-
-// What each column needs with every cell on one line. Measured from a layout that
-// has forgotten the widths already applied, or a column can only ever be measured
-// wider than it currently is.
-function naturalWidths() {
-  const applied = HEADS.map(head => head.style.width);
-  HEADS.forEach(head => { head.style.width = ''; });
-  TABLE.classList.add('measuring');
-  TABLE.style.tableLayout = 'auto';
-  TABLE.style.width = 'max-content';
-  const natural = HEADS.map(head => head.getBoundingClientRect().width);
-  TABLE.classList.remove('measuring');
-  HEADS.forEach((head, i) => { head.style.width = applied[i]; });
-  return natural;
-}
-
-HEADS.forEach((head, i) => {
-  const grip = document.createElement('span');
-  grip.className = 'grip';
-  head.append(grip);
-  // Double-click a grip and the column shrinks to what its widest cell needs on
-  // one line — the width you would have dragged to, without the dragging.
-  grip.ondblclick = event => {
-    event.stopPropagation();
-    WIDTHS[keyOf(head)] = Math.ceil(naturalWidths()[i]);
-    remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
-    applyWidths();
-  };
-  grip.onpointerdown = event => {
-    event.preventDefault();
-    grip.classList.add('dragging');
-    // Freeze every column first, or resizing one reflows all the others.
-    for (const other of HEADS) {
-      const key = keyOf(other);
-      WIDTHS[key] = WIDTHS[key] || Math.round(other.getBoundingClientRect().width);
-    }
-    TABLE.style.tableLayout = 'fixed';
-    const key = keyOf(head);
-    const from = event.clientX;
-    const was = WIDTHS[key];
-    const move = e => {
-      WIDTHS[key] = Math.max(40, was + e.clientX - from);
-      applyWidths();
-    };
-    const stop = () => {
-      grip.classList.remove('dragging');
-      remembered.set(WIDTH_KEY, JSON.stringify(WIDTHS));
-      removeEventListener('pointermove', move);
-      removeEventListener('pointerup', stop);
-    };
-    addEventListener('pointermove', move);
-    addEventListener('pointerup', stop);
-  };
+attachRecordTable({
+  table: document.getElementById('issues'),
+  search: document.getElementById('q'),
+  state: document.getElementById('state-filter'),
+  shown: document.getElementById('shown'),
+  nothing: document.getElementById('nomatch'),
+  clear: document.getElementById('clear-search'),
+  rank: {{ states|tojson }},
+  closed: {{ closed|tojson }},
+  widths: 'openproj:issue-widths:1',
 });
-applyWidths();
-
-function mark() {
-  for (const head of HEADS) {
-    const here = head.dataset.sort === sorted;
-    head.classList.toggle('sorted', here);
-    // The direction was invisible, so a column looked the same sorted either
-    // way. Announced as well as drawn: aria-sort is all a screen reader has.
-    head.setAttribute('aria-sort', here ? (reversed ? 'descending' : 'ascending') : 'none');
-    head.querySelector('.dir').textContent = here ? (reversed ? '▾' : '▴') : '';
-  }
-}
-
-for (const head of HEADS) {
-  head.querySelector('button').addEventListener('click', () => {
-    const key = head.dataset.sort;
-    reversed = sorted === key ? !reversed : false;
-    sorted = key;
-    const value = row => key === 'state'
-      ? String(RANK.indexOf(row.dataset.state)).padStart(3, '0')
-      : (row.dataset[key] || '');
-    const order = [...ROWS].sort((a, b) => value(a).localeCompare(value(b)));
-    if (reversed) order.reverse();
-    order.forEach(row => BODY_ROWS.append(row));
-    mark();
-  });
-}
 </script>
 """
 
@@ -10813,6 +11411,7 @@ _ISSUE = """
             placeholder="What happened, and how to see it again.">{{ issue.body }}</textarea>
   {% endif %}
 </form>
+{{ promote }}
 {{ combobox }}
 {% if editable %}
 <script>
@@ -10924,57 +11523,353 @@ SAVE.onclick = async () => {
 {% endif %}
 """
 
-_ISSUES_STYLE = """
-#issues { border-collapse: collapse; width: 100%; font-size: 13px; }
-#issues th, #issues td {
+_PROMOTE = """
+<div id="promote">
+  {% if kinds|length > 1 %}
+  <label for="into">Promote this into</label>
+  <select id="into">
+    {% for value, label in kinds %}<option value="{{ value }}">{{ label }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <button type="button" id="promote-go" class="button primary">{{ button }}</button>
+  <span id="promoted" role="status" aria-live="polite"></span>
+  <p class="hint">{{ hint }}</p>
+</div>
+<script>
+{#- An IIFE, because this fragment lands on a page that has already declared
+    FORM, SAVE and BASE at top level and a second `const` of any of them is a
+    SyntaxError that takes the whole script block with it — including the save
+    button, which is the control this bar sits beneath. -#}
+(() => {
+  const GO = document.getElementById('promote-go');
+  const INTO = document.getElementById('into');
+  const SAID = document.getElementById('promoted');
+  GO.onclick = async () => {
+    // Disabled first and never re-enabled on success. Promotion mints a record,
+    // so a second press is a second pitch — and the page navigates away rather
+    // than staying on a note that now has to be reloaded to look right.
+    GO.disabled = true;
+    SAID.textContent = '';
+    const response = await fetch('/api/promote', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        source: {{ source|tojson }},
+        kind: INTO ? INTO.value : {{ only|tojson }},
+        base_commit: {{ base_commit|tojson }},
+      }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      GO.disabled = false;
+      SAID.textContent = refusal(answer, response.status);
+      return;
+    }
+    location.href = {{ entity|tojson }} + answer.id;
+  };
+})();
+</script>
+"""
+
+_NOTES = """
+<h1 class="sr-only">Notes</h1>
+<p class="hint">Something somebody is thinking about, before anybody knows what it
+  is. A note has no owner, no size and no cycle — when it turns out to be work,
+  promote it and it becomes a project, a pitch or a task.</p>
+{% if editable %}
+<p class="editbar"><a class="button" href="{{ links.note }}new">Write a note</a></p>
+{% endif %}
+<div id="controls">
+  <input id="q" type="search" placeholder="Search notes" aria-label="Search notes">
+  <div class="facets">
+    <label class="facet">state
+      <select id="state-filter"><option value="">still thinking</option>
+        {% for value in states %}<option value="{{ value }}">{{ human(value) }}</option>
+        {% endfor %}
+        <option value="*">everything</option>
+      </select>
+    </label>
+  </div>
+</div>
+<div id="summary"><span id="shown">{{ notes|length }}</span> of {{ notes|length }}</div>
+<div class="table-scroll"><table id="notes" class="records"><thead><tr>
+  {% for column, label in columns %}
+  <th data-sort="{{ column }}" aria-sort="none"
+    ><button type="button">{{ label }}<span class="dir" aria-hidden="true"></span></button></th>
+  {%- endfor %}
+</tr></thead><tbody>
+  {% for note in notes %}
+  <tr data-id="{{ note.id }}" data-state="{{ note.state }}" data-text="{{ note.search }}"
+      data-title="{{ note.title }}" data-written_by="{{ note.written_by or '' }}"
+      data-written="{{ note.written }}" data-became="{{ note.became }}"
+      data-tags="{{ note.tags }}">
+    <td><span class="badge state-{{ note.state }}">{{ human(note.state) }}</span></td>
+    <td><a href="{{ links.note }}{{ note.id }}">{{ note.title }}</a></td>
+    <td>{{ note.written_by or '—' }}</td>
+    <td class="derived">{{ note.written or '—' }}</td>
+    <td>{{ note.became_links }}</td>
+    <td>{{ note.tags or '—' }}</td>
+  </tr>
+  {% endfor %}
+  {{ nothing }}
+</tbody></table></div>
+{{ record_table }}
+<script>
+attachRecordTable({
+  table: document.getElementById('notes'),
+  search: document.getElementById('q'),
+  state: document.getElementById('state-filter'),
+  shown: document.getElementById('shown'),
+  nothing: document.getElementById('nomatch'),
+  clear: document.getElementById('clear-search'),
+  rank: {{ states|tojson }},
+  // What "still thinking" hides. A promoted note is answered and a dropped one
+  // was decided against; neither is an idea anybody is still turning over, which
+  // is the only question this page opens with.
+  closed: {{ closed|tojson }},
+  widths: 'openproj:note-widths:1',
+});
+</script>
+"""
+
+_NOTE = """
+<p class="back"><a href="{{ links.notes }}">← all notes</a></p>
+{% if editable %}
+<p class="editbar">
+  <button type="button" id="toggle">{{ 'Cancel' if creating else 'Edit' }}</button>
+  <button type="button" id="save" {{ '' if creating else 'hidden' }}>
+    {{ 'Write it down' if creating else 'Save' }}</button>
+  <span id="state" role="status" aria-live="polite"></span>
+</p>
+{% endif %}
+<h1>{% if creating %}A new note{% else %}<span class="read">{{ note.title }}</span>
+{% endif %}</h1>
+{% if not creating %}
+<p class="meta"><code>{{ note.id }}</code> ·
+  <span class="badge state-{{ note.state }}">{{ human(note.state) }}</span>
+  {% if note.written %}· written {{ note.written }}{% endif %}
+  {% if note.written_by %}· by {{ note.written_by }}{% endif %}</p>
+{% endif %}
+<form id="edit" data-id="{{ note.id }}" onsubmit="return false">
+  <input type="hidden" name="base_commit" value="{{ base_commit }}">
+  <input name="title" class="field title-field" value="{{ note.title }}"
+         placeholder="What are you thinking about?" autocomplete="off" aria-label="Title">
+  <dl id="facts">
+    <dt>State</dt>
+    <dd><span class="read">{{ human(note.state) }}</span>
+      <select name="status" class="field" {{ 'disabled' if note.derived else '' }}>
+        {% for value in statuses %}<option value="{{ value }}"
+          {{ 'selected' if value == note.status else '' }}>{{ human(value) }}</option>
+        {% endfor %}
+      </select>
+      {% if note.derived %}<span class="hint">from what it became</span>
+      {% endif %}</dd>
+    <dt>Written by</dt>
+    <dd><span class="read">{{ note.written_by or '—' }}</span>
+      <input name="written_by" data-suggest="people" class="field"
+             value="{{ note.written_by }}" autocomplete="off"
+             placeholder="{{ signed_in }}"></dd>
+    <dt>Became</dt>
+    <dd><span class="read">{{ note.became_links }}</span>
+      <input name="became" data-type="list" data-suggest="entities" class="field"
+             value="{{ note.became }}" autocomplete="off"></dd>
+    <dt>Tags</dt>
+    <dd><span class="read">{{ note.tags or '—' }}</span>
+      <input name="tags" data-type="list" data-suggest="tags" class="field"
+             value="{{ note.tags }}" autocomplete="off"></dd>
+  </dl>
+  {% if note.problems %}<ul class="problems">
+    {% for problem in note.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
+  <div class="doc read">{{ note.rendered }}</div>
+  {% if editable %}
+  <p class="bodybar">
+    <span id="marks" class="marks"></span>
+    <span class="hint">paste or drop an image to put it in the plan</span>
+    <span class="hint" id="upload" role="status" aria-live="polite"></span>
+  </p>
+  <textarea name="body" class="field body-field" rows="12"
+    placeholder="What is the idea, and what is confusing about it.">{{ note.body }}</textarea>
+  {% endif %}
+</form>
+{{ promote }}
+{{ combobox }}
+{% if editable %}
+<script>
+const FORM = document.getElementById('edit');
+const SAVE = document.getElementById('save');
+const SAY = document.getElementById('state');
+const BASE = FORM.querySelector('[name=base_commit]');
+const BODY = FORM.querySelector('[name=body]');
+const CREATING = {{ 'true' if creating else 'false' }};
+const ORIGINAL = {{ original|tojson }};
+const FIELDS = ['title', 'status', 'written_by', 'became', 'tags'];
+
+attachUploads(BODY, document.getElementById('upload'));
+attachEditing(BODY, document.getElementById('marks'));
+for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
+
+function say(message) { SAY.textContent = message; }
+
+function read(name) {
+  const control = FORM.querySelector(`[name=${name}]`);
+  if (!control) return null;
+  const value = control.value.trim();
+  if (control.dataset.type === 'list')
+    return value ? [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))] : [];
+  return value;
+}
+
+function changed() {
+  // Diffed against what was rendered, never serialised whole: sending every field
+  // would overwrite whatever somebody else changed while this tab was open.
+  const fields = {};
+  for (const name of FIELDS) {
+    const now = read(name);
+    if (now === null) continue;
+    if (JSON.stringify(now) !== JSON.stringify(ORIGINAL[name])) fields[name] = now;
+  }
+  return fields;
+}
+
+function dirty() {
+  const count = Object.keys(changed()).length + (BODY.value !== ORIGINAL.body ? 1 : 0);
+  if (!CREATING) SAVE.hidden = !editing();
+  SAVE.disabled = !CREATING && count === 0;
+  if (!CREATING) say(count ? `${count} unsaved change${count === 1 ? '' : 's'}` : '');
+}
+
+function editing() {
+  return CREATING || document.body.classList.contains('editing');
+}
+
+function show(on) {
+  document.body.classList.toggle('editing', on);
+  document.getElementById('toggle').textContent = on ? 'Cancel' : 'Edit';
+  dirty();
+}
+
+FORM.addEventListener('input', dirty);
+FORM.addEventListener('change', dirty);
+
+if (!CREATING) {
+  document.getElementById('toggle').onclick = () => {
+    const on = !document.body.classList.contains('editing');
+    if (!on) {
+      // Cancel puts back what was rendered rather than reloading: a reload would
+      // also throw away a body somebody is part way through.
+      for (const name of FIELDS) {
+        const control = FORM.querySelector(`[name=${name}]`);
+        if (!control) continue;
+        const was = ORIGINAL[name];
+        control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
+      }
+      BODY.value = ORIGINAL.body;
+    }
+    show(on);
+  };
+  show(false);
+} else {
+  // Creating IS editing. Without this the page rendered every control and then
+  // hid all of them behind `body.editing`, so a new note was a heading, a Save
+  // button and nothing to type in.
+  document.body.classList.add('editing');
+  document.getElementById('toggle').onclick = () => { location.href = '{{ links.notes }}'; };
+  dirty();
+}
+
+SAVE.onclick = async () => {
+  SAVE.disabled = true;
+  const route = CREATING ? '/api/note' : `/api/note/${FORM.dataset.id}`;
+  const response = await fetch(route, {
+    method: CREATING ? 'POST' : 'PATCH',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      base_commit: BASE.value,
+      title: read('title'),
+      fields: CREATING
+        ? {...changed(), title: read('title')}
+        : changed(),
+      body: BODY.value,
+    }),
+  });
+  const answer = await response.json();
+  if (!response.ok) {
+    SAVE.disabled = false;
+    say(refusal(answer, response.status));
+    return;
+  }
+  location.href = CREATING ? `{{ links.note }}${answer.id}` : location.pathname;
+};
+</script>
+{% endif %}
+"""
+
+# One stylesheet for both inboxes, for the reason `attachRecordTable` is one
+# script: the issues table and the notes table are the same table over two kinds
+# of record. `.records` and not `#issues, #notes`, so a third one costs a class
+# on a `<table>` rather than an edit to fourteen selectors — which is how a rule
+# comes to be right for two tables and missing on the third.
+_RECORD_STYLE = """
+.records { border-collapse: collapse; width: 100%; font-size: 13px; }
+.records th, .records td {
   border-bottom: 1px solid var(--line); padding: .35rem .6rem; text-align: left;
   vertical-align: top;
   /* Border-box, or a width set from a measured box gains the padding again and
      every column grows by exactly one cell's worth on the first drag. The entity
-     table carries this rule in its own stylesheet, which this page does not
+     table carries this rule in its own stylesheet, which these pages do not
      get — and dragging one column here moved all six until it did. */
   box-sizing: border-box;
   /* A PR reference has no space in it, so at a narrow width it hangs over the
      next column instead of wrapping inside its own. */
   overflow-wrap: anywhere;
 }
-#issues th { color: var(--muted); font-weight: 400; font-size: 11px;
-             text-transform: uppercase; letter-spacing: .04em; user-select: none;
-             position: sticky; top: 0; z-index: 3; background: var(--surface);
-             /* A collapsed border is not painted on a sticky cell — the first row
-                scrolls straight over the top of it — so the rule is drawn inside
-                the box instead. */
-             box-shadow: inset 0 -1px 0 var(--line); }
+.records th { color: var(--muted); font-weight: 400; font-size: 11px;
+              text-transform: uppercase; letter-spacing: .04em; user-select: none;
+              position: sticky; top: 0; z-index: 3; background: var(--surface);
+              /* A collapsed border is not painted on a sticky cell — the first row
+                 scrolls straight over the top of it — so the rule is drawn inside
+                 the box instead. */
+              box-shadow: inset 0 -1px 0 var(--line); }
 /* The grip is positioned against this. */
-#issues th { position: relative; }
+.records th { position: relative; }
 /* And the grip itself, which the entity table carries in ITS stylesheet — so
    the span was rendered here with no width, no cursor and nothing to see: a
    control that existed, worked when a script poked it, and could not be reached
    by a hand. */
-#issues th .grip {
+.records th .grip {
   position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
 }
-#issues th .grip::before {
+.records th .grip::before {
   content: ""; position: absolute; top: 20%; bottom: 20%; right: 3px; width: 1px;
   background: var(--line-strong);
 }
-#issues th .grip:hover::before,
-#issues th .grip.dragging::before { background: var(--accent); width: 2px; }
-#issues th button { font: inherit; color: inherit; letter-spacing: inherit;
-                    text-transform: inherit; background: none; border: 0; padding: 0;
-                    cursor: pointer; }
+.records th .grip:hover::before,
+.records th .grip.dragging::before { background: var(--accent); width: 2px; }
+.records th button { font: inherit; color: inherit; letter-spacing: inherit;
+                     text-transform: inherit; background: none; border: 0; padding: 0;
+                     cursor: pointer; }
 /* Reserved whether or not this is the sorted column, so sorting does not shove
    every header one glyph to the left. */
-#issues th .dir { display: inline-block; width: .8em; color: var(--accent); }
-#issues th.sorted { color: inherit; font-weight: 700; }
-#issues td:nth-child(2) { font-weight: 600; }
+.records th .dir { display: inline-block; width: .8em; color: var(--accent); }
+.records th.sorted { color: inherit; font-weight: 700; }
+.records td:nth-child(2) { font-weight: 600; }
+/* Except on the row that says there is nothing here, whose cell is the second
+   one only by accident of spanning from it. */
+.records tr.nothing td { font-weight: 400; }
 .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
          white-space: nowrap; }
+/* Live above the page's ground, over for everything that is finished with. The
+   word is in the element, so this is the second channel and not the only one —
+   which is the whole reason these are text and not four dots. */
 .state-ready { color: var(--accent); }
 .state-in_progress { color: var(--accent); }
+.state-thinking { color: var(--accent); }
 .state-done { color: var(--muted); }
 .state-shelved { color: var(--muted); }
-/* The few rules this page shares with the detail page, copied rather than
+.state-promoted { color: var(--muted); }
+.state-dropped { color: var(--muted); }
+/* The few rules these pages share with the detail page, copied rather than
    inherited. `_DETAIL_STYLE` carries the width grip and its transition, which is
    a control these pages do not have — and the motion inventory is right that a
    page should not ship animation for an element it never renders. */
@@ -10982,6 +11877,8 @@ _ISSUES_STYLE = """
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
+.doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
+                  border-left: 2px solid var(--line-strong); }
 /* `display: flex` and not `inline-block`, and NOT carrying `.field`: with that
    class on it, `body.editing .field` won on specificity and the bar went
    inline — putting the textarea on the same line as the buttons. */
@@ -10998,12 +11895,21 @@ body.editing .read { display: none; }
 .body-field { width: 100%; max-width: 44rem; font-family: ui-monospace, monospace;
               font-size: 13px; }
 #facts .field { width: 100%; max-width: 28rem; font: inherit; font-size: 13px; }
+/* The promotion bar. Hidden while the record is being edited: promoting carries
+   the STORED body across, so offering it over a textarea somebody is halfway
+   through is offering to promote a document they cannot see. */
+#promote { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
+           border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
+body.editing #promote { display: none; }
+#promote select { font: inherit; font-size: 13px; }
+#promote .hint { margin: 0; }
 """
 
 
 _NAV = (
     ("table", "Table"), ("graph", "Graph"), ("timeline", "Timeline"),
     ("cycles", "Cycles"), ("people", "People"), ("issues", "Issues"),
+    ("notes", "Notes"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
 # Pages that exist and are not in the nav, and may still say which item to light.
@@ -11040,9 +11946,12 @@ def _page(
     it is serving. The caller knows; nothing else does.
 
     Empty means no item is marked, which `/new` uses deliberately: it is not one
-    of the six, and pressing Table from it leaves the form. `aria-current="page"`
-    claims a page *within* the set, and a form that is not in the set gets a
-    visible `<h1>` instead — the one page that names itself on screen.
+    of the nav's views, and pressing Table from it leaves the form.
+    `aria-current="page"` claims a page *within* the set, and a form that is not in
+    the set gets a visible `<h1>` instead — the one page that names itself on
+    screen. Said as "the set" and not as a number: the count has been written into
+    three docstrings twice now, and has been wrong in all of them each time a page
+    was added or taken away.
 
     A `current` that is not a nav key raises rather than quietly marking nothing,
     because marking nothing is the exact defect this round is here to fix.
@@ -11228,6 +12137,7 @@ def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tupl
         ("people.html", render_people(index)),
         ("cycles.html", render_cycles(index)),
         ("issues.html", render_issues(index)),
+        ("notes.html", render_notes(index)),
         ("graph.html", render_graph(index)),
         ("timeline.html", render_timeline(index)),
     ):

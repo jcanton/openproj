@@ -197,12 +197,18 @@ def test_an_issue_cannot_carry_a_field_it_does_not_have(client: TestClient, repo
 
 
 def test_the_page_shows_open_issues_until_it_is_asked_for_more(client: TestClient):
-    """Open issues are the question the page exists to answer."""
-    page = client.get("/issues").text
-    script = re.search(r"function apply\(\).*?\n\}", page, re.S).group(0)
+    """Open issues are the question the page exists to answer.
 
-    assert "state !== 'done' && state !== 'shelved'" in script
+    The filter itself now lives in `attachRecordTable`, which the notes page uses
+    too, so what is closed is data this page hands it rather than two status words
+    written into a script. Both halves are asserted: the rule, and this page's
+    answer to it."""
+    page = client.get("/issues").text
+    script = re.search(r"  function apply\(\).*?\n  \}", page, re.S).group(0)
+
+    assert "!config.closed.includes(state)" in script
     assert "wanted === '*' ? true" in script
+    assert 'closed: ["done", "shelved"]' in page
 
 
 def test_the_list_is_a_table_sorted_the_way_the_other_table_sorts(client: TestClient):
@@ -343,11 +349,11 @@ def test_the_issue_columns_can_be_dragged(client: TestClient):
     none of which this table has."""
     page = client.get("/issues").text
 
-    assert "const WIDTH_KEY = 'openproj:issue-widths:1';" in page
+    assert "widths: 'openproj:issue-widths:1'," in page
     assert "grip.onpointerdown" in page
     assert "grip.ondblclick" in page, "double-click fits the column to its widest cell"
     assert "remembered.map(WIDTH_KEY)" in page, "and it is remembered"
-    assert "#issues th { position: relative; }" in page, "the grip is positioned against it"
+    assert ".records th { position: relative; }" in page, "the grip is positioned against it"
 
 
 def test_an_issue_cell_is_border_box(client: TestClient):
@@ -355,7 +361,7 @@ def test_an_issue_cell_is_border_box(client: TestClient):
     every column grows by exactly one cell's worth on the first drag. The entity
     table carries this in its own stylesheet, which this page does not get —
     dragging one column here moved all six until it did."""
-    style = re.search(r"#issues th, #issues td \{(.*?)\}", client.get("/issues").text, re.S)
+    style = re.search(r"\.records th, \.records td \{(.*?)\}", client.get("/issues").text, re.S)
 
     assert style and "box-sizing: border-box;" in style.group(1)
 
@@ -371,8 +377,8 @@ def test_the_grip_is_a_thing_a_hand_can_reach(client: TestClient):
     """
     style = client.get("/issues").text
 
-    for rule in ("#issues th .grip {", "position: absolute;", "cursor: col-resize;",
-                 "#issues th .grip::before {"):
+    for rule in (".records th .grip {", "position: absolute;", "cursor: col-resize;",
+                 ".records th .grip::before {"):
         assert rule in style, rule
     # Positioned against the header cell, or `right: 0` is the page's right edge.
-    assert "#issues th { position: relative; }" in style
+    assert ".records th { position: relative; }" in style

@@ -1,4 +1,4 @@
-"""`openproj check`, `openproj render`, `openproj schedule`.
+"""`openproj check`, `openproj render`, `openproj schedule`, `openproj demo`.
 
 The CLI can do everything the web view can. That is deliberate: if the service is
 down, being upgraded, or never comes back, the plan is still readable and still
@@ -7,6 +7,13 @@ checkable with one command against a clone.
 `check` is the load-bearing one. It exits non-zero on blockers and zero on
 warnings, because a warning that fails the build is a rule that gets reverted
 rather than adopted.
+
+`demo` is the one somebody runs first. `serve` wants a bare clone of a plan
+repository, which is the right seam for a deployment and the wrong first
+instruction for a person who has just run `uv sync` — the README used to answer
+it with `serve --repo seed`, which pointed the server at a directory that is not
+a repository, and the command was deleted rather than fixed. `demo` is the fix:
+one command, no network, and a plan repository it builds for itself.
 """
 
 from __future__ import annotations
@@ -14,12 +21,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
+import socket
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
 from .index import build_index
-from .model import load_repo, validate_all
+from .model import Config, load_repo, validate_all
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -43,6 +53,22 @@ def _parser() -> argparse.ArgumentParser:
     # listening to the network.
     serve.add_argument("--host", default=os.environ.get("OPENPROJ_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
+
+    demo = commands.add_parser("demo", help="serve the bundled demo corpus, offline")
+    demo.add_argument(
+        "--today",
+        type=date.fromisoformat,
+        default=None,
+        help="the day to draw the plan around (default: the demo corpus's own)",
+    )
+    demo.add_argument(
+        "--as",
+        dest="signed_in",
+        default=None,
+        help="the login to be signed in as (default: the first name on the demo's roster)",
+    )
+    demo.add_argument("--host", default="127.0.0.1")
+    demo.add_argument("--port", type=int, default=8000)
 
     schedule = commands.add_parser("schedule", help="print the computed schedule")
     schedule.add_argument("repo", type=Path)
@@ -89,6 +115,165 @@ def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     for one in unreadable:
         print(f"left out {one.path}: {one.why}")
     return 0
+
+
+def _seed_dir() -> Path:
+    """Where the bundled demo corpus lives.
+
+    The same shape as `render._static_dir` and for the same reason: `seed/` is
+    not in the wheel, so an installed layout resolves `parents[2]` past
+    site-packages to a directory that is not there. Said rather than crashed, and
+    said with what to do about it.
+    """
+    for candidate in (
+        Path(__file__).resolve().parents[2] / "seed",
+        Path(__file__).resolve().parent / "seed",
+    ):
+        if candidate.is_dir():
+            return candidate
+    raise RuntimeError(
+        "the bundled seed/ corpus is missing. It is part of the source tree and not of "
+        "the wheel, so `openproj demo` runs from a checkout; against a real plan the "
+        "command is `openproj serve --repo <bare clone>`."
+    )
+
+
+def _seed_files(seed: Path) -> dict[str, str]:
+    """The seed, as the files a plan repository is made of.
+
+    Two things are left out on purpose.
+
+    `store.LOCK_FILE` is the writer's flock. It holds the pid of whoever last
+    opened a `Store` against the directory, and it was committed to this
+    repository once — so a copy of `seed/` handed a fresh server a lock file
+    naming a process that had been dead for months, and the second run of the
+    demo would have inherited the first run's pid. It is deleted from git in the
+    same commit as this, and skipped here as well, because a checkout that has
+    run a server against `seed/` will have made another one.
+
+    And anything that is not markdown or YAML, which is what a plan repository
+    holds. A `.DS_Store` beside the records is not part of anybody's plan, and it
+    is not UTF-8 either — so a rule of "every file under here" would have made
+    `openproj demo` fail on a Mac that had once opened the folder in Finder.
+    """
+    from .store import LOCK_FILE
+
+    return {
+        found.relative_to(seed).as_posix(): found.read_text(encoding="utf-8")
+        for found in sorted(seed.rglob("*"))
+        if found.is_file() and found.name != LOCK_FILE and found.suffix in (".md", ".yaml")
+    }
+
+
+def _demo_today(config: Config) -> date | None:
+    """The day the demo corpus is written around: the first day of the last cycle
+    it plans.
+
+    Derived and not typed in. That date is already written down four times in
+    `seed/` — the cycles table, a comment above it, cycle 37's own record, and a
+    sentence of prose in `seed/README.md` — and one more copy in here would be
+    the one that goes stale the day somebody adds cycle 38. Asked of the corpus,
+    the demo's "today" moves with the corpus, which is what "today" means to it.
+
+    `None` for a plan with no cycles at all, which is every plan on its first
+    day; the caller falls back to the real one.
+    """
+    return config.cycles[max(config.cycles)][0] if config.cycles else None
+
+
+def _taken(host: str, port: int) -> bool:
+    """Whether something else is already listening there.
+
+    Asked before the repository is built and before the URL is printed, and not
+    left to uvicorn: uvicorn discovers it at the end, after this command has
+    already told somebody to open a link — which by then belongs to whatever else
+    is on that port. A wrong URL on screen is worse than a refusal, because it is
+    a refusal you go looking for in the wrong place.
+
+    Through `getaddrinfo` rather than a bare `socket()`, which is AF_INET: a
+    `--host ::1` bound on an IPv4 socket raises the same OSError a busy port
+    does, and this would have answered "already in use" about a port nothing was
+    on. The probe has to be the socket uvicorn is going to open.
+    """
+    family, kind, proto, _, address = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)[0]
+    with socket.socket(family, kind, proto) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(address)
+        except OSError:
+            return True
+    return False
+
+
+def _demo(args) -> int:
+    """The demo corpus, in a throwaway repository, served offline.
+
+    **A fresh directory every run, and it goes when the server does.** The
+    alternative — a stable path under the cache directory, reused — was rejected
+    twice over. A demo that keeps yesterday's edits is not the demo any more and
+    nothing on screen says which parts are the corpus and which are yours; two
+    runs at once would fight over one writer lock; and the durable copy would be
+    a repository nobody backs up. So: built from `seed/` each time, and the
+    banner says it is going, so that everything in here is safe to press.
+
+    **Nothing here can lose anybody's work.** The temporary directory is the only
+    thing written to. `seed/` is read; no remote is configured, so the server has
+    nowhere to push; and a plan of your own is not reachable from this command at
+    all — that is `serve --repo`, which is where a real repository belongs.
+    """
+    from .store import build_plan_repository
+    from .web import create_app
+
+    if _taken(args.host, args.port):
+        print(
+            f"port {args.port} is already in use on {args.host}. Stop what is there, "
+            f"or run `openproj demo --port {args.port + 1}`.",
+            file=sys.stderr,
+        )
+        return 1
+
+    seed = _seed_dir()
+    _, config, _ = load_repo(seed)
+    when = args.today or _demo_today(config)
+    # The first name on the plan's own roster, so the picker on the People page
+    # has a row to hang off. `dev` is nobody in any corpus.
+    signed_in = args.signed_in or (config.known_people[0] if config.known_people else "dev")
+
+    with tempfile.TemporaryDirectory(prefix="openproj-demo-") as room:
+        repo = Path(room) / "plan.git"
+        build_plan_repository(repo, _seed_files(seed), f"the {seed.name}/ corpus, for a demo")
+        app = create_app(
+            repo,
+            auth="dev",
+            org="C2SM",
+            # A signing secret of its own, thrown away with the directory. The
+            # default is `dev-secret`, and a cookie is scoped to a HOST and not to
+            # a port — so a session left in the browser by any other openproj on
+            # 127.0.0.1 verified here and signed you in as somebody else. The
+            # banner below then said "you are ann" while the page believed
+            # otherwise, and on a corpus where that name holds nothing the People
+            # page quietly had no picker on it. Nothing signs in on a demo, so
+            # there is no session this needs to be able to read.
+            secret=secrets.token_urlsafe(32),
+            dev_login=signed_in,
+            today=when,
+        )
+        # One write and flushed, because stdout is a pipe as often as it is a
+        # terminal and Python buffers it when it is. uvicorn logs to stderr, which
+        # is not buffered — so unflushed, the four lines that say what this is
+        # arrived after the server had already started and printed over them, and
+        # the URL a person is meant to open was the last thing on screen at exit.
+        print(
+            f"plan     {repo}\n"
+            f"         a fresh copy of the bundled seed/ corpus, and deleted when this\n"
+            f"         stops. Nothing here reaches seed/ itself, or a plan of your own.\n"
+            f"today    {when}, which is the corpus's own — --today moves it\n"
+            f"you are  {signed_in}, and may write; --auth dev, so nothing asks you to sign in\n"
+            f"\n"
+            f"         http://{args.host}:{args.port}/\n",
+            flush=True,
+        )
+        return _exit_aware_server(app, args.host, args.port).run() or 0
 
 
 def _serve(args) -> int:
@@ -205,6 +390,8 @@ def main(argv: list[str] | None = None) -> int:
         return _render(args.repo, args.out_dir, args.today)
     if args.command == "serve":
         return _serve(args)
+    if args.command == "demo":
+        return _demo(args)
     return _schedule(args.repo, args.json, args.today)
 
 

@@ -19,10 +19,19 @@ plan repository with you as its author, and a file you change by hand and push i
 request. Both directions are first class on purpose — a tool that owns your files is a tool you
 cannot leave.
 
-The tabs are the same records seen six ways: **Table** is the one people live in, **Graph** is the
-dependency diagram, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets and
-its capacity, **People** who is on what and who is full, **Issues** the pile of things somebody
-noticed. Every filter is in the URL, so a view is a link.
+The tabs are the same records seen several ways: **Table** is the one people live in, **Graph** is
+the dependency diagram, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets
+and its capacity, **People** who is on what and who is full, **Issues** the pile of things somebody
+noticed, **Notes** the pile of things somebody is still thinking about. Every filter is in the URL,
+so a view is a link.
+
+The last two are inboxes rather than views of the plan, and they are two because they answer
+different questions: an issue is "we found something existing that is broken", a note is "we are
+thinking of creating something that does not exist and our ideas are confused". Neither carries an
+appetite or an owner and neither appears on the table, the graph or the timeline. **Promote** is
+what stops either from being an inbox nobody empties: it turns a note into a project, a pitch or a
+task — and an issue into a pitch — in one commit, and the new record says in its own shaping
+document where it came from.
 
 `docs/quickstart.md` is the five-minute version for somebody opening it for the first time.
 
@@ -33,16 +42,31 @@ argument, so pointing a deployment at a different plan is a flag rather than a f
 
 ## Locally
 
-`seed/` is a demo corpus and nobody's plan; `seed/README.md` says which parts of it are invented.
-
 ```bash
 uv sync
+uv run openproj demo
+```
+
+That is the whole of it. `demo` builds a plan repository out of the bundled demo corpus in a
+temporary directory, serves it with sign-in switched off, and prints the URL. No network, no
+credentials, and nothing to clean up: the repository is fresh every run and goes when you stop the
+server, so every button in it is safe to press. It draws the plan around the corpus's own "today"
+rather than around yours — `--today` moves it — and signs you in as somebody the corpus names, so
+the parts of the tool that are about a person are on screen too.
+
+`seed/` is that corpus and nobody's plan; `seed/README.md` says which parts of it are invented.
+Pointing the server at a real plan is `openproj serve --repo <a bare clone>`, and
+`docs/architecture.md` has the recipe.
+
+The same corpus, as static files:
+
+```bash
 uv run openproj render seed out --today 2026-08-17
 open out/index.html
 ```
 
-That writes the pages as static files, which is also the answer to what happens if the service goes
-away: the plan stays readable, and stays checkable, from any clone.
+That is also the answer to what happens if the service goes away: the plan stays readable, and
+stays checkable, from any clone.
 
 ```bash
 uv run openproj check seed        # every rule, exits non-zero only on blockers

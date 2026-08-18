@@ -16,9 +16,11 @@ guarantee that nobody can name themselves in a request body.
 regex before anything is concatenated, and the directory comes from its prefix.
 `projects|pitches|tasks/<id>.md` is the shape of it, and every path added since
 is admitted the same way and by nothing else: `cycles/<n>.md` by a number,
-`issues/<id>.md` by its own pattern, `assets/<sha>` by the hash of the bytes, and
-`people/<login>.md` by `model.LOGIN_PATTERN` (see `PUT /api/icon`). No route
-takes a path, a directory or a file name from a request. This matters more than
+`issues/<id>.md` and `notes/<id>.md` by their own patterns, `assets/<sha>` by the
+hash of the bytes, and `people/<login>.md` by `model.LOGIN_PATTERN` (see
+`PUT /api/icon`). No route takes a path, a directory or a file name from a
+request — `POST /api/promote` writes two files and takes neither of their names,
+because a record id and a kind decide both. This matters more than
 usual because branch protection means a bad write cannot be force-pushed away
 afterwards.
 
@@ -61,11 +63,14 @@ from .index import build_index
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
+    NOTE_ID_PATTERN,
+    NOTE_STATUS,
     PEOPLE_DIR,
     Config,
     Cycle,
     Entity,
     Issue,
+    Note,
     Person,
     Pitch,
     Project,
@@ -73,13 +78,16 @@ from .model import (
     Unreadable,
     parse_cycle_text,
     parse_issue_text,
+    parse_note_text,
     parse_person_text,
     parse_text,
     patch_text,
     person_path,
+    promoted_from,
     read_config,
     readable,
     record_paths_in,
+    shaping_document,
     validate_all,
     what_json_can_carry,
     why_it_will_not_read,
@@ -187,6 +195,30 @@ def _issue_path(issue_id: str) -> str:
     return f"{ISSUE_DIR}/{issue_id}.md"
 
 
+NOTE_DIR = "notes"
+
+
+def _notes_at(store: Store, commit: str) -> tuple[list[Note], list[Unreadable]]:
+    paths, too_deep = record_paths_in([NOTE_DIR], store.paths(commit))
+    notes, refused = readable(paths, lambda path: parse_note_text(store.read(commit, path), path))
+    return notes, [*refused, *too_deep]
+
+
+def _note_path(note_id: str) -> str:
+    """The one place a note id becomes part of a path.
+
+    `NOTE_ID_PATTERN` is imported from `model` rather than written out again here
+    the way the issue pattern above is. The same regex decides what the validator
+    calls a legal id and what this concatenates into `notes/<id>.md`, and two
+    copies of that rule is how the surface it keeps closed gets opened by degrees
+    — the check being in two files is exactly what let `people/team/ann.md` be a
+    record to one half of this application and not to the other.
+    """
+    if not NOTE_ID_PATTERN.match(note_id):
+        raise HTTPException(400, f"{note_id!r} is not a note id")
+    return f"{NOTE_DIR}/{note_id}.md"
+
+
 def _people_at(store: Store, commit: str) -> tuple[list[Person], list[Unreadable]]:
     """The person records at this commit, through the same door as everything else.
 
@@ -247,10 +279,11 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
     # same way it does under the CLI.
     plans, refused_plans = _cycles_at(store, commit)
     issues, refused_issues = _issues_at(store, commit)
+    notes, refused_notes = _notes_at(store, commit)
     people, refused_people = _people_at(store, commit)
     return (
-        config.with_plans(plans).with_issues(issues).with_people(people),
-        [*refused, *refused_plans, *refused_issues, *refused_people],
+        config.with_plans(plans).with_issues(issues).with_notes(notes).with_people(people),
+        [*refused, *refused_plans, *refused_issues, *refused_notes, *refused_people],
     )
 
 
@@ -369,6 +402,31 @@ def _reject_bad_issue(fields: dict) -> None:
     status = fields.get("status")
     if status is not None and status not in ISSUE_STATUS:
         raise HTTPException(422, f"{status!r} is not a status for an issue")
+
+
+def _reject_bad_note(fields: dict) -> None:
+    """A form returns strings, and a note has fewer fields than anything else here.
+
+    Its own function rather than `_reject_bad_issue` with a model argument: the
+    two records share a shape today and are meant to diverge — the whole point of
+    having both is that they are different questions — and one gate serving two
+    vocabularies is a gate that gets a parameter and then an `if` and then admits
+    a status to the wrong record.
+    """
+    unknown = sorted(set(fields) - set(Note.model_fields))
+    if unknown:
+        raise HTTPException(422, f"a note has no {', '.join(unknown)}")
+    for name in ("tags", "became"):
+        if name in fields and not isinstance(fields[name], list):
+            raise HTTPException(422, f"{name} must be a list")
+    status = fields.get("status")
+    if status is not None and status not in NOTE_STATUS:
+        raise HTTPException(
+            422,
+            f"{status!r} is not a status for a note: expected one of "
+            f"{', '.join(NOTE_STATUS)}. A note that became something is promoted, "
+            "which is read off what it became rather than typed.",
+        )
 
 
 def _reject_bad_types(fields: dict) -> None:
@@ -553,6 +611,8 @@ def create_app(
     client_secret: str = "",
     remote: str = "",
     credentials: object | None = None,
+    dev_login: str = "dev",
+    today: date | None = None,
 ) -> FastAPI:
     if auth == "github":
         if secret in _DEV_SECRETS:
@@ -628,7 +688,13 @@ def create_app(
         return commit, build_index(
             entities,
             config,
-            date.today(),
+            # Pinned only where somebody pinned it, which today is `openproj
+            # demo`: the seed corpus is written around one day as "now", and
+            # served in December it draws a plan every date of which is in the
+            # past — a demo of a scheduler with nothing left to schedule. A write
+            # still stamps the real date, because a commit happens when it
+            # happens; this is the day the plan is DRAWN around.
+            today or date.today(),
             # Sorted by path, because a reader works through the list by opening
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted(
@@ -656,10 +722,17 @@ def create_app(
         In dev mode anybody may write, but the session still decides *who they
         are*: dev never invents an author, because a commit attributed to nobody
         is worse than no commit.
+
+        `dev_login` is who a dev run is when no session says otherwise. It is
+        `dev` for `openproj serve`, which is what it always was, and a name off
+        the plan's own roster for `openproj demo` — because the People page hangs
+        the icon picker off the signed-in person's ROW, and `dev` holds no work
+        in any plan, so it has no row. A demo signed in as nobody is a demo of
+        the People page with the one control on it missing.
         """
         user = viewer(request)
         if auth == "dev":
-            return user or User(login="dev", member=True)
+            return user or User(login=dev_login, member=True)
         if user is None:
             raise HTTPException(401, "sign in to make changes")
         if not user.member:
@@ -846,6 +919,255 @@ def create_app(
         if written.commit:
             await announce(written.commit, [issue_id])
         return _result(written, base)
+
+    @app.get("/notes", response_class=HTMLResponse)
+    def notes() -> HTMLResponse:
+        commit, index = index_now()
+        return page(render.render_notes(index, render.ROUTES, commit))
+
+    @app.get("/note/new", response_class=HTMLResponse)
+    def new_note(request: Request) -> HTMLResponse:
+        commit, index = index_now()
+        who = viewer(request)
+        return page(
+            render.render_note(index, None, render.ROUTES, commit, who.login if who else "")
+        )
+
+    @app.get("/note/{note_id}", response_class=HTMLResponse)
+    def one_note(note_id: str, request: Request) -> HTMLResponse:
+        commit, index = index_now()
+        who = viewer(request)
+        try:
+            return page(
+                render.render_note(index, note_id, render.ROUTES, commit, who.login if who else "")
+            )
+        except KeyError:
+            raise HTTPException(404, f"no note {note_id!r}") from None
+
+    @app.post("/api/note")
+    async def write_note(request: Request) -> JSONResponse:
+        """The shortest write path in the tool, and shorter than the issue's.
+
+        Somebody is in the middle of thinking. Every field this asks for is a
+        reason to close the tab instead, so it asks for a title and the server
+        supplies the rest.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            raise HTTPException(422, "a note needs a title, even a bad one")
+
+        given = {k: v for k, v in _fields_in(payload).items()
+                 if k not in ("id", "title", "written_on")}
+        _reject_bad_note(given)
+        note_id = f"note-{secrets.token_hex(3)}"
+        fields = {
+            "id": note_id,
+            "title": title,
+            "status": "thinking",
+            # Whoever is signed in, as a default rather than as a fact — the same
+            # bargain the issue makes. It is who to ask, and the form can say
+            # somebody else wrote the thing down at the whiteboard.
+            "written_by": user.login,
+            **given,
+            # The server's, because when this was written down is not an opinion.
+            "written_on": date.today().isoformat(),
+        }
+        content = patch_text("---\n---\n", fields, _body_in(payload) or "")
+        parse_note_text(content, note_id)
+        written = store.write(
+            path=_note_path(note_id),
+            content=content,
+            base_commit=payload.get("base_commit") or store.head(),
+            author=user.login,
+            message=f"{note_id}: write down",
+        )
+        if written.commit:
+            await announce(written.commit, [note_id])
+        return JSONResponse({"id": note_id, "commit": written.commit})
+
+    @app.patch("/api/note/{note_id}")
+    async def save_note(note_id: str, request: Request) -> JSONResponse:
+        user = writer(request)
+        payload = await _sent(request)
+        body = _body_in(payload)
+        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
+            raise HTTPException(413, "that body is too large to commit")
+
+        base = _base_in(store, payload)
+        path = _note_path(note_id)
+        original = store.read(base, path)
+        if original is None:
+            raise HTTPException(404, f"no note {note_id!r}")
+
+        fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
+        _reject_bad_note(fields)
+        # Through `_patched` and not a bare `patch_text`: the file being edited
+        # came out of git and can be anything, and a frontmatter whose YAML never
+        # closes is a ruamel error under the router — a 500 with a plain-text
+        # body, which is the one answer this page cannot read back.
+        content = _patched(original, fields, body, path)
+        # Read back before it is written: a file the loader cannot parse would
+        # take the notes page with it, and it would already be in git.
+        parse_note_text(content, path)
+        written = store.write(
+            path=path,
+            content=content,
+            base_commit=base,
+            author=user.login,
+            message=f"{note_id}: {', '.join(fields) or 'body'}",
+        )
+        if written.commit:
+            await announce(written.commit, [note_id])
+        return _result(written, base)
+
+    @app.post("/api/promote")
+    async def promote(request: Request) -> JSONResponse:
+        """Turn a note or an issue into a record somebody can bet on.
+
+        **An inbox that cannot become work is a second inbox nobody empties.**
+        That is the whole reason this route exists: without it a note is a place
+        ideas go to be forgotten politely, and the tool has two of those.
+
+        Four decisions are worth reading before changing this.
+
+        **The source survives.** It is not deleted, moved or emptied. It is the
+        only record of the thinking that led to the bet, and `git log` is the
+        team's memory — a promotion that removed the note would answer "where did
+        this pitch come from" with a file nobody can open without knowing to look
+        for a deletion. It also means `store` needs no delete, which would be a
+        more destructive verb than anything else here has on a protected branch.
+
+        **The trail is written at both ends, in two different registers.** The
+        source gets `became` (or `pitched_into`), which is the machine-readable
+        end, on the record where the decision was made — one direction only, the
+        same rule `depends_on` follows. The new record says where it came from in
+        its own shaping document, in prose. That is deliberately not a field: a
+        `from_note` on `Entity` would put a note id into the type every view of
+        the plan is built from, and the table, the graph and the detail page would
+        each have to decide what to do with it — which is exactly the coupling
+        that keeping notes out of `Entity` exists to prevent. Prose cannot drift
+        out of step with anything, because nothing reads it but a person.
+
+        **One commit.** Two files, one decision. See `Store.write_all`: written as
+        two commits, the second can fail after the first has landed, leaving a
+        pitch in the plan and a note that does not know what it became — on a
+        branch whose protection means the first commit cannot be taken back.
+
+        **The new record is created in `shaping` and carries no field the source
+        could not honestly give it.** Title, tags and body cross; owner, size,
+        appetite, cycle and reviewer do not, because the source has none of them
+        and inventing one would be this tool asserting a commitment nobody made.
+        `shaping` is the status whose required-field gate is empty — "an idea
+        nobody has bet on has no owner and no size by definition" — so a
+        promotion always produces a record that validates. That is not luck; it
+        is the same claim the note was already making, carried across.
+
+        The request carries two values and both are closed vocabularies: a source
+        id matched against its own pattern, and a kind out of `DIRECTORY`. No
+        path, no directory, no file name, no field, no body.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        source_id = str(payload.get("source") or "")
+        kind = payload.get("kind")
+
+        if NOTE_ID_PATTERN.match(source_id):
+            inbox, path, link = "note", _note_path(source_id), "became"
+        elif ISSUE_ID_PATTERN.match(source_id):
+            inbox, path, link = "issue", _issue_path(source_id), "pitched_into"
+        else:
+            raise HTTPException(400, f"{source_id!r} is not a note or an issue")
+        # One phrase, used by the refusal and by the citation the promoted
+        # document carries. Written twice they drift, and one of the two is prose
+        # that ends up committed to the plan.
+        article = "an issue" if inbox == "issue" else "a note"
+        if kind not in render.PROMOTABLE[inbox]:
+            raise HTTPException(
+                422,
+                f"{article} becomes {' or '.join(render.PROMOTABLE[inbox])}, not {kind!r}",
+            )
+
+        base = _base_in(store, payload) if payload.get("base_commit") else store.head()
+        original = store.read(base, path)
+        if original is None:
+            raise HTTPException(404, f"no {inbox} {source_id!r}")
+        # Parsed rather than read out of the index, because the index is at HEAD
+        # and this is at the commit the page was rendered at — and a promotion
+        # carries the body somebody was looking at, not one that moved under them.
+        source = (
+            parse_note_text(original, path) if inbox == "note"
+            else parse_issue_text(original, path)
+        )
+        who = source.written_by if inbox == "note" else source.reported_by
+        when = source.written_on if inbox == "note" else source.opened_on
+
+        entity_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        commit = store.head()
+        config, _ = _config_at(store, commit)
+        content = patch_text(
+            "---\n---\n",
+            {
+                "id": entity_id,
+                "kind": kind,
+                "title": source.title,
+                # The one status that requires nothing, which is the honest state
+                # of anything that has just been promoted. See the docstring.
+                "status": "shaping",
+                "tags": list(source.tags),
+                "created_schema_version": config.schema_version,
+            },
+            shaping_document(
+                render.TEMPLATES.get(kind, ""),
+                promoted_from(source_id, article, who, when),
+                source.body,
+            ),
+        )
+        try:
+            candidate = parse_text(content, entity_id)
+        except ValueError as error:
+            raise HTTPException(
+                422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
+            ) from None
+        blockers = [
+            problem
+            for problem in validate_all([*_entities_at(store, commit)[0], candidate], config)
+            if problem.entity_id == entity_id and problem.severity == "blocker"
+        ]
+        if blockers:
+            return JSONResponse(
+                {"problems": [p.model_dump(mode="json") for p in blockers]}, status_code=422
+            )
+
+        # Appended, not replaced: a note that split into two pitches is the normal
+        # case, and it is the reason both fields are lists.
+        marked = _patched(original, {link: [*getattr(source, link), entity_id]}, None, path)
+        # Read back before it is written, the refusal every write path here makes.
+        # This one has the least to go wrong — the file parsed four lines up and
+        # gains one list of ids — and it is the write that must not half-happen,
+        # so it is checked rather than assumed.
+        try:
+            (parse_note_text if inbox == "note" else parse_issue_text)(marked, path)
+        except ValueError as error:
+            raise HTTPException(
+                422,
+                f"that would not read back as {article}: {why_it_will_not_read(error)}",
+            ) from None
+        written = store.write_all(
+            {f"{DIRECTORY[kind]}/{entity_id}.md": content, path: marked},
+            base_commit=base,
+            author=user.login,
+            message=f"{entity_id}: promoted from {source_id}",
+        )
+        if written.outcome == "conflict":
+            return _result(written, base)
+        if written.commit:
+            await announce(written.commit, [entity_id, source_id])
+        return JSONResponse(
+            {"id": entity_id, "outcome": written.outcome, "commit": written.commit},
+            status_code=201,
+        )
 
     @app.get("/cycles", response_class=HTMLResponse)
     def cycles() -> HTMLResponse:
