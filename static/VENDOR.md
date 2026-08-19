@@ -123,13 +123,75 @@ wrong trade.
 
 ## What is deliberately not here
 
-**No editor library.** CodeMirror 5 was vendored and then removed: the spec's cut line already said
-CodeMirror saves nothing and costs two days, and vim keys are a preference, not a requirement. A
-plain `<textarea>` with a preview needs no dependency at all, and the 690 KB — a third of it the vim
-keymap — buys nothing for editing a handful of fields and one markdown body. Revisit when somebody
-is actually slowed down by the textarea, not before.
+**No editor library — and the revisit happened.** CodeMirror 5 was vendored and then removed: the
+spec's cut line already said CodeMirror saves nothing and costs two days, and vim keys are a
+preference, not a requirement. A plain `<textarea>` with a preview needs no dependency at all, and
+the 690 KB — a third of it the vim keymap — buys nothing for editing a handful of fields and one
+markdown body. The condition written here for revisiting was "when somebody is actually slowed down
+by the textarea".
 
-Co-editing did not change this, and it is the one place it costs something: drawing
+That revisit ran in August 2026, against seven asks for a HackMD-like editor, and the full search is
+`docs/EDITOR.md`. Nobody has produced the measurement this paragraph asked for; what arrived instead
+was a feature request, which is a legitimate reason for a human to override a recorded rule and is
+not the same thing as evidence that the rule was wrong. The finding, so that the next person
+inherits the search rather than repeating it:
+
+* **Ace 1.44.0 (`src-min-noconflict`) is admissible, and it was measured rather than reasoned
+  about.** BSD-3-Clause — this repository's own licence. Three classic self-registering scripts,
+  zero `import`, zero `export`, zero bare `require(`: they run in a `<script>` block untouched and
+  need no `_yjs()` analogue. Inlined verbatim under this exact CSP in headless Chrome with
+  `window.Worker` hooked before Ace parsed: 0 Workers constructed, 0 CSP violations, 0 network
+  requests, `session.$worker === null`, and a forced-failure control on `ace/mode/javascript` that
+  *did* build a blocked `blob:` Worker — so the detection was real and not a test that could only
+  pass. `ace.js` 475,029 B (126,124 gz), `keybinding-vim.js` 119,277 B (36,518 gz),
+  `mode-markdown.js` 75,276 B (22,165 gz). The honest purchase for the one ask a textarea cannot
+  have is core + vim, **594,306 B**; with the markdown mode, 669,582 B — 85.8% and 96.7% of the
+  number refused above, against a 318,526 B page. The unminified `src-noconflict` build is
+  1,307,387 B and fails the font-`url()` assertion 24 more times than the minified one, because of
+  how it escapes its own `data:` URIs.
+* **One supporting fact in the earlier evidence is wrong and must not be repeated.**
+  `mode-markdown.js` contains **four** `createWorker` definitions, not zero — they belong to the
+  bundled javascript, css, html and xml sub-modes. The right reason Ace spawns none for markdown is
+  structural: `MarkdownMode` inherits `TextMode`, whose `createWorker` returns `null`, and
+  `createModeDelegates` wires highlight rules only. The consequence is that four worker-spawning
+  sub-modes would ship dormant in every page, and any later `setMode('ace/mode/javascript')` for a
+  fenced-code sub-editor builds a `blob:` Worker this policy blocks *silently* — an `error` event
+  with an empty message, no exception, and Ace's own "Could not load worker" warning never firing.
+* **Ace's default keymap fetches four modules over the network** through `config.loadModule` →
+  `net.loadScript`, which is `createElement('script')`. Measured: `metaKey+f` gives
+  `defaultPrevented=true`, `scriptsInjected=['ext-searchbox.js']`, a `script-src-elem` violation,
+  and an empty `window.error`. Cmd-F is taken from the browser and nothing is given back. The source
+  regex `<script[^>]+src=` cannot see a runtime injection, so this has to be tested in a browser.
+* **CodeMirror 6 + `y-codemirror.next` is refused on the linker, not on taste.** Nine artifacts,
+  816,104 B raw / 278,694 gz, taking the writer's page to 3.56x. It was proved to work — one
+  `EditorState` built from all nine packages against this repository's own `yjs.bundle.mjs` — and
+  then refused because those nine files carry 42 `import` statements and 9 `export` clauses that
+  must be inlined in a hardcoded topological order with each file's bindings rebound to the previous
+  IIFE. `_yjs()` below handles one import and one export by string partition and its own docstring
+  already refuses the four-module version of that. Fifty-one is more of the refused thing, not less.
+  esm.sh's `/build` API answers 403 and is deprecated, so there is no single-artifact route.
+  Two traps worth inheriting: `https://esm.sh/codemirror@6?bundle` resolves to `codemirror@6.65.7`,
+  which is CodeMirror **5**.65.7 mis-published under a 6.x number and never unpublished; and the
+  naive `?bundle` route gives seven private copies of `@codemirror/state`, which is 1,967,935 B of
+  silently non-functioning editor.
+* **CodeMirror 5 is refused on its upstream.** The set is 692,765 B, vim 33.5% of it — the "690 KB"
+  above is exact and nobody rounded in their own favour. But `github.com/codemirror/CodeMirror` is
+  now archived and forwarding, and `y-codemirror` was last published in 2021 with both of its live
+  issues in the remote-cursor code, which is the part that would be the reason to take it.
+* **Toast UI Editor 3.2.2 and EasyMDE 2.21.0 do not survive contact.** Toast UI's self-contained
+  bundle exists only on `uicdn.toast.com`, carries a live beacon to `google-analytics.com/collect`
+  compiled into the bytes and on by default, and its live preview cannot be `/api/preview` because
+  the only hook is synchronous and is handed HTML its own parser has already produced. EasyMDE
+  contains the literal string `cdn.` six times, which fails `assert "cdn." not in body` outright,
+  and injects a `<link>` to a Font Awesome CDN at runtime for the glyphs its own CSS does not carry.
+
+**The rule that comes out of this and applies to anything vendored next to Yjs:** a binding library
+that externalises `yjs` must bind to the **same `Y.Doc` class the room came from**. Two copies of
+Yjs in one page are two constructors, and a document built by one is not a document the other will
+observe — silently, with nothing raising in either. So such a library can never be inlined beside
+`_yjs()` as a block of its own; it has to take this page's `Y` or it does not go in.
+
+Co-editing did not change the decision above, and it is the one place it costs something: drawing
 another person's caret over a `<textarea>` means measuring text through a mirror
 element, which is the only real pixel work in that feature. So it is not drawn. The
 presence list names who else is in the document, which is the half that survives every

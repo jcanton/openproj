@@ -31,6 +31,7 @@ from markdown_it.renderer import RendererHTML
 from markdown_it.rules_core import StateCore
 from markdown_it.token import Token
 from markupsafe import Markup, escape
+from mdit_py_plugins.tasklists import tasklists_plugin
 from pydantic import BaseModel
 
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
@@ -938,7 +939,23 @@ ROUTES = Links(
     asset="/assets/", deck="/deck/", body="/api/body/",
 )
 
-_MD = MarkdownIt("commonmark", {"html": False}).enable("table")
+# Commonmark, plus the two things people were already typing and getting back as
+# punctuation. `~~dropped~~` rendered as four literal tildes and `- [ ] a task`
+# as the literal text `[ ]`, because commonmark has neither — so a struck-out
+# line read as emphasis nobody could see, and a checklist, which is what the
+# Progress section of a pitch is made of, read as a bullet with a box drawn in
+# ASCII. Both are GitHub's spelling and HackMD's, which is where these documents
+# were written before they were migrated here.
+#
+# The plugin is a dependency and not a hand-rolled rule for the reason
+# `AGENTS.md` gives: `mdit-py-plugins` is markdown-it-py's own companion package,
+# it costs the browser nothing at all, and a second implementation of the one
+# checkbox syntax is a second thing to keep in step with the parser under it.
+_MD = (
+    MarkdownIt("commonmark", {"html": False})
+    .enable(["table", "strikethrough"])
+    .use(tasklists_plugin)
+)
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
 
@@ -969,6 +986,37 @@ _ASSET_MEDIA = {
 _ASSET_SRC = re.compile(
     r"assets/([0-9a-f]{16}(?:" + "|".join(re.escape(s) for s in _ASSET_MEDIA) + "))"
 )
+
+
+def _source_lines(state: StateCore) -> None:
+    """Every top-level block, stamped with the lines of source it came from.
+
+    The box and the rendered document are two views of one text, and nothing in
+    the browser can line them up unless the rendered half says where each piece
+    was written. `token.map` is markdown-it's own answer to that and is already
+    computed by the time this runs — nothing here re-parses, and no line is
+    counted a second time in JavaScript, which is how the two would come to
+    disagree.
+
+    A core rule and not a `RendererHTML` override per tag: this belongs on a
+    heading exactly as much as on a paragraph, a list, a table, a fence and a
+    rule, and a method per tag is a method per tag plus one more the day a plugin
+    adds a block. Written as an attribute on the token rather than into a string,
+    so it leaves through the same escaper as every other attribute.
+
+    `token.level == 0`, so only the blocks a reader scrolls past are marked. Every
+    paragraph inside every list item would be stamped too, which is bytes on every
+    page for a resolution nothing wants: what a scroll position interpolates
+    between is top-level blocks.
+
+    `map` is [start, end) and zero-based; both numbers here are one-based and
+    inclusive, because that is what the editing surface counts in and a second
+    convention is a second place to be off by one.
+    """
+    for token in state.tokens:
+        if token.level == 0 and token.nesting >= 0 and token.map:
+            token.attrSet("data-startline", str(token.map[0] + 1))
+            token.attrSet("data-endline", str(token.map[1]))
 
 
 def _pr_refs(state: StateCore) -> None:
@@ -1085,6 +1133,7 @@ def _image(
     return RendererHTML.image(self, tokens, idx, options, env)
 
 
+_MD.core.ruler.push("openproj_source_lines", _source_lines)
 _MD.core.ruler.push("openproj_pr_refs", _pr_refs)
 _MD.add_render_rule("image", _image)
 
@@ -1718,6 +1767,18 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 #card .card-body p, #card .card-body ul, #card .card-body ol { margin: .2rem 0; }
 #card .card-body pre { overflow-x: auto; }
 #card .card-body img { max-width: 100%; }
+/* A checklist, and the one markdown-body rule in this stylesheet that is not
+   scoped to a view. Every other copy of "how a rendered document looks" is
+   written three times on purpose — the card here, `.doc` in `_SUGGEST_STYLE`,
+   `.slide .doc` in the deck — because each is a different size of the same
+   prose. This is not that: without it a task list carries a bullet AND the box
+   the renderer drew, on every page that shows a body, and the correction is the
+   same two declarations whichever page it is. So it is written once, unscoped,
+   against the classes the renderer itself emits. `list-style: none` and a negative
+   indent rather than `padding-left: 0`, so the boxes line up with the bullets of
+   an ordinary list beside them instead of hanging a character to their left. */
+li.task-list-item { list-style: none; margin-left: -1.1em; }
+li.task-list-item input { margin-right: .35em; }
 .hint { color: var(--muted); font-size: 12px; }
 .empty { color: var(--empty); }
 .num { font-variant-numeric: tabular-nums; }
@@ -7383,6 +7444,17 @@ function replaceRange(area, text) {
 // two fenced blocks in the whole corpus are a measure of how awkward that is
 // rather than of how little code people would paste. A button is worth more than
 // a count here.
+//
+// The four at the end arrived with the renderer that honours them, in one
+// commit, because a button that emits syntax the committed document renders as
+// punctuation is worse than no button. Their counts are the seed corpus's, which
+// is synthetic and answers zero for every one of them — the migrated HackMD
+// corpus is not in this repository yet. A check list is the shape the Progress
+// section of a pitch is written in and a strikethrough is how a dropped line is
+// marked, so both are here on the shape of the documents rather than on a count;
+// a table and a rule are here because they are the two blocks nobody types
+// correctly from memory, not because they are frequent. When the corpus lands,
+// this list is re-sized against it.
 const FORMATS = [
   {key: 'b', label: 'B', title: 'Bold  ⌘B', wrap: '**'},
   {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
@@ -7390,13 +7462,41 @@ const FORMATS = [
   {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
   {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
   {key: '8', label: '•', title: 'Bullet  ⌘8', prefix: '- '},
+  // ⌘⇧L and not ⌘⇧8 beside the bullet it belongs next to: the shortcut is
+  // matched on `event.key`, and shift-8 on a US layout is `*` rather than `8`,
+  // so the obvious pairing is a shortcut that could never fire. Every letter
+  // here survives shift.
+  {key: 'l', shift: true, label: '[x]', title: 'Check list  ⌘⇧L', prefix: '- [ ] ', box: true},
   {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
+  {key: 'x', shift: true, label: 'S', title: 'Strikethrough  ⌘⇧X', wrap: '~~',
+   style: 'text-decoration: line-through'},
+  // No shortcut on either: every letter this page could spare is spoken for, and
+  // a table is not something anybody inserts twice a minute. `pick` selects the
+  // first heading so the word you replace is already chosen.
+  {label: '▤', title: 'Table',
+   insert: '| Heading | Heading |\n| --- | --- |\n| Cell | Cell |', pick: [2, 7]},
+  {label: '—', title: 'Horizontal rule', insert: '---'},
 ];
 
 function lineRange(area) {
   const from = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1;
   let to = area.value.indexOf('\n', area.selectionEnd);
   return [from, to === -1 ? area.value.length : to];
+}
+
+// How much blank line is missing on each side of a block about to be written in.
+//
+// A block only is one if it stands apart: `---` written directly under a line of
+// text is a setext heading rather than a rule, and a table cannot interrupt a
+// paragraph at all — so both of the toolbar's templates and a pasted grid would
+// otherwise go in and render as punctuation. One function because that is one
+// rule about markdown, and the two callers would have been the same four
+// conditionals twice.
+function blockPadding(before, after) {
+  return [
+    !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n',
+    !after ? '' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n',
+  ];
 }
 
 function applyMark(area, mark) {
@@ -7425,13 +7525,38 @@ function applyMark(area, mark) {
     // bullet, and it costs one `startsWith`.
     const [from, to] = lineRange(area);
     const lines = area.value.slice(from, to).split('\n');
-    const on = lines.every(line => line.startsWith(mark.prefix));
+    // A check list is a bullet with a box on it, so on lines that are already
+    // bullets the box goes onto the bullet that is there. Stacking the whole
+    // prefix wrote `- [ ] - a`, which renders as one checked item whose text is
+    // a dash — the toggle would then never find its way back either, because the
+    // line no longer starts with the prefix it was given.
+    const boxed = mark.box && lines.every(line => LIST_ITEM.test(line));
+    const on = boxed
+      ? lines.every(line => LIST_ITEM.exec(line)[4])
+      : lines.every(line => line.startsWith(mark.prefix));
     const next = lines
-      .map(line => (on ? line.slice(mark.prefix.length) : mark.prefix + line))
+      .map(line => {
+        if (!boxed) return on ? line.slice(mark.prefix.length) : mark.prefix + line;
+        const [, indent, bullet, gap, , text] = LIST_ITEM.exec(line);
+        return `${indent}${bullet}${gap}${on ? '' : '[ ] '}${text}`;
+      })
       .join('\n');
     area.setSelectionRange(from, to);
     replaceRange(area, next);
     area.setSelectionRange(from, from + next.length);
+    return;
+  }
+  if (mark.insert) {
+    // A fourth shape, because a table and a rule are neither a wrap nor a prefix
+    // nor a fence: they are blocks that replace nothing, and they land after the
+    // line the caret is on rather than inside it.
+    const [, to] = lineRange(area);
+    const [lead, tail] = blockPadding(area.value.slice(0, to), area.value.slice(to));
+    area.setSelectionRange(to, to);
+    replaceRange(area, lead + mark.insert + tail);
+    const at = to + lead.length;
+    const [start, width] = mark.pick || [mark.insert.length, 0];
+    area.setSelectionRange(at + start, at + start + width);
     return;
   }
   const {selectionStart: from, selectionEnd: to} = area;
@@ -7457,6 +7582,80 @@ function applyMark(area, mark) {
 
 const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
 
+// Spaces, because a tab character is two columns here, four in git's diff view
+// and eight in a terminal, and the place these documents are read that this tool
+// does not draw is GitHub. Two of them, because that is what the plan is already
+// written at: 48 of the 56 nested bullets in it are indented by two.
+//
+// It is a TYPING setting and never a "convert this document" command. A global
+// re-indent reaches the room as one delete-everything-insert-everything, which
+// `tests/test_coedit.py` already measures as larger than a body is allowed to
+// be — so the whole document is never re-indented here, and the picker that
+// makes the width settable (a later stage) changes what the next Tab types and
+// nothing that is already written.
+const INDENT = '  ';
+// Derived, not written down a second time: one tab, or up to as many spaces as
+// an indent puts in. Two constants that are the same number are the same defect.
+const OUTDENT = new RegExp('^(?:\\t| {1,' + INDENT.length + '})');
+
+// Tab indents what the selection touches, and Shift-Tab takes it back.
+//
+// Every write goes through `replaceRange`, so the whole gesture is one undo step
+// and the native history survives it — including the outdent, which deletes
+// through `execCommand('insertText', false, '')` exactly as the empty-list-item
+// branch below already does.
+function indentLines(area, out) {
+  const {selectionStart: start, selectionEnd: end} = area;
+  const [from, to] = lineRange(area);
+  const chosen = area.value.slice(from, to);
+  const item = LIST_ITEM.exec(chosen);
+  const head = area.value.slice(from, start);
+  // Whole lines when there is a selection, when the caret is in the indent, and
+  // when it is anywhere inside a bullet's marker — which is the gesture that
+  // nests a list item under the one above it, and the reason `LIST_ITEM` is
+  // consulted here rather than a plain `^\s*`. A caret in the middle of a
+  // sentence means the other thing: type spaces to the next stop, the way a tab
+  // key does on a line of prose.
+  const lead = item ? item[1].length + item[2].length + item[3].length : 0;
+  const whole = out || start !== end || /^\s*$/.test(head) || (item && head.length <= lead);
+  if (!whole) {
+    replaceRange(area, ' '.repeat(INDENT.length - ((start - from) % INDENT.length)));
+    return;
+  }
+  const lines = chosen.split('\n');
+  const moves = [];
+  const next = lines
+    .map(line => {
+      if (!out) { moves.push(INDENT.length); return INDENT + line; }
+      const cut = OUTDENT.exec(line);
+      moves.push(cut ? -cut[0].length : 0);
+      return cut ? line.slice(cut[0].length) : line;
+    })
+    .join('\n');
+  // Nothing to take away. Without this, Shift-Tab on a line with no indent still
+  // wrote the line back over itself and cost somebody an undo press to find out
+  // that nothing had happened.
+  if (next === chosen) return;
+  area.setSelectionRange(from, to);
+  replaceRange(area, next);
+  // The caret ends where the text it was on ended up, not at the end of what was
+  // rewritten: an indent moves the line under you and leaves you on the word you
+  // were typing. Clamped to the start of its own line, for a caret that was
+  // sitting inside indentation an outdent has just removed.
+  const carried = at => {
+    let opens = from;
+    let before = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const ends = opens + lines[i].length;
+      if (at <= ends) return Math.max(opens + before, at + before + moves[i]);
+      opens = ends + 1;
+      before += moves[i];
+    }
+    return at + before;
+  };
+  area.setSelectionRange(carried(start), carried(end));
+}
+
 function attachEditing(area, bar) {
   if (bar) {
     for (const mark of FORMATS) {
@@ -7473,7 +7672,30 @@ function attachEditing(area, bar) {
     }
   }
 
+  // Armed by Escape, spent by the next Tab, and cleared by typing — which is
+  // what `input` is for rather than a second keydown branch: the Shift in
+  // Shift-Tab is itself a keydown, so disarming on any key would have taken the
+  // hatch away from the gesture for leaving backwards.
+  let leaving = false;
+  area.addEventListener('input', () => { leaving = false; });
+
   area.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      // Tab indents here, which takes away the only way out of the box for
+      // somebody with no pointer. Escape gives it back for one press, and says
+      // so: an escape hatch nobody is told about is not one, and swallowing Tab
+      // in silence is the version of this feature that traps people.
+      leaving = true;
+      announce('Press Tab to leave the document, or carry on typing to stay in it');
+      return;
+    }
+    if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      // Spent, and the browser moves focus the way it does everywhere else.
+      if (leaving) { leaving = false; return; }
+      event.preventDefault();
+      indentLines(area, event.shiftKey);
+      return;
+    }
     if (event.metaKey || event.ctrlKey) {
       const mark = FORMATS.find(
         m => m.key === event.key.toLowerCase() && !!m.shift === event.shiftKey
@@ -7504,6 +7726,41 @@ function attachEditing(area, bar) {
       : bullet;
     replaceRange(area, `\n${indent}${next}${gap}${box ? '[ ] ' : ''}`);
   });
+}
+
+// Two things a paste is nearly always the beginning of retyping by hand: a URL
+// dropped over the words it should link, and a block of cells copied out of a
+// spreadsheet. Both come back as markdown here, and both go in through
+// `replaceRange`, so one ctrl-Z gives back exactly what was on the clipboard —
+// which is the whole of the argument for doing this at all rather than leaving
+// it to a person.
+//
+// An allowlist, and a narrow one, for the same reason `_image` is one: `http`
+// and `https`, no whitespace, and only over a selection. A URL pasted with
+// nothing selected is somebody pasting a URL, and `[](url)` there would be the
+// editor guessing at what they meant.
+const URL_ONLY = /^https?:\/\/\S+$/;
+
+function pastedAs(area, text) {
+  if (!text) return null;
+  const {selectionStart: start, selectionEnd: end} = area;
+  const chosen = area.value.slice(start, end);
+  const one = text.trim();
+  if (chosen && URL_ONLY.test(one)) return `[${chosen}](${one})`;
+  const rows = text.replace(/\n$/, '').split('\n').map(row => row.split('\t'));
+  // Two rows and two columns, every row the same width. Anything less is a line
+  // that happens to contain a tab, and a line is what it has to paste as: a
+  // paste that quietly becomes something else is worse than no help at all.
+  if (rows.length < 2 || rows[0].length < 2) return null;
+  if (!rows.every(row => row.length === rows[0].length)) return null;
+  // A cell's own pipe would end the cell. Escaped rather than dropped, because
+  // the numbers people paste here are measurements and one of them is a range.
+  const line = cells =>
+    '| ' + cells.map(cell => cell.trim().replace(/\|/g, '\\|')).join(' | ') + ' |';
+  const table = [line(rows[0]), line(rows[0].map(() => '---')), ...rows.slice(1).map(line)]
+    .join('\n');
+  const [lead, tail] = blockPadding(area.value.slice(0, start), area.value.slice(end));
+  return lead + table + tail;
 }
 
 // Paste or drop an image and it goes into the plan repository, content-addressed,
@@ -7550,9 +7807,17 @@ function attachUploads(area, status) {
 
   area.addEventListener('paste', event => {
     const files = [...(event.clipboardData?.files || [])];
-    if (!files.length) return;
+    if (files.length) {
+      event.preventDefault();
+      files.forEach(send);
+      return;
+    }
+    const made = pastedAs(area, event.clipboardData?.getData('text/plain') || '');
+    // `null` and not `''`: everything this does not recognise is left to the
+    // browser, which pastes it as the text it is.
+    if (made === null) return;
     event.preventDefault();
-    files.forEach(send);
+    replaceRange(area, made);
   });
   area.addEventListener('dragover', event => {
     event.preventDefault();
@@ -7779,6 +8044,29 @@ button.mark {
 }
 button.mark:hover { border-color: var(--accent); color: var(--accent); }
 .doc img { max-width: 100%; height: auto; }
+/* A table in a shaping document. Tables have parsed since the day `_MD` was
+   given the rule, and drew as four words in a row with no lines anywhere —
+   which nobody had to look at until the toolbar gained a button that writes one.
+   Here and not beside the other `.doc` rules because those are written twice,
+   once in `_DETAIL_STYLE` and once in `_RECORD_STYLE`, and a third copy of a
+   border is a third place for two pages to disagree about what a table is. This
+   stylesheet is loaded by every page that shows a document.
+   A rule under the headings and a hairline between rows: a full grid is a
+   spreadsheet, and what a reader needs is to see where a row stops.
+   Resolved with `tests/cascade.py` rather than guessed at, because this
+   stylesheet is also loaded by the entity table, whose own sheet carries a bare
+   `th`: `.doc th` is (0,1,1) against that (0,0,1) and wins every property
+   declared here, and the table page has no `.doc` on it for the rest of that
+   bare rule to reach. */
+.doc table { border-collapse: collapse; margin: 0 0 1rem; font-size: 13px; }
+.doc th, .doc td { text-align: left; vertical-align: top; padding: .25rem .9rem .25rem 0; }
+.doc th { border-bottom: 1px solid var(--line-strong); font-weight: 600; }
+.doc tbody tr + tr td { border-top: 1px solid var(--line); }
+/* And the rule the toolbar's other new button writes. Chrome's default `hr` is
+   a 1px INSET border, which the dark theme renders as a bright bar heavier than
+   every other separator on the page — a divider that shouts is a divider that
+   reads as a heading. */
+.doc hr { border: 0; border-top: 1px solid var(--line-strong); margin: 1.4rem 0; }
 .suggest .dim { opacity: .6; }
 .suggest li.on .dim { opacity: .85; }
 """

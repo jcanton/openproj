@@ -19,6 +19,7 @@ anything was painted. This is the layer below that: the document, parsed.
 from __future__ import annotations
 
 from html.parser import HTMLParser
+from typing import NamedTuple
 
 
 class _Headings(HTMLParser):
@@ -223,3 +224,74 @@ def selects(page: str) -> list[list[tuple[str, str]]]:
     parser.feed(page)
     return parser.found
 
+
+class Element(NamedTuple):
+    """One element: what it is, what it carries, and what it says."""
+
+    tag: str
+    attrs: dict[str, str]
+    text: str
+
+
+class _Elements(HTMLParser):
+    """Every element in document order, each with the text it contains.
+
+    The parsers above each answer one page's question. This one answers the
+    question a rendered *document* raises, which is a different shape: markdown
+    output is not a fixed set of controls but whatever the writer typed, so what
+    a test needs is "which elements are these, and what is inside them" rather
+    than "where is the nav".
+
+    Text is closed on the end tag and stored back over the placeholder pushed on
+    the start tag, so an element's text is everything inside it — `<li>` reports
+    the checkbox's line and `<s>` reports the words that were struck out. Void
+    elements have no end tag and no text, and are reported as they are seen.
+    """
+
+    # `<input>` is the one that matters here — a task list is an input inside a
+    # list item — and the rest are named so that an unclosed `<br>` or `<img>`
+    # cannot swallow the elements after it.
+    VOID = frozenset(
+        "area base br col embed hr img input link meta param source track wbr".split()
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: list[Element] = []
+        self._open: list[tuple[str, int, list[str]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.found.append(Element(tag, {k: v or "" for k, v in attrs}, ""))
+        if tag not in self.VOID:
+            self._open.append((tag, len(self.found) - 1, []))
+
+    def handle_endtag(self, tag: str) -> None:
+        # From the inside out, and everything inside an unclosed element is
+        # closed with it: markdown-it emits well-formed markup, and a test that
+        # silently dropped half a document because one tag was misspelt would be
+        # a test that says nothing about the half it did read.
+        for depth in range(len(self._open) - 1, -1, -1):
+            if self._open[depth][0] != tag:
+                continue
+            for name, at, text in self._open[depth:]:
+                said = " ".join("".join(text).split())
+                self.found[at] = Element(name, self.found[at].attrs, said)
+            del self._open[depth:]
+            return
+
+    def handle_data(self, data: str) -> None:
+        for _, _, text in self._open:
+            text.append(data)
+
+
+def elements(page: str) -> list[Element]:
+    """Every element of a rendered document, parsed rather than searched for.
+
+    `"<h2>" in html` stopped being true the day a heading gained an attribute,
+    which is what it should never have been asserting: the claim is that the
+    document contains a level-two heading saying a particular thing, and that is
+    a question about an element and not about a string of characters.
+    """
+    parser = _Elements()
+    parser.feed(page)
+    return parser.found

@@ -52,6 +52,7 @@ import pygit2
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+from pages import elements
 from test_store import commit_directly
 
 from openproj.auth import User, sign_session
@@ -2253,11 +2254,15 @@ def test_the_preview_renders_with_the_page_s_own_markdown(client: TestClient):
         "/api/preview", json={"body": body, "title": "Bubble"}
     ).json()["html"]
 
-    assert "<table>" in previewed, "the same tables the saved page renders"
-    assert "<h1>Bubble</h1>" not in previewed, "and the same repeated title dropped"
+    def h1s(html: str) -> list[str]:
+        return [e.text for e in elements(html) if e.tag == "h1"]
+
+    tables = [e for e in elements(previewed) if e.tag == "table"]
+    assert tables, "the same tables the saved page renders"
+    assert "Bubble" not in h1s(previewed), "and the same repeated title dropped"
     # Without a title nothing is dropped: the heading is only a repetition when
     # there is something for it to repeat.
-    assert "<h1>Bubble</h1>" in client.post("/api/preview", json={"body": body}).json()["html"]
+    assert "Bubble" in h1s(client.post("/api/preview", json={"body": body}).json()["html"])
 
 
 def test_both_editors_send_the_title_they_are_previewing(client: TestClient):

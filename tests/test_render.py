@@ -13,11 +13,18 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
-from pages import headings, lit, selects
+from pages import elements, headings, lit, selects
 
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
-from openproj.render import STATUS_GLYPH, STATUSES, render_static
+from openproj.render import (
+    ROUTES,
+    STATUS_GLYPH,
+    STATUSES,
+    preview_html,
+    render_detail,
+    render_static,
+)
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
          "issues.html", "notes.html", "graph.html", "timeline.html")
@@ -99,17 +106,43 @@ def test_render_static_writes_every_page_and_says_which(rendered: Path, seed_ind
         assert render_static(seed_index, Path(directory)) == PAGES
 
 
+def fetches_nothing(body: str, where: str) -> None:
+    """Every way a page can ask the network for a file, in one place.
+
+    Written out inside the test that reads the eight exported files, this rule had
+    never once been applied to an editing surface: `render_static` calls
+    `render_detail` with no `base_commit`, so the exported `detail.html` carries
+    no textarea, no toolbar, no Yjs bundle and no room script at all. The rule was
+    unenforced exactly where the newest bytes in this repository land. It is a
+    function now so that the page which carries an editor is held to the same
+    words, and not to a second copy of them that can drift.
+    """
+    # Anchors to github.com are fine and wanted — a PR link that resolves is
+    # the point. What must never appear is a page FETCHING from the network.
+    assert not re.search(r'<script[^>]+src\s*=', body), where
+    assert not re.search(r'<link[^>]+href\s*=\s*["\']https?://', body), where
+    assert not re.search(r'<img[^>]+src\s*=\s*["\']https?://', body), where
+    assert "cdn." not in body, where
+
+
+def asks_for_no_font(body: str, where: str) -> None:
+    """The fourth way out, and the one a stylesheet can open without a tag.
+
+    A bare scan for `url(` over the whole page, `<script>` bodies included, which
+    is deliberate: it is the assertion a vendored editor mode was measured
+    failing twice on a tokeniser regex that fetches nothing at all. A rule that
+    holds only over the text it is allowed to read is not a rule.
+    """
+    for url in re.findall(r"url\(\s*[\"']?([^\"')]+)", body):
+        assert url.startswith("data:") or url.startswith("#"), (where, url[:60])
+    assert "fonts.googleapis" not in body and "fonts.gstatic" not in body, where
+
+
 def test_no_page_reaches_the_network(rendered: Path):
     """No npm, no build step, no CDN. A page that fetches from the internet is a
     page that breaks on a train, and this is the only test that would notice."""
     for name in PAGES:
-        body = read(rendered, name)
-        # Anchors to github.com are fine and wanted — a PR link that resolves is
-        # the point. What must never appear is a page FETCHING from the network.
-        assert not re.search(r'<script[^>]+src\s*=', body), name
-        assert not re.search(r'<link[^>]+href\s*=\s*["\']https?://', body), name
-        assert not re.search(r'<img[^>]+src\s*=\s*["\']https?://', body), name
-        assert "cdn." not in body, name
+        fetches_nothing(read(rendered, name), name)
 
 
 def test_the_libraries_are_inlined_rather_than_linked(rendered: Path):
@@ -1490,10 +1523,7 @@ def test_no_page_asks_the_network_for_a_font(rendered: Path):
     """The network assertion covers scripts, stylesheets and images. A font is the
     fourth way out, and the one a stylesheet can open without a tag."""
     for page in PAGES:
-        body = read(rendered, page)
-        for url in re.findall(r"url\(\s*[\"']?([^\"')]+)", body):
-            assert url.startswith("data:") or url.startswith("#"), (page, url[:60])
-        assert "fonts.googleapis" not in body and "fonts.gstatic" not in body, page
+        asks_for_no_font(read(rendered, page), page)
 
 
 def test_every_vendored_file_is_the_one_that_was_checksummed():
@@ -2178,7 +2208,118 @@ def test_a_first_heading_that_is_not_the_title_is_left_alone(rendered: Path, see
     article = re.search(rf'<article id="{differs.id}".*?</article>', body, re.S).group(0)
     first = differs.body.lstrip().splitlines()[0].lstrip("# ").strip()
 
-    assert f"<h1>{first}</h1>" in article
+    # Through the parser: an `<h1>` carries the source line it came from now, so
+    # the tag is no longer four characters, and it was the heading and not the
+    # characters that this ever meant.
+    assert first in [text for _, text in headings(article)]
+
+
+# The two syntaxes HackMD has that commonmark does not, and the line each block
+# was written on. Kept together because they are one commit's worth of renderer
+# and are checked the same way: through the parser, since the page also carries
+# the raw source of the same document inside a `<textarea>` and every one of
+# these claims is trivially true of a substring search over that.
+_WRITTEN = """## Progress
+
+- [ ] shape it
+- [x] bet on it
+
+~~Dropped~~ for now.
+"""
+
+
+def editable_page(index: Index, body: str | None = None) -> tuple[str, str]:
+    """One entity's detail page as a writer receives it: the id, and the page.
+
+    `base_commit` and `may_write`, which is the combination the static export
+    never produces — `render_static` passes neither, so the exported file carries
+    no editing surface for a test to look at.
+    """
+    one = next(iter(index.entities))
+    if body is not None:
+        index.entities[one].body = body
+    return one, render_detail(index, ROUTES, only=one, base_commit="deadbee", may_write=True)
+
+
+def test_a_struck_out_line_and_a_task_list_render_as_what_they_are(seed_index: Index):
+    """`~~x~~` rendered as four literal tildes and `- [ ] a task` as the literal
+    text `[ ]`, so a dropped line read as emphasis nobody could see and a
+    checklist — which is the shape a pitch's Progress section is written in —
+    read as a bullet with a box drawn in ASCII."""
+    _, page = editable_page(seed_index, _WRITTEN)
+    drawn = elements(page)
+    boxes = [
+        e for e in drawn
+        if e.tag == "input" and "task-list-item-checkbox" in e.attrs.get("class", "")
+    ]
+
+    assert [("checked" in e.attrs) for e in boxes] == [False, True], "two boxes, one ticked"
+    assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
+    # And the source spelling is gone from the rendered half. Not from the page:
+    # the box below holds the document verbatim, which is the whole reason this
+    # is asked of the parsed elements and not of the served bytes.
+    items = [
+        e.text for e in drawn
+        if e.tag == "li" and "task-list-item" in e.attrs.get("class", "")
+    ]
+    assert items == ["shape it", "bet on it"]
+    assert "~~" not in " ".join(e.text for e in drawn if e.tag == "p")
+
+
+def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index):
+    """The preview is the one place somebody checks a document before committing
+    it, and it renders through `_MD` for exactly this reason: a preview that
+    disagrees with the page about what a checkbox is, is worse than none."""
+    drawn = elements(preview_html(_WRITTEN))
+
+    assert [e.attrs.get("class") for e in drawn if e.tag == "ul"] == ["contains-task-list"]
+    assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
+
+
+def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index):
+    """The box and the document are two views of one text, and nothing in the
+    browser can line them up unless the rendered half says where each piece was
+    written. One-based and inclusive, because that is what the editing surface
+    counts in."""
+    _, page = editable_page(seed_index, _WRITTEN)
+    at = {
+        (e.tag, e.attrs["data-startline"], e.attrs["data-endline"])
+        for e in elements(page)
+        if "data-startline" in e.attrs
+    }
+
+    assert ("h2", "1", "1") in at, "## Progress is on line 1"
+    # 3 to 5 and not 3 to 4: markdown-it's own span for a list runs to the blank
+    # line that ends it, and that is the number this passes on rather than one
+    # trimmed here. A second opinion about where a block stops is a second thing
+    # for the browser's half to disagree with.
+    assert ("ul", "3", "5") in at, "the list runs from line 3 to the blank line that ends it"
+    assert ("p", "6", "6") in at, "and the paragraph under it is line 6"
+    # Only the blocks a reader scrolls past. Every paragraph inside every list
+    # item stamped too would be bytes on every page for a resolution nothing
+    # wants, and the one thing a scroll position interpolates between is these.
+    assert not [e for e in elements(page) if e.tag == "li" and "data-startline" in e.attrs]
+
+
+def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_index: Index):
+    """The hole under both network assertions, and it is older than any editor.
+
+    `PAGES` is the eight static-export files; `render_static` calls
+    `render_detail` with no `base_commit`, so `editable` is False and the
+    exported `detail.html` carries no textarea, no toolbar, no Yjs bundle and no
+    room script. Neither rule had ever inspected an editing surface — the one
+    part of this application that is being added to — and that is what concealed
+    two `url(` tokens in a vendored editor mode from a green suite.
+    """
+    one, page = editable_page(seed_index)
+
+    # The page really is the editing one, or the rest of this passes over a
+    # reader's page and says nothing about the bytes it was written for.
+    assert '<textarea name="body"' in page and "attachEditing(" in page
+    assert "const YJS" in page and "WebSocket" in page
+
+    fetches_nothing(page, f"the editable detail page for {one}")
+    asks_for_no_font(page, f"the editable detail page for {one}")
 
 
 def test_the_leading_heading_is_matched_on_words_and_not_on_bytes():

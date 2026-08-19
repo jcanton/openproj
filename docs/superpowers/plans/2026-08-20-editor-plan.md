@@ -224,33 +224,33 @@ page.
 
 **Server** (`src/openproj/render.py`):
 
-- [ ] **S1.1** `.enable("strikethrough")` on `_MD` at `render.py:941`, which is today
+- [x] **S1.1** `.enable("strikethrough")` on `_MD` at `render.py:941`, which is today
       `MarkdownIt("commonmark", {"html": False}).enable("table")`. Verified: `~~x~~`
       renders as literal tildes now.
-- [ ] **S1.2** Task-list checkboxes — `- [ ] a task` renders as the literal text `[ ]`
+- [x] **S1.2** Task-list checkboxes — `- [ ] a task` renders as the literal text `[ ]`
       today. A `mdit-py-plugins` dependency, zero browser bytes.
-- [ ] **S1.3** `data-startline` / `data-endline` stamped from markdown-it's `token.map` in
+- [x] **S1.3** `data-startline` / `data-endline` stamped from markdown-it's `token.map` in
       a `RendererHTML` override beside `_pr_refs` and `_image` (`render.py:1088-1089`).
       Nothing consumes it until S2; it lands here because it is a renderer change.
 
 **Client**, in the shared `_COMBOBOX` block (`render.py:7352`) — **one block, and all four
 pages get it for free**:
 
-- [ ] **S1.4** Tab / Shift-Tab soft indent through `replaceRange` (`render.py:7364`), in
+- [x] **S1.4** Tab / Shift-Tab soft indent through `replaceRange` (`render.py:7364`), in
       the `keydown` handler that already exists inside `attachEditing`
       (`render.py:7460`, the handler at `:7476`), with list and blockquote nesting reusing
       `LIST_ITEM` (`render.py:7458`) and `lineRange` (`render.py:7396`). Deletion through
       `execCommand('insertText', false, '')` is already a proven path — the empty-list-item
       branch does exactly that.
-- [ ] **S1.5** An Escape-armed one-shot Tab pass-through, **announced** through `announce`
+- [x] **S1.5** An Escape-armed one-shot Tab pass-through, **announced** through `announce`
       rather than silently implemented: swallowing Tab removes the only way to leave the
       field by keyboard.
-- [ ] **S1.6** Four new `FORMATS` entries (`render.py:7386`). Check list (`prefix: '- [ ] '`)
+- [x] **S1.6** Four new `FORMATS` entries (`render.py:7386`). Check list (`prefix: '- [ ] '`)
       and strikethrough (`wrap: '~~'`) drop into the existing shapes; a table template and
       a horizontal rule are neither wrap nor prefix nor fence and need a **fourth `insert:`
       branch in `applyMark`** (`render.py:7402`, which has exactly three today), ~4 lines.
       Explicitly not link and not image, on the S0 counts.
-- [ ] **S1.7** Smart paste inside the listener that already handles images
+- [x] **S1.7** Smart paste inside the listener that already handles images
       (`attachUploads`, `render.py:7513`): a URL pasted over a selection becomes
       `[selection](url)`; TSV becomes a markdown table. Both through `replaceRange`, so
       undo survives.
@@ -258,7 +258,7 @@ pages get it for free**:
 **The search, in the same commit**, because nothing here will mechanically force it and
 `AGENTS.md:308` requires it:
 
-- [ ] **S1.8** Rewrite `static/VENDOR.md`'s "No editor library" section to record that the
+- [x] **S1.8** Rewrite `static/VENDOR.md`'s "No editor library" section to record that the
       revisit happened; that Ace 1.44.0 is **admissible and measured** (BSD-3, three classic
       scripts, zero rewrite, no worker for markdown mode, verified in Chrome under this CSP
       with a forced-failure control on `ace/mode/javascript`); and the numbers — Ace
@@ -268,7 +268,7 @@ pages get it for free**:
       proposal 1's rule while it is being written: **any future Yjs-binding library that
       externalises `yjs` must bind to the same `Y.Doc` class the room came from**, so it can
       never be inlined beside `_yjs()` as a separate block.
-- [ ] **S1.9** Correct the record in the same paragraph: `mode-markdown.js` contains
+- [x] **S1.9** Correct the record in the same paragraph: `mode-markdown.js` contains
       **four** `createWorker` definitions, not zero. The right reason Ace spawns none is
       structural — `MarkdownMode` inherits `TextMode`, whose `createWorker` returns `null`.
 

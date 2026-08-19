@@ -21,7 +21,9 @@ from pathlib import Path
 
 import pygit2
 import pytest
+from browser import chrome, measured_in
 from fastapi.testclient import TestClient
+from pages import elements
 from test_store import commit_directly
 from test_web import ANN, PATH, SECRET, SEED, TASK, file_at, git_head, head, save
 
@@ -245,8 +247,13 @@ def test_the_preview_renders_markdown_without_a_client_side_library(client: Test
     one that is not what gets committed."""
     response = client.post("/api/preview", json={"body": "## Heading\n\nSome *text*.\n"})
     assert response.status_code == 200
-    assert "<h2>" in response.json()["html"]
-    assert "<em>" in response.json()["html"]
+    # Parsed, not searched for. `"<h2>" in html` was true until the day a block
+    # started carrying the source line it came from, and it was never the claim:
+    # what this test means is that the preview contains a level-two heading
+    # saying Heading, which is a question about an element.
+    drawn = [(e.tag, e.text) for e in elements(response.json()["html"])]
+    assert ("h2", "Heading") in drawn
+    assert ("em", "text") in drawn
 
 
 def test_a_preview_cannot_be_used_to_smuggle_html(client: TestClient):
@@ -812,14 +819,31 @@ def test_the_toolbar_carries_what_this_team_writes(client: TestClient):
     The two code buttons are here for a better reason than frequency. The team
     types on a mix of US and Swiss-German layouts, and on CH a backtick is a dead
     key, so a fence is three of them in a row — the two fenced blocks in the whole
-    corpus measure how awkward that is, not how little code people would paste."""
+    corpus measure how awkward that is, not how little code people would paste.
+
+    The last four are the ones the counts cannot yet defend: the migrated HackMD
+    corpus is not in this repository, and the seed corpus is synthetic and
+    answers zero for every syntax it would be asked about. They are here on the
+    shape of the documents instead — a checklist is what a pitch's Progress
+    section is made of and a strikethrough is how a dropped line is marked — and
+    the number in this test moves again when the corpus lands.
+    """
     page = client.get(f"/detail/{TASK}").text
     marks = re.search(r"const FORMATS = \[(.*?)\];", page, re.S).group(1)
 
-    assert marks.count("{key:") == 7
-    for wanted in ("Bold", "Italic", "Code  ", "Code block", "Heading", "Bullet", "Quote"):
+    # `title:` and not `{key:`, which is what this counted: two of the eleven
+    # deliberately carry no shortcut, and counting the ones that do would have
+    # reported a toolbar four buttons shorter than the one on the page.
+    assert marks.count("title:") == 11
+    for wanted in ("Bold", "Italic", "Code  ", "Code block", "Heading", "Bullet",
+                   "Check list", "Quote", "Strikethrough", "Table", "Horizontal rule"):
         assert wanted in marks, wanted
     assert "](" not in marks, "bare PR references are already linked by the renderer"
+    # Every shifted shortcut is bound to a letter. The handler matches on
+    # `event.key`, and shift-8 on a US layout is `*` and not `8` — so ⌘⇧8 beside
+    # the bullet's ⌘8 would have been a shortcut that could never once fire.
+    for entry in re.findall(r"\{[^{}]*shift: true[^{}]*\}", marks):
+        assert re.search(r"key: '[a-z]'", entry), entry
 
 
 def test_a_fence_takes_whole_lines_of_its_own(client: TestClient):
@@ -908,3 +932,181 @@ def test_starting_a_cycle_asks_for_dates_and_nothing_else(client: TestClient):
     assert 'id="number"' in create and 'id="starts"' in create and 'id="reviews"' in create
     assert 'id="start"' in create
     assert "<textarea" not in create, "no goal box here any more"
+
+
+# --- Tab, and the way back out of the box -----------------------------------
+
+# Asked of Chrome and not of `tests/js/drive.js`, on the rule in `AGENTS.md`:
+# the shim is a DOM, not a browser, and it has misled three rounds of this work.
+# Everything below is selection, key handling and the browser's own undo stack,
+# which is exactly the class of claim it cannot answer — `execCommand('insertText')`
+# is a browser API and the shim has no history for it to keep.
+_TABBING = """
+const area = document.querySelector('textarea[name=body]');
+document.getElementById('toggle').click();
+
+const press = (key, shift) => {
+  area.focus();
+  return area.dispatchEvent(new KeyboardEvent(
+    'keydown', {key, shiftKey: !!shift, bubbles: true, cancelable: true}));
+};
+const set = (text, from, to) => {
+  area.value = text;
+  area.dispatchEvent(new Event('input', {bubbles: true}));
+  area.focus();
+  area.setSelectionRange(from, to);
+};
+
+// A selection across two lines: both lines move, and both come back.
+set('alpha\\nbeta\\n', 0, 10);
+const swallowed = !press('Tab');
+const indented = area.value;
+const still = [area.selectionStart, area.selectionEnd];
+press('Tab', true);
+const back = area.value;
+
+// A caret in the middle of a sentence is the other gesture: spaces to the next
+// stop, and nothing else on the line moves. An odd column takes one space and an
+// even one takes two, which is what "stop" means and what a fixed two would not.
+set('alpha beta', 3, 3);
+press('Tab');
+const odd = area.value;
+set('alpha beta', 6, 6);
+press('Tab');
+const even = area.value;
+
+// A caret inside a bullet's marker nests the item under the one above it.
+set('- one\\n- two\\n', 8, 8);
+press('Tab');
+const nested = area.value;
+
+// One undo press gives the whole gesture back, which is the entire reason every
+// write goes through `execCommand` rather than through `area.value =`.
+set('alpha\\nbeta\\n', 0, 10);
+press('Tab');
+const wrote = area.value;
+document.execCommand('undo');
+const undone = area.value;
+
+// And Escape arms exactly one Tab, out loud, so the field can still be left by
+// keyboard.
+set('alpha', 0, 0);
+press('Escape');
+const said = document.getElementById('state').textContent;
+const passed = press('Tab');
+const untouched = area.value;
+// Spent: the press after it indents again.
+press('Tab');
+const spent = area.value;
+
+return {swallowed, indented, still, back, odd, even, nested, wrote, undone,
+        said, passed, untouched, spent};
+"""
+
+
+def test_tab_indents_the_lines_the_selection_touches_and_escape_then_tab_leaves_the_field(
+    client: TestClient, tmp_path: Path
+):
+    """Tab is the fifth ask, and taking Tab away is how an editor traps somebody
+    who has no pointer. Both halves are here because neither is safe alone: an
+    indent that swallows Tab with no way out is worse than no indent, and an
+    escape hatch nobody is told about is not one."""
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "tab.html", 1200, _TABBING
+    )
+
+    assert got["swallowed"], "Tab was left to the browser and moved focus instead"
+    assert got["indented"] == "  alpha\n  beta\n"
+    assert got["still"] == [2, 14], "the selection no longer covers the words it moved"
+    assert got["back"] == "alpha\nbeta\n", "Shift-Tab did not take the indent back"
+    assert got["odd"] == "alp ha beta", "a caret in a sentence types to the next stop"
+    assert got["even"] == "alpha   beta", "and a whole indent when it is already on one"
+    assert got["nested"] == "- one\n  - two\n", "Tab in a bullet did not nest the item"
+    assert got["wrote"] == "  alpha\n  beta\n"
+    assert got["undone"] == "alpha\nbeta\n", "the whole indent is not one undo step"
+    assert "Tab" in got["said"], "swallowing Tab was not announced"
+    assert got["passed"], "Escape did not give the next Tab back to the browser"
+    assert got["untouched"] == "alpha", "the armed Tab indented instead of leaving"
+    assert got["spent"] == "  alpha", "the hatch stayed open for a second Tab"
+
+
+# The four marks the renderer learnt in the same commit, and the two pastes.
+# Driven in Chrome rather than read out of the page, because every one of these
+# is a claim about a selection: which characters were chosen when the button was
+# pressed, and which are chosen afterwards.
+_MARKING = """
+const area = document.querySelector('textarea[name=body]');
+document.getElementById('toggle').click();
+const mark = name => FORMATS.find(m => m.title.split('  ')[0] === name);
+const set = (text, from, to) => {
+  area.value = text;
+  area.focus();
+  area.setSelectionRange(from, to);
+};
+const apply = (name, text, from, to) => {
+  set(text, from, to);
+  applyMark(area, mark(name));
+  return area.value;
+};
+
+const struck = apply('Strikethrough', 'alpha beta', 0, 5);
+const checked = apply('Check list', 'one\\ntwo', 0, 7);
+// On lines that are already bullets the box goes onto the bullet that is there.
+const boxed = apply('Check list', '- one\\n- two', 0, 11);
+const unboxed = apply('Check list', '- [ ] one\\n- [ ] two', 0, 19);
+// A block goes in on lines of its own, or `---` under a line of text is a
+// heading and a table does not interrupt a paragraph at all.
+const table = apply('Table', 'alpha', 5, 5);
+const picked = area.value.slice(area.selectionStart, area.selectionEnd);
+const rule = apply('Horizontal rule', 'alpha', 5, 5);
+
+// A paste is what the browser hands over, so it is given one.
+const paste = text => {
+  const data = new DataTransfer();
+  data.setData('text/plain', text);
+  area.focus();
+  const event = new ClipboardEvent(
+    'paste', {clipboardData: data, bubbles: true, cancelable: true});
+  area.dispatchEvent(event);
+  return {text: area.value, taken: event.defaultPrevented};
+};
+set('read the notes', 5, 14);
+const linked = paste('https://example.org/a?b=c');
+set('', 0, 0);
+const tabled = paste('a\\tb\\nc\\td\\n');
+// Everything else is the browser's, pasted as the text it is.
+set('one', 3, 3);
+const plain = paste(' and two');
+set('read the notes', 5, 14);
+const bare = paste('a sentence');
+
+return {struck, checked, boxed, unboxed, table, picked, rule,
+        linked, tabled, plain, bare};
+"""
+
+
+def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
+    client: TestClient, tmp_path: Path
+):
+    """A button that emits syntax the committed renderer does not honour is worse
+    than no button, which is why these arrived in the commit that taught `_MD`
+    strikethrough and task lists — and why a table and a rule are a fourth shape
+    in `applyMark` rather than a wrap with newlines in it."""
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "marks.html", 1200, _MARKING
+    )
+
+    assert got["struck"] == "~~alpha~~ beta"
+    assert got["checked"] == "- [ ] one\n- [ ] two"
+    assert got["boxed"] == "- [ ] one\n- [ ] two", "the prefix was stacked on the bullet"
+    assert got["unboxed"] == "- one\n- two", "and pressing it again did not take the box off"
+    assert got["table"] == (
+        "alpha\n\n| Heading | Heading |\n| --- | --- |\n| Cell | Cell |"
+    ), "a table that interrupts a paragraph is a wall of pipes"
+    assert got["picked"] == "Heading", "the word to replace was not chosen for you"
+    assert got["rule"] == "alpha\n\n---", "`---` under a line of text is a heading, not a rule"
+
+    assert got["linked"] == {"text": "read [the notes](https://example.org/a?b=c)", "taken": True}
+    assert got["tabled"] == {"text": "| a | b |\n| --- | --- |\n| c | d |", "taken": True}
+    assert got["plain"]["taken"] is False, "an ordinary paste was taken over"
+    assert got["bare"]["taken"] is False, "prose over a selection is not a link"
