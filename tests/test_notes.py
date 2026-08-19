@@ -32,12 +32,14 @@ from openproj.model import (
     Config,
     Note,
     Task,
+    is_bettable,
     load_repo,
     note_problems,
     promoted_from,
     shaping_document,
     validate_all,
 )
+from openproj.render import PROMOTABLE
 from openproj.web import SESSION_COOKIE, create_app
 
 # Every view of the plan, plus the other inbox. A note belongs on none of them.
@@ -436,30 +438,98 @@ def test_the_trail_survives_a_round_trip_through_git(client: TestClient, tmp_pat
     assert note.state({e.id: e for e in entities_now}) == "promoted"
 
 
-def test_an_issue_promotes_into_a_pitch_and_only_a_pitch(client: TestClient, repo_path: Path):
-    """That is the lifecycle the issue record already describes: somebody reads
-    the open issues at the betting table and writes a pitch for what matters.
-    Straight to a task would mint a chore nobody pitched — legal to write by hand,
-    and not something a button should make out of "this is broken"."""
+def test_an_issue_promotes_into_a_pitch_or_a_task_and_nothing_else(
+    client: TestClient, repo_path: Path
+):
+    """Two exits, because most of what is in an inbox is not worth a bet.
+
+    This asserted one — "straight to a task would mint a chore nobody pitched" —
+    and that argument is about a task UNDER a pitch, which is a piece of somebody
+    else's bet. A parentless task is not that: `is_bettable` says one is bet in
+    its own right and the betting table draws it beside the pitches. What the old
+    rule cost was paid outside this tool: a broken symlink and a one-line fix had
+    to be written up with an Appetite, Rabbit holes and No-gos to get out of the
+    inbox, or it went round the side of it.
+
+    A project is still refused, and that is the half of the rule worth keeping: a
+    project is a container for bets, and "we found something broken" is not a
+    milestone.
+    """
     opened = client.post(
         "/api/issue",
         json={"base_commit": git_head(repo_path), "title": "Halo drops a rank",
               "body": "Reproduced on 12 ranks."},
     ).json()["id"]
 
-    refused = promote(client, opened, "task", git_head(repo_path))
+    refused = promote(client, opened, "project", git_head(repo_path))
     assert refused.status_code == 422
-    assert "an issue becomes pitch" in refused.json()["detail"]
+    # Built from `PROMOTABLE` rather than written out, so the sentence a person is
+    # refused with cannot go stale the next time that tuple changes.
+    assert "an issue becomes pitch or task" in refused.json()["detail"]
 
-    response = promote(client, opened, "pitch", git_head(repo_path))
-    assert response.status_code == 201, response.text
-    new_id = response.json()["id"]
-    pitch = file_at(repo_path, git_head(repo_path), f"pitches/{new_id}.md")
-    issue = file_at(repo_path, git_head(repo_path), f"issues/{opened}.md")
+    for kind, directory in (("pitch", "pitches"), ("task", "tasks")):
+        response = promote(client, opened, kind, git_head(repo_path))
+        assert response.status_code == 201, response.text
+        new_id = response.json()["id"]
+        made = file_at(repo_path, git_head(repo_path), f"{directory}/{new_id}.md")
+        issue = file_at(repo_path, git_head(repo_path), f"issues/{opened}.md")
 
-    assert f"> Promoted from {opened} — an issue by ann on " in pitch
-    assert "Reproduced on 12 ranks." in pitch
-    assert f"- {new_id}" in issue, "pitched_into, which the issue already had"
+        assert f"kind: {kind}" in made
+        assert f"> Promoted from {opened} — an issue by ann on " in made
+        assert "Reproduced on 12 ranks." in made
+        assert f"- {new_id}" in issue, "pitched_into, which the issue already had"
+
+
+def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
+    client: TestClient, repo_path: Path
+):
+    """A task wants different things from a pitch, so "it validated as a pitch"
+    says nothing about it.
+
+    Two claims, and the second is the one a green route cannot make on its own:
+    that the record is a TASK — parentless, which is what makes it a bet in its
+    own right rather than an orphan piece of somebody else's — and that the
+    validator CI runs finds no blocker on it, asked over the whole corpus it
+    landed in rather than over the record alone. A promote path that writes a
+    record `openproj check` refuses is a promote path that puts a blocker in the
+    plan by pressing a button, on a protected branch.
+    """
+    opened = client.post(
+        "/api/issue",
+        json={"base_commit": git_head(repo_path), "title": "Halo drops a rank",
+              "body": "Reproduced on 12 ranks.", "fields": {"tags": ["halo"]}},
+    ).json()["id"]
+
+    new_id = promote(client, opened, "task", git_head(repo_path)).json()["id"]
+    stored = file_at(repo_path, git_head(repo_path), f"tasks/{new_id}.md")
+
+    assert new_id.startswith("task-")
+    assert "kind: task" in stored and "status: shaping" in stored
+    assert "Halo drops a rank" in stored, "the title crosses"
+    # None of these: an issue has no owner, no size and no cycle to give, and a
+    # promotion that invented one would be this tool asserting a commitment
+    # nobody made. `parent` is the one that decides what kind of thing this is.
+    for commitment in ("owner:", "person_weeks:", "cycle:", "assignees:", "parent:"):
+        assert commitment not in stored, commitment
+
+    entities_now, config, unreadable = load_repo_from(repo_path)
+    assert not unreadable
+    made = next(entity for entity in entities_now if entity.id == new_id)
+
+    assert made.kind == "task" and made.parent is None
+    assert is_bettable(made), "which is the state the model already has a word for"
+    assert not [
+        p for p in validate_all(entities_now, config)
+        if p.severity == "blocker" and p.entity_id == new_id
+    ]
+    # And the trail back, at both ends: the issue names it, and the record says
+    # in its own document where it came from.
+    issue = config.issues[opened]
+    assert issue.pitched_into == [new_id]
+    assert opened in made.body
+    assert issue.state({e.id: e for e in entities_now}) == "in_progress", (
+        "an issue that has been picked up says so, whichever kind picked it up"
+    )
 
 
 def test_a_source_that_is_not_a_note_or_an_issue_is_refused(client: TestClient, repo_path: Path):
@@ -499,11 +569,24 @@ def test_the_promote_control_is_not_offered_where_it_cannot_work(
 
     assert 'id="promote-go"' not in client.get("/note/new").text, "nothing to promote yet"
     assert 'id="promote-go"' in client.get(f"/note/{note_id}").text
-    # Three kinds on a note, one on an issue, and the issue's has no picker at all
-    # rather than a picker with one entry in it.
-    picker = re.search(r'<select id="into">.*?</select>', client.get(f"/note/{note_id}").text,
-                       re.S).group(0)
-    assert ["pitch", "task", "project"] == re.findall(r'value="(\w+)"', picker)
+    # Three kinds on a note and two on an issue, each page offering exactly what
+    # `PROMOTABLE` says and in its order — the picker used to be a note-only
+    # control, because an issue had one destination and a `<select>` holding one
+    # option is a control that cannot be used and looks exactly like one that can.
+    opened = client.post(
+        "/api/issue", json={"base_commit": git_head(repo_path), "title": "Something broke"},
+    ).json()["id"]
+    for page, expected in (
+        (f"/note/{note_id}", list(PROMOTABLE["note"])),
+        (f"/issue/{opened}", list(PROMOTABLE["issue"])),
+    ):
+        picker = re.search(r'<select id="into">.*?</select>', client.get(page).text, re.S).group(0)
+        assert expected == re.findall(r'value="(\w+)"', picker), page
+    assert ["pitch", "task", "project"] == list(PROMOTABLE["note"])
+    assert ["pitch", "task"] == list(PROMOTABLE["issue"]), (
+        "a project is not on offer from an issue: a milestone is a container for "
+        "bets, and \"we found something broken\" is not one"
+    )
 
 
 # --------------------------------------------------------------------------- #

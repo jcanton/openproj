@@ -703,3 +703,61 @@ def test_a_refusal_is_coloured_as_one_and_a_receipt_is_not(people: Sheet):
     bad = LINE + [el("span", "bad", id="state")]
 
     assert people.value(bad, "color") == "var(--warn)", says(people, bad, "color")
+
+
+# --------------------------------------------------------------------------- #
+# The row nobody has created yet
+# --------------------------------------------------------------------------- #
+
+# The draft row's id cell, which until there is an id carries the row's own
+# controls: create it, abandon it, and what it is going to be.
+DRAFTING = SCROLL + [
+    el("tbody"),
+    el("tr", "draft"),
+    el("td", "draft-id", data_col="id"),
+    el("span", "drafting"),
+]
+
+
+@pytest.mark.parametrize("control", ["draft-create", "draft-cancel"])
+def test_a_drawn_mark_has_a_size_of_its_own(index: Index, control: str):
+    """The check and the cross the draft row is created and cancelled with are
+    `<svg class="icon">`, and that element carries no `width` or `height`
+    attribute — every other page sizes it from the box it sits in
+    (`.avatar svg`, `.picker .art svg`, both `width: 100%`).
+
+    In a button that has no such rule an SVG with no intrinsic size lays out at
+    0x0, and the two controls that create and abandon a record are two empty
+    boxes. They were, on the served page, while the suite was green: nothing in
+    it asked what a browser resolves for the drawing, only that the markup was
+    emitted. This asks the cascade, which is the only thing that answers.
+    """
+    mark = DRAFTING + [el("button", "draft-do", id=control), el("svg", "icon")]
+    sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD))
+    for prop in ("width", "height"):
+        value = sheet.value(mark, prop)
+        assert value not in (None, "auto", "0", "0px"), (
+            f"{control}'s drawing resolves {prop} to {value!r}, which is no "
+            f"drawing at all:\n{says(sheet, mark, prop)}"
+        )
+
+
+def test_the_draft_rows_controls_stand_on_one_line(index: Index):
+    """Two marks and the kind picker, side by side in the narrowest column on
+    the table.
+
+    Laid out by the wrapper and not by the cell: a `<td>` that is a flex
+    container stops being a table cell. Without the rule the three sat as
+    inline boxes and the picker wrapped under the marks, which made the draft
+    twice the height of every other row — the exact thing the comment above
+    `draftControls` says the marks exist to avoid. And the picker has to be
+    allowed to shrink: a flex item's `min-width` is `auto`, so its longest
+    option decided the width of a 135px column.
+    """
+    sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD))
+    assert sheet.value(DRAFTING, "display") == "inline-flex", (
+        says(sheet, DRAFTING, "display")
+    )
+    assert sheet.value(DRAFTING, "align-items") == "center"
+    picker = DRAFTING + [el("select", id="draft-kind")]
+    assert sheet.value(picker, "min-width") == "0", says(sheet, picker, "min-width")
