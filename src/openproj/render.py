@@ -8881,6 +8881,19 @@ _ICON_ART = {
         '<circle cx="21" cy="13.6" r="1.7"/>'
         '<path d="M7.6 15.6v2.4M12 15.6v2.6M16.4 15.6v2.4M4.6 15.2 2.4 16.4"/>'
     ),
+    # A head in profile, because a whole unicorn at 20px is a horse-shaped smudge
+    # with a spike on it. The horn is the entire signal — it is drawn as its own
+    # shape rising clear of the skull rather than as a bump on the outline, since
+    # a point that shares an edge with the head reads as an ear at this size, and
+    # the ear beside it is what it would then be confused with.
+    "unicorn": (
+        '<path d="M3.4 16.6C3.4 12.2 6.8 8.8 11 8.5L13.2 8.3'
+        'C14.6 12.4 15.2 16.7 15.4 21.2H10.2C9.8 18.4 7.2 16.8 3.4 16.6Z"/>'
+        '<path d="M11.4 8.1 10.4 1.8 13.4 7.7"/>'
+        '<path d="M14.2 8.2 15.4 6.3 16.1 8.7"/>'
+        '<path d="M16.6 10.2Q19.6 12.6 18 15.1Q20.3 17.8 18.8 21.2"/>'
+        '<circle cx="9.6" cy="12.9" r=".85" fill="currentColor" stroke="none"/>'
+    ),
 }
 
 # The vocabulary, and the only thing that decides it. `web.py` refuses an icon
