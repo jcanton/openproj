@@ -2562,8 +2562,34 @@ addEventListener('openproj:wrote', event => {
   if (!movedWriting) while (movedHeld.length) showMoved(movedHeld.shift());
 });
 
+// A commit somebody else in your co-editing room made is not somebody changing
+// the file under you: the text it holds is already in the box in front of you,
+// letter by letter, which is what the room is. The banner appeared anyway —
+// "this was just changed by somebody else" over a document that had just been
+// synced, which is jcanton's report from the deployed service.
+//
+// Its own event rather than `openproj:wrote`, which also decrements the
+// in-flight counter: only the tab that pressed Save owes that one, and every tab
+// in the room hears this.
+addEventListener('openproj:ours', event => {
+  if (!event.detail) return;
+  movedOurs.add(event.detail);
+  // And if the stream beat the socket to it, the banner is already up about a
+  // commit we now know was the room's. Racing is the normal case, not the
+  // unlucky one: both arrive from the same write.
+  if (movedShowing === event.detail) {
+    moved.hidden = true;
+    movedShowing = null;
+  }
+});
+
+// Which commit the banner is currently about, so a late "that one was ours" can
+// take it down again.
+let movedShowing = null;
+
 function showMoved({commit, changed}) {
   if (movedOurs.has(commit)) return;
+  movedShowing = commit;
   // What this page is looking at. A page showing one entity has it in its URL;
   // the table shows all of them and has nothing in its URL, so it says so — and
   // said nothing, every write anywhere read as unrelated to what was on screen.
@@ -7956,8 +7982,15 @@ _DETAIL = """
         <span class="hint">paste or drop an image to put it in the plan</span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
       </p>
-      <textarea name="body" class="field body-field"
-                aria-label="Shaping document">{{ e.raw_body }}</textarea>
+      {#- The box, and a layer over it for where everybody else is. The layer is
+          a sibling rather than a background, because a `<textarea>` cannot hold
+          anything but text: the bands are drawn on top, translucent, and take no
+          pointer events — the thing under them is the thing being typed in. -#}
+      <div class="bodywrap">
+        <div id="seats" class="seats" aria-hidden="true"></div>
+        <textarea name="body" class="field body-field"
+                  aria-label="Shaping document">{{ e.raw_body }}</textarea>
+      </div>
       <div id="body-preview" class="field doc" hidden></div>
       <div id="conflict" role="status" aria-live="polite" hidden></div>
       {% endif %}
@@ -8135,6 +8168,12 @@ function showEditing(editing) {
   document.getElementById('cancel').hidden = !editing;
   document.getElementById('toggle').hidden = editing;
   dirty();
+  // The room's bands are measured against a box that has a size. The socket
+  // opens on load and the roster arrives while the page is still in read mode,
+  // where the textarea is `display: none` and every measurement is zero — so the
+  // first thing anybody saw on entering edit mode was no bands at all, on a
+  // document somebody else was demonstrably in.
+  dispatchEvent(new Event('openproj:editing'));
 }
 
 // Both of the buttons that change the mode, through one handler: Edit at the top
@@ -8464,6 +8503,99 @@ const COEDIT = (() => {
     together.textContent = others.length ? `also editing: ${others.join(', ')}` : '';
   }
 
+  // --- where everybody is ---------------------------------------------------
+  //
+  // A name says somebody else is in the document. It does not say which
+  // paragraph they are in, which is the thing you need in order not to rewrite
+  // the sentence somebody is halfway through — and in a shaping document that is
+  // the whole risk, because two people work on two sections of one file.
+  //
+  // A band on the line, not a caret. A caret drawn through a mirror element is
+  // wrong by a pixel or two and reads as a claim about a character; a translucent
+  // band is right about the line or visibly wrong about it, and being visibly
+  // wrong is a state somebody can act on.
+
+  let seats = [];
+
+  // Drawn again when the box appears. See `showEditing`.
+  addEventListener('openproj:editing', () => { drawSeats(); sit(); });
+
+  // One hue per login, from the name itself: no server-side allocation, no
+  // colour that changes when somebody leaves and rejoins, and the same person is
+  // the same colour in everybody's window. The other two channels are fixed, so
+  // every band is equally light — a colour that also varies in lightness is one
+  // that means "more" to a reader who cannot separate hues.
+  function hueOf(login) {
+    let hash = 0;
+    for (const character of login) hash = (hash * 31 + character.charCodeAt(0)) % 360;
+    return hash;
+  }
+
+  // The mirror. Built once, kept out of the accessibility tree, and given the
+  // textarea's own metrics every time it is measured — a mirror whose font is a
+  // fallback measures the fallback's line height, and every band lands somewhere
+  // else on the machine that has no webfont yet.
+  const ghost = document.createElement('div');
+  ghost.className = 'ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+
+  function measure(at) {
+    const style = getComputedStyle(BODY);
+    for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+                        'letterSpacing', 'padding', 'border', 'whiteSpace',
+                        'wordBreak', 'overflowWrap', 'tabSize', 'boxSizing']) {
+      ghost.style[name] = style[name];
+    }
+    ghost.style.width = BODY.clientWidth + 'px';
+    ghost.textContent = BODY.value.slice(0, at);
+    const mark = document.createElement('span');
+    // A zero-width space so the marker has a box on an empty line, and so the
+    // line it is on does not get one character wider than the real one.
+    mark.textContent = '\u200b';
+    ghost.appendChild(mark);
+    const top = mark.offsetTop;
+    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
+    return {top, height};
+  }
+
+  function drawSeats() {
+    const layer = document.getElementById('seats');
+    if (!layer || !BODY) return;
+    const others = seats.filter(seat => seat.login !== me);
+    if (!others.length) { layer.replaceChildren(); return; }
+    document.body.appendChild(ghost);
+    const drawn = others.map(seat => {
+      const {top, height} = measure(Math.min(seat.at, BODY.value.length));
+      const band = document.createElement('div');
+      band.className = 'seat';
+      band.style.top = (top - BODY.scrollTop) + 'px';
+      band.style.height = height + 'px';
+      band.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .22)`;
+      const who = document.createElement('span');
+      who.className = 'seatname';
+      who.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .85)`;
+      // `textContent`, because this is a login off a socket.
+      who.textContent = seat.login;
+      band.appendChild(who);
+      return band;
+    });
+    ghost.remove();
+    layer.replaceChildren(...drawn);
+  }
+
+  // Where this tab's caret is, when it moves to a different place. Sent on the
+  // index the two ends already agree on — UTF-16 code units, which is what
+  // `selectionStart` counts and what a Yjs text is made of in a browser. The
+  // server relays it and never reads it; see `Room.sits`.
+  let sentAt = -1;
+  function sit() {
+    if (!BODY || !bound) return;
+    const at = BODY.selectionStart;
+    if (at === sentAt) return;
+    sentAt = at;
+    send({t: 'at', at});
+  }
+
   // The shell counts these in pairs, so they are announced from one place each
   // and guarded by the same flag. Pressing Save both dispatches here and hears
   // the room say `saving` a moment later; two writings against one wrote left
@@ -8530,6 +8662,16 @@ const COEDIT = (() => {
       }
       bound = true;
       BODY.addEventListener('input', typed);
+      // Where this tab is sitting, and where everybody else's band should be
+      // drawn. Four events, because four different things move a band: the
+      // caret moving, the text moving under it, the box scrolling, and the
+      // window changing the wrap.
+      BODY.addEventListener('input', () => { sit(); drawSeats(); });
+      BODY.addEventListener('scroll', drawSeats);
+      BODY.addEventListener('keyup', sit);
+      BODY.addEventListener('click', sit);
+      addEventListener('resize', drawSeats);
+      sit();
     } else {
       // A reconnection. The document already merged everything typed while the
       // socket was down, so there is nothing to decide.
@@ -8543,8 +8685,20 @@ const COEDIT = (() => {
 
   function heard(message) {
     if (message.t === 'welcome') return welcomed(message);
-    if (message.t === 'update') return YJS.applyUpdate(doc, raw(message.u), 'remote');
-    if (message.t === 'who') return names(message.people);
+    if (message.t === 'update') {
+      YJS.applyUpdate(doc, raw(message.u), 'remote');
+      // Somebody else's text arrived, so every band below the change is now on
+      // the wrong line — including this tab's own idea of where it is sitting.
+      drawSeats();
+      sit();
+      return;
+    }
+    if (message.t === 'who') {
+      names(message.people);
+      seats = Array.isArray(message.where) ? message.where : [];
+      drawSeats();
+      return;
+    }
     if (message.t === 'reload') return stop(message.why);
     if (message.t === 'saving') {
       // The shell's banner has to know a write is in the air before it lands:
@@ -8579,6 +8733,10 @@ const COEDIT = (() => {
       announce(message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
         : (message.pushed === false ? 'saved here, not yet pushed' : 'saved'));
+      // Everybody in the room, not only the tab that pressed the button: this
+      // commit holds text that is already in every one of these editors, so the
+      // shell's "somebody else changed this" banner is wrong about all of them.
+      dispatchEvent(new CustomEvent('openproj:ours', {detail: message.commit}));
       // And the tab that pressed Save leaves edit mode, which is what pressing
       // it means. The path without a room reloads the page and lands in read
       // mode by doing so; in a room there is nothing to reload — the document is
@@ -8754,6 +8912,24 @@ article.entity:not(.editing) .req { display: none; }
 .field { display: none; }
 .entity.editing .field { display: block; }
 .entity.editing .field[hidden] { display: none; }
+/* Where the other people in the room are. One band per person on the line their
+   caret is in, translucent so the text keeps its own contrast, with the login on
+   the right — a colour on its own is a colour a reader has to be told the
+   meaning of, and the two channels together need no legend.
+   `pointer-events: none` throughout: the thing under this is the box being typed
+   in, and a layer that takes a click is a click that does not reach it. */
+.bodywrap { position: relative; }
+.seats { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+         border-radius: 3px; }
+.seat { position: absolute; left: 0; right: 0; }
+.seatname { position: absolute; right: .25rem; top: 0;
+            font-size: 10px; line-height: 1.4; padding: 0 .3rem; border-radius: 3px;
+            color: var(--bg); font-family: var(--font-sans); }
+/* Off the page and measured, never seen. It carries the textarea's own metrics —
+   a mirror in a fallback face measures the fallback's line height, and every band
+   then lands on the wrong row on the one machine whose webfont has not arrived. */
+.ghost { position: absolute; visibility: hidden; top: -9999px; left: -9999px;
+         white-space: pre-wrap; word-break: break-word; }
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
 /* The second row sits under the first rather than a paragraph's worth away: they
    are two halves of one bar, and the box they belong to is below both. */

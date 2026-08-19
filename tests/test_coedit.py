@@ -2532,3 +2532,108 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
         "over the document it could not be merged with"
     )
     assert not [line for line in said if "Content Security Policy" in line], said
+
+
+def test_a_commit_the_room_made_is_not_somebody_else_changing_it(client):
+    """The banner that says "this was just changed by somebody else", over a
+    document that had just been synced letter by letter.
+
+    Every commit comes back down `/api/events`, including the ones this tab
+    caused — the shell already knows that and keeps a set of its own. What it did
+    not know is that a commit made by SOMEBODY ELSE in your co-editing room is
+    also not news: the text it holds is in the box in front of you already, which
+    is the whole of what a room is. Reported by jcanton from the deployed
+    service, where two people were editing one document.
+
+    Asked of the source, because the claim is about which listener hears which
+    event: driving it would need two browsers, a real socket and a real stream,
+    and `tests/test_coedit.py`'s live fixture proves the socket rather than the
+    banner.
+    """
+    page_for_one = client.get(f"/detail/{TASK}").text
+    assert "addEventListener('openproj:ours'" in page_for_one, (
+        "the shell does not listen for the room's own commits"
+    )
+    assert "dispatchEvent(new CustomEvent('openproj:ours'" in page_for_one, (
+        "the room does not tell the shell about the commit it just made"
+    )
+    # And it is not `openproj:wrote`, which every tab in the room would then owe
+    # the counter — only the one that pressed Save owes that.
+    room = page_for_one.split("if (message.t === 'saved')")[1].split("if (message.t ===")[0]
+    assert "openproj:ours" in room
+    assert "openproj:wrote" not in room, (
+        "every tab in the room answers a writing that only one of them started"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Where everybody is
+# --------------------------------------------------------------------------- #
+
+
+def test_the_room_relays_where_each_person_is_sitting(client: TestClient):
+    """Presence was a list of names. A name says somebody else is in the
+    document; it does not say which paragraph they are in, and in a shaping
+    document that is the thing you need in order not to rewrite the sentence
+    somebody is halfway through.
+
+    The number is an index into the text and this server never reads it — it
+    carries it. The two ends that use it are both browsers and they already agree
+    on what it counts: UTF-16 code units, which is what `selectionStart` counts
+    and what a Yjs text is made of in a browser. Converting here would be a third
+    index space in the one module whose note is about exactly that mistake.
+    """
+    with open_room(client, "ann") as one, open_room(client, "bo") as two:
+        ann, bo = Session(one, "ann"), Session(two, "bo")
+        ann.hello()
+        bo.hello()
+        one.send_json({"t": "at", "at": 421})
+        heard = bo.take("who")
+        while not heard["where"]:
+            heard = bo.take("who")
+
+    assert heard["people"] == ["ann", "bo"]
+    assert heard["where"] == [{"login": "ann", "at": 421}]
+
+
+def test_a_seat_goes_when_its_person_does(client: TestClient):
+    """A band drawn for somebody who closed the tab is a colour under a name that
+    is no longer in the list beside it."""
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        with open_room(client, "bo") as two:
+            bo = Session(two, "bo")
+            bo.hello()
+            two.send_json({"t": "at", "at": 12})
+            heard = ann.take("who")
+            while not heard["where"]:
+                heard = ann.take("who")
+            assert heard["where"] == [{"login": "bo", "at": 12}]
+
+        left = ann.take("who")
+
+    assert left["people"] == ["ann"]
+    assert left["where"] == [], "the room kept a seat for somebody who has gone"
+
+
+def test_a_seat_that_is_not_a_number_is_not_a_seat(client: TestClient):
+    """It arrives off a socket and is drawn into a position: a float would be a
+    NaN in somebody else's arithmetic and an unbounded one is a band measured a
+    million lines down. Neither closes the socket — this is presence, and a
+    malformed frame about where somebody is sitting is not a reason to throw
+    them out of the document."""
+    with open_room(client, "ann") as one, open_room(client, "bo") as two:
+        ann, bo = Session(one, "ann"), Session(two, "bo")
+        ann.hello()
+        bo.hello()
+        for nonsense in ({"t": "at", "at": "here"}, {"t": "at", "at": -3},
+                         {"t": "at", "at": 10 ** 9}, {"t": "at"}):
+            one.send_json(nonsense)
+        # Still a room, still speaking: a real seat after the nonsense arrives.
+        one.send_json({"t": "at", "at": 7})
+        heard = bo.take("who")
+        while not heard["where"]:
+            heard = bo.take("who")
+
+    assert heard["where"] == [{"login": "ann", "at": 7}]

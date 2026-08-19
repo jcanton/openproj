@@ -135,6 +135,11 @@ class Room:
         # them: taking a paragraph out is authorship too.
         self.typed: dict[str, int] = {}
         self.members: dict[int, str] = {}
+        # Where each socket's caret is. Presence is a name and a place: the name
+        # says who else is in the document and the place says which line they are
+        # working on, which is the difference between knowing somebody is here
+        # and knowing not to rewrite the paragraph they are in.
+        self.seats: dict[int, int] = {}
         self.refusal: str | None = None
         self._quiet_since = time.monotonic()
         self._who: str | None = None
@@ -231,6 +236,9 @@ class Room:
 
     def leave(self, connection: int) -> None:
         self.members.pop(connection, None)
+        # And their seat, or the room draws a band for somebody who closed the
+        # tab — a colour under a name that is no longer in the list beside it.
+        self.seats.pop(connection, None)
 
     def empty(self) -> bool:
         return not self.members
@@ -238,6 +246,34 @@ class Room:
     def people(self) -> list[str]:
         """Who is in the room, each named once however many tabs they have open."""
         return sorted(set(self.members.values()))
+
+    def sits(self, connection: int, at: int) -> None:
+        """Where one member's caret is, as an index into the document.
+
+        Relayed and never read: this server does not interpret the number, it
+        carries it. Which matters, because the index space is the browser's —
+        UTF-16 code units, the only thing a `<textarea>`'s `selectionStart` and a
+        Yjs text in JavaScript agree on — and this module measures in UTF-8 bytes
+        for the splices it applies itself. Converting here would be a third index
+        space in a file whose module note is about exactly that mistake; the two
+        ends that use this one are both browsers, and they already agree.
+        """
+        self.seats[connection] = at
+
+    def where(self) -> list[dict]:
+        """Each member, once, and where they are sitting.
+
+        One entry per LOGIN and not per socket: two tabs of one person are one
+        person, the same way `people` counts them, and two bands in two places
+        under one name is a room saying somebody is in two rooms at once. The
+        newest of their sockets wins, which is the tab they are typing in.
+        """
+        seats: dict[str, int] = {}
+        for connection, login in self.members.items():
+            at = self.seats.get(connection)
+            if at is not None:
+                seats[login] = at
+        return [{"login": login, "at": at} for login, at in sorted(seats.items())]
 
     # -- the commit ---------------------------------------------------------
 
