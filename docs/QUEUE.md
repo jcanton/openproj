@@ -95,6 +95,26 @@ should wait for that answer and connect only when it says `login` and `member`.
 The awkward part is that the fetch lives in the shell and the editor is on the
 detail page, so the shell has to publish it rather than the editor asking twice.
 
+**And `/api/me` is the wrong question to gate on** — found 2026-08-19 while
+verifying #14 against `openproj demo`. `/api/me` answers `viewer(request)`, which
+reads the session cookie and nothing else. Under `--auth dev` — every `openproj
+demo`, and `serve --auth dev` — there is no session, so `/api/me` answers
+`{"org": …}` with no login and the corner draws "Sign in", while `writer()`
+invents `User(login=dev_login, member=True)` and the write goes through
+(`web.py`). That is why the demo says "Sign in" in the corner and creates rows
+happily.
+
+So a gate on `login` and `member` would refuse the socket in exactly the mode the
+tool is tried in, and co-editing would be broken for everybody running the demo
+while every test stayed green — the tests sign a cookie. The page has to be told
+what `writer()` would answer rather than what `viewer()` does: either `/api/me`
+gains the field the *write* path decides (`may_write`, answered by the same
+function the write path calls, not by a second copy of the rule), or the shell
+publishes what the server already put in the page to decide whether to draw the
+editor at all. The second is smaller and it is already right by construction:
+`EDITABLE` on the table and the editor on the detail page are drawn from the
+server's own answer, on the server, per request.
+
 ## 6. Smaller, and still owed
 
 - **Drag-to-reparent in the graph.** Costed already: the predicate and the
