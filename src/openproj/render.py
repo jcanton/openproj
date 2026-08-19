@@ -838,6 +838,12 @@ class Links(BaseModel):
     notes: str = "notes.html"
     note: str = "notes.html#"  # prefix, then the note id
     asset: str = "assets/"  # a rendered file sits beside the assets it names
+    # Prefix, then the entity id: where the hover card asks for a shaping
+    # document. Empty in the static export, where there is no server to ask — the
+    # card draws what the row already carries and the title stays what it always
+    # was, a link into `detail.html#id` where the whole document is. Same shape as
+    # co-editing falling back to a plain textarea.
+    body: str = ""
     # Prefix, then the cycle number. Empty for the same reason `new` is empty:
     # a deck is of ONE cycle, and the static export writes one file per view of
     # the whole plan with nowhere to put the number. Where it is empty the cycle
@@ -877,7 +883,7 @@ ROUTES = Links(
     entity="/detail/", new="/new", people="/people",
     cycles="/cycles", cycle="/cycle/", issues="/issues", issue="/issue/",
     notes="/notes", note="/note/",
-    asset="/assets/", deck="/deck/",
+    asset="/assets/", deck="/deck/", body="/api/body/",
 )
 
 _MD = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -1597,6 +1603,41 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 .facet select { display: block; font: inherit; font-size: 13px; text-transform: none;
                 letter-spacing: 0; color: inherit; }
 #q { font: inherit; font-size: 13px; padding: .15rem .3rem; min-width: 16rem; }
+/* The hover card, on every page, because it is one component drawn by three
+   views. Follows the pointer and takes no pointer events of its own, so it never
+   becomes the thing under the cursor — which on the graph would mean a card that
+   fights the node it describes.
+   `position: fixed` so a card on the graph survives the canvas being panned and
+   zoomed under it: the anchor moves, the card is placed again from the pointer,
+   and neither is inside the transformed layer. */
+#card { position: fixed; z-index: 20; max-width: 26rem; pointer-events: none;
+        background: var(--surface); color: var(--fg); font-size: 12px;
+        border: 1px solid var(--line-strong); border-radius: 3px;
+        padding: .4rem .55rem; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+#card[hidden] { display: none; }
+#card .card-title { margin: 0; font-size: 13px; font-weight: 600; }
+#card .card-chips { margin: .25rem 0 .35rem; }
+#card dl { display: grid; grid-template-columns: auto 1fr; gap: 0 .6rem; margin: 0; }
+#card dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
+           letter-spacing: .04em; }
+#card dd { margin: 0; }
+#card .num { font-variant-numeric: tabular-nums; }
+#card .guess { color: var(--muted); font-style: italic; }
+#card .card-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
+/* The shaping document. Capped and scrollable rather than as long as it is: a
+   900-word pitch drawn in full covers the table it was opened from, and the card
+   is a look rather than a read — the title is still a link to where the document
+   is read properly. Scrollable and not clipped, because a card that ends
+   mid-sentence with no way to see the rest reads as a broken card.
+   The cap is in `em` so it is a number of LINES rather than a number of pixels. */
+#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 12em;
+                   overflow-y: auto; border-top: 1px solid var(--line); }
+#card .card-body > :first-child { margin-top: 0; }
+#card .card-body > :last-child { margin-bottom: 0; }
+#card .card-body :is(h1, h2, h3, h4) { font-size: 12px; margin: .5rem 0 .2rem; }
+#card .card-body p, #card .card-body ul, #card .card-body ol { margin: .2rem 0; }
+#card .card-body pre { overflow-x: auto; }
+#card .card-body img { max-width: 100%; }
 .hint { color: var(--muted); font-size: 12px; }
 .empty { color: var(--empty); }
 .num { font-variant-numeric: tabular-nums; }
@@ -1902,7 +1943,31 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     inside `{% if editable %}`, so a page you can only read carried no live
     region at all — and a save, a refusal or an explanation that is only drawn is
     one nobody is told about. -#}
+{#- One card, three views. The timeline had it and it was good; a graph node
+    carries a title and a status glyph and nothing else, and the table's title is
+    the one cell whose field — the shaping document — is not on the row at all.
+    Drawn from the shell because it is one component: `appetite_weeks` reading as
+    three different numbers on three pages is what this codebase has already paid
+    for once.
+
+    Outside `live`, which is the block below: a rendered file has no server to
+    stream from and every page here draws a card. The first version of this was
+    inside it, so the static export — the copy somebody reads on a train, and the
+    one that most needs a way to see what a row is about without opening
+    seventeen documents — had nowhere to draw one. -#}
+<div id="card" role="tooltip" hidden></div>
+{#- Before the script that finds it, and not at the end of the body where a
+    fixed-position overlay would naturally live: `const CARD = getElementById`
+    runs while the parser is here, and an element further down the document does
+    not exist yet. It was further down, so `CARD` was null on every page and
+    every view drew nothing — in a browser. The shim parses the whole file before
+    running anything and answered that the card was fine. -#}
 <p id="announce" class="sr-only" role="status" aria-live="polite"></p>
+{#- The vocabulary every page draws words from. A `<script type=application/json>`
+    and not a template variable inside the script, because that is how every other
+    payload on this site travels and it is the one shape `test_no_page_is_assembled_by_substitution`
+    already understands. -#}
+<script id="words" type="application/json">{{ words|tojson }}</script>
 <script>
 // Declared before the content, because the pages' own scripts are inside it and
 // some of them announce while loading — the cycle page's receipt, the detail
@@ -1936,6 +2001,148 @@ const esc = value => String(value ?? '').replace(/[&<>"]/g,
 // server would have given it rather than its own text.
 const STATUS_RUNGS = {{ statuses|tojson }};
 const stClass = status => STATUS_RUNGS.includes(status) ? `st-${status}` : 'st-ready';
+
+// --- the hover card ---------------------------------------------------------
+//
+// One card, three views: the timeline's bars, the graph's nodes and the table's
+// titles. It was the timeline's alone, and the other two are the views that need
+// it most — a node carries a title and a status glyph, and the title cell is the
+// one cell whose real field, the shaping document, is not on the row at all.
+//
+// One function and not three. This codebase has already paid for one fact
+// formatted three ways: `appetite_weeks` read as three different numbers on
+// three pages, and the fix was one function every page calls. A card is a
+// stronger version of the same risk, because most of what it says is a fact
+// somebody else's column also draws.
+//
+// In the shell rather than in a per-view block, so a page that draws a card and a
+// page that does not both have exactly this one.
+
+const CARD = document.getElementById('card');
+// The whole prefix, given by the server and empty in a rendered file. A card in
+// a static export therefore draws what the row carries and stops; the title
+// beside it is still a link into `detail.html#id`, where the document is — the
+// same shape as co-editing falling back to a plain textarea.
+//
+// A template variable rather than a data attribute on `<html>`: the shell knows
+// its links at render time, and reading it back out of the DOM is one more thing
+// that can be true of the page and false of the document a test drives.
+const CARD_BODY_URL = {{ links.body|tojson }};
+const CARD_DASH = '<span class="empty">—</span>';
+
+// The word a value is drawn as. From the shell's own map and not from a page's
+// payload: the graph has no `DATA` — its payload is cytoscape elements — so a
+// card drawn there said `in_progress` where the other two said `In progress`,
+// which is the exact failure `HUMAN` exists to prevent, in the one component
+// whose whole job is to say the same thing on three pages.
+const CARD_WORDS = (() => {
+  try { return JSON.parse(document.getElementById('words').textContent); }
+  catch (error) { return {}; }
+})();
+function cardWord(value) { return CARD_WORDS[value] || value; }
+
+// Bodies already fetched, by id. A pointer crossing a column of rows asks for the
+// same document several times a second otherwise — and the answer cannot change
+// under a page that has not been reloaded, because a save reloads the rows.
+const CARD_BODIES = new Map();
+
+function cardHtml(row, extra) {
+  // An owner who is also an assignee is one person, not two. The scheduler reads
+  // them that way — `_people_on` dedupes — and a box that says "ann, ann" is a
+  // box nobody trusts the rest of.
+  const others = (row.assignees || []).filter(who => who && who !== row.owner);
+  const size = row.weeks ?? row.size;
+  const facts = [
+    ['Owner', row.owner ? esc(row.owner) : CARD_DASH],
+    ...(others.length ? [['With', esc(others.join(', '))]] : []),
+    ...(row.cycle ? [['Cycle', esc(String(row.cycle))]] : []),
+    ...(size == null ? [] : [['Appetite', esc(String(size))
+      + (Number(size) === 1 ? ' week' : ' weeks')
+      + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')]]),
+    ['Scheduled', row.start && row.end
+      ? `<span class="num">${esc(row.start)}</span> to <span class="num">${esc(row.end)}</span>`
+      : CARD_DASH],
+    ...((row.tags || []).length ? [['Tags', esc(row.tags.join(', '))]] : []),
+    ...extra,
+  ];
+  // The class attributes are escaped too, and not only the words beside them.
+  // They were not: a status reading `ready" onmouseover=alert(1) x="` came back
+  // out of this line as a real event handler that fired on hover, on the one
+  // element of the box a pointer is guaranteed to cross.
+  return `<p class="card-title">${esc(row.title)}</p>` +
+    `<p class="card-chips"><span class="chip ${stClass(row.status)}">` +
+    `${esc(cardWord(row.status))}</span> ` +
+    `<span class="chip kind-${esc(row.kind)}">${esc(cardWord(row.kind))}</span></p>` +
+    '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
+    '</dl>' + (row.tip ? `<p class="card-why">${esc(row.tip)}</p>` : '');
+}
+
+// What is on the row, immediately; the document underneath it when it arrives.
+// Two steps rather than one await, because a card that appears only once a fetch
+// has answered is a card that flickers in behind the pointer — and on a plan
+// served over a slow link, one that arrives after the pointer has moved on.
+let cardShowing = null;
+
+// Returns the promise the document arrives on, which nothing in the pages waits
+// for and every test does: a fire-and-forget fetch is a thing a test can only
+// wait for by guessing, and a guess that is too short reports a card that works
+// as a card that draws nothing.
+function showCard(row, x, y, extra) {
+  if (!CARD || !row) return Promise.resolve();
+  cardShowing = row.id;
+  CARD.innerHTML = cardHtml(row, extra || []);
+  CARD.hidden = false;
+  placeCard(x, y);
+  return CARD_BODY_URL ? fillCardBody(row.id) : Promise.resolve();
+}
+
+async function fillCardBody(id) {
+  if (!CARD_BODIES.has(id)) {
+    try {
+      const response = await fetch(CARD_BODY_URL + encodeURIComponent(id));
+      // A refusal is not a document. `ok` and not a `catch` alone: a 404 is a
+      // resolved promise with an error page in it, and `.json()` on that throws
+      // somewhere far away from the request that caused it.
+      CARD_BODIES.set(id, response.ok ? (await response.json()).html || '' : '');
+    } catch (error) {
+      // Offline, or a policy that refuses the request. The card keeps what it
+      // already drew; the row's own fields are the part that was never in doubt.
+      CARD_BODIES.set(id, '');
+    }
+  }
+  // The pointer may have moved on while the answer was in flight, and the card
+  // may already be describing something else — or nothing.
+  if (cardShowing !== id || CARD.hidden) return;
+  const html = CARD_BODIES.get(id);
+  if (!html) return;
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  // The server rendered this markdown, with HTML disabled in the parser, through
+  // the same function the detail page uses. It is the one string on this page
+  // that is markup on purpose.
+  body.innerHTML = html;
+  CARD.appendChild(body);
+  placeCard(cardAt.x, cardAt.y);
+}
+
+// Where the pointer was, kept so a card that grows a body when the fetch lands
+// can be placed again without one.
+let cardAt = {x: 0, y: 0};
+
+function placeCard(x, y) {
+  cardAt = {x, y};
+  const box = CARD.getBoundingClientRect();
+  const left = x + 14 + box.width > innerWidth - 8 ? x - 14 - box.width : x + 14;
+  const top = y + 14 + box.height > innerHeight - 8 ? y - 14 - box.height : y + 14;
+  CARD.style.left = Math.max(8, left) + 'px';
+  CARD.style.top = Math.max(8, top) + 'px';
+}
+
+function hideCard() {
+  if (!CARD) return;
+  cardShowing = null;
+  CARD.hidden = true;
+}
 
 // The re-set a repeated message is waiting on. One variable and not one per
 // region, because `announce` picks the same region every time on a given page:
@@ -3455,6 +3662,38 @@ function draw() {
 // The control bar changed the query string; what that means to a table is a
 // redraw, and to the graph beside it a different set of nodes.
 addEventListener('openproj:filter', draw);
+
+// --- the card, on the title ------------------------------------------------
+//
+// The body is the one field a row does not show, and in this tool the shaping
+// document IS the record — so the title is the cell it hangs off. The same card
+// the graph and the timeline draw; see `_SHELL`.
+//
+// Outside `if (EDITABLE)` on purpose: a rendered file is the copy somebody reads
+// on a train, and it is the copy that most needs a way to see what a row is about
+// without opening seventeen documents. There the card has no server to ask for a
+// body and draws the row's own fields, and the title beside it is still a link
+// into `detail.html#id`.
+tbody.addEventListener('pointerover', event => {
+  const cell = event.target.closest('td[data-col="title"]');
+  const row = cell && cell.closest('tr[data-id]');
+  // Not over an open editor, and not in the middle of a move: in both the
+  // pointer is doing something, and a box under it is in the way of the thing
+  // being done.
+  if (!row || cell.querySelector('input, textarea') || MOVING) return hideCard();
+  const held = DATA.rows[row.dataset.id];
+  if (held) showCard(held, event.clientX, event.clientY);
+});
+tbody.addEventListener('pointermove', event => {
+  if (!CARD.hidden) placeCard(event.clientX, event.clientY);
+});
+tbody.addEventListener('pointerout', event => {
+  if (event.target.closest('td[data-col="title"]')) hideCard();
+});
+// A cell that opens for editing under a card, and a redraw that replaces the row
+// the card is describing: neither is a pointer leaving anything, so neither fires
+// `pointerout`.
+addEventListener('openproj:filter', hideCard);
 
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
@@ -5779,6 +6018,34 @@ cy.on('dbltap', 'node', evt => {
   if (!connecting) location.href = '{{ links.entity }}' + evt.target.id();
 });
 
+// The card, on the view that needs it most: a node carries a title and a status
+// glyph and nothing else, so everything a row knows about itself is a page away.
+// The same card the timeline and the table draw — see `_SHELL`.
+//
+// Placed from the pointer rather than from the node, and `position: fixed` rather
+// than inside the canvas, because this canvas pans and zooms: a card anchored to
+// a node slides out from under the pointer the moment somebody scrolls, and one
+// inside the transformed layer is drawn at whatever size the zoom happens to be.
+//
+// Not while drawing an edge. In that mode the pointer is doing something else
+// entirely, and a box following it covers the node it is being dragged towards.
+cy.on('mouseover', 'node', evt => {
+  if (connecting) return;
+  // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
+  // from the same `_row` the table is drawn from — and this page has no `DATA` of
+  // its own to look anything up in. The first version of this read `DATA.rows`
+  // and drew nothing at all, on the one view the card was added for.
+  showCard(evt.target.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+});
+cy.on('mousemove', 'node', evt => {
+  if (!CARD.hidden) placeCard(evt.originalEvent.clientX, evt.originalEvent.clientY);
+});
+cy.on('mouseout', 'node', hideCard);
+// A node dragged out from under a card, and a canvas panned or zoomed under one:
+// the pointer never leaves the node, so `mouseout` does not fire and the card
+// stays describing a node that is no longer there.
+cy.on('drag pan zoom', hideCard);
+
 if (CONNECT) {
   CONNECT.onclick = () => {
     const dropped = connecting ? pending().length : 0;
@@ -6100,7 +6367,6 @@ _TIMELINE = """
   <button type="button" id="clear-filters"{% if not t.bars %} hidden{% endif %}>Clear
     filters</button>
 </div>
-<div id="tip" role="tooltip" hidden></div>
 <script id="bars" type="application/json">{{ bars|tojson }}</script>
 {{ filters }}
 <script>
@@ -6165,55 +6431,19 @@ scroller.onpointermove = event => {
 };
 scroller.onpointerup = () => { panning = null; scroller.style.cursor = ''; };
 
-const TIP = document.getElementById('tip');
 const human = value => (DATA && DATA.human[value]) || value;
-// `esc` is the shell's, declared once for every page. See `_SHELL`.
-const DASH = '<span class="empty">—</span>';
-
-function tipHtml(row) {
-  // An owner who is also an assignee is one person, not two. The scheduler
-  // already reads them that way — `_people_on` dedupes — and a box that says
-  // "ann, ann" is a box nobody trusts the rest of.
-  const others = (row.assignees || []).filter(who => who && who !== row.owner);
-  const facts = [
-    ['Owner', row.owner ? esc(row.owner) : DASH],
-    ...(others.length ? [['With', esc(others.join(', '))]] : []),
-    ['Appetite', row.weeks + (row.weeks === 1 ? ' week' : ' weeks')
-      + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')],
-    ['Scheduled', row.start && row.end
-      ? `<span class="num">${esc(row.start)}</span> to <span class="num">${esc(row.end)}</span>`
-      : DASH],
-  ];
-  // The class attributes are escaped too, and not only the words beside them.
-  // They were not: a status reading `ready" onmouseover=alert(1) x="` came back
-  // out of this line as a real event handler that fired on hover, on the one
-  // element of the box that a pointer is guaranteed to cross.
-  return `<p class="tip-title">${esc(row.title)}</p>` +
-    `<p class="tip-chips"><span class="chip ${stClass(row.status)}">` +
-    `${esc(human(row.status))}</span> ` +
-    `<span class="chip kind-${esc(row.kind)}">${esc(human(row.kind))}</span></p>` +
-    '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
-    '</dl>' + `<p class="tip-why">${esc(row.tip)}</p>`;
-}
 
 // A bar carried its dates, its owner and its appetite nowhere: the only thing
 // hoverable was a native tooltip holding one sentence about why it starts when
-// it does. That sentence is still here, at the bottom, where it reads as the
-// answer to a question the rest of the box has just raised.
+// it does. That sentence is still here, at the bottom of the card, where it reads
+// as the answer to a question the rest of the box has just raised — `row.tip`,
+// which the shared card draws for whoever puts one on a row.
+//
+// `showCard` is the shell's, and this is the view it was written for. The graph
+// and the table draw the same one now; see the card block in `_SHELL`.
 function showTip(id, x, y) {
   const row = DATA && DATA.rows[id];
-  if (!row) return;
-  TIP.innerHTML = tipHtml(row);
-  TIP.hidden = false;
-  place(x, y);
-}
-
-function place(x, y) {
-  const box = TIP.getBoundingClientRect();
-  const left = x + 14 + box.width > innerWidth - 8 ? x - 14 - box.width : x + 14;
-  const top = y + 14 + box.height > innerHeight - 8 ? y - 14 - box.height : y + 14;
-  TIP.style.left = Math.max(8, left) + 'px';
-  TIP.style.top = Math.max(8, top) + 'px';
+  if (row) showCard(row, x, y);
 }
 
 svg.addEventListener('pointerover', event => {
@@ -6221,10 +6451,10 @@ svg.addEventListener('pointerover', event => {
   if (rect) showTip(rect.dataset.id, event.clientX, event.clientY);
 });
 svg.addEventListener('pointermove', event => {
-  if (!TIP.hidden) place(event.clientX, event.clientY);
+  if (!CARD.hidden) placeCard(event.clientX, event.clientY);
 });
 svg.addEventListener('pointerout', event => {
-  if (event.target.closest('rect[data-id]')) TIP.hidden = true;
+  if (event.target.closest('rect[data-id]')) hideCard();
 });
 // The keyboard reaches a row through the label beside it: an SVG anchor is not
 // focusable in Chrome, and giving every bar a tabindex would put two stops on
@@ -6235,7 +6465,7 @@ for (const [id, row] of LABELS) {
     const box = link.getBoundingClientRect();
     showTip(id, box.right, box.bottom);
   });
-  link.addEventListener('blur', () => { TIP.hidden = true; });
+  link.addEventListener('blur', hideCard);
 }
 // The native tooltip holds the same sentence, arrives a second later and lands
 // somewhere else. The markup keeps it so a page without script still explains
@@ -6425,22 +6655,6 @@ text.bar-glyph { font-family: var(--font-sans); font-size: 9px; font-weight: 700
 #nothing { border: 1px solid var(--line); padding: 2.5rem 1rem; text-align: center; }
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
-/* Follows the pointer, so it cannot be hovered itself and never becomes the
-   thing under the cursor. */
-#tip { position: fixed; z-index: 5; max-width: 22rem; pointer-events: none;
-       background: var(--surface); color: var(--fg); font-size: 12px;
-       border: 1px solid var(--line-strong); border-radius: 3px;
-       padding: .4rem .55rem; box-shadow: 0 2px 8px rgb(0 0 0 / .18); }
-#tip[hidden] { display: none; }
-#tip .tip-title { margin: 0; font-size: 13px; font-weight: 600; }
-#tip .tip-chips { margin: .25rem 0 .35rem; }
-#tip dl { display: grid; grid-template-columns: auto 1fr; gap: 0 .6rem; margin: 0; }
-#tip dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
-          letter-spacing: .04em; }
-#tip dd { margin: 0; }
-#tip .num { font-variant-numeric: tabular-nums; }
-#tip .guess { color: var(--muted); font-style: italic; }
-#tip .tip-why { margin: .35rem 0 0; color: var(--muted); font-style: italic; }
 """
 
 
@@ -13040,6 +13254,13 @@ def _page(
         font=_font_uri(),
         icon=_icon_uri(),
         links=links,
+        # The word map, on every page rather than in the three payloads that
+        # happened to carry it. The hover card is drawn by three views and the
+        # graph's payload is cytoscape elements — no `DATA` at all — so the card
+        # read `in_progress` off a node and drew it as itself. `HUMAN` exists
+        # because five pages inventing their own capitalisation is how one status
+        # came to be spelled three ways on one screen; a card is the fourth page.
+        words=HUMAN,
         unreadable=list(unreadable),
         # The sentence is built here rather than in the template, because English
         # is not something Jinja should be doing arithmetic about and "1 files

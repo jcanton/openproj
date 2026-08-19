@@ -1590,6 +1590,31 @@ def create_app(
             }
         )
 
+    @app.get("/api/body/{entity_id}")
+    def body(entity_id: str) -> JSONResponse:
+        """One record's shaping document, rendered, for the hover card.
+
+        Fetched on hover rather than shipped with the rows. The table's payload
+        is in every page of every view, and the body is the longest field a
+        record has — inlining four hundred of them puts the whole corpus into
+        every page load to answer a question about the one row somebody is
+        pointing at.
+
+        Rendered here and not in the browser for the reason `/api/preview` gives:
+        a second markdown implementation in JavaScript would eventually disagree
+        with this one, and the card would show something the detail page does
+        not.
+
+        404 rather than an empty body for an id this plan has not got, because a
+        card that draws nothing for a typo and nothing for a record with no
+        document is a card that cannot say which it is. An empty document is a
+        200 with an empty string, and the card says so in words.
+        """
+        entity = index_now()[1].entities.get(entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="no such entity")
+        return JSONResponse({"html": str(render._body_html(entity, render.ROUTES))})
+
     # Two paths, one answer, because `/healthz` is not ours on Cloud Run.
     #
     # Google's frontend answers `/healthz` itself with its own 404 page — the

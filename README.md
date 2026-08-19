@@ -24,7 +24,8 @@ the dependency diagram, **Timeline** the derived Gantt, **Cycles** one page per 
 and its capacity, **People** who is on what and who is full, **Issues** the pile of things somebody
 noticed, **Notes** the pile of things somebody is still thinking about. Every filter is in the URL,
 so a view is a link, and a field can be asked for more than one value at a time — two statuses means
-either of them.
+either of them. Pointing at a row, a node or a bar opens the same card in all three: what the record
+is, who is on it, when it runs, and its shaping document under a rule.
 
 The search box is a small language, and it is the same language on the server and in the browser:
 bare words match a record's fields — its id, title, tags, PR references and the people named on it,
