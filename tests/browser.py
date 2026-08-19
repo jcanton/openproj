@@ -124,3 +124,87 @@ def measured_in(
     found = re.search(r'data-report="([^"]*)"', done.stdout)
     assert found, "the page reported nothing: it did not lay out, or the script threw"
     return json.loads(unescape(found.group(1)))
+
+
+def in_a_live_page(
+    browser: str, url: str, expression: str, profile: Path, seconds: float = 20
+) -> tuple[object, list[str]]:
+    """Open a URL in Chrome, then ask it a question once the page has settled.
+
+    `--dump-dom` cannot answer this one, and the way it fails is worth writing
+    down: it waits for the network to go idle, and a page holding a WebSocket
+    open never does. Chrome sat on the co-editing page until the test killed it
+    at three minutes — with the socket working perfectly, which is the sort of
+    green-looking red this file exists to avoid.
+
+    So this drives DevTools instead, over the same kind of socket the page under
+    test uses. That also buys the thing `--dump-dom` structurally cannot give: a
+    question asked *after* the page has settled, and asked again until it
+    answers, rather than one asked at load and answered by whatever had happened
+    by then.
+
+    Returns (the expression's value, every console message the page produced).
+    The console is half the evidence: a connection a policy refuses is a console
+    line naming the directive, and nothing else on these pages produces one.
+    """
+    import time
+    from urllib.parse import quote
+
+    import httpx
+    from wsclient import Client
+
+    profile.mkdir(parents=True, exist_ok=True)
+    chrome_process = subprocess.Popen(
+        [browser, "--headless=new", "--disable-gpu", "--no-first-run",
+         "--remote-debugging-port=0", f"--user-data-dir={profile}", "about:blank"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        # Chrome writes the port it actually took into the profile, which is the
+        # only way to ask for an ephemeral one and still find it.
+        where = profile / "DevToolsActivePort"
+        for _ in range(400):
+            if where.exists():
+                break
+            time.sleep(0.05)
+        assert where.exists(), "Chrome never wrote DevToolsActivePort"
+        port = int(where.read_text().splitlines()[0])
+
+        target = httpx.put(f"http://127.0.0.1:{port}/json/new?{quote(url, safe='')}").json()
+        page_path = target["webSocketDebuggerUrl"].split(f"127.0.0.1:{port}", 1)[1]
+
+        said: list[str] = []
+        with Client("127.0.0.1", port, page_path) as devtools:
+            asked = 0
+
+            def call(method: str, params: dict | None = None) -> dict:
+                nonlocal asked
+                asked += 1
+                mine = asked
+                devtools.send_json({"id": mine, "method": method, "params": params or {}})
+                while True:
+                    message = devtools.receive_json()
+                    if message.get("method") == "Log.entryAdded":
+                        said.append(message["params"]["entry"]["text"])
+                    if message.get("method") == "Runtime.consoleAPICalled":
+                        said.extend(str(one.get("value")) for one in message["params"]["args"])
+                    if message.get("id") == mine:
+                        return message
+
+            call("Log.enable")
+            call("Runtime.enable")
+            value = None
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                answer = call(
+                    "Runtime.evaluate",
+                    {"expression": expression, "returnByValue": True, "awaitPromise": True},
+                )
+                value = answer.get("result", {}).get("result", {}).get("value")
+                if value:
+                    break
+                time.sleep(0.25)
+            return value, said
+    finally:
+        chrome_process.terminate()
+        chrome_process.wait(timeout=30)

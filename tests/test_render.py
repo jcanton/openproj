@@ -1464,9 +1464,15 @@ def test_no_page_asks_the_network_for_a_font(rendered: Path):
         assert "fonts.googleapis" not in body and "fonts.gstatic" not in body, page
 
 
-def test_the_vendored_face_is_the_one_that_was_checksummed():
+def test_every_vendored_file_is_the_one_that_was_checksummed():
     """A vendored binary nobody verifies is a vendored binary nobody can audit.
-    The other three files in static/ have been listed since they were added."""
+
+    The list comes off the directory rather than out of this test. Naming the
+    font here — which is what this did — is a list written down by hand, and a
+    list written by hand is a list that goes stale: `yjs.bundle.mjs` arrived
+    beside it and would have been covered by nothing at all. Everything shipped
+    in `static/` is either code, a typeface, or the two files that describe them.
+    """
     import hashlib
 
     from openproj.render import _static_dir
@@ -1477,10 +1483,20 @@ def test_the_vendored_face_is_the_one_that_was_checksummed():
         for line in (static / "SHA256SUMS").read_text().splitlines()
         if line.strip()
     )
-    name = "inter-latin-wght-normal.woff2"
-    assert name in sums, "the face must be listed in SHA256SUMS"
-    digest = hashlib.sha256((static / name).read_bytes()).hexdigest()
-    assert digest == sums[name].strip()
+    # The list itself, and the licence texts that are notices rather than assets:
+    # a licence is read, not executed, and a changed word in one is a change
+    # somebody meant to make.
+    described = {"SHA256SUMS", "VENDOR.md"}
+    vendored = sorted(
+        path.name
+        for path in static.iterdir()
+        if path.is_file() and path.name not in described and not path.name.endswith("LICENSE.txt")
+    )
+    assert "inter-latin-wght-normal.woff2" in vendored and "yjs.bundle.mjs" in vendored
+    for name in vendored:
+        assert name in sums, f"{name} ships in every page and is checksummed nowhere"
+        digest = hashlib.sha256((static / name).read_bytes()).hexdigest()
+        assert digest == sums[name].strip(), name
 
 
 def test_the_vendoring_note_covers_every_file_it_is_about():
@@ -1506,8 +1522,10 @@ def test_the_vendoring_note_covers_every_file_it_is_about():
     for name in listed:
         assert name in doc, f"{name} is checksummed and undocumented"
     assert "*.js > SHA256SUMS" not in doc, "that command deletes the woff2's checksum"
-    assert "*.js *.woff2 > SHA256SUMS" in doc
+    assert "*.js *.woff2 > SHA256SUMS" not in doc, "that command deletes the mjs's checksum"
+    assert "*.js *.mjs *.woff2 > SHA256SUMS" in doc
     assert "SIL Open Font License" in doc and "inter-LICENSE.txt" in doc
+    assert "MIT" in doc and "yjs-LICENSE.txt" in doc
 
 
 def test_the_font_licence_travels_with_the_font(rendered: Path):

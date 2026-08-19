@@ -277,15 +277,52 @@ gcloud builds submit \
 #   --max-instances 1         one writer. The app takes a flock, so the lock is
 #                             the real guard, but a second instance would spend
 #                             its life losing races against the first.
-#   --concurrency 80          the opposite of the usual instinct, and it is what
+#   --concurrency 200         the opposite of the usual instinct, and it is what
 #                             keeps the instance count at one. Lowering it does
-#                             not add safety, it destroys it.
+#                             not add safety, it destroys it. The number is a
+#                             budget of *open requests*, and this app holds two
+#                             per person — see below.
 #   --min-instances 0         one instance left running for a month is 14x the
 #                             free tier.
 #   --cpu 1                   below 1 vCPU Cloud Run forces concurrency to 1,
 #                             which means one instance per in-flight request.
 #   --cpu-boost               a cold start clones the plan; this makes that fast
 #                             without paying for a warm instance.
+#   --timeout 300             the request deadline, and a co-editing socket is a
+#                             request — so every one of them is closed after five
+#                             minutes, whoever is typing. Reconnection is the
+#                             normal case rather than the exception, which is most
+#                             of why the editor uses a CRDT: a room is kept warm
+#                             for longer than this (coedit.LINGER_SECONDS) so a
+#                             tab that comes back joins the room it left instead
+#                             of being told to reload every five minutes.
+#
+# The concurrency budget is spent on connections, not on requests-per-second.
+# Every served page opens an `/api/events` stream and holds it, and a detail page
+# now holds a WebSocket beside it, and both of those are requests in Cloud Run's
+# accounting for the whole time they are open. So one reader costs one slot and
+# one person editing costs two, and with `--max-instances 1` there is nowhere for
+# the overflow to go: past the limit requests do not get slower, they queue
+# behind connections that are deliberately open for five minutes at a time. At
+# `--concurrency 80` that wall stood at forty open editors — plausible for a tab
+# left open overnight in a way that "eighty simultaneous requests" never sounded.
+#
+# Raised rather than fixed a cleverer way, because these connections are idle
+# almost all of the time: an SSE keepalive every fifteen seconds and a socket
+# frame per keystroke. The scarce thing is the slot, not the CPU, and each idle
+# connection costs a queue and a task — kilobytes against 512Mi, where the git
+# clone and the live rooms are what actually spend the memory. 200 is a hundred
+# people editing, which is five times the whole team.
+#
+# The alternative considered and rejected: stop holding the SSE stream on a page
+# that already has a socket. It does not work — the socket only carries the room
+# it belongs to, while the stream is how a page hears that some *other* record
+# moved, including through `PATCH`, the CLI, or somebody's terminal. Making the
+# socket carry that too would put the event stream's job inside the editor's
+# transport, and the editor is the half that has to be allowed to fail. If this
+# limit is ever actually reached, the signal is `container/instance_count` pegged
+# at 1 with `request_latencies` climbing on cheap routes, and the answer is still
+# not more instances: the flock is the writer and there can only be one.
 #
 # And never --no-cpu-throttling: two to three orders of magnitude more expensive,
 # from a flag whose name mentions neither billing nor instances. Google's
@@ -303,7 +340,7 @@ gcloud run deploy "$SERVICE" \
   --allow-unauthenticated \
   --service-account "$RUNTIME_SA" \
   --cpu 1 --memory 512Mi --cpu-boost \
-  --concurrency 80 --min-instances 0 --max-instances 1 --timeout 300 \
+  --concurrency 200 --min-instances 0 --max-instances 1 --timeout 300 \
   --set-env-vars "OPENPROJ_AUTH=github,OPENPROJ_ORG=${ORG}" \
   --set-env-vars "OPENPROJ_REMOTE=${REMOTE}" \
   --set-env-vars "OPENPROJ_CLIENT_ID=${OAUTH_CLIENT_ID}" \

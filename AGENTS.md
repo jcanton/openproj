@@ -119,7 +119,12 @@ one had the overflow guard: `Cycle.ends_on` and `_month_ticks` did not, so a bui
 typed into a form, or an `assigned_on` of 9999-12-31, killed nine routes permanently. It is one
 function now — `days_after` and `within_the_calendar` (`model.py`), which bound *before* rounding,
 because `round()` and `math.ceil()` both raise on infinity and `effort_weeks: .inf` is one
-hand-edit away. If a guard is the same three lines in more than one place, it is one helper.
+hand-edit away. If a guard is the same three lines in more than one place, it is one helper. Two
+constants that are the same number are the same defect: `MAX_UPDATE_BYTES` and `MAX_BODY_BYTES` were
+both written out as `256 * 1024` in two files, one bounding a socket frame and one bounding what may
+be committed — and because a Yjs update is always larger than the text inside it, the transport
+refused a body the policy would have taken, in silence. One is derived from the other now, and the
+comment says which kind of bound each is.
 
 **Empty must not look like broken, and neither must a failure.** A filter matching nothing, a plan
 that failed to load, and a plan with no entities are three different sentences, drawn inside the
@@ -140,7 +145,7 @@ there is no working copy, and why a single `repo.index` anywhere in that file gi
 
 ## How to find bugs here
 
-**This is the section worth the file.** Nine rounds of adversarial audit ran on this branch, and a
+**This is the section worth the file.** Twelve rounds of adversarial audit ran on this branch, and a
 green test suite missed every defect they found. Each round was cracked by exactly one question.
 
 | Ask this | What it found |
@@ -154,8 +159,18 @@ green test suite missed every defect they found. Each round was cracked by exact
 | What do the diagnostic tools say when the thing is broken? | `openproj check` reported "0 blockers, 0 warnings" and `openproj render` wrote no files, on a plan that 500ed every page. |
 | What does a person with a terminal commit that this never tries to parse? | Fifteen files that are not records — a pasted note with no `---` among them. Each took ten of eleven routes down permanently; `/healthz` alone answered, and `openproj check` died with a traceback on the first one and never mentioned the second. |
 | Two readers walk the same tree — do they agree on which files are records? | `_people_at` matched on the first path segment while `load_repo` globbed one level, so a hand-committed `people/team/ann.md` was a second record for `ann` on every served page, invisible to the CLI, and `openproj check` said nothing. |
+| Which index space is that `int` in, and would anything say if it were the other one? | `Room.absorb` measured a splice in Python code points and applied it to `pycrdt`, which addresses UTF-8 bytes. Both are `int`, an index inside a character silently appends at the end instead of raising, and every body with an em dash before the edit was rewritten in the wrong place — and committed. |
+| What has already run by the time this line reads that value? | The Yjs observer wrote the room's text over a restored draft *before* the branch that checks for one compared the textarea against what the server rendered. The check was therefore always false in exactly the case it was written for, and somebody's unsaved writing went into the box and then out of `localStorage`. |
+| The invariant is written in two languages — which copy is guarded? | `byte_offset` fixed the server and a syntax test held it there. The browser's half of the same splice went on scanning UTF-16 code units, so a boundary between the halves of a surrogate pair spliced half a character: `👍 done` edited to `👎 done` left the browser holding one document and the room another, with nothing raising in either. Emoji were strictly worse with a socket than without one, and the mandated footer of this file is `🤖`. |
+| What happens on the branch that decides *not* to act? | Three of them said nothing at all. An update over the frame ceiling was dropped with `continue`, so a 263 kB paste produced no frame back and the room committed the text from before it. A Save with nothing to commit returned without answering, so the page stayed "saving" for ever and the shell queued every later banner behind it. And the two ceilings were the same number, so the transport refused a body the policy would have taken. |
+| What does the callee document itself as raising, and what does the handler name? | `store.write` raises `StoreDiverged`, `StoreLocked` and `pygit2.GitError`; the room caught `(HTTPException, ValueError)`. An escape killed the timer task in `_watch`, and a dead timer has exactly one symptom: nothing is committed any more. |
+| Is the harness itself lying? | `tests/js/drive.js` handed this realm's `String` into the vm context it built, so `text.constructor === String` — how `YText.insert` tells a string from an embed — was false for every string the page made. Every insert became a one-unit embed with no text in it. A test written against that shim would have reported a defect the editor did not have, and passed one it did. |
+| What does *one* participant's socket do to everybody else's? | The room broadcast by awaiting `send_json` per member in turn. uvicorn's send begins `await self.writable.wait()`, cleared when a transport's buffer fills, so one member who stopped draining held that coroutine — and with it every other member's keystroke and the room's own timer, which reaches the same line. Three real sockets: the second member got nothing for thirty seconds, nothing was committed again, and `/healthz` answered 200 throughout. |
+| Whose names end up in a line this server signs? | Every write path built its commit message as `', '.join(fields)` — keys off the wire, verbatim. A field named `notes\n\nCo-authored-by: Mallory <…>` committed exactly that trailer, which git's parser, `git shortlog --group=trailer:co-authored-by` and GitHub all honour. On a branch whose whole point is that `Co-authored-by:` records who wrote a document. |
+| Is the harness itself lying? (again) | `drive.js` copied a parsed element's text into `textContent` and never into `.value`, so a `<textarea>` answered `''` where a browser answers the record's body. `ORIGINAL_BODY` was therefore always empty in page mode, which flips the one branch in the editor that can lose unsaved work. Two of the three rounds before this one were misled by this same file. |
+| Does the fix throw out the person who was working? | The first version of the outbox evicted a member whose queue passed a byte ceiling. Three real tabs: a tab applying a burst of whole-document updates goes a megabyte behind for a moment and catches up completely, and it was thrown out beside the tab that was actually suspended — so the room emptied and committed nothing. *Behind* and *not draining* are different things, and only a clock can tell them apart. |
 
-Behind all nine is one habit: **ask the question in the medium where the answer lives.** In
+Behind all twelve is one habit: **ask the question in the medium where the answer lives.** In
 practice that means:
 
 - **Render pages and parse them in a real DOM.** A substring cannot tell markup from text; a parser
@@ -163,12 +178,27 @@ practice that means:
 - **Drive the shipped JavaScript rather than grepping it.** The table's rows, the timeline's
   tooltip, the combobox popup and the cycle roster are built at runtime and appear in no rendered
   file. `tests/test_injection.py` runs those exact scripts in node and hands what they assign to
-  `innerHTML` back to the same parser.
+  `innerHTML` back to the same parser. The room is driven the same way: `{socket: true}` gives
+  `drive.js` a `WebSocket` the test moves frame by frame, and what the page puts on that wire is
+  applied to a real `Room` — because the claim crosses two CRDT implementations and a copy of
+  `typed()` written in the test would only prove the test agrees with itself.
+- **A shim is a realm, and a realm is a thing libraries ask about.** `drive.js` builds its sandbox
+  out of node's `vm`, and the context it makes already has every ECMAScript intrinsic; handing the
+  outer realm's copies in shadows them. Nothing notices until a library compares one —
+  `text.constructor === String` is how Yjs tells a string from an embed — and then every insert the
+  page makes is stored as an embed with no text in it, silently, in a harness whose whole job is to
+  say what the page really does.
 - **Resolve the real cascade when the claim is about specificity.** `tests/cascade.py` weighs
   selectors the way § Selectors 4 does and answers which rule wins, by name. A rule being *in* the
   stylesheet says nothing about whether it wins, which is the only thing a reader sees.
 - **Use a real browser when the claim is about pixels.** `tests/browser.py` drives headless Chrome.
   A resolved value is a promise about pixels that a stylesheet cannot keep on its own.
+- **Use a real server and a real socket when the claim is about backpressure.** `TestClient` speaks
+  ASGI directly and its send never blocks, so under it a member who stops draining is merely a
+  member who is slower — and the whole defect is that uvicorn's send is not. There is no kernel in
+  that harness and therefore no `writable` event to clear. `tests/test_coedit.py`'s `serving`
+  fixture is a real uvicorn on a real port, and the unresponsive member is a real client with a
+  small receive window that genuinely stops calling `recv`.
 - **Attack through the API, not by editing files.** The eleven unreadable PATCH bodies went in
   through the write path; nothing you can do by hand-editing a fixture would have found them.
 - **Mutation-test your own checker.** Two of the harnesses used here had bugs that made their checks
@@ -232,9 +262,16 @@ claim is about pixels, look at the pixels.
 - **Test the behaviour in the medium where it happens.** If the claim is about pixels, the test has
   to tell painted from unpainted, or say in its own words why it cannot.
 - **A test that would not have caught the defect it is written for is not a test.** Delete the fix,
-  watch the test fail, put the fix back. Eight rounds have each shipped one defect a green suite
-  missed; the last survived because a test asserted a stylesheet resolved to a value while nothing
-  was painted.
+  watch the test fail, put the fix back. Twelve rounds have each shipped one defect a green suite
+  missed, and the last three all destroyed somebody's writing without a word: a splice measured in
+  code points and applied in bytes, an observer that overwrote a restored draft before the line
+  written to protect it could read the box, and the same splice in the browser cutting emoji in
+  half. That last one went out under 1160 passing tests, and the reason is written down — **no test
+  drove the editor with anything but ASCII.** A corpus that does not contain the one string that
+  matters proves nothing, and "has an emoji in it somewhere" is not that string: the case is a
+  splice boundary *inside* a surrogate pair, and two of the five bodies in
+  `test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was` are there as the controls
+  that passed with the defect in place.
 - **Derive fixtures from the code where the code is what varies.** `markers()` reads `render.py`;
   `required_at()` runs the gate over a blank entity rather than restating it, so it cannot drift
   from the rule it mirrors — it *is* the rule.

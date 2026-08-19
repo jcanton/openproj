@@ -30,6 +30,10 @@
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
 //                            reading the property itself throw, the way a
 //                            private window and a blocked-cookies policy do.
+//          {socket: true}    a `WebSocket` the expression drives by hand,
+//                            through `__socket.opened()`, `__socket.hear(frame)`
+//                            and `__socket.sent()`. Absent by default, which is
+//                            the reader whose browser refuses the upgrade.
 // The expression may be async; its promise is awaited, and one that never
 // settles comes back as settled: false rather than as an empty answer.
 // Prints {written: [...innerHTML strings...], value: <expression result>,
@@ -39,6 +43,7 @@
 'use strict';
 
 const vm = require('node:vm');
+const nodeCrypto = require('node:crypto');
 
 // --------------------------------------------------------------------------
 // A very small HTML parser, so that a script which sets innerHTML and then
@@ -48,6 +53,38 @@ const vm = require('node:vm');
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
   'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+// The five names an escaper in this repository can emit, plus every numeric
+// reference. `esc` (the shell) writes four of them and markupsafe writes those
+// four as `&#34;`/`&#39;` instead, and `&#128465;` is in two templates — so a
+// shim that hands text back undecoded answers `Ann&#39;s note` where a browser
+// answers `Ann's note`. That is not a cosmetic difference: `ORIGINAL_BODY` is
+// the marker the editor's `mine`/`theirs` branch is decided by, and it is
+// compared for equality against the room's text, which has never been escaped.
+// A named table and not an HTML entity list, because these are the only names
+// this application produces and a list nobody derives goes stale — the numeric
+// forms are general because they are a syntax rather than a vocabulary.
+const NAMED = {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' '};
+
+function decoded(text) {
+  return text.replace(/&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, ref) => {
+    if (ref[0] === '#') {
+      const point = ref[1] === 'x' || ref[1] === 'X'
+        ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+      // Beyond the last code point is not a character reference, it is text
+      // that looks like one. Handing it to `fromCodePoint` is a RangeError.
+      return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
+    }
+    // A name this application never writes stays as it was typed, which is what
+    // a browser does with `&frobnicate;` too.
+    return ref in NAMED ? NAMED[ref] : whole;
+  });
+}
+
+// The elements whose *content* is their value, rather than an attribute. This
+// is the whole list in HTML: everything else carries `value=`, which
+// `setAttribute` below already reflects.
+const CONTENT_IS_VALUE = new Set(['TEXTAREA', 'OPTION']);
 
 function parseFragment(html, owner) {
   const root = {children: [], text: ''};
@@ -69,7 +106,7 @@ function parseFragment(html, owner) {
     }
     const element = new Element(tag, owner);
     for (const attr of (rest || '').matchAll(/([-\w:]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]*))?/g)) {
-      const value = (attr[2] || '').replace(/^["']|["']$/g, '');
+      const value = decoded((attr[2] || '').replace(/^["']|["']$/g, ''));
       element.setAttribute(attr[1], value);
     }
     element.parentNode = top === root ? owner : top;
@@ -84,7 +121,22 @@ function parseFragment(html, owner) {
 }
 
 function settle(element) {
-  if (element.text) element.textContent = element.text;
+  if (element.text) element.textContent = decoded(element.text);
+  // A `<textarea>`'s value IS its content — there is no `value` attribute to
+  // reflect — and this copied the content into `textContent` alone. So a parsed
+  // editing surface answered `''` to `.value` where a browser answers the
+  // record's body, and in page mode `ORIGINAL_BODY` was therefore always empty.
+  // That flips `welcomed()`'s `mine` from false to true on every first
+  // connection, which is the one branch in this feature that can lose unsaved
+  // work: the harness reported the draft path being taken over a page where
+  // nobody had typed. Two of the last three rounds were misled by this file.
+  //
+  // `'value' in attributes` and not a truth test on it: `<option value="">`
+  // means an empty value, and a falsy check would give that option its label
+  // instead — which is the "any" row at the top of three of this app's filters.
+  if (CONTENT_IS_VALUE.has(element.tagName) && !('value' in element.attributes)) {
+    element.value = element.textContent;
+  }
   for (const child of element.children) settle(child);
 }
 
@@ -517,6 +569,33 @@ async function run(html, expression, options) {
     removeItem: key => { held.delete(String(key)); },
   };
 
+  // A socket, driven by hand, and only when a test asks for one. The room's
+  // whole protocol is frames in and frames out, so a shim that delivered them on
+  // its own would be a shim deciding the order — and the order is where two of
+  // this feature's defects lived. `__socket.opened()` fires the open the page
+  // waits for, `__socket.hear(frame)` delivers one, and `__socket.sent()` is
+  // every frame the page put on the wire, parsed.
+  const wire = {sent: [], live: null};
+  class DriverSocket {
+    constructor(url) {
+      this.url = String(url);
+      // Open on arrival: nothing in this shim is asynchronous, and a page that
+      // could not send until a later tick would be a page this cannot drive.
+      this.readyState = DriverSocket.OPEN;
+      this.onopen = this.onmessage = this.onerror = this.onclose = null;
+      wire.live = this;
+    }
+    send(data) { wire.sent.push(String(data)); }
+    close() {
+      this.readyState = DriverSocket.CLOSED;
+      if (this.onclose) this.onclose();
+    }
+  }
+  DriverSocket.CONNECTING = 0;
+  DriverSocket.OPEN = 1;
+  DriverSocket.CLOSING = 2;
+  DriverSocket.CLOSED = 3;
+
   // Queued, not run. A timer that fired by itself would set a page's autosave
   // going against an answer nobody scripted; `__tick()` runs what is pending, so
   // a test about a timer — the live region re-sets a repeated message on one —
@@ -542,8 +621,17 @@ async function run(html, expression, options) {
   const sandbox = {
     document,
     console,
-    JSON, Math, Date, Object, Array, String, Number, Boolean, RegExp, Map, Set,
-    Promise, Error, URLSearchParams, URL, isNaN, parseInt, parseFloat, encodeURIComponent,
+    // Only what a V8 context does not already have. `Object`, `Array`, `String`,
+    // `Map` and the rest are intrinsics of the context `vm` builds, and handing
+    // this realm's copies in shadows them — which is invisible until a library
+    // asks a value which realm it came from. Yjs asks exactly that:
+    // `text.constructor === String` is how `YText.insert` tells a string from an
+    // embed, and a string made inside the context answers with the context's
+    // `String`, not with the one passed in here. Every insert was therefore
+    // stored as a one-unit embed with no text in it, `toString()` skipped it,
+    // and the page's document quietly stopped following the textarea — a defect
+    // of the shim that would have read as a defect of the editor.
+    URLSearchParams, URL,
     setTimeout: (fn, delay) => {
       timers.set(ticket, {fn, delay: Number(delay) || 0});
       return ticket++;
@@ -570,6 +658,21 @@ async function run(html, expression, options) {
     location: {search: '', pathname: '/', href: 'http://localhost/'},
     history: {replaceState() {}, pushState() {}},
     localStorage: storage,
+    // Yjs's lib0 reads `crypto.subtle` and binds `crypto.getRandomValues` at the
+    // top of the module with nothing guarding either, so the detail page's
+    // editor now stops on its fourth line without one. node's real one is handed
+    // through rather than faked: a client id that is not actually random is a
+    // document that collides with another tab's, which is the one failure a CRDT
+    // cannot recover from.
+    crypto: nodeCrypto.webcrypto,
+    btoa: value => Buffer.from(value, 'binary').toString('base64'),
+    atob: value => Buffer.from(value, 'base64').toString('binary'),
+    // No `WebSocket` unless `{socket: true}` asks for one, and the default is
+    // the point: this shim is then the reader whose browser refuses the socket —
+    // a `file://` copy, a proxy that drops the upgrade, a session that may not
+    // write — and every test that drives the editor without it is a test that
+    // the page degrades to exactly what it was. Asked for, it is `DriverSocket`
+    // above and the test moves every frame itself.
     matchMedia: () => ({matches: false, addEventListener() {}, addListener() {}}),
     getComputedStyle: () => ({getPropertyValue: () => ''}),
     // The escape the pages reach for when a selector has to hold typed text.
@@ -592,6 +695,16 @@ async function run(html, expression, options) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.self = sandbox;
+  if (options.socket) {
+    sandbox.WebSocket = DriverSocket;
+    sandbox.__socket = {
+      opened: () => { if (wire.live && wire.live.onopen) wire.live.onopen(); },
+      hear: frame => { wire.live.onmessage({data: JSON.stringify(frame)}); },
+      // Parsed, because every frame this application sends is JSON and a test
+      // asserting on strings would be asserting on key order.
+      sent: () => wire.sent.map(one => JSON.parse(one)),
+    };
+  }
 
   const context = vm.createContext(sandbox);
   if (denied) {

@@ -91,6 +91,7 @@ src/openproj/schedule.py   the scheduler — a pure function, the product
 src/openproj/index.py      the snapshot every view renders from
 src/openproj/render.py     the pages
 src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
+src/openproj/coedit.py     the co-editing rooms — one Y.Text per entity, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
 src/openproj/cli.py        check / render / schedule / serve / demo
 seed/                      the demo corpus
@@ -114,11 +115,34 @@ shows what they build. Without `node` on PATH those tests skip, and a suite miss
 for the wrong reason. `pytest` names every skip; a machine that is meant to gate a merge should
 have `node` installed.
 
+## Co-editing one document
+
+Several people can type in one shaping document at once. `src/openproj/coedit.py` holds the rooms —
+one `Y.Text` of the markdown body per entity, and nothing else; the frontmatter stays on the form,
+where the fields are typed and `validate_all` decides requiredness in one place. `WSS
+/api/coedit/<id>` carries it, which `connect-src 'self'` already permits.
+
+A room is a way of arriving at a commit, not a replacement for one. Every room ends in exactly one
+`store.write` against its own base — on Save, on the last participant leaving, or after twenty
+seconds of quiet — so a person editing in git, in a second tab or through the API is still handled
+by the same three-way merge, and a genuine overlap is still the same refusal. The author is computed
+rather than declared: whoever inserted the most characters since the last commit, with a
+`Co-authored-by:` for everybody else in the diff, and characters are credited to the socket they
+arrived on rather than to the client id inside the update.
+
+Nothing is persisted: git holds the text. The room is in memory on one process, which
+`--max-instances 1` makes safe, and losing it costs the twenty-second window and nothing that was
+committed. `docs/superpowers/specs/2026-08-18-co-editing-design.md` is the record of why Yjs, why
+not Automerge, and what a socket costs a policy that says `default-src 'none'`.
+
 ## Deliberately not built
 
-Real-time collaborative editing, notification infrastructure, user-defined custom fields, a
-PR-based editing workflow, time tracking, burndown charts, per-project permissions. If you are about
-to add one of these, read the spec first — each is excluded for a reason recorded there.
+Notification infrastructure, user-defined custom fields, a PR-based editing workflow, time tracking,
+burndown charts, per-project permissions. If you are about to add one of these, read the spec first —
+each is excluded for a reason recorded there. Real-time co-editing was on this list until the design
+above; `docs/superpowers/specs/2026-08-12-appetite-design.md` excluded it on the grounds that
+compare-and-swap *is* the design, and that argument still holds for everything except the body of one
+document that two people are writing at the same time.
 
 Nothing may make the CI bot write entity frontmatter. The bot owns `derived/` and nothing else;
 if it starts patching frontmatter, bot and humans fight over the same files forever.
