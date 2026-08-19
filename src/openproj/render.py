@@ -6211,16 +6211,19 @@ const cy = cytoscape({
         // token that is held at 3:1 against the page in both themes.
         'line-color': token('--line-strong'),
         'target-arrow-color': token('--line-strong') } },
+    // The two uncommitted states, told apart by colour rather than by dash
+    // pattern: both are dashed, because dashed is what "not in the plan yet"
+    // looks like here, and one is being added while the other is being taken
+    // away. `--ok` and `--sev-blocker` are the two tokens this app already uses
+    // for exactly that pair of meanings, and both are held against the page at
+    // 3:1 in either theme — a green that only reads as green on a white
+    // background is a green half the room does not have.
     { selector: 'edge.pending', style: {
-        'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
-        'line-style': 'dashed', 'width': 2 } },
-    // On its way out. The same ink as a drawn-but-unsaved edge, because both are
-    // "this is not committed yet", and dotted rather than dashed so the two
-    // states are told apart by more than the direction somebody remembers
-    // clicking in.
+        'line-color': token('--ok'), 'target-arrow-color': token('--ok'),
+        'line-style': 'dashed', 'width': 2.5 } },
     { selector: 'edge.dropping', style: {
-        'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
-        'line-style': 'dotted', 'width': 3 } },
+        'line-color': token('--sev-blocker'), 'target-arrow-color': token('--sev-blocker'),
+        'line-style': 'dashed', 'width': 2.5 } },
   ],
 });
 
