@@ -15,6 +15,64 @@ that starts them has to say, in those words, that it is a human override of a re
 rather than a correction of one — `static/VENDOR.md`'s revisit condition is "before somebody
 is measurably slowed down by a textarea", and nobody has produced that measurement.
 
+## Corrections from the observed screenshot, 2026-08-20 — these win over the stage text
+
+`docs/hackmd-observed.md` records a screenshot of a real HackMD note in the split view. The
+audit had reasoned about that editor from documentation and from HedgeDoc's source. Three
+things it shows contradict what is written below, and where they conflict, **the screenshot
+wins and the stage text is wrong.**
+
+1. **The view switcher is page chrome, not editor chrome.** S2 puts the tri-state in the
+   `bodybar` (`render.py:8261`), beside Preview, inside the editing surface. HackMD puts it in
+   the page header, immediately after the note's identity, as a **segmented control of three
+   icons drawn as one control** — pencil, split, eye — with the active one pressed. Build it
+   there and build it as one control: three adjacent segments say "three states of one thing",
+   which three buttons in a row of unrelated controls do not. Keep the Ctrl+Alt bindings and
+   the `?edit`/`?both`/`?view` deep links exactly as S2 specifies them.
+
+2. **Undo and redo are the first two toolbar buttons.** S4 adds `Y.UndoManager` and gives it no
+   buttons. It gets two, at the left end of the toolbar ahead of every mark, and they belong
+   with the `reflect()` undo-stack defect because that defect is what makes them necessary — a
+   button that does nothing after somebody else types is worse than no button.
+
+3. **The toolbar is sixteen buttons in four separated groups**, and jcanton asked for "all the
+   buttons on top of the editor" as ask 2 of seven. So build HackMD's set, in HackMD's order,
+   with the separators:
+
+   | group | buttons |
+   |---|---|
+   | history | undo, redo |
+   | inline marks | bold, italic, strikethrough, heading |
+   | block marks | code, quote, bullet list, numbered list, checkbox |
+   | insertables | link, image, table, horizontal rule |
+
+   **This is a deliberate override of `d6997e3` and the commit that does it must say so in
+   those words.** That commit cut the link button and the code-block button on measured counts
+   from the real corpus — 485 lines with an inline code span, 161 a bullet, 124 a heading, 83
+   bold, against 8 markdown links and 2 fenced blocks — and its reasoning was right: do not add
+   buttons before anybody asks. Somebody has now asked, by name, for the toolbar in the
+   screenshot. The measurement is not refuted; it is overruled, and the difference has to be
+   legible to whoever reads the commit in a year. Heading is **one** button, not a level
+   picker. `comment` is not built: it is a HackMD collaboration feature and there is nothing
+   behind it here.
+
+4. **Logical line numbers under soft wrap now have a reference.** In the shot, line 17 wraps to
+   two visual rows and the gutter shows one number aligned to the first row, with 18 next. That
+   is exactly S3's specification and it is no longer an assumption.
+
+One thing the screenshot shows that is **not** being built, written down so it is not
+rediscovered: HackMD draws a coloured stripe in the gutter on every line that **has text**,
+marking who wrote it, and it persists after that person leaves. The seat bands here are a
+different thing — they mark the line a caret is in *now* and vanish with the session. A
+per-line authorship stripe is `Room.credits` made visible while you are still writing, and in
+a tool where one Save is one commit authored by whoever typed the most it is the better of the
+two. It is not in this plan.
+
+What the screenshot does not settle is listed at the foot of `docs/hackmd-observed.md` — the
+settings dialog, the shortcuts, whether the panes scroll-sync, the other two view modes. More
+shots arrive 2026-08-20. **Do not treat that silence as absence**, and where a stage below
+rests on documentation alone for one of those, say so in its commit.
+
 ## Why the stages are ordered this way
 
 The cheap, visible things first, because the honest test of whether a 594 KB library is
