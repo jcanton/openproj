@@ -9,6 +9,7 @@ introduced after an entity was written may only warn about it, never block it.
 `test_grandfathering_*` is the load-bearing test of this module.
 """
 
+import time
 from datetime import date
 from pathlib import Path
 
@@ -436,9 +437,12 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         # wip without a start date
         ("blocker", "proj-7e57a0", "assigned_on", NEEDS_ASSIGNED_ON, 1),
         ("blocker", "pitch-48ea9e", "assigned_on", NEEDS_ASSIGNED_ON, 1),
-        # wip with an empty reviewer list
+        # wip with an empty reviewer list and nothing underneath carrying one.
+        # `pitch-5e7b1c` was here too and is not any more: its own list is empty,
+        # but its tasks name iomaganaris, muellch and abishekg7, and a pitch whose
+        # tasks are reviewed is reviewed. That is the rule doing what it was added
+        # for, on the corpus the first real import produced.
         ("blocker", "pitch-48ea9e", "reviewers", NEEDS_INDEPENDENT_REVIEWER, 1),
-        ("blocker", "pitch-5e7b1c", "reviewers", NEEDS_INDEPENDENT_REVIEWER, 1),
         # done, but the migration recovered no PR links
         ("blocker", "pitch-2a7f3e", "prs", NEEDS_PR, 1),
         ("blocker", "pitch-3c9a41", "prs", NEEDS_PR, 1),
@@ -602,3 +606,108 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
         if name in p.message
     )
     assert leaked == [], f"a rule spelled a field the file's way: {leaked}"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewers, counted from the work underneath
+# --------------------------------------------------------------------------- #
+
+
+def test_a_pitch_whose_tasks_are_reviewed_is_reviewed():
+    """jcanton, 2026-08-19, using it: a pitch with reviewed tasks under it was
+    still asked to name a reviewer of its own.
+
+    It is asking for a second copy of a fact that is already written one level
+    below — and the copy goes stale the first time a task changes hands. The work
+    being reviewed IS the tasks.
+    """
+    held = check(
+        pitch(reviewers=[]),
+        task(reviewers=["msimberg"]),
+    )
+
+    assert [p for p in held if p.entity_id == PITCH_ID and p.field == "reviewers"] == []
+
+
+def test_a_pitch_with_nothing_under_it_still_needs_a_reviewer():
+    """The rule inherits, it does not excuse: a pitch nobody has broken into tasks
+    has no work under it to be reviewed, so the question stands."""
+    problem = only(check(pitch(reviewers=[])), PITCH_ID, field="reviewers")
+
+    assert problem.message == NEEDS_REVIEWER
+
+
+def test_a_pitch_whose_tasks_name_nobody_still_needs_a_reviewer():
+    """Two tasks that name nobody are not a reviewer between them."""
+    problem = only(
+        check(pitch(reviewers=[]), task(reviewers=[], review_waived=True)),
+        PITCH_ID,
+        field="reviewers",
+    )
+
+    assert problem.message == NEEDS_REVIEWER
+
+
+def test_a_shelved_task_reviews_nothing():
+    """Parked work is not work anybody is reviewing, and `validate_all` already
+    leaves shelved children out of the map this walks."""
+    problem = only(
+        check(pitch(reviewers=[]), task(reviewers=["msimberg"], status="shelved")),
+        PITCH_ID,
+        field="reviewers",
+    )
+
+    assert problem.message == NEEDS_REVIEWER
+
+
+def test_a_project_inherits_through_its_pitches():
+    """Walked rather than read one level deep: a project holds pitches, and the
+    people reviewing the tasks under those pitches are reviewing the project's
+    work too."""
+    held = check(
+        project(reviewers=[], status="ready", person_weeks=None),
+        pitch(parent=PROJECT_ID, reviewers=[]),
+        task(reviewers=["msimberg"]),
+    )
+
+    assert [p for p in held if p.field == "reviewers"] == []
+
+
+def test_in_progress_wants_somebody_other_than_the_owner_from_underneath_too():
+    """The second reviewer rule reads the same set. A pitch in progress whose only
+    task is reviewed by the pitch's own owner is a pitch nobody else is
+    reviewing, which is the thing that rule is about."""
+    problem = only(
+        check(
+            pitch(reviewers=[], status="in_progress", assigned_on=date(2026, 8, 3)),
+            task(reviewers=["jcanton"], owner="jcanton"),
+        ),
+        PITCH_ID,
+        field="reviewers",
+    )
+
+    assert "other than its owner" in problem.message
+
+
+def test_a_parent_cycle_does_not_send_the_reviewer_walk_round_for_ever():
+    """The walk that reads reviewers off the work underneath had no memory of
+    where it had been, and a plan is allowed to contain a parent cycle — this
+    tool reports one as a blocker rather than refusing to load the plan, which is
+    the whole reason `test_a_parent_chain_cycle_is_reported_on_every_entity_in_it`
+    above has a corpus to run on.
+
+    On that corpus the walk went round for ever, appending a reviewer per pass:
+    an infinite loop that also grows. It took a laptop down before any test
+    noticed, because the suite it was in simply never finished — which is what
+    this bound is for. A test that hangs reports nothing; a test that fails names
+    the thing.
+    """
+    entities = (pitch(parent=OTHER_PITCH_ID), pitch(id=OTHER_PITCH_ID, parent=PITCH_ID))
+
+    started = time.monotonic()
+    found = check(*entities)
+    took = time.monotonic() - started
+
+    assert took < 5, f"the validator took {took:.1f}s over a two-record cycle"
+    # And it still says the thing that is actually wrong.
+    assert {p.field for p in found} == {"parent"}

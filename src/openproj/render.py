@@ -362,6 +362,32 @@ def _icon_uri() -> str:
     return "data:image/svg+xml," + quote(_ICON, safe="")
 
 
+def _reviewers_under(index: Index, entity_id: str) -> list[str]:
+    """`model.reviewers_under`, over the index's own child map.
+
+    The map the validator walks is built from entities and skips shelved ones;
+    this one is `index.children`, which is ids. Two shapes of the same fact, so
+    the walk is here and the rule is there — and the rule is the one that decides
+    whether anything is wrong, which is why this function only draws.
+
+    A `seen` set for the same reason `reviewers_under` has one: a parent cycle is
+    a blocker this tool reports rather than a plan it refuses to load, so this map
+    really can hold A whose child is B whose child is A — and a walk without it
+    never comes back.
+    """
+    found: list[str] = []
+    seen: set[str] = {entity_id}
+    stack = list(index.children.get(entity_id, []))
+    while stack:
+        child = index.entities.get(stack.pop())
+        if child is None or child.status == "shelved" or child.id in seen:
+            continue
+        seen.add(child.id)
+        found += child.reviewers
+        stack += index.children.get(child.id, [])
+    return list(dict.fromkeys(found))
+
+
 def _row(index: Index, entity_id: str) -> dict:
     entity = index.entities[entity_id]
     span = index.spans.get(entity_id)
@@ -400,6 +426,14 @@ def _row(index: Index, entity_id: str) -> dict:
         "progress_text": counted.text if counted else "",
         "prs": entity.prs,
         "tags": entity.tags,
+        # Who reviews the work filed under this record, when it names nobody
+        # itself. A pitch with reviewed tasks under it IS reviewed — the rule in
+        # `model.py` says so and stops asking — and this is the same fact drawn
+        # rather than enforced. Kept separate from `reviewers` on purpose: that
+        # key is what the file holds and what the cell editor starts from, and
+        # merging the two would make opening the editor an accidental way to
+        # write somebody else's name into this record.
+        "reviewers_from": _reviewers_under(index, entity_id) if not entity.reviewers else [],
         # Three fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
@@ -3417,6 +3451,12 @@ function shown(row, key) {
       `${esc(row.progress_text)}<span class="meter"><span style="width: ` +
       `${Math.round(row.progress * 100)}%"></span></span>`;
   if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
+  // Nobody named here, and somebody named underneath: a pitch whose tasks each
+  // have a reviewer is reviewed, and the validator has stopped asking it for one
+  // of its own. Drawn rather than left blank, because a column that is empty on
+  // the row and answered a level down is a column that reads as a gap.
+  if (key === 'reviewers' && !(value || []).length && (row.reviewers_from || []).length)
+    return clamped(row.reviewers_from.map(esc), 'person', 'people');
   // Every list in the table clamps, for the same reason and by the same badge.
   // These two were the last that did not, and they were most of the wrapping
   // left: `OngChia, nfarabullini, jcanton` took three lines in a 159px column and
@@ -3425,6 +3465,8 @@ function shown(row, key) {
   // are one click away, where they always were.
   if (key === 'assignees' || key === 'reviewers')
     return clamped((value || []).map(esc), 'person', 'people');
+  // Unreachable for `reviewers`, which is handled above — kept as one line so
+  // the two list columns stay one branch.
   return esc(stored(row, key));
 }
 
@@ -3523,6 +3565,12 @@ function cell(row, key, place) {
     editable ? 'edit' : '',
     !editable && key in WHY ? 'derived' : '',
     CLAMPED.has(key) ? 'clamp' : '',
+    // Inherited, not typed. The ground says the value came from the work under
+    // this record rather than from its own file, which is the difference between
+    // "these are the reviewers" and "these are the reviewers, and changing them
+    // means changing the tasks".
+    key === 'reviewers' && !(row.reviewers || []).length
+      && (row.reviewers_from || []).length ? 'inherited' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -3543,6 +3591,10 @@ function cell(row, key, place) {
   // up. A row that can go nowhere says that instead, which is also why it has no
   // handle to explain.
   const tip = [note, hiddenBy(row, key),
+               key === 'reviewers' && !(row.reviewers || []).length
+                 && (row.reviewers_from || []).length
+                 ? 'From the work filed under this record. Editing names reviewers of its own.'
+                 : '',
                editable ? 'Double-click to edit ' + named
                         : key === 'id' && EDITABLE ? moveTip(row) : WHY[key] || '']
     .filter(Boolean).join('\\n');
@@ -3595,6 +3647,11 @@ function rowHtml(place) {
     worst ? 'sev-row-' + SEV_CLASS[worst] : '',
     place.depth ? 'd' + place.depth : '',
     place.context ? 'context' : '',
+    // A write this row is waiting on. Against a plan on the other side of the
+    // world that is a fetch, a commit and a push — seconds — and for all of them
+    // the page said nothing at all and the row sat where it was, which reads as
+    // a drop that did not take.
+    row.id === WRITING ? 'writing' : '',
   ].filter(Boolean).join(' ');
   return `<tr data-id="${esc(row.id)}"${classes ? ` class="${classes}"` : ''}>` +
     keys.map(key => cell(row, key, place)).join('') + '</tr>';
@@ -3852,6 +3909,16 @@ tbody.addEventListener('pointerout', event => {
 // the card is describing: neither is a pointer leaving anything, so neither fires
 // `pointerout`.
 addEventListener('openproj:filter', hideCardNow);
+
+// The row a write is in the air for, or null. One at a time, because one drag is
+// one drop: this is not a queue, it is the row the reader is looking at.
+//
+// Declared out here rather than beside `reparent`, which is where it is set, and
+// outside the editable branch, which is where writes live. `rowHtml` reads it on
+// the first draw: further down the file it is in its dead zone then, and inside
+// the branch it does not exist at all on a rendered file — both of which are a
+// page that throws before a single row is drawn.
+let WRITING = null;
 
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
@@ -4703,6 +4770,14 @@ async function reparent(childId, parentId) {
   box.hidden = true;
   box.textContent = '';
   dispatchEvent(new Event('openproj:writing'));
+  // Said before the request rather than after it. Every write here goes through
+  // a fetch from the remote, a commit and a push, and against a repository on
+  // GitHub that is seconds — during which the old page said nothing and left the
+  // row where it was, which is indistinguishable from a drop that did not take.
+  WRITING = childId;
+  draw();
+  announce(parentId ? `moving ${childId} into ${parentId}…`
+                    : `taking ${childId} out…`);
   let committed = null;
   try {
     const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
@@ -4733,6 +4808,11 @@ async function reparent(childId, parentId) {
              : parentId ? `${childId} is now in ${parentId}`
                         : `${childId} is no longer inside anything`);
   } finally {
+    // Whatever happened — committed, refused, or the network gone — the row
+    // stops waiting. A row left dimmed after a refusal is a row that looks like
+    // it is still going.
+    WRITING = null;
+    draw();
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
 }
@@ -5609,6 +5689,14 @@ td.sev-cell-warn { background: var(--sev-warn-soft); }
 td.edit { cursor: cell; }
 td.edit:hover { background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--line-strong); }
 td.refused { background: var(--surface-2); }
+/* A value this record did not name: its reviewers, taken from the work filed
+   under it. A ground rather than an italic or a bracket, because the cell is a
+   list of logins and every other channel in it is already spoken for — and the
+   ground is the one that survives a clamped cell showing one name and a `+2`.
+   `--st-ready-soft` and not a colour of its own: the five status tints are the
+   palette this table already reads in, and this is a tint from it rather than a
+   sixth thing to learn. */
+td.inherited { background: var(--st-ready-soft); }
 td.clamp { white-space: nowrap; overflow: hidden; }
 /* A row, so that what gets cut is the value and never the badge. Laid out
    inline, the `+2` is simply the last thing on an overflowing line: a clamped
@@ -5836,6 +5924,11 @@ table.moving tr.adder #add-row { display: none; }
 table.moving tr.adder #unparent:not([hidden]) { display: inline-block; }
 table.moving tr.adder > td { box-shadow: inset 0 2px 0 var(--accent); }
 table.moving tr.adder.over > td { background: var(--surface-2); }
+/* A row with a write in the air. Dimmed rather than spinning: the row is still
+   readable, still says what it said a second ago, and the one thing that has
+   changed is that it is not settled yet. `cursor: progress` on the whole row is
+   the second channel, for a reader who has the animation turned off. */
+tr.writing > td { opacity: .55; cursor: progress; }
 /* The row being typed. It is a form laid out as a row, so an empty cell has to
    look like a box to fill in rather than like a value nobody has written: the
    column's own word, in the muted ink every hint on this page uses.
