@@ -1,7 +1,38 @@
 # What is designed and not built
 
-Written 2026-08-19. Everything here was settled in conversation with jcanton and
-has no code. The reasoning is kept because the decision is the expensive half.
+Written 2026-08-19, and mostly emptied the same day. Everything here was settled
+in conversation with jcanton; the reasoning is kept because the decision is the
+expensive half.
+
+## What has been built since
+
+| Item | Where |
+|---|---|
+| 1. One searchable text, and a query language over it | #16 |
+| 2. Multi-select in the dropdowns | #17 |
+| 3. One hover card, three views | #18 |
+| 5. A reader is not offered a socket | #19 |
+| 6. Drag-to-reparent in the graph | #20 |
+| 4. `v0.3.0`, tagged and released | #21, `v0.3.0` |
+
+`v0.3.0` is deployed: revision `openproj-00006-bdv`, and the console lines that
+opened item 5 are gone from the served page. The sections below are what is left,
+and each says why it is still here.
+
+## What is still owed
+
+* **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
+  against the deployment, where `--timeout 300` closes every socket at five
+  minutes and reconnection stops being exceptional. The deploy is done; the test
+  needs two signed-in members, and signing in is not something an agent does.
+* **Single-click to edit a cell.** Deferred with an argument rather than refused:
+  a single click focuses the cell for the arrow grid, and cells are drag sources
+  and drop targets, so click-to-edit would open a box during navigation and
+  during a drag. Enter and F2 already open one.
+* **The review deck**, awaiting jcanton's feedback after a proper read.
+
+The rest of this file is the reasoning behind what was built, kept because the
+next person to touch any of it will want to know why it is shaped this way.
 
 ## 1. The search box learns logic, and the two halves agree
 
@@ -117,11 +148,11 @@ server's own answer, on the server, per request.
 
 ## 6. Smaller, and still owed
 
-- **Drag-to-reparent in the graph.** Costed already: the predicate and the
-  refusal are reusable, but cytoscape's own drag already means "move the node",
-  so the gesture needs a modifier, a handle extension (a vendored library) or a
-  mode toggle — and the canvas has no bottom edge that means "outside the tree",
-  so unparenting needs a real drop zone.
+- **Drag-to-reparent in the graph.** *Built in #20, as the mode toggle.* The
+  costing was right about the gesture and wrong about the drop zone: the canvas
+  needed no zone, it needed the boxes measured as they were when the drag
+  started. A compound node's box follows the child being dragged, so until that
+  changed there was no point on the canvas that meant "outside".
 - **Single-click to edit a cell.** Asked about; deferred with an argument rather
   than refused. A single click currently focuses the cell for the arrow grid, and
   cells are drag sources and drop targets, so click-to-edit would open a box
