@@ -127,8 +127,17 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: 
 
     # Not a bare "@@" check: minified cytoscape genuinely contains `e["@@iterator"]`.
     assert not re.search(r"@@[\w.-]+\.js@@", graph), "an inlining marker survived"
-    for name in ("cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js"):
-        signature = (static / name).read_text(encoding="utf-8")[:120]
+    # Read from the directory rather than listed here: the set changed the day
+    # ELK replaced dagre, and a list written down in a test is a list that says
+    # a page is fine while it inlines a library nobody checked.
+    inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
+    assert len(inlined) == 4, inlined
+    for name in inlined:
+        # 200 and not 120: two of these are webpack bundles whose first 120
+        # characters are the same UMD preamble, so the shorter signature found
+        # each of them twice and called one of them a defect. Same length as the
+        # sibling check in test_injection.py, which is where that was learnt.
+        signature = (static / name).read_text(encoding="utf-8")[:200]
         assert graph.count(signature) == 1, name
 
 
@@ -204,7 +213,16 @@ def test_the_graph_is_a_compound_dag_coloured_by_status(rendered: Path):
 
     edges = [e["data"] for e in elements if "source" in e["data"]]
     assert {"source": "task-5a4e39", "target": "task-5c1d84", "kind": "depends"} in edges
-    assert "dagre" in body and '"rankDir": "LR"' in body.replace("'", '"')
+    # ELK, measured rather than chosen: dagre knows nothing about nested nodes,
+    # and on the real plan it drew three of six dependency edges across a box
+    # they are not attached to and fitted the whole thing into 7% of the canvas.
+    # See `LAYOUT`, which carries the numbers.
+    assert "elk" in body and "'elk.hierarchyHandling': 'INCLUDE_CHILDREN'" in body
+    # The word survives in the comment that explains why it went, which is where
+    # it belongs; what must be gone is the library and the call.
+    assert "cytoscapeDagre" not in body, "the layout it replaced is still registered"
+    assert "dagre.min.js" not in body
+    assert "packComponents" in body, "the pieces are arranged to the canvas afterwards"
 
 
 def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):
@@ -3438,7 +3456,9 @@ def test_the_graph_does_not_animate_where_css_cannot_stop_it():
     source = Path(render.__file__).read_text(encoding="utf-8")
     # The constant and every call that spreads it. Both, because `{...LAYOUT,
     # fit: true}` is where an option gets added without the constant changing.
-    specs = [re.search(r"^const LAYOUT = (\{.*\});$", source, re.M).group(1)]
+    # Multi-line since ELK: the options are a block rather than one line, and a
+    # regex anchored to `};` reads the whole of it.
+    specs = [re.search(r"^const LAYOUT = (\{.*?^\};)", source, re.M | re.S).group(1)]
     specs += re.findall(r"\.layout\((\{[^}]*\})\)", source)
     for spec in specs:
         assert "animate" not in spec, (

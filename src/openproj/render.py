@@ -362,6 +362,32 @@ def _icon_uri() -> str:
     return "data:image/svg+xml," + quote(_ICON, safe="")
 
 
+def _reviewers_under(index: Index, entity_id: str) -> list[str]:
+    """`model.reviewers_under`, over the index's own child map.
+
+    The map the validator walks is built from entities and skips shelved ones;
+    this one is `index.children`, which is ids. Two shapes of the same fact, so
+    the walk is here and the rule is there — and the rule is the one that decides
+    whether anything is wrong, which is why this function only draws.
+
+    A `seen` set for the same reason `reviewers_under` has one: a parent cycle is
+    a blocker this tool reports rather than a plan it refuses to load, so this map
+    really can hold A whose child is B whose child is A — and a walk without it
+    never comes back.
+    """
+    found: list[str] = []
+    seen: set[str] = {entity_id}
+    stack = list(index.children.get(entity_id, []))
+    while stack:
+        child = index.entities.get(stack.pop())
+        if child is None or child.status == "shelved" or child.id in seen:
+            continue
+        seen.add(child.id)
+        found += child.reviewers
+        stack += index.children.get(child.id, [])
+    return list(dict.fromkeys(found))
+
+
 def _row(index: Index, entity_id: str) -> dict:
     entity = index.entities[entity_id]
     span = index.spans.get(entity_id)
@@ -400,6 +426,22 @@ def _row(index: Index, entity_id: str) -> dict:
         "progress_text": counted.text if counted else "",
         "prs": entity.prs,
         "tags": entity.tags,
+        # Who reviews the work filed under this record, when it names nobody
+        # itself. A pitch with reviewed tasks under it IS reviewed — the rule in
+        # `model.py` says so and stops asking — and this is the same fact drawn
+        # rather than enforced. Kept separate from `reviewers` on purpose: that
+        # key is what the file holds and what the cell editor starts from, and
+        # merging the two would make opening the editor an accidental way to
+        # write somebody else's name into this record.
+        "reviewers_from": _reviewers_under(index, entity_id) if not entity.reviewers else [],
+        # Three fields that are not columns and are not drawn anywhere on this
+        # page. They are here because the gate names them: a status the table can
+        # set demands them, and a row has to be able to answer whether it already
+        # holds one — `size` is the appetite *or the default*, so it cannot
+        # answer for `person_weeks`, and the other two are on no row at all.
+        "assigned_on": entity.assigned_on.isoformat() if entity.assigned_on else None,
+        "person_weeks": getattr(entity, "person_weeks", None),
+        "shaped_by": getattr(entity, "shaped_by", None) or [],
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
@@ -483,6 +525,16 @@ def _payload(index: Index) -> dict:
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
         "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
+        # Which statuses demand which fields, derived from the gate itself by
+        # `required_at` (`model.py`). The detail page has had this since it grew
+        # the marks beside its labels; the table had nothing, so moving a row to
+        # `in_progress` was a refusal naming a field the table does not show, and
+        # the way out was to open the record and come back.
+        #
+        # Per kind, because a row is one kind: merged, the map says a project is
+        # missing `person_weeks` at `ready` and a project has no such field. The
+        # form keeps the merge, because its kind can still be switched.
+        "required": {kind: required_at(kind) for kind in _KIND_MODELS},
         # What a row that does not exist yet can be typed into, per kind.
         "new_row": _new_row_fields(),
         # And what it holds before anybody types anything, read off the model
@@ -2544,8 +2596,34 @@ addEventListener('openproj:wrote', event => {
   if (!movedWriting) while (movedHeld.length) showMoved(movedHeld.shift());
 });
 
+// A commit somebody else in your co-editing room made is not somebody changing
+// the file under you: the text it holds is already in the box in front of you,
+// letter by letter, which is what the room is. The banner appeared anyway —
+// "this was just changed by somebody else" over a document that had just been
+// synced, which is jcanton's report from the deployed service.
+//
+// Its own event rather than `openproj:wrote`, which also decrements the
+// in-flight counter: only the tab that pressed Save owes that one, and every tab
+// in the room hears this.
+addEventListener('openproj:ours', event => {
+  if (!event.detail) return;
+  movedOurs.add(event.detail);
+  // And if the stream beat the socket to it, the banner is already up about a
+  // commit we now know was the room's. Racing is the normal case, not the
+  // unlucky one: both arrive from the same write.
+  if (movedShowing === event.detail) {
+    moved.hidden = true;
+    movedShowing = null;
+  }
+});
+
+// Which commit the banner is currently about, so a late "that one was ours" can
+// take it down again.
+let movedShowing = null;
+
 function showMoved({commit, changed}) {
   if (movedOurs.has(commit)) return;
+  movedShowing = commit;
   // What this page is looking at. A page showing one entity has it in its URL;
   // the table shows all of them and has nothing in its URL, so it says so — and
   // said nothing, every write anywhere read as unrelated to what was on screen.
@@ -2630,7 +2708,12 @@ _FACETS = """
     </button>
     <div class="facetmenu" role="group" aria-labelledby="facet-{{ field }}" hidden>
       {% for value in facets.get(field, []) %}
-      <label><input type="checkbox" value="{{ value }}">{{ value|human }}</label>{% endfor %}
+      {#- The value is what the filter matches and what the URL carries; the word
+          beside it is what a person reads. They are the same string for a status
+          and a login and are not for a project, whose values are ids — `Project:
+          proj-370001` is a menu that asks you to know the plan by heart. -#}
+      <label><input type="checkbox" value="{{ value }}">{{
+        titles.get(value) or value|human }}</label>{% endfor %}
     </div>
   </div>
   {% endfor %}
@@ -3139,6 +3222,11 @@ _TABLE = """
 {#- A conflict is the one answer that means the save did not land. It was a
     box that appeared, and nothing more. -#}
 <div id="row-conflict" role="status" aria-live="polite" hidden></div>
+{#- What the status about to be saved demands and the row has not got. A panel
+    and not a column: `assigned_on` beside `start` and `end` is a third date on a
+    row that already carries two derived ones, and the question is only ever
+    asked at the moment the status moves. -#}
+<div id="askfor" hidden></div>
 {% endif %}
 <script id="payload" type="application/json">{{ payload|tojson }}</script>
 {% if editable %}{{ combobox }}{% endif %}
@@ -3363,6 +3451,12 @@ function shown(row, key) {
       `${esc(row.progress_text)}<span class="meter"><span style="width: ` +
       `${Math.round(row.progress * 100)}%"></span></span>`;
   if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
+  // Nobody named here, and somebody named underneath: a pitch whose tasks each
+  // have a reviewer is reviewed, and the validator has stopped asking it for one
+  // of its own. Drawn rather than left blank, because a column that is empty on
+  // the row and answered a level down is a column that reads as a gap.
+  if (key === 'reviewers' && !(value || []).length && (row.reviewers_from || []).length)
+    return clamped(row.reviewers_from.map(esc), 'person', 'people');
   // Every list in the table clamps, for the same reason and by the same badge.
   // These two were the last that did not, and they were most of the wrapping
   // left: `OngChia, nfarabullini, jcanton` took three lines in a 159px column and
@@ -3371,6 +3465,8 @@ function shown(row, key) {
   // are one click away, where they always were.
   if (key === 'assignees' || key === 'reviewers')
     return clamped((value || []).map(esc), 'person', 'people');
+  // Unreachable for `reviewers`, which is handled above — kept as one line so
+  // the two list columns stay one branch.
   return esc(stored(row, key));
 }
 
@@ -3469,6 +3565,12 @@ function cell(row, key, place) {
     editable ? 'edit' : '',
     !editable && key in WHY ? 'derived' : '',
     CLAMPED.has(key) ? 'clamp' : '',
+    // Inherited, not typed. The ground says the value came from the work under
+    // this record rather than from its own file, which is the difference between
+    // "these are the reviewers" and "these are the reviewers, and changing them
+    // means changing the tasks".
+    key === 'reviewers' && !(row.reviewers || []).length
+      && (row.reviewers_from || []).length ? 'inherited' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -3489,6 +3591,10 @@ function cell(row, key, place) {
   // up. A row that can go nowhere says that instead, which is also why it has no
   // handle to explain.
   const tip = [note, hiddenBy(row, key),
+               key === 'reviewers' && !(row.reviewers || []).length
+                 && (row.reviewers_from || []).length
+                 ? 'From the work filed under this record. Editing names reviewers of its own.'
+                 : '',
                editable ? 'Double-click to edit ' + named
                         : key === 'id' && EDITABLE ? moveTip(row) : WHY[key] || '']
     .filter(Boolean).join('\\n');
@@ -3541,6 +3647,11 @@ function rowHtml(place) {
     worst ? 'sev-row-' + SEV_CLASS[worst] : '',
     place.depth ? 'd' + place.depth : '',
     place.context ? 'context' : '',
+    // A write this row is waiting on. Against a plan on the other side of the
+    // world that is a fetch, a commit and a push — seconds — and for all of them
+    // the page said nothing at all and the row sat where it was, which reads as
+    // a drop that did not take.
+    row.id === WRITING ? 'writing' : '',
   ].filter(Boolean).join(' ');
   return `<tr data-id="${esc(row.id)}"${classes ? ` class="${classes}"` : ''}>` +
     keys.map(key => cell(row, key, place)).join('') + '</tr>';
@@ -3799,6 +3910,16 @@ tbody.addEventListener('pointerout', event => {
 // `pointerout`.
 addEventListener('openproj:filter', hideCardNow);
 
+// The row a write is in the air for, or null. One at a time, because one drag is
+// one drop: this is not a queue, it is the row the reader is looking at.
+//
+// Declared out here rather than beside `reparent`, which is where it is set, and
+// outside the editable branch, which is where writes live. `rowHtml` reads it on
+// the first draw: further down the file it is in its dead zone then, and inside
+// the branch it does not exist at all on a rendered file — both of which are a
+// page that throws before a single row is drawn.
+let WRITING = null;
+
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
 const EDITABLE = null;
@@ -3837,7 +3958,94 @@ async function refreshProblems() {
   summarise();
 }
 
-async function saveCell(cell, value) {
+// What this status will make the server refuse the row without, and the row has
+// not got. `DATA.required` is `required_at()`, which is derived from the gate
+// rather than written beside it — the same map the detail page marks its labels
+// from.
+//
+// `review_waived` is honoured here for the reason it is honoured there: it is the
+// escape hatch from the reviewer rule, and asking for reviewers on a row that has
+// waived them is a nag rather than a question.
+function missingFor(row, status) {
+  return Object.entries((DATA.required || {})[row.kind] || {})
+    .filter(([field, statuses]) => statuses.includes(status))
+    .map(([field]) => field)
+    .filter(field => EDITABLE[field] && !(field === 'reviewers' && row.review_waived))
+    .filter(field => {
+      const held = row[field];
+      return held === null || held === undefined || held === ''
+        || (Array.isArray(held) && held.length === 0);
+    });
+}
+
+// Fields a span is computed from. Editing one of these from the table changes
+// `start` and `end`, which are columns nothing in the browser can work out — so
+// the rows are re-read from the server rather than patched in place.
+const DERIVES_DATES = new Set(['assigned_on', 'person_weeks', 'cycle']);
+
+// Today, in the reader's own timezone. `toISOString` is UTC, so on a laptop east
+// of Greenwich in the evening it offers tomorrow — which is a date somebody
+// accepts without reading, because it is prefilled and it is nearly right.
+function today() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
+// The one question a status change is allowed to ask. It is asked BEFORE the
+// write, so the answer travels in the same PATCH as the status: a row that goes
+// `in_progress` and then has a date added is two commits, and for the length of
+// the first one the plan holds a record the validator refuses.
+function askFor(cell, status, fields) {
+  const panel = document.getElementById('askfor');
+  const named = fields.map(field => {
+    const label = FIELD_LABELS[field] || field;
+    const type = EDITABLE[field] === 'date' ? 'date' : 'text';
+    const value = field === 'assigned_on' ? today() : '';
+    return `<label>${esc(label)}` +
+      `<input type="${type}" data-field="${esc(field)}" value="${esc(value)}"></label>`;
+  }).join('');
+  panel.innerHTML =
+    `<p class="asking">${esc(human(status))} needs ${fields.length === 1 ? 'this' : 'these'}` +
+    `</p>${named}` +
+    `<span class="acts"><button type="button" id="asked" class="primary">Save</button>` +
+    `<button type="button" id="unasked">Cancel</button></span>`;
+  panel.hidden = false;
+  const box = cell.getBoundingClientRect();
+  panel.style.left = Math.max(8, Math.min(box.left, innerWidth - panel.offsetWidth - 8)) + 'px';
+  panel.style.top = Math.min(box.bottom + 6, innerHeight - panel.offsetHeight - 8) + 'px';
+  panel.querySelector('input').focus();
+  panel.querySelector('input').select();
+
+  // The keyboard goes back to the cell the question was asked about. `rove` is
+  // what this table hands focus with everywhere else, and it survives the redraw
+  // that a save causes.
+  const shut = () => { panel.hidden = true; panel.innerHTML = ''; rove(cell, true); };
+  panel.querySelector('#unasked').onclick = () => { shut(); announce('nothing was changed'); };
+  panel.querySelector('#asked').onclick = () => {
+    const extra = {};
+    for (const input of panel.querySelectorAll('input')) {
+      if (!input.value.trim()) {
+        announce(`${FIELD_LABELS[input.dataset.field] || input.dataset.field} is needed`);
+        input.focus();
+        return;
+      }
+      extra[input.dataset.field] = input.value.trim();
+    }
+    panel.hidden = true;
+    panel.innerHTML = '';
+    saveCell(cell, status, extra);
+  };
+  // Enter saves and Escape gives up, which is what every other box on this page
+  // answers to — a panel that has to be dismissed with the mouse is a panel that
+  // stops the keyboard path this table is built around.
+  panel.onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); panel.querySelector('#asked').click(); }
+    if (event.key === 'Escape') { event.preventDefault(); panel.querySelector('#unasked').click(); }
+  };
+}
+
+async function saveCell(cell, value, extra) {
   const field = cell.dataset.field;
   const box = document.getElementById('row-conflict');
   // Cleared here and nowhere else. This page redraws instead of reloading, so
@@ -3856,6 +4064,22 @@ async function saveCell(cell, value) {
   // the server announces a commit to the event stream before it answers the
   // request that made it, so the news of your own save can arrive before you
   // know its sha.
+  // A status that demands what this row has not got is a question before it is a
+  // write. Asked once — `extra` is what came back from asking, and a second pass
+  // through here with it must not ask again.
+  if (field === 'status' && !extra) {
+    const wanted = missingFor(DATA.rows[cell.dataset.entity] || {}, coerced);
+    if (wanted.length) { askFor(cell, value, wanted); return; }
+  }
+  let sending;
+  try {
+    sending = {[field]: coerced};
+    for (const [name, raw] of Object.entries(extra || {}))
+      sending[name] = coerce(EDITABLE[name], raw);
+  } catch (error) {
+    announce(`${field} ${error.message}`);
+    return;
+  }
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
@@ -3871,7 +4095,7 @@ async function saveCell(cell, value) {
     // the save somebody pressed on one record addresses something else entirely.
     const response = await fetch(`/api/entity/${encodeURIComponent(cell.dataset.entity)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
+      body: JSON.stringify({base_commit: BASE.value, fields: sending, body: null}),
     });
     const answer = await answerOf(response);
     if (response.status === 409) {
@@ -3887,7 +4111,15 @@ async function saveCell(cell, value) {
     // the commit it just made.
     committed = answer.commit;
     BASE.value = answer.commit;
-    DATA.rows[cell.dataset.entity][field] = coerced;
+    Object.assign(DATA.rows[cell.dataset.entity], sending);
+    // A date the schedule is derived FROM has moved, so every date derived from
+    // it on this row is now wrong on screen — and `start` and `end` are two
+    // columns away from the one that was edited. Re-read rather than recomputed:
+    // the scheduler is the server's, and a second copy of it here is the thing
+    // this codebase has paid for three times already.
+    if (extra && Object.keys(extra).some(name => DERIVES_DATES.has(name))) {
+      await refreshRows();
+    }
     // Twice: once to put the typed value back into the cell rather than leaving
     // an open editor sitting there for the length of a second round trip, and
     // once when the server has said what that value did to the problems.
@@ -4538,6 +4770,14 @@ async function reparent(childId, parentId) {
   box.hidden = true;
   box.textContent = '';
   dispatchEvent(new Event('openproj:writing'));
+  // Said before the request rather than after it. Every write here goes through
+  // a fetch from the remote, a commit and a push, and against a repository on
+  // GitHub that is seconds — during which the old page said nothing and left the
+  // row where it was, which is indistinguishable from a drop that did not take.
+  WRITING = childId;
+  draw();
+  announce(parentId ? `moving ${childId} into ${parentId}…`
+                    : `taking ${childId} out…`);
   let committed = null;
   try {
     const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
@@ -4568,6 +4808,11 @@ async function reparent(childId, parentId) {
              : parentId ? `${childId} is now in ${parentId}`
                         : `${childId} is no longer inside anything`);
   } finally {
+    // Whatever happened — committed, refused, or the network gone — the row
+    // stops waiting. A row left dimmed after a refusal is a row that looks like
+    // it is still going.
+    WRITING = null;
+    draw();
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }
 }
@@ -5444,6 +5689,14 @@ td.sev-cell-warn { background: var(--sev-warn-soft); }
 td.edit { cursor: cell; }
 td.edit:hover { background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--line-strong); }
 td.refused { background: var(--surface-2); }
+/* A value this record did not name: its reviewers, taken from the work filed
+   under it. A ground rather than an italic or a bracket, because the cell is a
+   list of logins and every other channel in it is already spoken for — and the
+   ground is the one that survives a clamped cell showing one name and a `+2`.
+   `--st-ready-soft` and not a colour of its own: the five status tints are the
+   palette this table already reads in, and this is a tint from it rather than a
+   sixth thing to learn. */
+td.inherited { background: var(--st-ready-soft); }
 td.clamp { white-space: nowrap; overflow: hidden; }
 /* A row, so that what gets cut is the value and never the badge. Laid out
    inline, the `+2` is simply the last thing on an overflowing line: a clamped
@@ -5671,6 +5924,11 @@ table.moving tr.adder #add-row { display: none; }
 table.moving tr.adder #unparent:not([hidden]) { display: inline-block; }
 table.moving tr.adder > td { box-shadow: inset 0 2px 0 var(--accent); }
 table.moving tr.adder.over > td { background: var(--surface-2); }
+/* A row with a write in the air. Dimmed rather than spinning: the row is still
+   readable, still says what it said a second ago, and the one thing that has
+   changed is that it is not settled yet. `cursor: progress` on the whole row is
+   the second channel, for a reader who has the animation turned off. */
+tr.writing > td { opacity: .55; cursor: progress; }
 /* The row being typed. It is a form laid out as a row, so an empty cell has to
    look like a box to fill in rather than like a value nobody has written: the
    column's own word, in the muted ink every hint on this page uses.
@@ -5702,6 +5960,30 @@ tr.draft > td.draft-none {
   background-image: repeating-linear-gradient(-45deg, transparent, transparent 3px,
                     var(--line-strong) 3px, var(--line-strong) 4px);
 }
+/* The one question a status change may ask, over the row it is about. Fixed, so
+   it is not clipped by the table's own scroller — the cell it belongs to can be
+   in a frozen column with `overflow: hidden` two ancestors up — and z-index 6,
+   which clears the header (3), the frozen pair (4) and the drop label (5). */
+#askfor {
+  position: fixed; z-index: 6; min-width: 14rem;
+  display: flex; flex-direction: column; gap: .35rem;
+  padding: .5rem .6rem; background: var(--surface); color: var(--fg);
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.12);
+}
+#askfor[hidden] { display: none; }
+#askfor .asking { margin: 0; font-size: 12px; color: var(--muted); }
+#askfor label { display: flex; flex-direction: column; gap: .15rem;
+                font-size: 11px; color: var(--muted); text-transform: uppercase;
+                letter-spacing: .04em; }
+#askfor input { font: inherit; font-size: 13px; text-transform: none;
+                letter-spacing: 0; color: var(--fg); padding: .15rem .3rem;
+                border: 1px solid var(--line-strong); border-radius: 3px; }
+#askfor .acts { display: flex; gap: .4rem; margin-top: .15rem; }
+#askfor button { font: inherit; font-size: 12px; padding: .15rem .6rem;
+                 border: 1px solid var(--line-strong); border-radius: 3px;
+                 background: none; color: inherit; cursor: pointer; }
+#askfor button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 /* The create refusal, beside the row it refused. `#row-conflict` is styled in
    the shell and this is the same kind of news, but a create has no row to sit
    next to — so it lands in the bar, where the button that caused it is. */
@@ -5766,6 +6048,13 @@ _GRAPH = """
     140px of graph. -#}
 <div class="commitbar" id="commitbar">
   <button type="button" id="connect">Edit dependencies</button>
+  {#- A mode, for the same reason the other one is: a plain drag on this canvas
+      means "move the node" and always has, so the gesture that files one record
+      inside another has to say which it is. What is new is that the dragging,
+      the drop target and the highlighting are the extension's now — the version
+      of this written here could not tell the reader where the node would land,
+      because the box it would land in moves with the node. -#}
+  <button type="button" id="refile">Refile</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
   <span id="state" role="status"></span>
@@ -5773,12 +6062,31 @@ _GRAPH = """
 </div>
 {% endif %}
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
+{#- `model.PARENT_KINDS`: which kind may hold which. The extension asks before it
+    lets go, so a drop the server would refuse is one the canvas never offers. -#}
+<script id="parents" type="application/json">{{ parent_kinds|tojson }}</script>
 <script>{{ cytoscape }}</script>
-<script>{{ dagre }}</script>
-<script>{{ cytoscape_dagre }}</script>
+{#- ELK rather than dagre, because dagre does not know what a nested node is: it
+    lays a plan whose pitches hold tasks out as though it were flat, and the
+    result was measured on the real plan at 7% of the canvas with three of six
+    dependency edges drawn across a box they are not attached to. ELK's layered
+    algorithm is hierarchy-aware and put the same plan on the same canvas with
+    none of them crossing. It is the one vendored file that is not permissively
+    licensed — EPL-2.0, notice beside it in `static/`, see `VENDOR.md`. -#}
+<script>{{ elk }}</script>
+<script>{{ cytoscape_elk }}</script>
+{#- Filing one thing inside another was written here by hand, shipped, and
+    removed the same day: a compound's outline follows the child being dragged,
+    so the drop looked like nothing happening until the page reloaded. This
+    extension is 14 KB, has no dependencies, and had solved it — see `Look for it
+    before you write it` in AGENTS.md, which this is the worked example of.
+    Its sibling `cytoscape-edgehandles` was audited and refused in the same pass:
+    it wants two lodash modules as globals to replace a gesture that works. -#}
+<script>{{ compound_dnd }}</script>
 {{ filters }}
 <script>
-cytoscape.use(cytoscapeDagre);
+cytoscape.use(cytoscapeElk);
+cytoscape.use(cytoscapeCompoundDragAndDrop);
 
 // A payload that did not survive the trip is a third kind of empty, and an empty
 // canvas looks the same whichever one it is: a bordered box with nothing in it,
@@ -5844,7 +6152,82 @@ function groupWidth(node) {
 
 // Named once: filtering re-runs it, and a second copy of the options is how the
 // graph comes to lay itself out one way at load and another way afterwards.
-const LAYOUT = {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70};
+// Measured on the real plan — 31 records, six dependencies — in a 1900x820
+// canvas, against the dagre layouts this replaces:
+//
+//     dagre LR (what shipped)   7% of the canvas   3 of 6 edges across a box
+//     dagre TB + packed        57%                 3 of 6
+//     elk layered RIGHT        69%                 0 of 6
+//
+// `hierarchyHandling: INCLUDE_CHILDREN` is the whole reason: dagre lays a nested
+// plan out as though it were flat, and a pitch holding four tasks is exactly
+// what this plan is made of. ELK lays out the boxes and their contents together.
+//
+// `RIGHT` and not `DOWN` for the reason `TB` beat `LR` under dagre — the shape of
+// this plan, not a preference. Most records depend on nothing, and the direction
+// decides whether that pile becomes a column or a row; measured, `DOWN` came out
+// at 23% of the canvas against 69%.
+//
+// An edge here is a dependency and only ever a dependency. What holds what is
+// drawn as a box around its contents, which is what `INCLUDE_CHILDREN` lays out
+// — the table draws the same relationship as a tree, and neither view turns it
+// into an arrow.
+const LAYOUT = {
+  name: 'elk',
+  // ELK's own fitting is off: `packComponents` below moves the pieces afterwards
+  // and fits once, and two fits fight over the same viewport.
+  fit: false,
+  elk: {
+    algorithm: 'layered',
+    'elk.direction': 'RIGHT',
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.edgeRouting': 'ORTHOGONAL',
+    'elk.spacing.nodeNode': 30,
+    'elk.layered.spacing.nodeNodeBetweenLayers': 50,
+    // `elk.separateConnectedComponents` and `elk.aspectRatio` were here and are
+    // not any more: measured, they changed nothing at all, because
+    // `packComponents` runs afterwards and arranges the pieces itself. Two
+    // settings that read as though they do something are worse than none.
+  },
+};
+
+// dagre lays the whole graph out as one drawing, so the pieces that are not
+// connected to each other are strung along a single line — which is why even
+// `TB` came out 11 times wider than it was tall, and still used a third of the
+// canvas. Nothing in the plan says those pieces belong in a row: they are
+// separate projects.
+//
+// So they are arranged afterwards, into rows whose width is chosen to make the
+// whole drawing the shape of the canvas it has to fit into. Same layout, same
+// edges, and 80% of the canvas instead of 7%, at nearly twice the zoom.
+//
+// Only the leaves are moved. A compound node's position is derived from its
+// children in cytoscape, so shifting a parent as well would move its contents
+// twice.
+// ELK is asynchronous, which is what makes the handler above enough: it emits
+// `layoutstop` after this file has finished being read. dagre was synchronous and
+// had already emitted it by then — the pack was written, never called, and the
+// graph came out in one long line exactly as before it was written.
+function packComponents() {
+  const pieces = cy.elements(':visible').components()
+    .map(piece => ({piece, box: piece.boundingBox()}))
+    .sort((a, b) => b.box.h - a.box.h);
+  if (pieces.length < 2) return;
+  const gap = 40;
+  const area = pieces.reduce((sum, one) => sum + (one.box.w + gap) * (one.box.h + gap), 0);
+  // The row width that would make the arrangement as wide-to-tall as the canvas.
+  const budget = Math.sqrt(area * (cy.width() / cy.height()));
+  let x = 0, y = 0, tallest = 0;
+  for (const {piece, box} of pieces) {
+    if (x > 0 && x + box.w > budget) { x = 0; y += tallest + gap; tallest = 0; }
+    const dx = x - box.x1, dy = y - box.y1;
+    piece.nodes().filter(node => node.isChildless())
+      .positions(node => ({x: node.position('x') + dx, y: node.position('y') + dy}));
+    x += box.w + gap;
+    tallest = Math.max(tallest, box.h);
+  }
+  cy.fit(undefined, 24);
+}
 
 // Before the canvas is built, not after. Cytoscape measures its container once,
 // here, and the first layout fits the plan into whatever it measured — so a
@@ -5929,16 +6312,19 @@ const cy = cytoscape({
         // token that is held at 3:1 against the page in both themes.
         'line-color': token('--line-strong'),
         'target-arrow-color': token('--line-strong') } },
+    // The two uncommitted states, told apart by colour rather than by dash
+    // pattern: both are dashed, because dashed is what "not in the plan yet"
+    // looks like here, and one is being added while the other is being taken
+    // away. `--ok` and `--sev-blocker` are the two tokens this app already uses
+    // for exactly that pair of meanings, and both are held against the page at
+    // 3:1 in either theme — a green that only reads as green on a white
+    // background is a green half the room does not have.
     { selector: 'edge.pending', style: {
-        'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
-        'line-style': 'dashed', 'width': 2 } },
-    // On its way out. The same ink as a drawn-but-unsaved edge, because both are
-    // "this is not committed yet", and dotted rather than dashed so the two
-    // states are told apart by more than the direction somebody remembers
-    // clicking in.
+        'line-color': token('--ok'), 'target-arrow-color': token('--ok'),
+        'line-style': 'dashed', 'width': 2.5 } },
     { selector: 'edge.dropping', style: {
-        'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
-        'line-style': 'dotted', 'width': 3 } },
+        'line-color': token('--sev-blocker'), 'target-arrow-color': token('--sev-blocker'),
+        'line-style': 'dashed', 'width': 2.5 } },
   ],
 });
 
@@ -5972,8 +6358,10 @@ function paint() {
                                 'text-margin-x': e => groupWidth(e) + 12})
     .selector('edge').style({'line-color': token('--line-strong'),
                              'target-arrow-color': token('--line-strong')})
-    .selector('edge.pending').style({'line-color': token('--danger'),
-                                     'target-arrow-color': token('--danger')})
+    .selector('edge.pending').style({'line-color': token('--ok'),
+                                     'target-arrow-color': token('--ok')})
+    .selector('edge.dropping').style({'line-color': token('--sev-blocker'),
+                                      'target-arrow-color': token('--sev-blocker')})
     .update();
   route();
 }
@@ -5982,7 +6370,9 @@ addEventListener('themechange', paint);
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
 
-cy.on('layoutstop', route);
+// Packed first and routed after: routing reads where the boxes ended up, and
+// the pack moves them.
+cy.on('layoutstop', () => { packComponents(); route(); });
 cy.on('position', 'node', route);
 route();
 
@@ -6264,6 +6654,94 @@ if (CONNECT) {
 // it is stored on. Marked rather than removed on the spot, because until Save
 // nothing has happened and the canvas has to be able to say what it is about to
 // do — the same rule the drawn ones follow.
+// --- refiling ---------------------------------------------------------------
+//
+// Drag a record onto the box that should hold it. The extension does the part
+// this repository got wrong on its own: it knows which box the pointer is over
+// while a node is in the air, draws it, and hands back the pair when the drag
+// ends. What is left here is the rule about which pairs are allowed and the
+// write — the same PATCH the table's own drag sends, because a parent is a field
+// like any other.
+const REFILE = document.getElementById('refile');
+const CAN_HOLD = (() => {
+  try { return JSON.parse(document.getElementById('parents').textContent); }
+  catch (error) { return {}; }
+})();
+let refiling = false;
+let cdnd = null;
+
+if (REFILE) {
+  REFILE.onclick = () => {
+    if (connecting) CONNECT.onclick();
+    refiling = !refiling;
+    REFILE.textContent = refiling ? 'Stop refiling' : 'Refile';
+    if (refiling) {
+      cdnd = cy.compoundDragAndDrop({
+        // Only the records that can be filed under something. A project belongs
+        // to nothing, so it is not something to pick up.
+        grabbedNode: node => (CAN_HOLD[node.data('kind')] || []).length > 0,
+        // And only into a box that may hold it. Asked before the drop rather
+        // than after, so the canvas never offers a move the server refuses.
+        dropTarget: (target, grabbed) =>
+          target.isParent() &&
+          (CAN_HOLD[grabbed.data('kind')] || []).includes(target.data('kind')),
+        // No new boxes: a project, a pitch and a task are the three kinds this
+        // plan has, and dropping one record on another must not invent a fourth
+        // thing to hold them.
+        dropSibling: () => false,
+      });
+      say('drag a record onto the box that should hold it, or out of the one it is in');
+    } else {
+      if (cdnd) { cdnd.destroy(); cdnd = null; }
+      say('');
+    }
+  };
+
+  // Filed. `dropTarget` is the box it landed in.
+  cy.on('cdnddrop', (event, dropTarget) => {
+    const child = event.target;
+    if (!refiling || !dropTarget || !dropTarget.length) return;
+    if (dropTarget.id() === (child.data('parent') || null)) return;
+    refile(child.id(), dropTarget.id());
+  });
+
+  // Taken out. The extension fires this when a node leaves the box it was in,
+  // which is the gesture that had no answer at all before: there was no point on
+  // the canvas that meant "outside".
+  cy.on('cdndout', (event, dropTarget) => {
+    const child = event.target;
+    if (!refiling || !child.data('parent')) return;
+    refile(child.id(), null);
+  });
+}
+
+// The write. Same PATCH, same base commit, same refusal as everything else this
+// page commits; the page reloads afterwards because a parent moves the record's
+// cycle, its dates, what it waits for and which project it counts against, and
+// not one of those is something this canvas can work out for itself.
+async function refile(childId, parentId) {
+  const base = document.getElementById('base');
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    say(parentId ? `filing ${childId} into ${parentId}…` : `taking ${childId} out…`);
+    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: base.value, fields: {parent: parentId}, body: null}),
+    });
+    const answer = await answerOf(response);
+    if (!response.ok) {
+      say(refusal(answer, response.status));
+      return;
+    }
+    committed = answer.commit;
+    base.value = answer.commit;
+  } finally {
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+  location.reload();
+}
+
 cy.on('tap', 'edge', evt => {
   if (!connecting) return;
   const edge = evt.target;
@@ -7443,12 +7921,19 @@ _NEW = """
         {#- What the form or the server refused this with. Filled by script, so
             it is news arriving on a page that is already open. -#}
         <ul id="problems" class="problems" role="status" aria-live="polite" hidden></ul>
+        {#- Two rows, in the order the two kinds of control are reached for. The
+            first says what this box will BE — a preview of it, and the template
+            it starts from; the second is the typing furniture. One row put a
+            seven-character select between `Preview the body` and eight
+            single-character buttons, and nothing on the line lined up with
+            anything else on it. -#}
         <p class="field bodybar">
-          <span id="marks" class="marks"></span>
           <button type="button" id="preview">Preview the body</button>
           {#- The template is offered, never imposed: it fills an untouched box
-              and refuses to overwrite one somebody has typed in. -#}
-          <label class="tplpick">start from
+              and refuses to overwrite one somebody has typed in. `template` and
+              not `start from`: the label names the control, and the sentence it
+              was part of ended in the option list. -#}
+          <label class="tplpick">template
             <select id="template">
               <option value="pitch">the shaping template</option>
               <option value="task">a task</option>
@@ -7457,6 +7942,9 @@ _NEW = """
             </select>
           </label>
           <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
+        </p>
+        <p class="field bodybar markbar">
+          <span id="marks" class="marks"></span>
           <span class="hint">paste or drop an image to put it in the plan</span>
           <span class="hint" id="upload" role="status" aria-live="polite"></span>
         </p>
@@ -7697,7 +8185,13 @@ _DETAIL = """
       column, level with the title, so nothing is further away than it was. -#}
   <p class="meta"><code>{{ e.id }}</code>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
+  {#- The way in, at the top. It was in the commit bar at the foot of the page,
+      under the whole shaping document — so on any record worth reading, the
+      button that lets you change it was a scroll away from the thing you had
+      just decided to change. Save stays down there, where what is being
+      committed ends. -#}
   {% if editable %}
+  <p class="editbar"><button type="button" id="toggle">Edit</button></p>
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
@@ -7770,13 +8264,22 @@ _DETAIL = """
             off a `<textarea>` through a mirror element is worse than no caret at
             all. Empty when nobody else is here, which is most of the time. -#}
         <span id="together" class="together" role="status" aria-live="polite"></span>
-        <span id="marks" class="marks"></span>
         <button type="button" id="preview">Preview the body</button>
+      </p>
+      <p class="field bodybar markbar">
+        <span id="marks" class="marks"></span>
         <span class="hint">paste or drop an image to put it in the plan</span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
       </p>
-      <textarea name="body" class="field body-field"
-                aria-label="Shaping document">{{ e.raw_body }}</textarea>
+      {#- The box, and a layer over it for where everybody else is. The layer is
+          a sibling rather than a background, because a `<textarea>` cannot hold
+          anything but text: the bands are drawn on top, translucent, and take no
+          pointer events — the thing under them is the thing being typed in. -#}
+      <div class="bodywrap">
+        <div id="seats" class="seats" aria-hidden="true"></div>
+        <textarea name="body" class="field body-field"
+                  aria-label="Shaping document">{{ e.raw_body }}</textarea>
+      </div>
       <div id="body-preview" class="field doc" hidden></div>
       <div id="conflict" role="status" aria-live="polite" hidden></div>
       {% endif %}
@@ -7784,10 +8287,17 @@ _DETAIL = """
   </div>
   {% if editable %}
   </form>
+  {#- Save stays at the bottom, where the thing being committed ends; Edit has
+      moved to the top, beside the title, because it is the way IN and a way in
+      you have to scroll past a shaping document to find is one nobody finds. -#}
   <div class="commitbar" id="commitbar">
     <span id="unsaved">Nothing to save</span>
-    <button type="button" id="toggle">Edit</button>
     <button type="button" id="save" hidden>Save</button>
+    {#- Cancel stays beside Save and never beside Edit. They are the two ways one
+        editing session can end and putting them in two places is how somebody
+        closes a tab believing the other one was the way out. Edit is a third
+        thing — the way IN — which is why it is at the top and this is not. -#}
+    <button type="button" id="cancel" hidden>Cancel</button>
     <span id="state" role="status"></span>
   </div>
   {% endif %}
@@ -7938,18 +8448,36 @@ function showEditing(editing) {
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
-  document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
+  // Three buttons and never two of them at once: Edit is the way in and lives at
+  // the top, beside the record; Save and Cancel are the two ways one editing
+  // session ends and live together in the sticky bar at the foot of the thing
+  // being committed. The button that used to be here was Edit and Cancel by
+  // turns, in one place, which put the way out under the document you were
+  // editing.
+  document.getElementById('cancel').hidden = !editing;
+  document.getElementById('toggle').hidden = editing;
   dirty();
+  // The room's bands are measured against a box that has a size. The socket
+  // opens on load and the roster arrives while the page is still in read mode,
+  // where the textarea is `display: none` and every measurement is zero — so the
+  // first thing anybody saw on entering edit mode was no bands at all, on a
+  // document somebody else was demonstrably in.
+  dispatchEvent(new Event('openproj:editing'));
 }
 
-document.getElementById('toggle').onclick = () => {
+// Both of the buttons that change the mode, through one handler: Edit at the top
+// turns it on, Cancel in the bar turns it off, and a second copy of what that
+// means is how the two come to disagree about the draft.
+function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   showEditing(editing);
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
   if (!editing) remembered.forget(DRAFT);
-};
+}
+document.getElementById('toggle').onclick = flipEditing;
+document.getElementById('cancel').onclick = flipEditing;
 
 document.getElementById('preview').onclick = async () => {
   // Only the body, and without leaving edit mode. It used to swap the whole page
@@ -8264,6 +8792,99 @@ const COEDIT = (() => {
     together.textContent = others.length ? `also editing: ${others.join(', ')}` : '';
   }
 
+  // --- where everybody is ---------------------------------------------------
+  //
+  // A name says somebody else is in the document. It does not say which
+  // paragraph they are in, which is the thing you need in order not to rewrite
+  // the sentence somebody is halfway through — and in a shaping document that is
+  // the whole risk, because two people work on two sections of one file.
+  //
+  // A band on the line, not a caret. A caret drawn through a mirror element is
+  // wrong by a pixel or two and reads as a claim about a character; a translucent
+  // band is right about the line or visibly wrong about it, and being visibly
+  // wrong is a state somebody can act on.
+
+  let seats = [];
+
+  // Drawn again when the box appears. See `showEditing`.
+  addEventListener('openproj:editing', () => { drawSeats(); sit(); });
+
+  // One hue per login, from the name itself: no server-side allocation, no
+  // colour that changes when somebody leaves and rejoins, and the same person is
+  // the same colour in everybody's window. The other two channels are fixed, so
+  // every band is equally light — a colour that also varies in lightness is one
+  // that means "more" to a reader who cannot separate hues.
+  function hueOf(login) {
+    let hash = 0;
+    for (const character of login) hash = (hash * 31 + character.charCodeAt(0)) % 360;
+    return hash;
+  }
+
+  // The mirror. Built once, kept out of the accessibility tree, and given the
+  // textarea's own metrics every time it is measured — a mirror whose font is a
+  // fallback measures the fallback's line height, and every band lands somewhere
+  // else on the machine that has no webfont yet.
+  const ghost = document.createElement('div');
+  ghost.className = 'ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+
+  function measure(at) {
+    const style = getComputedStyle(BODY);
+    for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+                        'letterSpacing', 'padding', 'border', 'whiteSpace',
+                        'wordBreak', 'overflowWrap', 'tabSize', 'boxSizing']) {
+      ghost.style[name] = style[name];
+    }
+    ghost.style.width = BODY.clientWidth + 'px';
+    ghost.textContent = BODY.value.slice(0, at);
+    const mark = document.createElement('span');
+    // A zero-width space so the marker has a box on an empty line, and so the
+    // line it is on does not get one character wider than the real one.
+    mark.textContent = '\u200b';
+    ghost.appendChild(mark);
+    const top = mark.offsetTop;
+    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
+    return {top, height};
+  }
+
+  function drawSeats() {
+    const layer = document.getElementById('seats');
+    if (!layer || !BODY) return;
+    const others = seats.filter(seat => seat.login !== me);
+    if (!others.length) { layer.replaceChildren(); return; }
+    document.body.appendChild(ghost);
+    const drawn = others.map(seat => {
+      const {top, height} = measure(Math.min(seat.at, BODY.value.length));
+      const band = document.createElement('div');
+      band.className = 'seat';
+      band.style.top = (top - BODY.scrollTop) + 'px';
+      band.style.height = height + 'px';
+      band.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .22)`;
+      const who = document.createElement('span');
+      who.className = 'seatname';
+      who.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .85)`;
+      // `textContent`, because this is a login off a socket.
+      who.textContent = seat.login;
+      band.appendChild(who);
+      return band;
+    });
+    ghost.remove();
+    layer.replaceChildren(...drawn);
+  }
+
+  // Where this tab's caret is, when it moves to a different place. Sent on the
+  // index the two ends already agree on — UTF-16 code units, which is what
+  // `selectionStart` counts and what a Yjs text is made of in a browser. The
+  // server relays it and never reads it; see `Room.sits`.
+  let sentAt = -1;
+  function sit() {
+    if (!BODY || !bound) return;
+    const at = BODY.selectionStart;
+    if (at === sentAt) return;
+    sentAt = at;
+    send({t: 'at', at});
+  }
+
   // The shell counts these in pairs, so they are announced from one place each
   // and guarded by the same flag. Pressing Save both dispatches here and hears
   // the room say `saving` a moment later; two writings against one wrote left
@@ -8330,6 +8951,16 @@ const COEDIT = (() => {
       }
       bound = true;
       BODY.addEventListener('input', typed);
+      // Where this tab is sitting, and where everybody else's band should be
+      // drawn. Four events, because four different things move a band: the
+      // caret moving, the text moving under it, the box scrolling, and the
+      // window changing the wrap.
+      BODY.addEventListener('input', () => { sit(); drawSeats(); });
+      BODY.addEventListener('scroll', drawSeats);
+      BODY.addEventListener('keyup', sit);
+      BODY.addEventListener('click', sit);
+      addEventListener('resize', drawSeats);
+      sit();
     } else {
       // A reconnection. The document already merged everything typed while the
       // socket was down, so there is nothing to decide.
@@ -8343,8 +8974,20 @@ const COEDIT = (() => {
 
   function heard(message) {
     if (message.t === 'welcome') return welcomed(message);
-    if (message.t === 'update') return YJS.applyUpdate(doc, raw(message.u), 'remote');
-    if (message.t === 'who') return names(message.people);
+    if (message.t === 'update') {
+      YJS.applyUpdate(doc, raw(message.u), 'remote');
+      // Somebody else's text arrived, so every band below the change is now on
+      // the wrong line — including this tab's own idea of where it is sitting.
+      drawSeats();
+      sit();
+      return;
+    }
+    if (message.t === 'who') {
+      names(message.people);
+      seats = Array.isArray(message.where) ? message.where : [];
+      drawSeats();
+      return;
+    }
     if (message.t === 'reload') return stop(message.why);
     if (message.t === 'saving') {
       // The shell's banner has to know a write is in the air before it lands:
@@ -8365,6 +9008,10 @@ const COEDIT = (() => {
       return;
     }
     if (message.t === 'saved') {
+      // Whether this tab is the one that asked, read BEFORE `settle` clears it:
+      // the frame goes to everybody in the room, and only the tab that pressed
+      // the button should be told anything or have its editor closed.
+      const mine = saving;
       if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
       BASE.value = message.commit;
       ORIGINAL_BODY = text.toString();
@@ -8375,6 +9022,18 @@ const COEDIT = (() => {
       announce(message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
         : (message.pushed === false ? 'saved here, not yet pushed' : 'saved'));
+      // Everybody in the room, not only the tab that pressed the button: this
+      // commit holds text that is already in every one of these editors, so the
+      // shell's "somebody else changed this" banner is wrong about all of them.
+      dispatchEvent(new CustomEvent('openproj:ours', {detail: message.commit}));
+      // And the tab that pressed Save leaves edit mode, which is what pressing
+      // it means. The path without a room reloads the page and lands in read
+      // mode by doing so; in a room there is nothing to reload — the document is
+      // already what everybody has — so this is the same ending arrived at
+      // deliberately. Only the tab that asked: everybody else in the room is
+      // still typing, and a commit somebody else made is not a reason to close
+      // the box in front of you.
+      if (mine && typeof showEditing === 'function') showEditing(false);
       return;
     }
     if (message.t === 'refused') {
@@ -8542,7 +9201,28 @@ article.entity:not(.editing) .req { display: none; }
 .field { display: none; }
 .entity.editing .field { display: block; }
 .entity.editing .field[hidden] { display: none; }
+/* Where the other people in the room are. One band per person on the line their
+   caret is in, translucent so the text keeps its own contrast, with the login on
+   the right — a colour on its own is a colour a reader has to be told the
+   meaning of, and the two channels together need no legend.
+   `pointer-events: none` throughout: the thing under this is the box being typed
+   in, and a layer that takes a click is a click that does not reach it. */
+.bodywrap { position: relative; }
+.seats { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+         border-radius: 3px; }
+.seat { position: absolute; left: 0; right: 0; }
+.seatname { position: absolute; right: .25rem; top: 0;
+            font-size: 10px; line-height: 1.4; padding: 0 .3rem; border-radius: 3px;
+            color: var(--bg); font-family: var(--font-sans); }
+/* Off the page and measured, never seen. It carries the textarea's own metrics —
+   a mirror in a fallback face measures the fallback's line height, and every band
+   then lands on the wrong row on the one machine whose webfont has not arrived. */
+.ghost { position: absolute; visibility: hidden; top: -9999px; left: -9999px;
+         white-space: pre-wrap; word-break: break-word; }
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
+/* The second row sits under the first rather than a paragraph's worth away: they
+   are two halves of one bar, and the box they belong to is below both. */
+.bodybar.markbar { margin-top: .25rem; }
 .entity.editing .bodybar { display: flex; }
 /* Who else is typing in this document, first in the bar because it is the one
    thing here that changes what you are about to do. `:empty` and not a `hidden`
@@ -12514,11 +13194,22 @@ def render_detail(
 _NO_ASIDE = Markup("")
 
 
+def _titles(index: Index) -> dict[str, str]:
+    """What each entity is called, for the menus whose values are ids.
+
+    Only the Project facet has any today. It is the whole index rather than the
+    projects alone because a value in a menu is a value in a menu — the day
+    something else is filtered by id, this already knows its name.
+    """
+    return {entity_id: entity.title for entity_id, entity in index.entities.items()}
+
+
 def _facets_html(
     facets: dict,
     fields: tuple[str, ...] = _PLAN_FACETS,
     search: str = "Search titles, tags, PRs, people",
     aside: Markup = _NO_ASIDE,
+    titles: dict[str, str] | None = None,
 ) -> Markup:
     """The control bar, for any view that filters anything.
 
@@ -12528,12 +13219,22 @@ def _facets_html(
     people page had written its own, over its own three fields, and had already
     drifted — same markup, a different search box.
 
+    `titles` is what a value is called where the value itself is not a word: the
+    Project menu's values are entity ids, because that is what the filter matches
+    and what the URL has to carry, and a menu of `proj-370001` asks a reader to
+    know the plan by heart. Given per page rather than looked up here, because
+    this function is handed facets and not an index — the people page's three
+    fields have no titles at all.
+
     `aside` rides at the far end of the search box's line. It is here rather than
     on each page because the sentence a view writes about itself was a full row on
     every one of them, and a row above the drawing is the most expensive place on
     these pages to put twelve words.
     """
-    return _fragment(_FACETS, facets=facets, fields=fields, search=search, aside=aside)
+    return _fragment(
+        _FACETS, facets=facets, fields=fields, search=search, aside=aside,
+        titles=titles or {},
+    )
 
 
 def _combobox_html(index: Index | None) -> Markup:
@@ -13352,6 +14053,9 @@ _RECORD_STYLE = """
    class on it, `body.editing .field` won on specificity and the bar went
    inline — putting the textarea on the same line as the buttons. */
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem; }
+/* The second row sits under the first rather than a paragraph's worth away: they
+   are two halves of one bar, and the box they belong to is below both. */
+.bodybar.markbar { margin-top: .25rem; }
 body.editing .bodybar { display: flex; }
 #facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
          margin: 1rem 0; align-items: baseline; }
@@ -13512,7 +14216,7 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
-        facets=_facets_html(index.facets),
+        facets=_facets_html(index.facets, titles=_titles(index)),
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
@@ -13538,16 +14242,18 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     body = _ENV.from_string(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        facets=_facets_html(index.facets, aside=_GRAPH_HINT),
+        facets=_facets_html(index.facets, aside=_GRAPH_HINT, titles=_titles(index)),
         filters=_FILTER_JS,
         statuses=STATUSES,
         glyphs=STATUS_GLYPH,
         total=len(index.entities),
         links=links,
         elements=_elements(index),
+        parent_kinds={kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         cytoscape=_library("cytoscape.min.js"),
-        dagre=_library("dagre.min.js"),
-        cytoscape_dagre=_library("cytoscape-dagre.js"),
+        elk=_library("elk.bundled.js"),
+        cytoscape_elk=_library("cytoscape-elk.js"),
+        compound_dnd=_library("cytoscape-compound-drag-and-drop.js"),
     )
     return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 
@@ -13585,6 +14291,7 @@ def render_timeline(
             aside=_fragment(
                 _TIMELINE_HINT, t=timeline, windowed=bool(window[0] or window[1])
             ),
+            titles=_titles(index),
         ),
         filters=_FILTER_JS,
         # The rows the shared `matches()` reads, for the bars that were drawn. Not

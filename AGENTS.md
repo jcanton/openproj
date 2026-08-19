@@ -305,6 +305,41 @@ Anything written on jcanton's behalf ends with exactly this line, and nothing af
 
 No `Co-Authored-By`, no `Claude-Session` trailers.
 
+## Look for it before you write it
+
+Before building a feature, look for the library or extension that already does it, and weigh
+that against writing it. Write down what you found and why you chose as you did — in the commit
+that builds it, so the next person inherits the search rather than repeating it.
+
+This is not a preference for dependencies. `No npm, no build step, no CDN` is still the rule, and
+it decides most of the answer: a candidate is only a candidate if it ships a file that can be
+vendored into `static/`, checksummed in `SHA256SUMS`, inlined into a page, and read by a person —
+and if its licence is compatible with BSD-3. What it costs is bytes on one page, and that is a
+number you can put beside the alternative.
+
+What it saves is usually not the happy path. The gestures this repository has hand-rolled and got
+wrong are the ones a library gets right: drawing a dependency by clicking two nodes was written
+here and works; dragging a node into another box to refile it was written here, shipped, and had
+to be removed the same day because a compound's outline follows the child being dragged and there
+was no point on the canvas that meant "outside". `cytoscape-compound-drag-and-drop` is 14 KB and
+had solved that; it existed the whole time.
+
+And the answer is allowed to be no. `cytoscape-edgehandles` draws exactly the connection preview
+that was hand-rolled here, and it was refused in the same pass: it reaches for `lodash.memoize`
+and `lodash.throttle` as globals, so taking it means vendoring lodash to draw a line. Written
+down here because "we looked and it did not fit" is the finding somebody would otherwise spend an
+afternoon re-discovering.
+
+The same question applies to the layouts underneath: dagre knows nothing about compound nodes, so
+it lays a nested plan out as though it were flat, which is why the graph fitted into 7% of its
+canvas and drew edges through boxes. ELK's layered algorithm is hierarchy-aware and returns routed
+bend points. That is a 1.5 MB answer to a problem no amount of parameter tuning here was going to
+solve.
+
+The audit is three questions: does something already do this; can it be vendored under the rules
+above; and what does it cost against what it replaces. A "no" to any of them is a fine answer —
+it is the unasked question that is expensive.
+
 ## Tag when you deploy
 
 The running revision has to have a name. Cloud Run knows a container digest and the service page

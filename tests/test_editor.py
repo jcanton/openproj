@@ -135,18 +135,27 @@ def test_the_editor_pulls_in_no_library_at_all(page: str):
     assert not re.search(r"<script[^>]+src=", page)
 
 
-def test_edit_and_save_follow_the_thing_they_commit(page: str):
-    """Edit sat above the title, so on an entity with a shaping doc the action was
-    a scroll away from every field it acted on. The bar is sticky and it is the
-    same bar the cycle page and the create page carry, because three answers to
-    "have I saved this yet" is three ways to close a tab with work in it."""
+def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
+    """Three buttons, and which of them belongs where is decided by what it does.
+
+    Edit is the way IN, and it was in the sticky bar at the foot of the page —
+    so on any record worth reading, the button that lets you change it was a
+    scroll past the whole shaping document (jcanton, 2026-08-19, using it). It is
+    back at the top, which reverses the argument the bar was built on; that
+    argument was about Save, and Save has not moved.
+
+    Save and Cancel are the two ways one editing session ends, and they stay
+    together in the sticky bar. Splitting them is how somebody closes a tab
+    believing the button at the other end of the page was the way out.
+    """
     assert page.index('id="commitbar"') > page.index('<dl id="facts">')
     assert page.index('id="commitbar"') > page.index('class="field body-field"')
     assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", page, re.S)
-    assert '<p class="editbar">' not in page, "the bar it replaced"
-    # And both buttons are in it, so Cancel is never somewhere else from Save.
+
     bar = re.search(r'<div class="commitbar".*?</div>', page, re.S).group(0)
-    assert 'id="toggle"' in bar and 'id="save"' in bar
+    assert 'id="save"' in bar and 'id="cancel"' in bar
+    assert 'id="toggle"' not in bar, "the way in is not one of the ways out"
+    assert page.index('id="toggle"') < page.index('<dl id="facts">')
 
 
 def test_the_bar_says_how_much_is_unsaved(page: str):

@@ -3960,3 +3960,65 @@ def test_the_draft_rows_marks_are_drawn(demo_root: Path, tmp_path: Path):
         f"the picker is {got['picker']['w']}px where the kind it is showing "
         f"needs {got['pickerNeeds']}px, so the word is cut"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Reviewers a row did not name itself
+# --------------------------------------------------------------------------- #
+
+
+_INHERITED = """
+const rows = [...tbody.querySelectorAll('tr[data-id]')];
+const found = rows.map(row => {
+  const cell = row.querySelector('td[data-col="reviewers"]');
+  return {
+    id: row.dataset.id,
+    own: (DATA.rows[row.dataset.id].reviewers || []).length,
+    from: (DATA.rows[row.dataset.id].reviewers_from || []).length,
+    text: cell.textContent.trim(),
+    inherited: cell.classList.contains('inherited'),
+    ground: getComputedStyle(cell).backgroundColor,
+  };
+});
+return {
+  borrowing: found.filter(one => !one.own && one.from),
+  owning: found.filter(one => one.own),
+};
+"""
+
+
+def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
+    """A pitch whose tasks are reviewed is reviewed — the validator stopped asking
+    it for a reviewer of its own, so the column stopped being empty for a reason
+    nothing on the page could see.
+
+    The ground says the value came from underneath rather than from this record's
+    file, which is the difference between "these are the reviewers" and "these are
+    the reviewers, and changing them means changing the tasks".
+    """
+    # A corpus of three, hand-built: every pitch in `seed/` names its own
+    # reviewers, which is what a plan somebody has been keeping looks like — and
+    # the whole question here is about one that does not.
+    entities = [
+        Pitch(id="pitch-000001", kind="pitch", title="Held up by its tasks",
+              status="ready", owner="ann", reviewers=[], person_weeks=4,
+              shaped_by=["ann"], assigned_on=date(2026, 8, 10)),
+        Task(id="task-000001", kind="task", title="One", parent="pitch-000001",
+             status="ready", owner="ann", reviewers=["bo"], person_weeks=2,
+             assigned_on=date(2026, 8, 10)),
+        Task(id="task-000002", kind="task", title="Two", parent="pitch-000001",
+             status="ready", owner="bo", reviewers=["cy"], person_weeks=2,
+             assigned_on=date(2026, 8, 10)),
+    ]
+    page = render_table(build_index(entities, Config(), date(2026, 8, 17)))
+    got = measured_in(chrome(), page, tmp_path / "inherited.html", 1460, _INHERITED)
+
+    assert got["borrowing"], "no row in this corpus takes its reviewers from below"
+    for row in got["borrowing"]:
+        assert row["text"], f"{row['id']} shows nothing where it has {row['from']} below it"
+        assert row["inherited"], f"{row['id']} does not say the names are not its own"
+        assert row["ground"] not in ("rgba(0, 0, 0, 0)", "transparent"), row["id"]
+
+    # And a row with its own reviewers is drawn the way it always was.
+    for row in got["owning"]:
+        assert not row["inherited"], f"{row['id']} names its own and is drawn as borrowing"

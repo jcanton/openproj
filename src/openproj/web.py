@@ -2256,7 +2256,11 @@ def create_app(
             # roster again anyway.
             for connection in list(room.members):
                 if (outbox := outboxes.get(connection)) is not None:
-                    outbox.offer(json.dumps({"t": "who", "people": room.people()}))
+                    outbox.offer(
+                        json.dumps(
+                            {"t": "who", "people": room.people(), "where": room.where()}
+                        )
+                    )
 
     def _body_at(commit: str, path: str) -> str:
         """The body as the editor shows it, which is not the bytes after the
@@ -2623,7 +2627,7 @@ def create_app(
             }
             outbox.offer(json.dumps(welcome))
             rooms.enter(room, connection, user.login)
-            _to_room(room, {"t": "who", "people": room.people()})
+            _to_room(room, {"t": "who", "people": room.people(), "where": room.where()})
             if room.refusal:
                 _to(connection, {"t": "refused", "why": room.refusal})
 
@@ -2699,6 +2703,27 @@ def create_app(
                         )
                         return
                     _to_room(room, {"t": "update", "u": message["u"]}, skip=connection)
+                elif kind == "at":
+                    # Where this tab's caret is, relayed to the rest of the room.
+                    # An `int()` and a bound, because it arrives off a socket and
+                    # is drawn into a position: a float would be a NaN in
+                    # somebody else's arithmetic, and an unbounded one is a band
+                    # measured a million lines down.
+                    try:
+                        at = int(message.get("at"))
+                    except (TypeError, ValueError):
+                        continue
+                    if not 0 <= at <= MAX_BODY_BYTES:
+                        continue
+                    room.sits(connection, at)
+                    # To everybody else, not to the room: a tab does not need its
+                    # own caret told back to it, and this frame is sent on every
+                    # line somebody moves to.
+                    _to_room(
+                        room,
+                        {"t": "who", "people": room.people(), "where": room.where()},
+                        skip=connection,
+                    )
                 elif kind == "save":
                     fields = message.get("fields")
                     fields = dict(fields) if isinstance(fields, dict) else {}
@@ -2734,7 +2759,7 @@ def create_app(
                 if task is not None:
                     task.cancel()
             else:
-                _to_room(room, {"t": "who", "people": room.people()})
+                _to_room(room, {"t": "who", "people": room.people(), "where": room.where()})
             rooms.sweep()
             # Now, and bounded. A `reload` or a refusal is the last thing several
             # of the paths above say, and cancelling the writer the instant they

@@ -1610,7 +1610,43 @@ def _dependency_problems(
             yield "warning", "depends_on", f"blocked by {target}, which is shelved", 1
 
 
-def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
+def reviewers_under(entity_id: str, children: dict[str, list[Entity]]) -> list[str]:
+    """Everybody reviewing the work filed under this record, each once.
+
+    A pitch with tasks under it is reviewed by whoever reviews those tasks. That
+    is not a shortcut: the work being reviewed IS the tasks, and asking the pitch
+    to name a reviewer of its own was asking for a second copy of a fact that is
+    already written down one level below — one that goes stale the first time
+    somebody changes a task.
+
+    Walked rather than read one level deep, so a project inherits from the tasks
+    under its pitches. A shelved child carries nobody: `validate_all` builds this
+    map without them, because parked work is not work anybody is reviewing.
+
+    **The walk remembers where it has been, because a plan is allowed to contain
+    a parent cycle.** `validate_all` reports one as a blocker rather than refusing
+    to load — a record that is wrong is worth showing beside the others — so this
+    map really can hold A whose child is B whose child is A. The first version of
+    this had no `seen`, and on that corpus it walked the pair for ever, appending
+    a reviewer per pass: an infinite loop whose memory grows. It took a laptop
+    down before a test caught it, which is why the test below exists.
+    """
+    found: list[str] = []
+    seen: set[str] = {entity_id}
+    stack = list(children.get(entity_id, []))
+    while stack:
+        child = stack.pop()
+        if child.id in seen:
+            continue
+        seen.add(child.id)
+        found += child.reviewers
+        stack += children.get(child.id, [])
+    return list(dict.fromkeys(found))
+
+
+def _status_problems(
+    entity: Entity, reviewers: list[str] | None = None
+) -> Iterator[tuple[str, str | None, str, int]]:
     """One gate per status, not a cumulative stack.
 
     `shaping` is exempt because an idea nobody has bet on yet has no owner and no
@@ -1625,12 +1661,16 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
     — one field with two names on one screen. The identifier is not lost: it stays
     on `Problem.field`, which is how the page finds the control to mark.
     """
+    # Whoever reviews this, counting the work under it. `None` means "ask the
+    # record itself", which is what a blank entity with no corpus around it can
+    # answer — `required_at` derives the gates that way.
+    reviews = entity.reviewers if reviewers is None else reviewers
     if entity.status in ("shaping", "shelved"):
         return
     if entity.status == "ready":
         if entity.owner is None:
             yield "blocker", "owner", "a ready entity needs an owner", 1
-        if not (entity.review_waived or entity.reviewers):
+        if not (entity.review_waived or reviews):
             yield "blocker", "reviewers", "a ready entity needs a reviewer, or review waived", 1
         field = _SIZE_FIELD.get(entity.kind)
         if field is not None and getattr(entity, field) is None:
@@ -1643,7 +1683,7 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
     elif entity.status == "in_progress":
         if entity.assigned_on is None:
             yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
-        if not entity.review_waived and not (set(entity.reviewers) - {entity.owner}):
+        if not entity.review_waived and not (set(reviews) - {entity.owner}):
             yield (
                 "blocker",
                 "reviewers",
@@ -1654,7 +1694,7 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
         yield "blocker", "prs", "a done entity needs at least one PR", 1
 
 
-def required_at() -> dict[str, tuple[str, ...]]:
+def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
     """Which statuses demand each field, derived from the gate rather than copied.
 
     A form needs this and an HTML `required` attribute cannot express it: what the
@@ -1672,11 +1712,19 @@ def required_at() -> dict[str, tuple[str, ...]]:
     across and import `_status_problems`: the fields a status demands are this
     module's knowledge, and the page is only the thing that prints them. It is
     still only a courtesy; the server's answer is the truth.
+
+    `kind` narrows it to one, which is what a caller asking about a RECORD wants:
+    merged, the map says a project is missing `person_weeks` at `ready`, and a
+    project has no such field. The form does want the merge — it draws the
+    controls for a kind that can still be switched — so that stays the default.
     """
     gates: dict[str, list[str]] = {}
-    for kind, model in (("project", Project), ("pitch", Pitch), ("task", Task)):
+    kinds = (("project", Project), ("pitch", Pitch), ("task", Task))
+    for name, model in kinds:
+        if kind is not None and name != kind:
+            continue
         for status in STATUS_ORDER:
-            blank = model(id=f"{_PREFIX_FOR_KIND[kind]}-000000", kind=kind, title="", status=status)
+            blank = model(id=f"{_PREFIX_FOR_KIND[name]}-000000", kind=name, title="", status=status)
             for _, field, _, _ in _status_problems(blank):
                 if field and status not in gates.setdefault(field, []):
                     gates[field].append(status)
@@ -1917,7 +1965,13 @@ def _problems_for(
 
     yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
     yield from _vocabulary_problems(entity)
-    yield from _status_problems(entity)
+    # The reviewers of the work under this record count as its own. A pitch whose
+    # tasks each name a reviewer is reviewed; asking it to name one as well is
+    # asking for a second copy of a fact that is already a level below, and the
+    # copy goes stale the first time a task changes hands.
+    yield from _status_problems(
+        entity, list(dict.fromkeys([*entity.reviewers, *reviewers_under(entity.id, children)]))
+    )
     yield from _people_problems(entity, config)
 
 
