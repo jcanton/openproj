@@ -12,12 +12,26 @@ expensive half.
 | 2. Multi-select in the dropdowns | #17 |
 | 3. One hover card, three views | #18 |
 | 5. A reader is not offered a socket | #19 |
-| 6. Drag-to-reparent in the graph | #20 |
+| 6. Drag-to-reparent in the graph | #20, and taken out again — see below |
 | 4. `v0.3.0`, tagged and released | #21, `v0.3.0` |
 
 `v0.3.0` is deployed: revision `openproj-00006-bdv`, and the console lines that
 opened item 5 are gone from the served page. The sections below are what is left,
 and each says why it is still here.
+
+## What was tried and dropped
+
+* **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
+  jcanton used it: a pitch could not be dropped into a project at all, and taking
+  one out looked like nothing happening — the project's outline follows the pitch
+  being dragged, so the boundary travels with it and the drop only appears to
+  have worked after the page reloads and the pitch is suddenly outside. The hit
+  test was right and the drawing was not, and a gesture whose result you cannot
+  see until it commits is not one to keep. Reparenting stays where it works: the
+  table, by dragging a row onto another.
+* **Single-click to edit a cell.** Dropped, not deferred — jcanton, 2026-08-19.
+  A single click focuses the cell for the arrow grid, and cells are drag sources
+  and drop targets. Enter and F2 open an editor.
 
 ## What is still owed
 
@@ -25,10 +39,6 @@ and each says why it is still here.
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
-* **Single-click to edit a cell.** Deferred with an argument rather than refused:
-  a single click focuses the cell for the arrow grid, and cells are drag sources
-  and drop targets, so click-to-edit would open a box during navigation and
-  during a drag. Enter and F2 already open one.
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 
 The rest of this file is the reasoning behind what was built, kept because the

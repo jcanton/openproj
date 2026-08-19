@@ -322,3 +322,114 @@ def test_the_document_is_drawn_under_the_fields(index: Index, tmp_path: Path):
     assert got["drawn"], "the answer arrived and the card ignored it"
     assert "the document" in got["text"]
     assert got["belowTheFacts"] == "DL", "the document is not under the record's fields"
+
+
+# --------------------------------------------------------------------------- #
+# Asking for a card, and reaching it
+# --------------------------------------------------------------------------- #
+
+
+_HOVER_INTENT = """
+const row = DATA.rows[%s];
+queueCard(row, 100, 100);
+const atOnce = CARD.hidden;
+await new Promise(done => setTimeout(done, 700));
+window.__asked = {atOnce, later: CARD.hidden};
+"""
+
+
+def test_a_pointer_passing_over_a_row_does_not_open_a_card(index: Index, tmp_path: Path):
+    """A pointer crossing a table on its way somewhere else is not a question, and
+    a card that answers it anyway flashes a box over every row on the way past.
+
+    Asked with a real timer in a real browser, because the claim is about time.
+    """
+    entity_id = one_pitch(index)
+    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+        "</body>",
+        # Assigned to a global rather than returned: the measuring script cannot
+        # await, and a promise stringifies as `{}`. The wait inside is shorter
+        # than the 1200ms `measured_in` gives the page, so the answer is there
+        # when it looks.
+        "<script>(async () => {"
+        + (_HOVER_INTENT % json.dumps(entity_id))
+        + "})();</script></body>",
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "intent.html", 1200, "return window.__asked;"
+    )
+
+    assert got["atOnce"] is True, "the card opened on the first pointer event"
+    assert got["later"] is False, "the card never opened at all"
+
+
+_REACHABLE = """
+const row = DATA.rows[%s];
+showCard(row, 100, 100);
+const style = getComputedStyle(CARD);
+// The pointer leaves the row and is on its way to the card.
+hideCard();
+const leaving = CARD.hidden;
+CARD.dispatchEvent(new PointerEvent('pointerenter'));
+await new Promise(done => setTimeout(done, 500));
+window.__reach = {events: style.pointerEvents, leaving, afterGrace: CARD.hidden};
+"""
+
+
+def test_the_card_can_be_reached_and_stays_while_the_pointer_is_in_it(
+    index: Index, tmp_path: Path
+):
+    """The document is capped and scrollable, and a box the pointer passes
+    straight through is a scrollbar nobody can grab — which is what shipped.
+
+    Two halves: the card takes pointer events at all, and leaving the row only
+    starts a timer that entering the card cancels. Without the second the gap
+    between the row and the box cannot be crossed.
+    """
+    entity_id = one_pitch(index)
+    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+        "</body>",
+        "<script>(async () => {"
+        + (_REACHABLE % json.dumps(entity_id))
+        + "})();</script></body>",
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "reach.html", 1200, "return window.__reach;"
+    )
+
+    assert got["events"] != "none", "the pointer goes straight through the card"
+    assert got["leaving"] is False, "the card went the instant the row was left"
+    assert got["afterGrace"] is False, "the card went while the pointer was inside it"
+
+
+_TWICE = """
+window.fetch = async () => ({ok: true, json: async () => ({html: '<p>the document</p>'})});
+const row = DATA.rows[%s];
+await showCard(row, 100, 100);
+// Again, which is a pointer that left and came back — and, with the answer
+// cached, lands in the same tick.
+await showCard(row, 100, 100);
+await showCard(row, 100, 100);
+window.__twice = {bodies: CARD.querySelectorAll('.card-body').length,
+        text: CARD.textContent.split('the document').length - 1};
+"""
+
+
+def test_one_card_holds_one_document(index: Index, tmp_path: Path):
+    """Two answers can be in flight for one card — the pointer leaves and comes
+    back, or a cached body lands in the same tick as a fetched one. Appending
+    drew the shaping document twice inside one box, which is the thing jcanton
+    saw and could not reproduce."""
+    entity_id = one_pitch(index)
+    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+        "</body>",
+        "<script>(async () => {"
+        + (_TWICE % json.dumps(entity_id))
+        + "})();</script></body>",
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "twice.html", 1200, "return window.__twice;"
+    )
+
+    assert got["bodies"] == 1, f"{got['bodies']} documents in one card"
+    assert got["text"] == 1
