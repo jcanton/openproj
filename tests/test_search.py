@@ -363,7 +363,8 @@ def test_the_aliases_and_the_free_text_fields_are_the_same():
 
     aliases = re.search(r"const ALIASES = \{(.*?)\};", _FILTER_JS, re.S).group(1)
     said = dict(re.findall(r"(\w+): '([^']+)'", aliases))
-    free = re.findall(r"'([^']+)'", re.search(r"const FREE_TEXT = \[([^\]]*)\]", _FILTER_JS).group(1))
+    listed = re.search(r"const FREE_TEXT = \[([^\]]*)\]", _FILTER_JS).group(1)
+    free = re.findall(r"'([^']+)'", listed)
 
     assert said == ALIASES
     assert free == list(FREE_TEXT)
