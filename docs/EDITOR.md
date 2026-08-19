@@ -35,9 +35,17 @@ do this, can it be vendored under `No npm, no build step, no CDN`, and what does
 it cost against what it replaces. Write the answer down in the commit.
 
 The obvious candidate is CodeMirror, and jcanton remembers it being discussed and
-turned down without remembering why. **Find out before re-deciding it.** The
-likely reason is in the constraint above: CodeMirror 6 is ESM-only and expects a
-bundler, which this repository does not have.
+turned down without remembering why. **It is written down**, in the module
+docstring of `tests/test_editor.py`: it was vendored, considered and cut because
+"CodeMirror saves nothing and costs two days", and 690 KB of editor was not a
+trade to make "before somebody is measurably slowed down by a textarea".
+
+So it was a cost-versus-benefit call and not a technical blocker — and the
+premise it rested on is the thing this work overturns. People have now asked for
+seven features, all of which a textarea cannot have and all of which CodeMirror
+ships. Re-decide it on the new premise, not on the old verdict. The constraint
+that still has to be answered is a different one: CodeMirror 6 is ESM-only and
+expects a bundler, which this repository does not have.
 
 That is not the end of the question, because `yjs.bundle.mjs` is already vendored
 from `esm.sh` — a prebuilt bundle fetched once at development time and committed

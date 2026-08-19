@@ -540,6 +540,47 @@ def _reject_bad_note(fields: dict) -> None:
         )
 
 
+def _holds(index, entity_id: str) -> str | None:
+    """What is pointing at this record, said in one sentence, or None.
+
+    One function and not two checks in the handler, so the message is built from
+    the same lists the refusal is decided on. The version where a handler tests
+    `children` and then writes its own prose is the version that says "it has
+    children" about a record whose children are all shelved.
+    """
+    alive = [
+        child
+        for child in index.children.get(entity_id, [])
+        if index.entities[child].status != "shelved"
+    ]
+    blocking = [
+        other
+        for other in index.blocks.get(entity_id, [])
+        if index.entities[other].status != "shelved"
+    ]
+    if not alive and not blocking:
+        return None
+    reasons = []
+    if alive:
+        reasons.append(f"{_and_then(alive)} {'is' if len(alive) == 1 else 'are'} filed under it")
+    if blocking:
+        word = "depends" if len(blocking) == 1 else "depend"
+        reasons.append(f"{_and_then(blocking)} {word} on it")
+    return (
+        f"{entity_id} cannot be deleted while " + ", and ".join(reasons) + ". "
+        "Move or delete those first, or shelve them."
+    )
+
+
+def _and_then(ids: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`. Sorted, because a list whose order comes out
+    of a dictionary reads as though it means something by it."""
+    names = sorted(ids)
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def _reject_bad_types(fields: dict) -> None:
     for name in _NUMERIC:
         value = fields.get(name)
@@ -1790,6 +1831,49 @@ def create_app(
             base_commit=base,
             author=user.login,
             message=f"{entity_id}: {_named(fields, ENTITY_FIELDS) or 'body'}",
+        )
+        if written.commit:
+            await announce(written.commit, [entity_id])
+        return _result(written, base)
+
+    @app.delete("/api/entity/{entity_id}")
+    async def remove(entity_id: str, request: Request) -> JSONResponse:
+        """Take one record out of the plan.
+
+        Out of the *plan*, not out of the repository: the commit removes the file
+        from the tip and every version of it stays in the history, which is the
+        one property that makes a delete button here defensible at all. Somebody
+        who deletes the wrong thing gets it back with `git revert`.
+
+        Refused where the record is holding something up. A record with children
+        would leave them parented to an id that no longer exists, and a record
+        something depends on would leave that dependency pointing at nothing —
+        both are blockers `validate_all` reports, and both would be reported one
+        commit too late, on a protected branch, about files the person who
+        pressed Delete never touched. So the refusal names what is pointing at
+        it, because "delete those first" is only useful advice if you are told
+        which those are.
+
+        Not refused for a shelved child or a shelved dependent: shelved work is
+        parked, and something parked should not be able to pin a record in the
+        plan for ever. The index keeps both lists whole, so this asks for status
+        itself rather than making the index take a view.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        base = _base_in(store, payload)
+        path = _path_for(store, base, entity_id)
+        if path is None:
+            raise HTTPException(404, f"no entity {entity_id!r}")
+        _, index = index_now()
+        held = _holds(index, entity_id)
+        if held:
+            raise HTTPException(409, held)
+        written = store.remove(
+            path=path,
+            base_commit=base,
+            author=user.login,
+            message=f"{entity_id}: deleted",
         )
         if written.commit:
             await announce(written.commit, [entity_id])

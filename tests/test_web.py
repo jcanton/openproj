@@ -257,6 +257,18 @@ def save(client: httpx.Client, entity_id: str, fields: dict, *, base=None, body=
     )
 
 
+def remove(client: httpx.Client, entity_id: str, *, base=None):
+    """A DELETE carries a body, which is unusual and deliberate: the base commit
+    is what makes every other write here a compare-and-swap, and a delete that did
+    not send one would be the single write in this app that cannot say what it
+    thought it was deleting."""
+    return client.request(
+        "DELETE",
+        f"/api/entity/{entity_id}",
+        json={"base_commit": base or head(client)},
+    )
+
+
 def create(client: httpx.Client, fields: dict, *, base=None, body=None):
     return client.post(
         "/api/entity",
@@ -3108,3 +3120,174 @@ def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient
         capture_output=True, text=True, check=True,
     ).stdout
     assert "Mallory" not in counted, "git's own trailer parser must not see one"
+
+
+# --- deleting a record ------------------------------------------------------
+
+
+def test_a_delete_takes_the_file_out_of_the_plan_and_leaves_it_in_the_history(
+    client: TestClient, repo_path: Path
+):
+    """The whole bargain of a delete button on a git-backed tool.
+
+    Both halves are asserted, because only the first one is what the word
+    "delete" normally promises and only the second one is what makes the button
+    safe to offer: the record is gone from the tip, and the commit before it still
+    holds the file, so `git revert` is the undo.
+    """
+    before = git_head(repo_path)
+    assert f"tasks/{DONE}.md" in paths_at(repo_path)
+
+    answer = remove(client, DONE)
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["outcome"] == "committed"
+
+    assert f"tasks/{DONE}.md" not in paths_at(repo_path)
+    assert file_at(repo_path, before, f"tasks/{DONE}.md")
+    assert commit_at(repo_path, git_head(repo_path)).author.name == "ann"
+    assert DONE in commit_at(repo_path, git_head(repo_path)).message
+
+
+def test_a_deleted_record_is_gone_from_every_page_that_drew_it(
+    client: TestClient
+):
+    """A 200 from the API and a row still on the table is the failure worth
+    testing for: the index is rebuilt per request from the tree, so this is
+    really asking whether the delete reached the tree rather than some cache."""
+    assert DONE in client.get("/").text
+    assert remove(client, DONE).status_code == 200
+
+    assert DONE not in client.get("/").text
+    assert DONE not in client.get("/api/index.json").text
+    assert client.get(f"/detail/{DONE}").status_code == 404
+
+
+def test_a_record_with_children_is_not_deleted_out_from_under_them(
+    client: TestClient, repo_path: Path
+):
+    """Refused, and the refusal names them.
+
+    Orphaning is not a hypothetical tidiness problem: `parent: pitch-b20000` on a
+    record whose pitch no longer exists is a blocker `validate_all` reports, and
+    it would be reported about three tasks whose files nobody touched, one commit
+    after it became impossible to prevent.
+    """
+    before = git_head(repo_path)
+    answer = remove(client, PITCH)
+
+    assert answer.status_code == 409
+    for child in (TASK, OTHER, DONE):
+        assert child in answer.text, f"{child} is filed under it and is not named"
+    assert git_head(repo_path) == before
+
+
+def test_a_record_something_depends_on_is_not_deleted_out_from_under_it(
+    client: TestClient, repo_path: Path
+):
+    assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
+    before = git_head(repo_path)
+
+    answer = remove(client, OTHER)
+    assert answer.status_code == 409
+    assert TASK in answer.text and "depend" in answer.text
+    assert git_head(repo_path) == before
+
+    # And the way out the message describes actually works.
+    assert save(client, TASK, {"depends_on": []}).status_code == 200
+    assert remove(client, OTHER).status_code == 200
+
+
+def test_shelved_work_cannot_pin_a_record_in_the_plan_for_ever(client: TestClient):
+    """Shelved work is parked, not blocking. A pitch whose only remaining tasks
+    are shelved is a pitch nobody is working on, and refusing to delete it would
+    make "shelve it and move on" a way to make records permanent by accident."""
+    for task in (TASK, OTHER, DONE):
+        assert save(client, task, {"status": "shelved"}).status_code == 200
+
+    assert remove(client, PITCH).status_code == 200
+
+
+def test_a_delete_of_something_that_is_not_there_is_a_404(client: TestClient):
+    assert remove(client, "task-ffffff").status_code == 404
+
+
+def test_an_anonymous_visitor_cannot_delete(
+    secure_client: TestClient, repo_path: Path
+):
+    """The gate is `writer`, the same one the other writes use. A destructive
+    route with its own idea of who may write is the one that ends up wrong."""
+    before = git_head(repo_path)
+    assert remove(secure_client, DONE).status_code == 401
+
+    secure_client.cookies.set(SESSION_COOKIE, sign_session(MALLORY, SECRET))
+    assert remove(secure_client, DONE).status_code == 403
+    assert git_head(repo_path) == before
+
+
+def test_a_delete_over_somebody_elses_edit_is_refused_rather_than_merged(
+    client: TestClient, repo_path: Path
+):
+    """Two people, one record, no third outcome.
+
+    A delete and an edit cannot both be kept, and the default without this is
+    worse than a conflict: the edit commits, the delete commits on top, and the
+    work is gone from the tip without anybody having read it.
+    """
+    base = head(client)
+    assert save(client, DONE, {"priority": "high"}).status_code == 200
+
+    answer = remove(client, DONE, base=base)
+    assert answer.status_code == 409
+    assert "edited this while you were deleting it" in answer.json()["conflict"]
+    assert f"tasks/{DONE}.md" in paths_at(repo_path)
+
+
+def test_two_people_deleting_one_record_do_not_both_report_a_deletion(
+    client: TestClient, repo_path: Path
+):
+    """The second one has not deleted anything; it is about to say it has, and
+    hand back a sha belonging to somebody else's commit."""
+    base = head(client)
+    assert remove(client, DONE).status_code == 200
+
+    answer = remove(client, DONE, base=base)
+    assert answer.status_code == 409
+    assert "already" in answer.json()["conflict"]
+
+
+def test_a_delete_tells_the_open_pages_which_record_went(live_server: str):
+    """Same announcement as a save, so a table somebody else is looking at hears
+    about the row that has just left it.
+
+    Through the live server and a listener thread, like the write broadcast test
+    above, because `TestClient` serves the stream on the thread that is asking for
+    it: opening the stream and then writing through the same client deadlocks, and
+    a test that hangs reports nothing at all.
+    """
+    cookies = {SESSION_COOKIE: sign_session(ANN, SECRET)}
+    seen: queue.Queue[str] = queue.Queue()
+
+    with (
+        httpx.Client(base_url=live_server, cookies=cookies, timeout=15) as watcher,
+        httpx.Client(base_url=live_server, cookies=cookies, timeout=15) as deleter,
+    ):
+
+        def listen() -> None:
+            with watcher.stream("GET", "/api/events") as response:
+                seen.put(response.headers["content-type"])
+                for line in response.iter_lines():
+                    if line.startswith("data:"):
+                        seen.put(line)
+                        return
+
+        listener = threading.Thread(target=listen, daemon=True)
+        listener.start()
+        assert seen.get(timeout=15).startswith("text/event-stream")
+
+        commit = remove(deleter, DONE).json()["commit"]
+
+        event = json.loads(seen.get(timeout=15).partition(":")[2])
+        listener.join(timeout=15)
+
+    assert event["commit"] == commit
+    assert event["changed"] == [DONE]

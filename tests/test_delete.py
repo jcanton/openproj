@@ -1,0 +1,222 @@
+"""Taking a record out of the plan.
+
+The server half is in `test_web.py`, beside the other writes, because a delete is
+one: a compare-and-swap against a base commit that either lands or refuses. What
+is here is the control — where it is, who is offered it, and the fact that it
+asks before it acts.
+
+Two properties are worth more than the rest and are checked in a real browser
+rather than asserted about the source. A destructive control has to be resolved
+to the record it is under, on a page that can hold more than one; and it has to
+be impossible to fire in one press.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+import pytest
+from browser import chrome, measured_in
+
+from openproj.index import Index, build_index
+from openproj.model import load_repo
+from openproj.render import ROUTES, STATIC, render_detail
+
+HEAD = "0123456789abcdef0123456789abcdef01234567"
+
+# The control itself. `_DETAIL_STYLE` is inlined into every copy of this page,
+# reader's or not, so the bare word appears on all of them.
+MARKUP = '<div class="dangerbar">'
+
+
+@pytest.fixture
+def index(demo_root: Path) -> Index:
+    entities, config, _ = load_repo(demo_root)
+    return build_index(entities, config, date(2026, 8, 17))
+
+
+def one_task(index: Index) -> str:
+    return sorted(e for e, entity in index.entities.items() if entity.kind == "task")[0]
+
+
+def test_only_somebody_the_server_would_take_a_write_from_is_offered_the_button(
+    index: Index,
+):
+    """Three pages, one question asked three ways.
+
+    `editable` is not the gate. It means "there is a server to talk to", and a
+    reader gets a served page with it on — so gating Delete on `editable` alone
+    puts a control on a stranger's page whose only possible answer is 401. The
+    editor above it has lived with that; a button that removes a record from the
+    plan should not, because the way you find out is by pressing it.
+    """
+    entity_id = one_task(index)
+    writer = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    reader = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=False)
+    exported = render_detail(index, STATIC, only=entity_id)
+
+    # The markup and not the word: the stylesheet is inlined into every copy of
+    # this page whatever the reader may do, so a plain substring test passes on a
+    # reader's page for the CSS alone and proves nothing about the control.
+    assert MARKUP in writer
+    assert MARKUP not in reader, "a reader was offered a delete they cannot make"
+    assert MARKUP not in exported, "a file on a memory stick offered to delete a record"
+
+
+def test_the_question_names_the_record_it_is_about(index: Index):
+    """"Are you sure?" over a record you cannot see is a question nobody can
+    answer. This page is as long as a shaping document and the control is at the
+    foot of it, so the title can easily be a screen and a half away."""
+    entity_id = one_task(index)
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+
+    asking = page[page.index(MARKUP) :]
+    assert index.entities[entity_id].title in asking
+    assert entity_id in asking
+    # And it says what "delete" means here, which is not what the word usually
+    # promises: the file leaves the plan and stays in the history.
+    assert "git revert" in asking
+
+
+def test_the_control_is_only_on_the_record_page(index: Index):
+    """Asked of the other editable pages, because "only in the details view" was
+    the requirement and every one of these can also write."""
+    from openproj.render import render_graph, render_table
+
+    for name, page in (
+        ("table", render_table(index, ROUTES, base_commit=HEAD)),
+        ("graph", render_graph(index, ROUTES, base_commit=HEAD)),
+    ):
+        assert MARKUP not in page, f"the {name} offers a delete"
+
+
+# The request is recorded and never answered, the way `test_edges.py` stubs a
+# save: the successful path ends in a navigation, which cannot be stubbed and
+# would take the page and the report with it.
+_PRESSES = """
+window.__sent = [];
+window.fetch = (url, options) => {
+  window.__sent.push({url, method: options.method, body: JSON.parse(options.body)});
+  return new Promise(() => {});
+};
+const bar = document.querySelector('.dangerbar');
+const panel = bar.querySelector('.confirming');
+const before = {asked: !panel.hidden, sent: window.__sent.length};
+
+bar.querySelector('button.delete').click();
+const opened = {asked: !panel.hidden, sent: window.__sent.length,
+                offered: !bar.querySelector('button.delete').hidden};
+
+bar.querySelector('button.keep').click();
+const backedOut = {asked: !panel.hidden, sent: window.__sent.length};
+
+bar.querySelector('button.delete').click();
+bar.querySelector('button.really').click();
+return {before, opened, backedOut, sent: window.__sent};
+"""
+
+
+def test_it_takes_two_presses_and_the_first_one_writes_nothing(
+    index: Index, tmp_path: Path
+):
+    """The whole point of the control. Everything up to the second press is a
+    question, and a question that has already deleted the record is not one."""
+    entity_id = one_task(index)
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+
+    got = measured_in(chrome(), page, tmp_path / "delete.html", 1200, _PRESSES)
+
+    assert got["before"] == {"asked": False, "sent": 0}, "the page opened already asking"
+    assert got["opened"]["asked"] is True, "the button did not ask anything"
+    assert got["opened"]["sent"] == 0, "the first press deleted the record"
+    assert got["opened"]["offered"] is False, "Delete and Delete it were both live"
+    assert got["backedOut"] == {"asked": False, "sent": 0}, "Keep it did not back out"
+
+    assert len(got["sent"]) == 1, got["sent"]
+    sent = got["sent"][0]
+    assert sent["method"] == "DELETE"
+    assert sent["url"] == f"/api/entity/{entity_id}"
+    # The base commit the page was drawn against, so the server can refuse a
+    # delete of something somebody has edited since. Without it this would be the
+    # one write in the app that cannot say what it thought it was removing.
+    assert sent["body"] == {"base_commit": HEAD}
+
+
+_WRONG_ONE = """
+window.__sent = [];
+window.fetch = (url, options) => {
+  window.__sent.push({url});
+  return new Promise(() => {});
+};
+const bars = [...document.querySelectorAll('.dangerbar')];
+const last = bars[bars.length - 1];
+last.querySelector('button.delete').click();
+last.querySelector('button.really').click();
+return {bars: bars.length, sent: window.__sent.map(one => one.url)};
+"""
+
+
+def test_the_delete_under_a_record_is_the_delete_of_that_record(
+    index: Index, tmp_path: Path
+):
+    """The page can hold every entity in the plan — `/detail` serves them all on
+    one route. Every other control here is found with `getElementById`, which on
+    that page answers with the first element of the name whatever you pressed;
+    for the editor the worst case is typing into the wrong box, in front of you,
+    undone by not saving. This one commits, so it is found through the article it
+    is in and this is the test that says so.
+    """
+    page = render_detail(index, ROUTES, base_commit=HEAD, may_write=True)
+    got = measured_in(chrome(), page, tmp_path / "many.html", 1200, _WRONG_ONE)
+
+    assert got["bars"] > 1, "the page held one record, so nothing was proved"
+    last = sorted(index.entities)[-1]
+    assert got["sent"] == [f"/api/entity/{last}"], (
+        f"the last record's Delete asked the server about {got['sent']}"
+    )
+
+
+# The one answer here that arrives a microtask late. `measured_in` stringifies
+# what the script returns, synchronously, so `await` cannot be spelled inside it
+# — but `--dump-dom` reads the page at the END of its virtual time budget, so a
+# continuation that writes `data-report` again overwrites the placeholder and is
+# what the harness brings back. Said out loud because a reader who does not know
+# it will read the `return` below as the answer.
+_REFUSED = """
+window.fetch = () => Promise.resolve({
+  ok: false, status: 409,
+  json: () => Promise.resolve({detail: %s}),
+});
+const bar = document.querySelector('.dangerbar');
+bar.querySelector('button.delete').click();
+bar.querySelector('button.really').click();
+setTimeout(() => {
+  const why = bar.querySelector('.why');
+  document.body.dataset.report = JSON.stringify({
+    shown: !why.hidden,
+    said: why.textContent,
+    canRetry: !bar.querySelector('.acts').hidden,
+  });
+}, 100);
+return {shown: null};
+"""
+
+
+def test_a_refusal_is_shown_where_the_question_was_asked(index: Index, tmp_path: Path):
+    """The server refuses a delete that would orphan children and names them. That
+    sentence is the useful half of the feature — "delete those three first" — and
+    it must not go to the console."""
+    entity_id = one_task(index)
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    reason = "pitch-x cannot be deleted while task-a and task-b are filed under it."
+
+    got = measured_in(
+        chrome(), page, tmp_path / "refused.html", 1200, _REFUSED % json.dumps(reason)
+    )
+
+    assert got["shown"] is not None, "the continuation never ran, so nothing was measured"
+    assert got["shown"], "the record survived and the page said nothing"
+    assert got["said"] == reason
+    assert got["canRetry"], "the buttons stayed gone, so there was no way to try again"

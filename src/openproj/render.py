@@ -8301,6 +8301,39 @@ _DETAIL = """
     <span id="state" role="status"></span>
   </div>
   {% endif %}
+  {#- Deliberately not in the bar above. Save and Cancel are pressed all day and
+      the bar is sticky, so it is on screen the whole time; a control that removes
+      the record from the plan does not belong within a thumb's width of the one
+      that keeps it. It sits at the very end of the record instead, past
+      everything there is to read, which is where you are when you have finished
+      deciding.
+
+      Classes and not ids, unlike everything else on this page. The static export
+      renders every entity into one document and `/detail` serves them all on one
+      route, so `id="delete"` would be seventeen elements of that name — and
+      `getElementById` answers with the first, which is a Delete button under
+      entity nine wired to entity one. The rest of this page has lived with that
+      duplication for a year because the worst it can do is edit the wrong thing
+      in a box you can see. This one commits. -#}
+  {% if editable and may_write %}
+  <div class="dangerbar">
+    <button type="button" class="delete">Delete this {{ e.kind }}</button>
+    <div class="confirming" hidden>
+      {#- The title, spelled out. "Are you sure?" over a record you cannot see
+          from the dialog is a question nobody can answer, and this page can be a
+          long way from the heading by the time you reach the foot of it. -#}
+      <p class="asking">Delete <strong>{{ e.title }}</strong>
+        (<code>{{ e.id }}</code>)?<br>
+        <span class="hint">The file leaves the plan in a commit. Git keeps every
+          version of it, so this can be undone with <code>git revert</code>.</span></p>
+      <p class="why" role="alert" hidden></p>
+      <span class="acts">
+        <button type="button" class="really">Delete it</button>
+        <button type="button" class="keep">Keep it</button>
+      </span>
+    </div>
+  </div>
+  {% endif %}
 </article>
 {% endfor %}
 <div id="grip" title="drag to set the width"></div>
@@ -8478,6 +8511,74 @@ function flipEditing() {
 }
 document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
+
+// Deleting a record. Two presses and a named record between them, and every
+// element found through the article the button is in rather than by id — this
+// page can hold more than one entity, and a destructive control resolved by
+// `getElementById` is one that acts on whichever entity happens to be first.
+for (const bar of document.querySelectorAll('.dangerbar')) {
+  const article = bar.closest('article.entity');
+  const ask = bar.querySelector('.confirming');
+  const why = bar.querySelector('.why');
+  const open = bar.querySelector('button.delete');
+
+  // Shown and hidden rather than a `confirm()`. A native dialog cannot say which
+  // record it is about in the words this page uses, cannot show the server's
+  // reason when the delete is refused, and is the one thing on a page that stops
+  // every other script until somebody clicks it.
+  const asking = state => {
+    ask.hidden = !state;
+    open.hidden = state;
+    why.hidden = true;
+    if (state) bar.querySelector('button.keep').focus();
+  };
+  open.onclick = () => asking(true);
+  bar.querySelector('button.keep').onclick = () => asking(false);
+  // Escape backs out of the question, the way it backs out of everything else
+  // here. Bound on the panel and not on the document, so it cannot swallow the
+  // key from the editor when nothing is being confirmed.
+  ask.onkeydown = event => { if (event.key === 'Escape') asking(false); };
+
+  bar.querySelector('button.really').onclick = async () => {
+    const acts = bar.querySelector('.acts');
+    acts.hidden = true;
+    // The base commit the page was rendered against, the same one every other
+    // write here sends: a delete is a compare-and-swap like the rest, and the
+    // server refuses it if somebody has edited the record since this page drew
+    // it. Read off the form so there is one answer on the page and not two.
+    const base = article.querySelector('input[name=base_commit]').value;
+    let answer;
+    try {
+      answer = await fetch('/api/entity/' + encodeURIComponent(article.id), {
+        method: 'DELETE',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({base_commit: base}),
+      });
+    } catch (error) {
+      acts.hidden = false;
+      why.hidden = false;
+      why.textContent = 'The server could not be reached. Nothing was deleted.';
+      return;
+    }
+    if (answer.ok) {
+      // To the table, because the page you are on is about a record that no
+      // longer exists: staying here would show a 404 on the next reload, and
+      // reloading it is what the shell does when it hears the commit.
+      location.href = {{ links.table|tojson }};
+      return;
+    }
+    // Refused, and the reason is the useful part: "pitch-b20000 cannot be
+    // deleted while task-c00001, task-c00002 and task-c00003 are filed under it"
+    // is the difference between a button that does not work and a plan that says
+    // what to do next. `detail` for an HTTPException, `conflict` for a write
+    // that lost the swap; the two routes to a refusal spell it differently.
+    acts.hidden = false;
+    why.hidden = false;
+    const said = await answer.json().catch(() => ({}));
+    why.textContent = said.detail || said.conflict ||
+      ('The server refused: ' + answer.status);
+  };
+}
 
 document.getElementById('preview').onclick = async () => {
   // Only the body, and without leaving edit mode. It used to swap the whole page
@@ -9273,6 +9374,30 @@ textarea.body-field {
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
+/* The way out of the plan, at the far end of the record and not in the sticky
+   bar. It is deliberately quiet until it is asked: an outline button in the
+   danger colour, not a filled red block, because a filled red block at the foot
+   of every record is a page that looks like it is warning you about something
+   when nothing is wrong. */
+.dangerbar { margin: 2.5rem 0 0; padding-top: .75rem;
+             border-top: 1px solid var(--line); }
+.dangerbar button { font: inherit; font-size: 13px; padding: .25rem .8rem;
+        border-radius: 2px; border: 1px solid var(--line-strong);
+        background: var(--surface); color: var(--muted); cursor: pointer; }
+.dangerbar button.delete:hover, .dangerbar button.really {
+        border-color: var(--danger); color: var(--danger); }
+.dangerbar .confirming { display: flex; flex-direction: column;
+        align-items: flex-start; gap: .5rem; max-width: 46ch;
+        padding: .6rem .75rem; border: 1px solid var(--danger);
+        border-radius: 3px; background: var(--surface); }
+.dangerbar .confirming[hidden] { display: none; }
+.dangerbar .asking { margin: 0; font-size: 13px; }
+.dangerbar .acts { display: flex; gap: .4rem; }
+/* The server's reason, where the question was asked. A refusal that names three
+   tasks is the useful half of this feature and it must not go to the console. */
+.dangerbar .why { margin: 0; font-size: 12px; color: var(--danger); }
+.dangerbar .why[hidden] { display: none; }
+
 """
 
 
@@ -13160,6 +13285,12 @@ def render_detail(
         single=only is not None,
         links=links,
         editable=base_commit is not None,
+        # The Delete control asks for both, and `editable` alone is not enough.
+        # `editable` means "there is a server to talk to"; this asks "would that
+        # server take a write from you", which is the question `may_write`
+        # answers — see the note on `yjs` below, and `may_write` in `web.py`.
+        # A reader offered a Delete button is offered a 401 dressed as a control.
+        may_write=may_write,
         base_commit=base_commit or "",
         statuses=STATUSES,
         combobox=_combobox_html(index),
