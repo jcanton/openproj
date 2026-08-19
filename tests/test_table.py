@@ -3846,3 +3846,107 @@ def test_no_template_comment_reaches_the_page(client: TestClient, route: str):
 
     assert served.count("{#") == 0, "a comment that reached the page never opened one"
     assert "#}" not in served, f"a template comment leaked into {route}"
+
+# The draft row's controls, in the browser that has to draw them. The row does
+# not exist in the rendered file — it is built by the page's own script when the
+# kind is chosen — and neither of its two controls contains a character, so the
+# only question worth asking about them is how big the drawing inside each one
+# came out.
+_DRAFT_MARKS = """
+document.getElementById('add-row').click();
+const picker = document.getElementById('draft-kind');
+picker.value = 'project';
+picker.dispatchEvent(new Event('change', {bubbles: true}));
+const box = node => {
+  const r = node.getBoundingClientRect();
+  return {w: Math.round(r.width), h: Math.round(r.height),
+          top: Math.round(r.top), right: Math.round(r.right)};
+};
+const cell = tbody.querySelector('tr.draft td.draft-id');
+const rows = [...tbody.querySelectorAll('tr:not(.draft):not(.adder)')];
+// What the picker would need to draw the kind it is showing, which is not what
+// it would need to draw the whole list: a `<select>` is as wide as its widest
+// option, and the one that decides that — `choose a kind…` — is only ever read
+// in the bar. So the probe holds the chosen option and nothing else.
+const picked = cell.querySelector('select');
+const probe = picked.cloneNode(false);
+probe.removeAttribute('id');
+probe.appendChild(picked.selectedOptions[0].cloneNode(true));
+probe.style.cssText =
+  'position:absolute;visibility:hidden;width:auto;min-width:auto;flex:none';
+picked.parentNode.appendChild(probe);
+const needed = Math.ceil(probe.getBoundingClientRect().width);
+probe.remove();
+return {
+  cell: box(cell),
+  marks: [...cell.querySelectorAll('button.draft-do')].map(button => ({
+    id: button.id,
+    button: box(button),
+    drawing: box(button.querySelector('svg')),
+  })),
+  picker: box(picked),
+  pickerNeeds: needed,
+  draftHeight: Math.round(
+    tbody.querySelector('tr.draft').getBoundingClientRect().height),
+  shortestRow: Math.min(...rows.map(
+    row => Math.round(row.getBoundingClientRect().height))),
+};
+"""
+
+
+def test_the_draft_rows_marks_are_drawn(demo_root: Path, tmp_path: Path):
+    """Both controls on the row nobody has created yet, measured in Chrome.
+
+    They shipped as two empty boxes. `_ICON_SVG` carries a `viewBox` and no
+    `width` or `height`, every earlier use of one sat in a box that sized it, and
+    an SVG that nothing sizes lays out at 0x0 — so the check and the cross the
+    row is created and abandoned with were nothing at all, under a suite that
+    was green because it only ever asked whether the markup was emitted.
+
+    A resolved value would not have settled it either way round: there was no
+    rule to resolve. The question is how many pixels the drawing came out, and
+    this is where that answer lives.
+    """
+    # The demo corpus and not the four-entity one, because the id column is as
+    # wide as the fit made it and the fit was measured against this plan: on
+    # seventeen rows the column is 121px, which is the width the picker has to
+    # say `Project` in.
+    entities, config, _ = load_repo(demo_root)
+    page = render_table(
+        build_index(entities, config, date(2026, 8, 17)), base_commit="deadbee"
+    )
+    got = measured_in(chrome(), page, tmp_path / "draft.html", 1460, _DRAFT_MARKS)
+
+    assert [mark["id"] for mark in got["marks"]] == ["draft-create", "draft-cancel"]
+    for mark in got["marks"]:
+        assert mark["drawing"]["w"] >= 8 and mark["drawing"]["h"] >= 8, (
+            f"{mark['id']} is drawn {mark['drawing']['w']}x{mark['drawing']['h']}, "
+            f"which is a button with nothing in it"
+        )
+        assert mark["button"]["w"] >= mark["drawing"]["w"], (
+            f"{mark['id']}'s drawing is wider than the button around it"
+        )
+
+    # One line, and the row the same height as an ordinary one: the marks are
+    # marks rather than the words `Create` and `Cancel` precisely so that the
+    # three of them and the id column fit each other.
+    tops = {mark["button"]["top"] for mark in got["marks"]} | {got["picker"]["top"]}
+    assert max(tops) - min(tops) <= 4, (
+        f"the draft row's controls stand on more than one line: {sorted(tops)}"
+    )
+    assert got["draftHeight"] <= got["shortestRow"] + 2, (
+        f"the draft row is {got['draftHeight']}px against {got['shortestRow']}px "
+        f"for an ordinary row, so it reads as a different kind of thing"
+    )
+    # And the picker gave way rather than the cell: a flex item's `min-width` is
+    # `auto`, which is how the longest thing in the list decided the width of the
+    # narrowest column on the table.
+    assert got["picker"]["right"] <= got["cell"]["right"], (
+        "the kind picker reaches past the right edge of the id cell"
+    )
+    # Shrinking is not the same as cutting. The cell says what the row is about
+    # to be, and a picker squeezed to `Projec` says it slightly wrong.
+    assert got["picker"]["w"] + 1 >= got["pickerNeeds"], (
+        f"the picker is {got['picker']['w']}px where the kind it is showing "
+        f"needs {got['pickerNeeds']}px, so the word is cut"
+    )

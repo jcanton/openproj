@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
-from pages import headings, lit
+from pages import headings, lit, selects
 
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
@@ -1029,11 +1029,17 @@ def test_a_plan_that_names_nobody_says_so_instead_of_offering_a_clear(tmp_path: 
 def test_every_filter_offers_a_way_back_to_everything(rendered: Path):
     """`<option value="">` used to repeat the field name, so a chosen filter had no
     "off" — the way back looked like the label, not like a choice. The field name
-    moved to a label beside the control and the empty option says `all`."""
+    moved to a label beside the control and the empty option says `all`.
+
+    Asked of the parsed document rather than of a regex over the page. The
+    shell's stylesheet is inlined into every page, so a CSS comment naming a
+    `<select>` put the characters of an opening tag into the served bytes and
+    the regex read the next real dropdown's options as that comment's contents —
+    the failure `tests/pages.py` was written for, arriving through a new door.
+    """
     for page in ("index.html", "people.html", "graph.html"):
-        body = read(rendered, page)
-        for tag in re.findall(r"<select[^>]*>(.*?)</select>", body, re.S):
-            assert re.match(r'\s*<option value="">all</option>', tag), tag[:80]
+        for options in selects(read(rendered, page)):
+            assert options[:1] == [("", "all")], options[:3]
 
 
 # --- the timeline window ----------------------------------------------------

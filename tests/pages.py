@@ -178,3 +178,48 @@ def lit(page: str) -> list[str]:
     none, and a helper answering `str | None` cannot tell them apart.
     """
     return [label for label, _, marked in nav_of(page) if marked]
+
+class _Selects(HTMLParser):
+    """Every `<select>` on the page, as the list of options inside it."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: list[list[tuple[str, str]]] = []
+        self._options: list[tuple[str, str]] | None = None
+        self._value: str | None = None
+        self._text = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "select":
+            self._options = []
+        elif tag == "option" and self._options is not None:
+            self._value = dict(attrs).get("value") or ""
+            self._text = ""
+
+    def handle_data(self, data: str) -> None:
+        if self._value is not None:
+            self._text += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "option" and self._options is not None and self._value is not None:
+            self._options.append((self._value, self._text.strip()))
+            self._value = None
+        elif tag == "select" and self._options is not None:
+            self.found.append(self._options)
+            self._options = None
+
+
+def selects(page: str) -> list[list[tuple[str, str]]]:
+    """Every dropdown, and what each offers.
+
+    The reason this is a parser and not a regex is the one in the docstring
+    above, caught a second time: a stylesheet comment that names a `<select>`
+    puts the characters of an opening tag into the served page, and a regex for
+    `<select[^>]*>(.*?)</select>` matched the comment and read the next real
+    dropdown's options as its contents. `HTMLParser` treats the body of a
+    `<style>` as the text it is.
+    """
+    parser = _Selects()
+    parser.feed(page)
+    return parser.found
+

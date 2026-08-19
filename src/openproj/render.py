@@ -1607,6 +1607,17 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
   outline-offset: 2px;
   border-radius: 2px;
 }
+/* A drawing with no size of its own. `_ICON_SVG` carries a `viewBox` and no
+   `width` or `height`, so an SVG that nothing sizes lays out at 0x0. Every use
+   of one was inside a box that decided — `.avatar svg` and `.picker .art svg`
+   are both `width: 100%` — and the first control to put a mark somewhere else
+   shipped two buttons with nothing in them. A default here is the size an icon
+   is wherever it is put; a box that wants to decide still does, because those
+   two rules are (0,1,1) against this (0,1,0).
+   `flex: none` because the places that put one beside text are flex rows, and a
+   drawing that shrinks to make room for a word is the word winning an argument
+   it should not be in. */
+.icon { width: 1em; height: 1em; flex: none; }
 /* The key to the one thing on a page that is not a word. Shared, because the
    graph and the timeline draw the same statuses in the same tokens, and every
    swatch is the token the shape is actually filled with — a legend naming a
@@ -3408,7 +3419,7 @@ function draftControls() {
     `${esc(human(kind))}</option>`).join('');
   const named = DRAFT.kind ? esc(human(DRAFT.kind).toLowerCase()) : '';
   const create = DRAFT.kind
-    ? `<button type="button" id="draft-create" class="draft-do"` +
+    ? `<button type="button" id="draft-create" class="draft-do primary"` +
       ` aria-label="Create this ${named}" title="Create this ${named}">` +
       `${MARK.create}</button>`
     : '';
@@ -4842,8 +4853,47 @@ tr.adder button {
 tr.adder button:hover { border-color: var(--accent); color: var(--accent); }
 tr.adder button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 tr.adder .hint { font-size: 12px; color: var(--muted); }
-tr.adder .kindpick { display: inline; font-size: 12px; color: var(--muted); margin-right: .5rem; }
-tr.adder .kindpick select { font: inherit; }
+/* The draft row's controls, in whichever of their two places they were drawn:
+   the bar while there is no row, the row's id cell once there is one. The
+   wrapper lays them out because a `<td>` that is a flex container stops being a
+   table cell — the same reason the clamped columns have a `.clamped` inside
+   them. Three rules, and each is a thing that went wrong on the page:
+
+   Laid out at all. Without this the marks and the picker were inline boxes in
+   the narrowest column on the table and the picker wrapped under them, so the
+   draft stood twice the height of every other row — which is the thing
+   `draftControls` says the marks are marks in order to avoid.
+
+   `inline-flex` and not `flex`. In the bar this wrapper shares a line with the
+   sentence saying nothing is written yet, and a block-level flex box took the
+   whole width: the picker stretched to 1400px and the sentence went to a line
+   of its own.
+
+   `max-width` is what makes shrink-to-fit shrink. A `<select>` is as wide as
+   its widest option, so in the id cell the wrapper sized itself to
+   "choose a kind…" — a string only ever read in the bar — and stood 33px past
+   the edge of a cell whose width the fit had already decided. */
+.drafting { display: inline-flex; align-items: center; gap: .2rem;
+            max-width: 100%; vertical-align: middle; margin-right: .5rem; }
+/* And the picker is the part that gives, because `min-width` on a flex item is
+   `auto`: without this the marks were pushed out of the cell instead. */
+.drafting select { font: inherit; font-size: 12px; min-width: 0; flex: 1 1 auto; }
+/* An icon-only control. Square and centred rather than padded like a word: the
+   mark has no baseline to sit on, and `tr.adder button`'s `.1rem .5rem` is the
+   room a word needs on either side of it. */
+.draft-do {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; margin: 0; padding: .2rem;
+  font: inherit; font-size: 12px; line-height: 0;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: none; color: inherit; cursor: pointer;
+}
+.draft-do:hover { border-color: var(--accent); color: var(--accent); }
+/* The one of the two that writes, in the ink this page gives that press
+   everywhere else. `.draft-do.primary` is (0,2,0) and its hover (0,3,0), so the
+   two do not have to be read in the order they happen to be written in. */
+.draft-do.primary { border-color: var(--accent); color: var(--accent); }
+.draft-do.primary:hover { background: var(--surface-2); }
 /* The `+` and the way out swap places, because at any moment exactly one of them
    is a thing you can do. `:not([hidden])` because `table.moving #unparent` is
    (1,1,1) and the browser's own `[hidden] { display: none }` is (0,1,0): without
@@ -4860,7 +4910,11 @@ table.moving tr.adder.over > td { background: var(--surface-2); }
    screen reader on the cell hears its column header and the editor's own
    `aria-label`, which is the name of the thing, said once. */
 tr.draft > td { background: var(--surface-2); }
-tr.draft .draft-id { color: var(--muted); }
+/* While this cell holds the row's controls instead of an id it is a strip of
+   controls and not a value, so it gives back the room either side of a value:
+   at the column's own 8px the picker had 56px to say `Project` in and drew
+   `Projec`, in the one cell whose whole job is to say what the row will be. */
+tr.draft .draft-id { color: var(--muted); padding-left: .3rem; padding-right: .3rem; }
 td.draft-cell:empty::after { content: attr(data-hint); color: var(--empty); }
 /* A column this kind has not got, or one nothing may type into. Hatched rather
    than merely empty: every other cell in this row carries its column's word in
