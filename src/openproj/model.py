@@ -1610,6 +1610,36 @@ def _dependency_problems(
             yield "warning", "depends_on", f"blocked by {target}, which is shelved", 1
 
 
+def under(entity_id: str, children: dict[str, list[str]]) -> list[str]:
+    """Every record filed below this one, however deep, each once and not itself.
+
+    What a delete has to cascade over. Read from the index's `children` map — ids
+    rather than entities, which is the shape the write path has — and returned in
+    the order the walk finds them, sorted by the caller where it is shown to
+    somebody.
+
+    Shelved work is included, unlike in `reviewers_under` below. The two ask
+    different questions: that one asks who is reviewing live work, and parked work
+    has nobody; this one asks what would be orphaned, and a shelved task under a
+    deleted pitch is orphaned exactly as much as a ready one.
+
+    **The walk remembers where it has been**, for the reason spelled out at length
+    on `reviewers_under`: a plan is allowed to contain a parent cycle, and the
+    version of that function without a `seen` set took a laptop down.
+    """
+    found: list[str] = []
+    seen: set[str] = {entity_id}
+    stack = list(children.get(entity_id, []))
+    while stack:
+        child = stack.pop()
+        if child in seen:
+            continue
+        seen.add(child)
+        found.append(child)
+        stack += children.get(child, [])
+    return found
+
+
 def reviewers_under(entity_id: str, children: dict[str, list[Entity]]) -> list[str]:
     """Everybody reviewing the work filed under this record, each once.
 

@@ -67,7 +67,7 @@ from .auth import (
     read_session,
     sign_session,
 )
-from .index import build_index
+from .index import build_index, cascade_of
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
@@ -540,36 +540,19 @@ def _reject_bad_note(fields: dict) -> None:
         )
 
 
-def _holds(index, entity_id: str) -> str | None:
-    """What is pointing at this record, said in one sentence, or None.
+def _deletion_message(entity_id: str, doomed: list[str], edited: list[str]) -> str:
+    """One commit, one line, and the line says how far it reached.
 
-    One function and not two checks in the handler, so the message is built from
-    the same lists the refusal is decided on. The version where a handler tests
-    `children` and then writes its own prose is the version that says "it has
-    children" about a record whose children are all shelved.
+    `git log --oneline` on a plan is the team's record of decisions, and "deleted"
+    over a commit that removed five files and edited two is the wrong record of
+    this one.
     """
-    alive = [
-        child
-        for child in index.children.get(entity_id, [])
-        if index.entities[child].status != "shelved"
-    ]
-    blocking = [
-        other
-        for other in index.blocks.get(entity_id, [])
-        if index.entities[other].status != "shelved"
-    ]
-    if not alive and not blocking:
-        return None
-    reasons = []
-    if alive:
-        reasons.append(f"{_and_then(alive)} {'is' if len(alive) == 1 else 'are'} filed under it")
-    if blocking:
-        word = "depends" if len(blocking) == 1 else "depend"
-        reasons.append(f"{_and_then(blocking)} {word} on it")
-    return (
-        f"{entity_id} cannot be deleted while " + ", and ".join(reasons) + ". "
-        "Move or delete those first, or shelve them."
-    )
+    said = f"{entity_id}: deleted"
+    if doomed:
+        said += f", with {len(doomed)} filed under it"
+    if edited:
+        said += f", freed {len(edited)}"
+    return said
 
 
 def _and_then(ids: list[str]) -> str:
@@ -1845,19 +1828,27 @@ def create_app(
         one property that makes a delete button here defensible at all. Somebody
         who deletes the wrong thing gets it back with `git revert`.
 
-        Refused where the record is holding something up. A record with children
-        would leave them parented to an id that no longer exists, and a record
-        something depends on would leave that dependency pointing at nothing —
-        both are blockers `validate_all` reports, and both would be reported one
-        commit too late, on a protected branch, about files the person who
-        pressed Delete never touched. So the refusal names what is pointing at
-        it, because "delete those first" is only useful advice if you are told
-        which those are.
+        It cascades, and it says what it will take with it first. Everything filed
+        under this record goes with it — a task whose pitch no longer exists is
+        parented to an id that is not there, which is a blocker `validate_all`
+        reports about a file its owner never touched. Everything that DEPENDS on
+        it keeps its file and loses the dependency: that is unrelated work which
+        merely waits for this, and deleting it would be a two-click gesture
+        reaching across the plan.
 
-        Not refused for a shelved child or a shelved dependent: shelved work is
-        parked, and something parked should not be able to pin a record in the
-        plan for ever. The index keeps both lists whole, so this asks for status
-        itself rather than making the index take a view.
+        **The confirmation is binding.** The page sends back the ids it showed,
+        and this refuses if the plan's answer has changed since — somebody filed a
+        new task under the pitch while the panel was open, and the version without
+        this check deletes it without ever having named it. That is the failure a
+        cascade confirmation exists to prevent, so it is a compare-and-swap on the
+        SHAPE of the deletion, beside the one the store already does on the bytes
+        of each file.
+
+        One commit for all of it, through `write_all`, for the reason promotion
+        uses it: this is one decision, and a `git log` that shows a pitch removed
+        and then four tasks removed says four things that are not true. It also
+        removes the half-done state — a subtree half deleted, on a protected
+        branch, is not a state anybody can be asked to repair.
         """
         user = writer(request)
         payload = await _sent(request)
@@ -1866,17 +1857,42 @@ def create_app(
         if path is None:
             raise HTTPException(404, f"no entity {entity_id!r}")
         _, index = index_now()
-        held = _holds(index, entity_id)
-        if held:
-            raise HTTPException(409, held)
-        written = store.remove(
-            path=path,
+        doomed, edited = cascade_of(index, entity_id)
+
+        shown = payload.get("also")
+        if shown is not None and sorted(shown) != sorted(doomed + edited):
+            raise HTTPException(
+                409,
+                "the plan changed while that was open: deleting "
+                f"{entity_id} now affects {_and_then(doomed + edited) or 'nothing else'}. "
+                "Nothing was deleted — read it again and decide.",
+            )
+
+        files: dict[str, str | None] = {path: None}
+        for other in doomed:
+            gone = _path_for(store, base, other)
+            if gone is None:
+                raise HTTPException(409, f"{other} is filed under this and could not be found")
+            files[gone] = None
+        for other in edited:
+            where = _path_for(store, base, other)
+            if where is None:
+                raise HTTPException(409, f"{other} depends on this and could not be found")
+            kept = [
+                target
+                for target in index.entities[other].depends_on
+                if target != entity_id and target not in doomed
+            ]
+            files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
+
+        written = store.write_all(
+            files,
             base_commit=base,
             author=user.login,
-            message=f"{entity_id}: deleted",
+            message=_deletion_message(entity_id, doomed, edited),
         )
         if written.commit:
-            await announce(written.commit, [entity_id])
+            await announce(written.commit, [entity_id, *doomed, *edited])
         return _result(written, base)
 
     @app.put("/api/cycle/{number}")

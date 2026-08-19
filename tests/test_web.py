@@ -257,16 +257,19 @@ def save(client: httpx.Client, entity_id: str, fields: dict, *, base=None, body=
     )
 
 
-def remove(client: httpx.Client, entity_id: str, *, base=None):
-    """A DELETE carries a body, which is unusual and deliberate: the base commit
-    is what makes every other write here a compare-and-swap, and a delete that did
-    not send one would be the single write in this app that cannot say what it
-    thought it was deleting."""
-    return client.request(
-        "DELETE",
-        f"/api/entity/{entity_id}",
-        json={"base_commit": base or head(client)},
-    )
+def remove(client: httpx.Client, entity_id: str, *, base=None, also=None):
+    """A DELETE carries a body, which is unusual and deliberate.
+
+    Two things are in it. The base commit, because that is what makes every other
+    write here a compare-and-swap, and a delete without one would be the single
+    write in this app that cannot say what it thought it was removing. And
+    `also` — the ids the confirmation panel showed — so the server can refuse a
+    cascade whose reach has changed since somebody read it.
+    """
+    payload: dict = {"base_commit": base or head(client)}
+    if also is not None:
+        payload["also"] = also
+    return client.request("DELETE", f"/api/entity/{entity_id}", json=payload)
 
 
 def create(client: httpx.Client, fields: dict, *, base=None, body=None):
@@ -3162,49 +3165,105 @@ def test_a_deleted_record_is_gone_from_every_page_that_drew_it(
     assert client.get(f"/detail/{DONE}").status_code == 404
 
 
-def test_a_record_with_children_is_not_deleted_out_from_under_them(
+def test_deleting_a_record_deletes_everything_filed_under_it(
     client: TestClient, repo_path: Path
 ):
-    """Refused, and the refusal names them.
+    """Cascade, not refusal — jcanton, 2026-08-20.
 
-    Orphaning is not a hypothetical tidiness problem: `parent: pitch-b20000` on a
-    record whose pitch no longer exists is a blocker `validate_all` reports, and
-    it would be reported about three tasks whose files nobody touched, one commit
-    after it became impossible to prevent.
+    Orphaning is not a tidiness problem: `parent: pitch-b20000` on a record whose
+    pitch no longer exists is a blocker `validate_all` reports, about three files
+    whose owners never touched them. So the subtree goes with it, and the panel
+    that asked said which records those were.
+    """
+    answer = remove(client, PITCH, also=[TASK, OTHER, DONE])
+    assert answer.status_code == 200, answer.text
+
+    left = paths_at(repo_path)
+    for gone in (PITCH, TASK, OTHER, DONE):
+        assert not [path for path in left if gone in path], f"{gone} was left behind"
+    # And the project above it is untouched: the cascade goes down, never up.
+    assert [path for path in left if PROJECT in path]
+
+
+def test_the_whole_subtree_goes_however_deep_it_is(client: TestClient, repo_path: Path):
+    """Two levels, because a walk that stops at one passes every test written
+    against a flat corpus. The seed is project → pitch → tasks, so deleting the
+    project has to reach the tasks through the pitch."""
+    assert remove(client, PROJECT, also=[PITCH, TASK, OTHER, DONE]).status_code == 200
+
+    left = paths_at(repo_path)
+    assert not [path for path in left if path.startswith(("tasks/", "pitches/"))]
+
+
+def test_one_decision_is_one_commit(client: TestClient, repo_path: Path):
+    """Four files leave in one commit, not four.
+
+    `git log` on a plan is the team's record of decisions, and a delete that
+    landed as four lines would say four things that are not true. It also removes
+    the half-done state: a subtree half deleted, on a protected branch, is not
+    something anybody can be asked to repair.
     """
     before = git_head(repo_path)
-    answer = remove(client, PITCH)
+    assert remove(client, PITCH, also=[TASK, OTHER, DONE]).status_code == 200
 
-    assert answer.status_code == 409
-    for child in (TASK, OTHER, DONE):
-        assert child in answer.text, f"{child} is filed under it and is not named"
-    assert git_head(repo_path) == before
+    made = commit_at(repo_path, git_head(repo_path))
+    assert str(made.parents[0].id) == before, "the cascade landed as more than one commit"
+    assert PITCH in made.message and "3" in made.message
 
 
-def test_a_record_something_depends_on_is_not_deleted_out_from_under_it(
+def test_a_record_that_merely_depends_on_this_one_keeps_its_file(
     client: TestClient, repo_path: Path
 ):
-    assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
-    before = git_head(repo_path)
+    """The line the cascade does not cross.
 
-    answer = remove(client, OTHER)
+    Something filed UNDER a record has nowhere to be once it is gone. Something
+    that DEPENDS on it is unrelated work that merely waits for it, and deleting
+    that would be a two-click gesture reaching across the plan into somebody
+    else's task. It keeps its file and loses the dependency, in the same commit,
+    because a `depends_on` pointing at a record that is gone is the same blocker
+    by another name.
+    """
+    assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
+
+    assert remove(client, OTHER, also=[TASK]).status_code == 200
+
+    assert f"tasks/{TASK}.md" in paths_at(repo_path), "an unrelated task was deleted"
+    kept = file_at(repo_path, git_head(repo_path), f"tasks/{TASK}.md")
+    assert OTHER not in kept, "the dependency still points at a record that is gone"
+
+
+def test_the_confirmation_is_binding(client: TestClient, repo_path: Path):
+    """The failure a cascade confirmation exists to prevent.
+
+    Somebody files a task under the pitch while the panel is open. The page has
+    already drawn its list, the person reads it and presses Delete — and without
+    this the cascade takes a record it never named. So the page sends back the ids
+    it showed, and the server refuses when its own answer has changed: a
+    compare-and-swap on the SHAPE of the deletion, beside the one the store
+    already does on the bytes of each file.
+    """
+    before = git_head(repo_path)
+    stale = [TASK, OTHER]  # DONE is filed under it too, and this list predates it
+
+    answer = remove(client, PITCH, also=stale)
     assert answer.status_code == 409
-    assert TASK in answer.text and "depend" in answer.text
+    assert DONE in answer.text, "the refusal did not say what the page had missed"
     assert git_head(repo_path) == before
 
-    # And the way out the message describes actually works.
-    assert save(client, TASK, {"depends_on": []}).status_code == 200
-    assert remove(client, OTHER).status_code == 200
+    # Asked again with what it would really do, it lands.
+    assert remove(client, PITCH, also=[TASK, OTHER, DONE]).status_code == 200
 
 
-def test_shelved_work_cannot_pin_a_record_in_the_plan_for_ever(client: TestClient):
-    """Shelved work is parked, not blocking. A pitch whose only remaining tasks
-    are shelved is a pitch nobody is working on, and refusing to delete it would
-    make "shelve it and move on" a way to make records permanent by accident."""
-    for task in (TASK, OTHER, DONE):
-        assert save(client, task, {"status": "shelved"}).status_code == 200
+def test_shelved_work_is_taken_with_it_rather_than_left_behind(
+    client: TestClient, repo_path: Path
+):
+    """Parked, not exempt. A shelved task under a deleted pitch is orphaned
+    exactly as much as a ready one, and leaving it would put a blocker in the plan
+    for the sake of a distinction nothing else about a delete makes."""
+    assert save(client, DONE, {"status": "shelved"}).status_code == 200
 
-    assert remove(client, PITCH).status_code == 200
+    assert remove(client, PITCH, also=[TASK, OTHER, DONE]).status_code == 200
+    assert not [path for path in paths_at(repo_path) if DONE in path]
 
 
 def test_a_delete_of_something_that_is_not_there_is_a_404(client: TestClient):

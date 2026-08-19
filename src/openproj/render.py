@@ -33,7 +33,14 @@ from markdown_it.token import Token
 from markupsafe import Markup, escape
 from pydantic import BaseModel
 
-from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
+from .index import (
+    COMPUTED_PREDICATES,
+    Index,
+    _matches_predicate,
+    _people_on,
+    _project_of,
+    cascade_of,
+)
 from .model import (
     ISSUE_STATUS,
     NOTE_STATES,
@@ -8318,7 +8325,7 @@ _DETAIL = """
   {% if editable and may_write %}
   <div class="dangerbar">
     <button type="button" class="delete">Delete this {{ e.kind }}</button>
-    <div class="confirming" hidden>
+    <div class="confirming" data-also="{{ (e.deletes + e.frees)|join(" ") }}" hidden>
       {#- The title, spelled out. "Are you sure?" over a record you cannot see
           from the dialog is a question nobody can answer, and this page can be a
           long way from the heading by the time you reach the foot of it. -#}
@@ -8326,6 +8333,25 @@ _DETAIL = """
         (<code>{{ e.id }}</code>)?<br>
         <span class="hint">The file leaves the plan in a commit. Git keeps every
           version of it, so this can be undone with <code>git revert</code>.</span></p>
+      {#- The reach of it, before the press and not after. A record filed under
+          this one has nowhere to be once it is gone, so it goes too; a record
+          that merely depends on this one is somebody else's work waiting for it,
+          and deleting that would be this gesture reaching across the plan. The
+          two consequences are drawn as two sentences because they are two
+          different things happening to two different sets of files. -#}
+      {% if e.deletes %}
+      <p class="reach">This also deletes
+        <strong>{{ e.deletes|length }}</strong> record{{
+          "" if e.deletes|length == 1 else "s" }} filed under it:
+        <span class="ids">{{ e.deletes|join(", ") }}</span></p>
+      {% endif %}
+      {% if e.frees %}
+      <p class="reach mild">It also stops
+        <span class="ids">{{ e.frees|join(", ") }}</span>
+        depending on it. {{ "That record keeps" if e.frees|length == 1
+          else "Those records keep" }} {{ "its" if e.frees|length == 1 else "their"
+          }} file.</p>
+      {% endif %}
       <p class="why" role="alert" hidden></p>
       <span class="acts">
         <button type="button" class="really">Delete it</button>
@@ -8547,12 +8573,17 @@ for (const bar of document.querySelectorAll('.dangerbar')) {
     // server refuses it if somebody has edited the record since this page drew
     // it. Read off the form so there is one answer on the page and not two.
     const base = article.querySelector('input[name=base_commit]').value;
+    const also = (ask.dataset.also || '').split(' ').filter(Boolean);
     let answer;
     try {
       answer = await fetch('/api/entity/' + encodeURIComponent(article.id), {
         method: 'DELETE',
         headers: {'content-type': 'application/json'},
-        body: JSON.stringify({base_commit: base}),
+        // The ids the panel showed, sent back so the question that was answered
+        // is the question the server acts on. Somebody filing a task under this
+        // pitch while the panel sat open is the whole reason: without this the
+        // cascade takes a record it never named.
+        body: JSON.stringify({base_commit: base, also: also}),
       });
     } catch (error) {
       acts.hidden = false;
@@ -9393,6 +9424,17 @@ textarea.body-field {
 .dangerbar .confirming[hidden] { display: none; }
 .dangerbar .asking { margin: 0; font-size: 13px; }
 .dangerbar .acts { display: flex; gap: .4rem; }
+/* What else this takes with it. The loud one is the deletion of other records —
+   that is the sentence somebody has to read before pressing, so it is the danger
+   colour and it is bold. The dependency line is quieter on purpose: nothing is
+   destroyed there, a field is edited, and drawing the two the same way would
+   teach people to skim both. */
+.dangerbar .reach { margin: 0; font-size: 13px; font-weight: 600;
+                    color: var(--danger); }
+.dangerbar .reach.mild { font-weight: 400; color: var(--fg); }
+.dangerbar .reach .ids { font-family: var(--font-mono); font-size: 12px;
+                         font-weight: 400; }
+
 /* The server's reason, where the question was asked. A refusal that names three
    tasks is the useful half of this feature and it must not go to the console. */
 .dangerbar .why { margin: 0; font-size: 12px; color: var(--danger); }
@@ -13274,6 +13316,12 @@ def render_detail(
         entity = index.entities[row["id"]]
         row["rows"] = _fact_rows(index, entity, links)
         row["raw_body"] = entity.body
+        # What deleting it would take with it, drawn into the confirmation before
+        # anybody presses anything. From `cascade_of`, which is what the route
+        # itself asks — a panel that listed the consequences from a second
+        # derivation of them would be a panel that can be wrong about the commit
+        # it is authorising.
+        row["deletes"], row["frees"] = cascade_of(index, row["id"])
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
         groups=_by_status(rows),

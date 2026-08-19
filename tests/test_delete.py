@@ -14,13 +14,14 @@ be impossible to fire in one press.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
 import pytest
 from browser import chrome, measured_in
 
-from openproj.index import Index, build_index
+from openproj.index import Index, build_index, cascade_of
 from openproj.model import load_repo
 from openproj.render import ROUTES, STATIC, render_detail
 
@@ -92,6 +93,50 @@ def test_the_control_is_only_on_the_record_page(index: Index):
         assert MARKUP not in page, f"the {name} offers a delete"
 
 
+def test_the_panel_says_what_the_delete_will_take_with_it(index: Index):
+    """A cascade nobody was shown is a cascade nobody agreed to.
+
+    The two consequences are drawn as two sentences because they are two different
+    things happening to two different sets of files: records filed under this one
+    are deleted, and records that merely depend on it keep their file and lose the
+    dependency. Both lists come from `cascade_of`, which is what the route itself
+    asks — a panel built from a second derivation of that is a panel that can be
+    wrong about the commit it is authorising.
+    """
+    parent = next(
+        entity_id
+        for entity_id in sorted(index.entities)
+        if cascade_of(index, entity_id)[0]
+    )
+    doomed, _ = cascade_of(index, parent)
+    page = render_detail(index, ROUTES, only=parent, base_commit=HEAD, may_write=True)
+    asking = page[page.index(MARKUP) :]
+
+    assert "also deletes" in asking
+    for child in doomed:
+        assert child in asking, f"{child} would be deleted and is not named"
+    # And the same ids go back with the press, so what was answered is what the
+    # server acts on.
+    shown = re.search(r'data-also="([^"]*)"', asking).group(1).split()
+    assert sorted(shown) == sorted(doomed + cascade_of(index, parent)[1])
+
+
+def test_a_leaf_record_asks_a_plain_question(index: Index):
+    """Nothing under it and nothing waiting on it, so no cascade sentence at all.
+    A panel that says "this also deletes 0 records" teaches people to skim the
+    line that matters."""
+    leaf = next(
+        entity_id
+        for entity_id in sorted(index.entities)
+        if cascade_of(index, entity_id) == ([], [])
+    )
+    page = render_detail(index, ROUTES, only=leaf, base_commit=HEAD, may_write=True)
+    asking = page[page.index(MARKUP) :]
+
+    assert "also deletes" not in asking
+    assert "depending on it" not in asking
+
+
 # The request is recorded and never answered, the way `test_edges.py` stubs a
 # save: the successful path ends in a navigation, which cannot be stubbed and
 # would take the page and the report with it.
@@ -141,7 +186,11 @@ def test_it_takes_two_presses_and_the_first_one_writes_nothing(
     # The base commit the page was drawn against, so the server can refuse a
     # delete of something somebody has edited since. Without it this would be the
     # one write in the app that cannot say what it thought it was removing.
-    assert sent["body"] == {"base_commit": HEAD}
+    # `also` is the list the panel showed — empty for a leaf task with nothing
+    # under it and nothing waiting on it, and sent anyway, because the server
+    # tells "the page showed nothing" from "the page is too old to have been
+    # asked" by whether the key is there at all.
+    assert sent["body"] == {"base_commit": HEAD, "also": []}
 
 
 _WRONG_ONE = """
