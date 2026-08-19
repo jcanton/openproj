@@ -5661,6 +5661,14 @@ _GRAPH = """
     140px of graph. -#}
 <div class="commitbar" id="commitbar">
   <button type="button" id="connect">Edit dependencies</button>
+  {#- A mode and not a modifier. Cytoscape's own drag already means "move the
+      node on the canvas", so the gesture that files one thing under another has
+      to be told apart from it somehow — and shift-drag is invisible until
+      somebody is told about it, while a handle on each node is a vendored
+      library in a repository whose premise is that nothing is fetched. A mode
+      says what the next drag will do, in the place the other mode already
+      lives. -#}
+  <button type="button" id="refile">Refile</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
   <span id="state" role="status"></span>
@@ -5668,6 +5676,11 @@ _GRAPH = """
 </div>
 {% endif %}
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
+{#- `model.PARENT_KINDS`, which decides which drop is refused before it is sent.
+    The table ships the same map inside its payload and calls it the same thing;
+    the server refuses either way, and a client that only finds out afterwards is
+    a canvas that lets you drop a project into a task and then takes it back. -#}
+<script id="parents" type="application/json">{{ parent_kinds|tojson }}</script>
 <script>{{ cytoscape }}</script>
 <script>{{ dagre }}</script>
 <script>{{ cytoscape_dagre }}</script>
@@ -5785,6 +5798,14 @@ const cy = cytoscape({
         'width': 150, 'height': 44 } },
     { selector: '.picked', style: {
         'border-color': token('--danger'), 'border-width': 5 } },
+    // What a drop would do, while the mouse is still down — the canvas's spelling
+    // of the two answers the table paints on its rows during the same gesture. A
+    // rule you can only learn by breaking it is a rule nobody learns.
+    { selector: '.can-hold', style: {
+        'border-color': token('--ok'), 'border-width': 4 } },
+    { selector: '.cannot-hold', style: {
+        'border-color': token('--sev-blocker'), 'border-width': 4,
+        'border-style': 'dashed' } },
     // The name of a group used to be 9px of --muted sitting ON the box's border,
     // where every edge crossing the box ran straight through it. Inside, top
     // left, on its own ground: a box whose name you cannot read is a box that
@@ -6118,6 +6139,155 @@ if (CONNECT) {
     }
     location.reload();
   };
+}
+
+// --- refiling ---------------------------------------------------------------
+//
+// Dragging one node onto another files it under that one; dragging it onto bare
+// canvas takes it out of whatever holds it. Both are a `parent`, which is a
+// field like any other, so the write below is the same PATCH the table's own
+// drag sends — the gesture is new, the save path is not.
+//
+// In a mode of its own, because a plain drag on this canvas already means "move
+// the node" and always has. The alternatives were a modifier, which is invisible
+// until somebody is told about it, and a drag handle from a library this
+// repository would have to vendor. The mode names what the next drag will do.
+//
+// The two modes are exclusive: entering one leaves the other. Drawing an edge
+// and refiling are both "click a node, then somewhere else", and a canvas where
+// that means two things at once is a canvas nobody can predict.
+
+const REFILE = document.getElementById('refile');
+const CAN_HOLD = (() => {
+  try { return JSON.parse(document.getElementById('parents').textContent); }
+  catch (error) { return {}; }
+})();
+let refiling = false;
+let held = null;
+
+// What a kind may be filed under, in the validator's own words — the same
+// sentence the table says before the same refusal.
+const holdersOf = kind =>
+  (CAN_HOLD[kind] || []).map(one => 'a ' + one).join(' or ') || 'nothing';
+
+// The innermost node this point is inside, ignoring the one being dragged and
+// anything it holds: dropping a pitch into its own task is a cycle, and the
+// canvas should refuse it while the mouse is still down rather than after a
+// round trip. Innermost, because the boxes nest — a task dropped inside a pitch
+// inside a project must land in the pitch, which is the one the pointer is
+// actually over.
+// Where every box was when the drag started.
+//
+// Measured once, at `grab`, and not per frame. A compound node's box is drawn
+// around its children, so while one of them is in the air the box follows it: a
+// task dragged to the far corner of the canvas is still inside the parent it is
+// trying to leave, which made taking something OUT of a pitch impossible — the
+// answer was always its own parent, wherever it was dropped. Measuring the
+// parent without the dragged child instead shrinks the box to the other
+// children, so dropping a node back where it started landed it outside the thing
+// it had not left.
+//
+// The boxes as they were is the answer to both. It is also what the person
+// dragging sees: the boxes under the pointer are the ones that were on screen
+// when they picked the node up.
+let BOXES = new Map();
+
+function snapBoxes() {
+  BOXES = new Map(cy.nodes().map(node => [node.id(), node.boundingBox()]));
+}
+
+// The innermost box this point is inside, ignoring the node being dragged and
+// anything it holds: dropping a pitch into its own task is a cycle, and the
+// canvas refuses it while the mouse is still down rather than after a round trip.
+// Innermost, because the boxes nest — a task dropped inside a pitch inside a
+// project lands in the pitch, which is the one the pointer is actually over.
+function under(point, dragged) {
+  let best = null;
+  cy.nodes().forEach(node => {
+    if (node.same(dragged) || dragged.descendants().contains(node)) return;
+    const box = BOXES.get(node.id());
+    if (!box) return;
+    if (point.x < box.x1 || point.x > box.x2 || point.y < box.y1 || point.y > box.y2) return;
+    const area = box.w * box.h;
+    if (!best || area < best.area) best = {node, area};
+  });
+  return best && best.node;
+}
+
+// Whether this drop is one the server would take, asked before it is sent.
+function mayHold(parent, child) {
+  return (CAN_HOLD[child.data('kind')] || []).includes(parent.data('kind'));
+}
+
+if (REFILE) {
+  REFILE.onclick = () => {
+    if (connecting) CONNECT.onclick();
+    refiling = !refiling;
+    REFILE.textContent = refiling ? 'Stop refiling' : 'Refile';
+    document.getElementById('cy').classList.toggle('refiling', refiling);
+    say(refiling
+      ? 'Drag a node onto another to file it there, or onto the canvas to take it out'
+      : '');
+  };
+}
+
+cy.on('grab', 'node', evt => {
+  held = refiling ? evt.target : null;
+  if (held) snapBoxes();
+});
+
+// What the drop would do, while the mouse is still down. `can-hold` and
+// `cannot-hold` are the graph's spelling of the two classes the table paints on
+// its rows during the same gesture, for the same reason: a rule you only learn
+// by breaking it is a rule nobody learns.
+cy.on('drag', 'node', evt => {
+  if (!refiling || !held) return;
+  cy.nodes().removeClass('can-hold cannot-hold');
+  const target = under(evt.target.position(), held);
+  if (target) target.addClass(mayHold(target, held) ? 'can-hold' : 'cannot-hold');
+});
+
+cy.on('free', 'node', async evt => {
+  if (!refiling || !held) return;
+  const child = held;
+  held = null;
+  cy.nodes().removeClass('can-hold cannot-hold');
+  const target = under(evt.target.position(), child);
+  const was = child.data('parent') || null;
+
+  if (target && !mayHold(target, child)) {
+    say(`A ${child.data('kind')} belongs under ${holdersOf(child.data('kind'))}`);
+    return;
+  }
+  const wanted = target ? target.id() : null;
+  // A drag that changed nothing is not a write. Cytoscape fires `free` for every
+  // drag, including the ones that only moved a node two pixels on the canvas —
+  // and a commit per nudge is a history nobody can read.
+  if (wanted === was) return;
+  await refile(child.id(), wanted);
+});
+
+// The write. Same PATCH, same base commit, same 409 as everything else this page
+// commits; the page reloads afterwards because a parent moves the row's cycle,
+// its dates, what it waits for and which project it counts against, and not one
+// of those is something this canvas can work out for itself.
+async function refile(childId, parentId) {
+  const base = document.getElementById('base');
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: base.value, fields: {parent: parentId}, body: null}),
+    });
+    const answer = await answerOf(response);
+    if (!response.ok) { say(refusal(answer, response.status)); return; }
+    committed = answer.commit;
+    base.value = answer.commit;
+  } finally {
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+  location.reload();
 }
 
 cy.on('tap', 'node', evt => {
@@ -6652,6 +6822,11 @@ text.bar-glyph { font-family: var(--font-sans); font-size: 9px; font-weight: 700
                  pointer-events: none; }
 /* Beside the plot rather than over it: the plot is as tall as its rows, and an
    overlay on an empty one has nothing to cover. */
+/* What a drop would do, while the mouse is still down. The table paints the same
+   two answers on its rows during the same gesture; this is the canvas's spelling
+   of them. `--drop` is the ground a row that would take it wears there, and
+   `--sev-blocker` is the ink a refusal wears everywhere. */
+#cy.refiling { cursor: grab; }
 #nothing { border: 1px solid var(--line); padding: 2.5rem 1rem; text-align: center; }
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
@@ -13374,6 +13549,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         total=len(index.entities),
         links=links,
         elements=_elements(index),
+        parent_kinds={kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         cytoscape=_library("cytoscape.min.js"),
         dagre=_library("dagre.min.js"),
         cytoscape_dagre=_library("cytoscape-dagre.js"),
