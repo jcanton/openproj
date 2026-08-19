@@ -197,6 +197,34 @@ def _deleted(path: str) -> str:
     )
 
 
+def _changed_under_delete(path: str) -> str:
+    """What a delete is answered with when somebody edited the file first.
+
+    The mirror of `_deleted`, from the other side of the same disagreement. One
+    person decided this record should not exist and another decided what it should
+    say, and there is no third outcome that is both — least of all the one that
+    happens by default, which is that the edit is committed and then thrown away
+    without ever being read.
+    """
+    return (
+        f"{path} — somebody edited this while you were deleting it.\n"
+        "  Nothing was removed. Read what they wrote, then decide again."
+    )
+
+
+def _already_gone(path: str) -> str:
+    """What a delete is answered with when the record has already gone.
+
+    Not silence. Two people deleting one record is not a conflict of intent, but
+    it is still a page about to say "deleted" over a commit it did not make, and
+    the sha it would report belongs to somebody else's work.
+    """
+    return (
+        f"{path} — somebody deleted this first.\n"
+        "  Nothing was written, and the record is already out of the plan."
+    )
+
+
 def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, str | None]:
     """Structured merge of one entity file. Returns (merged_text, conflict_report)."""
     base_front, base_body = _split(base)
@@ -420,8 +448,26 @@ class Store:
         """One file, one commit. The overwhelming majority of writes here."""
         return self.write_all({path: content}, base_commit, author, message)
 
+    def remove(
+        self, path: str, base_commit: str, author: str, message: str
+    ) -> WriteResult:
+        """Take one file out of the plan, in a commit.
+
+        `None` and not an empty string, which is a real file with nothing in it —
+        and which `_merge` would treat as a record whose every field was cleared.
+        That distinction is the subject of `_deleted` above; spelling a removal as
+        empty content would put the bug it describes into the writer as well as
+        into the merger.
+
+        History is not touched. The commit removes the file from the tip, and
+        `git log --follow` still has every version of it: deleting a record here
+        is deleting it from the *plan*, not from the repository, which is the
+        whole reason this tool keeps its data in git.
+        """
+        return self.write_all({path: None}, base_commit, author, message)
+
     def write_all(
-        self, files: dict[str, str], base_commit: str, author: str, message: str
+        self, files: dict[str, str | None], base_commit: str, author: str, message: str
     ) -> WriteResult:
         """Several files in ONE commit, each compared-and-swapped on its own path.
 
@@ -458,6 +504,16 @@ class Store:
             outcomes: list[str] = []
             conflicts: list[str] = []
             for path, content in files.items():
+                # Asked before the fast paths below, because both of them are
+                # about a file that is still there. A removal of something
+                # already gone slipped through the `was == stored` path — both
+                # sides read `None`, which looks exactly like "somebody edited a
+                # different file" — and committed a tree identical to its parent:
+                # an empty commit, reported to the person who pressed Delete as
+                # the sha that deleted the record.
+                if content is None and self.read(current, path) is None:
+                    conflicts.append(_already_gone(path))
+                    continue
                 if current == base_commit:
                     resolved[path] = content
                     outcomes.append("committed")
@@ -476,6 +532,14 @@ class Store:
                 # just deleted therefore recreated it as a file holding nothing
                 # but `parent:`, and answered 200. Parsing would not have caught
                 # it — every field here is optional by design.
+                # A removal has no third text to fall back on. `_merge` exists
+                # because two edits to one file can often both be kept; a delete
+                # and an edit cannot. Refused rather than merged, and refused
+                # rather than quietly winning: the edit would otherwise be
+                # committed and then thrown away without anybody reading it.
+                if content is None:
+                    conflicts.append(_changed_under_delete(path))
+                    continue
                 if was is not None and stored is None:
                     conflicts.append(_deleted(path))
                     continue
@@ -538,13 +602,17 @@ class Store:
         parent = self.head()
         tree = self._tree(parent).id
         for path, content in files.items():
-            blob = self._repo.create_blob(content.encode("utf-8"))
             # Read the tree back between files. Each insert rewrites the path's
             # spine from the bottom up and hands back a new root, so the second
             # file has to go into the root the first one produced — inserted into
             # the parent commit's instead, it writes a tree that has silently
             # dropped the first file, and the commit still succeeds.
-            tree = self._insert(self._repo[tree].peel(pygit2.Tree), path.split("/"), blob)
+            root = self._repo[tree].peel(pygit2.Tree)
+            if content is None:
+                tree = self._drop(root, path.split("/"))
+                continue
+            blob = self._repo.create_blob(content.encode("utf-8"))
+            tree = self._insert(root, path.split("/"), blob)
         # Author is the person, committer is the bot: `git log --format='%an'` is
         # then a per-person audit trail for free, while a future push credential
         # stays a bot that no human's departure invalidates.
@@ -566,6 +634,32 @@ class Store:
                 if entry.type_str == "tree":
                     child = self._repo.get(entry.id)
             builder.insert(name, self._insert(child, rest, blob), pygit2.enums.FileMode.TREE)
+        return builder.write()
+
+    def _drop(self, tree, parts: list[str]) -> pygit2.Oid:
+        """The same spine, rebuilt without this entry.
+
+        Git has no empty directory: a tree with no entries is not something a
+        commit can point a name at, and writing one produces a repository that
+        `git fsck` complains about and that some clients refuse to read. So when
+        removing the last record from `tasks/` empties it, the directory goes too
+        — which is also what `git rm` does, and what a plan with no tasks in it
+        should look like.
+        """
+        builder = self._repo.TreeBuilder(tree)
+        name, rest = parts[0], parts[1:]
+        if not rest:
+            builder.remove(name)
+            return builder.write()
+        entry = tree[name] if name in [item.name for item in tree] else None
+        child = self._repo.get(entry.id) if entry is not None and entry.type_str == "tree" else None
+        if child is None:
+            return builder.write()
+        inner = self._drop(child, rest)
+        if len(self._repo[inner]) == 0:
+            builder.remove(name)
+        else:
+            builder.insert(name, inner, pygit2.enums.FileMode.TREE)
         return builder.write()
 
     def close(self) -> None:

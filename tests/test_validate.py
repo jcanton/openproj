@@ -711,3 +711,22 @@ def test_a_parent_cycle_does_not_send_the_reviewer_walk_round_for_ever():
     assert took < 5, f"the validator took {took:.1f}s over a two-record cycle"
     # And it still says the thing that is actually wrong.
     assert {p.field for p in found} == {"parent"}
+
+
+def test_a_parent_cycle_does_not_send_the_delete_walk_round_for_ever():
+    """The same lesson, asked of the second walk to be written over that map.
+
+    `under` is what a delete cascades along, so the loop this bound is for would
+    now be reached by pressing a button rather than by loading a page — and it
+    would be reached while building the list somebody is about to authorise.
+    """
+    from openproj.model import under
+
+    ring = {PITCH_ID: [OTHER_PITCH_ID], OTHER_PITCH_ID: [PITCH_ID]}
+
+    started = time.monotonic()
+    found = under(PITCH_ID, ring)
+    took = time.monotonic() - started
+
+    assert took < 5, f"the walk took {took:.1f}s over a two-record cycle"
+    assert found == [OTHER_PITCH_ID], "a record must not be filed under itself"

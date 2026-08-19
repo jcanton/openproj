@@ -67,7 +67,7 @@ from .auth import (
     read_session,
     sign_session,
 )
-from .index import build_index
+from .index import build_index, cascade_of
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
@@ -538,6 +538,30 @@ def _reject_bad_note(fields: dict) -> None:
             f"{', '.join(NOTE_STATUS)}. A note that became something is promoted, "
             "which is read off what it became rather than typed.",
         )
+
+
+def _deletion_message(entity_id: str, doomed: list[str], edited: list[str]) -> str:
+    """One commit, one line, and the line says how far it reached.
+
+    `git log --oneline` on a plan is the team's record of decisions, and "deleted"
+    over a commit that removed five files and edited two is the wrong record of
+    this one.
+    """
+    said = f"{entity_id}: deleted"
+    if doomed:
+        said += f", with {len(doomed)} filed under it"
+    if edited:
+        said += f", freed {len(edited)}"
+    return said
+
+
+def _and_then(ids: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`. Sorted, because a list whose order comes out
+    of a dictionary reads as though it means something by it."""
+    names = sorted(ids)
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _reject_bad_types(fields: dict) -> None:
@@ -1793,6 +1817,82 @@ def create_app(
         )
         if written.commit:
             await announce(written.commit, [entity_id])
+        return _result(written, base)
+
+    @app.delete("/api/entity/{entity_id}")
+    async def remove(entity_id: str, request: Request) -> JSONResponse:
+        """Take one record out of the plan.
+
+        Out of the *plan*, not out of the repository: the commit removes the file
+        from the tip and every version of it stays in the history, which is the
+        one property that makes a delete button here defensible at all. Somebody
+        who deletes the wrong thing gets it back with `git revert`.
+
+        It cascades, and it says what it will take with it first. Everything filed
+        under this record goes with it — a task whose pitch no longer exists is
+        parented to an id that is not there, which is a blocker `validate_all`
+        reports about a file its owner never touched. Everything that DEPENDS on
+        it keeps its file and loses the dependency: that is unrelated work which
+        merely waits for this, and deleting it would be a two-click gesture
+        reaching across the plan.
+
+        **The confirmation is binding.** The page sends back the ids it showed,
+        and this refuses if the plan's answer has changed since — somebody filed a
+        new task under the pitch while the panel was open, and the version without
+        this check deletes it without ever having named it. That is the failure a
+        cascade confirmation exists to prevent, so it is a compare-and-swap on the
+        SHAPE of the deletion, beside the one the store already does on the bytes
+        of each file.
+
+        One commit for all of it, through `write_all`, for the reason promotion
+        uses it: this is one decision, and a `git log` that shows a pitch removed
+        and then four tasks removed says four things that are not true. It also
+        removes the half-done state — a subtree half deleted, on a protected
+        branch, is not a state anybody can be asked to repair.
+        """
+        user = writer(request)
+        payload = await _sent(request)
+        base = _base_in(store, payload)
+        path = _path_for(store, base, entity_id)
+        if path is None:
+            raise HTTPException(404, f"no entity {entity_id!r}")
+        _, index = index_now()
+        doomed, edited = cascade_of(index, entity_id)
+
+        shown = payload.get("also")
+        if shown is not None and sorted(shown) != sorted(doomed + edited):
+            raise HTTPException(
+                409,
+                "the plan changed while that was open: deleting "
+                f"{entity_id} now affects {_and_then(doomed + edited) or 'nothing else'}. "
+                "Nothing was deleted — read it again and decide.",
+            )
+
+        files: dict[str, str | None] = {path: None}
+        for other in doomed:
+            gone = _path_for(store, base, other)
+            if gone is None:
+                raise HTTPException(409, f"{other} is filed under this and could not be found")
+            files[gone] = None
+        for other in edited:
+            where = _path_for(store, base, other)
+            if where is None:
+                raise HTTPException(409, f"{other} depends on this and could not be found")
+            kept = [
+                target
+                for target in index.entities[other].depends_on
+                if target != entity_id and target not in doomed
+            ]
+            files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
+
+        written = store.write_all(
+            files,
+            base_commit=base,
+            author=user.login,
+            message=_deletion_message(entity_id, doomed, edited),
+        )
+        if written.commit:
+            await announce(written.commit, [entity_id, *doomed, *edited])
         return _result(written, base)
 
     @app.put("/api/cycle/{number}")
