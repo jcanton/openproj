@@ -359,3 +359,68 @@ def test_the_people_page_honours_both_values_too(index: Index, tmp_path: Path):
         f"the page shows {sorted(set(got['shown']))} for {got['wanted']}"
     )
     assert got["said"] == "2 chosen"
+
+
+_THE_WAY_OUT = """
+const out = document.getElementById('unfilter');
+const atRest = out.hidden;
+const facet = document.querySelector('.facet[data-field="status"]');
+facet.querySelector('.facetopen').click();
+facet.querySelector('input[type=checkbox]').click();
+const once = out.hidden;
+out.click();
+return {atRest, once, after: out.hidden, params: params.toString(),
+        ticked: document.querySelectorAll('.facetmenu input:checked').length};
+"""
+
+
+def test_the_way_out_appears_only_when_there_is_one(page: str, tmp_path: Path):
+    """A Clear that is always there is a control that does nothing most of the
+    time, and a reader has to read it to find that out. It appears when something
+    is set, it clears everything, and it goes again."""
+    got = measured_in(chrome(), page, tmp_path / "out.html", 1460, _THE_WAY_OUT)
+
+    assert got["atRest"] is True, "a page with no filters offers a way out of them"
+    assert got["once"] is False, "a field was set and nothing offered to unset it"
+    assert got["after"] is True
+    assert got["params"] == ""
+    assert got["ticked"] == 0
+
+
+_LOOKS_LIKE_A_MENU = """
+const said = document.querySelector('.facet[data-field="status"] .facetsaid');
+// Read into plain values before anything is clicked. `getComputedStyle` hands
+// back a LIVE object: keeping the reference and clicking gave two readings of
+// the open state and a test that said the caret had no ink in it.
+const ink = () => {
+  const drawn = getComputedStyle(said, '::after');
+  return {top: drawn.borderTopColor, bottom: drawn.borderBottomColor,
+          width: drawn.borderTopWidth};
+};
+const shut = ink();
+const opener = document.querySelector('.facet[data-field="status"] .facetopen');
+opener.click();
+const open = ink();
+// The colours and not the widths: three of the four borders are there in both
+// states and only one of them has ink in it, which is what makes the triangle.
+return {shut, open, ground: getComputedStyle(said).backgroundColor};
+"""
+
+
+def test_a_facet_reads_as_a_menu_and_not_as_a_box_to_type_in(page: str, tmp_path: Path):
+    """The border alone reads as somewhere to type — which is what the bar looked
+    like once the selects became buttons. The caret a browser draws on a real
+    `<select>` is drawn here, and it turns over when the menu opens, which is the
+    one thing that says a press did something when the menu is off the bottom of
+    a short window."""
+    got = measured_in(chrome(), page, tmp_path / "menu.html", 1460, _LOOKS_LIKE_A_MENU)
+
+    clear = ("transparent", "rgba(0, 0, 0, 0)")
+    assert got["shut"]["width"] != "0px", "there is no caret"
+    assert got["shut"]["top"] not in clear, "the caret has no ink in it"
+    assert got["shut"]["bottom"] in clear, "the caret points both ways at once"
+    assert got["open"]["bottom"] not in clear, "the caret does not turn over when it opens"
+    assert got["open"]["top"] in clear
+    assert got["ground"] not in ("rgba(0, 0, 0, 0)", "transparent"), (
+        "the control has no ground of its own, so it reads as part of the page"
+    )

@@ -308,7 +308,10 @@ def test_the_graph_explains_its_mode_once_and_beside_the_button(client: TestClie
     assert "PANHINT" not in page, "and the standing one is no longer swapped out"
     # What edit mode adds, said once, in the live region beside the button that
     # turned it on.
-    assert "'click what must finish first, then what waits for it'" in page
+    assert "click what must finish first, then what waits for it" in page
+    # And the other half of the mode, said in the same breath rather than in a
+    # second paragraph: an arrow is a decision the mode can take back.
+    assert "or click an arrow to remove it" in page
     assert re.search(r'<button type="button" id="connect">Edit dependencies</button>', page)
 
 

@@ -1555,8 +1555,16 @@ body:has([data-fills]) { padding-bottom: 1rem; }
   background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
 }
 .facetopen .facetsaid {
+  /* A dropdown and not a text box. The border alone reads as somewhere to type —
+     which is what the bar looked like once the `<select>`s became buttons — so
+     the caret the browser draws on a real `<select>` is drawn here instead, in
+     the same place and pointing the same way. Two borders and no background,
+     because a triangle drawn from borders is one element and needs no image, no
+     glyph and nothing fetched. */
+  display: inline-flex; align-items: center; gap: .35rem;
   font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--fg);
   border: 1px solid var(--line-strong); border-radius: 3px; padding: .1rem .35rem;
+  background: var(--surface);
   /* Wide enough for `all` plus the room a value will need, and no wider: ten of
      these on one line is the bar's whole budget, and at 5rem the tenth field
      wrapped to a second row — which costs the drawing below it more than the
@@ -1566,6 +1574,21 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 /* What is set, in the ink the rest of the page uses for a choice somebody made.
    Without it a bar with three fields filtered looks exactly like a bar with
    none, which is how a reader comes to believe a plan has four rows in it. */
+/* The caret. `margin-left: auto` so it sits at the right edge of a control that
+   is wider than its word, which is where a `<select>` puts it. */
+.facetopen .facetsaid::after {
+  content: ""; margin-left: auto; width: 0; height: 0;
+  border: 4px solid transparent; border-top: 5px solid currentColor;
+  /* The triangle's own box is 9px tall and its ink is the bottom 5, so it sits
+     low without this. */
+  transform: translateY(2px);
+}
+/* Open: the caret turns over, which is the one thing that says a press did
+   something on a control whose menu may be off the bottom of a short window. */
+.facetopen[aria-expanded="true"] .facetsaid::after {
+  border-top-color: transparent; border-bottom: 5px solid currentColor;
+  transform: translateY(-2px);
+}
 .facetopen[aria-expanded="true"] .facetsaid,
 .facet.chosen .facetsaid { border-color: var(--accent); color: var(--accent); }
 /* The open list. Absolutely positioned so opening one does not push the drawing
@@ -1610,7 +1633,12 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    `position: fixed` so a card on the graph survives the canvas being panned and
    zoomed under it: the anchor moves, the card is placed again from the pointer,
    and neither is inside the transformed layer. */
-#card { position: fixed; z-index: 20; max-width: 26rem; pointer-events: none;
+/* No `pointer-events: none`. The card holds a shaping document that is capped
+   and scrollable, and a box the pointer passes straight through is a scrollbar
+   nobody can grab — which is exactly what shipped. It does not follow the
+   pointer either: it is placed once, where the pointer was when it opened, and
+   the gap to it is crossable because leaving the row only starts a timer. */
+#card { position: fixed; z-index: 20; max-width: 26rem;
         background: var(--surface); color: var(--fg); font-size: 12px;
         border: 1px solid var(--line-strong); border-radius: 3px;
         padding: .4rem .55rem; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
@@ -2089,11 +2117,41 @@ let cardShowing = null;
 // as a card that draws nothing.
 function showCard(row, x, y, extra) {
   if (!CARD || !row) return Promise.resolve();
+  clearTimeout(cardTimer);
+  clearTimeout(cardLeaving);
   cardShowing = row.id;
   CARD.innerHTML = cardHtml(row, extra || []);
   CARD.hidden = false;
   placeCard(x, y);
   return CARD_BODY_URL ? fillCardBody(row.id) : Promise.resolve();
+}
+
+// A pointer crossing a table on its way somewhere else is not a question, and a
+// card that answers it anyway flashes a box over every row on the way past. So
+// hovering ASKS for a card and waits; the wait is cancelled by leaving.
+//
+// 400ms is the delay every hover-intent control settles on: long enough that
+// crossing a row does not open one, short enough that pointing at a row and
+// stopping does not feel broken. The keyboard path on the timeline does not go
+// through here — focus is deliberate, and a delay after a deliberate act is a
+// page that ignored you.
+const CARD_DELAY = 400;
+// And the grace on the way out, which is the whole reason the card can be
+// scrolled: the pointer has to cross the gap between the row and the box, and a
+// card that goes the instant the row is left cannot be reached.
+const CARD_GRACE = 220;
+let cardTimer = 0;
+let cardLeaving = 0;
+
+function queueCard(row, x, y, extra) {
+  if (!CARD || !row) return;
+  clearTimeout(cardTimer);
+  clearTimeout(cardLeaving);
+  // Already showing this one: the pointer moved inside the same row, which is
+  // not a new question. Notably it does NOT move the card — a box that follows
+  // the pointer is a box you cannot put the pointer into.
+  if (!CARD.hidden && cardShowing === row.id) return;
+  cardTimer = setTimeout(() => showCard(row, x, y, extra), CARD_DELAY);
 }
 
 async function fillCardBody(id) {
@@ -2115,13 +2173,18 @@ async function fillCardBody(id) {
   if (cardShowing !== id || CARD.hidden) return;
   const html = CARD_BODIES.get(id);
   if (!html) return;
-  const body = document.createElement('div');
+  // Replaced and never appended. Two answers can be in flight for one card — the
+  // pointer leaves and comes back, or a cached body lands in the same tick as a
+  // fetched one — and appending drew the shaping document twice inside one box,
+  // which is what jcanton saw and could not reproduce.
+  const already = CARD.querySelector('.card-body');
+  const body = already || document.createElement('div');
   body.className = 'card-body';
   // The server rendered this markdown, with HTML disabled in the parser, through
   // the same function the detail page uses. It is the one string on this page
   // that is markup on purpose.
   body.innerHTML = html;
-  CARD.appendChild(body);
+  if (!already) CARD.appendChild(body);
   placeCard(cardAt.x, cardAt.y);
 }
 
@@ -2138,10 +2201,31 @@ function placeCard(x, y) {
   CARD.style.top = Math.max(8, top) + 'px';
 }
 
+// Asked for by a pointer leaving, and answered a moment later: the gap between
+// the row and the card is a place the pointer has to be allowed to cross.
 function hideCard() {
   if (!CARD) return;
+  clearTimeout(cardTimer);
+  clearTimeout(cardLeaving);
+  cardLeaving = setTimeout(hideCardNow, CARD_GRACE);
+}
+
+// No grace. For the things that are not a pointer leaving a row: a node dragged
+// out from under the card, a canvas panned, a filter redrawing the rows.
+function hideCardNow() {
+  if (!CARD) return;
+  clearTimeout(cardTimer);
+  clearTimeout(cardLeaving);
   cardShowing = null;
   CARD.hidden = true;
+}
+
+// The card is a thing you can put the pointer in, which is what makes a long
+// document readable: it takes pointer events, it does not follow the pointer
+// once it is up, and it stays while the pointer is inside it.
+if (CARD) {
+  CARD.addEventListener('pointerenter', () => clearTimeout(cardLeaving));
+  CARD.addEventListener('pointerleave', hideCard);
 }
 
 // The re-set a repeated message is waiting on. One variable and not one per
@@ -2506,6 +2590,13 @@ _FACETS = """
       reader who is told about every half-finished bracket as an alert is a
       reader who turns the page off. -#}
   <span id="query-error" role="status" aria-live="polite" hidden></span>
+  {#- The way out, beside the box that gets you in. Drawn only when something is
+      actually set: a Clear that is always there is a control that does nothing
+      most of the time, and the reader has to read it to find that out. It is not
+      `#clear-filters` — the table draws one of those inside its own empty state,
+      where a reader who has filtered everything away is looking, and two elements
+      cannot share an id. -#}
+  <button type="button" id="unfilter" hidden>Clear filters</button>
   {#- The far end of the search box's line, for what a page has to say about the
       view it draws. A slot rather than a sentence, because the three views say
       different things there — how to pan the graph, which window the timeline is
@@ -2822,6 +2913,20 @@ function syncFilters() {
   }
   document.getElementById('q').value = params.get('q') || '';
   sayQueryError();
+  showTheWayOut();
+}
+
+// Whether anything is set at all, asked of the query string rather than of the
+// controls: the query string is the state, and the people page's `role` is a
+// field the entity list below has never heard of.
+function showTheWayOut() {
+  const out = document.getElementById('unfilter');
+  if (!out) return;
+  const fields = [...document.querySelectorAll('.facet[data-field]')]
+    .map(facet => facet.dataset.field);
+  const set = [...fields, 'q', 'predicate']
+    .some(field => params.getAll(field).filter(Boolean).length);
+  out.hidden = !set;
 }
 
 function facetLabel(facet) {
@@ -2902,6 +3007,8 @@ function clearFilters() {
 }
 
 document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
+const UNFILTER = document.getElementById('unfilter');
+if (UNFILTER) UNFILTER.onclick = clearFilters;
 
 // --- opening and closing a field -------------------------------------------
 //
@@ -3682,10 +3789,7 @@ tbody.addEventListener('pointerover', event => {
   // being done.
   if (!row || cell.querySelector('input, textarea') || MOVING) return hideCard();
   const held = DATA.rows[row.dataset.id];
-  if (held) showCard(held, event.clientX, event.clientY);
-});
-tbody.addEventListener('pointermove', event => {
-  if (!CARD.hidden) placeCard(event.clientX, event.clientY);
+  if (held) queueCard(held, event.clientX, event.clientY);
 });
 tbody.addEventListener('pointerout', event => {
   if (event.target.closest('td[data-col="title"]')) hideCard();
@@ -3693,7 +3797,7 @@ tbody.addEventListener('pointerout', event => {
 // A cell that opens for editing under a card, and a redraw that replaces the row
 // the card is describing: neither is a pointer leaving anything, so neither fires
 // `pointerout`.
-addEventListener('openproj:filter', hideCard);
+addEventListener('openproj:filter', hideCardNow);
 
 {% if not editable %}
 // A rendered file has no server to save to, so the table is a table.
@@ -4046,13 +4150,14 @@ function adderHtml() {
   // there is no row for them to belong to. One function draws them either way,
   // so the two places cannot come to offer different things.
   //
-  // The sentence stays here, under both. It is the one thing that says the row
-  // on screen is not a record yet, and a person reads it in the gap between
-  // typing and pressing — which is where it already is.
+  // The sentence that used to be here — "Nothing is written until you press
+  // Create" — is gone. It named a button that no longer exists: the controls are
+  // a check and a cross now, and a hint that explains a control by the wrong
+  // name is worse than no hint. The marks carry their own names in `title` and
+  // `aria-label`, which is where a control says what it does.
   return (DRAFT.kind ? draftRowHtml() : '') +
     `<tr class="adder open"><td${wide}>` +
     (DRAFT.kind ? '' : draftControls()) +
-    `<span class="hint">Nothing is written until you press Create</span>` +
     `<ul id="draft-problems" role="status" aria-live="polite" hidden></ul>` +
     `</td></tr>`;
 }
@@ -5661,14 +5766,6 @@ _GRAPH = """
     140px of graph. -#}
 <div class="commitbar" id="commitbar">
   <button type="button" id="connect">Edit dependencies</button>
-  {#- A mode and not a modifier. Cytoscape's own drag already means "move the
-      node on the canvas", so the gesture that files one thing under another has
-      to be told apart from it somehow — and shift-drag is invisible until
-      somebody is told about it, while a handle on each node is a vendored
-      library in a repository whose premise is that nothing is fetched. A mode
-      says what the next drag will do, in the place the other mode already
-      lives. -#}
-  <button type="button" id="refile">Refile</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
   <span id="state" role="status"></span>
@@ -5676,11 +5773,6 @@ _GRAPH = """
 </div>
 {% endif %}
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
-{#- `model.PARENT_KINDS`, which decides which drop is refused before it is sent.
-    The table ships the same map inside its payload and calls it the same thing;
-    the server refuses either way, and a client that only finds out afterwards is
-    a canvas that lets you drop a project into a task and then takes it back. -#}
-<script id="parents" type="application/json">{{ parent_kinds|tojson }}</script>
 <script>{{ cytoscape }}</script>
 <script>{{ dagre }}</script>
 <script>{{ cytoscape_dagre }}</script>
@@ -5798,14 +5890,6 @@ const cy = cytoscape({
         'width': 150, 'height': 44 } },
     { selector: '.picked', style: {
         'border-color': token('--danger'), 'border-width': 5 } },
-    // What a drop would do, while the mouse is still down — the canvas's spelling
-    // of the two answers the table paints on its rows during the same gesture. A
-    // rule you can only learn by breaking it is a rule nobody learns.
-    { selector: '.can-hold', style: {
-        'border-color': token('--ok'), 'border-width': 4 } },
-    { selector: '.cannot-hold', style: {
-        'border-color': token('--sev-blocker'), 'border-width': 4,
-        'border-style': 'dashed' } },
     // The name of a group used to be 9px of --muted sitting ON the box's border,
     // where every edge crossing the box ran straight through it. Inside, top
     // left, on its own ground: a box whose name you cannot read is a box that
@@ -5848,6 +5932,13 @@ const cy = cytoscape({
     { selector: 'edge.pending', style: {
         'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
         'line-style': 'dashed', 'width': 2 } },
+    // On its way out. The same ink as a drawn-but-unsaved edge, because both are
+    // "this is not committed yet", and dotted rather than dashed so the two
+    // states are told apart by more than the direction somebody remembers
+    // clicking in.
+    { selector: 'edge.dropping', style: {
+        'line-color': token('--danger'), 'target-arrow-color': token('--danger'),
+        'line-style': 'dotted', 'width': 3 } },
   ],
 });
 
@@ -6018,13 +6109,23 @@ function pending() {
   return cy.edges('.pending');
 }
 
+// Edges that are on the canvas because they are in the plan, and are marked to
+// come out of it. Drawing one and removing one are the same job — "what waits
+// for what is wrong on this diagram" — and a mode that could only add was a mode
+// you had to leave, and open a record, to finish the thought.
+function dropping() {
+  return cy.edges('.dropping');
+}
+
 function tally(extra) {
   const n = pending().length;
+  const gone = dropping().length;
   SAVE.hidden = DISCARD.hidden = !connecting;
-  SAVE.disabled = n === 0;
-  const drawn = n === 0 ? 'nothing drawn yet' :
-                n === 1 ? '1 dependency drawn — press Save to commit it' :
-                `${n} dependencies drawn — press Save to commit them`;
+  SAVE.disabled = n === 0 && gone === 0;
+  const drawn = n === 0 && gone === 0 ? 'nothing changed yet' : [
+    n === 1 ? '1 dependency drawn' : n > 1 ? `${n} dependencies drawn` : '',
+    gone === 1 ? '1 to remove' : gone > 1 ? `${gone} to remove` : '',
+  ].filter(Boolean).join(', ') + ' — press Save to commit';
   say(connecting ? (extra ? extra + ' · ' + drawn : drawn) : (extra || ''));
   // Save and Reset appear here, and at a narrow window that is a second line of
   // commit bar. The bar is what the canvas has to clear, so a bar that grew is a
@@ -6056,21 +6157,18 @@ cy.on('mouseover', 'node', evt => {
   // from the same `_row` the table is drawn from — and this page has no `DATA` of
   // its own to look anything up in. The first version of this read `DATA.rows`
   // and drew nothing at all, on the one view the card was added for.
-  showCard(evt.target.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
-});
-cy.on('mousemove', 'node', evt => {
-  if (!CARD.hidden) placeCard(evt.originalEvent.clientX, evt.originalEvent.clientY);
+  queueCard(evt.target.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
 });
 cy.on('mouseout', 'node', hideCard);
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
-cy.on('drag pan zoom', hideCard);
+cy.on('drag pan zoom', hideCardNow);
 
 if (CONNECT) {
   CONNECT.onclick = () => {
-    const dropped = connecting ? pending().length : 0;
-    if (dropped) cy.remove(pending());
+    const dropped = connecting ? pending().length + dropping().length : 0;
+    if (dropped) { cy.remove(pending()); dropping().removeClass('dropping'); }
     connecting = !connecting;
     blocker = null;
     cy.nodes().removeClass('picked');
@@ -6080,12 +6178,14 @@ if (CONNECT) {
     // the button reflowed the page under the pointer — and everything it says is
     // still true in edit mode: you still pan, still zoom, still drag a node.
     // What edit mode adds is said once, beside the button that turned it on.
-    tally(connecting ? 'click what must finish first, then what waits for it'
-                     : dropped ? `discarded ${dropped}` : '');
+    tally(connecting
+      ? 'click what must finish first, then what waits for it — or click an arrow to remove it'
+      : dropped ? `discarded ${dropped}` : '');
   };
 
   DISCARD.onclick = () => {
     cy.remove(pending());
+    dropping().removeClass('dropping');
     blocker = null;
     cy.nodes().removeClass('picked');
     tally('reset');
@@ -6098,15 +6198,32 @@ if (CONNECT) {
   SAVE.onclick = async () => {
     SAVE.disabled = true;
     const wanted = new Map();
+    // Both halves are grouped by the entity that WAITS, because that is the
+    // record `depends_on` is stored on — an edge removed is a line taken out of
+    // the dependent's own file, exactly like an edge added is one put into it.
+    const unwanted = new Map();
     for (const edge of pending()) {
       const target = edge.target().id();
       wanted.set(target, [...(wanted.get(target) || []), edge.source().id()]);
+    }
+    for (const edge of dropping()) {
+      const target = edge.target().id();
+      unwanted.set(target, [...(unwanted.get(target) || []), edge.source().id()]);
+      if (!wanted.has(target)) wanted.set(target, []);
     }
     const base = document.getElementById('base');
     let written = 0;
     for (const [id, sources] of wanted) {
       const node = cy.getElementById(id);
-      const fields = {depends_on: [...new Set([...(node.data('depends_on') || []), ...sources])]};
+      const gone = new Set(unwanted.get(id) || []);
+      // Added first and removed second, so a dependency drawn and then marked in
+      // one session comes out as removed rather than as whichever the loops ran
+      // in. `depends_on` is sent whole because a PATCH of a list replaces it —
+      // there is no "and also remove this" on the wire, and inventing one would
+      // be a second way to say the same thing.
+      const fields = {depends_on:
+        [...new Set([...(node.data('depends_on') || []), ...sources])]
+          .filter(one => !gone.has(one))};
       // Declared before the request and answered in `finally`, because the server
       // announces a commit to the event stream before it answers the request that
       // made it — so this tab can hear about its own write first. Announced even
@@ -6141,154 +6258,25 @@ if (CONNECT) {
   };
 }
 
-// --- refiling ---------------------------------------------------------------
-//
-// Dragging one node onto another files it under that one; dragging it onto bare
-// canvas takes it out of whatever holds it. Both are a `parent`, which is a
-// field like any other, so the write below is the same PATCH the table's own
-// drag sends — the gesture is new, the save path is not.
-//
-// In a mode of its own, because a plain drag on this canvas already means "move
-// the node" and always has. The alternatives were a modifier, which is invisible
-// until somebody is told about it, and a drag handle from a library this
-// repository would have to vendor. The mode names what the next drag will do.
-//
-// The two modes are exclusive: entering one leaves the other. Drawing an edge
-// and refiling are both "click a node, then somewhere else", and a canvas where
-// that means two things at once is a canvas nobody can predict.
-
-const REFILE = document.getElementById('refile');
-const CAN_HOLD = (() => {
-  try { return JSON.parse(document.getElementById('parents').textContent); }
-  catch (error) { return {}; }
-})();
-let refiling = false;
-let held = null;
-
-// What a kind may be filed under, in the validator's own words — the same
-// sentence the table says before the same refusal.
-const holdersOf = kind =>
-  (CAN_HOLD[kind] || []).map(one => 'a ' + one).join(' or ') || 'nothing';
-
-// The innermost node this point is inside, ignoring the one being dragged and
-// anything it holds: dropping a pitch into its own task is a cycle, and the
-// canvas should refuse it while the mouse is still down rather than after a
-// round trip. Innermost, because the boxes nest — a task dropped inside a pitch
-// inside a project must land in the pitch, which is the one the pointer is
-// actually over.
-// Where every box was when the drag started.
-//
-// Measured once, at `grab`, and not per frame. A compound node's box is drawn
-// around its children, so while one of them is in the air the box follows it: a
-// task dragged to the far corner of the canvas is still inside the parent it is
-// trying to leave, which made taking something OUT of a pitch impossible — the
-// answer was always its own parent, wherever it was dropped. Measuring the
-// parent without the dragged child instead shrinks the box to the other
-// children, so dropping a node back where it started landed it outside the thing
-// it had not left.
-//
-// The boxes as they were is the answer to both. It is also what the person
-// dragging sees: the boxes under the pointer are the ones that were on screen
-// when they picked the node up.
-let BOXES = new Map();
-
-function snapBoxes() {
-  BOXES = new Map(cy.nodes().map(node => [node.id(), node.boundingBox()]));
-}
-
-// The innermost box this point is inside, ignoring the node being dragged and
-// anything it holds: dropping a pitch into its own task is a cycle, and the
-// canvas refuses it while the mouse is still down rather than after a round trip.
-// Innermost, because the boxes nest — a task dropped inside a pitch inside a
-// project lands in the pitch, which is the one the pointer is actually over.
-function under(point, dragged) {
-  let best = null;
-  cy.nodes().forEach(node => {
-    if (node.same(dragged) || dragged.descendants().contains(node)) return;
-    const box = BOXES.get(node.id());
-    if (!box) return;
-    if (point.x < box.x1 || point.x > box.x2 || point.y < box.y1 || point.y > box.y2) return;
-    const area = box.w * box.h;
-    if (!best || area < best.area) best = {node, area};
-  });
-  return best && best.node;
-}
-
-// Whether this drop is one the server would take, asked before it is sent.
-function mayHold(parent, child) {
-  return (CAN_HOLD[child.data('kind')] || []).includes(parent.data('kind'));
-}
-
-if (REFILE) {
-  REFILE.onclick = () => {
-    if (connecting) CONNECT.onclick();
-    refiling = !refiling;
-    REFILE.textContent = refiling ? 'Stop refiling' : 'Refile';
-    document.getElementById('cy').classList.toggle('refiling', refiling);
-    say(refiling
-      ? 'Drag a node onto another to file it there, or onto the canvas to take it out'
-      : '');
-  };
-}
-
-cy.on('grab', 'node', evt => {
-  held = refiling ? evt.target : null;
-  if (held) snapBoxes();
-});
-
-// What the drop would do, while the mouse is still down. `can-hold` and
-// `cannot-hold` are the graph's spelling of the two classes the table paints on
-// its rows during the same gesture, for the same reason: a rule you only learn
-// by breaking it is a rule nobody learns.
-cy.on('drag', 'node', evt => {
-  if (!refiling || !held) return;
-  cy.nodes().removeClass('can-hold cannot-hold');
-  const target = under(evt.target.position(), held);
-  if (target) target.addClass(mayHold(target, held) ? 'can-hold' : 'cannot-hold');
-});
-
-cy.on('free', 'node', async evt => {
-  if (!refiling || !held) return;
-  const child = held;
-  held = null;
-  cy.nodes().removeClass('can-hold cannot-hold');
-  const target = under(evt.target.position(), child);
-  const was = child.data('parent') || null;
-
-  if (target && !mayHold(target, child)) {
-    say(`A ${child.data('kind')} belongs under ${holdersOf(child.data('kind'))}`);
+// An edge is a decision like a node is, so in edit mode it answers to a click.
+// A dependency that was drawn in this session and not saved is simply undrawn;
+// one that is in the plan is marked, and Save takes it out of the `depends_on`
+// it is stored on. Marked rather than removed on the spot, because until Save
+// nothing has happened and the canvas has to be able to say what it is about to
+// do — the same rule the drawn ones follow.
+cy.on('tap', 'edge', evt => {
+  if (!connecting) return;
+  const edge = evt.target;
+  if (edge.hasClass('pending')) {
+    cy.remove(edge);
+    tally('undrawn');
     return;
   }
-  const wanted = target ? target.id() : null;
-  // A drag that changed nothing is not a write. Cytoscape fires `free` for every
-  // drag, including the ones that only moved a node two pixels on the canvas —
-  // and a commit per nudge is a history nobody can read.
-  if (wanted === was) return;
-  await refile(child.id(), wanted);
+  edge.toggleClass('dropping');
+  tally(edge.hasClass('dropping')
+    ? `${edge.source().id()} → ${edge.target().id()} will be removed`
+    : 'kept');
 });
-
-// The write. Same PATCH, same base commit, same 409 as everything else this page
-// commits; the page reloads afterwards because a parent moves the row's cycle,
-// its dates, what it waits for and which project it counts against, and not one
-// of those is something this canvas can work out for itself.
-async function refile(childId, parentId) {
-  const base = document.getElementById('base');
-  dispatchEvent(new Event('openproj:writing'));
-  let committed = null;
-  try {
-    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
-      method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: base.value, fields: {parent: parentId}, body: null}),
-    });
-    const answer = await answerOf(response);
-    if (!response.ok) { say(refusal(answer, response.status)); return; }
-    committed = answer.commit;
-    base.value = answer.commit;
-  } finally {
-    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
-  }
-  location.reload();
-}
 
 cy.on('tap', 'node', evt => {
   const node = evt.target;
@@ -6611,17 +6599,17 @@ const human = value => (DATA && DATA.human[value]) || value;
 //
 // `showCard` is the shell's, and this is the view it was written for. The graph
 // and the table draw the same one now; see the card block in `_SHELL`.
-function showTip(id, x, y) {
+function showTip(id, x, y, now) {
   const row = DATA && DATA.rows[id];
-  if (row) showCard(row, x, y);
+  // `now` for the keyboard: focus is a deliberate act and a delay after one is a
+  // page ignoring you. A pointer crossing the plot is not deliberate, so it
+  // waits like everywhere else.
+  if (row) (now ? showCard : queueCard)(row, x, y);
 }
 
 svg.addEventListener('pointerover', event => {
   const rect = event.target.closest('rect[data-id]');
   if (rect) showTip(rect.dataset.id, event.clientX, event.clientY);
-});
-svg.addEventListener('pointermove', event => {
-  if (!CARD.hidden) placeCard(event.clientX, event.clientY);
 });
 svg.addEventListener('pointerout', event => {
   if (event.target.closest('rect[data-id]')) hideCard();
@@ -6633,9 +6621,9 @@ for (const [id, row] of LABELS) {
   const link = row.querySelector('a');
   link.addEventListener('focus', () => {
     const box = link.getBoundingClientRect();
-    showTip(id, box.right, box.bottom);
+    showTip(id, box.right, box.bottom, true);
   });
-  link.addEventListener('blur', hideCard);
+  link.addEventListener('blur', hideCardNow);
 }
 // The native tooltip holds the same sentence, arrives a second later and lands
 // somewhere else. The markup keeps it so a page without script still explains
@@ -6822,11 +6810,6 @@ text.bar-glyph { font-family: var(--font-sans); font-size: 9px; font-weight: 700
                  pointer-events: none; }
 /* Beside the plot rather than over it: the plot is as tall as its rows, and an
    overlay on an empty one has nothing to cover. */
-/* What a drop would do, while the mouse is still down. The table paints the same
-   two answers on its rows during the same gesture; this is the canvas's spelling
-   of them. `--drop` is the ground a row that would take it wears there, and
-   `--sev-blocker` is the ink a refusal wears everywhere. */
-#cy.refiling { cursor: grab; }
 #nothing { border: 1px solid var(--line); padding: 2.5rem 1rem; text-align: center; }
 #nothing .headline { margin: 0 0 .25rem; font-size: 15px; }
 #nothing .hint { margin: 0 0 .75rem; }
@@ -13562,7 +13545,6 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         total=len(index.entities),
         links=links,
         elements=_elements(index),
-        parent_kinds={kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         cytoscape=_library("cytoscape.min.js"),
         dagre=_library("dagre.min.js"),
         cytoscape_dagre=_library("cytoscape-dagre.js"),
