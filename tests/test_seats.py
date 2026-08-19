@@ -13,7 +13,6 @@ which is the same shape as the room, with the network taken out.
 
 from __future__ import annotations
 
-import json
 from datetime import date
 from pathlib import Path
 
@@ -85,7 +84,7 @@ addEventListener('load', () => setTimeout(() => {
   const socket = window.__socket;
   socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
   const body = document.querySelector('textarea[name=body]');
-  body.value = '%s';
+  body.value = '%LINES%';
   body.dispatchEvent(new Event('input'));
   // The start of the third line, which is where the band should be drawn.
   window.__at = body.value.indexOf('line 2');
@@ -93,7 +92,7 @@ addEventListener('load', () => setTimeout(() => {
                where: [{login: 'bo', at: window.__at}]});
 }, 200));
 </script>
-""" % LINES
+""".replace("%LINES%", LINES)
 
 _DRAWN = """
 const layer = document.getElementById('seats');
@@ -183,14 +182,14 @@ addEventListener('load', () => setTimeout(() => {
   socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '',
                people: ['ann', 'bo', 'cy']});
   const body = document.querySelector('textarea[name=body]');
-  body.value = '%s';
+  body.value = '%LINES%';
   body.dispatchEvent(new Event('input'));
   socket.hear({t: 'who', people: ['ann', 'bo', 'cy'],
                where: [{login: 'bo', at: body.value.indexOf('line 1')},
                        {login: 'cy', at: body.value.indexOf('line 7')}]});
 }, 200));
 </script>
-""" % LINES
+""".replace("%LINES%", LINES)
 
 _COLOURS = """
 const bands = [...document.getElementById('seats').children];
