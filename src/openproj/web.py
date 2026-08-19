@@ -1054,6 +1054,28 @@ def create_app(
             raise HTTPException(403, f"{user.login} is not a member of {org}")
         return user
 
+    def may_write(request: Request) -> bool:
+        """Whether this request would be allowed to write, asked before a socket
+        is opened rather than after it is refused.
+
+        Through `writer` and not through a second reading of the session, for the
+        reason `picker_for` below gives at length: two spellings of "who may
+        write" is how a page comes to offer something whose only answer is 403.
+
+        It matters that it is this function and not `/api/me`, which the page
+        already fetches to draw the corner. `/api/me` answers `viewer` — the
+        session cookie and nothing else — and under `--auth dev` there is no
+        cookie while `writer` invents `dev_login` and permits the write. Gating on
+        the corner would therefore refuse the socket in exactly the mode somebody
+        tries this tool in, with every test still green, because the tests sign a
+        cookie.
+        """
+        try:
+            writer(request)
+        except HTTPException:
+            return False
+        return True
+
     def picker_for(request: Request) -> str:
         """The login this request may set an icon for, or "" for nobody.
 
@@ -1553,15 +1575,28 @@ def create_app(
         return page(render.render_detail(index_now()[1], render.ROUTES))
 
     @app.get("/detail/{entity_id}", response_class=HTMLResponse)
-    def detail(entity_id: str) -> HTMLResponse:
+    def detail(entity_id: str, request: Request) -> HTMLResponse:
         commit, index = index_now()
         if entity_id not in index.entities:
             raise HTTPException(404, f"no entity {entity_id!r}")
         # The page carries the commit it was rendered at, so a save is compared
         # against what the person actually saw rather than against whatever HEAD
         # has become while the tab sat open.
+        #
+        # And whether this reader may write, because the co-editing socket is
+        # only offered to somebody the server would accept a frame from. Reads
+        # here are public, so most page loads are readers — and every one of them
+        # used to open a socket, be refused, and try four more times, which is
+        # five red lines in the console of a page that is working exactly as
+        # designed. That is how a real error comes to be ignored.
         return page(
-            render.render_detail(index, render.ROUTES, only=entity_id, base_commit=commit)
+            render.render_detail(
+                index,
+                render.ROUTES,
+                only=entity_id,
+                base_commit=commit,
+                may_write=may_write(request),
+            )
         )
 
     @app.post("/api/preview")
