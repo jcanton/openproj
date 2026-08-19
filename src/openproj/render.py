@@ -400,6 +400,14 @@ def _row(index: Index, entity_id: str) -> dict:
         "progress_text": counted.text if counted else "",
         "prs": entity.prs,
         "tags": entity.tags,
+        # Three fields that are not columns and are not drawn anywhere on this
+        # page. They are here because the gate names them: a status the table can
+        # set demands them, and a row has to be able to answer whether it already
+        # holds one — `size` is the appetite *or the default*, so it cannot
+        # answer for `person_weeks`, and the other two are on no row at all.
+        "assigned_on": entity.assigned_on.isoformat() if entity.assigned_on else None,
+        "person_weeks": getattr(entity, "person_weeks", None),
+        "shaped_by": getattr(entity, "shaped_by", None) or [],
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
@@ -483,6 +491,16 @@ def _payload(index: Index) -> dict:
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
         "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
+        # Which statuses demand which fields, derived from the gate itself by
+        # `required_at` (`model.py`). The detail page has had this since it grew
+        # the marks beside its labels; the table had nothing, so moving a row to
+        # `in_progress` was a refusal naming a field the table does not show, and
+        # the way out was to open the record and come back.
+        #
+        # Per kind, because a row is one kind: merged, the map says a project is
+        # missing `person_weeks` at `ready` and a project has no such field. The
+        # form keeps the merge, because its kind can still be switched.
+        "required": {kind: required_at(kind) for kind in _KIND_MODELS},
         # What a row that does not exist yet can be typed into, per kind.
         "new_row": _new_row_fields(),
         # And what it holds before anybody types anything, read off the model
@@ -2630,7 +2648,12 @@ _FACETS = """
     </button>
     <div class="facetmenu" role="group" aria-labelledby="facet-{{ field }}" hidden>
       {% for value in facets.get(field, []) %}
-      <label><input type="checkbox" value="{{ value }}">{{ value|human }}</label>{% endfor %}
+      {#- The value is what the filter matches and what the URL carries; the word
+          beside it is what a person reads. They are the same string for a status
+          and a login and are not for a project, whose values are ids — `Project:
+          proj-370001` is a menu that asks you to know the plan by heart. -#}
+      <label><input type="checkbox" value="{{ value }}">{{
+        titles.get(value) or value|human }}</label>{% endfor %}
     </div>
   </div>
   {% endfor %}
@@ -3139,6 +3162,11 @@ _TABLE = """
 {#- A conflict is the one answer that means the save did not land. It was a
     box that appeared, and nothing more. -#}
 <div id="row-conflict" role="status" aria-live="polite" hidden></div>
+{#- What the status about to be saved demands and the row has not got. A panel
+    and not a column: `assigned_on` beside `start` and `end` is a third date on a
+    row that already carries two derived ones, and the question is only ever
+    asked at the moment the status moves. -#}
+<div id="askfor" hidden></div>
 {% endif %}
 <script id="payload" type="application/json">{{ payload|tojson }}</script>
 {% if editable %}{{ combobox }}{% endif %}
@@ -3837,7 +3865,94 @@ async function refreshProblems() {
   summarise();
 }
 
-async function saveCell(cell, value) {
+// What this status will make the server refuse the row without, and the row has
+// not got. `DATA.required` is `required_at()`, which is derived from the gate
+// rather than written beside it — the same map the detail page marks its labels
+// from.
+//
+// `review_waived` is honoured here for the reason it is honoured there: it is the
+// escape hatch from the reviewer rule, and asking for reviewers on a row that has
+// waived them is a nag rather than a question.
+function missingFor(row, status) {
+  return Object.entries((DATA.required || {})[row.kind] || {})
+    .filter(([field, statuses]) => statuses.includes(status))
+    .map(([field]) => field)
+    .filter(field => EDITABLE[field] && !(field === 'reviewers' && row.review_waived))
+    .filter(field => {
+      const held = row[field];
+      return held === null || held === undefined || held === ''
+        || (Array.isArray(held) && held.length === 0);
+    });
+}
+
+// Fields a span is computed from. Editing one of these from the table changes
+// `start` and `end`, which are columns nothing in the browser can work out — so
+// the rows are re-read from the server rather than patched in place.
+const DERIVES_DATES = new Set(['assigned_on', 'person_weeks', 'cycle']);
+
+// Today, in the reader's own timezone. `toISOString` is UTC, so on a laptop east
+// of Greenwich in the evening it offers tomorrow — which is a date somebody
+// accepts without reading, because it is prefilled and it is nearly right.
+function today() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
+// The one question a status change is allowed to ask. It is asked BEFORE the
+// write, so the answer travels in the same PATCH as the status: a row that goes
+// `in_progress` and then has a date added is two commits, and for the length of
+// the first one the plan holds a record the validator refuses.
+function askFor(cell, status, fields) {
+  const panel = document.getElementById('askfor');
+  const named = fields.map(field => {
+    const label = FIELD_LABELS[field] || field;
+    const type = EDITABLE[field] === 'date' ? 'date' : 'text';
+    const value = field === 'assigned_on' ? today() : '';
+    return `<label>${esc(label)}` +
+      `<input type="${type}" data-field="${esc(field)}" value="${esc(value)}"></label>`;
+  }).join('');
+  panel.innerHTML =
+    `<p class="asking">${esc(human(status))} needs ${fields.length === 1 ? 'this' : 'these'}` +
+    `</p>${named}` +
+    `<span class="acts"><button type="button" id="asked" class="primary">Save</button>` +
+    `<button type="button" id="unasked">Cancel</button></span>`;
+  panel.hidden = false;
+  const box = cell.getBoundingClientRect();
+  panel.style.left = Math.max(8, Math.min(box.left, innerWidth - panel.offsetWidth - 8)) + 'px';
+  panel.style.top = Math.min(box.bottom + 6, innerHeight - panel.offsetHeight - 8) + 'px';
+  panel.querySelector('input').focus();
+  panel.querySelector('input').select();
+
+  // The keyboard goes back to the cell the question was asked about. `rove` is
+  // what this table hands focus with everywhere else, and it survives the redraw
+  // that a save causes.
+  const shut = () => { panel.hidden = true; panel.innerHTML = ''; rove(cell, true); };
+  panel.querySelector('#unasked').onclick = () => { shut(); announce('nothing was changed'); };
+  panel.querySelector('#asked').onclick = () => {
+    const extra = {};
+    for (const input of panel.querySelectorAll('input')) {
+      if (!input.value.trim()) {
+        announce(`${FIELD_LABELS[input.dataset.field] || input.dataset.field} is needed`);
+        input.focus();
+        return;
+      }
+      extra[input.dataset.field] = input.value.trim();
+    }
+    panel.hidden = true;
+    panel.innerHTML = '';
+    saveCell(cell, status, extra);
+  };
+  // Enter saves and Escape gives up, which is what every other box on this page
+  // answers to — a panel that has to be dismissed with the mouse is a panel that
+  // stops the keyboard path this table is built around.
+  panel.onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); panel.querySelector('#asked').click(); }
+    if (event.key === 'Escape') { event.preventDefault(); panel.querySelector('#unasked').click(); }
+  };
+}
+
+async function saveCell(cell, value, extra) {
   const field = cell.dataset.field;
   const box = document.getElementById('row-conflict');
   // Cleared here and nowhere else. This page redraws instead of reloading, so
@@ -3856,6 +3971,22 @@ async function saveCell(cell, value) {
   // the server announces a commit to the event stream before it answers the
   // request that made it, so the news of your own save can arrive before you
   // know its sha.
+  // A status that demands what this row has not got is a question before it is a
+  // write. Asked once — `extra` is what came back from asking, and a second pass
+  // through here with it must not ask again.
+  if (field === 'status' && !extra) {
+    const wanted = missingFor(DATA.rows[cell.dataset.entity] || {}, coerced);
+    if (wanted.length) { askFor(cell, value, wanted); return; }
+  }
+  let sending;
+  try {
+    sending = {[field]: coerced};
+    for (const [name, raw] of Object.entries(extra || {}))
+      sending[name] = coerce(EDITABLE[name], raw);
+  } catch (error) {
+    announce(`${field} ${error.message}`);
+    return;
+  }
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
@@ -3871,7 +4002,7 @@ async function saveCell(cell, value) {
     // the save somebody pressed on one record addresses something else entirely.
     const response = await fetch(`/api/entity/${encodeURIComponent(cell.dataset.entity)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: BASE.value, fields: {[field]: coerced}, body: null}),
+      body: JSON.stringify({base_commit: BASE.value, fields: sending, body: null}),
     });
     const answer = await answerOf(response);
     if (response.status === 409) {
@@ -3887,7 +4018,15 @@ async function saveCell(cell, value) {
     // the commit it just made.
     committed = answer.commit;
     BASE.value = answer.commit;
-    DATA.rows[cell.dataset.entity][field] = coerced;
+    Object.assign(DATA.rows[cell.dataset.entity], sending);
+    // A date the schedule is derived FROM has moved, so every date derived from
+    // it on this row is now wrong on screen — and `start` and `end` are two
+    // columns away from the one that was edited. Re-read rather than recomputed:
+    // the scheduler is the server's, and a second copy of it here is the thing
+    // this codebase has paid for three times already.
+    if (extra && Object.keys(extra).some(name => DERIVES_DATES.has(name))) {
+      await refreshRows();
+    }
     // Twice: once to put the typed value back into the cell rather than leaving
     // an open editor sitting there for the length of a second round trip, and
     // once when the server has said what that value did to the problems.
@@ -5702,6 +5841,30 @@ tr.draft > td.draft-none {
   background-image: repeating-linear-gradient(-45deg, transparent, transparent 3px,
                     var(--line-strong) 3px, var(--line-strong) 4px);
 }
+/* The one question a status change may ask, over the row it is about. Fixed, so
+   it is not clipped by the table's own scroller — the cell it belongs to can be
+   in a frozen column with `overflow: hidden` two ancestors up — and z-index 6,
+   which clears the header (3), the frozen pair (4) and the drop label (5). */
+#askfor {
+  position: fixed; z-index: 6; min-width: 14rem;
+  display: flex; flex-direction: column; gap: .35rem;
+  padding: .5rem .6rem; background: var(--surface); color: var(--fg);
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.12);
+}
+#askfor[hidden] { display: none; }
+#askfor .asking { margin: 0; font-size: 12px; color: var(--muted); }
+#askfor label { display: flex; flex-direction: column; gap: .15rem;
+                font-size: 11px; color: var(--muted); text-transform: uppercase;
+                letter-spacing: .04em; }
+#askfor input { font: inherit; font-size: 13px; text-transform: none;
+                letter-spacing: 0; color: var(--fg); padding: .15rem .3rem;
+                border: 1px solid var(--line-strong); border-radius: 3px; }
+#askfor .acts { display: flex; gap: .4rem; margin-top: .15rem; }
+#askfor button { font: inherit; font-size: 12px; padding: .15rem .6rem;
+                 border: 1px solid var(--line-strong); border-radius: 3px;
+                 background: none; color: inherit; cursor: pointer; }
+#askfor button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 /* The create refusal, beside the row it refused. `#row-conflict` is styled in
    the shell and this is the same kind of news, but a create has no row to sit
    next to — so it lands in the bar, where the button that caused it is. */
@@ -7443,12 +7606,19 @@ _NEW = """
         {#- What the form or the server refused this with. Filled by script, so
             it is news arriving on a page that is already open. -#}
         <ul id="problems" class="problems" role="status" aria-live="polite" hidden></ul>
+        {#- Two rows, in the order the two kinds of control are reached for. The
+            first says what this box will BE — a preview of it, and the template
+            it starts from; the second is the typing furniture. One row put a
+            seven-character select between `Preview the body` and eight
+            single-character buttons, and nothing on the line lined up with
+            anything else on it. -#}
         <p class="field bodybar">
-          <span id="marks" class="marks"></span>
           <button type="button" id="preview">Preview the body</button>
           {#- The template is offered, never imposed: it fills an untouched box
-              and refuses to overwrite one somebody has typed in. -#}
-          <label class="tplpick">start from
+              and refuses to overwrite one somebody has typed in. `template` and
+              not `start from`: the label names the control, and the sentence it
+              was part of ended in the option list. -#}
+          <label class="tplpick">template
             <select id="template">
               <option value="pitch">the shaping template</option>
               <option value="task">a task</option>
@@ -7457,6 +7627,9 @@ _NEW = """
             </select>
           </label>
           <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
+        </p>
+        <p class="field bodybar markbar">
+          <span id="marks" class="marks"></span>
           <span class="hint">paste or drop an image to put it in the plan</span>
           <span class="hint" id="upload" role="status" aria-live="polite"></span>
         </p>
@@ -7697,7 +7870,13 @@ _DETAIL = """
       column, level with the title, so nothing is further away than it was. -#}
   <p class="meta"><code>{{ e.id }}</code>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
+  {#- The way in, at the top. It was in the commit bar at the foot of the page,
+      under the whole shaping document — so on any record worth reading, the
+      button that lets you change it was a scroll away from the thing you had
+      just decided to change. Save stays down there, where what is being
+      committed ends. -#}
   {% if editable %}
+  <p class="editbar"><button type="button" id="toggle">Edit</button></p>
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
@@ -7770,8 +7949,10 @@ _DETAIL = """
             off a `<textarea>` through a mirror element is worse than no caret at
             all. Empty when nobody else is here, which is most of the time. -#}
         <span id="together" class="together" role="status" aria-live="polite"></span>
-        <span id="marks" class="marks"></span>
         <button type="button" id="preview">Preview the body</button>
+      </p>
+      <p class="field bodybar markbar">
+        <span id="marks" class="marks"></span>
         <span class="hint">paste or drop an image to put it in the plan</span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
       </p>
@@ -7784,10 +7965,17 @@ _DETAIL = """
   </div>
   {% if editable %}
   </form>
+  {#- Save stays at the bottom, where the thing being committed ends; Edit has
+      moved to the top, beside the title, because it is the way IN and a way in
+      you have to scroll past a shaping document to find is one nobody finds. -#}
   <div class="commitbar" id="commitbar">
     <span id="unsaved">Nothing to save</span>
-    <button type="button" id="toggle">Edit</button>
     <button type="button" id="save" hidden>Save</button>
+    {#- Cancel stays beside Save and never beside Edit. They are the two ways one
+        editing session can end and putting them in two places is how somebody
+        closes a tab believing the other one was the way out. Edit is a third
+        thing — the way IN — which is why it is at the top and this is not. -#}
+    <button type="button" id="cancel" hidden>Cancel</button>
     <span id="state" role="status"></span>
   </div>
   {% endif %}
@@ -7938,18 +8126,30 @@ function showEditing(editing) {
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
-  document.getElementById('toggle').textContent = editing ? 'Cancel' : 'Edit';
+  // Three buttons and never two of them at once: Edit is the way in and lives at
+  // the top, beside the record; Save and Cancel are the two ways one editing
+  // session ends and live together in the sticky bar at the foot of the thing
+  // being committed. The button that used to be here was Edit and Cancel by
+  // turns, in one place, which put the way out under the document you were
+  // editing.
+  document.getElementById('cancel').hidden = !editing;
+  document.getElementById('toggle').hidden = editing;
   dirty();
 }
 
-document.getElementById('toggle').onclick = () => {
+// Both of the buttons that change the mode, through one handler: Edit at the top
+// turns it on, Cancel in the bar turns it off, and a second copy of what that
+// means is how the two come to disagree about the draft.
+function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   showEditing(editing);
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
   if (!editing) remembered.forget(DRAFT);
-};
+}
+document.getElementById('toggle').onclick = flipEditing;
+document.getElementById('cancel').onclick = flipEditing;
 
 document.getElementById('preview').onclick = async () => {
   // Only the body, and without leaving edit mode. It used to swap the whole page
@@ -8365,6 +8565,10 @@ const COEDIT = (() => {
       return;
     }
     if (message.t === 'saved') {
+      // Whether this tab is the one that asked, read BEFORE `settle` clears it:
+      // the frame goes to everybody in the room, and only the tab that pressed
+      // the button should be told anything or have its editor closed.
+      const mine = saving;
       if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
       BASE.value = message.commit;
       ORIGINAL_BODY = text.toString();
@@ -8375,6 +8579,14 @@ const COEDIT = (() => {
       announce(message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
         : (message.pushed === false ? 'saved here, not yet pushed' : 'saved'));
+      // And the tab that pressed Save leaves edit mode, which is what pressing
+      // it means. The path without a room reloads the page and lands in read
+      // mode by doing so; in a room there is nothing to reload — the document is
+      // already what everybody has — so this is the same ending arrived at
+      // deliberately. Only the tab that asked: everybody else in the room is
+      // still typing, and a commit somebody else made is not a reason to close
+      // the box in front of you.
+      if (mine && typeof showEditing === 'function') showEditing(false);
       return;
     }
     if (message.t === 'refused') {
@@ -8543,6 +8755,9 @@ article.entity:not(.editing) .req { display: none; }
 .entity.editing .field { display: block; }
 .entity.editing .field[hidden] { display: none; }
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
+/* The second row sits under the first rather than a paragraph's worth away: they
+   are two halves of one bar, and the box they belong to is below both. */
+.bodybar.markbar { margin-top: .25rem; }
 .entity.editing .bodybar { display: flex; }
 /* Who else is typing in this document, first in the bar because it is the one
    thing here that changes what you are about to do. `:empty` and not a `hidden`
@@ -12501,11 +12716,22 @@ def render_detail(
 _NO_ASIDE = Markup("")
 
 
+def _titles(index: Index) -> dict[str, str]:
+    """What each entity is called, for the menus whose values are ids.
+
+    Only the Project facet has any today. It is the whole index rather than the
+    projects alone because a value in a menu is a value in a menu — the day
+    something else is filtered by id, this already knows its name.
+    """
+    return {entity_id: entity.title for entity_id, entity in index.entities.items()}
+
+
 def _facets_html(
     facets: dict,
     fields: tuple[str, ...] = _PLAN_FACETS,
     search: str = "Search titles, tags, PRs, people",
     aside: Markup = _NO_ASIDE,
+    titles: dict[str, str] | None = None,
 ) -> Markup:
     """The control bar, for any view that filters anything.
 
@@ -12515,12 +12741,22 @@ def _facets_html(
     people page had written its own, over its own three fields, and had already
     drifted — same markup, a different search box.
 
+    `titles` is what a value is called where the value itself is not a word: the
+    Project menu's values are entity ids, because that is what the filter matches
+    and what the URL has to carry, and a menu of `proj-370001` asks a reader to
+    know the plan by heart. Given per page rather than looked up here, because
+    this function is handed facets and not an index — the people page's three
+    fields have no titles at all.
+
     `aside` rides at the far end of the search box's line. It is here rather than
     on each page because the sentence a view writes about itself was a full row on
     every one of them, and a row above the drawing is the most expensive place on
     these pages to put twelve words.
     """
-    return _fragment(_FACETS, facets=facets, fields=fields, search=search, aside=aside)
+    return _fragment(
+        _FACETS, facets=facets, fields=fields, search=search, aside=aside,
+        titles=titles or {},
+    )
 
 
 def _combobox_html(index: Index | None) -> Markup:
@@ -13339,6 +13575,9 @@ _RECORD_STYLE = """
    class on it, `body.editing .field` won on specificity and the bar went
    inline — putting the textarea on the same line as the buttons. */
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem; }
+/* The second row sits under the first rather than a paragraph's worth away: they
+   are two halves of one bar, and the box they belong to is below both. */
+.bodybar.markbar { margin-top: .25rem; }
 body.editing .bodybar { display: flex; }
 #facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
          margin: 1rem 0; align-items: baseline; }
@@ -13499,7 +13738,7 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         # in the language the rest of this file's drawings are written in.
         marks=DRAFT_MARKS,
         why=_TABLE_WHY,
-        facets=_facets_html(index.facets),
+        facets=_facets_html(index.facets, titles=_titles(index)),
         filters=_FILTER_JS,
         combobox=_combobox_html(index),
     )
@@ -13525,7 +13764,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     body = _ENV.from_string(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
-        facets=_facets_html(index.facets, aside=_GRAPH_HINT),
+        facets=_facets_html(index.facets, aside=_GRAPH_HINT, titles=_titles(index)),
         filters=_FILTER_JS,
         statuses=STATUSES,
         glyphs=STATUS_GLYPH,
@@ -13572,6 +13811,7 @@ def render_timeline(
             aside=_fragment(
                 _TIMELINE_HINT, t=timeline, windowed=bool(window[0] or window[1])
             ),
+            titles=_titles(index),
         ),
         filters=_FILTER_JS,
         # The rows the shared `matches()` reads, for the bars that were drawn. Not

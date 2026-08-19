@@ -1654,7 +1654,7 @@ def _status_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int
         yield "blocker", "prs", "a done entity needs at least one PR", 1
 
 
-def required_at() -> dict[str, tuple[str, ...]]:
+def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
     """Which statuses demand each field, derived from the gate rather than copied.
 
     A form needs this and an HTML `required` attribute cannot express it: what the
@@ -1672,11 +1672,19 @@ def required_at() -> dict[str, tuple[str, ...]]:
     across and import `_status_problems`: the fields a status demands are this
     module's knowledge, and the page is only the thing that prints them. It is
     still only a courtesy; the server's answer is the truth.
+
+    `kind` narrows it to one, which is what a caller asking about a RECORD wants:
+    merged, the map says a project is missing `person_weeks` at `ready`, and a
+    project has no such field. The form does want the merge — it draws the
+    controls for a kind that can still be switched — so that stays the default.
     """
     gates: dict[str, list[str]] = {}
-    for kind, model in (("project", Project), ("pitch", Pitch), ("task", Task)):
+    kinds = (("project", Project), ("pitch", Pitch), ("task", Task))
+    for name, model in kinds:
+        if kind is not None and name != kind:
+            continue
         for status in STATUS_ORDER:
-            blank = model(id=f"{_PREFIX_FOR_KIND[kind]}-000000", kind=kind, title="", status=status)
+            blank = model(id=f"{_PREFIX_FOR_KIND[name]}-000000", kind=name, title="", status=status)
             for _, field, _, _ in _status_problems(blank):
                 if field and status not in gates.setdefault(field, []):
                     gates[field].append(status)
