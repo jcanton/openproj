@@ -983,6 +983,54 @@ def test_a_client_seeded_at_another_commit_is_told_to_reload(client: TestClient)
     assert "reload" in answer["why"]
 
 
+def test_a_joiner_who_is_told_to_reload_does_not_swallow_a_commit_made_in_git(
+    client: TestClient, plan: Path
+):
+    """The fold a join triggers belongs to the room, not to the joiner.
+
+    `room.absorb(_body_at(head, path))` runs on the join path *before* the hello
+    is read and was broadcast after it, so a tab with a stale seed — correctly
+    answered `reload` and correctly gone — took a colleague's `git push` with it
+    on the way out. Nothing corrects it afterwards: the room is `settled` at that
+    commit, so the next write sees `landed == body` and broadcasts nothing, and
+    the room quietly commits a line no client has ever been shown. Measured
+    before the fix: `in git: True, on ann's screen after a commit: False` — the
+    room and the person reading it disagreeing permanently, with nothing said.
+
+    Asked through the save, because that is what makes it permanent rather than
+    merely late: the assertion is about ann's *document* after a commit has come
+    and gone.
+    """
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        front, body = split_front_matter(stored(plan))
+        commit_directly(
+            plan,
+            {**SEED, PATH: f"---\n{front}\n---\n{body}\nA LINE COMMITTED IN GIT\n"},
+            "a person with a terminal",
+            author="cy",
+        )
+
+        # A second tab whose document was built in a process that has since
+        # restarted. It is told to reload and goes away, which is right — and the
+        # fold its arrival triggered is everybody else's news.
+        with open_room(client, "bo") as two:
+            assert Session(two, "bo", seed="0" * 40).hello()["t"] == "reload"
+
+        ann.type(0, "A LINE TYPED IN THE ROOM\n")
+        ann.save()
+        ann.take("saved")
+        assert "A LINE COMMITTED IN GIT" in ann.body(), (
+            "cy's line is in git and in the room and has never been on ann's screen: "
+            "a joiner who was refused took the update that says so with it, and the "
+            f"room has since committed a line ann does not have. She holds {ann.body()!r}"
+        )
+        assert "A LINE TYPED IN THE ROOM" in ann.body()
+
+    assert "A LINE COMMITTED IN GIT" in stored_body(plan)
+
+
 def test_a_stranger_is_refused_the_socket(plan: Path):
     """And is therefore handed exactly today's editor. Refusal has to be a
     handshake that does not complete rather than a room that quietly does
@@ -2131,6 +2179,136 @@ def test_a_commit_never_deletes_what_was_typed_during_it(serving: int, plan: Pat
     for one in (ann, dave, bo, cy):
         with contextlib.suppress(Exception):
             one.close()
+
+
+@pytest.fixture
+def peak_held(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """The most this process ever held for one member, watched from outside.
+
+    `Outbox.offer` on the real server, wrapped rather than replaced: the rule
+    under test is the one running, and this only reads the queue it is being
+    handed a frame for. Read *before* the call, so the number is the bytes that
+    are about to be held including this frame — which is the peak, and is the
+    thing that is or is not bounded.
+
+    Nothing else can answer this. The outboxes live in a closure inside
+    `create_app` and there is no route that reports them; asking the process for
+    its RSS instead would be measuring the allocator as much as the queue.
+    """
+    peak = {"bytes": 0, "frames": 0}
+    real = web_module.Outbox.offer
+
+    def watched(self, frame: str) -> bool:
+        holding = self._held + len(frame)
+        if holding > peak["bytes"]:
+            peak["bytes"], peak["frames"] = holding, len(self._frames) + 1
+        return real(self, frame)
+
+    monkeypatch.setattr(web_module.Outbox, "offer", watched)
+    return peak
+
+
+def test_what_is_held_for_a_member_who_never_reads_is_bounded(
+    serving: int, plan: Path, peak_held: dict
+):
+    """The ceiling starts a clock. Something else has to decide what is held.
+
+    Past `MAX_OUTBOX_BYTES` this returned True for *every* frame until
+    `STALL_SECONDS` had elapsed, so the queue in front of one wedged member was
+    unbounded for the whole stall window — whatever the room could broadcast in
+    ten seconds, which is a room, not a constant. Measured against this server
+    with one wedged member and one member pasting ordinary documents: **1.3 GB
+    queued for one member in 3917 frames**, 1245x the ceiling, and the process
+    went from 82 MB RSS to 1519 MB. `gcloud_deploy.sh` runs `--memory 512Mi
+    --max-instances 1`, so what round four turned into "the room stops
+    committing" this turned into "the process is OOM-killed and every room's
+    uncommitted text dies with it" — worse, from the same trigger, and the
+    comment above `STALL_SECONDS` stated the bound as a fact.
+
+    Sixty-six megabytes of legitimate frames, which is the volume rather than the
+    duration: a test that flooded for ten seconds would measure this machine's
+    loopback throughput and would hold a gigabyte on the runner to do it.
+    """
+    ann, _ = in_the_room(serving, "ann", receive_buffer=2048)  # and never reads again
+    dave, dave_welcome = in_the_room(serving, "dave")
+    dave_doc = a_document_from(dave_welcome, client_id=4)
+
+    # An ordinary document, pasted — under `MAX_BODY_BYTES`, so nothing here is
+    # refused and none of it grows the room's text. This is what somebody working
+    # sends, not an attack.
+    before = dave_doc.get_state()
+    dave_doc[coedit.BODY].insert(0, "x" * 250_000 + "\n")
+    frame = {"t": "update", "u": base64.b64encode(dave_doc.get_update(before)).decode()}
+    with contextlib.suppress(OSError):
+        for _ in range(200):
+            dave.send_json(frame)
+    time.sleep(2)
+
+    # One frame of slack, because the cap is read after the frame is appended:
+    # `MAX_UPDATE_BYTES` of update is about 1.37 MiB of base64 JSON.
+    allowed = web_module.MAX_HELD_BYTES + 2 * MAX_UPDATE_BYTES
+    assert 0 < peak_held["bytes"] <= allowed, (
+        f"one member who stopped reading had {peak_held['bytes']:,} bytes queued for "
+        f"them in {peak_held['frames']} frames — "
+        f"{peak_held['bytes'] / web_module.MAX_OUTBOX_BYTES:.0f}x the ceiling. The "
+        f"ceiling decides when the clock starts, not what is held, so this process "
+        f"holds whatever the room broadcasts in a stall window and is OOM-killed on "
+        f"512Mi with every room's uncommitted text in it."
+    )
+
+    for one in (ann, dave):
+        with contextlib.suppress(Exception):
+            one.close()
+
+
+def test_a_room_emptied_by_an_eviction_is_still_committed(
+    serving: int, plan: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Every route to an empty room commits, including the one nobody's `finally`
+    is standing on.
+
+    The leaving member's `finally` asks `room.empty()` and *then* broadcasts the
+    roster — and that broadcast is what evicts a member who has stopped reading.
+    So the room empties one line after the last-person-out commit was skipped,
+    `_watch` fell out of `while room.members:` without committing, and
+    `rooms.sweep()` dropped the room seven minutes later with the text still in
+    it. Measured here before the fix: nothing was committed at 90 seconds, and
+    nothing was ever going to be — uvicorn cannot get a keepalive ping down a
+    wedged socket either, so the 40-second ping timeout never fires.
+
+    `QUIET_SECONDS` is left alone deliberately, and bo leaves well inside it: a
+    shortened quiet window would commit this on the ordinary timer and the test
+    would pass without the fix. Only the eviction clock is shortened, and it is
+    still the real rule on the real server.
+    """
+    monkeypatch.setattr(web_module, "STALL_SECONDS", 1.0)
+    ann, _ = in_the_room(serving, "ann", receive_buffer=2048)  # and never reads again
+    bo, bo_welcome = in_the_room(serving, "bo")
+    bo_doc = a_document_from(bo_welcome, client_id=2)
+    was = git_head(plan)
+
+    typing(bo, bo_doc, "BO TYPED THIS AND THEN LEFT\n")
+    flooding(bo, bo_doc, frames=150)
+    # Past the stall window, so the next frame offered to ann ends her
+    # membership — and the next frame offered to ann is the roster that bo's own
+    # departure broadcasts, from inside the `finally` that has already decided
+    # the room was not empty.
+    time.sleep(3)
+    bo.close()
+
+    for _ in range(24):
+        if git_head(plan) != was:
+            break
+        time.sleep(0.5)
+    assert git_head(plan) != was, (
+        "the last typist left, the eviction his departure triggered emptied the "
+        "room, and nothing committed it: the text was acknowledged and then "
+        "silently discarded"
+    )
+    assert "BO TYPED THIS AND THEN LEFT" in stored_body(plan), stored_body(plan)
+
+    with contextlib.suppress(Exception):
+        ann.close()
 
 
 def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(

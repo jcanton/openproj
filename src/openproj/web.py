@@ -160,6 +160,14 @@ MAX_UPDATE_BYTES = 4 * MAX_BODY_BYTES
 # Derived from the frame ceiling and not written out beside it, for the reason
 # the paragraph above gives: this is "one whole document, queued and not yet on
 # the wire", which is the largest single frame anybody can legitimately be owed.
+#
+# Approximately. `MAX_UPDATE_BYTES` bounds the *decoded* update — that is what
+# `_raw` hands back and what the frame handler measures — while an outbox holds
+# the frame the room broadcasts, which is that update base64'd into JSON at four
+# characters per three bytes. So the largest single frame anybody can legitimately
+# be owed is about 1.37 MiB against a ceiling of 1 MiB, and a member owed exactly
+# one whole document is already over it. That is why this is a clock and not a
+# verdict, and it is 1.333 and not a factor anybody chose.
 MAX_OUTBOX_BYTES = MAX_UPDATE_BYTES
 # And how long they may stay past it before the room gives up on them.
 #
@@ -173,10 +181,41 @@ MAX_OUTBOX_BYTES = MAX_UPDATE_BYTES
 #
 # So the ceiling starts a clock and staying over it stops the membership. A tab
 # that gets back under, however briefly, has proved it is draining and the clock
-# goes back to zero. What the process may hold for one member during those ten
-# seconds is whatever the room can broadcast in them, and every frame in that is
-# already bounded by `MAX_UPDATE_BYTES`.
+# goes back to zero.
+#
+# The pair of them is a drain-rate floor, and the number is worth writing down
+# because nobody chose it directly: a member has to take `MAX_OUTBOX_BYTES` off
+# the wire every `STALL_SECONDS` to keep their membership, which is 105 kB/s.
+# Measured with a real `Outbox` over a wire that accepts a fixed number of bytes a
+# second, a burst of ordinary update frames putting it two ceilings behind, and
+# somebody typing beside it throughout: 87 kB/s is evicted at 10.1 s, 105 kB/s
+# recovers, 217 kB/s is completely caught up. That is a calibration and not a law,
+# and it degrades honestly — a reader who cannot take 105 kB/s was not going to be
+# able to edit collaboratively over that connection anyway — but it is a decision
+# somebody made by writing two other numbers down, so here it is.
 STALL_SECONDS = 10.0
+# And the most this process will hold for one member under any circumstances,
+# past which they are given up on at once rather than at the end of the clock.
+#
+# The clock alone was not a bound. Past the ceiling `offer` set `_behind` and
+# then returned True for *every* frame until `STALL_SECONDS` had elapsed, so what
+# was held for one wedged member was "whatever the room can broadcast in ten
+# seconds" — which is a property of the room and of the machine, not a constant.
+# Measured against a real server with one wedged member and one member pasting
+# ordinary documents: **1.3 GB queued for one member in 3917 frames**, 1245x the
+# ceiling, and the process went from 82 MB RSS to 1519 MB. `gcloud_deploy.sh`
+# runs `--memory 512Mi --max-instances 1`, so the outcome was not "the room stops
+# committing" but "the process is OOM-killed and every room's uncommitted text
+# dies with it" — worse, from the same trigger.
+#
+# Six times the ceiling, so both facts stay true at once: the tolerance the clock
+# was written for survives (the tab applying a burst of whole-document updates
+# peaked at 1.7x and caught up) and the process is bounded at a few MB per member
+# rather than by how fast anybody can type. It is a multiple of the ceiling and
+# not a number of its own because it is the same quantity measured for a
+# different purpose, and two constants that are the same number are the same
+# defect.
+MAX_HELD_BYTES = 6 * MAX_OUTBOX_BYTES
 # How long a socket may hold its own handler open flushing what it still owes,
 # after the room has already been left and the last commit already made. Short,
 # because the only thing waiting on it is the person leaving.
@@ -631,7 +670,11 @@ def _named(fields: dict, known: tuple[str, ...]) -> str:
     chosen = [name for name in known if name in fields]
     others = len(fields) - len(chosen)
     if others:
-        chosen.append(f"{others} more" if chosen else f"{others} unnamed fields")
+        # Counted in agreement with itself. "1 unnamed fields" was the subject
+        # line of a real commit, and a commit message is the one thing this tool
+        # writes that outlives the tool.
+        plural = "fields" if others > 1 else "field"
+        chosen.append(f"{others} more" if chosen else f"{others} unnamed {plural}")
     return ", ".join(chosen)
 
 
@@ -740,8 +783,15 @@ class Outbox:
     the same outage with a memory leak in it. Past the bound a member is not
     caught up but replaced: their queue is dropped for a single `reload`, which
     is the only honest frame to send a tab that has missed part of a CRDT stream
-    it can only apply in order. The bound is a ceiling *and* a clock — see
-    `STALL_SECONDS`, and the three real tabs that found out why.
+    it can only apply in order.
+
+    Three numbers and not one, and each answers a different question.
+    `MAX_OUTBOX_BYTES` is where being behind starts to count, `STALL_SECONDS` is
+    how long behind may last, and `MAX_HELD_BYTES` is what this process will hold
+    while the other two make up their minds — because the first two on their own
+    bound the *duration* of the stall and say nothing at all about its size, and
+    a member wedged for ten seconds queued 1.3 GB. All three are written down
+    beside each other above, with what was measured against each.
     """
 
     def __init__(self, socket: WebSocket) -> None:
@@ -777,8 +827,15 @@ class Outbox:
         now = time.monotonic()
         if self._behind is None:
             self._behind = now
-            return True
-        if now - self._behind < STALL_SECONDS:
+        # Two ways to be given up on, and the second is not an impatient version
+        # of the first. The clock decides whether this member is draining, which
+        # is the only question that can tell *behind* from *stalled* and is worth
+        # ten seconds of tolerance. `MAX_HELD_BYTES` decides what this process
+        # will spend waiting for that answer — and without it there was no
+        # answer, because a queue that grows for the whole stall window grows by
+        # however much the room broadcasts in it. Whichever comes first ends the
+        # membership.
+        if self._held <= MAX_HELD_BYTES and now - self._behind < STALL_SECONDS:
             return True
         self.overrun = True
         # Their queue is worth nothing to them now — a Yjs stream is applied in
@@ -2351,6 +2408,17 @@ def create_app(
         silent — no exception reaches a request, no page changes, `/healthz` goes
         on answering — and what it costs is every commit this room would have
         made for as long as somebody has the tab open.
+
+        **And it commits on the way out.** The last-person-out commit lives in
+        the leaving socket's `finally`, which asks `room.empty()` and *then*
+        broadcasts the roster — and that broadcast is what evicts a member who
+        has stopped reading. So the room emptied one line after the commit was
+        skipped, this loop fell through on its next tick with the text still in
+        the room, and `rooms.sweep()` dropped it seven minutes later. Nothing
+        rescued it: uvicorn cannot get a keepalive ping down a wedged socket, so
+        the 40-second ping timeout never fired either. This is here rather than
+        beside the eviction because it covers every route to an empty room, and
+        because text that was acknowledged must never be silently discarded.
         """
         while room.members:
             await asyncio.sleep(1)
@@ -2374,6 +2442,11 @@ def create_app(
                     room.tried()
             except Exception:  # noqa: BLE001 - the timer outlives anything; see the docstring
                 continue
+        # Guarded like the tick above and for the same reason: `pending()` walks
+        # the document, and an escape here is the last chance this room had.
+        with contextlib.suppress(Exception):
+            if room.pending():
+                await _commit_room(room)
 
     @app.websocket("/api/coedit/{entity_id}")
     async def coedit_socket(socket: WebSocket, entity_id: str) -> None:
@@ -2403,7 +2476,6 @@ def create_app(
         connections += 1
         connection = connections
         room = rooms.get(entity_id)
-        arriving: bytes | None = None
         if room is None:
             room = rooms.add(coedit.Room(entity_id, path, head, _body_at(head, path)))
         elif not room.pending():
@@ -2413,6 +2485,20 @@ def create_app(
             # in `store.write` does it at the next commit instead.
             arriving = room.absorb(_body_at(head, path))
             room.settled(head, room.body())
+            if arriving:
+                # Said here, to the people already in the room, and not after
+                # this socket's welcome — because it is not this socket's news
+                # and does not depend on it. It used to be broadcast below, past
+                # `await socket.receive_json()` and past the `return` that
+                # answers a stale seed, so a tab that was correctly told to
+                # reload took a colleague's `git push` with it on the way out.
+                # Not self-correcting either: `settled` above means the next
+                # write sees `landed == body` and broadcasts nothing, so the room
+                # went on to commit a line no client had ever been shown, and the
+                # room and the person reading it disagreed permanently with
+                # nothing said. The joiner needs no copy — the absorb is already
+                # in the document its welcome is composed from.
+                _to_room(room, {"t": "update", "u": _b64(arriving)})
 
         # Last, and immediately before the `try` that will tidy it up, because
         # this is a task and a registry entry: anything between the two is a line
@@ -2473,8 +2559,6 @@ def create_app(
             }
             outbox.offer(json.dumps(welcome))
             rooms.enter(room, connection, user.login)
-            if arriving:
-                _to_room(room, {"t": "update", "u": _b64(arriving)}, skip=connection)
             _to_room(room, {"t": "who", "people": room.people()})
             if room.refusal:
                 _to(connection, {"t": "refused", "why": room.refusal})
