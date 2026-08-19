@@ -48,6 +48,7 @@ from typing import Literal
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from pydantic import BaseModel
 
 from . import render
 from .auth import (
@@ -165,6 +166,66 @@ MAX_CYCLE_WEEKS = 520.0
 # document into a field whose whole value is being short — the notes below the
 # table are where prose goes, and they are unbounded.
 MAX_GOAL_CHARS = 400
+
+
+def _schema_names(*models: type[BaseModel]) -> tuple[str, ...]:
+    """Every field these records declare, in the order they declare it.
+
+    Read off the models rather than written out beside them, so a field added to
+    a record is nameable in a commit message on the commit that adds it and a
+    list nobody derives cannot go stale.
+    """
+    names: dict[str, None] = {}
+    for model in models:
+        names.update(dict.fromkeys(model.model_fields))
+    return tuple(names)
+
+
+ENTITY_FIELDS = _schema_names(Project, Pitch, Task)
+ISSUE_FIELDS = _schema_names(Issue)
+NOTE_FIELDS = _schema_names(Note)
+CYCLE_FIELDS = _schema_names(Cycle)
+
+
+def _named(fields: dict, known: tuple[str, ...]) -> str:
+    """Which fields a save moved, said with names this server chose.
+
+    Every write path here built that phrase as `', '.join(fields)` — the keys of
+    a JSON object off the wire, verbatim, into a commit message. A field named
+
+        "notes\\n\\nCo-authored-by: Mallory <mallory@users.noreply.github.com>"
+
+    therefore committed exactly that trailer, and it is not decorative: git's own
+    parser reads it, `git shortlog --group=trailer:co-authored-by` counts Mallory
+    for it, and GitHub puts their avatar on the commit. This branch is what makes
+    `Co-authored-by:` the record of who wrote a document, so a forgeable one is
+    worse than none. Measured on the entity PATCH and the cycle PUT, which are
+    both on `main` today; the issue and note routes happened to be closed already
+    because their own gates refuse a field name no model declares.
+
+    An allowlist and not an escape. Stripping newlines would leave the next
+    person to work out which characters git's trailer parser accepts, and there
+    is no denylist of those that is ever finished — where the model's own field
+    names are Python identifiers and cannot spell a trailer at all. Anything else
+    the payload carried is counted rather than quoted, because a save that wrote
+    something this cannot name is still a save that wrote something.
+
+    In the model's declaration order, which is fixed here, and deliberately not
+    in the order the payload arrived: the sender must not choose even the order
+    of a line this server signs.
+    """
+    chosen = [name for name in known if name in fields]
+    others = len(fields) - len(chosen)
+    if others:
+        chosen.append(f"{others} more" if chosen else f"{others} unnamed fields")
+    return ", ".join(chosen)
+
+
+def _cycle_message(fields: dict) -> str:
+    """A cycle's own number is in the message already, so it is not one of the
+    fields the message names."""
+    rest = {name: value for name, value in fields.items() if name != "cycle"}
+    return _named(rest, CYCLE_FIELDS) or "goal"
 
 
 def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
@@ -914,7 +975,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{issue_id}: {', '.join(fields) or 'body'}",
+            message=f"{issue_id}: {_named(fields, ISSUE_FIELDS) or 'body'}",
         )
         if written.commit:
             await announce(written.commit, [issue_id])
@@ -1016,7 +1077,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{note_id}: {', '.join(fields) or 'body'}",
+            message=f"{note_id}: {_named(fields, NOTE_FIELDS) or 'body'}",
         )
         if written.commit:
             await announce(written.commit, [note_id])
@@ -1414,7 +1475,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{entity_id}: {', '.join(fields) or 'body'}",
+            message=f"{entity_id}: {_named(fields, ENTITY_FIELDS) or 'body'}",
         )
         if written.commit:
             await announce(written.commit, [entity_id])
@@ -1460,7 +1521,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"cycle {number}: {', '.join(k for k in fields if k != 'cycle') or 'goal'}",
+            message=f"cycle {number}: {_cycle_message(fields)}",
         )
         if written.commit:
             await announce(written.commit, [f"cycle-{number}"])
