@@ -1805,7 +1805,7 @@ def test_assignees_is_a_column_and_a_filter_and_a_value(page: str, client: TestC
     payload_json = json.loads(re.search(
         r'<script id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
     row = next(iter(payload_json["rows"].values()))
-    offered = re.findall(r'<select data-field="([^"]+)"', page)
+    offered = re.findall(r'<div class="facet" data-field="([^"]+)"', page)
     filtered = re.search(r"const FILTERS = \[(.*?)\];", page, re.S).group(1)
 
     assert "assignees" in columns(page)
@@ -1869,7 +1869,7 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
         r"""if \(key === 'id'\)\s*\n\s*return \(EDITABLE && movable\(row\) \? GRIP : ''\)"""
         r"""\s*\+ `<span class="eid">\$\{esc\(row\.id\)\}""", body
     ), "and nothing is boxed in its place but the handle it is moved by"
-    assert 'class="facet">Kind' in page, "and kind is still asked for in the facet bar"
+    assert '<span class="facetname">Kind' in page, "and kind is still asked for in the facet bar"
 
 
 def test_no_kind_is_given_a_rule_of_its_own(page: str):
@@ -1885,10 +1885,15 @@ def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
     the filter holding the second was labelled STATE — a word from nowhere in the
     domain. The option's value stays the identifier because that is what the
     client-side filter compares against; only the text a person reads changes."""
-    assert '<option value="in_progress">In progress</option>' in page
-    assert '<option value="missing_required_fields">Has a problem</option>' in page
-    assert '<label class="facet">Flags' in page
-    assert '<label class="facet">state' not in page
+    # The facet's values are checkboxes now, each labelled with the word rather
+    # than the identifier — the claim is about `in_progress` never reaching a
+    # reader, not about the tag it is drawn in.
+    assert '<input type="checkbox" value="in_progress">In progress</label>' in page
+    assert (
+        '<input type="checkbox" value="missing_required_fields">Has a problem</label>' in page
+    )
+    assert '<span class="facetname">Flags' in page
+    assert '<span class="facetname">state' not in page
 
     # Including inside the editor a double-click opens, or picking "In progress"
     # from a cell would write the label back into the corpus. Both go through
@@ -2059,7 +2064,7 @@ def test_clearing_the_filters_is_a_button_and_never_a_form_field(page: str):
     assert re.search(cleared, body)
     # And every control the page draws, not only the entity fields: the people
     # page filters by role, which is not a field of an entity and was left set.
-    assert "document.querySelectorAll('select[data-field]')]\n    .map(select" in body
+    assert "document.querySelectorAll('.facet[data-field]')]\n    .map(facet" in body
 
 
 def test_a_sortable_header_is_a_button_that_says_which_way_it_sorts(page: str):
