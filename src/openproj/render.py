@@ -7432,51 +7432,79 @@ function replaceRange(area, text) {
 }
 
 
-// A small toolbar, sized to what this team writes rather than to what an editor
-// usually offers. Counted across the seed and the migrated HackMD corpus: 485
-// lines carry an inline code span, 161 a bullet, 124 a heading, 83 bold — and
-// eight carry a markdown link, which is why there is no link button: people write
-// `C2SM/icon4py#1364` bare and the renderer already turns it into a link.
+// The toolbar in the screenshot, in the order and the groups it is drawn in:
+// `docs/hackmd-observed.md`, read off the pixels of a real note.
 //
-// The two code buttons are here for a different reason than frequency, and it is
-// the better reason. The team types on a mix of US and Swiss-German layouts, and
-// on CH a backtick is a dead key — so a fence is three of them in a row, and the
-// two fenced blocks in the whole corpus are a measure of how awkward that is
-// rather than of how little code people would paste. A button is worth more than
-// a count here.
+// **This overrules a measurement, and the measurement was not wrong.** `d6997e3`
+// counted the seed and the migrated HackMD corpora — 485 lines carry an inline
+// code span, 161 a bullet, 124 a heading, 83 bold, against 8 markdown links —
+// and cut the link button on that count, correctly, because you do not add a
+// button before somebody asks for it. Somebody has now asked for it by name:
+// "the buttons along the top of the editor", as ask 2 of seven, pointing at that
+// screenshot. So link, image and a numbered list are here, and the count is not
+// refuted — it is overruled, and the difference is written down so that whoever
+// reads this in a year does not mistake one for the other.
 //
-// The four at the end arrived with the renderer that honours them, in one
-// commit, because a button that emits syntax the committed document renders as
-// punctuation is worse than no button. Their counts are the seed corpus's, which
-// is synthetic and answers zero for every one of them — the migrated HackMD
-// corpus is not in this repository yet. A check list is the shape the Progress
-// section of a pitch is written in and a strikethrough is how a dropped line is
-// marked, so both are here on the shape of the documents rather than on a count;
-// a table and a rule are here because they are the two blocks nobody types
-// correctly from memory, not because they are frequent. When the corpus lands,
-// this list is re-sized against it.
+// Three deliberate departures from the shot, each with a reason:
+//
+// * **Two code buttons, not one.** The team types on a mix of US and
+//   Swiss-German layouts, and on CH a backtick is a dead key — so a fence is
+//   three of them in a row, and the two fenced blocks in the whole corpus
+//   measure how awkward that is rather than how little code people would paste.
+// * **No comment button.** It is a HackMD collaboration feature, not markdown,
+//   and there is nothing behind it here. The review channel this team uses is
+//   the PR, which every pitch already names in `prs:`.
+// * **No undo and redo yet.** They are the first two buttons in the shot and
+//   they belong with the defect that makes them necessary: `reflect()` wipes the
+//   browser's native undo stack on every remote keystroke, and a history button
+//   that does nothing after somebody else types is worse than no button. They
+//   arrive with `Y.UndoManager`.
+//
+// The check list and the strikethrough are still guesses on the shape of the
+// documents rather than on a count — a checklist is what a pitch's Progress
+// section is made of, a strikethrough is how a dropped line is marked — because
+// the migrated corpus is not in this repository and the seed one is synthetic
+// and answers zero for both. That grep is still owed.
+//
+// `group: true` opens a new group; `attachEditing` draws a rule before it.
 const FORMATS = [
   {key: 'b', label: 'B', title: 'Bold  ⌘B', wrap: '**'},
   {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
-  {key: 'e', label: '<>', title: 'Code  ⌘E', wrap: '`'},
-  {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
-  {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
-  {key: '8', label: '•', title: 'Bullet  ⌘8', prefix: '- '},
-  // ⌘⇧L and not ⌘⇧8 beside the bullet it belongs next to: the shortcut is
-  // matched on `event.key`, and shift-8 on a US layout is `*` rather than `8`,
-  // so the obvious pairing is a shortcut that could never fire. Every letter
-  // here survives shift.
-  {key: 'l', shift: true, label: '[x]', title: 'Check list  ⌘⇧L', prefix: '- [ ] ', box: true},
-  {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
+  // ⌘⇧X and not ⌘⇧S: the shortcut is matched on `event.key`, and every shifted
+  // binding here is a letter, because shift-8 on a US layout is `*` rather than
+  // `8` and a shortcut on a digit is one that could never once fire.
   {key: 'x', shift: true, label: 'S', title: 'Strikethrough  ⌘⇧X', wrap: '~~',
    style: 'text-decoration: line-through'},
-  // No shortcut on either: every letter this page could spare is spoken for, and
-  // a table is not something anybody inserts twice a minute. `pick` selects the
-  // first heading so the word you replace is already chosen.
+  {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
+
+  {key: 'e', group: true, label: '<>', title: 'Code  ⌘E', wrap: '`'},
+  {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
+  {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
+  {key: '8', label: '•', title: 'Bullet list  ⌘8', prefix: '- '},
+  // ⌘7 beside ⌘8, on the precedent ⌘8 already set: both are browser tab
+  // shortcuts and both are taken back by `preventDefault`, and a numbered list
+  // one key from the bulleted one is the pairing anybody would guess.
+  {key: '7', label: '1.', title: 'Numbered list  ⌘7', prefix: '1. ', ordered: true},
+  {key: 'l', shift: true, label: '[x]', title: 'Check list  ⌘⇧L', prefix: '- [ ] ', box: true},
+
+  {key: 'k', group: true, label: '[]()', title: 'Link  ⌘K', link: true},
+  // The one button that does not write markdown. An `![alt](https://…)` typed
+  // into this tool draws no picture: `_image` refuses anything that is not an
+  // asset this repository stored, on the allowlist rule, and renders it as a
+  // link instead. So the image button does what paste and drop already do —
+  // uploads the bytes and writes the path they landed at.
+  {label: '![]', title: 'Image', upload: true},
+  // No shortcut on the last three: every letter this page could spare is spoken
+  // for, and none of them is something anybody inserts twice a minute.
+  // `chooses` is an offset and a length into the inserted text, so the word you
+  // are about to replace is already selected.
   {label: '▤', title: 'Table',
-   insert: '| Heading | Heading |\n| --- | --- |\n| Cell | Cell |', pick: [2, 7]},
+   insert: '| Heading | Heading |\n| --- | --- |\n| Cell | Cell |', chooses: [2, 7]},
   {label: '—', title: 'Horizontal rule', insert: '---'},
 ];
+
+// A numbered list, on any of the ways somebody has already written one.
+const ORDERED = /^\d+\.\s+/;
 
 function lineRange(area) {
   const from = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1;
@@ -7525,17 +7553,24 @@ function applyMark(area, mark) {
     // bullet, and it costs one `startsWith`.
     const [from, to] = lineRange(area);
     const lines = area.value.slice(from, to).split('\n');
-    // A check list is a bullet with a box on it, so on lines that are already
-    // bullets the box goes onto the bullet that is there. Stacking the whole
-    // prefix wrote `- [ ] - a`, which renders as one checked item whose text is
-    // a dash — the toggle would then never find its way back either, because the
-    // line no longer starts with the prefix it was given.
+    // Three ways a line prefix can already be on, because two of these marks are
+    // not a fixed string. A check list is a bullet with a box on it, so on lines
+    // that are already bullets the box goes onto the bullet that is there —
+    // stacking the whole prefix wrote `- [ ] - a`, which renders as one checked
+    // item whose text is a dash, and the toggle could never find its way back
+    // because the line no longer started with what it was given.
     const boxed = mark.box && lines.every(line => LIST_ITEM.test(line));
-    const on = boxed
-      ? lines.every(line => LIST_ITEM.exec(line)[4])
-      : lines.every(line => line.startsWith(mark.prefix));
+    const on = mark.ordered
+      ? lines.every(line => ORDERED.test(line))
+      : boxed
+        ? lines.every(line => LIST_ITEM.exec(line)[4])
+        : lines.every(line => line.startsWith(mark.prefix));
     const next = lines
-      .map(line => {
+      .map((line, at) => {
+        // Numbered, and not `1.` on every line. Commonmark renumbers, so both
+        // render the same — but the file is the record here and people read and
+        // edit it in git, where a list of five `1.`s reads as a mistake.
+        if (mark.ordered) return on ? line.replace(ORDERED, '') : `${at + 1}. ${line}`;
         if (!boxed) return on ? line.slice(mark.prefix.length) : mark.prefix + line;
         const [, indent, bullet, gap, , text] = LIST_ITEM.exec(line);
         return `${indent}${bullet}${gap}${on ? '' : '[ ] '}${text}`;
@@ -7544,6 +7579,19 @@ function applyMark(area, mark) {
     area.setSelectionRange(from, to);
     replaceRange(area, next);
     area.setSelectionRange(from, from + next.length);
+    return;
+  }
+  if (mark.link) {
+    // `[text](url)`: two halves that differ, so it is neither a wrap nor an
+    // insert. What ends up selected is what you are about to replace — the URL
+    // when there are already words to link, and the words when there are not.
+    const {selectionStart: from, selectionEnd: to} = area;
+    const chosen = area.value.slice(from, to);
+    const label = chosen || 'text';
+    replaceRange(area, `[${label}](url)`);
+    const at = from + 1;
+    if (chosen) area.setSelectionRange(at + label.length + 2, at + label.length + 5);
+    else area.setSelectionRange(at, at + label.length);
     return;
   }
   if (mark.insert) {
@@ -7555,7 +7603,7 @@ function applyMark(area, mark) {
     area.setSelectionRange(to, to);
     replaceRange(area, lead + mark.insert + tail);
     const at = to + lead.length;
-    const [start, width] = mark.pick || [mark.insert.length, 0];
+    const [start, width] = mark.chooses || [mark.insert.length, 0];
     area.setSelectionRange(at + start, at + start + width);
     return;
   }
@@ -7659,6 +7707,15 @@ function indentLines(area, out) {
 function attachEditing(area, bar) {
   if (bar) {
     for (const mark of FORMATS) {
+      if (mark.group) {
+        // A rule and not a gap. Four groups of adjacent buttons say "these four
+        // do the same kind of thing" only if the boundary is visible; spacing
+        // alone reads as a toolbar that wrapped.
+        const rule = document.createElement('span');
+        rule.className = 'sep';
+        rule.setAttribute('aria-hidden', 'true');
+        bar.append(rule);
+      }
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'mark';
@@ -7667,7 +7724,16 @@ function attachEditing(area, bar) {
       if (mark.style) button.setAttribute('style', mark.style);
       // mousedown, not click: click runs after the textarea has lost focus and
       // with it the selection the mark is supposed to apply to.
-      button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };
+      //
+      // The image button is the exception and has to be a click: a file picker
+      // opens only on a real user gesture, and `preventDefault` on mousedown
+      // takes the activation away from the `.click()` that opens it. It has no
+      // selection to protect, so nothing is lost by waiting.
+      if (mark.upload) {
+        button.onclick = () => area.dispatchEvent(new Event('openproj:pick-image'));
+      } else {
+        button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };
+      }
       bar.append(button);
     }
   }
@@ -7804,6 +7870,21 @@ function attachUploads(area, status) {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
   }
+
+  // The toolbar's image button, wired without either function reaching into the
+  // other. `attachEditing` builds the bar and `attachUploads` owns the upload,
+  // and every page attaches them in two lines that know nothing of each other;
+  // an event on the element they both already hold is the seam. A page with a
+  // toolbar and no uploader would draw a button that does nothing, and there is
+  // no such page — all four call both.
+  area.addEventListener('openproj:pick-image', () => {
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = 'image/*';
+    picker.multiple = true;
+    picker.onchange = () => [...picker.files].forEach(send);
+    picker.click();
+  });
 
   area.addEventListener('paste', event => {
     const files = [...(event.clipboardData?.files || [])];
@@ -8036,7 +8117,10 @@ _SUGGEST_STYLE = """
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
 .suggest li.on { background: var(--accent); color: var(--on-accent); }
 textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
-.marks { display: inline-flex; gap: .15rem; }
+.marks { display: inline-flex; gap: .15rem; align-items: stretch; flex-wrap: wrap; }
+/* The line between one group of marks and the next. `align-self: stretch` so it
+   is the height of the buttons rather than of the text inside them. */
+.marks .sep { width: 1px; background: var(--line); margin: 0 .3rem; align-self: stretch; }
 button.mark {
   font: inherit; font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
   border: 1px solid var(--line); border-radius: 3px;

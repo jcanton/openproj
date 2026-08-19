@@ -810,40 +810,53 @@ def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
     assert "replaceRange(area" in editing, "and it is what the editing code calls"
 
 
-def test_the_toolbar_carries_what_this_team_writes(client: TestClient):
-    """Counted across the seed and migrated corpora: 485 lines carry an inline
-    code span, 161 a bullet, 124 a heading, 83 bold — and eight a markdown link,
-    which is why there is no link button: people write `C2SM/icon4py#1364` bare
-    and the renderer already links it.
+def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
+    client: TestClient,
+):
+    """`docs/hackmd-observed.md` records the toolbar off the pixels of a real
+    HackMD note: four groups, drawn with separators, in a fixed order. jcanton
+    asked for "the buttons along the top of the editor" and pointed at that.
 
-    The two code buttons are here for a better reason than frequency. The team
-    types on a mix of US and Swiss-German layouts, and on CH a backtick is a dead
-    key, so a fence is three of them in a row — the two fenced blocks in the whole
-    corpus measure how awkward that is, not how little code people would paste.
+    **This overrules a measurement, and the measurement was not wrong.** The
+    seven buttons this replaces were counted from the seed and migrated corpora —
+    485 lines with an inline code span, 161 a bullet, 124 a heading, 83 bold,
+    against 8 markdown links — and the link button was cut on that count,
+    correctly, because you do not add a button before somebody asks for one.
+    Somebody has now asked. The count is overruled, not refuted, and this test
+    holds the toolbar to the shot rather than to the corpus.
 
-    The last four are the ones the counts cannot yet defend: the migrated HackMD
-    corpus is not in this repository, and the seed corpus is synthetic and
-    answers zero for every syntax it would be asked about. They are here on the
-    shape of the documents instead — a checklist is what a pitch's Progress
-    section is made of and a strikethrough is how a dropped line is marked — and
-    the number in this test moves again when the corpus lands.
+    Three deliberate departures, each of which this test pins: two code buttons,
+    because a backtick is a dead key on a Swiss-German layout and a fence is
+    three in a row; no comment button, which is a HackMD collaboration feature
+    with nothing behind it here; and no undo and redo yet, because they are the
+    first two in the shot and they belong with the `reflect()` defect that makes
+    them necessary.
     """
     page = client.get(f"/detail/{TASK}").text
-    marks = re.search(r"const FORMATS = \[(.*?)\];", page, re.S).group(1)
+    marks = re.search(r"const FORMATS = \[(.*?)\n\];", page, re.S).group(1)
+    # Comment lines out first, then one chunk per entry. A bare `\{[^{}]*\}`
+    # finds the code-block button's own label — `{ }` — and reports it as a
+    # fifteenth mark with no title on it.
+    body = "\n".join(ln for ln in marks.splitlines() if not ln.strip().startswith("//"))
+    entries = [chunk for chunk in re.split(r"\n(?=  \{)", body) if "title:" in chunk]
+    named = [re.search(r"title: '([^']*)'", entry).group(1).split("  ")[0] for entry in entries]
 
-    # `title:` and not `{key:`, which is what this counted: two of the eleven
-    # deliberately carry no shortcut, and counting the ones that do would have
-    # reported a toolbar four buttons shorter than the one on the page.
-    assert marks.count("title:") == 11
-    for wanted in ("Bold", "Italic", "Code  ", "Code block", "Heading", "Bullet",
-                   "Check list", "Quote", "Strikethrough", "Table", "Horizontal rule"):
-        assert wanted in marks, wanted
-    assert "](" not in marks, "bare PR references are already linked by the renderer"
+    assert named == [
+        "Bold", "Italic", "Strikethrough", "Heading",
+        "Code", "Code block", "Quote", "Bullet list", "Numbered list", "Check list",
+        "Link", "Image", "Table", "Horizontal rule",
+    ]
+    # Where the rules fall, and not merely how many there are: a separator in the
+    # wrong place groups the buttons into a claim about them that is false.
+    assert [i for i, entry in enumerate(entries) if "group: true" in entry] == [4, 10]
+    assert "comment" not in marks.lower(), "a collaboration feature with nothing behind it"
+    assert "undo" not in marks.lower(), "history arrives with the UndoManager that answers it"
     # Every shifted shortcut is bound to a letter. The handler matches on
     # `event.key`, and shift-8 on a US layout is `*` and not `8` — so ⌘⇧8 beside
     # the bullet's ⌘8 would have been a shortcut that could never once fire.
-    for entry in re.findall(r"\{[^{}]*shift: true[^{}]*\}", marks):
-        assert re.search(r"key: '[a-z]'", entry), entry
+    for entry in entries:
+        if "shift: true" in entry:
+            assert re.search(r"key: '[a-z]'", entry), entry
 
 
 def test_a_fence_takes_whole_lines_of_its_own(client: TestClient):
@@ -1050,6 +1063,12 @@ const apply = (name, text, from, to) => {
 };
 
 const struck = apply('Strikethrough', 'alpha beta', 0, 5);
+const numbered = apply('Numbered list', 'one\\ntwo\\nthree', 0, 13);
+const unnumbered = apply('Numbered list', '1. one\\n2. two\\n3. three', 0, 22);
+const linkedUp = apply('Link', 'read the notes', 5, 14);
+const urlChosen = area.value.slice(area.selectionStart, area.selectionEnd);
+const bareLink = apply('Link', '', 0, 0);
+const wordChosen = area.value.slice(area.selectionStart, area.selectionEnd);
 const checked = apply('Check list', 'one\\ntwo', 0, 7);
 // On lines that are already bullets the box goes onto the bullet that is there.
 const boxed = apply('Check list', '- one\\n- two', 0, 11);
@@ -1080,8 +1099,35 @@ const plain = paste(' and two');
 set('read the notes', 5, 14);
 const bare = paste('a sentence');
 
-return {struck, checked, boxed, unboxed, table, picked, rule,
-        linked, tabled, plain, bare};
+// The image button writes no markdown at all: `_image` refuses anything that is
+// not an asset this repository stored, so a typed `![](https://…)` draws a link
+// and not a picture. It opens the same upload path paste and drop use, and this
+// catches the element that path builds.
+let opened = null;
+const built = document.createElement.bind(document);
+document.createElement = tag => {
+  const made = built(tag);
+  if (tag === 'input') opened = made;
+  return made;
+};
+const button = title => [...document.querySelectorAll('#marks button')]
+  .find(b => b.title.split('  ')[0] === title);
+button('Image').click();
+document.createElement = built;
+const picker = opened ? {type: opened.type, accept: opened.accept} : null;
+const wrote = area.value;
+
+const bar = {
+  buttons: document.querySelectorAll('#marks button').length,
+  rules: document.querySelectorAll('#marks .sep').length,
+  // Where the rules fall in the drawn bar, not only how many there are.
+  before: [...document.querySelectorAll('#marks .sep')]
+    .map(rule => rule.nextElementSibling.title.split('  ')[0]),
+};
+
+return {struck, numbered, unnumbered, linkedUp, urlChosen, bareLink, wordChosen,
+        checked, boxed, unboxed, table, picked, rule,
+        linked, tabled, plain, bare, picker, wrote, bar};
 """
 
 
@@ -1097,6 +1143,12 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     )
 
     assert got["struck"] == "~~alpha~~ beta"
+    assert got["numbered"] == "1. one\n2. two\n3. three", "a list of five `1.`s reads as a mistake"
+    assert got["unnumbered"] == "one\ntwo\nthree", "and pressing it again did not take it back"
+    assert got["linkedUp"] == "read [the notes](url)"
+    assert got["urlChosen"] == "url", "the half you are about to paste was not selected"
+    assert got["bareLink"] == "[text](url)"
+    assert got["wordChosen"] == "text", "with nothing selected, the words are what you replace"
     assert got["checked"] == "- [ ] one\n- [ ] two"
     assert got["boxed"] == "- [ ] one\n- [ ] two", "the prefix was stacked on the bullet"
     assert got["unboxed"] == "- one\n- two", "and pressing it again did not take the box off"
@@ -1110,3 +1162,13 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     assert got["tabled"] == {"text": "| a | b |\n| --- | --- |\n| c | d |", "taken": True}
     assert got["plain"]["taken"] is False, "an ordinary paste was taken over"
     assert got["bare"]["taken"] is False, "prose over a selection is not a link"
+
+    assert got["picker"] == {"type": "file", "accept": "image/*"}, (
+        "the image button did not reach the upload path paste and drop use"
+    )
+    assert "![" not in got["wrote"], "and it wrote markdown into the box instead"
+    assert got["bar"] == {
+        "buttons": 14,
+        "rules": 2,
+        "before": ["Code", "Link"],
+    }, "the drawn toolbar is not the shot's three groups"
