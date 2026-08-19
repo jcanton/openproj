@@ -44,7 +44,8 @@ def kinds(index: Index) -> dict[str, str]:
 
 def a_task_in_a_pitch(index: Index) -> tuple[str, str]:
     for entity_id, entity in sorted(index.entities.items()):
-        if entity.kind == "task" and entity.parent and index.entities[entity.parent].kind == "pitch":
+        holder = index.entities.get(entity.parent) if entity.parent else None
+        if entity.kind == "task" and holder is not None and holder.kind == "pitch":
             return entity_id, entity.parent
     raise AssertionError("the corpus has no task inside a pitch")
 
