@@ -1597,7 +1597,7 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
 
     assert re.findall(r'<select data-field="([^"]+)"', people) == ["role", "kind", "status"]
     assert 'aria-label="Search person, entity, id"' in people
-    assert 'aria-label="Search title, tags, body"' in index
+    assert 'aria-label="Search titles, tags, PRs, people"' in index
 
 
 def test_no_fact_is_formatted_for_the_detail_page_twice(seed_index: Index):

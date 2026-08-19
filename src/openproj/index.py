@@ -313,6 +313,45 @@ def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
 # number or a status, and none of those is ever written like this.
 NO_VALUE = "(none)"
 
+# What the search box searches, in one place, for both halves of the app.
+#
+# It used to be two definitions: this file swept title, tags, PR references *and
+# the whole shaping document* into one blob, while the browser searched
+# `row.title + ' ' + row.tags`. A word in a body found rows through a pasted link
+# and nothing in the box in front of you; `#1364` found the entity on the server
+# and nothing in the table — and neither side erred, which is the shape of every
+# divergence this repository has shipped. The blob is built here now and travels
+# on the row (`_row` in `render.py`), so the browser searches the string the
+# server searched rather than a second idea of what a record says.
+#
+# **Fields, not bodies** — jcanton, 2026-08-19. The shaping document IS the
+# record, but it is not the record's index: a 900-word pitch in a substring
+# search makes every long word in the plan a match for something, and the reader
+# cannot see why a row was kept. The document is read on the detail page, which
+# is where a document is read.
+#
+# These seven and not every field: they are what a person names a record BY — its
+# id, what it is called, the labels somebody put on it, the pull requests it is
+# argued in, and the people whose names are on it. `status`, `kind`, `priority`
+# and `cycle` are deliberately absent: each has a dropdown that says which values
+# exist, and sweeping them in means typing `ready` matches half the plan through
+# a box that cannot say which field it matched.
+SEARCH_FIELDS = ("id", "title", "tags", "prs", "owner", "assignees", "reviewers")
+
+
+def searchable(entity: Entity) -> str:
+    """One record's searchable text: every value in `SEARCH_FIELDS`, lowered.
+
+    Lowered here rather than at each comparison, because the browser holds this
+    string and compares a lowered needle against it; a second `.toLowerCase()`
+    per row per keystroke is the same answer computed fifteen thousand times.
+    """
+    said: list[str] = []
+    for field in SEARCH_FIELDS:
+        value = getattr(entity, field, None)
+        said += value if isinstance(value, list) else [value] if value else []
+    return " ".join(said).lower()
+
 
 def _ordered(field: str, values: set[str]) -> list[str]:
     """Alphabetical, except where the values are a sequence rather than a set.
@@ -384,10 +423,9 @@ def build_index(
             facets[field].update(values or [NO_VALUE])
         # PR references too. "Which entity is #1364?" is a question people ask
         # in front of a screen, and the answer was only findable if the number
-        # also happened to appear in the prose.
-        search_blob[entity.id] = " ".join(
-            [entity.title, *entity.tags, *entity.prs, entity.body]
-        ).lower()
+        # also happened to appear in the prose. What goes in is `SEARCH_FIELDS`,
+        # which is also what the row carries to the browser.
+        search_blob[entity.id] = searchable(entity)
         # A shelved child is not work anybody is waiting for, so it counts in
         # neither half of the fraction — otherwise parking a task makes a pitch
         # look less finished than it was the day before.

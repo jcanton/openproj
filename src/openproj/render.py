@@ -404,6 +404,14 @@ def _row(index: Index, entity_id: str) -> dict:
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
         "predicates": [p for p in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, p)],
+        # What the box searches, built once by `searchable` (`index.py`) and
+        # carried rather than rebuilt: the browser used to search
+        # `row.title + ' ' + row.tags` while the server searched four fields and
+        # every shaping document, so the same query answered differently
+        # depending on whether it arrived in a link or through the keyboard.
+        # `search` is the key the people, issues and notes rows already use for
+        # exactly this, which is why it is spelled that way here.
+        "search": index.search_blob[entity_id],
     }
 
 
@@ -2279,7 +2287,12 @@ function wanted(field) { return params.getAll(field).filter(Boolean); }
 // graph hands it a node's data, which is that same row.
 function matches(row) {
   const q = (params.get('q') || '').trim().toLowerCase();
-  if (q && !(row.title + ' ' + row.tags.join(' ')).toLowerCase().includes(q)) return false;
+  // `row.search` and not a blob rebuilt here: what is searchable is decided once,
+  // by `SEARCH_FIELDS` in `index.py`, and shipped on the row. This line used to
+  // read `row.title + ' ' + row.tags`, which is neither what `apply_filters`
+  // searched nor what the placeholder promised — and a table that quietly
+  // searches less than the link you were sent is a table that lies twice.
+  if (q && !(row.search || '').includes(q)) return false;
   for (const field of FILTERS) {
     const values = wanted(field);
     if (!values.length) continue;
@@ -11680,7 +11693,7 @@ _NO_ASIDE = Markup("")
 def _facets_html(
     facets: dict,
     fields: tuple[str, ...] = _PLAN_FACETS,
-    search: str = "Search title, tags, body",
+    search: str = "Search titles, tags, PRs, people",
     aside: Markup = _NO_ASIDE,
 ) -> Markup:
     """The control bar, for any view that filters anything.
