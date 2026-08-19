@@ -3214,6 +3214,14 @@ function openEditor(cell) {
       // value still in the box, and the edit somebody just abandoned gets saved.
       abandoned = true;
       RETURN = true;
+      // And it means discard THIS, never the row it is in. The grid answers
+      // Escape as well now — it is how a draft is abandoned — and both listeners
+      // are on the way up from this box, so without this an Escape meant to undo
+      // one mistyped cell would take the whole half-typed row with it. The
+      // comment on that handler already says the keys belong to an open editor;
+      // this is the line that makes it so rather than leaving it to a test of
+      // what an editor looks like from the outside.
+      e.stopPropagation();
       draw();
     }
     if (e.key === 'Tab') {
@@ -3243,6 +3251,11 @@ function openEditor(cell) {
 const NEW_ROW = DATA.new_row || {};
 const DEFAULTS = DATA.defaults || {};
 const TEMPLATES = DATA.templates || {};
+// The check and the cross the draft row's two controls are drawn with, rendered
+// on the server. A template variable and not a `.replace` into the finished
+// page, which is the rule the whole file is held to; and drawings rather than
+// the characters `✓` and `✕`, which is argued at `DRAFT_MARKS`.
+const MARK = {{ marks|tojson }};
 // What the row being typed answers to in the grid. `+` is not an id and cannot
 // become one — an id is a prefix and six hex digits — so nothing that walks the
 // rows can confuse the draft with a record.
@@ -3284,15 +3297,23 @@ function draftShown(field) {
 function draftRowHtml() {
   const fields = NEW_ROW[DRAFT.kind] || {};
   const cells = keys.map(key => {
-    // Where the id will be. It says which kind is about to be written rather
-    // than standing empty: the id itself is the server's to mint — a browser
-    // that names an id names a path — and this is the column that will carry it.
-    // In the tooltip and not beside the word, because this is the narrowest
-    // column on the row and the sentence took the draft to two lines: a row that
-    // is twice the height of every other row reads as a different kind of thing.
+    // Where the id will be, and until it exists this is the row's controls
+    // instead. The id is the server's to mint — a browser that names an id names
+    // a path — so this cell has nothing of its own to show, and what stands in
+    // for it is the one decision the id will be made out of plus the two answers
+    // to whether it should be made at all.
+    //
+    // It read `new task`, with the kind picker and two word buttons in a bar
+    // under the row. The words said what this cell now IS: the kind belongs in
+    // the cell that carries the row's identity, and a bar under a row is a
+    // second place to look for controls that belong to it.
+    //
+    // The sentence stays in the tooltip, because this is the narrowest column on
+    // the table and beside the word it took the draft to two lines — a row twice
+    // the height of every other row reads as a different kind of thing.
     if (key === 'id')
       return `<td data-col="id" class="draft-id"` +
-        ` title="The id and the file are the server's to choose">new ${esc(DRAFT.kind)}</td>`;
+        ` title="The id and the file are the server's to choose">${draftControls()}</td>`;
     const field = fields[key];
     const named = (FIELD_LABELS[key] || key).toLowerCase();
     if (!field) {
@@ -3340,23 +3361,74 @@ function adderHtml() {
       `<span class="hint" id="rootless" hidden></span>` +
       `</td></tr>`;
   }
-  const kinds = Object.keys(NEW_ROW).map(kind =>
-    `<option value="${esc(kind)}"${kind === DRAFT.kind ? ' selected' : ''}>` +
-    `${esc(human(kind))}</option>`).join('');
   // The kind first, and it stays: it is the decision that says which fields the
   // row even has, and switching it after typing must not cost the typing — the
   // create form learned that one already. The row itself appears only once the
   // kind is chosen, because until then there is no answer to which columns it
   // has — which is the whole reason the kind is asked first.
+  //
+  // Which is also why the controls are in this bar until there is a row and in
+  // the row's id cell afterwards: they belong to the row, and for one press
+  // there is no row for them to belong to. One function draws them either way,
+  // so the two places cannot come to offer different things.
+  //
+  // The sentence stays here, under both. It is the one thing that says the row
+  // on screen is not a record yet, and a person reads it in the gap between
+  // typing and pressing — which is where it already is.
   return (DRAFT.kind ? draftRowHtml() : '') +
     `<tr class="adder open"><td${wide}>` +
-    `<label class="kindpick">kind <select id="draft-kind">` +
-    `<option value=""${DRAFT.kind ? '' : ' selected'}>choose…</option>${kinds}</select></label>` +
-    (DRAFT.kind ? `<button type="button" id="draft-create" class="primary">Create</button>` : '') +
-    `<button type="button" id="draft-cancel">Cancel</button>` +
+    (DRAFT.kind ? '' : draftControls()) +
     `<span class="hint">Nothing is written until you press Create</span>` +
     `<ul id="draft-problems" role="status" aria-live="polite" hidden></ul>` +
     `</td></tr>`;
+}
+
+// Create it, abandon it, and what it will be — the whole of what a row that does
+// not exist yet offers, in one line and in that order.
+//
+// Marks and not words. `Create` and `Cancel` spelled out are two thirds of the
+// id column, and this cell is the row's name rather than a toolbar; the marks
+// are drawn rather than typed because `✓` and `✕` are in neither the vendored
+// face nor anything else this page ships — see `DRAFT_MARKS`, which is where
+// that is argued and where the drawings are.
+//
+// Which means every one of them is an icon-only control, so each carries the
+// name twice: `aria-label` for a reader who cannot see it and `title` for one
+// who can see it and cannot tell what it is. Never `title` alone — that is a
+// hint, and these are the two controls this row has. The third channel is
+// Escape, in the grid's key handler, because somebody who arrived here with Tab
+// needs a way out that is not hunting for the ✕.
+//
+// Create names the kind — "Create this task", not "Create" — because it is the
+// press that writes a file, and the row above it is not the only draft-shaped
+// thing on the page while a filter is drawn.
+function draftControls() {
+  const kinds = Object.keys(NEW_ROW).map(kind =>
+    `<option value="${esc(kind)}"${kind === DRAFT.kind ? ' selected' : ''}>` +
+    `${esc(human(kind))}</option>`).join('');
+  const named = DRAFT.kind ? esc(human(DRAFT.kind).toLowerCase()) : '';
+  const create = DRAFT.kind
+    ? `<button type="button" id="draft-create" class="draft-do"` +
+      ` aria-label="Create this ${named}" title="Create this ${named}">` +
+      `${MARK.create}</button>`
+    : '';
+  // "choose a kind…" and not "choose…": the word `kind` used to be printed
+  // beside the picker and there is no room for it in the id column, so the
+  // placeholder carries it instead. It is only ever read in the bar — the row
+  // does not exist until a kind is chosen — so the narrow cell never has to
+  // draw it.
+  //
+  // Wrapped, and the wrapper is what does the laying out: a `<td>` cannot be the
+  // flex container itself without ceasing to be a table cell, which is the same
+  // reason the clamped columns have `.clamped` inside them.
+  return `<span class="drafting">` + create +
+    `<button type="button" id="draft-cancel" class="draft-do"` +
+    ` aria-label="Discard this new row" title="Discard this new row">` +
+    `${MARK.cancel}</button>` +
+    `<select id="draft-kind" aria-label="Kind"` +
+    ` title="Which kind of record this row becomes">` +
+    `<option value=""${DRAFT.kind ? '' : ' selected'}>choose a kind…</option>` +
+    `${kinds}</select></span>`;
 }
 
 // Whatever the last attempt was refused with, put in as text.
@@ -3396,11 +3468,18 @@ function refusalLines(answer, status) {
                          : [refusal(answer, status)];
 }
 
+// The picker, wherever it was just drawn — in the bar while there is no row, in
+// the row's id cell once there is one. Asked of the document rather than kept,
+// because every redraw replaces it.
+function focusDraftKind() {
+  const picker = document.getElementById('draft-kind');
+  if (picker) picker.focus();
+}
+
 function openDraft() {
   DRAFT = {kind: null, fields: {}, said: []};
   draw();
-  const picker = document.getElementById('draft-kind');
-  if (picker) picker.focus();
+  focusDraftKind();
 }
 
 function closeDraft(said) {
@@ -3412,7 +3491,17 @@ function closeDraft(said) {
 }
 
 function chooseKind(kind) {
-  if (!NEW_ROW[kind]) { DRAFT.kind = null; draw(); return; }
+  if (!NEW_ROW[kind]) {
+    // Back to "choose a kind…", which takes the row away and the picker with it
+    // — `draw()` rebuilds the whole tbody and the picker is drawn in the bar
+    // again. Handed back rather than left on `<body>`: the element that had the
+    // keyboard no longer exists, and a person who has just changed their mind
+    // about the kind is still answering the same question.
+    DRAFT.kind = null;
+    draw();
+    focusDraftKind();
+    return;
+  }
   DRAFT.kind = kind;
   // What was typed stays. Except a field this kind has not got: a size typed
   // while the row was a task is not a project's to carry, and sending it is a
@@ -3818,6 +3907,23 @@ if (EDITABLE) {
   });
 
   tbody.addEventListener('keydown', event => {
+    // Escape abandons the row nobody has created yet, from anywhere inside it.
+    // The two controls it has are marks rather than words, and a person who
+    // reached them with Tab should not have to work out which drawing is the way
+    // out — this is the key every dismissable thing on this page already answers
+    // to, and `closeDraft` says out loud what it did.
+    //
+    // Two things get it first, both by design. A move in the air owns Escape
+    // until it lands, which is why `MOVING` is asked here rather than below. And
+    // an open cell editor never reaches this line at all: its own Escape stops
+    // the bubble, because discarding one cell and discarding the whole row are
+    // different sizes of undo and the smaller one is what was pressed.
+    if (event.key === 'Escape' && DRAFT && !MOVING
+        && event.target.closest('tr.draft, tr.adder')) {
+      event.preventDefault();
+      closeDraft('The row was not created');
+      return;
+    }
     const cell = event.target.closest('td[tabindex]');
     // Only a cell's own keys. Once an editor is open the keys belong to it — its
     // Escape discards and its Tab commits — and the grid must not act as well.
@@ -7932,6 +8038,32 @@ def icon_svg(name: str) -> Markup:
     return Markup(_ICON_SVG).format(Markup(art)) if art else Markup("")
 
 
+# The two marks the table's draft row is created and cancelled with, in the same
+# frame as the icons above and for the same reason, one page over.
+#
+# Drawn and not typed. `✓` (U+2713) and `✕` (U+2715) are not in the vendored
+# latin subset — 230 codepoints, and neither is among them — so a page that used
+# the characters would be asking the reader's machine for them, which is the one
+# thing every other mark on this site is arranged not to do. On a workstation
+# without a font that has them, the two controls that create and abandon a record
+# are two tofu boxes. `.rowgrip` settles the identical question the identical way
+# and says so in the stylesheet: `⠿` is not in the subset either, so the grip is
+# two drawn rules instead of a character.
+#
+# They are not entries in `_ICON_ART`. That map IS the icon vocabulary — `ICONS`
+# is `tuple(_ICON_ART)`, the picker offers exactly its keys and `web.py` accepts
+# exactly its keys — so a `check` in it is a check somebody can store as their
+# face. These are furniture on one control; the frame is what they share.
+#
+# `aria-hidden` comes with the frame, which is what these need: each sits inside
+# a button that carries the name, and a drawing announced beside it would be the
+# same control said twice.
+DRAFT_MARKS = {
+    "create": _ICON_SVG.format('<path d="M5 12.6 9.7 17.3 19 6.9"/>'),
+    "cancel": _ICON_SVG.format('<path d="M6.6 6.6 17.4 17.4M17.4 6.6 6.6 17.4"/>'),
+}
+
+
 # Fields only one kind has, so the create form can hide the rest.
 # A project is a container and has no size of its own; `shaped_by` is asked of
 # the kind that gets shaped. `person_weeks` is on both of the others, so it is
@@ -10911,18 +11043,19 @@ def render_issue(
         base_commit=base_commit or "",
         signed_in=signed_in,
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
-        # The same machinery the notes page uses, with one kind on offer. An issue
-        # that is worth doing is worth a bet, and the bet is what the betting
-        # table reads — so the button says that rather than "promote", which is a
-        # word about this tool and not about the room.
+        # The same machinery the notes page uses, and now the same shape as well:
+        # two kinds and a picker to choose between them. A pitch when the fix is
+        # worth a bet somebody argues for, a task when it is only worth doing —
+        # which is the judgement the person reading the issue is already making,
+        # and the one this control used to make for them by offering one exit.
         promote=(
             _promote_html(
                 view["id"],
                 PROMOTABLE["issue"],
-                "The pitch starts in Shaping, carrying this issue\u2019s title, its tags "
-                "and its text, and saying in its own document that it came from here. "
-                "The issue stays open until the pitch is done.",
-                "Shape it into a pitch",
+                "The new record starts in Shaping, carrying this issue\u2019s title, its "
+                "tags and its text, and saying in its own document that it came from "
+                "here. Nothing else is carried: an issue has no owner and no size to "
+                "give it. The issue stays open until what it became is done.",
                 base_commit or "",
                 links,
             )
@@ -10991,24 +11124,52 @@ def _blank_issue() -> dict:
 # work, and asking the person who is still confused to decide is the whole
 # service this button provides.
 #
-# An issue gets only `pitch`, and that is the lifecycle the data model already
-# describes: somebody reads the open issues at the betting table and writes a
-# pitch for what matters. Promoting one straight to a task would mint a chore
-# nobody pitched — legal to write by hand, and not a thing a button should make
-# out of "something is broken" without the room agreeing it is worth doing.
-PROMOTABLE = {"note": ("pitch", "task", "project"), "issue": ("pitch",)}
+# An issue gets two. It got one, and the argument for that was that promoting
+# straight to a task would "mint a chore nobody pitched" — which is true of a
+# task under a pitch, because that task is a piece of somebody else's bet. A
+# parentless task is not that: `is_bettable` says one is bet in its own right,
+# `PARENT_KINDS` lets one hang straight off a project, and the betting table
+# draws it beside the pitches. So the rule was refusing the one shape that
+# already exists for exactly this case.
+#
+# What the old rule cost was paid on the way out rather than here: a broken
+# symlink and a one-line fix had to go through Shaping, Appetite, Rabbit holes
+# and No-gos to leave this tool, or it left round the side of it. An inbox whose
+# only exit is bigger than most of what is in it is an inbox nobody empties,
+# which is the defect `/api/promote` exists to fix in the first place.
+#
+# A project is still not on offer here, and that absence is the load-bearing one:
+# a project is a container for bets, and "we found something broken" is not a
+# milestone. A note gets it because a note can be an idea about the shape of the
+# year; an issue never is.
+PROMOTABLE = {"note": ("pitch", "task", "project"), "issue": ("pitch", "task")}
 _ARTICLE = {"pitch": "a pitch", "task": "a task", "project": "a project"}
 
 
 def _promote_html(
-    source_id: str, kinds: Sequence[str], hint: str, button: str, base_commit: str,
+    source_id: str, kinds: Sequence[str], hint: str, base_commit: str,
     links: Links = ROUTES,
 ) -> Markup:
     """The promotion control, for either inbox.
 
-    One fragment because the two differ in exactly two things — how many kinds
-    they offer and the sentence above the button — and in nothing else. Written
-    twice, the second copy is where the base commit stops being sent.
+    One fragment because the two differ in exactly one thing — the sentence above
+    the button — and in nothing else. Written twice, the second copy is where the
+    base commit stops being sent.
+
+    The word on the button was a parameter as well, and the issue's read "Shape it
+    into a pitch". That was the better copy while there was one destination: a
+    control that names what will happen beats a control naming the mechanism. It
+    stops being available with two, because "Shape it into a pitch or a task" is a
+    button arguing with the picker next to it, and picking the destination is now
+    the picker's job on both pages. So both say Promote — the word the label above
+    the picker already uses, kept the same through the flow, because five pages
+    inventing their own word for one act is how `in_progress` came to be spelled
+    three ways on one screen.
+
+    `only` survives a `kinds` of length one, which no inbox has today. It is kept
+    because the alternative it guards against is drawn rather than argued: a
+    `<select>` holding a single option is a control that cannot be used and looks
+    exactly like one that can.
     """
     return _fragment(
         _PROMOTE,
@@ -11016,7 +11177,6 @@ def _promote_html(
         kinds=[(kind, _ARTICLE[kind]) for kind in kinds],
         only=kinds[0],
         hint=hint,
-        button=button,
         base_commit=base_commit,
         entity=links.entity,
     )
@@ -11118,7 +11278,6 @@ def render_note(
                 "tags and its text, and saying in its own document that it came from "
                 "here. Nothing else is carried: a note has no owner and no size to "
                 "give it. This note stays, and points at what it became.",
-                "Promote",
                 base_commit or "",
                 links,
             )
@@ -11951,7 +12110,7 @@ _PROMOTE = """
     {% endfor %}
   </select>
   {% endif %}
-  <button type="button" id="promote-go" class="button primary">{{ button }}</button>
+  <button type="button" id="promote-go" class="button primary">Promote</button>
   <span id="promoted" role="status" aria-live="polite"></span>
   <p class="hint">{{ hint }}</p>
 </div>
@@ -12448,6 +12607,12 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         base_commit=base_commit or "",
         links=links,
         columns=_columns_for(index),
+        # The drawings the draft row's two controls are made of. Sent as values
+        # and read by the script, rather than written out as two `<svg>` strings
+        # in a template literal: this is the same argument the icon picker makes
+        # against rebuilding its own art in JavaScript, one drawing per mark and
+        # in the language the rest of this file's drawings are written in.
+        marks=DRAFT_MARKS,
         why=_TABLE_WHY,
         facets=_facets_html(index.facets),
         filters=_FILTER_JS,

@@ -149,9 +149,12 @@ class Issue(BaseModel):
     the timeline by construction, rather than by an exclusion in each of them
     that somebody later forgets.
 
-    There is no `shaping`: a shaped issue is a pitch, and that is the whole
-    lifecycle — somebody reads the open issues at the betting table and writes a
-    pitch for what matters.
+    There is no `shaping`: shaping happens in the record an issue is promoted
+    into and never in the issue itself, so a status for it here would be a second
+    place to say what `pitched_into` already says. What it is promoted into is a
+    pitch when the fix is worth a bet and a task when it is only worth doing —
+    see `render.PROMOTABLE`, which offered pitch alone until a one-line fix had
+    to be written up as a bet to get out of this inbox.
     """
 
     id: str
