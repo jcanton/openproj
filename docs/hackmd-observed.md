@@ -92,6 +92,71 @@ reference for it: number the logical line, position from the top of its first vi
   Tracer advection state`), an info button, a tag button, the account avatar, a history button
   and Share.
 
+## The second shot: the status bar, and the URL
+
+A full-window shot of the same note, 2026-08-20. Two things in it are worth more than
+everything in the first one.
+
+### The view mode is a query parameter, and the spelling is HackMD's
+
+The address bar reads `hackmd.io/ppDzW8W0QnmS2y8eFyU1Tw?both=`. So the mode is not a
+client-side class; it is in the URL, which makes a view a link — the same rule this repository
+already applies to a filtered table. The plan proposed `?edit` / `?both` / `?view` from
+documentation and guessed right down to the word. Build those three spellings and no others.
+
+### The editor's settings live in a bottom status bar, not in a dialog
+
+The strip along the foot of the editor pane, left to right:
+
+| item | what it is |
+|---|---|
+| `Line 1, Columns 1 — 100 Lines` | caret position, and the document's line count |
+| a lightbulb | tips |
+| a tick | spellcheck |
+| a brush | editor theme |
+| **`Spaces: 4`** | **indent type and width — ask 5, and it is a click target, not a dialog** |
+| **`Breaks`** | whether a single newline renders as a line break |
+| a keyboard glyph | **the keymap selector — ask 6's control** |
+| `Length: 1369` | character count |
+
+This is where asks 5 and 6 belong. S5 is already called "The preference, the status bar, and
+the draft receipt", so the plan anticipated a status bar; it did not know what goes in one.
+Now it does, and the answer is that HackMD exposes indent width and keymap as **two words in a
+status bar** rather than as a settings screen — one click, no modal, the current value legible
+without opening anything. `Spaces: 4` says what it is and what it is set to in two words.
+
+The autosave interval is **not** there, which is worth stating: nothing in this strip is a
+timer. Ask 7 being read as draft autosave with a visible receipt is consistent with what
+HackMD actually shows, which is `Length` and a line count rather than a countdown.
+
+### `Breaks` is a renderer setting and it is a real difference from this repository
+
+HackMD lets a note choose whether one newline is a line break. `render.py:941` builds
+`MarkdownIt("commonmark", {"html": False}).enable("table")`, and CommonMark's answer is no — a
+single newline is a space. So a corpus written in HackMD with breaks on renders differently
+here, and the difference is invisible in a diff: no character changes, the paragraphs just
+join up. Nobody has checked whether the migrated notes rely on it. That is now the sharpest
+reason to want the corpus, sharper than the toolbar question the first shot raised, and it is
+a server-side one-word change (`{"breaks": True}`) rather than an editor feature.
+
+### The gutter stripes are more than one colour
+
+The full-height shot shows at least three: green on lines 1–26 and 47, a teal band across
+33–44, amber on 48 onward. One colour per author, hue derived from the person, exactly as this
+repository already derives a seat's hue from a login. It confirms the reading in the section
+above — the stripe marks **who wrote each line** and persists after they leave — and it is
+still not being built.
+
+### Also visible
+
+- Each pane has its own scrollbar and they are at different positions, so the panes are
+  scrolling independently in this shot. That is not evidence against scroll sync — sync is
+  usually driven by the pane with focus — but it is not evidence for it either, and the plan
+  still rests on documentation for that one.
+- A panel icon at the right of the preview's header, next to the brush, which is most likely
+  the outline or table-of-contents toggle. Not confirmed.
+- Line 17 wraps to two visual rows under a single gutter number, again.
+
 ## What this screenshot does not settle
 
 It shows one view of one note, so none of the following is answered and none of it should be

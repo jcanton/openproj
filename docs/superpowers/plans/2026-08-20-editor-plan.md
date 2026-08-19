@@ -56,7 +56,27 @@ wins and the stage text is wrong.**
    picker. `comment` is not built: it is a HackMD collaboration feature and there is nothing
    behind it here.
 
-4. **Logical line numbers under soft wrap now have a reference.** In the shot, line 17 wraps to
+4. **The view mode is a URL query parameter and the plan guessed the spelling right.** The
+   address bar reads `?both=`. Build `?edit`, `?both`, `?view` and nothing else.
+
+5. **Asks 5 and 6 live in a bottom status bar, as words, not in a dialog.** HackMD's strip
+   along the foot of the editor reads: caret position and line count, spellcheck, theme,
+   **`Spaces: 4`**, **`Breaks`**, a keymap glyph, and `Length: 1369`. So the indent control is
+   two words that state the current value and are themselves the click target, and the keymap
+   selector sits beside it. S5 already carries a status bar; this is what goes in it. No modal,
+   no settings screen. Note what is absent: no timer and no autosave countdown, which is
+   consistent with ask 7 being draft autosave with a receipt.
+
+6. **`Breaks` is a server-side finding, not an editor one, and nobody has checked it.**
+   `render.py:941` is `MarkdownIt("commonmark", {"html": False}).enable("table")`, and
+   CommonMark treats a single newline as a space. HackMD makes that a per-note toggle. A corpus
+   written there with breaks on renders differently here, and the difference changes no
+   characters — the paragraphs simply join up, which is invisible in a diff and obvious on a
+   page. Do not flip it blind: `{"breaks": True}` would reflow every document already in this
+   plan. It is the sharpest reason to want the corpus that S0 asks for, and until that grep
+   runs it stays a stated unknown rather than a change.
+
+7. **Logical line numbers under soft wrap now have a reference.** In the shot, line 17 wraps to
    two visual rows and the gutter shows one number aligned to the first row, with 18 next. That
    is exactly S3's specification and it is no longer an assumption.
 
