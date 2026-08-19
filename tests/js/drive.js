@@ -54,6 +54,38 @@ const nodeCrypto = require('node:crypto');
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
   'link', 'meta', 'param', 'source', 'track', 'wbr']);
 
+// The five names an escaper in this repository can emit, plus every numeric
+// reference. `esc` (the shell) writes four of them and markupsafe writes those
+// four as `&#34;`/`&#39;` instead, and `&#128465;` is in two templates — so a
+// shim that hands text back undecoded answers `Ann&#39;s note` where a browser
+// answers `Ann's note`. That is not a cosmetic difference: `ORIGINAL_BODY` is
+// the marker the editor's `mine`/`theirs` branch is decided by, and it is
+// compared for equality against the room's text, which has never been escaped.
+// A named table and not an HTML entity list, because these are the only names
+// this application produces and a list nobody derives goes stale — the numeric
+// forms are general because they are a syntax rather than a vocabulary.
+const NAMED = {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' '};
+
+function decoded(text) {
+  return text.replace(/&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, ref) => {
+    if (ref[0] === '#') {
+      const point = ref[1] === 'x' || ref[1] === 'X'
+        ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+      // Beyond the last code point is not a character reference, it is text
+      // that looks like one. Handing it to `fromCodePoint` is a RangeError.
+      return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
+    }
+    // A name this application never writes stays as it was typed, which is what
+    // a browser does with `&frobnicate;` too.
+    return ref in NAMED ? NAMED[ref] : whole;
+  });
+}
+
+// The elements whose *content* is their value, rather than an attribute. This
+// is the whole list in HTML: everything else carries `value=`, which
+// `setAttribute` below already reflects.
+const CONTENT_IS_VALUE = new Set(['TEXTAREA', 'OPTION']);
+
 function parseFragment(html, owner) {
   const root = {children: [], text: ''};
   const stack = [root];
@@ -74,7 +106,7 @@ function parseFragment(html, owner) {
     }
     const element = new Element(tag, owner);
     for (const attr of (rest || '').matchAll(/([-\w:]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]*))?/g)) {
-      const value = (attr[2] || '').replace(/^["']|["']$/g, '');
+      const value = decoded((attr[2] || '').replace(/^["']|["']$/g, ''));
       element.setAttribute(attr[1], value);
     }
     element.parentNode = top === root ? owner : top;
@@ -89,7 +121,22 @@ function parseFragment(html, owner) {
 }
 
 function settle(element) {
-  if (element.text) element.textContent = element.text;
+  if (element.text) element.textContent = decoded(element.text);
+  // A `<textarea>`'s value IS its content — there is no `value` attribute to
+  // reflect — and this copied the content into `textContent` alone. So a parsed
+  // editing surface answered `''` to `.value` where a browser answers the
+  // record's body, and in page mode `ORIGINAL_BODY` was therefore always empty.
+  // That flips `welcomed()`'s `mine` from false to true on every first
+  // connection, which is the one branch in this feature that can lose unsaved
+  // work: the harness reported the draft path being taken over a page where
+  // nobody had typed. Two of the last three rounds were misled by this file.
+  //
+  // `'value' in attributes` and not a truth test on it: `<option value="">`
+  // means an empty value, and a falsy check would give that option its label
+  // instead — which is the "any" row at the top of three of this app's filters.
+  if (CONTENT_IS_VALUE.has(element.tagName) && !('value' in element.attributes)) {
+    element.value = element.textContent;
+  }
   for (const child of element.children) settle(child);
 }
 

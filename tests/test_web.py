@@ -612,6 +612,96 @@ def test_the_commit_author_is_the_signed_in_user(client: TestClient, repo_path: 
     assert written.message.startswith(f"{TASK}: ")
 
 
+FORGED = "notes\n\nCo-authored-by: Mallory <mallory@users.noreply.github.com>"
+
+
+def trailers_of(repo_path: Path, commit: str) -> dict[str, str]:
+    """The trailers git reads out of this commit's message.
+
+    libgit2's own parser, asked rather than imitated. A regex written here would
+    only prove this file agrees with itself about what a trailer is, and the
+    whole finding is that git, `git shortlog --group=trailer:co-authored-by` and
+    GitHub all read one where nothing in this repository intended to write one.
+    """
+    return dict(commit_at(repo_path, commit).message_trailers)
+
+
+def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, repo_path: Path):
+    """Every write path built its message as `', '.join(fields)`.
+
+    Those are keys off the wire, verbatim, and a field named with two newlines
+    and a `Co-authored-by:` line therefore committed exactly that trailer — which
+    is not decoration: `git shortlog --group=trailer:co-authored-by` counts the
+    name, and GitHub puts their avatar on the commit. Measured on this route and
+    on the cycle route beside it, both of which shipped it; the issue and note
+    routes happened to be closed already, by gates that refuse a field name no
+    model declares.
+
+    That matters more here than it would anywhere else, because live co-editing
+    is what makes `Co-authored-by:` the record of who wrote a shaping document. A
+    forgeable trail is worse than none — nobody audits a trail they know is
+    forgeable, and everybody trusts one they think is not.
+
+    All four write paths, because the expression was the same expression in all
+    four and a fix in one is a fix that drifts.
+    """
+    before = git_head(repo_path)
+    entity = client.patch(
+        f"/api/entity/{TASK}",
+        json={"base_commit": before, "fields": {FORGED: "hi"}, "body": None},
+    )
+    assert entity.status_code == 200, entity.text
+    assert trailers_of(repo_path, entity.json()["commit"]) == {}, (
+        "a field name off the wire wrote a Co-authored-by: trailer git reads"
+    )
+
+    cycle = client.put(
+        "/api/cycle/41",
+        json={
+            "base_commit": head(client),
+            "fields": {FORGED: "hi", "starts_on": "2026-09-01", "reviews_on": "2026-10-01"},
+        },
+    )
+    assert cycle.status_code == 200, cycle.text
+    assert trailers_of(repo_path, cycle.json()["commit"]) == {}
+
+    # The two that were already closed, held closed. Refused at the gate rather
+    # than committed with a sanitised message, which is the stronger answer and
+    # the one this pins.
+    opened = client.post("/api/issue", json={"title": "a thing somebody noticed"})
+    assert opened.status_code == 200, opened.text
+    refused = client.patch(
+        f"/api/issue/{opened.json()['id']}",
+        json={"base_commit": head(client), "fields": {FORGED: "hi"}},
+    )
+    assert refused.status_code == 422, refused.text
+
+    written = client.post("/api/note", json={"title": "an idea nobody has shaped"})
+    assert written.status_code == 200, written.text
+    refused = client.patch(
+        f"/api/note/{written.json()['id']}",
+        json={"base_commit": head(client), "fields": {FORGED: "hi"}},
+    )
+    assert refused.status_code == 422, refused.text
+
+
+def test_a_commit_message_still_names_the_fields_a_save_moved(
+    client: TestClient, repo_path: Path
+):
+    """The allowlist has to leave the log readable, or it has bought safety with
+    the thing the log is for. A name the schema declares is said; anything else
+    is counted, because a save that wrote something this cannot name is still a
+    save that wrote something."""
+    moved = save(client, TASK, {"priority": "high", "owner": "bo"}).json()["commit"]
+    assert commit_at(repo_path, moved).message == f"{TASK}: owner, priority"
+
+    both = client.patch(
+        f"/api/entity/{TASK}",
+        json={"base_commit": head(client), "fields": {"status": "in_progress", FORGED: "x"}},
+    )
+    assert commit_at(repo_path, both.json()["commit"]).message == f"{TASK}: status, 1 more"
+
+
 def test_the_author_can_never_be_supplied_by_the_client(client: TestClient, repo_path: Path):
     """The audit trail is worth exactly as much as this. A header, a query
     parameter or a body field claiming to be somebody else has to change nothing

@@ -262,6 +262,19 @@ class Room:
             return "", []
         return order[0], order[1:]
 
+    def tried(self) -> None:
+        """A commit was attempted. The next quiet window starts here.
+
+        A refusal used to be cleared by `apply` alone, so a `StoreLocked` — which
+        is what an ordinary second writer looks like, and is over in a moment —
+        stopped the quiet window until somebody typed again. A room whose typists
+        had all stopped never committed at all, and nothing said so. The window
+        retries now, and this is what keeps that a retry per window rather than a
+        retry per second: the clock the window is measured against restarts when
+        the attempt is made, exactly as it does when a keystroke arrives.
+        """
+        self._quiet_since = time.monotonic()
+
     def settled(self, commit: str, body: str) -> None:
         """The write landed. This is now the ground the next one stands on."""
         self.base = commit

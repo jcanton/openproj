@@ -27,8 +27,21 @@ from wsproto.frame_protocol import CloseReason
 class Client:
     """One connection. Blocking, because a test reads one message at a time."""
 
-    def __init__(self, host: str, port: int, path: str, cookie: str = "") -> None:
-        self._socket = socket.create_connection((host, port), timeout=10)
+    def __init__(
+        self, host: str, port: int, path: str, cookie: str = "", receive_buffer: int = 0
+    ) -> None:
+        self._socket = socket.socket()
+        if receive_buffer:
+            # A window small enough that a member who stops reading stops
+            # accepting writes within a few frames instead of within a few
+            # megabytes. This is how the one test that needs an unresponsive
+            # member makes one: not by pretending, but by having a real client
+            # on a real socket genuinely stop draining. The kernel is free to
+            # round this up and does — `SO_RCVBUF` is a request — so the test
+            # measures where the writes actually stop rather than assuming.
+            self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+        self._socket.settimeout(10)
+        self._socket.connect((host, port))
         self._connection = WSConnection(ConnectionType.CLIENT)
         self._waiting: list[str] = []
         headers = [(b"cookie", cookie.encode())] if cookie else []

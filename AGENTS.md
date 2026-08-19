@@ -145,7 +145,7 @@ there is no working copy, and why a single `repo.index` anywhere in that file gi
 
 ## How to find bugs here
 
-**This is the section worth the file.** Eleven rounds of adversarial audit ran on this branch, and a
+**This is the section worth the file.** Twelve rounds of adversarial audit ran on this branch, and a
 green test suite missed every defect they found. Each round was cracked by exactly one question.
 
 | Ask this | What it found |
@@ -165,8 +165,12 @@ green test suite missed every defect they found. Each round was cracked by exact
 | What happens on the branch that decides *not* to act? | Three of them said nothing at all. An update over the frame ceiling was dropped with `continue`, so a 263 kB paste produced no frame back and the room committed the text from before it. A Save with nothing to commit returned without answering, so the page stayed "saving" for ever and the shell queued every later banner behind it. And the two ceilings were the same number, so the transport refused a body the policy would have taken. |
 | What does the callee document itself as raising, and what does the handler name? | `store.write` raises `StoreDiverged`, `StoreLocked` and `pygit2.GitError`; the room caught `(HTTPException, ValueError)`. An escape killed the timer task in `_watch`, and a dead timer has exactly one symptom: nothing is committed any more. |
 | Is the harness itself lying? | `tests/js/drive.js` handed this realm's `String` into the vm context it built, so `text.constructor === String` — how `YText.insert` tells a string from an embed — was false for every string the page made. Every insert became a one-unit embed with no text in it. A test written against that shim would have reported a defect the editor did not have, and passed one it did. |
+| What does *one* participant's socket do to everybody else's? | The room broadcast by awaiting `send_json` per member in turn. uvicorn's send begins `await self.writable.wait()`, cleared when a transport's buffer fills, so one member who stopped draining held that coroutine — and with it every other member's keystroke and the room's own timer, which reaches the same line. Three real sockets: the second member got nothing for thirty seconds, nothing was committed again, and `/healthz` answered 200 throughout. |
+| Whose names end up in a line this server signs? | Every write path built its commit message as `', '.join(fields)` — keys off the wire, verbatim. A field named `notes\n\nCo-authored-by: Mallory <…>` committed exactly that trailer, which git's parser, `git shortlog --group=trailer:co-authored-by` and GitHub all honour. On a branch whose whole point is that `Co-authored-by:` records who wrote a document. |
+| Is the harness itself lying? (again) | `drive.js` copied a parsed element's text into `textContent` and never into `.value`, so a `<textarea>` answered `''` where a browser answers the record's body. `ORIGINAL_BODY` was therefore always empty in page mode, which flips the one branch in the editor that can lose unsaved work. Two of the three rounds before this one were misled by this same file. |
+| Does the fix throw out the person who was working? | The first version of the outbox evicted a member whose queue passed a byte ceiling. Three real tabs: a tab applying a burst of whole-document updates goes a megabyte behind for a moment and catches up completely, and it was thrown out beside the tab that was actually suspended — so the room emptied and committed nothing. *Behind* and *not draining* are different things, and only a clock can tell them apart. |
 
-Behind all eleven is one habit: **ask the question in the medium where the answer lives.** In
+Behind all twelve is one habit: **ask the question in the medium where the answer lives.** In
 practice that means:
 
 - **Render pages and parse them in a real DOM.** A substring cannot tell markup from text; a parser
@@ -189,6 +193,12 @@ practice that means:
   stylesheet says nothing about whether it wins, which is the only thing a reader sees.
 - **Use a real browser when the claim is about pixels.** `tests/browser.py` drives headless Chrome.
   A resolved value is a promise about pixels that a stylesheet cannot keep on its own.
+- **Use a real server and a real socket when the claim is about backpressure.** `TestClient` speaks
+  ASGI directly and its send never blocks, so under it a member who stops draining is merely a
+  member who is slower — and the whole defect is that uvicorn's send is not. There is no kernel in
+  that harness and therefore no `writable` event to clear. `tests/test_coedit.py`'s `serving`
+  fixture is a real uvicorn on a real port, and the unresponsive member is a real client with a
+  small receive window that genuinely stops calling `recv`.
 - **Attack through the API, not by editing files.** The eleven unreadable PATCH bodies went in
   through the write path; nothing you can do by hand-editing a fixture would have found them.
 - **Mutation-test your own checker.** Two of the harnesses used here had bugs that made their checks
@@ -252,7 +262,7 @@ claim is about pixels, look at the pixels.
 - **Test the behaviour in the medium where it happens.** If the claim is about pixels, the test has
   to tell painted from unpainted, or say in its own words why it cannot.
 - **A test that would not have caught the defect it is written for is not a test.** Delete the fix,
-  watch the test fail, put the fix back. Eleven rounds have each shipped one defect a green suite
+  watch the test fail, put the fix back. Twelve rounds have each shipped one defect a green suite
   missed, and the last three all destroyed somebody's writing without a word: a splice measured in
   code points and applied in bytes, an observer that overwrote a restored draft before the line
   written to protect it could read the box, and the same splice in the browser cutting emoji in

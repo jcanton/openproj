@@ -16,12 +16,16 @@ Chrome in `test_the_browser_opens_the_socket_under_this_policy` below.
 from __future__ import annotations
 
 import ast
+import asyncio
 import base64
+import contextlib
 import gc
 import json
+import queue
 import re
 import shutil
 import subprocess
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -32,15 +36,21 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from test_injection import run_js
 from test_store import commit_directly
-from test_web import PATH, SECRET, SEED, TASK
+from test_web import PATH, SECRET, SEED, TASK, git_head
 
 from openproj import coedit
+from openproj import web as web_module
 from openproj.auth import User, sign_session
 from openproj.index import build_index
 from openproj.model import load_repo, split_front_matter
 from openproj.render import _yjs
-from openproj.store import Store, StoreDiverged
-from openproj.web import MAX_BODY_BYTES, MAX_UPDATE_BYTES, SESSION_COOKIE, create_app
+from openproj.store import Store, StoreDiverged, StoreLocked
+from openproj.web import (
+    MAX_BODY_BYTES,
+    MAX_UPDATE_BYTES,
+    SESSION_COOKIE,
+    create_app,
+)
 
 # --------------------------------------------------------------------------- #
 # The repository, read without taking the writer's lock
@@ -305,6 +315,186 @@ def test_a_save_carries_the_fields_from_the_form_and_the_body_from_the_room(
     assert message.splitlines()[0] == f"{TASK}: status"
     assert stored_body(plan).startswith("New opening line.\n")
     assert "status: in_progress" in stored(plan)
+
+
+def test_a_room_will_not_write_somebody_elses_name_into_its_own_trailers(
+    client: TestClient, plan: Path
+):
+    """The room's message was `', '.join(fields)` like every other write path.
+
+    Here it is worse than it is on the PATCH route beside it, because this is the
+    branch that makes `Co-authored-by:` mean something: it is how two people
+    writing one shaping document both end up on the commit. A field name that can
+    add a third is a trail that can be written by anybody who can open the
+    editor, and a forgeable trail is worse than none.
+
+    The trailers are read with libgit2's parser rather than matched with a regex,
+    because the claim is about what git reads and not about what this file thinks
+    a trailer looks like.
+    """
+    with open_room(client, "ann") as one, open_room(client, "bo") as two:
+        ann, bo = Session(one, "ann"), Session(two, "bo")
+        ann.hello()
+        bo.hello()
+        ann.type(0, "a line ann wrote\n")
+        bo.until("ann wrote")
+        bo.type(0, "x")
+        ann.until("xa line")
+        bo.save({"notes\n\nCo-authored-by: Mallory <mallory@users.noreply.github.com>": "hi"})
+        ann.take("saved")
+
+    written = pygit2.Repository(str(plan))[
+        pygit2.Repository(str(plan)).references["refs/heads/main"].target
+    ]
+    credited = sorted(
+        value for name, value in written.message_trailers.items() if name == "Co-authored-by"
+    )
+    assert credited == ["bo <bo@users.noreply.github.com>"], (
+        f"the room credited somebody nobody put in it: {written.message!r}"
+    )
+    # And the trailers it does write are still there, because a fix that emptied
+    # them would pass the line above and lose the feature.
+    assert written.author.name == "ann"
+
+
+def test_the_timer_survives_a_failure_the_tuple_does_not_name(
+    client: TestClient, plan: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`WRITE_FAILURES` is a five-class denylist, and `_watch` had no try at all.
+
+    So a bare `RuntimeError` out of `store.write` on a tick killed the timer
+    task, and a dead timer has exactly one symptom: nothing is committed any
+    more, for as long as somebody has the tab open, with `/healthz` answering 200
+    throughout. The tuple is right for the failures it can name — "another writer
+    has the lock" is a sentence a person can act on — and wrong as the only net.
+
+    A `RuntimeError` and not a subclass of anything named, raised once, and then
+    the same room has to commit on a later tick without anybody reconnecting.
+    """
+    monkeypatch.setattr(coedit, "QUIET_SECONDS", 0.0)
+    failed = []
+    real = Store.write
+
+    def write(self, **asked):
+        if not failed:
+            failed.append(asked)
+            raise RuntimeError("something nobody has seen before")
+        return real(self, **asked)
+
+    monkeypatch.setattr(Store, "write", write)
+
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.type(0, "typed into a room whose write is about to explode\n")
+        until(lambda: bool(failed), "the quiet window never tried to write")
+        assert len(log_of(plan)) == before, "a failed write commits nothing"
+        until(
+            lambda: len(log_of(plan)) > before,
+            "the quiet window never came back: the timer died on a failure the "
+            "tuple did not name, and nothing anywhere said so",
+        )
+        # `saved` is in the list on purpose. The commit above proves the timer
+        # lived; without it here, a version that survived in silence would leave
+        # this waiting on a frame that is never coming — a test that hangs
+        # instead of a test that says what the server answered.
+        why = waited_for(ann, "refused", "saved")
+        assert why["t"] == "refused", (
+            "a failure nobody had named went past without a word, so the only "
+            "thing in front of a person was a save that never happened"
+        )
+        assert "RuntimeError" in why["why"], (
+            f"a failure nobody named still has to be said out loud: {why['why']!r}"
+        )
+    assert "about to explode" in stored_body(plan)
+
+
+def test_a_refused_room_tries_again_on_the_next_window(
+    client: TestClient, plan: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A `StoreLocked` is another writer, which is ordinary and over in a moment.
+
+    Only `Room.apply` cleared `refusal`, and `_watch` would not commit while one
+    was set — so a transient refusal stopped the quiet window until somebody
+    typed again. A room whose typists had stopped for the evening therefore never
+    got its text into git at all, and the design's own promise is a retry on the
+    next window. Nobody types here after the refusal: that is the whole test.
+    """
+    monkeypatch.setattr(coedit, "QUIET_SECONDS", 0.5)
+    failed = []
+    real = Store.write
+
+    def write(self, **asked):
+        if not failed:
+            failed.append(asked)
+            raise StoreLocked("another writer has the lock")
+        return real(self, **asked)
+
+    monkeypatch.setattr(Store, "write", write)
+
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        ann.type(0, "a sentence written just as somebody else took the lock\n")
+        until(lambda: bool(failed), "the quiet window never tried to write")
+        until(
+            lambda: len(log_of(plan)) > before,
+            "the room stayed refused until somebody typed again, so a lock held "
+            "for one second cost the whole document until the next keystroke",
+        )
+    assert "just as somebody else took the lock" in stored_body(plan)
+
+
+def test_a_commit_never_deletes_what_was_typed_during_it_by_construction():
+    """The other half of the real-socket test at the bottom of this file.
+
+    That one drives it; this one holds the shape that makes it true. Between the
+    snapshot `_commit_room` takes and `room.settled`, there must be no `await` at
+    all — an `await` there is a place another socket's handler can put a
+    keystroke into the room that `absorb` then takes back out, which is exactly
+    how a sentence typed during a save was deleted from every open document and
+    from `localStorage` behind it. Read as syntax, because "there happens to be
+    no suspension point today" is the kind of claim that is true until somebody
+    adds a line, and the test that would notice takes twenty seconds and three
+    sockets to run.
+    """
+    from openproj import web
+
+    tree = ast.parse(Path(web.__file__).read_text(encoding="utf-8"))
+    found = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_commit_room"
+    ]
+    assert len(found) == 1, "there is no _commit_room to read any more"
+
+    snapshot = [
+        node.lineno
+        for node in ast.walk(found[0])
+        if isinstance(node, ast.Assign)
+        and any(getattr(t, "id", "") == "body" for t in node.targets)
+    ]
+    settled = [
+        node.lineno
+        for node in ast.walk(found[0])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "settled"
+    ]
+    assert snapshot and settled, "the snapshot and the settle have been renamed"
+    suspensions = [
+        node.lineno
+        for node in ast.walk(found[0])
+        if isinstance(node, ast.Await) and min(snapshot) < node.lineno < max(settled)
+    ]
+    assert not suspensions, (
+        f"`_commit_room` suspends at line(s) {suspensions} between the snapshot it "
+        f"writes (line {min(snapshot)}) and `room.settled` (line {max(settled)}). "
+        "Anything typed while it is suspended there is in the room and not in the "
+        "snapshot, and is then deleted from every open document by the absorb."
+    )
 
 
 def test_a_save_the_model_could_not_read_back_is_refused_and_writes_nothing(
@@ -804,6 +994,65 @@ def test_a_stranger_is_refused_the_socket(plan: Path):
                 pass
 
 
+def test_a_socket_re_reads_the_session_it_was_opened_with(
+    plan: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`writer(socket)` ran once, at the handshake, and never again.
+
+    So a session that stopped being good went on writing commits under that login
+    for as long as the tab stayed open. Membership is already baked into the
+    cookie for 24 hours on the HTTP side, which is a decision this makes no worse;
+    what a socket adds is that it outlives even that, and a laptop left open over
+    a weekend is a room committing under a session that expired on Friday.
+
+    Driven with the real signer, the real cookie and the real expiry rule, run
+    sooner: `read_session` is asked for a window of two seconds instead of
+    twenty-four hours, exactly as `impatient` above asks for a shorter quiet
+    window. Nothing about the check is stubbed — the token is genuinely past its
+    own timestamp by the time the socket looks again.
+
+    The wait is four seconds against a window of two, and not two and a half,
+    because `itsdangerous` stamps and compares whole seconds: an age measured as
+    `int(now) - int(then)` over a gap of 2.5s is 2 as often as it is 3, and `2 >
+    2` is false. That is a test that passes most of the time, which is worse than
+    one that fails.
+    """
+    import functools
+
+    from openproj import auth as auth_module
+
+    monkeypatch.setattr(web_module, "RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(
+        web_module, "read_session", functools.partial(auth_module.read_session, max_age=2)
+    )
+    app = create_app(plan, auth="github", secret=SECRET, client_id="x", client_secret="y")
+    token = sign_session(User(login="ann", member=True), SECRET)
+    before = len(log_of(plan))
+    with TestClient(app) as signed_in:
+        with signed_in.websocket_connect(
+            f"/api/coedit/{TASK}", headers={"cookie": f"{SESSION_COOKIE}={token}"}
+        ) as socket:
+            ann = Session(socket, "ann")
+            ann.hello()
+            ann.type(0, "typed while the session was still good\n")
+            time.sleep(4)
+            # The next frame is the one that finds out. Nothing about it is
+            # special: the point is that a live socket asks again at all.
+            ann.type(0, "typed after it had expired\n")
+            answer = waited_for(ann, "reload", "saved")
+
+    assert answer["t"] == "reload", answer
+    assert "typed after it had expired" not in stored_body(plan), (
+        "a socket went on taking writes under a session that had stopped being "
+        f"good. git holds {stored_body(plan)!r}"
+    )
+    # And what was typed while it *was* good is still committed. Refusing that
+    # would answer one way of losing somebody's writing with another: they wrote
+    # it, they were signed in, and the room is the only place it exists.
+    assert "typed while the session was still good" in stored_body(plan)
+    assert len(log_of(plan)) == before + 1
+
+
 def test_a_room_for_an_entity_that_is_not_there_never_opens(client: TestClient):
     with pytest.raises(WebSocketDisconnect):
         with open_room(client, "ann", entity_id="task-ffffff"):
@@ -1296,6 +1545,98 @@ def test_the_servers_update_lands_in_the_vendored_yjs():
 
 
 # --------------------------------------------------------------------------- #
+# The harness itself
+# --------------------------------------------------------------------------- #
+
+
+def test_the_parsed_editing_surface_answers_the_body_the_server_rendered(
+    client: TestClient, plan: Path
+):
+    """Is the harness lying? — asked of the one value this feature turns on.
+
+    A `<textarea>`'s value IS its content: there is no `value` attribute to
+    reflect, so `drive.js` copying the parsed text into `textContent` alone left
+    `.value` answering `''` where a browser answers the record's body. In page
+    mode `ORIGINAL_BODY` was therefore always empty, and `ORIGINAL_BODY` is the
+    only marker `welcomed()` has of whether anything in the box is unsent work.
+
+    Equality against what the server actually rendered, and with a body carrying
+    the characters an escaper rewrites — an apostrophe, an ampersand, angle
+    brackets — because the second half of the same lie is that a parser hands
+    back `Ann&#39;s note` where a browser hands back `Ann's note`. Both sides of
+    that comparison are compared for equality against the room's text, which has
+    never been escaped, so an undecoded shim is a shim that reports a conflict
+    for every body containing a quote. This corpus's prose is full of them.
+    """
+    front, _ = split_front_matter(stored(plan))
+    body = "Ann's note <b> & \"quoted\" — done.\n"
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "escapes")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert shown == body, "the record under test is not the one the page is showing"
+
+    page = client.get(f"/detail/{TASK}").text
+    answer = run_js(page, "document.querySelector('[name=body]').value", page=True)
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] == body, (
+        "the parsed editing surface answers something a browser does not, so every "
+        "page-mode test of this editor was driven against the wrong document"
+    )
+
+
+def test_a_draft_in_the_box_is_offered_to_a_room_that_has_not_moved(client: TestClient):
+    """The branch the broken shim made unreachable, driven through the shipped page.
+
+    Three answers hang off `mine`/`theirs` at the welcome, and this is the one
+    that keeps somebody's unsaved writing: a draft in the box, a room still
+    holding what the server rendered, so there is nothing to reconcile and the
+    draft goes up to the room as text. With `.value` answering `''` the page saw
+    `mine && theirs` instead — two edits and no common base — and took the
+    refusal: the room's copy went into the box and the draft went into the
+    conflict report. A harness that can only ever reach the refusal cannot tell
+    a working editor from one that throws away every restored draft.
+    """
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    page = client.get(f"/detail/{TASK}").text
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    draft = f"A SENTENCE NOBODY HAS SAVED YET\n{shown}"
+    answer = run_js(
+        page,
+        "(() => {"
+        "  const box = document.querySelector('[name=body]');"
+        f" box.value = {json.dumps(draft)};"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  const said = document.getElementById('conflict');"
+        "  return {box: box.value, refused: !said.hidden, sent: __socket.sent()};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert not answer["value"]["refused"], (
+        "a draft against a room that has not moved was reported as a conflict"
+    )
+    assert answer["value"]["box"] == draft, (
+        f"the welcome overwrote the draft in the box: {answer['value']['box']!r}"
+    )
+    for frame in answer["value"]["sent"]:
+        if frame["t"] == "update":
+            room.apply(base64.b64decode(frame["u"]), "ann")
+    assert room.body() == draft, (
+        "the draft stayed in the box and never reached the room, so the next commit "
+        f"would have written the file back over it. The room holds {room.body()!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # The floor: no socket at all
 # --------------------------------------------------------------------------- #
 
@@ -1411,6 +1752,385 @@ def serving(plan: Path):
     finally:
         server.should_exit = True
         thread.join(10)
+
+
+# --------------------------------------------------------------------------- #
+# One member who stops reading, over real sockets
+#
+# Everything below needs a real transport and could not be asked any other way.
+# `TestClient` speaks ASGI directly: its send never blocks, so a member who
+# stops draining is a member who is simply slower, and the whole defect is that
+# uvicorn's is not — `WSProtocol.send` begins `await self.writable.wait()`, and
+# asyncio clears that event when a transport's buffer fills. A harness with no
+# kernel in it cannot have that event, and a suite that only had one reported a
+# healthy room for a process that had stopped committing.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def impatient(monkeypatch: pytest.MonkeyPatch):
+    """The two waits these tests are not about, shortened.
+
+    The claims under test are that the timer still fires and that a member who
+    has stopped reading is let go of — not how long either waits. `_watch` reads
+    `coedit.QUIET_SECONDS` on every tick and `Outbox.offer` reads
+    `STALL_SECONDS` on every frame, so both are the real rules on the real
+    server, running sooner.
+    """
+    monkeypatch.setattr(coedit, "QUIET_SECONDS", 2.0)
+    monkeypatch.setattr(web_module, "STALL_SECONDS", 1.0)
+
+
+def test_a_member_who_is_behind_but_still_reading_is_not_given_up_on(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Behind and not draining are different things, and only one is a reason.
+
+    Found with three real tabs, against the first version of this: a byte ceiling
+    on its own threw out the tab that was *working*. Applying a burst of
+    whole-document updates puts a browser a megabyte behind for a moment, and it
+    catches up completely — so a rule written only in bytes evicted the person
+    typing beside the person whose laptop was shut, and the room emptied and
+    committed nothing. Evicting somebody for being busy is a worse failure than
+    the one the queue was written to fix.
+
+    Asked of `Outbox` directly, which is where the rule lives, and with a wire
+    that answers so the queue really does go down. The transport half — that one
+    member cannot block another at all — is the real-socket test above.
+    """
+    monkeypatch.setattr(web_module, "STALL_SECONDS", 0.2)
+
+    async def go() -> None:
+        sent: list[str] = []
+
+        class Wire:
+            async def send_text(self, frame: str) -> None:
+                sent.append(frame)
+
+        outbox = web_module.Outbox(Wire())
+        posting = asyncio.create_task(outbox.drain())
+        big = "x" * (web_module.MAX_OUTBOX_BYTES // 2 + 1)
+        try:
+            # Twice the ceiling at once: behind, and the clock starts.
+            assert outbox.offer(big)
+            assert outbox.offer(big)
+            assert not outbox.overrun
+            # The wire takes them, and then more than a whole stall window
+            # passes. A rule that only ever looked at the clock would give up
+            # here on somebody who is completely caught up.
+            await asyncio.sleep(0.4)
+            assert len(sent) == 2, sent
+            assert outbox.offer(big)
+            assert outbox.offer(big)
+            assert not outbox.overrun, (
+                "a member who drained everything it was sent was given up on for "
+                "having once been behind"
+            )
+        finally:
+            posting.cancel()
+
+    asyncio.run(go())
+
+
+def test_a_member_who_never_reads_is_given_up_on(monkeypatch: pytest.MonkeyPatch):
+    """The other half of the same rule, and the one it was written for.
+
+    Nothing is taken off this wire, so the queue only grows: past the ceiling and
+    still past it a stall window later, the member is replaced by a `reload`
+    rather than caught up. A Yjs stream is applied in order or not at all, so a
+    tab that has missed part of one has nothing useful to be sent."""
+    monkeypatch.setattr(web_module, "STALL_SECONDS", 0.2)
+
+    async def go() -> None:
+        class Wire:
+            async def send_text(self, frame: str) -> None:
+                await asyncio.Event().wait()  # a socket that never accepts a write
+
+        outbox = web_module.Outbox(Wire())
+        posting = asyncio.create_task(outbox.drain())
+        big = "x" * (web_module.MAX_OUTBOX_BYTES // 2 + 1)
+        try:
+            assert outbox.offer(big)
+            assert outbox.offer(big)
+            assert outbox.offer(big)
+            assert not outbox.overrun, "given up on before the stall window had passed"
+            await asyncio.sleep(0.3)
+            assert not outbox.offer(big)
+            assert outbox.overrun
+            # And what is left waiting for them is the one frame that helps.
+            assert json.loads(outbox._frames[0])["t"] == "reload"
+            assert len(outbox._frames) == 1, "the queue they cannot use was kept"
+        finally:
+            posting.cancel()
+
+    asyncio.run(go())
+
+
+class Listening:
+    """One member, drained by a thread, so a slow room cannot be mistaken for a
+    slow test.
+
+    Every frame is kept as well as queued. `until` consumes from the queue, and a
+    version that only queued therefore threw away the frames it walked past — so
+    a test that waited for `saved` and then rebuilt this member's document from
+    "what arrived" rebuilt it from what arrived *after* the interesting frame,
+    and the deletion the whole test is about was never applied to anything.
+    """
+
+    def __init__(self, client, name: str) -> None:
+        self.client, self.name = client, name
+        self.heard: queue.Queue = queue.Queue()
+        self.everything: list[dict] = []
+        client._socket.settimeout(None)
+        self._thread = threading.Thread(target=self._drain, daemon=True)
+        self._thread.start()
+
+    def _drain(self) -> None:
+        try:
+            while True:
+                frame = self.client.receive_json()
+                self.everything.append(frame)
+                self.heard.put(frame)
+        except Exception as error:  # noqa: BLE001 - a closed socket ends this thread
+            self.heard.put({"t": "!gone", "why": type(error).__name__})
+
+    def until(self, wanted: str, seconds: float = 20.0) -> dict | None:
+        """The next frame of this kind, or None if none arrives in time."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                frame = self.heard.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if frame["t"] == wanted:
+                return frame
+        return None
+
+    def document(self, doc: coedit.Doc) -> coedit.Doc:
+        """This member's document, with everything the room has said applied.
+
+        `saved` carries an update too, and it is the one that matters here: it is
+        how a commit puts back into every open document whatever the write
+        changed, and how a commit that forced the room to the file deleted
+        somebody's sentence out of the screen in front of them.
+        """
+        for frame in list(self.everything):
+            carried = frame.get("u") if frame["t"] == "update" else frame.get("update")
+            if carried:
+                doc.apply_update(base64.b64decode(carried))
+        return doc
+
+
+def in_the_room(port: int, login: str, **how: object):
+    """One real socket, signed in as this person, welcomed."""
+    from wsclient import Client
+
+    token = sign_session(User(login=login, member=True), SECRET)
+    client = Client(
+        "127.0.0.1", port, f"/api/coedit/{TASK}", cookie=f"{SESSION_COOKIE}={token}", **how
+    )
+    client.send_json({"t": "hello", "seed": None, "sv": None})
+    welcome = client.receive_json()
+    assert welcome["t"] == "welcome", welcome
+    return client, welcome
+
+
+def a_document_from(welcome: dict, client_id: int) -> coedit.Doc:
+    """One participant's Yjs document, seeded from their welcome.
+
+    `client_id` is per person and never shared. Yjs names every character by
+    (client, clock), so two documents built with one id are one client that has
+    forked: the room already knows that client up to some clock, and the second
+    person's insert is silently taken as an item it has already seen. Nothing
+    raises, nobody's text arrives, and the test then reports a defect in the
+    server that is entirely its own.
+    """
+    doc = coedit.Doc(client_id=client_id)
+    doc[coedit.BODY] = coedit.Text()
+    doc.apply_update(base64.b64decode(welcome["update"]))
+    return doc
+
+
+def typing(client, doc: coedit.Doc, text: str, at: int = 0) -> None:
+    """Type into this document and put what changed on the wire."""
+    before = doc.get_state()
+    doc[coedit.BODY].insert(at, text)
+    client.send_json({"t": "update", "u": base64.b64encode(doc.get_update(before)).decode()})
+
+
+def flooding(client, doc: coedit.Doc, frames: int) -> None:
+    """Push bytes at everybody else in the room without growing the document.
+
+    One update, then that same update again and again: the server broadcasts
+    what it was handed, and a Yjs update that is already applied changes nothing
+    when it is applied twice. So this fills a stalled member's pipe with
+    megabytes while the room's text — and therefore what a commit would write —
+    grows by one line. A flood that grew the document would hit `MAX_BODY_BYTES`
+    and the commit under test would be refused for a reason that is not the one
+    being asked about.
+    """
+    before = doc.get_state()
+    doc[coedit.BODY].insert(0, "x" * 30000 + "\n")
+    frame = {"t": "update", "u": base64.b64encode(doc.get_update(before)).decode()}
+    # A send that will not complete is the defect arriving early rather than a
+    # broken test: a server suspended in a broadcast has stopped reading *every*
+    # socket, so this one fills too. Swallowed here so the assertions below get
+    # to say what actually went wrong, in the words of the thing being tested.
+    with contextlib.suppress(OSError):
+        for _ in range(frames):
+            client.send_json(frame)
+
+
+def test_one_member_who_stops_reading_freezes_nobody(serving: int, plan: Path, impatient):
+    """A closed lid must cost that lid and nothing else.
+
+    `_to_room` awaited `socket.send_json` per member in turn, with no timeout and
+    no isolation, and uvicorn's send begins `await self.writable.wait()`. So the
+    broadcast — and with it every other member's update handler and the `_watch`
+    timer, which reaches the same line through `_commit_room` — suspended on
+    whoever was slowest. Measured here with three real sockets before the fix:
+    once ann's socket stopped accepting writes, cy received **0** further frames,
+    the room's commit count stayed where it was, ann's own sentence reached
+    neither cy's document nor git, and the last-person-out commit did not fire
+    either. `/healthz` and every page answered 200 throughout, so nothing
+    anywhere said the room had stopped.
+
+    Ann is a real client on a real socket with a small receive window who simply
+    stops calling `recv`. Dave is the one who fills it: the flood has to come
+    from somebody the test is finished with, because under the defect the sender's
+    own handler is the second thing to seize.
+    """
+    ann, _ = in_the_room(serving, "ann", receive_buffer=2048)  # and never reads again
+    dave, dave_welcome = in_the_room(serving, "dave")
+    bo, bo_welcome = in_the_room(serving, "bo")
+    cy, cy_welcome = in_the_room(serving, "cy")
+    listening = Listening(cy, "cy")
+    Listening(bo, "bo")
+    dave_doc = a_document_from(dave_welcome, client_id=4)
+    bo_doc = a_document_from(bo_welcome, client_id=2)
+    cy_doc = a_document_from(cy_welcome, client_id=3)
+    was = git_head(plan)
+
+    # Enough to be a whole document behind: `MAX_OUTBOX_BYTES` past whatever the
+    # kernel and the transport hold on the way, which is the operating system's
+    # number rather than this application's — 664 kB on the machine this was
+    # written on, and rather less on a Linux runner, where asking for a small
+    # `SO_RCVBUF` switches auto-tuning off instead of being a hint.
+    flooding(dave, dave_doc, frames=120)
+
+    # Ann is out. Bo keeps typing while we wait, and that is not decoration: the
+    # ceiling starts a clock and it is the *next frame after the stall window*
+    # that ends her membership, so a test that stopped broadcasting and then
+    # waited would be waiting for a decision nothing is going to ask for.
+    for _ in range(60):
+        typing(bo, bo_doc, ".")
+        time.sleep(0.5)
+        roster = [one for one in listening.everything if one["t"] == "who"]
+        if roster and "ann" not in roster[-1]["people"]:
+            break
+    else:  # pragma: no cover - only reached when the fix is not in place
+        raise AssertionError(
+            f"ann was never dropped, so the room is still waiting on her: "
+            f"{[one for one in listening.everything if one['t'] == 'who'][-1:]}"
+        )
+
+    # And now the two claims that matter: the others still hear each other, and
+    # the room still commits. Cy's own document and not "a frame arrived",
+    # because the question is whether bo's sentence reached the person he is
+    # writing it with.
+    typing(bo, bo_doc, "BO KEPT TYPING\n")
+    for _ in range(40):
+        if "BO KEPT TYPING" in str(listening.document(cy_doc)[coedit.BODY]):
+            break
+        time.sleep(0.5)
+    assert "BO KEPT TYPING" in str(cy_doc[coedit.BODY]), (
+        "bo typed and it never reached cy: one member who stopped reading stopped "
+        f"the room. Cy's document holds {str(cy_doc[coedit.BODY])!r}"
+    )
+    for _ in range(60):
+        if git_head(plan) != was:
+            break
+        time.sleep(0.5)
+    assert git_head(plan) != was, (
+        "the quiet window never fired: the timer reached the same await the "
+        "broadcast did, so a stalled member stopped every commit in the room"
+    )
+    assert "BO KEPT TYPING" in stored_body(plan), stored_body(plan)
+
+    for one in (ann, dave, bo, cy):
+        with contextlib.suppress(Exception):
+            one.close()
+
+
+def test_a_commit_never_deletes_what_was_typed_during_it(serving: int, plan: Path, impatient):
+    """The keystroke that lands while a save is in the air.
+
+    `_commit_room` snapshotted `body = room.body()`, then suspended at
+    `await _to_room(room, {"t": "saving"})` — the same await as above — wrote the
+    snapshot, and then `room.absorb(landed)` forced the room back to the file and
+    broadcast that as a deletion. The client's `saved` handler then moved
+    `ORIGINAL_BODY` and called `remembered.forget(DRAFT)`, so the `localStorage`
+    copy went with it. A sentence typed during a commit was deleted from every
+    open document and from the one place it could have been got back.
+
+    Reproduced by forcing that suspension the way a person would: ann stops
+    reading and dave fills her pipe, so the broadcast in the middle of bo's save
+    genuinely suspends. Cy types into the gap.
+    """
+    ann, _ = in_the_room(serving, "ann", receive_buffer=2048)
+    dave, dave_welcome = in_the_room(serving, "dave")
+    bo, bo_welcome = in_the_room(serving, "bo")
+    cy, cy_welcome = in_the_room(serving, "cy")
+    dave_doc = a_document_from(dave_welcome, client_id=4)
+    bo_doc = a_document_from(bo_welcome, client_id=2)
+    cy_doc = a_document_from(cy_welcome, client_id=3)
+    watching_bo = Listening(bo, "bo")
+    listening = Listening(cy, "cy")
+
+    typing(bo, bo_doc, "BO WROTE A PARAGRAPH\n")
+    flooding(dave, dave_doc, frames=120)
+    time.sleep(1)
+
+    # Bo saves. Under the defect this suspends inside `_commit_room`, holding a
+    # snapshot that does not have the next line in it.
+    bo.send_json({"t": "save", "fields": {}})
+    time.sleep(0.5)
+    # And cy types into that gap. `room.apply` runs before the broadcast that
+    # blocks, so this keystroke IS in the room while the write is in the air —
+    # which is exactly the sentence `absorb` then took back out.
+    typing(cy, cy_doc, "CY TYPED THIS DURING THE SAVE\n")
+
+    # Ann starts reading again, so everything that was suspended completes.
+    ann._socket.settimeout(2)
+    with contextlib.suppress(Exception):
+        while True:
+            ann.receive_json()
+
+    assert listening.until("saved", seconds=30) is not None, "the save never landed"
+    for _ in range(60):
+        if "CY TYPED THIS DURING THE SAVE" in stored_body(plan):
+            break
+        time.sleep(0.5)
+
+    # Both halves of the same loss, because they are not the same claim. The
+    # document is what a person is looking at; git is what survives the tab.
+    assert "CY TYPED THIS DURING THE SAVE" in str(watching_bo.document(bo_doc)[coedit.BODY]), (
+        "the commit broadcast a deletion of a keystroke that landed while it was "
+        "running, so it went off somebody else's screen while they were reading it. "
+        f"Bo's document holds {str(bo_doc[coedit.BODY])!r}"
+    )
+    assert "CY TYPED THIS DURING THE SAVE" in str(listening.document(cy_doc)[coedit.BODY]), (
+        "a commit deleted a keystroke that landed while it was running, out of the "
+        f"document of the person who typed it. It holds {str(cy_doc[coedit.BODY])!r}"
+    )
+    assert "CY TYPED THIS DURING THE SAVE" in stored_body(plan), (
+        "the sentence typed during the save never reached git, so the room believed "
+        f"it had committed text it had not. git holds {stored_body(plan)!r}"
+    )
+
+    for one in (ann, dave, bo, cy):
+        with contextlib.suppress(Exception):
+            one.close()
 
 
 def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(

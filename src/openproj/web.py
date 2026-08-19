@@ -44,6 +44,8 @@ import os
 import re
 import secrets
 import threading
+import time
+from collections import deque
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -52,6 +54,7 @@ import httpx
 import pygit2
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
 from . import coedit, render
@@ -153,6 +156,39 @@ MAX_BODY_BYTES = 256 * 1024
 # frame is refused out loud: a document that large could not be committed
 # either way, and a frame dropped in silence is how a paste disappeared.
 MAX_UPDATE_BYTES = 4 * MAX_BODY_BYTES
+# How far behind one member of a room may fall before the room starts counting.
+# Derived from the frame ceiling and not written out beside it, for the reason
+# the paragraph above gives: this is "one whole document, queued and not yet on
+# the wire", which is the largest single frame anybody can legitimately be owed.
+MAX_OUTBOX_BYTES = MAX_UPDATE_BYTES
+# And how long they may stay past it before the room gives up on them.
+#
+# Two conditions and not one, because *behind* and *not draining* are different
+# things and only the second is a reason to end somebody's membership. Measured
+# with three real tabs: with a byte ceiling alone, a tab applying a burst of
+# whole-document updates went a megabyte behind for a moment — doing exactly its
+# job, and it caught up completely — and was thrown out of the room beside the
+# tab that was actually suspended. Evicting the person who was working is a worse
+# failure than the one this was written to fix.
+#
+# So the ceiling starts a clock and staying over it stops the membership. A tab
+# that gets back under, however briefly, has proved it is draining and the clock
+# goes back to zero. What the process may hold for one member during those ten
+# seconds is whatever the room can broadcast in them, and every frame in that is
+# already bounded by `MAX_UPDATE_BYTES`.
+STALL_SECONDS = 10.0
+# How long a socket may hold its own handler open flushing what it still owes,
+# after the room has already been left and the last commit already made. Short,
+# because the only thing waiting on it is the person leaving.
+FLUSH_SECONDS = 5.0
+# How often a live socket re-reads the session it was opened with. Membership is
+# already baked into a cookie for 24 hours over HTTP; what a socket adds is that
+# it outlives even that, so a sign-out or a revoked membership went on committing
+# under that login for as long as the tab stayed open. A minute, because the
+# check is a signature verification against a cookie this process already has —
+# there is no request to GitHub in it — and because a minute is short beside a
+# tab somebody leaves open all afternoon.
+RECHECK_SECONDS = 60.0
 # A screenshot of a plot is well under this; a photograph pasted by accident is
 # not. Every byte here is a byte in the plan repository forever — git keeps it
 # after the markdown that referenced it is deleted.
@@ -546,6 +582,59 @@ def _fields_in(payload: dict) -> dict:
     return dict(fields)
 
 
+def _schema_names(*models: type[BaseModel]) -> tuple[str, ...]:
+    """Every field these records declare, in the order they declare it.
+
+    Read off the models rather than written out beside them, so a field added to
+    a record is nameable in a commit message on the commit that adds it and a
+    list nobody derives cannot go stale.
+    """
+    names: dict[str, None] = {}
+    for model in models:
+        names.update(dict.fromkeys(model.model_fields))
+    return tuple(names)
+
+
+ENTITY_FIELDS = _schema_names(Project, Pitch, Task)
+ISSUE_FIELDS = _schema_names(Issue)
+NOTE_FIELDS = _schema_names(Note)
+CYCLE_FIELDS = _schema_names(Cycle)
+
+
+def _named(fields: dict, known: tuple[str, ...]) -> str:
+    """Which fields a save moved, said with names this server chose.
+
+    Every write path here built that phrase as `', '.join(fields)` — the keys of
+    a JSON object off the wire, verbatim, into a commit message. A field named
+
+        "notes\\n\\nCo-authored-by: Mallory <mallory@users.noreply.github.com>"
+
+    therefore committed exactly that trailer, and it is not decorative: git's own
+    parser reads it, `git shortlog --group=trailer:co-authored-by` counts Mallory
+    for it, and GitHub puts their avatar on the commit. This branch is what makes
+    `Co-authored-by:` the record of who wrote a document, so a forgeable one is
+    worse than none. Measured on the entity PATCH and the cycle PUT, which are
+    both on `main` today; the issue and note routes happened to be closed already
+    because their own gates refuse a field name no model declares.
+
+    An allowlist and not an escape. Stripping newlines would leave the next
+    person to work out which characters git's trailer parser accepts, and there
+    is no denylist of those that is ever finished — where the model's own field
+    names are Python identifiers and cannot spell a trailer at all. Anything else
+    the payload carried is counted rather than quoted, because a save that wrote
+    something this cannot name is still a save that wrote something.
+
+    In the model's declaration order, which is fixed here, and deliberately not
+    in the order the payload arrived: the sender must not choose even the order
+    of a line this server signs.
+    """
+    chosen = [name for name in known if name in fields]
+    others = len(fields) - len(chosen)
+    if others:
+        chosen.append(f"{others} more" if chosen else f"{others} unnamed fields")
+    return ", ".join(chosen)
+
+
 def _patched(original: str, fields: dict, body: str | None, path: str) -> str:
     """The file with those fields applied, or a refusal naming the file.
 
@@ -628,6 +717,124 @@ def _as_zoom(value: str) -> float | None:
         return min(60.0, max(0.5, float(value)))
     except ValueError:
         return None
+
+
+class Outbox:
+    """One member's frames, and the task that puts them on the wire.
+
+    A room used to broadcast by awaiting `socket.send_json` for each member in
+    turn. That await is uvicorn's `await self.writable.wait()`, which asyncio
+    clears the moment a transport's buffer fills, so a member who stops draining
+    does not merely fall behind — they hold the coroutine that was sending to
+    them, and therefore the handler it was called from. Every other member's
+    keystroke and the room's own twenty-second timer both arrive at that same
+    line, so one closed lid stopped the room and every commit in it while every
+    page and `/healthz` went on answering 200.
+
+    The queue is the fix, and it is a queue per member rather than a timeout per
+    send because a timeout still couples them: everybody else waits for it to
+    expire. Here the broadcast never waits at all — `offer` appends and returns —
+    and being slow costs the slow member their own queue and nobody else's time.
+
+    Bounded, because an unbounded queue in front of a socket nobody is reading is
+    the same outage with a memory leak in it. Past the bound a member is not
+    caught up but replaced: their queue is dropped for a single `reload`, which
+    is the only honest frame to send a tab that has missed part of a CRDT stream
+    it can only apply in order. The bound is a ceiling *and* a clock — see
+    `STALL_SECONDS`, and the three real tabs that found out why.
+    """
+
+    def __init__(self, socket: WebSocket) -> None:
+        self.socket = socket
+        self._frames: deque[str] = deque()
+        self._held = 0
+        self._ready = asyncio.Event()
+        # When this member first went past the ceiling and stayed there, or None
+        # if they are keeping up. Cleared by getting back under it, which is the
+        # only evidence that matters: a queue that goes down is a socket that is
+        # being read.
+        self._behind: float | None = None
+        # Set when they have been given up on. Read by the socket's own read
+        # loop, so a member who comes back to life leaves promptly rather than
+        # typing into a room that is no longer listening to them.
+        self.overrun = False
+
+    def offer(self, frame: str) -> bool:
+        """Queue one frame. False if this member has just been given up on.
+
+        Never awaits and never raises: the whole point is that a caller
+        broadcasting to a room cannot be delayed or interrupted by any one member
+        in it.
+        """
+        if self.overrun:
+            return False
+        self._held += len(frame)
+        self._frames.append(frame)
+        self._ready.set()
+        if self._held <= MAX_OUTBOX_BYTES:
+            self._behind = None
+            return True
+        now = time.monotonic()
+        if self._behind is None:
+            self._behind = now
+            return True
+        if now - self._behind < STALL_SECONDS:
+            return True
+        self.overrun = True
+        # Their queue is worth nothing to them now — a Yjs stream is applied in
+        # order or not at all — so it goes, and one frame saying why takes its
+        # place. Dropped rather than kept because the whole reason they are being
+        # given up on is that this process is holding bytes nobody is reading.
+        self._frames.clear()
+        goodbye = json.dumps(
+            {
+                "t": "reload",
+                "why": "this tab stopped keeping up with the room, so it has left "
+                "it. Nothing in this tab is lost: Save writes the whole document, "
+                "the way it did before rooms existed.",
+            }
+        )
+        self._held = len(goodbye)
+        self._frames.append(goodbye)
+        self._ready.set()
+        return False
+
+    async def _next(self) -> str:
+        while not self._frames:
+            self._ready.clear()
+            await self._ready.wait()
+        frame = self._frames.popleft()
+        self._held -= len(frame)
+        return frame
+
+    async def drain(self) -> None:
+        """Put queued frames on the wire, for as long as this socket lives.
+
+        One task per connection, so the only thing a blocked send blocks is the
+        member it is blocked on. A send that fails is a socket that has gone: the
+        read loop is what removes it from the room, and raising here would only
+        turn a departure into a traceback.
+        """
+        try:
+            while True:
+                await self.socket.send_text(await self._next())
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a socket ends in as many ways as there are networks
+            return
+
+    async def flushed(self, seconds: float) -> None:
+        """Wait for what is still queued to reach the wire, or give up.
+
+        Called by the leaving member's own handler and after the room has already
+        been tidied up, so the only person a stalled flush costs time is the one
+        leaving. It exists so that the last thing said to a socket — a `reload`,
+        a refusal — is actually sent before the task carrying it is cancelled.
+        """
+        with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            async with asyncio.timeout(seconds):
+                while self._frames:
+                    await asyncio.sleep(0.01)
 
 
 def create_app(
@@ -958,7 +1165,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{issue_id}: {', '.join(fields) or 'body'}",
+            message=f"{issue_id}: {_named(fields, ISSUE_FIELDS) or 'body'}",
         )
         if written.commit:
             await announce(written.commit, [issue_id])
@@ -1060,7 +1267,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{note_id}: {', '.join(fields) or 'body'}",
+            message=f"{note_id}: {_named(fields, NOTE_FIELDS) or 'body'}",
         )
         if written.commit:
             await announce(written.commit, [note_id])
@@ -1458,7 +1665,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{entity_id}: {', '.join(fields) or 'body'}",
+            message=f"{entity_id}: {_named(fields, ENTITY_FIELDS) or 'body'}",
         )
         if written.commit:
             await announce(written.commit, [entity_id])
@@ -1504,7 +1711,10 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"cycle {number}: {', '.join(k for k in fields if k != 'cycle') or 'goal'}",
+            # Without `cycle`, which this route put there itself from the URL and
+            # which is therefore never news.
+            message=f"cycle {number}: "
+            f"{_named({k: v for k, v in fields.items() if k != 'cycle'}, CYCLE_FIELDS) or 'goal'}",
         )
         if written.commit:
             await announce(written.commit, [f"cycle-{number}"])
@@ -1846,9 +2056,9 @@ def create_app(
     # merge, and a genuine overlap still comes back as the same refusal.
 
     rooms = coedit.Rooms()
-    # The socket per connection, kept out of `Room` so `coedit.py` has nothing to
+    # The outbox per connection, kept out of `Room` so `coedit.py` has nothing to
     # say about transport and can be tested without one.
-    sockets: dict[int, WebSocket] = {}
+    outboxes: dict[int, Outbox] = {}
     watching: dict[str, asyncio.Task] = {}
     connections = 0
 
@@ -1872,18 +2082,60 @@ def create_app(
         except (binascii.Error, ValueError):
             return None
 
-    async def _to_room(room: coedit.Room, message: dict, skip: int | None = None) -> None:
+    def _to(connection: int, message: dict) -> None:
+        """One frame to one member, queued. Never blocks, never raises."""
+        outbox = outboxes.get(connection)
+        if outbox is not None:
+            outbox.offer(json.dumps(message))
+
+    def _to_room(room: coedit.Room, message: dict, skip: int | None = None) -> None:
+        """One frame to everybody in the room. Synchronous, and that is the point.
+
+        This awaited `socket.send_json` per member in turn, with no timeout and
+        no isolation. uvicorn's websocket send begins `await
+        self.writable.wait()`, and asyncio clears that event whenever a
+        transport's buffer fills — so one member who stopped draining (a closed
+        lid, a tunnel, a proxy holding the response) suspended the broadcast, and
+        with it *every other member's* update handler and the `_watch` timer,
+        which reaches the same await through `_commit_room`. Measured against a
+        real uvicorn server with three real sockets: after ann's socket stopped
+        accepting writes, bo received nothing further, commits stopped, ann's
+        sentence reached neither bo's document nor git, and the last-person-out
+        commit did not fire either — while `/healthz` and every page went on
+        answering 200, so nothing anywhere said the room was gone.
+
+        So a broadcast puts bytes in a queue and returns. There is no `await` in
+        here at all, which is what makes "one slow socket cannot reach another
+        member's handler or the timer" a fact about the shape of this function
+        rather than a promise about how long a send takes.
+
+        Serialised once for the room rather than once per member, because
+        `send_json` is `json.dumps` and this frame is the same frame for
+        everybody.
+        """
+        frame = json.dumps(message)
+        dropped = []
         for connection in list(room.members):
             if connection == skip:
                 continue
-            socket = sockets.get(connection)
-            if socket is None:
+            outbox = outboxes.get(connection)
+            if outbox is None:
                 continue
-            # A send that fails is a socket that has gone; the loop reading it is
-            # what removes it from the room, and shouting about it here would
-            # take down the send to everybody after it in the list.
-            with contextlib.suppress(Exception):
-                await socket.send_json(message)
+            if not outbox.offer(frame):
+                dropped.append(connection)
+        for connection in dropped:
+            # Out of the room at once, so the people still typing stop waiting on
+            # somebody who is a megabyte behind, and so the presence list stops
+            # naming them. Their socket keeps its `reload` queued: they get it if
+            # they ever drain, and their own handler tidies up either way.
+            rooms.exit(room, connection)
+        if dropped:
+            # One pass and deliberately not a recursive `_to_room`: an eviction
+            # here would cascade, and the next thing anybody does broadcasts the
+            # roster again anyway.
+            for connection in list(room.members):
+                if (outbox := outboxes.get(connection)) is not None:
+                    outbox.offer(json.dumps({"t": "who", "people": room.people()}))
 
     def _body_at(commit: str, path: str) -> str:
         """The body as the editor shows it, which is not the bytes after the
@@ -1922,11 +2174,25 @@ def create_app(
         in git mid-session is a blocker the pages draw, not a reason to strand
         everybody typing.
 
-        **This never raises for a write that failed, and `_watch` depends on that
-        rather than guarding it a second time.** A timer task that dies takes the
-        quiet window with it for as long as the room lives, and the only symptom
-        is that nothing is committed any more. Every failure leaves by the same
-        door instead: `refused`, into the room's own box, said to everybody in it.
+        **This never raises for a write that failed.** A timer task that dies
+        takes the quiet window with it for as long as the room lives, and the
+        only symptom is that nothing is committed any more. Every failure leaves
+        by the same door instead: `refused`, into the room's own box, said to
+        everybody in it. `_watch` guards itself as well, and the two are not the
+        same guard — see the note there.
+
+        **Nothing typed while this is running may be deleted.** Between the
+        snapshot below and `room.settled` at the bottom there is no `await`, so
+        no other coroutine can put a keystroke in the room that this would then
+        take back out. That used to be a claim about `store.write` being
+        synchronous while a broadcast sat in the middle of the same stretch: the
+        snapshot was taken, `await _to_room(room, {"t": "saving"})` suspended on
+        whichever member was slowest, another socket's handler applied a
+        keystroke to the room while it waited, and `absorb` then forced the room
+        back to the file — deleting that keystroke from every open document and,
+        through the `saved` handler, from `localStorage` too. `_to_room` does not
+        suspend any more, and `test_a_commit_never_deletes_what_was_typed_during_it`
+        holds this function to having no `await` in that stretch.
         """
         fields = fields or {}
         author, others = room.credits(presser)
@@ -1943,10 +2209,19 @@ def create_app(
             # button, because the quiet window and the last person out are owed
             # nothing.
             if presser:
-                await _to_room(room, {"t": "nothing"})
+                _to_room(room, {"t": "nothing"})
             return
-        body = room.body()
         try:
+            # Said before the write, and before the snapshot. A commit is
+            # announced to the event stream before the request that made it is
+            # answered, so the shell's "somebody else changed this" banner has to
+            # know a write is in the air first — otherwise the room's own commit
+            # arrives as news that a stranger moved the plan.
+            _to_room(room, {"t": "saving"})
+            # The snapshot, taken after the last thing above it that could ever
+            # have suspended, and read once. Everything from here to `absorb` is
+            # one synchronous run of this coroutine; see the docstring.
+            body = room.body()
             # The same ceiling `_body_in` holds a PATCH to. A room has no other:
             # every frame is bounded, and a document is unbounded exactly because
             # it is the sum of them.
@@ -1971,13 +2246,7 @@ def create_app(
             # everybody, on a branch where the commit cannot be force-pushed away.
             parse_text(content, room.path)
 
-            # Said before the write, not after it: a commit is announced to the
-            # event stream before the request that made it is answered, so the
-            # shell's "somebody else changed this" banner has to know a write is
-            # in the air first — otherwise the room's own commit arrives as news
-            # that a stranger moved the plan.
-            await _to_room(room, {"t": "saving"})
-            message = f"{room.entity_id}: {', '.join(fields) or 'body'}"
+            message = f"{room.entity_id}: {_named(fields, ENTITY_FIELDS) or 'body'}"
             if others:
                 # The trailer git itself reads. `store._commit` puts the author
                 # in the author field, so `git log --format='%an'` is unchanged
@@ -2002,40 +2271,68 @@ def create_app(
                 # pasted into a textarea is text somebody saves back. The room
                 # keeps the base it had and tries again once the text moves.
                 room.refusal = written.conflict
-                await _to_room(room, {"t": "refused", "why": written.conflict})
+                _to_room(room, {"t": "refused", "why": written.conflict})
                 return
             # Whatever actually landed, which is not what was sent when `_merge`
             # folded in somebody's git commit. Applied back into the document so
             # the room sees their paragraph arrive as text rather than diverging
             # from the file.
-            #
-            # Nothing can have been typed in between: `store.write` is
-            # synchronous, so no other coroutine ran while it was in there.
             landed = _body_at(written.commit, room.path)
+            # Only when the write changed something. `absorb` makes the room's
+            # text *be* the text it is given, which is right on the join path
+            # where the room is settled and wrong here the instant the room holds
+            # anything the snapshot did not: it would delete it and broadcast the
+            # deletion. The ordinary write changes nothing — `_body_at` reads back
+            # exactly what went in — so the ordinary write now touches no
+            # document at all, and this stays a comparison rather than a claim
+            # about which coroutine ran when.
+            update = room.absorb(landed) if landed != body else None
+            # `landed`, which is what is in the file, and never `room.body()`,
+            # which is what the room happens to be holding. The two are the same
+            # in every ordinary case and they were the same line for that reason
+            # — and when they differ, `room.body()` is the room telling itself
+            # that a sentence it has never written is already in git. `pending()`
+            # is that comparison, so believing it stops the quiet window
+            # altogether: measured over real sockets, a sentence typed during a
+            # save sat in the room for ever and no commit was ever made for it.
+            room.settled(written.commit, landed)
+            # Inside the try, with the write. These only report, but a report
+            # that raises kills the caller just as thoroughly as a write that
+            # does: `absorb` crosses two index spaces, `announce` writes to every
+            # open event stream, and an escape from either used to take `_watch`
+            # with it and stop every commit in the room for as long as it lived.
+            _to_room(
+                room,
+                {
+                    "t": "saved",
+                    "commit": written.commit,
+                    "outcome": written.outcome,
+                    "pushed": written.pushed,
+                    "update": _b64(update) if update else None,
+                },
+            )
+            await announce(written.commit, [room.entity_id])
         except WRITE_FAILURES as error:
-            # Everything a write is documented to fail with, not the two that had
-            # been thought of — see `WRITE_FAILURES`. This is also the only handler
-            # between a failed write and `_watch`, which has no try of its own: an
-            # escape from here cancelled that task, and the quiet-window commit for
-            # that entity then stopped for as long as the room stayed open, with
-            # nothing anywhere saying so.
+            # Everything a write is documented to fail with, said in its own
+            # words — see `WRITE_FAILURES`. The arm below catches the rest; this
+            # one exists because these are the failures a person can act on, and
+            # "another writer has the lock" is a different sentence from "this
+            # broke".
             why = error.detail if isinstance(error, HTTPException) else str(error)
             room.refusal = why
-            await _to_room(room, {"t": "refused", "why": why})
-            return
-        update = room.absorb(landed)
-        room.settled(written.commit, room.body())
-        await _to_room(
-            room,
-            {
-                "t": "saved",
-                "commit": written.commit,
-                "outcome": written.outcome,
-                "pushed": written.pushed,
-                "update": _b64(update) if update else None,
-            },
-        )
-        await announce(written.commit, [room.entity_id])
+            _to_room(room, {"t": "refused", "why": why})
+        except Exception as error:  # noqa: BLE001 - see the docstring: this may not raise
+            # A denylist is right where the failures can be named and the name is
+            # what the reader needs; this file argues for that everywhere else and
+            # `WRITE_FAILURES` above is one. It is wrong *here*, because what an
+            # escape costs is not one bad message — it is the timer task, and a
+            # dead timer has exactly one symptom, which is that nothing is
+            # committed any more and nothing anywhere says so. So the tuple keeps
+            # the sentences it can write and this keeps the promise, and the class
+            # name goes out with it rather than a shrug.
+            why = f"that save did not go through: {type(error).__name__}: {error}"
+            room.refusal = why
+            _to_room(room, {"t": "refused", "why": why})
 
     async def _watch(room: coedit.Room) -> None:
         """The quiet window, and the last second before a shutdown.
@@ -2044,18 +2341,39 @@ def create_app(
         when somebody arrives and ends when the room empties, so a process that
         nobody is editing on holds no timers, and a test that opens a socket does
         not leave one running after it.
+
+        **The tick is guarded, and it is a different guard from `_commit_room`'s.**
+        That one promises "a save never raises" and writes a sentence about the
+        save. This one promises "the timer outlives anything", including the
+        things that are not the save: `room.pending()` walks the document,
+        `closing.is_set()` is an event this process shares with the shutdown
+        hook, and either can be the line that ends the task. A dead timer is
+        silent — no exception reaches a request, no page changes, `/healthz` goes
+        on answering — and what it costs is every commit this room would have
+        made for as long as somebody has the tab open.
         """
         while room.members:
             await asyncio.sleep(1)
-            if closing.is_set():
-                # The floor the design promises is the debounce window, and this
-                # is the second that gets most of it back. Same hook the event
-                # stream uses — uvicorn's exit fires it before it waits.
-                if room.pending():
+            try:
+                if closing.is_set():
+                    # The floor the design promises is the debounce window, and
+                    # this is the second that gets most of it back. Same hook the
+                    # event stream uses — uvicorn's exit fires it before it waits.
+                    if room.pending():
+                        await _commit_room(room)
+                    return
+                if room.pending() and room.quiet_for() >= coedit.QUIET_SECONDS:
+                    # Not gated on `room.refusal`. Only `Room.apply` cleared it,
+                    # so a `StoreLocked` — another writer, which is ordinary and
+                    # transient — stopped the quiet window until somebody typed
+                    # again, and a room whose typists had all stopped never got
+                    # its text into git at all. The design promises a retry on the
+                    # next window, and `tried()` is what makes it the *next* one
+                    # rather than every second from here on.
                     await _commit_room(room)
-                return
-            if room.refusal is None and room.pending() and room.quiet_for() >= coedit.QUIET_SECONDS:
-                await _commit_room(room)
+                    room.tried()
+            except Exception:  # noqa: BLE001 - the timer outlives anything; see the docstring
+                continue
 
     @app.websocket("/api/coedit/{entity_id}")
     async def coedit_socket(socket: WebSocket, entity_id: str) -> None:
@@ -2096,6 +2414,18 @@ def create_app(
             arriving = room.absorb(_body_at(head, path))
             room.settled(head, room.body())
 
+        # Last, and immediately before the `try` that will tidy it up, because
+        # this is a task and a registry entry: anything between the two is a line
+        # that can raise and leave both behind. And before anything writes to
+        # this socket, because from here on *nothing* writes to it directly. One
+        # writer per connection is what makes a broadcast unable to block — see
+        # `Outbox` and `_to_room` — and a second path sending straight down the
+        # socket would be a second place a slow member could stop the process,
+        # which is the defect this replaced.
+        outbox = Outbox(socket)
+        outboxes[connection] = outbox
+        posting = asyncio.create_task(outbox.drain())
+
         try:
             hello = await socket.receive_json()
             if not isinstance(hello, dict):
@@ -2109,12 +2439,14 @@ def create_app(
             # noticing it happened.
             seed = hello.get("seed")
             if isinstance(seed, str) and seed != room.seed:
-                await socket.send_json(
-                    {
-                        "t": "reload",
-                        "why": "this document was rebuilt on the server while you were "
-                        "away — reload the page to join the room again",
-                    }
+                outbox.offer(
+                    json.dumps(
+                        {
+                            "t": "reload",
+                            "why": "this document was rebuilt on the server while you were "
+                            "away — reload the page to join the room again",
+                        }
+                    )
                 )
                 return
             # Composed, then joined, then sent, with no `await` between the first
@@ -2128,7 +2460,9 @@ def create_app(
             # built and before it is sent is the only order with no gap in it:
             # anything applied to the room earlier is inside this update, and
             # anything applied later is broadcast to a socket that is already
-            # listed, behind bytes that are already queued.
+            # listed, behind bytes that are already queued. The queue keeps that
+            # order for free: the welcome is put in it before the room is joined,
+            # so it is in front of every frame a broadcast can add.
             welcome = {
                 "t": "welcome",
                 "seed": room.seed,
@@ -2137,20 +2471,42 @@ def create_app(
                 "sv": _b64(room.state()),
                 "update": _b64(room.since(_raw(hello.get("sv")))),
             }
-            sockets[connection] = socket
+            outbox.offer(json.dumps(welcome))
             rooms.enter(room, connection, user.login)
-            await socket.send_json(welcome)
             if arriving:
-                await _to_room(room, {"t": "update", "u": _b64(arriving)}, skip=connection)
-            await _to_room(room, {"t": "who", "people": room.people()})
+                _to_room(room, {"t": "update", "u": _b64(arriving)}, skip=connection)
+            _to_room(room, {"t": "who", "people": room.people()})
             if room.refusal:
-                await socket.send_json({"t": "refused", "why": room.refusal})
+                _to(connection, {"t": "refused", "why": room.refusal})
 
             if watching.get(entity_id) is None or watching[entity_id].done():
                 watching[entity_id] = asyncio.create_task(_watch(room))
 
+            checked = time.monotonic()
             while True:
                 message = await socket.receive_json()
+                if outbox.overrun:
+                    # Given up on by the room while this was waiting: they are a
+                    # whole document behind and the `reload` is already queued.
+                    # Leaving here rather than at the next broadcast is what stops
+                    # a tab that came back to life typing into a room that has
+                    # stopped listening to it.
+                    return
+                if time.monotonic() - checked >= RECHECK_SECONDS:
+                    # Who this socket is, asked again, because a socket outlives
+                    # the answer it was opened with. `writer` was run once at the
+                    # handshake and never after, so a sign-out or a revoked
+                    # membership went on writing commits under that login for as
+                    # long as the tab stayed open — and a socket outlives even the
+                    # 24 hours the cookie is good for, which is the whole of what
+                    # it adds to the HTTP side. The same `writer`, on the same
+                    # cookies, so there is exactly one spelling of who may write.
+                    try:
+                        user = writer(socket)  # type: ignore[arg-type]
+                    except HTTPException as refused:
+                        _to(connection, {"t": "reload", "why": refused.detail})
+                        return
+                    checked = time.monotonic()
                 if not isinstance(message, dict):
                     continue
                 kind = message.get("t")
@@ -2168,14 +2524,15 @@ def create_app(
                         # the way an update that will not apply is answered,
                         # because it is the same condition: two copies that
                         # cannot converge.
-                        await socket.send_json(
+                        _to(
+                            connection,
                             {
                                 "t": "reload",
                                 "why": "this tab sent a change the room could not take, so "
                                 "it has left the room. Nothing in this tab is lost: Save "
                                 "writes the whole document, the way it did before rooms "
                                 "existed.",
-                            }
+                            },
                         )
                         return
                     try:
@@ -2184,15 +2541,16 @@ def create_app(
                         # An update this document cannot read leaves the two
                         # copies unable to converge, and the only honest answer to
                         # that is to start again from the file.
-                        await socket.send_json(
+                        _to(
+                            connection,
                             {
                                 "t": "reload",
                                 "why": "this tab and the server stopped agreeing about "
                                 "the document — reload the page",
-                            }
+                            },
                         )
                         return
-                    await _to_room(room, {"t": "update", "u": message["u"]}, skip=connection)
+                    _to_room(room, {"t": "update", "u": message["u"]}, skip=connection)
                 elif kind == "save":
                     fields = message.get("fields")
                     fields = dict(fields) if isinstance(fields, dict) else {}
@@ -2200,7 +2558,7 @@ def create_app(
                     try:
                         _reject_bad_types(fields)
                     except HTTPException as refused:
-                        await socket.send_json({"t": "refused", "why": refused.detail})
+                        _to(connection, {"t": "refused", "why": refused.detail})
                         continue
                     await _commit_room(room, presser=user.login, fields=fields)
         except (WebSocketDisconnect, ValueError, KeyError, RuntimeError):
@@ -2208,7 +2566,12 @@ def create_app(
             # a frame that is not the JSON this speaks.
             pass
         finally:
-            sockets.pop(connection, None)
+            # The room first, and the flush after it. Everything here that anybody
+            # else in the room is waiting on — the last-person-out commit, the
+            # presence list — happens before this socket is given a single further
+            # chance to be slow, so a member whose connection is wedged cannot
+            # delay the commit their own departure triggers.
+            outboxes.pop(connection, None)
             rooms.exit(room, connection)
             if room.empty():
                 # The last person out commits, so a room that nobody comes back to
@@ -2223,8 +2586,14 @@ def create_app(
                 if task is not None:
                     task.cancel()
             else:
-                await _to_room(room, {"t": "who", "people": room.people()})
+                _to_room(room, {"t": "who", "people": room.people()})
             rooms.sweep()
+            # Now, and bounded. A `reload` or a refusal is the last thing several
+            # of the paths above say, and cancelling the writer the instant they
+            # said it would mean nobody ever heard it — while waiting for a socket
+            # that will never drain would leave this task pending for ever.
+            await outbox.flushed(FLUSH_SECONDS)
+            posting.cancel()
             with contextlib.suppress(Exception):
                 await socket.close()
 
