@@ -297,7 +297,13 @@ def test_an_entity_outside_any_project_matches_no_project_filter():
     assert apply_filters(index, {"project": [NO_VALUE]}, "") == ["task-c00001"]
 
 
-def test_search_blob_is_lowercased_title_tags_and_body():
+def test_the_searchable_text_is_the_fields_and_not_the_document():
+    """Fields, not bodies — jcanton, 2026-08-19.
+
+    The shaping document IS the record, and it is still not the record's index: a
+    900-word pitch in a substring search makes every long word in the plan a
+    match for something, and nothing on the row says which word matched.
+    """
     entity = a_task(
         "task-c00001",
         "Reproduce the 2-GPU Equator Artefact",
@@ -309,19 +315,25 @@ def test_search_blob_is_lowercased_title_tags_and_body():
     assert "reproduce the 2-gpu equator artefact" in blob
     assert "gpu" in blob
     assert "ci" in blob
-    assert "only on daint." in blob
+    assert "daint" not in blob
     assert blob == blob.lower()
 
 
-def test_search_blob_holds_nothing_but_title_tags_and_body():
-    """Searching for a person or an id must go through a filter, not a substring
-    match that quietly hits every entity whose body mentions them."""
+def test_the_searchable_text_holds_the_names_a_record_is_known_by():
+    """The people on a record and its id are searchable, and were not.
+
+    The rule this replaces said the opposite, and its reason was the body: with a
+    whole shaping document in the blob, `alice` matched every record that merely
+    *mentioned* her, so a name had to go through the dropdown to mean anything.
+    The document is out now, so a login in this text means the one thing it
+    should — that somebody's name is on this record.
+    """
     entity = a_task("task-c00001", "Something", owner="alice", reviewers=["bob"])
     blob = build_index([entity], CONFIG, TODAY).search_blob["task-c00001"]
 
-    assert "alice" not in blob
-    assert "bob" not in blob
-    assert "task-c00001" not in blob
+    assert "alice" in blob
+    assert "bob" in blob
+    assert "task-c00001" in blob
 
 
 # --- apply_filters ---------------------------------------------------------
@@ -503,7 +515,10 @@ def test_search_is_a_case_insensitive_substring_match():
     index = build_index(entities, CONFIG, TODAY)
 
     assert apply_filters(index, {}, "EQUATOR") == ["task-c00001"]
-    assert apply_filters(index, {}, "reductions") == ["task-c00002", "task-c00003"]
+    # And the third one, whose only `reductions` is in its shaping document, is
+    # not a match any more: the case-insensitivity is the claim here, and the
+    # corpus quietly carried the body rule as well.
+    assert apply_filters(index, {}, "reductions") == ["task-c00002"]
     assert apply_filters(index, {}, "nothing here") == []
 
 
