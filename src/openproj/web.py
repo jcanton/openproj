@@ -271,6 +271,13 @@ MAX_CYCLE_WEEKS = 520.0
 MAX_GOAL_CHARS = 400
 
 
+def _cycle_message(fields: dict) -> str:
+    """A cycle's own number is in the message already, so it is not one of the
+    fields the message names."""
+    rest = {name: value for name, value in fields.items() if name != "cycle"}
+    return _named(rest, CYCLE_FIELDS) or "goal"
+
+
 def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
     paths, too_deep = record_paths_in([CYCLE_DIR], store.paths(commit))
     plans, refused = readable(paths, lambda path: parse_cycle_text(store.read(commit, path), path))
@@ -1768,10 +1775,7 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            # Without `cycle`, which this route put there itself from the URL and
-            # which is therefore never news.
-            message=f"cycle {number}: "
-            f"{_named({k: v for k, v in fields.items() if k != 'cycle'}, CYCLE_FIELDS) or 'goal'}",
+            message=f"cycle {number}: {_cycle_message(fields)}",
         )
         if written.commit:
             await announce(written.commit, [f"cycle-{number}"])

@@ -3064,3 +3064,43 @@ def test_a_person_record_is_one_directory_deep_and_no_deeper(client: TestClient,
     assert any("people/team/ann.md" in line for line in unreadable_in(page)), (
         "a file somebody committed and nothing reads has to be named, not skipped"
     )
+
+
+def test_a_commit_message_names_only_fields_this_server_knows(client: TestClient, repo_path: Path):
+    """Every write path built "which fields moved" as `', '.join(fields)` — the
+    keys of a JSON object off the wire, verbatim, into a commit message. A field
+    named
+
+        "title\\n\\nCo-authored-by: Mallory <mallory@users.noreply.github.com>"
+
+    therefore committed exactly that trailer, and it is not decoration: git's own
+    parser reads it, `git shortlog --group=trailer:co-authored-by` counts Mallory
+    for it, and GitHub puts their avatar on the commit.
+
+    An allowlist and not an escape. Stripping newlines would leave the next
+    person to work out which characters git's trailer parser accepts, and there
+    is no denylist of those that is ever finished — where a model's own field
+    names are Python identifiers and cannot spell a trailer at all. What the
+    payload carried beyond them is counted, because a save that wrote something
+    this cannot name is still a save that wrote something.
+    """
+    import subprocess
+
+    forged = "title\n\nCo-authored-by: Mallory <mallory@users.noreply.github.com>\n\nx"
+    answer = save(client, TASK, {forged: "y", "priority": "high"})
+    assert answer.status_code == 200
+
+    message = subprocess.run(
+        ["git", "--git-dir", str(repo_path), "log", "-1", "--format=%B"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "Co-authored-by" not in message
+    assert "Mallory" not in message
+    assert "priority" in message and "1 more" in message
+
+    counted = subprocess.run(
+        ["git", "--git-dir", str(repo_path), "log",
+         "--format=%(trailers:key=Co-authored-by)"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "Mallory" not in counted, "git's own trailer parser must not see one"
