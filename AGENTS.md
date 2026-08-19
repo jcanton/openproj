@@ -305,6 +305,19 @@ Anything written on jcanton's behalf ends with exactly this line, and nothing af
 
 No `Co-Authored-By`, no `Claude-Session` trailers.
 
+## Tag when you deploy
+
+The running revision has to have a name. Cloud Run knows a container digest and the service page
+shows a revision id; neither of those is something you can check out, and "which commit is live" was
+answered for months by reading a sha out of a deploy log. So: bump `pyproject.toml` and
+`src/openproj/__init__.py` — they are two files and they have already disagreed with each other and
+with the newest tag — run `uv lock`, because CI installs `--locked` and a bump without it goes red,
+then tag `main` and deploy that commit.
+
+Versions are cheap here. The plan is on GitHub and this service holds no data, so a tag costs one
+command and buys the ability to say what is running, and to put a release beside it saying what
+changed. 1.0.0 waits for adoption, per jcanton.
+
 ## Type checking: measured, not adopted
 
 Measured on 2026-08-18, with `ty` 0.0.72 and `mypy` 2.3.1:

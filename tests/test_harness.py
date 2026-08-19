@@ -3,8 +3,22 @@ from pathlib import Path
 import openproj
 
 
-def test_package_exposes_its_version():
-    assert openproj.__version__ == "0.1.0"
+def test_the_package_and_the_project_agree_about_the_version():
+    """Two files hold this number and they have already disagreed with each other
+    and with the newest tag: `pyproject.toml` and `__init__.py` both said 0.1.0
+    while `v0.2.0` was the newest tag and 189 commits had landed since it.
+
+    A literal here was the previous version of this test, which pins the number
+    to whatever it was on the day it was written and goes stale on the commit
+    that bumps it — so it asks the thing that can actually be wrong: whether the
+    two files say the same thing. Which of them a wheel believes depends on how
+    it was built.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())
+
+    assert openproj.__version__ == pyproject["project"]["version"]
 
 
 def test_seed_corpus_has_seventeen_entity_files(seed_root: Path):
