@@ -40,6 +40,20 @@ and each says why it is still here.
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
 * **The review deck**, awaiting jcanton's feedback after a proper read.
+* **A write can still create a loop.** jcanton asked, 2026-08-19: "doesn't
+  openproj forbid cycles? if not we should". Today it detects them — `validate_all`
+  reports a parent cycle and a blocked-by cycle as blockers, through
+  `_cyclic_members` — but nothing stops a PATCH of `parent` or `depends_on` from
+  closing one, and the blocker then lands after the commit, on a protected branch.
+  The shape of the fix is a `loop_made(candidate, plan)` in `model.py` asking that
+  same `_cyclic_members` with this record's proposed edges substituted, called from
+  `save()` and `create()` in `web.py` — so a refusal and a report cannot disagree.
+  Detecting rather than refusing is right for a plan that *arrives* with a loop: a
+  file in git is a fact, and refusing to load it takes every page down over
+  somebody else's mistake. That is the distinction the fix has to keep.
+* **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
+  the library shortlist and the list of what must not be lost are in
+  `docs/EDITOR.md`.
 
 The rest of this file is the reasoning behind what was built, kept because the
 next person to touch any of it will want to know why it is shaped this way.
