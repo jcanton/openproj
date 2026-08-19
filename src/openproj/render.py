@@ -12282,6 +12282,7 @@ def render_detail(
     links: Links = STATIC,
     only: str | None = None,
     base_commit: str | None = None,
+    may_write: bool = False,
 ) -> str:
     """Every entity, or exactly one.
 
@@ -12312,12 +12313,26 @@ def render_detail(
         statuses=STATUSES,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
-        # Only where there is a server to talk to. The static export renders the
-        # same template with `editable` false, so it carries neither the library
-        # nor the script — a page opened from a memory stick has no socket to
-        # open and nothing in it that would try.
-        yjs=_yjs() if base_commit is not None else Markup(""),
-        coedit=_COEDIT if base_commit is not None else Markup(""),
+        # Only where there is a server to talk to, and only for somebody it would
+        # take a frame from. The static export renders the same template with
+        # `editable` false, so it carries neither the library nor the script — a
+        # page opened from a memory stick has no socket to open and nothing in it
+        # that would try.
+        #
+        # `may_write` is the second half and it is newer: reads here are public,
+        # so most page loads are readers, and a reader was given the socket code
+        # anyway. It knocked five times, was correctly refused five times, and put
+        # five red lines in the console of a page that was working exactly as
+        # designed — which is how a real error comes to be ignored. It also
+        # carried the Yjs bundle to do it.
+        #
+        # The answer comes from `writer` on the server (see `may_write` in
+        # `web.py`) and not from `/api/me`, which the shell already fetches: that
+        # route answers `viewer`, and under `--auth dev` there is no session while
+        # the write is permitted. A gate on the corner would silence the editor in
+        # exactly the mode this tool is tried in.
+        yjs=_yjs() if base_commit is not None and may_write else Markup(""),
+        coedit=_COEDIT if base_commit is not None and may_write else Markup(""),
     )
     return _page(
         "openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail",
