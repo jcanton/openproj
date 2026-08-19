@@ -477,11 +477,20 @@ def test_the_table_cell_editor_does_not_let_a_stored_value_become_markup(hostile
     assert_js_clean(written, "table cell editor")
 
 
-def test_the_timeline_tooltip_does_not_let_a_field_become_markup(hostile_served):
+def test_the_hover_card_does_not_let_a_field_become_markup(hostile_served):
+    """The card the timeline, the graph and the table all draw.
+
+    It was the timeline's alone and this test was `tipHtml`. One function now, so
+    a title that becomes markup here becomes markup on three pages — and the
+    class attributes are as much of the census as the words are: a status
+    reading `ready" onmouseover=alert(1) x="` came back out of the chips line as
+    a real event handler, on the one element of the box a pointer is guaranteed
+    to cross.
+    """
     written = drive(
-        hostile_served["timeline"], "Object.values(DATA.rows).map(row => tipHtml(row))"
+        hostile_served["timeline"], "Object.values(DATA.rows).map(row => cardHtml(row, []))"
     )
-    assert_js_clean(written, "timeline tooltip")
+    assert_js_clean(written, "hover card")
 
 
 @pytest.mark.parametrize("page", ["table", f"{ONE_ENTITY} 0", "new task", "cycle 41"])

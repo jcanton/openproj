@@ -1864,7 +1864,12 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
     assert "esc(human(row.status))" in body, "the chip carries the word, not the identifier"
     assert ".chip.st-in_progress" in page
 
-    assert "chip kind-" not in body, "no kind chip is built for any cell of this table"
+    # The shell's hover card builds one — a card is not a cell, and on the graph
+    # and the timeline the kind chip is the only thing saying which kind a node
+    # is. So the claim is about the table's own script, which is the thing that
+    # draws the cells.
+    table_only = body.split("// --- the hover card")[0] + body.split("function hideCard()")[-1]
+    assert "chip kind-" not in table_only, "no kind chip is built for any cell of this table"
     assert re.search(
         r"""if \(key === 'id'\)\s*\n\s*return \(EDITABLE && movable\(row\) \? GRIP : ''\)"""
         r"""\s*\+ `<span class="eid">\$\{esc\(row\.id\)\}""", body

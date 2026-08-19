@@ -595,7 +595,7 @@ def test_a_bar_carries_what_it_is_holding(rendered: Path, seed_index: Index):
     for key in ("title", "status", "owner", "weeks", "start", "end", "tip", "predicates"):
         assert key in row, key
     assert payload["human"]["in_progress"] == "In progress"
-    assert 'id="tip"' in body
+    assert 'id="card"' in body
 
 
 def test_the_timeline_names_every_colour_it_draws(rendered: Path):
@@ -880,8 +880,16 @@ def test_one_persons_rows_do_not_run_into_the_next(rendered: Path):
     size, style, colour = gap.group(1).split()
     assert (style, colour) == ("solid", "var(--bg)"), gap.group(1)
     assert float(size.removesuffix("rem")) >= 0.5, "space somebody can actually see"
-    # And it is the only top border on the page, so nothing draws a line there.
-    assert re.findall(r"border-top: ([^;]+);", body) == [gap.group(1)]
+    # And it is the only top border anything on this page draws in the table, so
+    # nothing puts a line where the space is. The hover card's own rule is
+    # excluded by name: it is a popup that is not on the page until somebody
+    # points at a row, and it draws its rule between two parts of itself.
+    drawn = [
+        rule
+        for rule in re.findall(r"([-#.\w ]+) \{ [^}]*border-top: ([^;]+);", body)
+        if not rule[0].strip().startswith("#card")
+    ]
+    assert [rule[1] for rule in drawn] == [gap.group(1)], drawn
 
 
 def test_a_person_is_weighed_in_weeks_and_not_in_things(demo_rendered: tuple[Path, Index]):
