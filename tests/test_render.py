@@ -179,8 +179,8 @@ def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Pat
     for rule in (".chip.st-done", ".chip.kind-pitch", ".sev-row-blocker", ".sev-mark-blocker"):
         assert rule in index, rule
     assert "'The plan could not be loaded.'" in index
-    assert '<label class="facet">Flags' in index
-    assert '<option value="has_blocker">Has a blocking problem</option>' in index
+    assert '<span class="facetname">Flags' in index
+    assert '<input type="checkbox" value="has_blocker">Has a blocking problem</label>' in index
 
 
 def test_filter_state_lives_in_query_parameters(rendered: Path):
@@ -236,8 +236,8 @@ def test_the_graph_filters_the_plan_the_way_the_table_does(rendered: Path):
     model = re.search(r"function matches\(row\) \{.*?\n\}", table, re.S).group(0)
 
     assert model in graph, "the graph must ask the same question, not a similar one"
-    assert re.findall(r'<select data-field="([^"]+)"', graph) == re.findall(
-        r'<select data-field="([^"]+)"', table
+    assert re.findall(r'<div class="facet" data-field="([^"]+)"', graph) == re.findall(
+        r'<div class="facet" data-field="([^"]+)"', table
     )
     assert "URLSearchParams" in graph and "history.replaceState" in graph
     assert '<input id="q"' in graph
@@ -820,7 +820,7 @@ def test_the_people_page_is_alphabetical_and_filterable(rendered: Path):
     assert logins != sorted(logins), "the corpus no longer mixes case; this proves nothing"
     assert '<input id="q"' in body
     for attribute in ("role", "kind", "status"):
-        assert f'select data-field="{attribute}"' in body, attribute
+        assert f'<div class="facet" data-field="{attribute}"' in body, attribute
     assert re.search(r'<tr data-role="[^"]+" data-kind="[^"]+" data-status="[^"]+"', body)
 
 
@@ -1139,8 +1139,8 @@ def test_the_timeline_filters_with_the_same_bar_the_table_does(rendered: Path):
     and ignored it for everything else."""
     body = read(rendered, "timeline.html")
 
-    assert '<select data-field="status">' in body
-    assert '<select data-field="predicate">' in body
+    assert '<div class="facet" data-field="status">' in body
+    assert '<div class="facet" data-field="predicate">' in body
     assert "function matches(row)" in body
     assert "addEventListener('openproj:filter', applyFilter)" in body
     assert 'id="clear-filters"' in body
@@ -1595,7 +1595,9 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
     for name, page in (("people", people), ("index", index)):
         assert re.search(shape, page), name
 
-    assert re.findall(r'<select data-field="([^"]+)"', people) == ["role", "kind", "status"]
+    assert re.findall(r'<div class="facet" data-field="([^"]+)"', people) == [
+        "role", "kind", "status"
+    ]
     assert 'aria-label="Search person, entity, id"' in people
     assert 'aria-label="Search titles, tags, PRs, people"' in index
 

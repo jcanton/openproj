@@ -23,7 +23,8 @@ The tabs are the same records seen several ways: **Table** is the one people liv
 the dependency diagram, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets
 and its capacity, **People** who is on what and who is full, **Issues** the pile of things somebody
 noticed, **Notes** the pile of things somebody is still thinking about. Every filter is in the URL,
-so a view is a link.
+so a view is a link, and a field can be asked for more than one value at a time — two statuses means
+either of them.
 
 The search box is a small language, and it is the same language on the server and in the browser:
 bare words match a record's fields — its id, title, tags, PR references and the people named on it,

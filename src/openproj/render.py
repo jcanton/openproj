@@ -1538,7 +1538,62 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 #controls .aside > * { margin: 0; }
 #controls .facets { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
                     margin-top: .5rem; }
-.facet { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.facet { position: relative; font-size: 11px; color: var(--muted);
+         text-transform: uppercase; letter-spacing: .04em; }
+/* The closed control. It used to be a `<select>` and it still has to read as one
+   — this bar has ten of them and a row of buttons that look like buttons reads as
+   ten things to press rather than as the state of a filter. */
+.facetopen {
+  display: flex; align-items: baseline; gap: .35rem;
+  font: inherit; color: inherit; letter-spacing: inherit;
+  background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
+}
+.facetopen .facetsaid {
+  font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--fg);
+  border: 1px solid var(--line-strong); border-radius: 3px; padding: .1rem .35rem;
+  /* Wide enough for `all` plus the room a value will need, and no wider: ten of
+     these on one line is the bar's whole budget, and at 5rem the tenth field
+     wrapped to a second row — which costs the drawing below it more than the
+     control gains. */
+  min-width: 3.5rem;
+}
+/* What is set, in the ink the rest of the page uses for a choice somebody made.
+   Without it a bar with three fields filtered looks exactly like a bar with
+   none, which is how a reader comes to believe a plan has four rows in it. */
+.facetopen[aria-expanded="true"] .facetsaid,
+.facet.chosen .facetsaid { border-color: var(--accent); color: var(--accent); }
+/* The open list. Absolutely positioned so opening one does not push the drawing
+   below it down the page — on the graph and the timeline that is a relayout of
+   the whole view — and capped in height because `tags` on a real plan is forty
+   values and a menu the length of the page is a menu you scroll the document
+   for. z-index 6 clears the table's own furniture: its header is 3, the frozen
+   pair 4, and the drop label 5. */
+/* `:not([hidden])` on the display, and it is not decoration: the browser's own
+   `[hidden] { display: none }` is (0,1,0) in the UA sheet, and ANY author rule
+   setting `display` beats it. Without this every menu on the bar is open the
+   moment the page loads — which is what shipped for ten minutes, over the plan
+   it is meant to filter. `#unparent` two hundred lines down settles the same
+   question the same way and says so; this is the second time. */
+.facetmenu:not([hidden]) {
+  position: absolute; z-index: 6; top: 100%; left: 0; margin-top: .2rem;
+  max-height: 15rem; overflow-y: auto; min-width: 100%;
+  display: flex; flex-direction: column; gap: .1rem;
+  padding: .3rem; background: var(--surface); border: 1px solid var(--line-strong);
+  /* The same shadow the combobox and the icon picker float on. A literal
+     rather than a token because there is no shadow token: the three popups
+     on this site are the only things that lift off the page. */
+  border-radius: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+}
+.facetmenu label {
+  display: flex; align-items: baseline; gap: .35rem; white-space: nowrap;
+  font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--fg);
+  padding: .1rem .2rem; cursor: pointer;
+}
+.facetmenu label:hover { background: var(--surface-2); }
+/* `.facet` is also the label a plain `<select>` wears elsewhere — the timeline's
+   window, the cycle page's three settings, the state picker on Issues and Notes.
+   Those are one-of-several questions with one answer, so they stay selects, and
+   this is the rule that dresses them. */
 .facet select { display: block; font: inherit; font-size: 13px; text-transform: none;
                 letter-spacing: 0; color: inherit; }
 #q { font: inherit; font-size: 13px; padding: .15rem .3rem; min-width: 16rem; }
@@ -2252,13 +2307,34 @@ _FACETS = """
   {% if aside %}<div class="aside">{{ aside }}</div>{% endif %}
   </div>
   <div class="facets">
+  {#- A field is a button and a list of checkboxes, and not a `<select>`, because
+      the filter underneath has always been able to answer more than a select can
+      ask: `apply_filters` ORs within a field and ANDs across them, and the URL
+      has always carried a field twice. The menu was the only thing insisting on
+      one value, and a control that can express less than the thing it controls
+      is a control that hides half the tool.
+
+      Checkboxes and not a `<select multiple>`: the native one costs four rows of
+      height per field on a bar of ten of them, and de-selecting is ctrl-click,
+      which is folklore. Real `<input type="checkbox">` inside real `<label>`s
+      rather than a listbox with `aria-selected`, because a checkbox already
+      means "several of these, independently" to every reader and every screen
+      reader, and the roles this would otherwise need are the part people get
+      wrong. -#}
   {% for field in fields %}
-  <label class="facet">{{ label(field) }}
-    <select data-field="{{ field }}"><option value="">all</option>
+  <div class="facet" data-field="{{ field }}">
+    <button type="button" class="facetopen" id="facet-{{ field }}" aria-expanded="false">
+      <span class="facetname">{{ label(field) }}</span>
+      {#- What is chosen, in the control rather than only in the popup: a filter
+          you cannot see is a filter you forget you set, and this bar spends most
+          of its life closed. -#}
+      <span class="facetsaid">all</span>
+    </button>
+    <div class="facetmenu" role="group" aria-labelledby="facet-{{ field }}" hidden>
       {% for value in facets.get(field, []) %}
-      <option value="{{ value }}">{{ value|human }}</option>{% endfor %}
-    </select>
-  </label>
+      <label><input type="checkbox" value="{{ value }}">{{ value|human }}</label>{% endfor %}
+    </div>
+  </div>
   {% endfor %}
   </div>
 </div>
@@ -2519,10 +2595,52 @@ function matches(row) {
 // themselves, so a filtered view somebody pasted to you opens with its dropdowns
 // already set.
 function syncFilters() {
-  for (const select of document.querySelectorAll('select[data-field]'))
-    select.value = params.get(select.dataset.field) || '';
+  // Every control takes its state from the query string rather than from itself,
+  // so a filtered view somebody pasted to you opens with its boxes already
+  // ticked — and so a Clear is one `params.delete` rather than a sweep of the
+  // DOM that has to find every control it drew.
+  for (const facet of document.querySelectorAll('.facet[data-field]')) {
+    const chosen = params.getAll(facet.dataset.field).filter(Boolean);
+    for (const box of facet.querySelectorAll('input[type=checkbox]'))
+      box.checked = chosen.includes(box.value);
+    facet.querySelector('.facetsaid').textContent = facetSummary(facet, chosen);
+    // The class the accent hangs off. On the wrapper and not the button, so a
+    // field that is set reads as set whether its menu is open or closed.
+    facet.classList.toggle('chosen', chosen.length > 0);
+    // The button says what is set, and the button is also what a reader who
+    // cannot see it hears — so the count goes in the accessible name too, and
+    // not only in the ink.
+    facet.querySelector('.facetopen').setAttribute(
+      'aria-label', `${facetLabel(facet)}: ${facetSummary(facet, chosen)}`);
+  }
   document.getElementById('q').value = params.get('q') || '';
   sayQueryError();
+}
+
+function facetLabel(facet) {
+  return facet.querySelector('.facetname').textContent.trim();
+}
+
+// `all`, the value itself, or how many.
+//
+// `facetSummary` and not `summarise`: the table already has a `summarise` that
+// writes "17 of 17 shown", and these two scripts are two `<script>` blocks in one
+// global scope. The first version of this function was named that, and the table's
+// won — so every field's button said `undefined` while nothing threw. Everything
+// this block declares is named for the bar for that reason; see
+// `test_no_two_scripts_on_a_page_declare_the_same_name`. One value is named because naming it is
+// the whole point of a closed control saying anything; three are counted because
+// three tag names do not fit in a button on a bar of ten of them.
+//
+// The word comes off the checkbox the server drew rather than from a map: this
+// script is shared by five pages and `HUMAN` is the table's payload, so a `human`
+// of its own here would be the same vocabulary written twice — and `in_progress`
+// would read as itself on the one page that had not been given the map.
+function facetSummary(facet, chosen) {
+  if (!chosen.length) return 'all';
+  if (chosen.length > 1) return `${chosen.length} chosen`;
+  const box = facet.querySelector(`input[type=checkbox][value="${CSS.escape(chosen[0])}"]`);
+  return box ? box.parentNode.textContent.trim() : chosen[0];
 }
 
 // The half of "a malformed query says so and matches nothing" that says so. The
@@ -2552,12 +2670,24 @@ function update(field, value) {
   settled();
 }
 
+// One value of one field, on or off, leaving the field's other values alone.
+// `delete` then `append` per value rather than a `set`, because `set` is the one
+// value a select could hold and this control's whole point is that a field can
+// be asked about twice.
+function chooseValue(field, value, wanted) {
+  const chosen = params.getAll(field).filter(Boolean).filter(v => v !== value);
+  if (wanted) chosen.push(value);
+  params.delete(field);
+  for (const one of chosen) params.append(field, one);
+  settled();
+}
+
 function clearFilters() {
   // Every control the page actually draws, and not only the entity fields above:
   // the people page filters by role, which is not a field of an entity, and a
   // Clear that left it set is a Clear that did not clear.
-  const onPage = [...document.querySelectorAll('select[data-field]')]
-    .map(select => select.dataset.field);
+  const onPage = [...document.querySelectorAll('.facet[data-field]')]
+    .map(facet => facet.dataset.field);
   // Not the sort order: clearing the filters and losing the column somebody
   // sorted by is a second surprise on top of the one they were undoing.
   for (const field of [...FILTERS, ...onPage, 'predicate', 'q']) params.delete(field);
@@ -2565,8 +2695,65 @@ function clearFilters() {
 }
 
 document.getElementById('q').addEventListener('input', e => update('q', e.target.value));
-for (const select of document.querySelectorAll('select[data-field]'))
-  select.addEventListener('change', e => update(e.target.dataset.field, e.target.value));
+
+// --- opening and closing a field -------------------------------------------
+//
+// One listener on the bar rather than one per control: the bar is drawn once by
+// the server and never rebuilt, but a listener per checkbox on a plan with two
+// hundred tags is two hundred listeners for a thing that can be asked once.
+
+const FACET_BAR = document.getElementById('controls');
+
+function openFacet(facet, open) {
+  facet.querySelector('.facetmenu').hidden = !open;
+  facet.querySelector('.facetopen').setAttribute('aria-expanded', String(open));
+}
+
+function closeFacets(except) {
+  for (const facet of document.querySelectorAll('.facet[data-field]'))
+    if (facet !== except) openFacet(facet, false);
+}
+
+if (FACET_BAR) {
+  FACET_BAR.addEventListener('click', event => {
+    const opener = event.target.closest('.facetopen');
+    if (opener) {
+      const facet = opener.closest('.facet');
+      const open = opener.getAttribute('aria-expanded') !== 'true';
+      closeFacets(facet);
+      openFacet(facet, open);
+      return;
+    }
+    // A click anywhere else inside the bar that is not in a menu closes the
+    // menus: the labels and the search box are in here too.
+    if (!event.target.closest('.facetmenu')) closeFacets(null);
+  });
+
+  FACET_BAR.addEventListener('change', event => {
+    const box = event.target.closest('.facetmenu input[type=checkbox]');
+    if (box) chooseValue(box.closest('.facet').dataset.field, box.value, box.checked);
+  });
+
+  // Escape closes the menu and hands the keyboard back to the button that opened
+  // it. Without the second half, Escape drops focus on `<body>` and the next Tab
+  // starts from the top of the page — which is the same defect the draft row's
+  // Escape had, in a different control.
+  FACET_BAR.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const facet = event.target.closest('.facet');
+    if (!facet || facet.querySelector('.facetmenu').hidden) return;
+    event.stopPropagation();
+    openFacet(facet, false);
+    facet.querySelector('.facetopen').focus();
+  });
+}
+
+// Outside the bar entirely. `pointerdown` and not `click`, so a menu that is over
+// the thing somebody is reaching for is gone before the press lands on it.
+addEventListener('pointerdown', event => {
+  if (!event.target.closest('.facet')) closeFacets(null);
+});
+
 syncFilters();
 </script>
 """)
@@ -7367,7 +7554,14 @@ FORM.addEventListener('change', dirty);
 // and the checkbox beside it lets one of those rules off.
 watchRequired(FORM);
 
-function show(editing) {
+// `showEditing` and not `show`: the detail page's hash router declares a `show`
+// of its own in another `<script>`, and two top-level functions of one name in
+// one page are one function. The two blocks are never emitted together today —
+// the index is read-only and the single view has no router — so this was a trap
+// rather than a defect, and one condition changing anywhere above makes it one.
+// (Written without naming the tag: this block is a Jinja template, and a comment
+// that mentions one is a comment the template engine reads.)
+function showEditing(editing) {
   // One class on the article. Each fact is a single row whose value swaps for its
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
@@ -7378,7 +7572,7 @@ function show(editing) {
 
 document.getElementById('toggle').onclick = () => {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
-  show(editing);
+  showEditing(editing);
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
@@ -7511,7 +7705,7 @@ if (typeof draft.text === 'string' && draft.text !== BODY.value) {
     ? 'unsaved draft restored — somebody else has changed this since it was written'
     : 'unsaved draft restored');
   BODY.value = draft.text;
-  show(true);
+  showEditing(true);
 }
 </script>{% endif %}
 {% if editable %}<script>{{ yjs }}</script>
@@ -10096,14 +10290,20 @@ const COUNT = document.getElementById('shown');
 // keep agreeing with the first.
 function apply() {
   const text = (params.get('q') || '').trim().toLowerCase();
+  // `getAll` and OR within a field, which is what the bar can now ask and what
+  // `matches` and `apply_filters` have always answered. With `get` this page
+  // honoured the first value and ignored the rest in silence — a control that
+  // sets two and a page that reads one is the same divergence as the search
+  // blob, on the same afternoon it was fixed.
   const want = ['role', 'kind', 'status']
-    .map(field => [field, params.get(field)]).filter(([, value]) => value);
+    .map(field => [field, params.getAll(field).filter(Boolean)])
+    .filter(([, values]) => values.length);
   let visible = 0;
   for (const group of GROUPS) {
     const person = group.dataset.login.toLowerCase();
     let kept = 0;
     for (const row of group.querySelectorAll('tr[data-role]')) {
-      const keep = want.every(([field, value]) => row.dataset[field] === value)
+      const keep = want.every(([field, values]) => values.includes(row.dataset[field]))
         && (!text || person.includes(text) || row.dataset.text.includes(text));
       row.hidden = !keep;
       kept += keep ? 1 : 0;
