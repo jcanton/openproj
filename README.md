@@ -25,13 +25,21 @@ and its capacity, **People** who is on what and who is full, **Issues** the pile
 noticed, **Notes** the pile of things somebody is still thinking about. Every filter is in the URL,
 so a view is a link.
 
+The search box is a small language, and it is the same language on the server and in the browser:
+bare words match a record's fields — its id, title, tags, PR references and the people named on it,
+never the shaping document — and `field:value` asks one field. `and`, `or`, `not` and brackets do
+what they look like, two terms side by side mean both, and `tag:gpu and tag:distributed` is the
+query the dropdowns cannot express, because a menu means OR within a field. A field this plan has
+not got matches nothing rather than everything, and a query that cannot be read says what is wrong
+with it and matches nothing while you finish typing.
+
 The last two are inboxes rather than views of the plan, and they are two because they answer
 different questions: an issue is "we found something existing that is broken", a note is "we are
 thinking of creating something that does not exist and our ideas are confused". Neither carries an
 appetite or an owner and neither appears on the table, the graph or the timeline. **Promote** is
 what stops either from being an inbox nobody empties: it turns a note into a project, a pitch or a
-task — and an issue into a pitch — in one commit, and the new record says in its own shaping
-document where it came from.
+task, and an issue into a pitch or a task — in one commit, and the new record says in its own
+shaping document where it came from.
 
 `docs/quickstart.md` is the five-minute version for somebody opening it for the first time.
 

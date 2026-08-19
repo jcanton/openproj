@@ -37,6 +37,7 @@ from .model import (
     size_weeks,
     validate_all,
 )
+from .query import QueryError, evaluate, parse
 from .schedule import Explanation, Span, schedule
 
 
@@ -519,17 +520,49 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
     return False
 
 
+def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
+    """One record's values per field, lowered — what `query.evaluate` asks about.
+
+    The browser builds the same map out of the row it was shipped (`queryFields`
+    in `_FILTER_JS`), so the two parsers are handed identical data and a
+    disagreement between them is the language rather than the plan.
+    """
+    entity = index.entities[entity_id]
+    fields = {
+        field: [value.lower() for value in _facet_values(entity, field, index.entities)]
+        for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project")
+    }
+    fields["id"] = [entity.id.lower()]
+    fields["title"] = [entity.title.lower()]
+    fields["prs"] = [pr.lower() for pr in entity.prs]
+    fields["predicate"] = [
+        name for name in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, name)
+    ]
+    return fields
+
+
 def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> list[str]:
-    """AND across fields, OR within a field, then a substring search.
+    """AND across fields, OR within a field, then the query language.
 
     An unknown field or predicate matches nothing rather than everything: filter
     state comes from a hand-editable query string, and a typo that silently widens
     the result set is worse than one that visibly empties it.
+
+    A query that cannot be read matches nothing, for the same reason and one
+    more: half a query is a query somebody is still typing, and a table that
+    widens to everything on the way to `kind:task and (` flickers through the
+    whole plan at every keystroke. The sentence is not shown from here — this
+    function answers with rows — so the caller that has a reader in front of it
+    asks `parse` itself. See `render.py`'s `queryError`.
     """
-    needle = query.strip().lower()
+    try:
+        asked = parse(query)
+    except QueryError:
+        return []
     matched = []
     for entity_id, entity in index.entities.items():
-        if needle and needle not in index.search_blob[entity_id]:
+        fields = query_fields(index, entity_id)
+        if not evaluate(asked, fields, index.search_blob[entity_id], NO_VALUE):
             continue
         for field, wanted in filters.items():
             if not wanted:

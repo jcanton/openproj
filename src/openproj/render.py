@@ -1702,6 +1702,10 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 /* The way out of a filter, on every page that has one. Three pages were drawing
    this button themselves, which is three chances for the way out of a filter to
    look like something else. */
+/* What is wrong with the query, beside the box it is in. `--sev-warn` and not
+   `--sev-blocker`: nothing is broken, a sentence is half-typed — and the rows
+   come back the moment the bracket is closed. */
+#query-error { font-size: 12px; color: var(--sev-warn); align-self: center; }
 #clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
                  border: 1px solid var(--line-strong); background: var(--surface);
                  color: var(--fg); cursor: pointer; }
@@ -2232,6 +2236,14 @@ _FACETS = """
       box is wrapped in its `<label>`; the search box was the one control in the
       bar that had nothing to say what it searches. -#}
   <input id="q" type="search" aria-label="{{ search }}" placeholder="{{ search }}">
+  {#- What is wrong with what is in the box. Here rather than in each view,
+      because the box is in the bar and the bar is shared: the table can say it
+      again over its own empty rows, and does, but the graph and the timeline
+      draw pictures and have nowhere to put a sentence at all.
+      `role="status"` and polite: a query is typed a character at a time, and a
+      reader who is told about every half-finished bracket as an alert is a
+      reader who turns the page off. -#}
+  <span id="query-error" role="status" aria-live="polite" hidden></span>
   {#- The far end of the search box's line, for what a page has to say about the
       view it draws. A slot rather than a sentence, because the three views say
       different things there — how to pan the graph, which window the timeline is
@@ -2264,7 +2276,7 @@ _PLAN_FACETS = (
 # README has always said three views filter the same plan the same way; while
 # `matches` lived inside the table's script, that was true of one of them, and a
 # second copy of it is how a facet comes to mean something different per page.
-_FILTER_JS = Markup("""
+_FILTER_JS = Markup(r"""
 <script>
 const params = new URLSearchParams(location.search);
 
@@ -2282,17 +2294,210 @@ const NO_VALUE = '(none)';
 
 function wanted(field) { return params.getAll(field).filter(Boolean); }
 
+// --- the query language ----------------------------------------------------
+//
+// The second implementation of `query.py`, and it has to be a second one: the
+// static export has no server to ask and this table filters without one. The
+// two are pinned together by results rather than by source — a corpus of
+// queries run through both in `tests/test_search.py` — because that is the only
+// claim worth making about two parsers.
+//
+// Every rule here is argued in `query.py`. The short version: adjacency is AND,
+// `not` binds tightest then `and` then `or`, an unknown field matches nothing
+// rather than everything, and a query that cannot be read matches nothing and
+// says why.
+
+// The fields a query may name, and the alias each is asked by. Written out
+// rather than derived from the row, because a row also carries `progress`,
+// `derived` and eleven other things nobody would type — and because the same
+// list exists in `index.py`, where `test_the_two_field_lists_are_the_same` holds
+// the two together.
+const QUERY_FIELDS = ['kind','status','owner','priority','cycle','assignees',
+                      'reviewers','tags','project','id','title','prs','predicate'];
+const ALIASES = {tag: 'tags', assignee: 'assignees', reviewer: 'reviewers',
+                 pr: 'prs', person: 'owner'};
+// Free text, matched by substring; everything else is a vocabulary and is
+// matched whole, so `cycle:3` does not answer for cycle 30.
+const FREE_TEXT = ['title', 'prs'];
+
+// One record's values per field, lowered — the same map `query_fields` builds in
+// `index.py`, so both parsers are asked about identical data and a disagreement
+// between them is the language rather than the plan.
+function queryFields(row) {
+  const fields = {};
+  for (const name of QUERY_FIELDS) {
+    // `predicates` on the row, `predicate` in the language: the menu is named
+    // for the question and the row for its answers.
+    const held = name === 'predicate' ? row.predicates : row[name];
+    fields[name] = [].concat(held ?? []).map(String).map(v => v.toLowerCase())
+      .filter(v => v !== '');
+  }
+  return fields;
+}
+
+// `[text, wasQuoted]` per token, with the brackets as their own. Quoting is
+// tracked and not forgotten: `"and"` is a word rather than the operator, and the
+// colon inside `title:"a: b"` belongs to the value. The NUL marks the one colon
+// that splits the term, found here rather than searched for again later.
+function queryTerms(text) {
+  const tokens = [];
+  let i = 0;
+  while (i < text.length) {
+    if (/\s/.test(text[i])) { i++; continue; }
+    if (text[i] === '(' || text[i] === ')') { tokens.push([text[i], false]); i++; continue; }
+    let buffer = '', quoted = false, colon = -1;
+    while (i < text.length && !/\s/.test(text[i]) && text[i] !== '(' && text[i] !== ')') {
+      if (text[i] === '"') {
+        const closes = text.indexOf('"', i + 1);
+        if (closes < 0) throw new QueryError('a quote is opened and never closed');
+        buffer += text.slice(i + 1, closes);
+        quoted = true;
+        i = closes + 1;
+        continue;
+      }
+      if (text[i] === ':' && colon < 0) colon = buffer.length;
+      buffer += text[i];
+      i++;
+    }
+    tokens.push([colon < 0 ? buffer
+      : buffer.slice(0, colon) + '\u0000' + buffer.slice(colon + 1), quoted]);
+  }
+  return tokens;
+}
+
+class QueryError extends Error {}
+
+function queryTerm(raw, quoted) {
+  const colon = raw.indexOf('\u0000');
+  if (colon >= 0) {
+    const name = raw.slice(0, colon).toLowerCase(), value = raw.slice(colon + 1);
+    if (!name || !value)
+      throw new QueryError('a field and a value both have to be there, as `field:value`');
+    return {field: ALIASES[name] || name, value: value.toLowerCase()};
+  }
+  if (!raw) throw new QueryError('there is nothing between the quotes');
+  return {word: raw.toLowerCase()};
+}
+
+function queryTree(text) {
+  const tokens = queryTerms(text);
+  let at = 0;
+  const peek = () => at < tokens.length ? tokens[at] : null;
+  const keyword = word => {
+    const token = peek();
+    return !!token && !token[1] && token[0].toLowerCase() === word;
+  };
+  const done = () => { const token = peek(); return !token || (token[0] === ')' && !token[1]); };
+
+  function either() {
+    let node = both();
+    while (keyword('or')) {
+      at++;
+      if (done()) throw new QueryError('`or` needs something on both sides of it');
+      node = {either: [node, both()]};
+    }
+    return node;
+  }
+  function both() {
+    let node = unary();
+    for (;;) {
+      if (keyword('and')) {
+        at++;
+        if (done()) throw new QueryError('`and` needs something on both sides of it');
+      } else if (done() || keyword('or')) {
+        return node;
+      }
+      node = {both: [node, unary()]};
+    }
+  }
+  function unary() {
+    if (keyword('not')) {
+      at++;
+      if (done()) throw new QueryError('`not` needs something to take away');
+      return {not: unary()};
+    }
+    const token = peek();
+    if (!token) throw new QueryError('the query stops in the middle');
+    if (token[0] === '(' && !token[1]) {
+      at++;
+      // Asked here and not left to the parse inside: `kind:task and (` is a
+      // bracket somebody just opened, and being told the query stops in the
+      // middle is true and useless.
+      if (!peek()) throw new QueryError('a bracket is opened and never closed');
+      if (peek()[0] === ')') throw new QueryError('there is nothing inside the brackets');
+      const node = either();
+      const closing = peek();
+      if (!closing || closing[0] !== ')')
+        throw new QueryError('a bracket is opened and never closed');
+      at++;
+      return node;
+    }
+    if (token[0] === ')' && !token[1])
+      throw new QueryError('a bracket is closed that was never opened');
+    const word = token[1] ? '' : token[0].toLowerCase();
+    if (word === 'and' || word === 'or')
+      throw new QueryError('`' + word + '` needs something on both sides of it');
+    at++;
+    return queryTerm(token[0], token[1]);
+  }
+
+  if (!tokens.length) return null;
+  const node = either();
+  if (peek() !== null) throw new QueryError('a bracket is closed that was never opened');
+  return node;
+}
+
+function answers(node, fields, text) {
+  if (node === null) return true;
+  if ('word' in node) return text.includes(node.word);
+  if ('not' in node) return !answers(node.not, fields, text);
+  if ('both' in node)
+    return answers(node.both[0], fields, text) && answers(node.both[1], fields, text);
+  if ('either' in node)
+    return answers(node.either[0], fields, text) || answers(node.either[1], fields, text);
+  // A field this plan has not got: nothing, and not everything. Filter state is
+  // hand-editable, and a typo that widens a result set is worse than one that
+  // visibly empties it.
+  if (!(node.field in fields)) return false;
+  const held = fields[node.field];
+  if (node.value === NO_VALUE) return !held.length;
+  if (FREE_TEXT.includes(node.field)) return held.some(value => value.includes(node.value));
+  return held.includes(node.value);
+}
+
+// Parsed once per query and not once per row: the table redraws on every
+// keystroke over as many rows as the plan has, and parsing `kind:task` two
+// hundred times to answer one question is two hundred parses.
+let ASKED = {text: null, tree: null, error: ''};
+function asked() {
+  const text = params.get('q') || '';
+  if (text === ASKED.text) return ASKED;
+  try {
+    ASKED = {text, tree: queryTree(text), error: ''};
+  } catch (error) {
+    if (!(error instanceof QueryError)) throw error;
+    ASKED = {text, tree: null, error: error.message};
+  }
+  return ASKED;
+}
+
+// What is wrong with what is in the box, or '' if nothing is. The views draw
+// this beside the rows: a query somebody is halfway through typing must not look
+// like a plan with nothing in it.
+function queryError() { return asked().error; }
+
 // AND between fields, OR inside one: two owners means either of them, an owner
 // and a status means both. Anything shaped like a table row can be asked — the
 // graph hands it a node's data, which is that same row.
 function matches(row) {
-  const q = (params.get('q') || '').trim().toLowerCase();
-  // `row.search` and not a blob rebuilt here: what is searchable is decided once,
-  // by `SEARCH_FIELDS` in `index.py`, and shipped on the row. This line used to
-  // read `row.title + ' ' + row.tags`, which is neither what `apply_filters`
-  // searched nor what the placeholder promised — and a table that quietly
-  // searches less than the link you were sent is a table that lies twice.
-  if (q && !(row.search || '').includes(q)) return false;
+  // The query language, over `row.search` for a bare word — what is searchable is
+  // decided once, by `SEARCH_FIELDS` in `index.py`, and shipped on the row. This
+  // line used to read `row.title + ' ' + row.tags`, which is neither what
+  // `apply_filters` searched nor what the placeholder promised: a table that
+  // quietly searches less than the link you were sent is a table that lies twice.
+  const query = asked();
+  if (query.error) return false;
+  if (!answers(query.tree, queryFields(row), row.search || '')) return false;
   for (const field of FILTERS) {
     const values = wanted(field);
     if (!values.length) continue;
@@ -2317,6 +2522,19 @@ function syncFilters() {
   for (const select of document.querySelectorAll('select[data-field]'))
     select.value = params.get(select.dataset.field) || '';
   document.getElementById('q').value = params.get('q') || '';
+  sayQueryError();
+}
+
+// The half of "a malformed query says so and matches nothing" that says so. The
+// other half is `matches`, which keeps every row out — and on its own that is a
+// plan that looks empty, which is the failure this repository keeps finding in
+// new places.
+function sayQueryError() {
+  const where = document.getElementById('query-error');
+  if (!where) return;
+  const said = queryError();
+  where.textContent = said;
+  where.hidden = !said;
 }
 
 // replaceState rather than pushState: a filter is not a page you want to walk
@@ -2842,6 +3060,12 @@ function emptyRow() {
     headline = 'This plan has no entities yet.';
     detail = 'Nothing has been pitched, shaped or scheduled.';
     clearable = false;
+  } else if (queryError()) {
+    // A fourth way to be empty, and the only one the reader caused a keystroke
+    // ago. Said here as well as in the bar because this is where the rows were:
+    // one sentence, from one function, in the two places a person is looking.
+    headline = 'That search cannot be read.';
+    detail = esc(queryError()) + '.';
   }
   return `<tr class="nothing"><td colspan="${keys.length}">` +
     `<p class="headline">${headline}</p><p class="hint">${detail}</p>` +
