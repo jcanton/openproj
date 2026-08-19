@@ -25,8 +25,14 @@ rows, plus a test that both sides agree — the shape of
 time this class of divergence has been found, after the `(none)` sentinel and the
 search blob itself.
 
+**Fields only, not bodies** — jcanton, 2026-08-19. So the searchable text is the
+record's fields, and the shaping document is not swept into it. That makes the
+divergence above a smaller fix than it first looked: the two sides have to agree
+on a field list rather than on a blob, and searching a 900-word body for a
+substring stops being something either side does.
+
 Then the syntax on top: `field:value`, `and` / `or` / `not`, parentheses, bare
-words as full text over every field. `tag:gpu and tag:distributed` is the query
+words across the fields. `tag:gpu and tag:distributed` is the query
 the dropdowns cannot express, because a menu means OR within a field.
 
 Three rules it must keep. The query lives in the URL, because a filtered view
@@ -72,7 +78,24 @@ release from the ~130 commits since `v0.2.0`. Then a line in `AGENTS.md` next to
 the commit rules: **tag when you deploy**, so the running revision has a name
 instead of a sha. 1.0.0 after adoption, per jcanton.
 
-## 5. Smaller, and still owed
+## 5. A reader should not open a socket they may not write through
+
+Found from jcanton's console on the deployed service, 2026-08-19. Signed out, a
+detail page tries `wss://…/api/coedit/<id>` five times and gets
+`NS_ERROR_WEBSOCKET_CONNECTION_REFUSED` each time — the server correctly refusing
+a socket to somebody who may not write. It is self-limiting (`if (!arrived &&
+attempts >= 4) return stop('')`) and the comment there already names "a reader
+who may not write" as one of the three causes, so nothing loops.
+
+But reads are public here, so *most* page loads are readers, and every one of
+them gets five red lines in a console for a page that is working exactly as
+designed — which is how a real error comes to be ignored. The page already knows:
+the shell fetches `/api/me` to draw the corner, and drew "Sign in". So `COEDIT`
+should wait for that answer and connect only when it says `login` and `member`.
+The awkward part is that the fetch lives in the shell and the editor is on the
+detail page, so the shell has to publish it rather than the editor asking twice.
+
+## 6. Smaller, and still owed
 
 - **Drag-to-reparent in the graph.** Costed already: the predicate and the
   refusal are reusable, but cytoscape's own drag already means "move the node",
