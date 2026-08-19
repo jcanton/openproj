@@ -6048,6 +6048,13 @@ _GRAPH = """
     140px of graph. -#}
 <div class="commitbar" id="commitbar">
   <button type="button" id="connect">Edit dependencies</button>
+  {#- A mode, for the same reason the other one is: a plain drag on this canvas
+      means "move the node" and always has, so the gesture that files one record
+      inside another has to say which it is. What is new is that the dragging,
+      the drop target and the highlighting are the extension's now — the version
+      of this written here could not tell the reader where the node would land,
+      because the box it would land in moves with the node. -#}
+  <button type="button" id="refile">Refile</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
   <span id="state" role="status"></span>
@@ -6055,12 +6062,31 @@ _GRAPH = """
 </div>
 {% endif %}
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
+{#- `model.PARENT_KINDS`: which kind may hold which. The extension asks before it
+    lets go, so a drop the server would refuse is one the canvas never offers. -#}
+<script id="parents" type="application/json">{{ parent_kinds|tojson }}</script>
 <script>{{ cytoscape }}</script>
-<script>{{ dagre }}</script>
-<script>{{ cytoscape_dagre }}</script>
+{#- ELK rather than dagre, because dagre does not know what a nested node is: it
+    lays a plan whose pitches hold tasks out as though it were flat, and the
+    result was measured on the real plan at 7% of the canvas with three of six
+    dependency edges drawn across a box they are not attached to. ELK's layered
+    algorithm is hierarchy-aware and put the same plan on the same canvas with
+    none of them crossing. It is the one vendored file that is not permissively
+    licensed — EPL-2.0, notice beside it in `static/`, see `VENDOR.md`. -#}
+<script>{{ elk }}</script>
+<script>{{ cytoscape_elk }}</script>
+{#- Filing one thing inside another was written here by hand, shipped, and
+    removed the same day: a compound's outline follows the child being dragged,
+    so the drop looked like nothing happening until the page reloaded. This
+    extension is 14 KB, has no dependencies, and had solved it — see `Look for it
+    before you write it` in AGENTS.md, which this is the worked example of.
+    Its sibling `cytoscape-edgehandles` was audited and refused in the same pass:
+    it wants two lodash modules as globals to replace a gesture that works. -#}
+<script>{{ compound_dnd }}</script>
 {{ filters }}
 <script>
-cytoscape.use(cytoscapeDagre);
+cytoscape.use(cytoscapeElk);
+cytoscape.use(cytoscapeCompoundDragAndDrop);
 
 // A payload that did not survive the trip is a third kind of empty, and an empty
 // canvas looks the same whichever one it is: a bordered box with nothing in it,
@@ -6126,7 +6152,82 @@ function groupWidth(node) {
 
 // Named once: filtering re-runs it, and a second copy of the options is how the
 // graph comes to lay itself out one way at load and another way afterwards.
-const LAYOUT = {"name": "dagre", "rankDir": "LR", "nodeSep": 18, "rankSep": 70};
+// Measured on the real plan — 31 records, six dependencies — in a 1900x820
+// canvas, against the dagre layouts this replaces:
+//
+//     dagre LR (what shipped)   7% of the canvas   3 of 6 edges across a box
+//     dagre TB + packed        57%                 3 of 6
+//     elk layered RIGHT        69%                 0 of 6
+//
+// `hierarchyHandling: INCLUDE_CHILDREN` is the whole reason: dagre lays a nested
+// plan out as though it were flat, and a pitch holding four tasks is exactly
+// what this plan is made of. ELK lays out the boxes and their contents together.
+//
+// `RIGHT` and not `DOWN` for the reason `TB` beat `LR` under dagre — the shape of
+// this plan, not a preference. Most records depend on nothing, and the direction
+// decides whether that pile becomes a column or a row; measured, `DOWN` came out
+// at 23% of the canvas against 69%.
+//
+// An edge here is a dependency and only ever a dependency. What holds what is
+// drawn as a box around its contents, which is what `INCLUDE_CHILDREN` lays out
+// — the table draws the same relationship as a tree, and neither view turns it
+// into an arrow.
+const LAYOUT = {
+  name: 'elk',
+  // ELK's own fitting is off: `packComponents` below moves the pieces afterwards
+  // and fits once, and two fits fight over the same viewport.
+  fit: false,
+  elk: {
+    algorithm: 'layered',
+    'elk.direction': 'RIGHT',
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.edgeRouting': 'ORTHOGONAL',
+    'elk.spacing.nodeNode': 30,
+    'elk.layered.spacing.nodeNodeBetweenLayers': 50,
+    // `elk.separateConnectedComponents` and `elk.aspectRatio` were here and are
+    // not any more: measured, they changed nothing at all, because
+    // `packComponents` runs afterwards and arranges the pieces itself. Two
+    // settings that read as though they do something are worse than none.
+  },
+};
+
+// dagre lays the whole graph out as one drawing, so the pieces that are not
+// connected to each other are strung along a single line — which is why even
+// `TB` came out 11 times wider than it was tall, and still used a third of the
+// canvas. Nothing in the plan says those pieces belong in a row: they are
+// separate projects.
+//
+// So they are arranged afterwards, into rows whose width is chosen to make the
+// whole drawing the shape of the canvas it has to fit into. Same layout, same
+// edges, and 80% of the canvas instead of 7%, at nearly twice the zoom.
+//
+// Only the leaves are moved. A compound node's position is derived from its
+// children in cytoscape, so shifting a parent as well would move its contents
+// twice.
+// ELK is asynchronous, which is what makes the handler above enough: it emits
+// `layoutstop` after this file has finished being read. dagre was synchronous and
+// had already emitted it by then — the pack was written, never called, and the
+// graph came out in one long line exactly as before it was written.
+function packComponents() {
+  const pieces = cy.elements(':visible').components()
+    .map(piece => ({piece, box: piece.boundingBox()}))
+    .sort((a, b) => b.box.h - a.box.h);
+  if (pieces.length < 2) return;
+  const gap = 40;
+  const area = pieces.reduce((sum, one) => sum + (one.box.w + gap) * (one.box.h + gap), 0);
+  // The row width that would make the arrangement as wide-to-tall as the canvas.
+  const budget = Math.sqrt(area * (cy.width() / cy.height()));
+  let x = 0, y = 0, tallest = 0;
+  for (const {piece, box} of pieces) {
+    if (x > 0 && x + box.w > budget) { x = 0; y += tallest + gap; tallest = 0; }
+    const dx = x - box.x1, dy = y - box.y1;
+    piece.nodes().filter(node => node.isChildless())
+      .positions(node => ({x: node.position('x') + dx, y: node.position('y') + dy}));
+    x += box.w + gap;
+    tallest = Math.max(tallest, box.h);
+  }
+  cy.fit(undefined, 24);
+}
 
 // Before the canvas is built, not after. Cytoscape measures its container once,
 // here, and the first layout fits the plan into whatever it measured — so a
@@ -6257,8 +6358,10 @@ function paint() {
                                 'text-margin-x': e => groupWidth(e) + 12})
     .selector('edge').style({'line-color': token('--line-strong'),
                              'target-arrow-color': token('--line-strong')})
-    .selector('edge.pending').style({'line-color': token('--danger'),
-                                     'target-arrow-color': token('--danger')})
+    .selector('edge.pending').style({'line-color': token('--ok'),
+                                     'target-arrow-color': token('--ok')})
+    .selector('edge.dropping').style({'line-color': token('--sev-blocker'),
+                                      'target-arrow-color': token('--sev-blocker')})
     .update();
   route();
 }
@@ -6267,7 +6370,9 @@ addEventListener('themechange', paint);
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
 
-cy.on('layoutstop', route);
+// Packed first and routed after: routing reads where the boxes ended up, and
+// the pack moves them.
+cy.on('layoutstop', () => { packComponents(); route(); });
 cy.on('position', 'node', route);
 route();
 
@@ -6549,6 +6654,94 @@ if (CONNECT) {
 // it is stored on. Marked rather than removed on the spot, because until Save
 // nothing has happened and the canvas has to be able to say what it is about to
 // do — the same rule the drawn ones follow.
+// --- refiling ---------------------------------------------------------------
+//
+// Drag a record onto the box that should hold it. The extension does the part
+// this repository got wrong on its own: it knows which box the pointer is over
+// while a node is in the air, draws it, and hands back the pair when the drag
+// ends. What is left here is the rule about which pairs are allowed and the
+// write — the same PATCH the table's own drag sends, because a parent is a field
+// like any other.
+const REFILE = document.getElementById('refile');
+const CAN_HOLD = (() => {
+  try { return JSON.parse(document.getElementById('parents').textContent); }
+  catch (error) { return {}; }
+})();
+let refiling = false;
+let cdnd = null;
+
+if (REFILE) {
+  REFILE.onclick = () => {
+    if (connecting) CONNECT.onclick();
+    refiling = !refiling;
+    REFILE.textContent = refiling ? 'Stop refiling' : 'Refile';
+    if (refiling) {
+      cdnd = cy.compoundDragAndDrop({
+        // Only the records that can be filed under something. A project belongs
+        // to nothing, so it is not something to pick up.
+        grabbedNode: node => (CAN_HOLD[node.data('kind')] || []).length > 0,
+        // And only into a box that may hold it. Asked before the drop rather
+        // than after, so the canvas never offers a move the server refuses.
+        dropTarget: (target, grabbed) =>
+          target.isParent() &&
+          (CAN_HOLD[grabbed.data('kind')] || []).includes(target.data('kind')),
+        // No new boxes: a project, a pitch and a task are the three kinds this
+        // plan has, and dropping one record on another must not invent a fourth
+        // thing to hold them.
+        dropSibling: () => false,
+      });
+      say('drag a record onto the box that should hold it, or out of the one it is in');
+    } else {
+      if (cdnd) { cdnd.destroy(); cdnd = null; }
+      say('');
+    }
+  };
+
+  // Filed. `dropTarget` is the box it landed in.
+  cy.on('cdnddrop', (event, dropTarget) => {
+    const child = event.target;
+    if (!refiling || !dropTarget || !dropTarget.length) return;
+    if (dropTarget.id() === (child.data('parent') || null)) return;
+    refile(child.id(), dropTarget.id());
+  });
+
+  // Taken out. The extension fires this when a node leaves the box it was in,
+  // which is the gesture that had no answer at all before: there was no point on
+  // the canvas that meant "outside".
+  cy.on('cdndout', (event, dropTarget) => {
+    const child = event.target;
+    if (!refiling || !child.data('parent')) return;
+    refile(child.id(), null);
+  });
+}
+
+// The write. Same PATCH, same base commit, same refusal as everything else this
+// page commits; the page reloads afterwards because a parent moves the record's
+// cycle, its dates, what it waits for and which project it counts against, and
+// not one of those is something this canvas can work out for itself.
+async function refile(childId, parentId) {
+  const base = document.getElementById('base');
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    say(parentId ? `filing ${childId} into ${parentId}…` : `taking ${childId} out…`);
+    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
+      method: 'PATCH', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({base_commit: base.value, fields: {parent: parentId}, body: null}),
+    });
+    const answer = await answerOf(response);
+    if (!response.ok) {
+      say(refusal(answer, response.status));
+      return;
+    }
+    committed = answer.commit;
+    base.value = answer.commit;
+  } finally {
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+  location.reload();
+}
+
 cy.on('tap', 'edge', evt => {
   if (!connecting) return;
   const edge = evt.target;
@@ -14056,9 +14249,11 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         total=len(index.entities),
         links=links,
         elements=_elements(index),
+        parent_kinds={kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         cytoscape=_library("cytoscape.min.js"),
-        dagre=_library("dagre.min.js"),
-        cytoscape_dagre=_library("cytoscape-dagre.js"),
+        elk=_library("elk.bundled.js"),
+        cytoscape_elk=_library("cytoscape-elk.js"),
+        compound_dnd=_library("cytoscape-compound-drag-and-drop.js"),
     )
     return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 

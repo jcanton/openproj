@@ -9,10 +9,12 @@ below, and the bytes in git are still upstream's.
 | file | version | licence | source |
 |---|---|---|---|
 | `cytoscape.min.js` | 3.30.2 | MIT | https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js |
-| `dagre.min.js` | 0.8.5 | MIT | https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js |
-| `cytoscape-dagre.js` | 2.5.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js |
 | `yjs.bundle.mjs` | 13.6.32 | MIT | https://esm.sh/yjs@13.6.32/es2020/yjs.bundle.mjs |
 | `yjs-LICENSE.txt` | 13.6.32 | MIT | https://raw.githubusercontent.com/yjs/yjs/v13.6.32/LICENSE |
+| `elk.bundled.js` | 0.9.3 | **EPL-2.0** | https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js |
+| `elk-LICENSE.txt` | 0.9.3 | EPL-2.0 | licence text for the file above |
+| `cytoscape-elk.js` | 2.2.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-elk@2.2.0/dist/cytoscape-elk.js |
+| `cytoscape-compound-drag-and-drop.js` | 1.1.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-compound-drag-and-drop@1.1.0/cytoscape-compound-drag-and-drop.js |
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
 
@@ -21,8 +23,28 @@ is how the update procedure below came to delete its checksum. Its upstream Inte
 release was not written down when it was vendored; the SHA256 below is what identifies
 the exact bytes, and whoever replaces the file should record the version here.
 
-Only cytoscape carries its MIT notice inline in the minified file. dagre and
-cytoscape-dagre declare theirs in their upstream `package.json`. Yjs's minified bundle
+**ELK is the one file here that is not permissively licensed.** EPL-2.0 is a weak,
+file-level copyleft: this repository is BSD-3-Clause and stays BSD-3-Clause, the bundle is
+shipped verbatim with its notice beside it in `elk-LICENSE.txt`, and its source is public
+at https://github.com/kieler/elkjs. What EPL asks in return is that changes *to that file*
+are released under EPL — so it is vendored unmodified, and a patch would go upstream rather
+than into this copy. It is here because it is the only layout in reach that understands
+nested nodes: measured on the real plan, it drew the graph with none of its six dependency
+edges crossing a box they are not attached to, against three of six for dagre.
+
+`cytoscape-edgehandles` was audited and refused, which is the other half of the rule in
+AGENTS.md: it draws the connection gesture this page writes by hand, and its browser build
+wants `lodash.memoize` and `lodash.throttle` as globals under those exact names — 28 KB
+becomes 58 KB and a shim, to replace clicking one node and then another, which works and
+which nobody has complained about. `cytoscape-compound-drag-and-drop` was taken, because
+what it replaces did not.
+
+dagre and cytoscape-dagre were here until ELK replaced them; they are gone rather than
+left in the directory, because a vendored file nothing inlines is a file nobody checks.
+
+Only cytoscape carries its MIT notice inline in the minified file. Both cytoscape
+extensions declare theirs in their upstream `package.json`, and ELK's ships beside it as
+a file because EPL asks for that. Yjs's minified bundle
 carries none, so the MIT text ships beside it the way Inter's OFL does.
 
 ## Checksums, and updating a file

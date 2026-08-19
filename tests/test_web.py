@@ -396,14 +396,18 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
     so — it fails silently, in the console, on one route.
     """
     # Only the scripts this app writes. The vendored bundles declare their own
-    # names at column 0 inside their own module wrappers — cytoscape-dagre has
-    # two `defaults` in two webpack modules — and they are not ours to police.
-    # Matched by content rather than by size: the smallest of them is 12 KB.
+    # names at column 0 inside their own module wrappers — cytoscape-elk has two
+    # `defaults` in two webpack modules — and they are not ours to police.
+    # Matched by content rather than by size: the smallest of them is 11 KB.
+    #
+    # Read out of the directory rather than listed here. This test named three
+    # files, ELK replaced two of them, and every route failed on a missing path —
+    # which is at least loud. The quiet version is a library added and not listed,
+    # whose globals then count as ours and are reported as our collisions.
     from openproj.render import _static_dir, _yjs
 
     vendored = {
-        (_static_dir() / name).read_text()
-        for name in ("cytoscape.min.js", "dagre.min.js", "cytoscape-dagre.js")
+        path.read_text() for path in _static_dir().iterdir() if path.suffix == ".js"
     }
     # Yjs too, and by the text the page actually carries rather than by the file:
     # it is the one vendored library that cannot be inlined verbatim, so its
