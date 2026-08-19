@@ -20,7 +20,8 @@ request. Both directions are first class on purpose — a tool that owns your fi
 cannot leave.
 
 The tabs are the same records seen several ways: **Table** is the one people live in, **Graph** is
-the dependency diagram, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets
+the dependency diagram — where dependencies are drawn in one mode and work is refiled by dragging it
+between boxes in another — **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets
 and its capacity, **People** who is on what and who is full, **Issues** the pile of things somebody
 noticed, **Notes** the pile of things somebody is still thinking about. Every filter is in the URL,
 so a view is a link, and a field can be asked for more than one value at a time — two statuses means
