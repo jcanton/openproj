@@ -556,45 +556,89 @@ changes the typing setting only, never the document, and the commit says so.
 
 ## S6 — The surface adapter, textarea-only, shipped alone
 
-Zero bytes, zero behaviour change. This is proposal 3's best single engineering judgement,
-kept in shape and changed in purpose. **One shared block plus `_COEDIT`.**
+**Built. Zero behaviour change, measured; NOT zero bytes, and the header above was wrong
+about that.** The detail page a writer gets goes 408,752 → 418,229 B raw and 162,724 →
+166,202 B gz -9 on `tests/fixtures/corpus`; a signed-out reader's goes 292,122 → 301,262 B,
+for the reason S1–S3 and S5 each recorded — `editable` is gated on `base_commit` alone.
+The whole of it is one region of `_COMBOBOX`, 8,557 B of which 1,917 B is code and 6,640 B
+is the argument for the shape of the boundary. The long form of that argument was moved out
+to `docs/EDITOR.md`'s "What the skeptics broke", where it already was, and the block now
+names it rather than restating it; that trim was worth 1,115 B and stopping there was a
+choice. Zero was never reachable: an explicit boundary with seven named operations is more
+characters than fifteen bare `.value` reads, and pretending otherwise would have meant
+shipping it uncommented.
 
-- [ ] **S6.1** `_COEDIT` (`render.py:8636`), `FORMATS` / `applyMark`, `attachUploads`, the
-      draft writer and `drawSeats` move behind seven methods — `text`, `caret`, `setCaret`,
-      `splice`, `onInput`, `onCaret`, `coordsAt` — every one specified in **UTF-16 code
-      units**, with the textarea as the only implementation.
-- [ ] **S6.2** Add `test_the_body_is_read_through_one_place_and_nothing_else`: a source-grep
-      test in the same shape as the splice guard, asserting `BODY.value` appears only inside
-      the textarea implementation. The seventeen call sites — `read`, `changed`, `dirty`,
-      `save`, the draft writer, the draft restorer, `ORIGINAL_BODY`, the preview,
-      `attachUploads`, `attachEditing`, `applyMark`, `lineRange`, `drawSeats`, `sit`,
-      `typed`, `reflect`, `welcomed` — have to be enumerable **before** anything is allowed
-      to stop writing to it.
-- [ ] **S6.3** Re-point `test_the_browser_splices_on_a_whole_character`
-      (`tests/test_coedit.py:1446`) at the adapter's source rather than deleting it. It
-      reads `str(_COEDIT)` and requires every `text.insert` / `text.delete` index to start
-      literally with `units(`, so an adapter in a new module constant is invisible to it.
-      Its regex `\btext\.(?:insert|delete)\(` is also blind to `ytext.insert`,
-      `shared.insert` and `doc.getText('body').insert` — i.e. dodgeable by a rename. Widen
-      it in the same commit.
+- [x] **S6.1** `_COEDIT`, `FORMATS` / `applyMark`, `attachUploads`, `attachEditing`,
+      `attachGutter`, `attachStatus`, `indentLines`, `pastedAs`, the draft writer, the draft
+      restorer, `drawSeats`, `sit` and `_VIEWS` all move behind seven methods — `text`,
+      `caret`, `setCaret`, `splice`, `onInput`, `onCaret`, `coordsAt` — every one specified
+      in **UTF-16 code units**, with the textarea as the only implementation. Three members
+      are on the object and are NOT of the seven, each argued where it is defined: `apply`
+      (the re-entrancy flag, built now and tested now because a textarea will never demand
+      it), `lineCoords` (the mirror's other question — one layout of the document against
+      `coordsAt`'s one forced reflow per index, which is the gutter's whole frame budget at
+      the 1,000-line ceiling) and `el` (the box, for scroll, classes and the events the
+      seven do not cover).
+- [x] **S6.2** `test_the_body_is_read_through_one_place_and_nothing_else`. It cuts the
+      surface's own source out of the shipped page — by the banner comments that delimit it,
+      so a boundary that moves takes its guard with it — and asserts that no `BODY.value`,
+      `area.value`, `selectionStart`, `selectionEnd` or `setSelectionRange` survives
+      anywhere else, on `/detail` and on `/new`. The seventeen call sites are enumerated in
+      `_THROUGH_THE_SURFACE` beside it, so a sweep that DELETED one instead of converting it
+      is caught as well.
+- [x] **S6.3** `test_the_browser_splices_on_a_whole_character` reads `_COEDIT` **and**
+      `_COMBOBOX`, and asserts the surface's banner is in what it read — so an adapter that
+      takes `typed()` into a third constant cannot leave the guard passing over a file with
+      no splice in it. `_document_indexes`' regex drops the receiver name entirely:
+      `\.(?:insert|delete)\(` rather than `\btext\.…`. Demonstrated rather than asserted:
+      a third splice added as `shared.insert(head, put)` is invisible to the old regex, which
+      still finds its two `units(` indexes and passes, and is caught by the new one.
 
 **No features in this commit**, so any regression in the code path that has destroyed
-unsaved writing three times is attributable to it.
+unsaved writing four times is attributable to it. Measured: the editing surface's geometry
+at 1440×900 in the split view — the box, the toolbar, the gutter and every line number's
+top, the status bar and its text, the preview pane, and the box's computed face and left
+padding — is byte-identical before and after, and so are the two PNGs.
 
 **Proved by:**
 
 - The whole existing `tests/test_coedit.py` and `tests/test_seats.py`, unmodified apart from
-  S6.3. Thirty-five of sixty-five test functions in `test_coedit.py` address `BODY` /
-  `textarea[name=body]`; if any of them moves, the adapter changed behaviour and this stage
-  failed its own claim.
-- `tests/test_editor.py:787` (extended in S4) and the new S6.2 grep.
-- **Chrome + a real `Room`** — re-run
-  `test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was`
-  (`tests/test_coedit.py:1414`) through the adapter. Note its own comments: two of its five
-  cases are **controls that passed with the defect in place**.
+  S6.3 — every convergence test in both files passes through the adapter with not one
+  assertion changed, which is the stage's central claim and the only way it could have been
+  made.
+- `test_no_script_ever_assigns_a_textarea_its_value`, **extended to `_COEDIT`** — which is
+  S4.3 arriving early and for free. That scope was the reason nobody noticed `reflect()`
+  assigning `.value` on every remote update; the room writes through `splice` now, so it can
+  be held to the same rule. It is not a fix for the undo stack: `splice` under `apply` still
+  assigns `.value` INSIDE the implementation, which is the one place allowed to, and S4's
+  `Y.UndoManager` is what answers it.
+- **Chrome + a real `Room`** — `test_an_edit_across_an_emoji_reaches_the_room_through_the_
+  adapter`, the same five bodies as the shim-driven original including its two controls,
+  driven in a real browser against a real `openproj.coedit.Room` over a socket that goes
+  nowhere. Mutation-checked against the original defect (`[...now]` back to `now.split('')`):
+  the room ends up holding a lone surrogate and the test says so.
+- **Chrome + a real `Room`** — `test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_
+  hold`. `parse_text` keeps `\r\n` and `store.py` decodes with no newline translation, so a
+  `\r` really can be in a room's `Y.Text`; a textarea normalises it away twice over. The
+  shim cannot ask this at all — it has no HTML parser. What it pins is that the two copies
+  still converge; the cost it records, and does not fix, is that the first keystroke on such
+  a document rewrites everything between the first carriage return and the last.
+- **Chrome + a real `Room`** — `test_somebody_elses_keystroke_is_reflected_and_never_sent_
+  back`. Both halves: a remote keystroke puts zero frames on the wire, leaves the caret where
+  it was, and credits the passive tab nothing; and the `applying` flag, asked directly by
+  synthesising the change event a textarea will never fire — remove-all, event, insert-all,
+  event, which is what every measured "set the text" actually is. With the flag removed the
+  subscriber fires twice and two frames go up the socket, which is the amplification in
+  miniature.
 
 **Hazards answered:** *nothing reads `BODY.value` except one place*; the rest of *a guard
 that greps source must follow the code it guards*.
+
+**Departures, stated:** `sit()` now wakes on `select` and `focus` as well as `keyup`, `click`
+and `input`, because `onCaret` is one list where there were two. Measured in Chrome over a
+focus / select / keyup / input / click / drag-select sequence: the same four `at` frames with
+the same four values in the same order, before and after — one of them dispatched at the
+`select` that moved the caret rather than at the `keyup` after it.
 
 ---
 

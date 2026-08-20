@@ -2276,7 +2276,7 @@ def test_both_editors_send_the_title_they_are_previewing(client: TestClient):
     copy to disagree with the first."""
     for page in (client.get(f"/detail/{TASK}").text, client.get("/new?kind=pitch").text):
         assert "const TITLED = document.querySelector('.title-field');" in page
-        asked = "JSON.stringify({body: BODY.value, title: TITLED.value})"
+        asked = "JSON.stringify({body: SURFACE.text(), title: TITLED.value})"
         assert page.count(asked) == 1
         # And the same string is what goes on the wire, rather than being rebuilt
         # from the two fields a second time: it is the request body and the "has

@@ -541,8 +541,8 @@ def test_an_image_can_be_pasted_or_dropped_into_the_body(client: TestClient):
     receives them exactly the same way."""
     for path in (f"/detail/{TASK}", "/new"):
         page = client.get(path).text
-        assert "function attachUploads(area, status)" in page, path
-        assert "attachUploads(BODY, document.getElementById('upload'));" in page, path
+        assert "function attachUploads(surface, status)" in page, path
+        assert "attachUploads(SURFACE, document.getElementById('upload'));" in page, path
         assert "addEventListener('paste'" in page, path
         assert "addEventListener('drop'" in page, path
         assert "fetch('/api/asset'" in page, path
@@ -557,7 +557,7 @@ def test_a_slow_upload_holds_its_place_in_the_text(client: TestClient):
 
     assert "const token = `![uploading" in send
     assert "insert(token)" in send
-    assert "replaceRange(area," in send
+    assert "surface.splice(at, at + token.length," in send
     assert "response.ok ? `![${alt}](${answer.path})` : ''" in send
 
 
@@ -791,23 +791,148 @@ def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
 # --- writing in the body ----------------------------------------------------
 
 
+# The adapter's own boundary, read off the shipped page rather than off a module
+# constant — an adapter that moved into a new constant would otherwise be
+# invisible to every guard below.
+_SURFACE_OPENS = "// --- the textarea, as a surface ---"
+_SURFACE_CLOSES = "// --- end of the textarea surface ---"
+
+
+def _surface_source(page: str) -> str:
+    """The one region of any of these pages that knows the box is a textarea."""
+    opens = page.index(_SURFACE_OPENS)
+    closes = page.index(_SURFACE_CLOSES, opens)
+    return page[opens:closes]
+
+
+def _coedit_source(page: str) -> str:
+    """The room's script, as it ships."""
+    found = re.search(r"const COEDIT = \(\(\) => \{.*?\n\}\)\(\);", page, re.S)
+    assert found, "the room's script is not on the page under the name this looks for"
+    return found.group(0)
+
+
+# Every read of the document that used to be a `.value` on the box, by the name
+# it goes by in the block it lives in. The list is here rather than in prose
+# because S6.2 asks for it to be enumerable BEFORE anything is allowed to stop
+# writing to the box: if one of these has no replacement, the sweep was partial
+# and the boundary is a boundary with a hole in it.
+_THROUGH_THE_SURFACE = (
+    "let ORIGINAL_BODY = SURFACE.text();",                       # the baseline
+    "const count = Object.keys(fields).length + (SURFACE.text()",  # dirty
+    "const body = SURFACE.text() === ORIGINAL_BODY ? null : SURFACE.text();",  # save
+    "text: SURFACE.text()}))",                                   # the draft writer
+    "draft.text !== SURFACE.text()",                             # the draft restorer
+    "SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, draft.text))",
+    "body: SURFACE.text(), title: TITLED.value",                 # the preview
+    "SURFACE.lineCoords()",                                      # the scroll sync
+    "const now = SURFACE.text(), was = text.toString();",        # typed
+    "const want = text.toString(), was = SURFACE.text();",       # reflect
+    "SURFACE.coordsAt(",                                         # drawSeats
+    "const at = SURFACE.caret().from;",                          # sit
+    "const mine = SURFACE.text() !== ORIGINAL_BODY;",            # welcomed
+    "const draft = SURFACE.text();",                             # welcomed's report
+    "const count = surface.text().split",                        # attachGutter
+    "const text = surface.text();",                              # attachStatus, applyMark
+    "surface.text().indexOf(token)",                             # attachUploads
+)
+
+
+def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient):
+    """S6.2. `BODY.value` may appear in exactly one region of the page.
+
+    The adapter is worth nothing as a boundary if anything can still reach past
+    it, and "nothing reaches past it" is a claim about the whole document rather
+    than about the function somebody happened to be editing. So this reads the
+    shipped page, cuts out the surface's own source, and asserts that no read or
+    write of the box's text or selection survives anywhere else — on all four
+    pages that inline an editing surface, because the block is shared and the
+    mount sites are not.
+
+    The `<input>`s are deliberately not in scope: the suggestion combobox calls
+    `setSelectionRange` on a text field, which is a different control with no
+    document in it and no room behind it. The names below are the body's.
+    """
+    for path in (f"/detail/{TASK}", "/new"):
+        page = client.get(path).text
+        surface = _surface_source(page)
+        assert "function textareaSurface(area)" in surface, path
+        # Every one of the seven, by name, in the one place they are implemented.
+        for method in ("text:", "caret:", "setCaret(", "splice(", "onInput(",
+                       "onCaret(", "coordsAt("):
+            assert method in surface, f"{method} is not in the surface on {path}"
+        assert "let applying = false;" in surface, path
+
+        rest = page.replace(surface, "")
+        for reach in ("BODY.value", "BODY.selectionStart", "BODY.selectionEnd",
+                      "BODY.setSelectionRange", "area.value", "area.selectionStart",
+                      "area.selectionEnd", "area.setSelectionRange"):
+            assert reach not in rest, (
+                f"`{reach}` on {path} reads the document from outside the one place "
+                "that is allowed to. Every other surface fires its change event for "
+                "its own edits and a person's alike, and a read that dodges the "
+                "boundary is the one that will not be found when that matters."
+            )
+
+    # And the seventeen call sites, enumerated. A sweep that missed one is a
+    # sweep that left a `.value` behind, and the assertion above would catch
+    # that; this one catches the other half — a call site quietly deleted
+    # instead of converted.
+    page = client.get(f"/detail/{TASK}").text
+    for site in _THROUGH_THE_SURFACE:
+        assert site in page, f"this call site no longer goes through the surface: {site}"
+
+    # `reflect`, read as source, because the two things that matter about it are
+    # invisible to a textarea and therefore to every behavioural test in the
+    # suite. Both ends of the splice have to be bounded — `to` is
+    # `was.length - tail` and not `was.length`, or the write is a whole-document
+    # replacement wearing a splice's signature — and it has to be inside `apply`,
+    # which is what a surface that fires its own change events will read.
+    reflect = re.search(r"function reflect\(\) \{.*?\n  \}", page, re.S)
+    assert reflect, "the room no longer has a `reflect` under that name"
+    assert "was.length - tail" in reflect.group(0), (
+        "reflect's splice is not bounded at the tail, so it replaces everything "
+        "from the first differing character to the end of the document"
+    )
+    assert "SURFACE.apply(" in reflect.group(0), (
+        "reflect writes the box without saying it is the page writing"
+    )
+
+
 def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
     """`textarea.value = …` wipes the browser's native undo stack. Paste a diagram
     into a four-hundred-line pitch, press ctrl-Z, and the last ten minutes are
     gone. Every programmatic edit goes through `replaceRange`, which uses
     `execCommand('insertText')` — deprecated, and still the only API in any
-    shipping browser that edits a textarea as though a person had typed."""
+    shipping browser that edits a textarea as though a person had typed.
+
+    **Extended to `_COEDIT`, which it deliberately did not look at.** The audit
+    named that omission as a live defect: `reflect()` assigned `.value` on every
+    remote update while the comment forty lines above said what that costs, and
+    this test's scope — `replaceRange`, `FORMATS` and `attachUploads` — was
+    exactly why nobody noticed. The room's script now writes through the
+    surface's `splice` like everything else, so it can be held to the same rule.
+    It is still not a fix for the undo stack: `splice` under `apply` assigns
+    `.value` inside the implementation, which is the one place allowed to, and
+    S4's `Y.UndoManager` is what answers it.
+    """
     page = client.get(f"/detail/{TASK}").text
-    helpers = re.search(r"function replaceRange.*?\n\}", page, re.S).group(0)
-    # Everything that edits the body while somebody is working in it. A draft
-    # restored at page load is not in scope: there is no history to protect yet,
-    # and it replaces the whole field rather than part of it.
+    helpers = _surface_source(page)
+    # Everything that edits the body while somebody is working in it — plus, now,
+    # the room, which is the caller that had a `.value` assignment in it all
+    # along. A draft restored at page load replaces the whole field rather than
+    # part of it, and it says so through `splice(0, length, …)` inside `apply`
+    # rather than by writing to the box behind the boundary's back.
     editing = re.search(r"const FORMATS = \[.*?\n\}\n", page, re.S).group(0)
     editing += re.search(r"function attachUploads.*?\n\}\n", page, re.S).group(0)
+    editing += _coedit_source(page)
 
     assert "document.execCommand('insertText', false, text)" in helpers
     assert "area.value =" not in editing, "only the fallback inside replaceRange may assign"
-    assert "replaceRange(area" in editing, "and it is what the editing code calls"
+    assert "BODY.value =" not in editing, "and the room may not assign either"
+    assert "surface.splice(" in editing or "SURFACE.splice(" in editing, (
+        "and a splice through the surface is what the editing code calls"
+    )
 
 
 def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
@@ -865,9 +990,9 @@ def test_a_fence_takes_whole_lines_of_its_own(client: TestClient):
     page = client.get(f"/detail/{TASK}").text
     fence = re.search(r"if \(mark\.fence\) \{.*?\n    return;\n  \}", page, re.S).group(0)
 
-    assert "const [from, to] = lineRange(area);" in fence
+    assert "const [from, to] = lineRange(surface);" in fence
     assert "'```\\n' + chosen + '\\n```'" in fence
-    assert "area.setSelectionRange(from + 3, from + 3)" in fence, "the caret lands on the language"
+    assert "surface.setCaret(from + 3)" in fence, "the caret lands on the language"
     assert "fenced" in fence, "and pressing it again unwraps"
 
 
@@ -888,12 +1013,13 @@ def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
     the mark is supposed to wrap."""
     page = client.get(f"/detail/{TASK}").text
 
-    bound = "button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };"
+    bound = "button.onmousedown = event => { event.preventDefault(); applyMark(surface, mark); };"
     assert bound in page
     # And a click as well, which is the only thing Enter and Space produce.
     # `detail === 0` is how a click synthesised from a key is told from one a
     # pointer made, so the two bindings cannot both fire for one press.
-    assert "button.onclick = event => { if (event.detail === 0) applyMark(area, mark); };" in page
+    keyed = "button.onclick = event => { if (event.detail === 0) applyMark(surface, mark); };"
+    assert keyed in page
     assert "event.detail" in page
 
 
@@ -1062,7 +1188,7 @@ const set = (text, from, to) => {
 };
 const apply = (name, text, from, to) => {
   set(text, from, to);
-  applyMark(area, mark(name));
+  applyMark(SURFACE, mark(name));
   return area.value;
 };
 
@@ -1087,6 +1213,14 @@ const bracketed = apply('Link', 'a]b', 0, 3);
 const table = apply('Table', 'alpha', 5, 5);
 const picked = area.value.slice(area.selectionStart, area.selectionEnd);
 const rule = apply('Horizontal rule', 'alpha', 5, 5);
+
+// The two marks that leave a caret and no selection, which is the one-argument
+// form of `setCaret` and its only two callers. Both are a POSITION, not a
+// range, and a range with a missing end is a caret at the top of the document.
+const fenced = apply('Code block', 'alpha beta', 0, 10);
+const afterFence = [area.selectionStart, area.selectionEnd];
+const emptyBold = apply('Bold', 'alpha', 5, 5);
+const insideBold = [area.selectionStart, area.selectionEnd];
 
 // A paste is what the browser hands over, so it is given one.
 const paste = text => {
@@ -1137,7 +1271,7 @@ const wrote = area.value;
 set('untouched', 0, 0);
 document.getElementById('state').textContent = '';
 let threw = null;
-try { applyMark(area, mark('Image')); } catch (error) { threw = String(error); }
+try { applyMark(SURFACE, mark('Image')); } catch (error) { threw = String(error); }
 const unwritable = {said: document.getElementById('state').textContent, wrote: area.value};
 
 // The keyboard. Enter and Space on a focused button produce a click and no
@@ -1184,7 +1318,8 @@ const bar = {
     .map(one => Math.round(one.getBoundingClientRect().y)))].length,
 };
 
-return {struck, numbered, unnumbered, nestedOff, nestedOn, linkedUp, urlChosen, bareLink,
+return {fenced, afterFence, emptyBold, insideBold,
+        struck, numbered, unnumbered, nestedOff, nestedOn, linkedUp, urlChosen, bareLink,
         wordChosen, bracketed, checked, boxed, unboxed, table, picked, rule,
         linked, tabled, plain, bare, picker, wrote, threw, unwritable,
         keyed, pressed, refused, bar};
@@ -1217,6 +1352,20 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
         "alpha\n\n| Heading | Heading |\n| --- | --- |\n| Cell | Cell |"
     ), "a table that interrupts a paragraph is a wall of pipes"
     assert got["picked"] == "Heading", "the word to replace was not chosen for you"
+    # A caret and not a selection, on the two marks that leave one. The fence
+    # puts it on the language — the one word you type before the code and cannot
+    # paste from anywhere — and an empty Bold puts it between the marks, ready to
+    # type. Both are `setCaret(position)` with no second argument, and a second
+    # argument that arrives as `undefined` is a caret at the top of the document
+    # rather than where the mark just went in.
+    assert got["fenced"] == "```\nalpha beta\n```"
+    assert got["afterFence"] == [3, 3], (
+        f"the caret did not land on the fence's language: {got['afterFence']}"
+    )
+    assert got["emptyBold"] == "alpha****"
+    assert got["insideBold"] == [7, 7], (
+        f"the caret did not land between the marks it just wrote: {got['insideBold']}"
+    )
     assert got["rule"] == "alpha\n\n---", "`---` under a line of text is a heading, not a rule"
 
     assert got["linked"] == {"text": "read [the notes](https://example.org/a?b=c)", "taken": True}

@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pygit2
 import pytest
+from browser import chrome, measured_in
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from test_injection import run_js
@@ -1318,14 +1319,22 @@ def test_every_index_into_the_document_is_converted():
 
 
 def _document_indexes(script: str) -> list[str]:
-    """Every first argument handed to `text.delete(` / `text.insert(` in a script.
+    """Every first argument handed to any `.delete(` / `.insert(` in a script.
 
     A regex finds the call and then the parentheses are balanced by hand, because
     the index is itself a call with a comma in it and `[^,]+` stops in the middle
     of it. There is no JavaScript parser here and adding one would mean npm.
+
+    **The receiver is not named, and that is the widening this needed.** It was
+    `\btext\.(?:insert|delete)\(`, which is blind to `ytext.insert`,
+    `shared.insert` and `doc.getText('body').insert` — so the one guard holding
+    every index into the shared document to `units(` was dodgeable by renaming a
+    variable. Measured on the shipped scripts, the two calls below are the only
+    `.insert(`/`.delete(` in any of them, so the widening costs nothing today and
+    catches the rename it was blind to.
     """
     found = []
-    for match in re.finditer(r"\btext\.(?:insert|delete)\(", script):
+    for match in re.finditer(r"\.(?:insert|delete)\(", script):
         depth, at = 0, match.end()
         while at < len(script):
             letter = script[at]
@@ -1443,6 +1452,346 @@ def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
     )
 
 
+# --------------------------------------------------------------------------- #
+# The surface adapter, driven in Chrome against a real room
+# --------------------------------------------------------------------------- #
+#
+# `typed_in_the_page` above drives the page's script under `tests/js/drive.js`,
+# which has no layout, no selection and — the reason these tests exist — no HTML
+# parser. A `<textarea>`'s value is not the text between its tags: the parser
+# folds `\r\n` to `\n` on the way in and the API folds it again on the way out,
+# and the shim does neither. So the questions below are asked of Chrome, with a
+# real `openproj.coedit.Room` on the other end of a socket that goes nowhere.
+
+# A socket that never leaves the page. Every frame the editor writes is kept for
+# the test to hand to the room, and every frame the test wants to deliver goes in
+# through `onmessage`, so the two halves are the real ones and only the wire
+# between them is not.
+#
+# `fetch` is stubbed for the same reason every other Chrome test here stubs it:
+# a `file://` page cannot reach `/api/preview`, and an editing session opens one.
+_ROOM_STUB = """
+window.__errors = [];
+addEventListener('error', event => window.__errors.push(String(event.message)));
+window.fetch = async () => ({ok: true, json: async () => (
+  {html: '<p data-startline="1">rendered</p>'})});
+window.__sent = [];
+function FakeSocket() {
+  this.readyState = 1;
+  window.__room = this;
+  setTimeout(() => { if (this.onopen) this.onopen(); }, 0);
+}
+FakeSocket.OPEN = 1;
+FakeSocket.prototype.send = function (data) { window.__sent.push(JSON.parse(data)); };
+FakeSocket.prototype.close = function () { this.readyState = 3; };
+window.WebSocket = FakeSocket;
+"""
+
+
+def _welcome(room: coedit.Room) -> dict:
+    return {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+
+
+def in_chrome_room(
+    client: TestClient, where: Path, room: coedit.Room, welcome: dict, script: str
+) -> dict:
+    """Open the shipped detail page in Chrome, welcome it into a real room, run
+    `script`, and hand everything it sent back to the room.
+
+    The welcome is delivered from inside the question rather than from the stub,
+    because it has to arrive after the page's own scripts have run — which is
+    exactly the ordering the room's `bound` flag is about. It is built by the
+    caller for the same reason: a test that wants somebody else to type has to
+    take the snapshot before they do.
+    """
+    page = client.get(f"/detail/{TASK}").text
+    seeded = page.replace(
+        '<link rel="icon"', f'<script>{_ROOM_STUB}</script><link rel="icon"', 1
+    )
+    answer = measured_in(
+        chrome(), seeded, where, 1400,
+        f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
+        budget=8000,
+    )
+    assert answer["errors"] == [], f"the page threw: {answer['errors']}"
+    for frame in answer.get("sent", []):
+        if frame["t"] == "update":
+            room.apply(base64.b64decode(frame["u"]), "ann")
+    return answer
+
+
+_TYPED_IN_CHROME = r"""
+const area = document.querySelector('textarea[name=body]');
+const opened = area.value;
+area.value = NEXT;
+area.dispatchEvent(new Event('input'));
+return {errors: window.__errors, sent: window.__sent, opened, box: area.value};
+"""
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # The same five bodies `test_an_edit_across_an_emoji_reaches_the_room_as_
+        # the_character_it_was` uses, asked again through the adapter and of a
+        # real browser rather than the shim. Two of them are controls that passed
+        # with the defect in place, and they are here for the same reason.
+        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
+        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
+        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
+        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
+        ("a fine result\n", "a fine \U0001f389 result\n"),
+    ],
+)
+def test_an_edit_across_an_emoji_reaches_the_room_through_the_adapter(
+    client: TestClient, plan: Path, tmp_path: Path, was: str, now: str
+):
+    """S6's claim, in one sentence: the same convergence, through the boundary.
+
+    The splice is recovered from a surface's `text()` now rather than from a
+    box's `.value`, and it is applied through a `splice(from, to, put)` that is
+    specified in UTF-16 code units. Neither of those is allowed to have moved a
+    single index, and an emoji is where an index moving is visible: a character
+    can be two code units, and two emoji that share a leading half stop a
+    unit-at-a-time scan *between* the halves of a surrogate pair.
+
+    Asked in Chrome and not under the shim, because the shim has no HTML parser
+    and this stage's whole risk is a surface whose idea of the document differs
+    from the page's.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert shown == was, "the page is not showing the body this test is about"
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "emoji.html", room, _welcome(room),
+        _TYPED_IN_CHROME.replace("NEXT", json.dumps(now)),
+    )
+    assert answer["opened"] == was, (
+        "the welcome did not reach the editing surface, so nothing below was driven"
+    )
+    assert room.body() == now, (
+        f"the browser typed {now!r} and the room ended up holding {room.body()!r}"
+    )
+
+
+def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """The case the shim structurally cannot ask, written down as what it is.
+
+    A `\\r` can genuinely be in a room's `Y.Text`: `parse_text` keeps `\\r\\n` in
+    the body, `store.py` decodes the blob with no newline translation, and there
+    is no `.gitattributes text=auto` — so the room is seeded with the carriage
+    returns the file holds and the server's copy has them.
+
+    **The browser's copy cannot.** A `<textarea>` normalises `\\r\\n` to `\\n`
+    twice over — once in the HTML parser on the way in and once in the `value`
+    getter — so the box holds LF whatever it is given. That is a fact about the
+    surface, not about this code, and it is the reason `docs/EDITOR.md` records
+    that the two editors this decision keeps normalise in OPPOSITE directions.
+
+    What this pins is that the two copies still CONVERGE, which is the invariant
+    that matters: the first thing anybody types makes the room agree with the box
+    exactly, carriage returns and all. It is asserted rather than assumed because
+    the alternative — the splice recovering a `\\r` at one end and not the other —
+    is a document held differently on each side, silently, which is what the
+    emoji defect was. The `\\r` going is a change to line endings that shows up in
+    a diff; a half-converged document does not.
+
+    **And the cost is written down rather than left to be rediscovered**, because
+    it is not free and this stage does not fix it. `reflect()` cannot make the
+    box hold a `\\r`, so the two copies stay one character apart for as long as
+    nobody types; the moment somebody does, `typed()` finds the common prefix
+    ending at the FIRST carriage return and the common suffix ending just after
+    the last one, and splices everything between them. On a document whose first
+    line ends `\\r\\n` that is one keystroke rewriting the whole body, credited
+    to whoever typed it. A textarea normalises unconditionally in both
+    directions, so there is nothing to do about it on this side of the wire; the
+    fix, if one is wanted, is the server not seeding a room with endings no
+    surface can hold.
+    """
+    front, _ = split_front_matter(stored(plan))
+    body = "Ann says\r\nand then\nlast line\r\n"
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "CRLF in the body")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert "\r\n" in shown, "the carriage returns did not survive the parse"
+
+    typed = "Ann says\nand then\nlast line and more\n"
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "crlf.html", room, _welcome(room),
+        _TYPED_IN_CHROME.replace("NEXT", json.dumps(typed)),
+    )
+    assert answer["opened"] == shown.replace("\r\n", "\n"), (
+        f"the box did not normalise the endings it was given: {answer['opened']!r}"
+    )
+    assert room.body() == typed, (
+        "the room and the box hold different documents after one keystroke: "
+        f"{room.body()!r} against {typed!r}"
+    )
+    assert "\r" not in room.body(), (
+        "a carriage return survived on one side of a surface that cannot hold one"
+    )
+
+
+_REFLECTED = r"""
+const area = document.querySelector('textarea[name=body]');
+// In an editing session and focused, because that is the tab this is about: a
+// reader with the box closed has no caret to lose, and `reflect` deliberately
+// leaves an unfocused box alone rather than calling `setSelectionRange` on it,
+// which would also scroll it.
+document.getElementById('toggle').click();
+area.focus();
+area.setSelectionRange(2, 2);
+const caretWas = area.selectionStart;
+const before = window.__sent.filter(frame => frame.t === 'update').length;
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+const after = window.__sent.filter(frame => frame.t === 'update').length;
+// Read here and not at the end: the flag experiment below deliberately takes the
+// whole document out and puts it back, which is the one gesture that does move a
+// caret, and reading afterwards would be reading about that instead.
+const caretNow = area.selectionStart;
+const reflected = area.value;
+
+// And the flag, asked directly, because a textarea will never ask it by itself.
+// Every other surface fires its change event for its OWN edits and for the
+// page's alike — `session.setValue`, `session.replace` and a hand-written delta
+// applier all do — so this is that event, made by hand, at the one moment the
+// page is writing. Without the flag it reaches `typed()`, which recovers the
+// whole document as a local splice and pushes it up the socket under this tab's
+// name: measured at 6,700x amplification on a 97,890-character body.
+let heard = 0;
+SURFACE.onInput(() => heard++);
+const outside = SURFACE.applying();
+let inside = null;
+SURFACE.apply(() => {
+  inside = SURFACE.applying();
+  const whole = SURFACE.text();
+  // What every measured "set the text" actually is, reproduced by hand:
+  // remove-all-then-insert-all, TWO change events with an EMPTY DOCUMENT
+  // between them. `session.setValue` of a document onto itself measured
+  // deleted=1532, inserted=1532, and `session.replace(Range, text)` — the API
+  // recommended as "splices in place" — does the same. The first of the two
+  // events is the dangerous one: a handler reading the document there sees
+  // nothing at all and splices that into the `Y.Text` as a local delete.
+  SURFACE.splice(0, whole.length, '');
+  area.dispatchEvent(new Event('input'));
+  SURFACE.splice(0, 0, whole);
+  area.dispatchEvent(new Event('input'));
+});
+const gated = heard;
+const sentUnderApply = window.__sent.filter(frame => frame.t === 'update').length;
+// The same event with the flag down, so the gate above is a gate and not a
+// subscriber that never fires.
+area.dispatchEvent(new Event('input'));
+return {
+  errors: window.__errors, sent: window.__sent, box: area.value, reflected,
+  before, after, caretWas, caretNow,
+  outside, inside, restored: SURFACE.applying(), gated, open: heard,
+  sentUnderApply, sentAfter: window.__sent.filter(frame => frame.t === 'update').length,
+};
+"""
+
+
+def test_somebody_elses_keystroke_is_reflected_and_never_sent_back(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """The credit invariant, and the flag that will keep it when the surface changes.
+
+    `Room._count` credits every inserted character to the socket it arrived on,
+    and `Room.credits` turns that into "one Save is one commit authored by
+    whoever typed the most". It rests entirely on a passive tab staying passive:
+    measured on the editor this boundary exists to make possible, one remote
+    four-character keystroke reflected as a set-the-text made a tab that had
+    typed nothing push 97,890 characters back up the socket and take the
+    authorship of the whole document — 6,700x wire amplification, three frames to
+    fill `MAX_OUTBOX_BYTES`.
+
+    A textarea cannot do that, because assigning `.value` fires no `input` event.
+    That is measured, it is the reason this application has never carried a
+    re-entrancy guard, and it is exactly why the guard is added HERE rather than
+    with the surface that needs it: a flag introduced alongside the boundary has
+    a written reason, and one introduced alongside a bug is a patch.
+
+    So both halves are asked. The room half is the real invariant against a real
+    `Room`. The flag half synthesises the change event a textarea will not fire,
+    and it is not vacuous: the same event with the flag down does reach the
+    subscriber and does put a frame on the wire.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    # Ann's room, and the welcome taken BEFORE anybody else types into it.
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    # Bob's five characters, made in a second copy of the same document — same
+    # body, same seed, so the update it produces is one Ann's room and Ann's
+    # browser can both apply. Then it is applied to Ann's room as Bob's, which
+    # is what the server does when it relays.
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("the body", "the long body"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+
+    answer = in_chrome_room(
+        client, tmp_path / "reflect.html", room, welcome,
+        _REFLECTED.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
+    )
+
+    assert answer["reflected"] == bob.body(), (
+        f"the remote keystroke did not reach the box: {answer['reflected']!r}"
+    )
+    assert answer["after"] == answer["before"], (
+        f"a passive tab put {answer['after'] - answer['before']} update frame(s) on the "
+        "wire because somebody else typed — that is the credit invariant gone"
+    )
+    assert answer["caretNow"] == answer["caretWas"], (
+        "reflecting somebody else's keystroke moved this tab's caret"
+    )
+    assert answer["outside"] is False and answer["inside"] is True, (
+        f"the flag is not a flag: {answer['outside']} then {answer['inside']}"
+    )
+    assert answer["restored"] is False, "the flag was left up after `apply` returned"
+    assert answer["gated"] == 0, (
+        "a change event fired while the page was writing reached the input "
+        "subscribers, so a surface that fires one would push the document back"
+    )
+    assert answer["sentUnderApply"] == answer["after"], (
+        "and it reached the room: the empty document between the two change "
+        "events went up the socket as a delete of everything, which is the "
+        "amplification measured at 6,700x"
+    )
+    assert answer["box"] == bob.body(), (
+        "the page's own write left the box holding something other than the room's text"
+    )
+    assert room.typed.get("ann", 0) == 0, (
+        f"a tab that typed nothing was credited {room.typed.get('ann')} characters — "
+        "one Save is one commit authored by whoever typed the most, and this is how "
+        "that becomes authored by whoever reflected last"
+    )
+    assert answer["open"] == 1, (
+        "the same event with the flag down reached nobody either, so the "
+        "assertion above proves nothing"
+    )
+    assert room.body() == bob.body(), "the two copies did not converge"
+
+
 def test_the_browser_splices_on_a_whole_character():
     """`test_every_index_into_the_document_is_converted`, on the other side.
 
@@ -1455,16 +1804,29 @@ def test_the_browser_splices_on_a_whole_character():
 
     So the shipped script is read and every index handed to the document has to
     come from `units` by name.
-    """
-    from openproj.render import _COEDIT
 
-    indexes = _document_indexes(str(_COEDIT))
+    **Re-pointed at the surface adapter rather than deleted.** The splice lives
+    behind a boundary now, and this test read one module constant — so an adapter
+    that took `typed()` with it into another constant would have left the guard
+    passing over a file with no splice in it at all. Both constants are read, and
+    the count below is what says the splice is still somewhere in them.
+    """
+    from openproj.render import _COEDIT, _COMBOBOX
+
+    shipped = str(_COEDIT) + _COMBOBOX
+    # The adapter is where every index into the document is COUNTED now, so the
+    # guard has to be able to see it. If this banner moves, this test moves with
+    # it rather than quietly guarding a file the splice has left.
+    assert "// --- the textarea, as a surface ---" in shipped, (
+        "the surface adapter is not in either of the constants this reads"
+    )
+    indexes = _document_indexes(shipped)
     assert len(indexes) >= 2, "this stopped finding the splice it was written to guard"
     for index in indexes:
         assert index.startswith("units("), (
-            f"`text.insert/delete({index}, …)` in `_COEDIT` indexes the document with "
-            "something that did not come from `units`. A count of characters and a count "
-            "of UTF-16 code units are both numbers, and they differ on every emoji."
+            f"`.insert/.delete({index}, …)` in the shipped editor indexes the document "
+            "with something that did not come from `units`. A count of characters and a "
+            "count of UTF-16 code units are both numbers, and they differ on every emoji."
         )
 
 

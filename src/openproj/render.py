@@ -7422,6 +7422,39 @@ def _status_paint_css() -> str:
 _COMBOBOX = r"""
 <script id="suggest" type="application/json">{{ suggest|tojson }}</script>
 <script>
+// --- the textarea, as a surface --------------------------------------------
+//
+// Everything between this banner and the one that closes it is the only code on
+// any of these six pages that knows the document is being written in a
+// `<textarea>`. Nothing outside it reads `.value`, `selectionStart`,
+// `selectionEnd` or calls `setSelectionRange`, and
+// `test_the_body_is_read_through_one_place_and_nothing_else` holds it there.
+//
+// **Seven operations, and the shape of them is measured rather than guessed.**
+// `docs/EDITOR.md`'s "What the skeptics broke" is the evidence, in full, against
+// a real editor and this repository's own `Room`; three findings decide what is
+// here and what deliberately is not:
+//
+// * A textarea's programmatic `.value =` fires ZERO input events, and that —
+//   nothing else — is why this application has never needed a re-entrancy guard.
+//   Every other surface fires its change event for its own edits and the page's
+//   alike, indistinguishably. So `applying` is here NOW, with a test.
+// * **There is no "set the text", and that absence is the design.** Every
+//   measured one is remove-all-then-insert-all: two change events with an EMPTY
+//   DOCUMENT between them, which no prefix/suffix walk can recover a splice
+//   from. One remote four-character keystroke reflected that way made a PASSIVE
+//   tab push a whole 97,890-character body up the socket and take the authorship
+//   credit for it — 6,700x, `MAX_OUTBOX_BYTES` full in three frames. The one
+//   write is `splice`, and a whole-document replacement has to say so in words.
+// * **Every index here is a UTF-16 CODE UNIT** — what `selectionStart` counts,
+//   what a `Y.Text` is counted in inside a browser, and what `Room.sits` relays.
+//   `units()` in `_COEDIT` is the one conversion at the one boundary and
+//   `coedit.byte_offset` is its server twin.
+//
+// The seven: `text`, `caret`, `setCaret`, `splice`, `onInput`, `onCaret`,
+// `coordsAt`. Three more are on the object and are NOT of that set, each for a
+// reason given where it is defined: `apply`, `lineCoords` and `el`.
+
 // Every programmatic edit to a textarea goes through here.
 //
 // `textarea.value = ...` wipes the browser's native undo stack: paste a diagram
@@ -7431,6 +7464,9 @@ _COMBOBOX = r"""
 // had typed — one undo step, selection handled, `input` fired for free. The
 // fallback keeps the feature working if it is ever removed; it loses undo, which
 // is the least bad of the things that can be lost.
+//
+// Called from one place now — `splice` below — rather than from fifteen, which
+// is what lets the guard test say "one place" and mean it.
 function replaceRange(area, text) {
   area.focus();
   if (document.execCommand && document.execCommand('insertText', false, text)) return;
@@ -7439,6 +7475,112 @@ function replaceRange(area, text) {
   area.selectionStart = area.selectionEnd = from + text.length;
   area.dispatchEvent(new Event('input', {bubbles: true}));
 }
+
+function textareaSurface(area) {
+  // The re-entrancy flag: belt and braces on a textarea, and the whole of the
+  // difference on anything else between reflecting somebody's keystroke and
+  // pushing the document back up the socket under your own name. A flag
+  // introduced with the boundary has a written reason; one introduced with the
+  // second surface is one added under pressure.
+  let applying = false;
+  const heard = {input: [], caret: []};
+  const fire = kind => { for (const listener of heard[kind]) listener(); };
+
+  // Two element listeners for the whole page, and the order between them is
+  // fixed rather than left to whoever attached first: on an `input` event every
+  // `onInput` subscriber runs, then every `onCaret` one.
+  area.addEventListener('input', () => { if (!applying) fire('input'); });
+  // What moves a caret, and none of it is an `input` — except typing, which is
+  // why `input` is in the list too. Every subscriber here is idempotent on the
+  // position: `sit()` compares against what it last sent, `refresh()` recomputes.
+  //
+  // NOT gated on `applying`: a position that really did move is one the caret
+  // readout and the seat layer both want, and it moving because somebody else
+  // typed is the case the seat layer exists for.
+  for (const kind of ['input', 'keyup', 'click', 'select', 'focus']) {
+    area.addEventListener(kind, () => fire('caret'));
+  }
+
+  return {
+    // The box, for the questions that are about a box rather than a document:
+    // scroll offsets, class names, `closest`, and the events the seven do not
+    // cover — keydown, paste, drop, scroll. Never for its text.
+    el: area,
+
+    // 1. The whole document, in UTF-16 code units.
+    text: () => area.value,
+
+    // 2. Where the caret is, as a range, because it is one: an empty selection
+    // is `from === to`. Both in UTF-16 code units.
+    caret: () => ({from: area.selectionStart, to: area.selectionEnd}),
+
+    // 3. And where to put it. One argument means an empty selection there.
+    setCaret(from, to) { area.setSelectionRange(from, to === undefined ? from : to); },
+
+    // 4. The only write. `[from, to)` in UTF-16 code units, replaced by `put`.
+    //
+    // Two ways, and `applying` is which. A person's edit — a toolbar button, an
+    // indent, an upload's placeholder — goes through `execCommand`: one undo
+    // step, `input` fired, and the room hears it as typing, which is what it is.
+    // The page's own write goes through the `.value` setter with the caret
+    // carried across, which fires nothing and steals no focus.
+    //
+    // That setter wiping the native undo stack is a live defect and it is this
+    // stage's job NOT to fix it: `reflect()` has done exactly this on every
+    // remote keystroke since rooms shipped, S4 answers it with `Y.UndoManager`,
+    // and a commit that changes the co-editing path and a behaviour at once is
+    // one whose regression cannot be attributed to it.
+    splice(from, to, put) {
+      if (!applying) {
+        area.setSelectionRange(from, to);
+        replaceRange(area, put);
+        return;
+      }
+      const was = area.value;
+      const start = area.selectionStart, end = area.selectionEnd;
+      const shift = put.length - (to - from);
+      // Anything before the splice stays put; anything after it moves by the
+      // difference, and nothing may end up before where the splice began.
+      const moved = at => at <= from ? at : Math.max(from, at + shift);
+      area.value = was.slice(0, from) + put + was.slice(to);
+      // Only when this box has the caret: `setSelectionRange` on an unfocused
+      // textarea also scrolls it, and a page scrolling itself because somebody
+      // else typed is the thing nobody asked for.
+      if (document.activeElement === area) area.setSelectionRange(moved(start), moved(end));
+    },
+
+    // 5 and 6. The two subscriptions. `onInput` is "the text changed and a
+    // person did it"; `onCaret` is "the caret is somewhere else".
+    onInput(listener) { heard.input.push(listener); },
+    onCaret(listener) { heard.caret.push(listener); },
+
+    // 7. Where the carets at these indexes are DRAWN — the top of each one's
+    // visual row, in the box's own scroll space. See `rowTops`.
+    coordsAt(indexes) { return rowTops(area, area.value, indexes); },
+
+    // The page writing rather than a person. The previous value is restored
+    // rather than `false` assumed, so nesting is safe; the `finally` is what
+    // stops one throw inside a reflect leaving this page deaf to every keystroke
+    // after it.
+    apply(run) {
+      const before = applying;
+      applying = true;
+      try { return run(); } finally { applying = before; }
+    },
+    applying: () => applying,
+
+    // NOT one of the seven, and here rather than as a bare `lineTops(el)` at two
+    // call sites so the mirror stays on this side of the boundary. Where every
+    // logical LINE starts — the gutter's question on every keystroke, the scroll
+    // sync's on every resize. Separate from `coordsAt` because it is ONE layout
+    // of the document where `coordsAt` is one forced reflow per index: asking it
+    // as `coordsAt(lineStarts)` would turn the gutter's measured 6.5ms at 1,000
+    // lines into a thousand reflows.
+    lineCoords() { return lineTops(area, area.value); },
+  };
+}
+
+// --- end of the textarea surface -------------------------------------------
 
 
 // The toolbar in the screenshot, in the order and the groups it is drawn in:
@@ -7520,10 +7662,12 @@ const FORMATS = [
 // made of.
 const ORDERED = /^(\s*)\d+\.\s+/;
 
-function lineRange(area) {
-  const from = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1;
-  let to = area.value.indexOf('\n', area.selectionEnd);
-  return [from, to === -1 ? area.value.length : to];
+function lineRange(surface) {
+  const text = surface.text();
+  const {from: start, to: end} = surface.caret();
+  const from = text.lastIndexOf('\n', start - 1) + 1;
+  const to = text.indexOf('\n', end);
+  return [from, to === -1 ? text.length : to];
 }
 
 // How much blank line is missing on each side of a block about to be written in.
@@ -7541,32 +7685,32 @@ function blockPadding(before, after) {
   ];
 }
 
-function applyMark(area, mark) {
+function applyMark(surface, mark) {
+  const text = surface.text();
   if (mark.fence) {
     // Whole lines, and on their own lines: a fence only opens a block if nothing
     // shares its line, so wrapping a selection in place would produce three
     // paragraphs of literal backticks.
-    const [from, to] = lineRange(area);
-    const chosen = area.value.slice(from, to);
+    const [from, to] = lineRange(surface);
+    const chosen = text.slice(from, to);
     const fenced = /^```/.test(chosen) && /```$/.test(chosen);
-    area.setSelectionRange(from, to);
     if (fenced) {
       const inner = chosen.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
-      replaceRange(area, inner);
-      area.setSelectionRange(from, from + inner.length);
+      surface.splice(from, to, inner);
+      surface.setCaret(from, from + inner.length);
       return;
     }
-    replaceRange(area, '```\n' + chosen + '\n```');
+    surface.splice(from, to, '```\n' + chosen + '\n```');
     // The caret lands on the language, which is the one word you type before the
     // code and cannot paste from anywhere.
-    area.setSelectionRange(from + 3, from + 3);
+    surface.setCaret(from + 3);
     return;
   }
   if (mark.prefix) {
     // Whole lines, and a toggle: pressing bullet twice is how somebody undoes a
     // bullet, and it costs one `startsWith`.
-    const [from, to] = lineRange(area);
-    const lines = area.value.slice(from, to).split('\n');
+    const [from, to] = lineRange(surface);
+    const lines = text.slice(from, to).split('\n');
     // Three ways a line prefix can already be on, because two of these marks are
     // not a fixed string. A check list is a bullet with a box on it, so on lines
     // that are already bullets the box goes onto the bullet that is there —
@@ -7594,21 +7738,20 @@ function applyMark(area, mark) {
             : `${lead}${at + 1}. ${line.slice(lead.length)}`;
         }
         if (!boxed) return on ? line.slice(mark.prefix.length) : mark.prefix + line;
-        const [, indent, bullet, gap, , text] = LIST_ITEM.exec(line);
-        return `${indent}${bullet}${gap}${on ? '' : '[ ] '}${text}`;
+        const [, indent, bullet, gap, , rest] = LIST_ITEM.exec(line);
+        return `${indent}${bullet}${gap}${on ? '' : '[ ] '}${rest}`;
       })
       .join('\n');
-    area.setSelectionRange(from, to);
-    replaceRange(area, next);
-    area.setSelectionRange(from, from + next.length);
+    surface.splice(from, to, next);
+    surface.setCaret(from, from + next.length);
     return;
   }
   if (mark.link) {
     // `[text](url)`: two halves that differ, so it is neither a wrap nor an
     // insert. What ends up selected is what you are about to replace — the URL
     // when there are already words to link, and the words when there are not.
-    const {selectionStart: from, selectionEnd: to} = area;
-    const chosen = area.value.slice(from, to);
+    const {from, to} = surface.caret();
+    const chosen = text.slice(from, to);
     // A bracket inside the label ends the label. `[a]b]` selected and linked
     // wrote `[a]b](url)`, which the committed renderer draws as literal text
     // with no link in it and no sign that anything failed. Escaped rather than
@@ -7620,23 +7763,22 @@ function applyMark(area, mark) {
     // one character over: `a\]b` became `[a\\]b](url)`, in which the `\\` is a
     // literal backslash and the `]` is the one that ends the label again.
     const label = (chosen || 'text').replace(/([\\[\]])/g, '\\$1');
-    replaceRange(area, `[${label}](url)`);
+    surface.splice(from, to, `[${label}](url)`);
     const at = from + 1;
-    if (chosen) area.setSelectionRange(at + label.length + 2, at + label.length + 5);
-    else area.setSelectionRange(at, at + label.length);
+    if (chosen) surface.setCaret(at + label.length + 2, at + label.length + 5);
+    else surface.setCaret(at, at + label.length);
     return;
   }
   if (mark.insert) {
     // A fourth shape, because a table and a rule are neither a wrap nor a prefix
     // nor a fence: they are blocks that replace nothing, and they land after the
     // line the caret is on rather than inside it.
-    const [, to] = lineRange(area);
-    const [lead, tail] = blockPadding(area.value.slice(0, to), area.value.slice(to));
-    area.setSelectionRange(to, to);
-    replaceRange(area, lead + mark.insert + tail);
+    const [, to] = lineRange(surface);
+    const [lead, tail] = blockPadding(text.slice(0, to), text.slice(to));
+    surface.splice(to, to, lead + mark.insert + tail);
     const at = to + lead.length;
     const [start, width] = mark.chooses || [mark.insert.length, 0];
-    area.setSelectionRange(at + start, at + start + width);
+    surface.setCaret(at + start, at + start + width);
     return;
   }
   // The tail is the WRAP shape, and it is reached only by a mark that is one.
@@ -7654,25 +7796,24 @@ function applyMark(area, mark) {
     announce(`${mark.title} writes nothing into the document`);
     return;
   }
-  const {selectionStart: from, selectionEnd: to} = area;
-  const chosen = area.value.slice(from, to);
+  const {from, to} = surface.caret();
+  const chosen = text.slice(from, to);
   const width = mark.wrap.length;
   const wrapped =
-    area.value.slice(from - width, from) === mark.wrap &&
-    area.value.slice(to, to + width) === mark.wrap;
+    text.slice(from - width, from) === mark.wrap &&
+    text.slice(to, to + width) === mark.wrap;
   if (wrapped) {
     // Already marked: unwrap, taking the marks with it rather than leaving a
     // stray pair behind for somebody to delete by hand.
-    area.setSelectionRange(from - width, to + width);
-    replaceRange(area, chosen);
-    area.setSelectionRange(from - width, to + width - 2 * width);
+    surface.splice(from - width, to + width, chosen);
+    surface.setCaret(from - width, to + width - 2 * width);
     return;
   }
-  replaceRange(area, mark.wrap + chosen + mark.wrap);
+  surface.splice(from, to, mark.wrap + chosen + mark.wrap);
   // An empty selection leaves the caret between the marks, ready to type. A
   // selection stays selected, so a second press undoes it.
-  if (chosen) area.setSelectionRange(from + width, to + width);
-  else area.setSelectionRange(from + width, from + width);
+  if (chosen) surface.setCaret(from + width, to + width);
+  else surface.setCaret(from + width);
 }
 
 const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
@@ -7755,12 +7896,13 @@ setIndentWidth(EDITOR.indent);
 // and the native history survives it — including the outdent, which deletes
 // through `execCommand('insertText', false, '')` exactly as the empty-list-item
 // branch below already does.
-function indentLines(area, out) {
-  const {selectionStart: start, selectionEnd: end} = area;
-  const [from, to] = lineRange(area);
-  const chosen = area.value.slice(from, to);
+function indentLines(surface, out) {
+  const text = surface.text();
+  const {from: start, to: end} = surface.caret();
+  const [from, to] = lineRange(surface);
+  const chosen = text.slice(from, to);
   const item = LIST_ITEM.exec(chosen);
-  const head = area.value.slice(from, start);
+  const head = text.slice(from, start);
   // Whole lines when there is a selection, when the caret is in the indent, and
   // when it is anywhere inside a bullet's marker — which is the gesture that
   // nests a list item under the one above it, and the reason `LIST_ITEM` is
@@ -7770,7 +7912,7 @@ function indentLines(area, out) {
   const lead = item ? item[1].length + item[2].length + item[3].length : 0;
   const whole = out || start !== end || /^\s*$/.test(head) || (item && head.length <= lead);
   if (!whole) {
-    replaceRange(area, ' '.repeat(INDENT.length - ((start - from) % INDENT.length)));
+    surface.splice(start, end, ' '.repeat(INDENT.length - ((start - from) % INDENT.length)));
     return;
   }
   const lines = chosen.split('\n');
@@ -7787,8 +7929,7 @@ function indentLines(area, out) {
   // wrote the line back over itself and cost somebody an undo press to find out
   // that nothing had happened.
   if (next === chosen) return;
-  area.setSelectionRange(from, to);
-  replaceRange(area, next);
+  surface.splice(from, to, next);
   // The caret ends where the text it was on ended up, not at the end of what was
   // rewritten: an indent moves the line under you and leaves you on the word you
   // were typing. Clamped to the start of its own line, for a caret that was
@@ -7804,7 +7945,7 @@ function indentLines(area, out) {
     }
     return at + before;
   };
-  area.setSelectionRange(carried(start), carried(end));
+  surface.setCaret(carried(start), carried(end));
 }
 
 // The mirror. One of them, and every pixel question about a textarea is asked of
@@ -7846,7 +7987,7 @@ function indentLines(area, out) {
 // is the second half of the accuracy. `offsetTop` is an integer while a row here
 // is 20.15625px tall, so it rounds — and the rounding accumulates down the
 // document, up to half a row by the foot of a long one. A rect is fractional.
-function measuredLines(area, ask) {
+function measuredLines(area, text, ask) {
   const style = getComputedStyle(area);
   const mirror = document.createElement('div');
   mirror.setAttribute('aria-hidden', 'true');
@@ -7868,7 +8009,13 @@ function measuredLines(area, ask) {
   // rows it draws on — which is what "line 17" means in the gutter of the editor
   // this is modelled on, and what `data-startline` counts on the other side.
   // A zero-width space on an empty line, or the box has no height at all.
-  const lines = area.value.split('\n');
+  //
+  // The text is handed in rather than read off the box, and that is the boundary
+  // above showing through: the mirror is about GEOMETRY — a font, a width, a
+  // wrap — and the document it lays out belongs to the surface. Reading
+  // the box's own value here would be a second place that knows this is a
+  // textarea.
+  const lines = text.split('\n');
   mirror.append(...lines.map(line => {
     const row = document.createElement('div');
     row.textContent = line || '\u200b';
@@ -7888,8 +8035,8 @@ function measuredLines(area, ask) {
 }
 
 // Where every logical line of a textarea starts, in the box's own scroll space.
-function lineTops(area) {
-  return measuredLines(area, (rows, lines, topOf) => rows.map(topOf));
+function lineTops(area, text) {
+  return measuredLines(area, text, (rows, lines, topOf) => rows.map(topOf));
 }
 
 // And where the top of the box's first row of text is drawn, in the coordinates
@@ -7915,8 +8062,8 @@ function textTop(area, host) {
 // mirror, filled it with a prefix of the whole document and laid it out once PER
 // PERSON in the room — the only item in this plan that makes something already
 // shipped cheaper.
-function rowTops(area, indexes) {
-  return measuredLines(area, (rows, lines, topOf) => {
+function rowTops(area, text, indexes) {
+  return measuredLines(area, text, (rows, lines, topOf) => {
     const mark = document.createElement('span');
     // A zero-width space, so the marker has a box on an empty line and so the
     // line it is on does not come out one character wider than the real one.
@@ -7966,7 +8113,12 @@ function rowTops(area, indexes) {
 // are broken".
 const GUTTER_MAX = 1000;
 
-function attachGutter(area, note) {
+function attachGutter(surface, note) {
+  // The box, for the questions that are about a box: does it have a layout, how
+  // far is it scrolled, which wrapper is it in. The DOCUMENT comes off the
+  // surface, and so do the two measurements, which is why the mirror is not
+  // reached for by name here any more.
+  const area = surface.el;
   const wrap = area.closest('.bodywrap');
   if (!wrap) return;
   const gutter = document.createElement('div');
@@ -8010,7 +8162,7 @@ function attachGutter(area, note) {
     // document one character per row. Read mode is exactly that, and
     // `openproj:editing` is what brings the gutter back.
     if (!area.getClientRects().length) return;
-    const count = area.value.split('\n').length;
+    const count = surface.text().split('\n').length;
     if (count > GUTTER_MAX) {
       wrap.classList.remove('numbered');
       rows.replaceChildren();
@@ -8039,7 +8191,7 @@ function attachGutter(area, note) {
     const want = 'calc(' + String(count).length + 'ch + 1.1rem)';
     wrap.style.setProperty('--gutter', want);
     wrap.classList.add('numbered');
-    rows.replaceChildren(...lineTops(area).map((top, at) => {
+    rows.replaceChildren(...surface.lineCoords().map((top, at) => {
       const number = document.createElement('span');
       number.className = 'lineno';
       number.style.top = top + 'px';
@@ -8090,7 +8242,7 @@ function attachGutter(area, note) {
   }
 
   area.addEventListener('scroll', slide);
-  area.addEventListener('input', later);
+  surface.onInput(later);
   addEventListener('resize', later);
   // Every view change, and the one that turns editing on: the box arrives, or
   // changes width by half a window, and the numbers are a function of its width.
@@ -8165,7 +8317,7 @@ function statusPick(button, label, offered, chosen, chose) {
   return button;
 }
 
-function attachStatus(area, bar) {
+function attachStatus(surface, bar) {
   if (!bar) return null;
   const where = document.createElement('span');
   where.className = 'stat';
@@ -8193,8 +8345,8 @@ function attachStatus(area, bar) {
   let wasOver = false;
 
   function refresh() {
-    const text = area.value;
-    const at = area.selectionStart;
+    const text = surface.text();
+    const {from: at, to: ends} = surface.caret();
     // Counted rather than split: `text.slice(0, at).split('\n')` allocates every
     // line above the caret, and this runs on every keystroke of a document that
     // may be four hundred lines long.
@@ -8207,7 +8359,7 @@ function attachStatus(area, bar) {
     // surrogate pair in half.
     const column = [...text.slice(opens, at)].length + 1;
     const lines = text.split('\n').length;
-    const chosen = area.selectionEnd - at;
+    const chosen = ends - at;
     where.textContent = `Line ${line}, Column ${column}`
       + (chosen ? ` — ${chosen.toLocaleString()} selected` : '')
       + ` — ${lines.toLocaleString()} Lines`;
@@ -8245,15 +8397,17 @@ function attachStatus(area, bar) {
   // `input`. `openproj:editing` is the box arriving, changing width, or being
   // written into by somebody else in the room — all three change what this says
   // and none of them fires anything else here.
-  for (const kind of ['input', 'keyup', 'click', 'select', 'focus']) {
-    area.addEventListener(kind, refresh);
-  }
+  // Exactly the five events this used to name one at a time: the surface's
+  // `onCaret` IS that list, and it is one list now rather than two copies of it
+  // in two functions that both wanted "the caret may have moved".
+  surface.onCaret(refresh);
   addEventListener('openproj:editing', refresh);
   refresh();
   return {refresh};
 }
 
-function attachEditing(area, bar) {
+function attachEditing(surface, bar) {
+  const area = surface.el;
   if (bar) {
     for (const mark of FORMATS) {
       if (mark.group) {
@@ -8281,13 +8435,13 @@ function attachEditing(area, bar) {
       if (mark.upload) {
         button.onclick = () => area.dispatchEvent(new Event('openproj:pick-image'));
       } else {
-        button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };
+        button.onmousedown = event => { event.preventDefault(); applyMark(surface, mark); };
         // And the keyboard, which `onmousedown` alone left out: Enter and Space
         // on a focused button produce a click and no mousedown at all, so every
         // mark in this bar was a focus stop that did nothing. `detail === 0` is
         // how a click synthesised from a key is told from one a pointer made, so
         // a mouse press still applies the mark exactly once.
-        button.onclick = event => { if (event.detail === 0) applyMark(area, mark); };
+        button.onclick = event => { if (event.detail === 0) applyMark(surface, mark); };
       }
       bar.append(button);
     }
@@ -8298,7 +8452,7 @@ function attachEditing(area, bar) {
   // Shift-Tab is itself a keydown, so disarming on any key would have taken the
   // hatch away from the gesture for leaving backwards.
   let leaving = false;
-  area.addEventListener('input', () => { leaving = false; });
+  surface.onInput(() => { leaving = false; });
 
   area.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
@@ -8334,7 +8488,7 @@ function attachEditing(area, bar) {
       // Spent, and the browser moves focus the way it does everywhere else.
       if (leaving) { leaving = false; return; }
       event.preventDefault();
-      indentLines(area, event.shiftKey);
+      indentLines(surface, event.shiftKey);
       return;
     }
     if (event.metaKey || event.ctrlKey) {
@@ -8343,7 +8497,7 @@ function attachEditing(area, bar) {
       );
       if (mark && !event.altKey) {
         event.preventDefault();
-        applyMark(area, mark);
+        applyMark(surface, mark);
       }
       return;
     }
@@ -8351,21 +8505,21 @@ function attachEditing(area, bar) {
     // Enter continues a list, which is the one thing everybody misses from
     // HackMD within a minute. An empty item ends the list instead of making
     // another empty one, which is how every editor that does this behaves.
-    const [from] = lineRange(area);
-    const line = area.value.slice(from, area.selectionStart);
+    const [from] = lineRange(surface);
+    const caret = surface.caret();
+    const line = surface.text().slice(from, caret.from);
     const parts = LIST_ITEM.exec(line);
     if (!parts) return;
     event.preventDefault();
     const [, indent, bullet, gap, box, text] = parts;
     if (!text.trim()) {
-      area.setSelectionRange(from, area.selectionEnd);
-      replaceRange(area, '');
+      surface.splice(from, caret.to, '');
       return;
     }
     const next = /^\d+\./.test(bullet)
       ? `${parseInt(bullet, 10) + 1}.`
       : bullet;
-    replaceRange(area, `\n${indent}${next}${gap}${box ? '[ ] ' : ''}`);
+    surface.splice(caret.from, caret.to, `\n${indent}${next}${gap}${box ? '[ ] ' : ''}`);
   });
 }
 
@@ -8382,10 +8536,10 @@ function attachEditing(area, bar) {
 // editor guessing at what they meant.
 const URL_ONLY = /^https?:\/\/\S+$/;
 
-function pastedAs(area, text) {
+function pastedAs(surface, text) {
   if (!text) return null;
-  const {selectionStart: start, selectionEnd: end} = area;
-  const chosen = area.value.slice(start, end);
+  const {from: start, to: end} = surface.caret();
+  const chosen = surface.text().slice(start, end);
   const one = text.trim();
   if (chosen && URL_ONLY.test(one)) return `[${chosen}](${one})`;
   const rows = text.replace(/\n$/, '').split('\n').map(row => row.split('\t'));
@@ -8400,7 +8554,7 @@ function pastedAs(area, text) {
     '| ' + cells.map(cell => cell.trim().replace(/\|/g, '\\|')).join(' | ') + ' |';
   const table = [line(rows[0]), line(rows[0].map(() => '---')), ...rows.slice(1).map(line)]
     .join('\n');
-  const [lead, tail] = blockPadding(area.value.slice(0, start), area.value.slice(end));
+  const [lead, tail] = blockPadding(surface.text().slice(0, start), surface.text().slice(end));
   return lead + table + tail;
 }
 
@@ -8408,8 +8562,14 @@ function pastedAs(area, text) {
 // and the markdown that names it is inserted where the cursor is. The path is
 // written repository-relative so the same text reads correctly in git, on GitHub
 // and here — only the prefix in front of it differs.
-function attachUploads(area, status) {
-  const insert = markdown => replaceRange(area, markdown);
+function attachUploads(surface, status) {
+  const area = surface.el;
+  // At the caret, which the splice has to be told rather than left to infer —
+  // that explicitness is the whole point of the boundary. See `textareaSurface`.
+  const insert = markdown => {
+    const {from, to} = surface.caret();
+    surface.splice(from, to, markdown);
+  };
 
   async function send(file) {
     if (!file) return;
@@ -8444,10 +8604,9 @@ function attachUploads(area, status) {
       // already in the plan would swallow a banner about somebody else's write.
       if (response.ok && answer.fresh) committed = answer.commit;
       const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
-      const at = area.value.indexOf(token);
+      const at = surface.text().indexOf(token);
       if (at >= 0) {
-        area.setSelectionRange(at, at + token.length);
-        replaceRange(area, response.ok ? `![${alt}](${answer.path})` : '');
+        surface.splice(at, at + token.length, response.ok ? `![${alt}](${answer.path})` : '');
       }
       status.textContent = response.ok
         ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
@@ -8479,12 +8638,13 @@ function attachUploads(area, status) {
       files.forEach(send);
       return;
     }
-    const made = pastedAs(area, event.clipboardData?.getData('text/plain') || '');
+    const made = pastedAs(surface, event.clipboardData?.getData('text/plain') || '');
     // `null` and not `''`: everything this does not recognise is left to the
     // browser, which pastes it as the text it is.
     if (made === null) return;
     event.preventDefault();
-    replaceRange(area, made);
+    const {from, to} = surface.caret();
+    surface.splice(from, to, made);
   });
   area.addEventListener('dragover', event => {
     event.preventDefault();
@@ -9005,7 +9165,7 @@ async function askPreview() {
   // The title goes with it: the page drops a leading heading that only restates
   // the title, so a preview without one shows a heading the saved page will not.
   // The title in the FORM, not the stored one — this same Save may change it.
-  const want = JSON.stringify({body: BODY.value, title: TITLED.value});
+  const want = JSON.stringify({body: SURFACE.text(), title: TITLED.value});
   if (want === previewShown) return;
   if (previewFlight) previewFlight.abort();
   previewFlight = new AbortController();
@@ -9072,7 +9232,7 @@ let sourcePoints = null;
 let previewPoints = null;
 
 function sourceMap() {
-  if (!sourcePoints) sourcePoints = lineTops(BODY).map((top, at) => ({line: at + 1, top}));
+  if (!sourcePoints) sourcePoints = SURFACE.lineCoords().map((top, at) => ({line: at + 1, top}));
   return sourcePoints;
 }
 
@@ -9162,7 +9322,7 @@ function syncFromPreview() {
 
 BODY.addEventListener('scroll', syncFromSource);
 VIEW_PANE.addEventListener('scroll', syncFromPreview);
-BODY.addEventListener('input', () => { sourcePoints = null; refreshPreview(); });
+SURFACE.onInput(() => { sourcePoints = null; refreshPreview(); });
 TITLED.addEventListener('input', () => refreshPreview());
 // Both maps are in pixels and every pixel here is a function of the width.
 addEventListener('resize', () => { sourcePoints = null; previewPoints = null; });
@@ -9433,10 +9593,14 @@ const BODY = FORM.querySelector('[name=body]');
 // because on the create page the title sits outside `<form>` and is bound to it
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
-attachGutter(BODY, document.getElementById('gutter-note'));
-attachStatus(BODY, document.getElementById('statusbar'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = textareaSurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 
 // The body a new entity starts from. Switching kind switches template, because
 // picking "pitch" and getting a task's headings is the wrong default in the one
@@ -9449,7 +9613,7 @@ const TPL = document.getElementById('template');
 const TPLSTATE = document.getElementById('tplstate');
 
 function untouched() {
-  return Object.values(TEMPLATES).some(text => text.trim() === BODY.value.trim());
+  return Object.values(TEMPLATES).some(text => text.trim() === SURFACE.text().trim());
 }
 
 function applyTemplate(name) {
@@ -9457,7 +9621,12 @@ function applyTemplate(name) {
     TPLSTATE.textContent = 'the body has been edited — clear it to start from a template';
     return false;
   }
-  BODY.value = TEMPLATES[name] ?? '';
+  // A whole-document replacement, said in those words and made once. `apply` is
+  // what marks it as the page writing rather than a person typing: no focus
+  // stolen from the picker that asked for it, no `input` event, and no undo step
+  // for a gesture that was not an edit to anybody's writing — this branch only
+  // runs while the box still holds one of ours.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
   TPLSTATE.textContent = '';
   return true;
 }
@@ -9523,7 +9692,7 @@ document.getElementById('save').onclick = async () => {
       method: 'POST', headers: {'content-type': 'application/json'},
       body: JSON.stringify({
         base_commit: FORM.querySelector('[name=base_commit]').value, fields,
-        body: BODY.value || '',
+        body: SURFACE.text() || '',
       }),
     });
     const answer = await answerOf(response);
@@ -9832,10 +10001,14 @@ const BODY = FORM.querySelector('[name=body]');
 // because on the create page the title sits outside `<form>` and is bound to it
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
-attachGutter(BODY, document.getElementById('gutter-note'));
-attachStatus(BODY, document.getElementById('statusbar'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = textareaSurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 // The commit this page was rendered at, and what every save is compared against.
 // Read through this one box rather than looked up at each write, because a
 // restored draft moves it back to the commit that draft was written on top of.
@@ -9868,7 +10041,7 @@ for (const control of CONTROLS) ORIGINAL[control.name] = JSON.stringify(read(con
 // `let`, because a room can commit this body without this tab pressing anything:
 // after that commit the saved text IS the baseline, and a `const` here left the
 // bar claiming one unsaved change forever over text that is already in git.
-let ORIGINAL_BODY = BODY.value;
+let ORIGINAL_BODY = SURFACE.text();
 
 function changed() {
   const fields = {};
@@ -9890,7 +10063,7 @@ function dirty() {
   // A number typed as a word throws in `read`; that is Save's message to deliver,
   // not a reason for the counter to stop counting the rest.
   try { fields = changed(); } catch (error) { fields = {}; }
-  const count = Object.keys(fields).length + (BODY.value === ORIGINAL_BODY ? 0 : 1);
+  const count = Object.keys(fields).length + (SURFACE.text() === ORIGINAL_BODY ? 0 : 1);
   const editing = document.querySelector('article.entity').classList.contains('editing');
   BAR.classList.toggle('dirty', count > 0);
   UNSAVED.textContent = count
@@ -9974,7 +10147,7 @@ async function save() {
   // the fields from this form. Sending both down this path would be two commits
   // for one press, and the second would be racing the first.
   if (COEDIT.live()) { COEDIT.save(fields); return; }
-  const body = BODY.value === ORIGINAL_BODY ? null : BODY.value;
+  const body = SURFACE.text() === ORIGINAL_BODY ? null : SURFACE.text();
   if (!Object.keys(fields).length && body === null) {
     announce('nothing changed');
     return;
@@ -10075,7 +10248,7 @@ function sayDraft() {
 function writeDraft() {
   clearTimeout(draftTimer);
   draftTimer = 0;
-  if (remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: BODY.value}))) {
+  if (remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: SURFACE.text()}))) {
     draftRefused = false;
     draftWritten = Date.now();
     sayDraft();
@@ -10116,7 +10289,7 @@ function forgetDraft() {
   sayDraft();
 }
 
-BODY.addEventListener('input', () => {
+SURFACE.onInput(() => {
   if (draftTimer) return;
   const wait = draftWritten + draftMs - Date.now();
   if (wait <= 0) writeDraft();
@@ -10155,7 +10328,7 @@ if (remembered.get(older) !== null) {
     announce('a draft saved by an older version of this page was discarded');
   }
 }
-if (typeof draft.text === 'string' && draft.text !== BODY.value) {
+if (typeof draft.text === 'string' && draft.text !== SURFACE.text()) {
   // The page is at HEAD and this text is not. Saving it is compared against the
   // commit it was drafted against, so the server can tell a merge from an
   // overwrite — and whoever restores it is told the ground moved rather than
@@ -10165,7 +10338,10 @@ if (typeof draft.text === 'string' && draft.text !== BODY.value) {
   announce(moved
     ? 'unsaved draft restored — somebody else has changed this since it was written'
     : 'unsaved draft restored');
-  BODY.value = draft.text;
+  // The whole document, replaced once and said so. `apply` because this is the
+  // page restoring, not a person typing: at load there is no history to protect
+  // and nothing may be told that somebody just wrote 400 lines.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, draft.text));
   showEditing(true);
 }
 </script>{% endif %}
@@ -10279,7 +10455,7 @@ const COEDIT = (() => {
   // jump to the top of the document on every keystroke of mine, and the commit
   // would credit whoever typed last with the whole file.
   function typed() {
-    const now = BODY.value, was = text.toString();
+    const now = SURFACE.text(), was = text.toString();
     if (now === was) return;
     // Scanned a character at a time and not a code unit at a time. Two emoji
     // that share a leading half — a thumb up and a thumb down differ only in
@@ -10316,18 +10492,21 @@ const COEDIT = (() => {
   // where somebody else is typing means the caret walks to the bottom of the
   // document once a second.
   function reflect() {
-    const want = text.toString(), was = BODY.value;
+    const want = text.toString(), was = SURFACE.text();
     if (want === was) return;
+    // A SPLICE, bounded at BOTH ends, and never "set the text" — the whole of
+    // the argument is on `textareaSurface`. Counted in UTF-16 code units, which
+    // is what both of these strings and `Y.Text` are counted in.
     let head = 0;
     while (head < want.length && head < was.length && want[head] === was[head]) head++;
-    const shift = want.length - was.length;
-    const start = BODY.selectionStart, end = BODY.selectionEnd;
-    const moved = at => at <= head ? at : Math.max(head, at + shift);
-    BODY.value = want;
-    // Only when this box has the caret: `setSelectionRange` on an unfocused
-    // textarea also scrolls it, and a page scrolling itself because somebody
-    // else typed is the thing nobody asked for.
-    if (document.activeElement === BODY) BODY.setSelectionRange(moved(start), moved(end));
+    let tail = 0;
+    while (tail < want.length - head && tail < was.length - head
+           && want[want.length - 1 - tail] === was[was.length - 1 - tail]) tail++;
+    // Inside `apply`: this is the page writing, not a person. On a textarea that
+    // is observably nothing, which is why the flag has a test of its own rather
+    // than a behaviour to hide behind.
+    SURFACE.apply(
+      () => SURFACE.splice(head, was.length - tail, want.slice(head, want.length - tail)));
     dirty();
     // Assigning `.value` fires no `input` event, and everything drawn over this
     // box hangs off one. `heard` already calls `drawSeats(); sit();` here for
@@ -10428,7 +10607,8 @@ const COEDIT = (() => {
     if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
     const style = getComputedStyle(BODY);
     const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
-    const tops = rowTops(BODY, others.map(seat => Math.min(seat.at, BODY.value.length)));
+    const tops = SURFACE.coordsAt(
+      others.map(seat => Math.min(seat.at, SURFACE.text().length)));
     // The layer fills `.bodywrap`, whose top is the box's border box, while
     // `rowTops` answers from its padding box. One border-width, on every band.
     const origin = textTop(BODY, layer);
@@ -10457,7 +10637,7 @@ const COEDIT = (() => {
   let sentAt = -1;
   function sit() {
     if (!BODY || !bound) return;
-    const at = BODY.selectionStart;
+    const at = SURFACE.caret().from;
     if (at === sentAt) return;
     sentAt = at;
     send({t: 'at', at});
@@ -10509,14 +10689,14 @@ const COEDIT = (() => {
       // reason with, so the three answers are decided by hand. `ORIGINAL_BODY`
       // is what the server rendered into this page, which is the only marker of
       // whether anything here is unsent work.
-      const mine = BODY.value !== ORIGINAL_BODY;
+      const mine = SURFACE.text() !== ORIGINAL_BODY;
       const theirs = text.toString() !== ORIGINAL_BODY;
       if (mine && theirs) {
         // Two edits and no common base — a restored draft against a room that
         // has already moved. Refuse to guess: the room's text is what is in the
         // box, and the draft goes in the conflict report to be pasted back by
         // the person who wrote it.
-        const draft = BODY.value;
+        const draft = SURFACE.text();
         reflect();
         box.hidden = false;
         box.textContent = 'Somebody is editing this document, and it has moved since your '
@@ -10528,15 +10708,16 @@ const COEDIT = (() => {
         reflect();
       }
       bound = true;
-      BODY.addEventListener('input', typed);
+      SURFACE.onInput(typed);
       // Where this tab is sitting, and where everybody else's band should be
-      // drawn. Four events, because four different things move a band: the
-      // caret moving, the text moving under it, the box scrolling, and the
-      // window changing the wrap.
-      BODY.addEventListener('input', () => { sit(); drawSeats(); });
+      // drawn. Four things move a band: the caret moving, the text moving under
+      // it, the box scrolling, and the window changing the wrap. Two of those
+      // are the surface's own subscriptions and two are the box's, and that
+      // split is the boundary rather than an accident — a caret and a document
+      // are the surface's, a scroll offset and a window are a box's.
+      SURFACE.onInput(drawSeats);
+      SURFACE.onCaret(sit);
       BODY.addEventListener('scroll', drawSeats);
-      BODY.addEventListener('keyup', sit);
-      BODY.addEventListener('click', sit);
       addEventListener('resize', drawSeats);
       sit();
     } else {
@@ -15408,10 +15589,14 @@ const ARTICLE = document.querySelector('article.entity');
 // pages that carry an editing surface.
 const TITLED = document.querySelector('.title-field');
 
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
-attachGutter(BODY, document.getElementById('gutter-note'));
-attachStatus(BODY, document.getElementById('statusbar'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = textareaSurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
 
 function say(message) { SAY.textContent = message; }
@@ -15438,7 +15623,7 @@ function changed() {
 }
 
 function dirty() {
-  const count = Object.keys(changed()).length + (BODY.value !== ORIGINAL.body ? 1 : 0);
+  const count = Object.keys(changed()).length + (SURFACE.text() !== ORIGINAL.body ? 1 : 0);
   if (!CREATING) SAVE.hidden = !editing();
   SAVE.disabled = !CREATING && count === 0;
   if (!CREATING) say(count ? `${count} unsaved change${count === 1 ? '' : 's'}` : '');
@@ -15481,7 +15666,10 @@ if (!CREATING) {
         const was = ORIGINAL[name];
         control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
       }
-      BODY.value = ORIGINAL.body;
+      // A whole-document replacement, made once and marked as the page's own:
+      // Cancel puts back what the server rendered, and nothing about that is a
+      // keystroke.
+      SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL.body));
     }
     // Ending the session leaves the surface the session was in. Without this,
     // Cancel from a full-page view left a reader inside a fixed, opaque,
@@ -15514,7 +15702,7 @@ SAVE.onclick = async () => {
       fields: CREATING
         ? {...changed(), title: read('title')}
         : changed(),
-      body: BODY.value,
+      body: SURFACE.text(),
     }),
   });
   const answer = await response.json();
@@ -15734,10 +15922,14 @@ const ARTICLE = document.querySelector('article.entity');
 // drops a leading heading that only restates it.
 const TITLED = document.querySelector('.title-field');
 
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
-attachGutter(BODY, document.getElementById('gutter-note'));
-attachStatus(BODY, document.getElementById('statusbar'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = textareaSurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
 
 function say(message) { SAY.textContent = message; }
@@ -15764,7 +15956,7 @@ function changed() {
 }
 
 function dirty() {
-  const count = Object.keys(changed()).length + (BODY.value !== ORIGINAL.body ? 1 : 0);
+  const count = Object.keys(changed()).length + (SURFACE.text() !== ORIGINAL.body ? 1 : 0);
   if (!CREATING) SAVE.hidden = !editing();
   SAVE.disabled = !CREATING && count === 0;
   if (!CREATING) say(count ? `${count} unsaved change${count === 1 ? '' : 's'}` : '');
@@ -15807,7 +15999,10 @@ if (!CREATING) {
         const was = ORIGINAL[name];
         control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
       }
-      BODY.value = ORIGINAL.body;
+      // A whole-document replacement, made once and marked as the page's own:
+      // Cancel puts back what the server rendered, and nothing about that is a
+      // keystroke.
+      SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL.body));
     }
     // Ending the session leaves the surface the session was in. Without this,
     // Cancel from a full-page view left a reader inside a fixed, opaque,
@@ -15840,7 +16035,7 @@ SAVE.onclick = async () => {
       fields: CREATING
         ? {...changed(), title: read('title')}
         : changed(),
-      body: BODY.value,
+      body: SURFACE.text(),
     }),
   });
   const answer = await response.json();
