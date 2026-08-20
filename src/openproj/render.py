@@ -2003,11 +2003,16 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    choice, made deliberately over converting four more controls into popups.
 
    THE RULE IS THE DEFAULT AND NOT A LIST. It was a list of ids and classes for
-   half a day, and in that time it missed `#preview`, `#connect`, `#clear-filters`,
-   `#promote-go`, `#discard`, `#pick`, `#add-row` and a dozen more — jcanton found
-   the first of them within the hour and asked the right question: "I thought we
-   had managed to impose the style of buttons and dropdowns to be coherent across
-   the entire app? why did that work?"
+   half a day, and in that time it missed twenty of the twenty-eight controls on
+   this site — the body preview, the dependency editor, the clear-filters button,
+   the promote control, the icon picker, the table's own new-row button. jcanton
+   found the first within the hour and asked the right question: "I thought we had
+   managed to impose the style of buttons and dropdowns to be coherent across the
+   entire app? why did that work?"
+
+   (Named in prose rather than by id, and that is not fussiness: a static export
+   is checked for the id of a control it must not carry, and a comment mentioning
+   that id put it on the page and turned the check red.)
 
    It did not work, and a list is why. Every control added from now on would have
    had to be remembered into a selector three thousand lines from where it was
