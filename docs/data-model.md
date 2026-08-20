@@ -42,7 +42,9 @@ Each kind is one thing and says so:
   a warning where the field is merely ignored.
 
   On the graph it is a dashed outline rather than a filled box, which is how a grouping is told from
-  the work inside it at a glance.
+  the work inside it at a glance. It carries no status and no PRs either — a codebase is not
+  `in_progress` and does not have a pull request; the state of the work is the state of the work
+  inside it.
 
 `product ← project ← pitch ← task` is enforced, not just documented: a parent of the wrong kind is a
 blocker for anything written since the rule existed, and a warning for everything older. A task may
