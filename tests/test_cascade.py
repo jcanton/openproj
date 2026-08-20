@@ -787,9 +787,6 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
     assert sheet.value(picker, "min-width") == "0", says(sheet, picker, "min-width")
 
 
-CONTROLS = ("#unfilter", "#toggle", "#tl-zoom", "#state-filter", "#kind", "#template", "#into")
-
-
 # Every button and every select on the page, and what it is actually drawn with.
 # Measured, not read: the version of this test that read the stylesheet passed
 # while `#preview`, `#connect`, `#clear-filters` and a dozen others were being
