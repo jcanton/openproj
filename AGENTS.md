@@ -417,13 +417,21 @@ the current commit and leaves the service account, the registry and the three se
 prompts for exactly one thing, the OAuth client secret, and only when
 `openproj-oauth-client-secret` does not already exist; once it does, the deploy is unattended.
 
-Afterwards, ask the service what it is running and check the version string against the tag. That
-is the whole point of tagging, and it is one command:
+Afterwards, ask the service what it is running and check it against the tag. That is the whole
+point of tagging, and it is two commands:
 
 ```bash
 gcloud run services describe openproj --region=europe-west1 \
   --format="value(status.url,status.latestReadyRevisionName)"
+curl -s https://openproj-perontl7xq-ew.a.run.app/api/health
+# {"ok": true, "head": "<the PLAN's commit>", "version": "0.12.0"}
 ```
+
+`version` is this code's and moves only on a release; `head` is the plan's and moves whenever
+anybody saves a record. Read one for the other and you will conclude a deploy landed because
+somebody edited a pitch. And ask `/api/health`, not `/healthz`: on Cloud Run, Google's frontend
+answers `/healthz` with its own 404 page and the request never reaches the container — so the one
+URL that is meant to prove the service is alive is the one that cannot reach it.
 
 **One region, and delete the ones you stop using.** The first deployment went to `europe-west6`
 (Zurich) and moved to `europe-west1` for the free tier. The Zurich service was not deleted, and on

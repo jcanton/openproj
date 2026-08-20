@@ -57,7 +57,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
-from . import coedit, render
+from . import __version__, coedit, render
 from .auth import (
     OAuthError,
     User,
@@ -1859,7 +1859,13 @@ def create_app(
     @app.get("/healthz")
     @app.get("/api/health")
     def healthz() -> dict:
-        return {"ok": True, "head": store.head()}
+        # `version` because the whole point of tagging a deploy is being able to
+        # ask the running service what it is, and until now it could not answer.
+        # `head` is the PLAN's commit and moves whenever anybody saves a record;
+        # `version` is this code's, and moves only on a release. They were one
+        # field's worth of confusion apart, and the deploy runbook in AGENTS.md
+        # told a reader to check a version string that nothing served.
+        return {"ok": True, "head": store.head(), "version": __version__}
 
     @app.get("/api/index.json")
     def index_json() -> JSONResponse:
