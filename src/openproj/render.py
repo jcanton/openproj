@@ -426,7 +426,22 @@ def _row(index: Index, entity_id: str) -> dict:
         "estimated": bool(span and span.estimated),
         "unowned": bool(span and span.unowned),
         "overruns": span.overruns_cycle_weeks if span else None,
-        "blocked_by": len(index.blocked_by[entity_id]),
+        # What is still in the way, not what was ever in the way — jcanton,
+        # 2026-08-20: "make sure the counter gets updated if blocking tasks are
+        # marked as done". A record whose one dependency finished last week is
+        # not blocked by anything, and a column headed "Blockers" that says 1
+        # about it is a column people learn to ignore.
+        #
+        # `done` and `shelved` both stop counting, for the same reason by two
+        # routes: one is finished and the other is parked, and neither is work
+        # anybody is waiting on. `depends_on` itself is untouched — the fact that
+        # this waited for that is history worth keeping, and it is what the graph
+        # draws.
+        "blocked_by": sum(
+            1
+            for blocker in index.blocked_by[entity_id]
+            if index.entities[blocker].status not in ("done", "shelved")
+        ),
         # Two keys for one fact: the ratio is what a column sorts by, the text is
         # what it prints. Sorting on "7/12" as a string puts 10/12 before 7/12.
         "progress": round(counted.fraction, 4) if counted else None,
@@ -479,7 +494,7 @@ _TABLE_WHY = {
     "start": "Derived from assigned_on, from what blocks it, and from what the people "
     "on it are already doing.",
     "end": "Derived from the start and the appetite.",
-    "blocked_by": "Counted from depends_on.",
+    "blocked_by": "Counted from depends_on, minus the ones already done or shelved.",
     "progress": "Counted from the task list in the body. Tick the boxes there.",
 }
 _TABLE_DERIVED = tuple(_TABLE_WHY)
@@ -1411,6 +1426,12 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
      good, careful and broken, and a very-low-priority task is none of those. */
   --pri-very-low: #2f7248; --pri-low: #5d9a4e; --pri-medium: #b07d10;
   --pri-high: #c0532f; --pri-very-high: #9a3327;
+  /* The ground under a cell that is waiting on something. Its own token and not
+     `--sev-blocker-soft`, which is what a validation blocker wears: those two
+     are different facts and a reader who learns one tint for both has learned
+     that the plan is broken every time somebody is waiting for a colleague.
+     Amber rather than red for the same reason — being blocked is normal. */
+  --waiting: #fdf0dd;
   --band: #c3d6de;
 }
 @media (prefers-color-scheme: dark) {
@@ -1455,6 +1476,7 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
     --drop: #1e3a2b;
     --pri-very-low: #6fc095; --pri-low: #8fc772; --pri-medium: #d9a557;
     --pri-high: #e08a5a; --pri-very-high: #e0796a;
+    --waiting: #34291a;
     --band: #2a3941;
   }
 }
@@ -1481,6 +1503,7 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
   --band: #2a3941;
   --pri-very-low: #6fc095; --pri-low: #8fc772; --pri-medium: #d9a557;
   --pri-high: #e08a5a; --pri-very-high: #e0796a;
+  --waiting: #34291a;
 }
 /* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
    spacing of the curly quotes and slashes that PR refs and paths are full of. */
@@ -3740,6 +3763,13 @@ function cell(row, key, place) {
     // means changing the tasks".
     key === 'reviewers' && !(row.reviewers || []).length
       && (row.reviewers_from || []).length ? 'inherited' : '',
+    // Something is still in the way. Only where there is: a column tinted on
+    // every row says nothing, and the value of this is that the few tinted cells
+    // are the ones worth looking at. Written beside the number rather than as a
+    // CSS rule on the text, so the tint cannot outlive the count — the row is
+    // rebuilt from the index after every write, and a blocker that has just been
+    // marked done takes its ground with it.
+    key === 'blocked_by' && row.blocked_by > 0 ? 'waiting' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -5988,6 +6018,15 @@ td .sev-mark { margin-left: .25rem; }
 .eid { font-family: var(--font-mono); font-size: 12px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
+/* A cell with something still in the way. Only when there is: a column tinted on
+   every row says nothing, and the whole value of this is that the tinted cells
+   are the few worth looking at. The class is written by the same function that
+   writes the number, so the tint cannot outlive the count it is about — which is
+   what would happen if this were a CSS rule keyed on the text.
+   `--waiting` and not `--sev-blocker-soft`: a record waiting on a colleague is
+   not a record that is broken, and one tint for both teaches the reader that the
+   plan is on fire whenever anybody is waiting. */
+td[data-col="blocked_by"].waiting { background: var(--waiting); }
 /* The column's `+`, in the header of every column that clamps. It is the badge
    in the cells below it wearing the same border and the same 11px, because it
    means the same thing one level up — `+4` in a cell is four you cannot see,
