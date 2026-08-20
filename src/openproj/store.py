@@ -407,6 +407,21 @@ class Store:
         if not self._remote:
             return False
         self.fetch()
+        return self._send()
+
+    def _send(self, refetched: bool = False) -> bool:
+        """Push what the tracking ref already says is ahead.
+
+        Split out of `push` because a write had just fetched, milliseconds
+        earlier and inside the same lock, and then fetched again on the way out:
+        one save cost THREE round trips to GitHub — fetch, fetch, push — where a
+        round trip is about 600 ms and is most of what a save costs at all.
+
+        Divergence is still caught, and caught properly; it is just no longer
+        paid for on every write. If the remote moved inside that window the push
+        is rejected, and this fetches once and looks — so the fetch happens when
+        it is needed rather than in the hope that it will be.
+        """
         local, remote_head = self.head(), self._remote_head()
         if remote_head == local:
             return False
@@ -415,7 +430,19 @@ class Store:
                 f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
                 "refusing to guess which commits to discard"
             )
-        self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks())
+        try:
+            self._repo.remotes[_ORIGIN].push(
+                [f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks()
+            )
+        except Exception:
+            # Somebody else pushed between the fetch and this. The tracking ref is
+            # stale, so it is refreshed and asked again — once, because a second
+            # rejection is a remote that is moving faster than this can answer and
+            # the commit is safe locally either way.
+            if refetched:
+                raise
+            self.fetch()
+            return self._send(refetched=True)
         return True
 
     def _callbacks(self):
@@ -603,7 +630,7 @@ class Store:
         pushed = False
         if self._remote:
             try:
-                pushed = self.push()
+                pushed = self._send()
             except StoreDiverged:
                 raise
             except Exception:
