@@ -7234,7 +7234,15 @@ _GRAPH_STYLE = """
         pointer-events: none;
         padding: .35rem .5rem; border-radius: 3px;
         background: color-mix(in srgb, var(--bg) 82%, transparent); }
-.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .7rem; }
+.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .5rem; }
+/* Both rows the same length — jcanton, 2026-08-20. Each row is five keys and a
+   name, so five keys of one width and a name of one width is two rows of one
+   length, whatever the words inside them happen to be. Without it the rows are
+   as long as their vocabulary: "Very high, High, Medium, Low, Very low" against
+   "Shaping, Ready, In progress, Done, Shelved" came out 55px apart, and two
+   ragged rows in a corner read as two unrelated things. */
+.keys .legend li { min-width: 6.6rem; }
+.keys .legend li.legendname { min-width: 4.4rem; }
 .keys #summary { margin: 0; pointer-events: auto; font-size: 12px;
                  color: var(--muted); text-align: right; }
 

@@ -249,3 +249,61 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
     assert got["overlapping"] == [], got["overlapping"][:6]
     assert got["trespassing"] == [], got["trespassing"][:6]
     assert got["sparseMean"] < 2.5, got
+
+
+_KEYS = """
+const rows = [...document.querySelectorAll('.keys .legend')];
+const widths = rows.map(r => Math.round(r.getBoundingClientRect().width));
+const box = document.querySelector('[data-fills]').getBoundingClientRect();
+const keys = document.querySelector('.keys').getBoundingClientRect();
+return {
+  rows: rows.length,
+  spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
+  inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
+  marked: cy.nodes().filter(n => n.isChildless()).slice(0, 5)
+    .map(n => (n.style('label') || '').slice(0, 2)),
+};
+"""
+
+
+def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
+    index: Index, tmp_path: Path
+):
+    """jcanton, 2026-08-20: "would be nice if the two legend rows were the same
+    length".
+
+    Each row is five keys and a name, so five keys of one width and a name of one
+    width is two rows of one length whatever the words inside them are. Left to
+    their vocabulary they came out 55px apart — "Very high, High, Medium, Low,
+    Very low" against "Shaping, Ready, In progress, Done, Shelved" — and two
+    ragged rows in a corner read as two unrelated things rather than one key.
+    """
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "keys.html", 1900, _KEYS,
+                      height=820, patience=3500)
+
+    assert got["rows"] == 2, "priority and status are two rows"
+    assert got["spread"] == 0, f"the rows differ by {got['spread']}px"
+    assert got["inside"], "the keys are not over the drawing"
+
+
+def test_every_node_says_its_priority_as_well_as_its_status(index: Index, tmp_path: Path):
+    """The channel priority is drawn with here is the border's THICKNESS, which is
+    legible only against a neighbour to compare it against — jcanton saw one
+    project drawn thicker and had to ask what it meant.
+
+    So a node's label leads with a rung of the same ladder, in front of the status
+    glyph that has been there since the view was written, for exactly the reason
+    that one is there: a fill on a luminance ladder is separable without being
+    nameable.
+    """
+    from openproj.render import PRIORITY_GLYPH, STATUS_GLYPH
+
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "marks.html", 1900, _KEYS,
+                      height=820, patience=3500)
+
+    assert got["marked"], "no node was measured"
+    for prefix in got["marked"]:
+        assert prefix[0] in PRIORITY_GLYPH.values(), f"{prefix!r} does not start with a rung"
+        assert prefix[1] in STATUS_GLYPH.values(), f"{prefix!r} has lost its status glyph"
