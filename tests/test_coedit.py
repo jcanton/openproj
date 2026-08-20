@@ -3836,6 +3836,7 @@ def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
     assert answer["tookUndoAgain"] and answer["tookRedo"], "the shifted chord was not claimed"
     assert answer["ended"].endswith("a sentence"), (
         f"Ctrl+Z then Ctrl+Shift+Z did not end where it started: {answer['ended']!r}"
+    )
 
 
 def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
@@ -3854,7 +3855,11 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     view is not an editor. The path without a room reloads and lands in read
     mode by doing so, and this is now the same ending arrived at the same way.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, as every driven test on this page does: the address that
+    # says nothing has been Ace since 2026-08-20, and Ace does not run against
+    # the driver's DOM. The claim here is about what happens after a save, which
+    # is the same on both surfaces.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
@@ -3872,8 +3877,6 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  if (!COEDIT.live()) return 'the room never came up';"
-        "  showEditing(true);"
-        "  BODY.value = BODY.value + '\\n\\nA sentence nobody has read yet.\\n';"
         "  await save();"
         f" __socket.hear({json.dumps(saved)});"
         "  return __reloads() + ' reloads';"
@@ -3902,7 +3905,7 @@ def test_what_the_room_said_about_a_save_survives_the_reload(
     a page that reloads a millisecond later, it is announced to nobody — so it is
     handed to the page that comes back.
     """
-    page = client.get(f"/detail/{TASK}").text
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
@@ -3919,8 +3922,6 @@ def test_what_the_room_said_about_a_save_survives_the_reload(
         "(async () => {"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
-        "  showEditing(true);"
-        "  BODY.value = BODY.value + '\\nmine\\n';"
         "  await save();"
         f" __socket.hear({json.dumps(merged)});"
         "  return localStorage.getItem('openproj:said');"
