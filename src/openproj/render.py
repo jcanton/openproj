@@ -10256,6 +10256,14 @@ function applyTemplate(name) {
   // for a gesture that was not an edit to anybody's writing — this branch only
   // runs while the box still holds one of ours.
   SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
+  // And say that the document changed, because `apply` deliberately fires no
+  // `input` and everything drawn beside this box hangs off one. `reflect()` in
+  // `_COEDIT` dispatches this for exactly the same reason and in the same words:
+  // the one place that changes the text without typing it tells the layers once,
+  // rather than a call being added here every time something new listens.
+  // Measured without it: choosing `blank` emptied the box and left twenty-one
+  // line numbers down the side of it and `21 Lines — Length: 661` under it.
+  dispatchEvent(new Event('openproj:editing'));
   TPLSTATE.textContent = '';
   return true;
 }

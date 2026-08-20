@@ -3376,3 +3376,60 @@ def test_the_full_page_surface_is_a_writing_surface_at_a_window_that_is_not_wide
     assert got["paneRows"] >= 12, "the rendered half of the split is not readable either"
     assert got["read"]["paneRows"] >= 12
     assert got["read"]["documentFirst"]
+
+
+_TEMPLATE_SWAP = """
+const picker = document.getElementById('template');
+const numbers = () => document.querySelectorAll('.lineno').length;
+const bar = document.getElementById('statusbar');
+const said = () => bar.textContent.replace(/\\s+/g, ' ').trim();
+const state = () => ({length: SURFACE.text().length, numbers: numbers(), said: said()});
+const choose = async name => {
+  picker.value = name;
+  picker.dispatchEvent(new Event('change', {bubbles: true}));
+  await new Promise(go => setTimeout(go, 250));
+  return state();
+};
+const out = {start: state()};
+out.blank = await choose('blank');
+out.project = await choose('project');
+return out;
+"""
+
+
+def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth(
+    client: TestClient, tmp_path: Path
+):
+    """The picker replaces the whole document through `apply`, which fires no
+    `input` — and the gutter and the status bar are both drawn off one.
+
+    Measured before this: choosing `blank` on the create form emptied the box and
+    left twenty-one line numbers painted down the side of an empty textarea, with
+    `21 Lines — Length: 661` underneath it. Both values had resolved correctly
+    once, for a document that no longer existed, which is why nothing in the
+    suite noticed: every assertion about either was made at load.
+
+    This is the same hazard `reflect()` names in `_COEDIT` — the page changing
+    the text without typing it — and it is answered the same way, with one
+    `openproj:editing` from the one place that did it.
+    """
+    got = measured_in(
+        chrome(), client.get("/new").text, tmp_path / "template.html", 1400, _TEMPLATE_SWAP
+    )
+
+    assert got["start"]["numbers"] > 1 and got["start"]["length"] > 0, (
+        "the create form did not open on a template, so there is nothing to swap away from"
+    )
+    assert got["blank"]["length"] == 0, "the picker did not empty the box"
+    assert got["blank"]["numbers"] == 1, (
+        f"an empty box has {got['blank']['numbers']} line numbers beside it"
+    )
+    assert "1 Lines" in got["blank"]["said"] and "Length: 0" in got["blank"]["said"], (
+        f"the status bar is still describing the document before it: {got['blank']['said']}"
+    )
+    assert got["project"]["length"] > 0, "and it did not put the next template in"
+    lines = int(got["project"]["said"].split(" Lines")[0].split("\u2014 ")[-1].replace(",", ""))
+    assert got["project"]["numbers"] == lines, (
+        "the gutter and the status bar do not agree on how long the document is"
+    )
+    assert f"Length: {got['project']['length']:,}" in got["project"]["said"]
