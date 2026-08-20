@@ -815,6 +815,60 @@ the same object literal is an error nowhere: it silently wins, and every use of 
 became the string `'ace'`. It is `editorName` now, and it is a label that must never be
 branched on; a behavioural difference between the surfaces goes in `provides`.
 
+## The app's look is the default, and the corner is the toolbar's, 2026-08-20
+
+This work forked before `main`'s `4076b1c`, which is the commit that made the app's chrome the
+DEFAULT for every `button` and `select` rather than a rule naming ids. Until the merge, this
+branch's Edit button was a bare `<button id="toggle">` inside `.editbar` — which styles layout
+and nothing else — so Chrome drew it `2px outset`, the operating system's own button, beside a
+correctly-styled Save. jcanton saw it: *"I thought we had managed to impose the style of
+buttons and dropdowns to be coherent across the entire app? why did that work? this is rather
+important for preventing future drifts."*
+
+It did not work, and the reason is the shape of the rule rather than the rule. A rule that
+names ids reaches the controls somebody thought of and none of the ones they did not, and the
+failure is silent — a control looks like the operating system and nobody notices until two of
+them are side by side. The default fixes it on contact, and **nothing this branch added opts
+out of it**: the sixteen toolbar buttons, the three view segments, the status strip and the
+editor switch each declare only what is theirs.
+
+**The corner is 3px, and that is jcanton's number.** He looked at the toolbar, which had been
+drawing its own 3px against the app's 2px, and preferred it — so the global radius moved and
+`button.mark`'s private copy was deleted rather than kept. Moving one number found the four
+rules that had quietly kept a copy of it (`#clear-filters`, `td.clamp .more`, `.confirm
+button`, `#start`), each of which would otherwise have been the only control left on the old
+corner. That is the whole argument for a default, demonstrated by moving it once.
+
+The guard is `test_every_control_on_every_page_is_drawn_the_same` in `tests/test_cascade.py`,
+which measures every `button` and `select` in Chrome rather than reading the stylesheet — a
+test that reads a stylesheet can only say a rule exists, and what matters is which controls it
+reaches. Two things had to change for it to see this work at all. The editing surface is
+`.field`s inside `article.entity.editing`, so on a served record nobody is editing it has no
+client rects and the sweep skipped all twenty controls; the create page is the same markup with
+the mode already on, and is now the seventh page in the parametrize. And `bare()` — the list of
+controls deliberately drawn with nothing — was a list of NAMES, which is the shape the rule
+exists to kill; it asks the drawing now (no border and no ground), so the browser's own chrome
+still lands in the set that has to match and `button#theme` stops being excused wholesale.
+
+## A session ends the same way through every door, 2026-08-20
+
+Written down because it came back through a new door after being fixed, which is this
+repository's characteristic failure. Press a view, then end the editing session: the surface
+has to come down with it, or the reader is left inside a fixed, opaque, window-filling article
+whose switcher — the documented way back — is drawn only under `.entity.editing` and goes at
+the same instant. That was found on Cancel and fixed by writing `showView(null)` at the call
+site. Then the same line was written at the issue page's toggle, and again at the note page's.
+
+The fourth door had no copy. **A Save made in a room does not reload** — the document is
+already what everybody in the room has — so `_COEDIT`'s `saved` branch ends the session with a
+bare `showEditing(false)`. Measured in Chrome from the split view: `full view-both` on the
+article, `fullpage` on the body, the nav still `inert`, no switcher, and the theme toggle and
+sign-in control still lodged in `.editbar` where the session had put them.
+
+It is one listener on `openproj:session` now — the event that already exists to mean "a session
+began or ended" — and the three call-site copies are deleted. An invariant written three times
+was an invariant guarded twice.
+
 ## The trap that is still written down
 
 `tests/js/drive.js` is a DOM shim, not a browser. `AGENTS.md` records that it has misled

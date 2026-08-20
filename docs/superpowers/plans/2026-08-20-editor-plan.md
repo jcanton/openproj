@@ -1065,6 +1065,74 @@ with the code it guarded is not a fix that was wrong.
 The remaining `await fetch(` sites fail silently, which is worse in a different way and is not
 this branch's work.
 
+## S11 — Built. The merge with `main`, and the three changes jcanton asked for after using it
+
+Not a planned stage. It is what using the thing produced, and it is written here because two
+of the four items overturn something a stage above decided.
+
+### The merge, and what it decided
+
+PR #36 had never been built: GitHub reported `mergeable: CONFLICTING`, so there was no
+`refs/pull/36/merge` for the workflow to check out and CI had nothing to run on a thirty-commit
+branch. Thirty-two commits of `main`, through v0.6.0, v0.7.0 and v0.8.0, seven conflicted
+files. What it settled:
+
+- **The app's look is the DEFAULT for every `button` and `select`**, from `main`'s `4076b1c`,
+  which this branch forked before. Our Edit button was bare inside `.editbar` and Chrome drew
+  it `2px outset` beside a correctly-styled Save; jcanton saw it. Nothing this branch added
+  opts out — the sixteen toolbar buttons, the three view segments, the status strip and the
+  editor switch each declare only what is theirs.
+- **The corner is 3px and it is the toolbar's number, not the app's old 2px** — jcanton looked
+  at the two and preferred the toolbar's, so the global radius moved and `button.mark`'s
+  private copy was deleted. Moving it once found the four rules that had quietly kept a copy.
+  `docs/EDITOR.md` carries the argument.
+- **Save and Edit take `main`'s positions.** The commit bar is out of the foot of the page and
+  under the button that opened the edit, so the three controls that begin, end and abandon one
+  edit are in one place. This overrides the ordering S2 recorded as still-passing. The view
+  switcher joins Edit and Delete on that one row, and is never on it at the same time: Edit and
+  Delete leave when a session begins, and a view of an editing surface is nothing at all when
+  there is no editing surface.
+- **Refiling on the graph is gone**, with jcanton's *"no need to do this in the graph, let's
+  leave it to the table"* — so this branch's `catch` on `refile` and the test that held it go
+  with the gesture. The table's half of the same finding is kept and still tested; see the S10
+  paragraph above, which now records which half survived.
+- `tests/browser.py` had two names for one clock — this branch's `budget` in total virtual time
+  and `main`'s `patience` measured from the report. One constant now, and it is `patience`,
+  because it says what the SCRIPT gets rather than making every caller subtract 1200.
+
+### The three changes jcanton asked for
+
+1. **Ace is the default** — *"make ace the default, I think it's worth it."* This overrides
+   S8's `?editor=ace`, which was written as an opt-in and stays as a spelling the server still
+   honours; `?editor=plain` is the way out now. Only the default arm moved, and the reload the
+   sticky preference costs moved with it, onto the people who want the plain box. **It is a
+   human override on top of the human override S7 already was**: `static/VENDOR.md`'s revisit
+   condition, "before somebody is measurably slowed down by a textarea", is still unmet, and
+   both `_ace_wanted` and `VENDOR.md` say so where a reader will find it. A writer pays
+   ~594 KB by default; a reader pays nothing, for the library and for the parameter alike,
+   which is the half the inversion could most easily have destroyed and is therefore asserted
+   three ways round rather than assumed.
+2. **The theme toggle and the sign-in control come into the editor's bar with you.** The cause
+   was S2's `inert` on `body > nav`, and that is right — eight focusable elements really were
+   painted over by an opaque fixed article and still in the tab order. So the nav stays inert
+   and the two controls MOVE, into `.editbar` beside the switcher, and home again when the
+   surface closes. The same nodes, not copies: `#theme` and `#who` are ids and the shell's own
+   scripts fill exactly one of each.
+3. **Which editor is a switch beside the three view segments**, not a fourth segment: the
+   segments are one control with three states, and this is a two-state setting. `role="switch"`
+   with `aria-checked` rendered by the SERVER from the same `_ace_wanted` that decided the
+   bytes, so it is right before a script runs. It is honest that it reloads — the resting title
+   says so, the press says so through `announce`, and the knob stops HALFWAY rather than
+   arriving, because this page will never be the page with the other editor in it.
+
+### And the door the review found
+
+Ending an editing session has to leave the surface the session was in. S3's Cancel fix wrote
+that at the call site; the issue and note pages each grew a copy; and the fourth door — a Save
+made in a room, which does not reload — had none, so it left the reader inside the fixed opaque
+article with the switcher gone. It is one listener on `openproj:session` now and the three
+copies are deleted. `docs/EDITOR.md` has the measurement.
+
 ## What is explicitly not in this plan, and why
 
 - **Remote carets with a name label.** They are drawable inside a real editor and not over a
