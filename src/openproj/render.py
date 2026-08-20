@@ -6381,7 +6381,11 @@ _GRAPH = """
     and the node are the same picture at two sizes. -#}
 <ul class="legend" aria-label="What a node's line thickness means">
   <li class="legendname">priority</li>
-  {% for priority in priorities %}
+  {#- Reversed: the meter fills to the RIGHT, so the key reads low to high the way
+      the bars grow — jcanton, 2026-08-20. `PRIORITIES` itself stays highest-first,
+      because that is the order a dropdown offers them in and the order the table
+      sorts by, and neither wants the quietest thing at the top of the list. -#}
+  {% for priority in priorities|reverse %}
   <li><span class="swatch pri pri-{{ priority }}" aria-hidden="true">{{
       bars(priority) }}</span>{{ priority|human }}</li>
   {% endfor %}
@@ -6497,15 +6501,36 @@ const LINE = () => ({
 // timeline draws at a bar's left edge and the legend below shows in its swatch.
 // Not a token: a shape, so it survives a screenshot, a projector and deuteranopia.
 const GLYPH = {{ glyphs|tojson }};
-// And priority in front of it, for the reason the status glyph is there at all:
-// the channel priority is drawn with here is the border's THICKNESS, which is
-// legible only against a neighbour to compare it with — jcanton saw one project
-// drawn thicker than the rest and had to ask what it meant. A rung of the same
-// ladder, in the label, answers it without a comparison.
-const MARK = {{ marks|tojson }};
-const labelOf = node =>
-  (MARK[node.data('priority')] || '') +
-  (GLYPH[node.data('status')] || '') + ' ' + (node.data('label') || '');
+const labelOf = node => (GLYPH[node.data('status')] || '') + ' ' + (node.data('label') || '');
+
+// Priority, as the same five bars the legend and the table draw, painted into the
+// corner of the card.
+//
+// NOT as a character in the label, which is what shipped first and what jcanton
+// saw: cytoscape draws a label into a canvas with the font it is given and no
+// fallback chain, and Inter has no Block Elements — so `▅` came out as a .notdef
+// box in front of every node's name. A rendering that depends on the typeface
+// having a glyph is a rendering that fails silently on somebody else's machine.
+//
+// A `data:` SVG, which the policy allows (`img-src 'self' data:`) and which is
+// the same picture as the meter in the legend rather than a second notation for
+// one fact. Rebuilt on a theme change with `paint()`, because the colours are
+// tokens and the image has already resolved them.
+const LEVELS = {{ levels|tojson }};
+function barsImage(priority) {
+  const level = LEVELS[priority] || 0;
+  const lit = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
+  const dim = token('--line-strong');
+  const bars = [];
+  for (let i = 0; i < 5; i++) {
+    const height = 3 + i * 2;
+    bars.push(`<rect x="${i * 4}" y="${11 - height}" width="3" height="${height}" rx="1" ` +
+              `fill="${i < level ? lit : dim}" opacity="${i < level ? 1 : 0.25}"/>`);
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="19" height="11" ` +
+    `viewBox="0 0 19 11">${bars.join('')}</svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
 
 // Cytoscape aligns a left-aligned label by its RIGHT edge against the box's left
 // edge, so putting a group's name inside its own box means knowing how wide the
@@ -6723,7 +6748,14 @@ async function relayout() {
       if (one.id.startsWith('ghost:')) return;
       const section = (one.sections || [])[0];
       if (!section || !(section.bendPoints || []).length) return;
-      bends[one.id] = section.bendPoints.map(p => ({x: p.x + dx, y: p.y + dy}));
+    section.bendPoints = section.bendPoints || [];
+      // The start and end points as well as the bends. Cytoscape draws a
+      // `segments` edge from one node's CENTRE to the other's, and ELK's route
+      // begins at the border — so without these the first and last legs cut
+      // diagonally from the middle of a card to wherever the first bend is,
+      // which is most of what an ELK-routed edge looked like.
+      bends[one.id] = [section.startPoint, ...section.bendPoints, section.endPoint]
+        .map(p => ({x: p.x + dx, y: p.y + dy}));
     });
     (node.children || []).forEach(kid => {
       const where = at[kid.id];
@@ -6732,6 +6764,12 @@ async function relayout() {
   };
   collect(laid, 0, 0);
   drawRoutes(bends);
+  // Which way each taxi edge turns, from where the boxes ACTUALLY are. It used to
+  // ride on `layoutstop`, which cytoscape emits and ELK does not — so after the
+  // layout became a direct call it was computed once at load, from the positions
+  // the nodes had before anything had been laid out. Every edge that needed a
+  // vertical turn got a horizontal one, which is the diagonal stub jcanton saw.
+  route();
 
   cy.fit(undefined, 24);
 }
@@ -6805,6 +6843,15 @@ const cy = cytoscape({
   style: [
     { selector: 'node', style: {
         'label': labelOf, 'font-size': 10, 'shape': 'round-rectangle',
+        // The priority meter, in the card's top-left corner. `background-fit:
+        // none` and an explicit size, or cytoscape scales the image to the node
+        // and a wide card gets a stretched meter.
+        'background-image': node => node.isParent() ? 'none' : barsImage(node.data('priority')),
+        'background-image-opacity': 1,
+        'background-width': 19, 'background-height': 11,
+        'background-position-x': 6, 'background-position-y': 5,
+        'background-fit': 'none', 'background-clip': 'node',
+        'background-image-containment': 'inside',
         // One typeface for the whole app, this canvas included — and the ruler
         // above measures group labels in it, so a second stack here would put
         // every group label a few pixels off the box it belongs to.
@@ -6812,6 +6859,9 @@ const cy = cytoscape({
         // text-wrap alone does nothing: without a max width the label just
         // overflows the box it is supposed to sit inside.
         'text-wrap': 'wrap', 'text-max-width': 136,
+        // Pushed down so the meter in the corner has the top of the card to
+        // itself rather than sitting on the first line of the title.
+        'text-margin-y': 5,
         'background-color': e => COLOUR()[e.data('status')],
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
@@ -6928,6 +6978,8 @@ function paint() {
     .selector(':parent').style({'color': token('--fg'),
                                 'text-background-color': token('--surface'),
                                 'text-margin-x': e => groupWidth(e) + 12})
+    .selector('node').style({'background-image': e =>
+        e.isParent() ? 'none' : barsImage(e.data('priority'))})
     .selector('edge').style({'line-color': token('--line-strong'),
                              'target-arrow-color': token('--line-strong')})
     .selector('edge.pending').style({'line-color': token('--ok'),
@@ -7394,15 +7446,21 @@ _GRAPH_STYLE = """
         pointer-events: none;
         padding: .35rem .5rem; border-radius: 3px;
         background: color-mix(in srgb, var(--bg) 82%, transparent); }
-.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .5rem; }
+.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .45rem; }
 /* Both rows the same length — jcanton, 2026-08-20. Each row is five keys and a
    name, so five keys of one width and a name of one width is two rows of one
    length, whatever the words inside them happen to be. Without it the rows are
    as long as their vocabulary: "Very high, High, Medium, Low, Very low" against
    "Shaping, Ready, In progress, Done, Shelved" came out 55px apart, and two
    ragged rows in a corner read as two unrelated things. */
-.keys .legend li { min-width: 6.6rem; }
-.keys .legend li.legendname { min-width: 4.4rem; }
+/* Tight, and the rows come out near enough the same length by having the same
+   number of keys in them. Two earlier attempts at making them EXACTLY equal both
+   cost more than the equality was worth: `min-width` on every key padded them all
+   to the width of "In progress", and a grid of five equal columns did the same
+   thing by another route — jcanton, 2026-08-20: "there is too much horizontal
+   space between cards in the legend". A key is as wide as what is in it. */
+.keys .legend li { margin-right: .35rem; }
+.keys .legend li.legendname { margin-right: .5rem; }
 .keys #summary { margin: 0; pointer-events: auto; font-size: 12px;
                  color: var(--muted); text-align: right; }
 
@@ -10115,10 +10173,16 @@ PRIORITIES = ("very_high", "high", "medium", "low", "very_low")
 # two ladders that agree until somebody adds a rung.
 PRIORITY_LEVEL = {"very_low": 1, "low": 2, "medium": 3, "high": 4, "very_high": 5}
 
-# The same ladder where only text will go: a graph node's label and a `<select>`
-# option are strings, and neither can hold the five-element meter the legend and
-# the table draw. One block character per rung, rising with it — the same fact,
-# counted the same way, in the one notation those two places can carry.
+# The same ladder where only text will go: a `<select>` option is a string and
+# cannot hold the five-element meter the legend and the table draw. One block
+# character per rung, rising with it.
+#
+# The graph does NOT use this and did for one release. A cytoscape label is drawn
+# into a canvas with the font it is given and no fallback chain, and Inter has no
+# Block Elements — so every node's name came out with a .notdef box in front of
+# it. An `<option>` is drawn by the platform's own widget, which does fall back,
+# which is why the same characters are safe here and were not there. If that ever
+# stops being true the answer is the one the graph took: draw it.
 #
 # Text and not an image, which is the argument `STATUS_GLYPH` already makes and
 # it applies here unchanged: a shape survives a screenshot, a projector and
@@ -15104,7 +15168,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         statuses=STATUSES,
         priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,
-        marks=PRIORITY_GLYPH,
+        levels=PRIORITY_LEVEL,
         total=len(index.entities),
         links=links,
         elements=_elements(index),
