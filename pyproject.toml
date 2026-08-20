@@ -1,6 +1,6 @@
 [project]
 name = "openproj"
-version = "0.9.0"
+version = "0.10.0"
 description = "Git-backed appetite planning for the icon4py team"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
