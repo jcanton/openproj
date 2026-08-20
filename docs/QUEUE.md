@@ -79,6 +79,61 @@ and each says why it is still here.
   wrapped under them is the same bug wearing different clothes — it went
   unreported only because a wrap looks less broken than an overflow.
 
+* **A level above project, to hold the codebases.** jcanton, 2026-08-20, and the
+  reason is cross-dependencies rather than tidiness:
+
+  > we have gt4py which is the dsl underneath icon4py (which is all the corpus is
+  > about for now) and dace which is a backend, and some people are working on
+  > pmap which is another code, etc. sometimes there are inter-dependencies
+  > between these, so we may possibly want to have all in the same corpus and the
+  > same tool (instead of having different corpora for the different entities,
+  > which would prevent cross-dependencies).
+
+  That is the whole argument and it is a good one: one plan can express "this
+  icon4py pitch waits on that gt4py task"; four plans cannot express it at all.
+
+  **What it is.** A container and nothing else. Title and a short description —
+  no owner, no assignees, no dates, no appetite. It does not appear on the
+  timeline, and it may not have dependencies: its projects, pitches and tasks
+  can, and it cannot. It is a fourth kind above `project`, so `PARENT_KINDS`
+  gains an entry and `project` stops being the top.
+
+  **What to call it, which is the part jcanton was unsure of.** The examples are
+  all software: icon4py, gt4py, dace, pmap. Candidates and the argument against
+  each — `programme` and `portfolio` are management words for a thing that is
+  really a codebase; `repo` is wrong the first time one of them spans two
+  repositories or none; `area` and `group` say nothing at all. **`product`** is
+  the recommendation: it is what these are to the people planning them, it stays
+  true if one of them stops being a single repository, and it does not borrow
+  from a methodology this tool does not otherwise use. `codebase` is the runner-up
+  and is more literal at the cost of excluding anything that is not code.
+
+  **In the graph, a different shape.** jcanton asked for it and it is right: an
+  ellipse, or a dashed boundary, or both — the point is that a reader can tell at
+  a glance that this box is not a project. `:parent` styling in `_GRAPH` already
+  varies by kind for the fill; the shape and the border style are free.
+
+  **What it touches**, from a survey rather than a guess:
+
+  * `model.py` — `Entity.kind`'s `Literal`, `_MODELS`, `_ID_PREFIXES`,
+    `_PREFIX_FOR_KIND`, `_ID_PATTERN`, the `kinds` tuple in `validate_all`, and
+    `PARENT_KINDS`. A `Product` model with two fields, and `required_at` giving
+    it nothing to require.
+  * `web.py` — `DIRECTORY` gains `products/`, which is what `_path_for`,
+    `_entities_at` and the create route read.
+  * `index.py` — twelve references to `"project"`, several of which mean "the top
+    of the tree" and now do not. `_project_of` is the one to read first.
+  * `schedule.py` — it must schedule nothing. A container with no size and no
+    dates should fall out naturally; assert it rather than assume it.
+  * `render.py` — the table's tree and its `project` facet, the graph's compound
+    nesting and the new shape, the timeline's exclusion, and `PARENT_KINDS`
+    shipped to the browser for the drag.
+
+  **The one to be careful about** is the `project` facet and everything that
+  says "which project is this under". With a level above, "project" stops being
+  the coarsest grouping and a filter that means "top-level thing" has to say
+  which it means. That is the change most likely to be half-done.
+
 * **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
