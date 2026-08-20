@@ -39,6 +39,34 @@ and each says why it is still here.
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
+* **One aesthetic for every control.** jcanton, 2026-08-20: "buttons do not have
+  consistent aesthetic: clear filters, the timeline zoom dropdown, the issues state
+  dropdown, notes state, edit entity are all grey and different from the newer
+  buttons. I'd like them all to have the style of the table dropdowns and table +
+  New row button. everywhere consistently in the app."
+
+  The target is already written down twice and should end up written once:
+
+  * `.button` in the shell (`render.py`, near `.editbar`) — 13px, `1px solid
+    var(--line-strong)`, 2px radius, `var(--surface)` ground, accent on hover.
+    This is what the table's **New entity** wears.
+  * `.facetopen .facetsaid` — the same border, ground and radius plus a caret
+    drawn from borders. This is what the table's **dropdowns** wear, and the
+    comment on it explains why a bare border reads as a text box.
+
+  What is still native and grey: `#unfilter` (Clear), the timeline's zoom
+  `<select>`, the issues and notes state `<select>`s, `#toggle` (Edit) on the
+  detail page, and the buttons in `.commitbar`, which have a third spelling of
+  their own (`#save, .commitbar button`).
+
+  The work is to name the shared look once and have every control ask for it,
+  rather than to add a fourth copy. A real `<select>` cannot be styled the way
+  `.facetopen` is without replacing it — the table's dropdowns are buttons for
+  exactly that reason — so the honest choices are to give the remaining
+  `<select>`s the border, ground and radius and accept the browser's own caret,
+  or to convert them the way the facets were converted. Decide that first;
+  everything else is one rule.
+
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **A write can still create a loop.** jcanton asked, 2026-08-19: "doesn't
   openproj forbid cycles? if not we should". Today it detects them — `validate_all`
