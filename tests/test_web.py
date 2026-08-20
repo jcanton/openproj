@@ -528,10 +528,19 @@ def test_healthz_reports_the_commit_being_served(client: TestClient, repo_path: 
     """`head` is what a deploy check and a stale-tab check both read. It has to be
     the commit on disk, not a value the process cached at startup — somebody will
     push to this repository from a terminal in week one."""
+    from openproj import __version__
+
     response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "head": git_head(repo_path)}
+    # Whole-dict equality, deliberately: it is what caught `version` being added
+    # without this test being told, and a field appearing in a payload a deploy
+    # check parses is exactly the change somebody should have to notice.
+    assert response.json() == {
+        "ok": True,
+        "head": git_head(repo_path),
+        "version": __version__,
+    }
 
     save(client, TASK, {"priority": "high"})
     assert head(client) == git_head(repo_path)
