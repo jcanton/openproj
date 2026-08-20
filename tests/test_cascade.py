@@ -1053,6 +1053,53 @@ def test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets(
         )
 
 
+def test_the_handle_between_the_panes_is_the_same_control_on_both_stylesheets(
+    record: Sheet, index: Index
+):
+    """The splitter resolved against `_RECORD_STYLE` as well as `_DETAIL_STYLE`.
+
+    The two are the failure mode this file exists for: a second copy of the
+    editing rules under a different mode class, where a rule that wins on one page
+    can lose on the other and nothing between them says so. The issue and note
+    pages draw this handle — `render_issue` and `render_note` emit `_SPLIT_HANDLE`
+    into the same `.bodysplit` the detail page does — so both halves have to be
+    asked, and the fight worth asking about is the DEFAULT: `#splitter` is (1,0,0)
+    and the rules that give it a box are class selectors, so if a sheet ever loses
+    the id rule the separator appears on every page that inlines it with no
+    document to divide.
+
+    `touch-action` is here for the same reason it is asserted in the browser: a
+    handle a finger can start a pan on is one the browser may take the pointer
+    back from mid-drag.
+    """
+    detail = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+    for name, sheet in (("issue", record), ("detail", detail)):
+        inside = [
+            el("body", "fullpage"), el("main", id="main"),
+            el("article", "entity editing full view-both"), el("form", id="edit"),
+            el("div", "bodysplit"), el("div", id="splitter"),
+        ]
+        won = sheet.winner(inside, "display")
+        assert won and won.value == "block", (
+            f"on the {name} page the handle in the split view is displayed by {won}\n"
+            + says(sheet, inside, "display")
+        )
+        assert sheet.value(inside, "touch-action") == "none", (
+            f"on the {name} page a finger on the handle can start a pan\n"
+            + says(sheet, inside, "touch-action")
+        )
+
+        outside = [
+            el("body"), el("main", id="main"), el("article", "entity editing"),
+            el("div", "bodysplit"), el("div", id="splitter"),
+        ]
+        off = sheet.winner(outside, "display")
+        assert off and off.value == "none" and off.selector == "#splitter", (
+            f"on the {name} page a splitter outside the split view is displayed by {off}\n"
+            + says(sheet, outside, "display")
+        )
+
+
 # --------------------------------------------------------------------------- #
 # One commit bar, four pages, one rule
 # --------------------------------------------------------------------------- #

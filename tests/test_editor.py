@@ -2433,6 +2433,200 @@ def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
     )
 
 
+# The join dragged as far as it will go, on a window wide enough that the outer
+# fence is what stops it rather than the pixel floor.
+_SPLIT_TO_THE_END = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+const pane = article.querySelector('#body-preview');
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 80));
+handle.focus();
+handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'End', bubbles: true, cancelable: true}));
+return {box: box.getBoundingClientRect().width, pane: pane.getBoundingClientRect().width,
+        now: Number(handle.getAttribute('aria-valuenow')),
+        most: Number(handle.getAttribute('aria-valuemax')),
+        stored: localStorage.getItem('openproj:editor:1')};
+"""
+
+# And the same page opened again with exactly what that left behind in the store.
+_SPLIT_AS_FOUND = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+const pane = article.querySelector('#body-preview');
+document.getElementById('toggle').click();
+await new Promise(go => setTimeout(go, 80));
+return {box: box.getBoundingClientRect().width, pane: pane.getBoundingClientRect().width,
+        held: EDITOR.split, view: VIEW};
+"""
+
+
+@pytest.mark.parametrize("width", [1400, 3440])
+def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_back(
+    client: TestClient, tmp_path: Path, width: int
+):
+    """A round trip through the store, in two loads, because one load cannot show
+    that a value survives being read back.
+
+    **This is a defect with a monitor size attached to it.** The clamp was the
+    240px floor alone, so what a drag stored was `(space - 240) / 240` — which
+    passes `SPLIT_RANGE` the moment the panes have more than 2,160px between them.
+    On a 3440px ultrawide, pushing the preview down to its floor stored `11.57`
+    and the next load put that through `EDITOR`'s own `<= SPLIT_RANGE` guard, read
+    it as out of range and drew 50/50 — then wrote `1` back over it as soon as the
+    split view opened. Not ignored: destroyed, in silence, and only for the people
+    with the biggest screens. Verified with a real mouse over DevTools before it
+    was fixed, and this is that with `End` instead of a drag.
+
+    1400 is the control. Under 2,584px of window the floor is still the tighter
+    bound and nothing about this changes, which is what says the fix is a fence
+    and not a new behaviour.
+    """
+    first = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / f"end-{width}.html", width, _SPLIT_TO_THE_END, patience=4800,
+    )
+    # It went somewhere, and the separator says it is at the end of its own range.
+    assert first["box"] > first["pane"] and first["now"] == first["most"], first
+
+    again = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % first["stored"]
+        ),
+        tmp_path / f"back-{width}.html", width, _SPLIT_AS_FOUND, patience=4800,
+    )
+    assert again["view"] == "both", "the remembered view did not open"
+    assert (again["box"], again["pane"]) == (first["box"], first["pane"]), (
+        f"a split of {json.loads(first['stored'])['split']} chosen at {width}px came back "
+        f"as {again['box']} to {again['pane']} instead of {first['box']} to {first['pane']} "
+        "— the value the drag wrote is one the next load will not read"
+    )
+
+
+_CANCELLED_DRAG = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 80));
+const w = () => ({box: box.getBoundingClientRect().width,
+                  dragging: handle.classList.contains('dragging')});
+const grip = handle.getBoundingClientRect();
+const from = grip.left + grip.width / 2;
+handle.dispatchEvent(new PointerEvent('pointerdown', {
+  bubbles: true, cancelable: true, pointerId: 1, clientX: from, clientY: grip.top + 40}));
+const down = w();
+// What the browser sends when it takes the gesture for itself. There is no
+// `pointerup` after this one — that is the whole of the case.
+handle.dispatchEvent(new PointerEvent('pointercancel', {bubbles: true, pointerId: 1}));
+const cancelled = w();
+// And the pointer moving afterwards with nothing held down.
+dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerId: 1,
+  clientX: from + 260}));
+return {down, cancelled, after: w(), touch: getComputedStyle(handle).touchAction};
+"""
+
+
+def test_a_drag_the_browser_takes_away_lets_go_of_the_join(
+    client: TestClient, tmp_path: Path
+):
+    """A drag does not always end in a `pointerup`.
+
+    The browser can revoke the pointer — a touch it decides is a pan is the
+    ordinary way — and what arrives then is `pointercancel` and nothing else. The
+    handler listened for `pointerup` alone, so measured in Chrome before this fix:
+    the handle kept `.dragging`, the move listener stayed on the window, and the
+    next `pointermove` with nothing held down moved the join 248px. That is the
+    handle stuck to the cursor that `setPointerCapture` is there to prevent,
+    reached through the one door capture does not close.
+
+    `touch-action: none` is the other half and it is asserted here rather than in
+    the cascade file because what matters is the value on the element a finger
+    lands on: it is what stops the browser wanting the gesture at all.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "cancel.html", 1400, _CANCELLED_DRAG, patience=4800,
+    )
+    assert got["down"]["dragging"], "the drag never started, so nothing here is being tested"
+    assert not got["cancelled"]["dragging"], (
+        "the handle is still drawn as being dragged after the browser cancelled the pointer"
+    )
+    assert got["after"] == got["cancelled"], (
+        f"the join followed the pointer after the drag was cancelled: {got['after']} "
+        f"against {got['cancelled']}"
+    )
+    assert got["touch"] == "none", (
+        f"the handle's touch-action is {got['touch']}, so a finger dragging it is a "
+        "gesture the browser is free to take away"
+    )
+
+
+_MODIFIED_KEYS = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 80));
+handle.focus();
+const press = (key, mod) => {
+  const event = new KeyboardEvent('keydown',
+    {key, ...mod, bubbles: true, cancelable: true});
+  handle.dispatchEvent(event);
+  return {box: box.getBoundingClientRect().width, swallowed: event.defaultPrevented};
+};
+const before = box.getBoundingClientRect().width;
+return {
+  before,
+  alt: press('ArrowLeft', {altKey: true}),
+  ctrl: press('Home', {ctrlKey: true}),
+  meta: press('ArrowRight', {metaKey: true}),
+  shift: press('End', {shiftKey: true}),
+  // The unmodified one, so this cannot pass by the handler being gone.
+  plain: press('ArrowRight', {}),
+};
+"""
+
+
+def test_the_separator_hands_back_every_key_that_carries_a_modifier(
+    client: TestClient, tmp_path: Path
+):
+    """Alt+Left is Back.
+
+    Measured in Chrome with focus on the handle and before this guard: Alt+Left
+    was `preventDefault`ed and moved the join 32px instead of going back a page,
+    and Ctrl+Home and Cmd+Right went the same way. This branch has already paid
+    for one binding that swallowed a keystroke somebody meant for something else —
+    the view chord was Ctrl+Alt, which IS AltGr, and it ate a euro — and the guard
+    here is the one that fix put in: any modifier and the key is not this
+    control's.
+
+    `defaultPrevented` as well as the width, because a handler that moves nothing
+    and still cancels the event is a Back button that silently does nothing, which
+    is the worse half of the same defect.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "modified.html", 1400, _MODIFIED_KEYS, patience=4800,
+    )
+    for name in ("alt", "ctrl", "meta", "shift"):
+        assert got[name]["box"] == got["before"], (
+            f"a modified key ({name}) moved the join from {got['before']} to "
+            f"{got[name]['box']}"
+        )
+        assert not got[name]["swallowed"], (
+            f"the separator cancelled a modified key ({name}), so whatever the browser "
+            "or the platform does with it does not happen"
+        )
+    assert got["plain"]["box"] == got["before"] + 32, (
+        f"the unmodified arrow stopped working too: {got['plain']}"
+    )
+    assert got["plain"]["swallowed"], "the arrow that IS this control's was not taken"
+
+
 # The document the scroll sync is asked about: 161 lines, one of which is long
 # enough to wrap. One that wrapped nowhere would be a corpus that does not
 # contain the string that matters — `scrollTop / lineHeight` is exactly right on

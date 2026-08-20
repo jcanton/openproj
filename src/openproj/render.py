@@ -9447,6 +9447,12 @@ const DRAFT_SECONDS = [1, 2, 5, 10, 20];
 // wide monitor and restored on a laptop is a pane at a few pixels: `applySplit`
 // clamps to what fits on the screen it is actually on, and this is the outer
 // fence around what may be stored at all.
+//
+// **The same fence bounds the writing**, in `splitBound` beside the clamp, and it
+// did not at first: a drag on a 3440px screen stored 11.57 and this line then
+// threw it away on the very next load. A number a control can produce and its own
+// guard refuses is a preference that vanishes for exactly the people with the
+// biggest monitors.
 const SPLIT_RANGE = 8;
 // The two surfaces, spelled the way the query string spells them, because these
 // are the same two strings the server reads — one vocabulary and not two.
@@ -11201,6 +11207,28 @@ function splitSpace() {
   return SPLIT.clientWidth - SPLITTER.offsetWidth;
 }
 
+// The most lopsided this split may be on a screen this wide, and there is ONE of
+// these because it has to bound what gets STORED as well as what may be read back.
+//
+// **It did not, and that was a defect with a monitor size attached to it.** The
+// pixel floor alone allows `(space - 240) / 240`, which passes `SPLIT_RANGE` as
+// soon as the panes have more than 2,160px between them — a 3440px ultrawide, or
+// a 4K screen, both of which are what a plan gets written on. Measured in Chrome
+// with a real mouse at 3440: dragging the preview down to its floor stored
+// `11.57`, the next load put that through the `<= SPLIT_RANGE` guard in `EDITOR`,
+// read it as out of range and drew 50/50 — and then wrote `1` back over it the
+// moment the split view opened again. The reader's choice was not ignored, it was
+// destroyed, in silence, and only on the big screens. A write path that stores
+// what the read path refuses is this repository's oldest recurring bug and it now
+// has one fence rather than two.
+//
+// So `SPLIT_RANGE` is the outer bound in both directions, the floor is the inner
+// one, and the smaller of the two wins. Below 2,584px of window nothing changes:
+// the floor is still what a drag runs into.
+function splitBound(space) {
+  return Math.min(SPLIT_RANGE, (space - SPLIT_FLOOR) / SPLIT_FLOOR);
+}
+
 // The ratio the panes are drawn at: the remembered one, clamped to what fits on
 // THIS screen. Clamped and not written back — a division chosen on a monitor is
 // still that person's choice when the same browser opens a narrow window.
@@ -11214,16 +11242,18 @@ function applySplit() {
     SPLIT_ROOT.style.removeProperty('--split');
     return;
   }
-  const most = (space - SPLIT_FLOOR) / SPLIT_FLOOR;
+  const most = splitBound(space);
   const ratio = Math.min(most, Math.max(1 / most, EDITOR.split));
   SPLIT_ROOT.style.setProperty('--split', ratio + 'fr');
   // What the separator says it is at: the share of the two PANES, because the
-  // handle's own 1.5rem is not width either of them could have had.
+  // handle's own 1.5rem is not width either of them could have had. Both ends
+  // come off `most` rather than off the floor, so what is announced as reachable
+  // is what a key or a drag can actually reach — where the floor is the tighter
+  // of the two bounds this is the same arithmetic it was, `100 * FLOOR / space`.
   const share = Math.round(100 * ratio / (1 + ratio));
-  const least = Math.round(100 * SPLIT_FLOOR / space);
   SPLITTER.setAttribute('aria-valuenow', String(share));
-  SPLITTER.setAttribute('aria-valuemin', String(least));
-  SPLITTER.setAttribute('aria-valuemax', String(100 - least));
+  SPLITTER.setAttribute('aria-valuemin', String(Math.round(100 / (1 + most))));
+  SPLITTER.setAttribute('aria-valuemax', String(Math.round(100 * most / (1 + most))));
   SPLITTER.setAttribute('aria-valuetext', share + '% writing, ' + (100 - share) + '% preview');
 }
 
@@ -11236,7 +11266,10 @@ function moveSplit(paneWidth) {
   const space = splitSpace();
   if (space < SPLIT_FLOOR * 2) return;      // nothing to divide; see `applySplit`
   const want = Math.min(space - SPLIT_FLOOR, Math.max(SPLIT_FLOOR, paneWidth));
-  EDITOR.split = want / (space - want);
+  // Through the same fence `applySplit` draws the panes with, so that what is
+  // stored is always something a later load can read back. See `splitBound`.
+  const most = splitBound(space);
+  EDITOR.split = Math.min(most, Math.max(1 / most, want / (space - want)));
   applySplit();
   // Every pixel the gutter, the seat bands and the two scroll maps draw is a
   // function of the box's width, and this control's whole job is to change it.
@@ -11267,15 +11300,39 @@ SPLITTER.onpointerdown = event => {
     rememberEditor({});
     removeEventListener('pointermove', move);
     removeEventListener('pointerup', stop);
+    removeEventListener('pointercancel', stop);
   };
   addEventListener('pointermove', move);
   addEventListener('pointerup', stop);
+  // **A drag does not always end in a `pointerup`.** The browser can take the
+  // gesture away — a touch it decides is a pan, a pointer the platform revokes —
+  // and what it sends then is `pointercancel` and no up at all. Measured in
+  // Chrome before this line: after a cancel the handle kept `.dragging`, the move
+  // listener stayed on the window, and the next `pointermove` with nothing held
+  // down moved the join 248px. That is precisely the handle stuck to the cursor
+  // that `setPointerCapture` is up there to prevent, arrived at through the one
+  // door capture does not close. `touch-action: none` beside the rule stops the
+  // browser wanting the gesture in the first place; this is the branch for when
+  // it takes it anyway.
+  //
+  // `#grip` and the table's column grips have the same gap. They are not touched
+  // here: this is one control's commit and a sweep of the other two is its own.
+  addEventListener('pointercancel', stop);
 };
 // Both directions and both extremes, because a separator that answers only a
 // mouse is the same defect as the thirteen mouse-only toolbar buttons this branch
 // shipped and had to fix. `moveSplit` clamps, so Home and End are written as the
 // ends of the space and arrive at the floor.
 SPLITTER.onkeydown = event => {
+  // **A modifier means the key is not this control's**, and until this line the
+  // separator ate four that belong to the browser and the platform. Alt+Left is
+  // Back on Windows and Linux; measured in Chrome with focus on the handle, it
+  // was `preventDefault`ed and moved the join instead of going back a page, and
+  // Ctrl+Home and Cmd+Right went the same way. This is the trap the view chord
+  // two hundred lines down already carries a paragraph about — a binding that
+  // swallows a keystroke somebody meant for something else — and the guard is the
+  // one used there.
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const at = SPLITTER.getBoundingClientRect().left - SPLIT.getBoundingClientRect().left;
   const to = {
     ArrowLeft: at - SPLIT_STEP, ArrowRight: at + SPLIT_STEP,
@@ -13791,8 +13848,13 @@ article.entity.full.view-both .bodysplit {
    than disabled: a separator in the tab order that divides nothing is a control
    that lies about what the page can do. */
 #splitter { display: none; }
+/* `touch-action: none` because the alternative is the browser deciding this drag
+   was a pan: it then revokes the pointer with a `pointercancel` and no `pointerup`
+   at all, which is the one way a captured pointer can still leave a handle stuck
+   to the cursor. The script carries the branch for when it happens anyway; this
+   is what stops it being asked for. */
 article.entity.full.view-both #splitter {
-  display: block; position: relative; cursor: col-resize;
+  display: block; position: relative; cursor: col-resize; touch-action: none;
 }
 /* The line down the middle, which was `#body-preview`'s `border-left` and its
    centring padding and negative margin. The same pixel in the same place, drawn
