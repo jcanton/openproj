@@ -15357,7 +15357,18 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 _status_class(entity.status), _human(entity.status)
             )
         elif name == "priority":
-            display = escape(_human(entity.priority))
+            # The same chip the table wears, mark and all: this row and that cell
+            # are the same fact, and the menu below this row already leads with
+            # the mark.
+            display = Markup(
+                '<span class="chip pri pri-{}">'
+                '<span class="chipmark" aria-hidden="true">{}</span>'
+                '<span class="chipword">{}</span></span>'
+            ).format(
+                entity.priority,
+                PRIORITY_GLYPH.get(str(entity.priority), ""),
+                _human(entity.priority),
+            )
         elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, entity) is not None:
             # The bet, and what its tasks propose to put inside it. Two numbers on
             # one line because they are one question: an appetite read on its own
