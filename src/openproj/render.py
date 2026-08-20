@@ -7742,24 +7742,46 @@ function indentLines(area, out) {
   area.setSelectionRange(carried(start), carried(end));
 }
 
-// Where every source line of a textarea starts, in the box's own pixels.
+// The mirror. One of them, and every pixel question about a textarea is asked of
+// it: where each logical line starts, and where a caret at a given index is
+// drawn. There were two — this one and `_COEDIT`'s `ghost`, built the same way
+// for the seat bands and carrying the width bug below — and two mirrors is two
+// places for the same answer to be wrong in.
 //
 // A textarea has no DOM inside it, so there is no range to measure and no other
-// way to ask this: the answer comes from a mirror that is given the box's own
-// metrics and one block per logical line, and `offsetTop` then reads each line's
-// top straight off. Measured rather than assumed — `scrollTop / lineHeight` is
-// only right for a document in which nothing wraps, and in a pane half a window
-// wide most lines wrap.
+// way to ask any of this: the answer comes from a mirror that is given the box's
+// own metrics and one block per logical line, and `offsetTop` then reads a
+// position straight off. Measured rather than assumed — `scrollTop / lineHeight`
+// is only right for a document in which nothing wraps, and in a pane half a
+// window wide most lines wrap.
 //
 // **The width is the fractional content box, and that is the whole of the
-// accuracy.** `BODY.clientWidth` is an integer while the real content box is
-// fractional, and at a width sitting on a wrap boundary that integer flips one
-// break — after which every line below it is a whole line height out, up to
-// three. Measured across six corpora and 481 widths each: 1.7% to 10.4% of
-// widths wrong with the integer, 0 of 481 with this. `_COEDIT`'s seat mirror
-// still has the integer; it is the same mirror and the stage that draws the
-// gutter deletes that copy rather than fixing it.
-function lineTops(area) {
+// accuracy.** The seat mirror this replaces set `ghost.style.width =
+// BODY.clientWidth + 'px'` on a `border-box` element it had also handed the
+// textarea's padding and border to — so it took the padding box for a border box
+// and came out a whole border narrower than the real content box, on top of
+// `clientWidth` being an integer where the content box is fractional. At a width
+// sitting on a wrap boundary that flips one break, and every line below it lands
+// a whole line height out, up to three: 1.7% to 10.4% of widths across six
+// corpora and 481 widths each, against 0 of 481 with this. `VENDOR.md` holds
+// this feature to "a caret one line off is worse than no caret".
+//
+// `ask` is handed the mirror rather than the mirror handed back, so the thing
+// cannot outlive the question: an off-screen copy of the document left in the
+// page is one that goes stale and one a later `querySelector` finds.
+//
+// **Every top this answers is in the box's own SCROLL space** — zero is the top
+// of the padding box, which is what `scrollTop` counts from, so a consumer that
+// has already subtracted `scrollTop` is done. Anything drawn OVER the box is
+// positioned from its BORDER box instead and has one more term to add; that is
+// `textTop` below, and it is a whole border-width, which is why every line
+// number was a pixel above the line it numbered before it existed.
+//
+// `ask` is handed a `topOf` rather than being left to read `offsetTop`, and that
+// is the second half of the accuracy. `offsetTop` is an integer while a row here
+// is 20.15625px tall, so it rounds — and the rounding accumulates down the
+// document, up to half a row by the foot of a long one. A rect is fractional.
+function measuredLines(area, ask) {
   const style = getComputedStyle(area);
   const mirror = document.createElement('div');
   mirror.setAttribute('aria-hidden', 'true');
@@ -7781,15 +7803,251 @@ function lineTops(area) {
   // rows it draws on — which is what "line 17" means in the gutter of the editor
   // this is modelled on, and what `data-startline` counts on the other side.
   // A zero-width space on an empty line, or the box has no height at all.
-  mirror.append(...area.value.split('\n').map(line => {
+  const lines = area.value.split('\n');
+  mirror.append(...lines.map(line => {
     const row = document.createElement('div');
     row.textContent = line || '\u200b';
     return row;
   }));
   document.body.append(mirror);
-  const tops = [...mirror.children].map(row => row.offsetTop);
-  mirror.remove();
-  return tops;
+  // The mirror's own border box, plus its border, is the origin the box's
+  // `scrollTop` counts from — so a row's distance from it is the number a
+  // consumer can subtract `scrollTop` from directly.
+  const zero = mirror.getBoundingClientRect().top + parseFloat(style.borderTopWidth);
+  const topOf = element => element.getBoundingClientRect().top - zero;
+  try {
+    return ask([...mirror.children], lines, topOf);
+  } finally {
+    mirror.remove();
+  }
+}
+
+// Where every logical line of a textarea starts, in the box's own scroll space.
+function lineTops(area) {
+  return measuredLines(area, (rows, lines, topOf) => rows.map(topOf));
+}
+
+// And where the top of the box's first row of text is drawn, in the coordinates
+// of a layer that fills `host` — the gutter's column and the seat layer are both
+// absolutely positioned inside `.bodywrap`, whose top is the box's BORDER box,
+// while `lineTops` and `rowTops` answer from its padding box.
+//
+// One border-width apart, which sounds like nothing and is not: measured in
+// Chrome against an independent overlay, every line number came out exactly
+// 1.000px above the line it numbered, on every line, in a column of numbers
+// whose whole job is to line up with something.
+function textTop(area, host) {
+  return area.getBoundingClientRect().top - host.getBoundingClientRect().top
+    + (parseFloat(getComputedStyle(area).borderTopWidth) || 0);
+}
+
+// And where the carets at these indexes are drawn — the top of the visual ROW
+// each one sits on, which is not the top of its logical line the moment that line
+// wraps. A band on the first row of a paragraph somebody is typing the fourth row
+// of is a band pointing at the wrong sentence.
+//
+// Every index in one pass over one mirror, because the loop this replaces built a
+// mirror, filled it with a prefix of the whole document and laid it out once PER
+// PERSON in the room — the only item in this plan that makes something already
+// shipped cheaper.
+function rowTops(area, indexes) {
+  return measuredLines(area, (rows, lines, topOf) => {
+    const mark = document.createElement('span');
+    // A zero-width space, so the marker has a box on an empty line and so the
+    // line it is on does not come out one character wider than the real one.
+    mark.textContent = '\u200b';
+    return indexes.map(index => {
+      let line = 0;
+      let opens = 0;
+      // The line the index is IN, so an index at the very end of a line stays on
+      // that line rather than jumping to the top of the next one.
+      while (line < lines.length - 1 && index > opens + lines[line].length) {
+        opens += lines[line].length + 1;
+        line++;
+      }
+      const row = rows[line];
+      row.textContent = lines[line].slice(0, Math.max(0, index - opens));
+      row.append(mark);
+      const top = topOf(mark);
+      // Put the line back, or the second index measured is measured against a
+      // document the first one truncated.
+      row.textContent = lines[line] || '\u200b';
+      return top;
+    });
+  });
+}
+
+// Ask 4: the numbers down the side of the box.
+//
+// LOGICAL lines, one number each, aligned to the first visual row of the line it
+// numbers — which is what the note this is modelled on does, and what makes the
+// number mean the same thing as the line number in a diff, a stack trace or a
+// review comment. A count of visual rows would be a number that changes when you
+// drag the width handle.
+//
+// The ceiling exists because the rebuild is a layout of the whole document and
+// it happens on every keystroke. Measured in Chrome, mirror and numbers
+// together: 0.8ms at 100 lines, 2.6 at 400, 6.5 at 1,000, 8 at 1,200, 15.6 at
+// 2,000 and 25.3 at 4,000. A 60Hz frame is 16.7ms, so 2,000 already spends one
+// on a fast machine and the ceiling is set at half of one instead — the longest
+// document in this repository's own corpus is 124 lines, so a thousand is eight
+// times anything anybody has written here and still leaves room for a machine
+// three times slower than this one.
+//
+// Above it the gutter goes off and SAYS SO, in the bar above the box, with the
+// count it went off for. This application has shipped three branches that
+// decided not to act and said nothing about it, and a gutter that silently
+// vanishes on a long document is the one somebody reports as "the line numbers
+// are broken".
+const GUTTER_MAX = 1000;
+
+function attachGutter(area, note) {
+  const wrap = area.closest('.bodywrap');
+  if (!wrap) return;
+  const gutter = document.createElement('div');
+  gutter.className = 'gutter';
+  // Furniture, and out of the accessibility tree: a screen reader reading four
+  // hundred numbers before the document is worse than no gutter at all.
+  gutter.setAttribute('aria-hidden', 'true');
+  const rows = document.createElement('div');
+  rows.className = 'gutterrows';
+  gutter.append(rows);
+  // After the box and not before it, which decides which one is painted on top:
+  // both are positioned, so document order is the tie-break, and a gutter drawn
+  // under the textarea is a gutter behind an opaque background.
+  wrap.append(gutter);
+
+  // The numbers move with the box, and that is a transform on one element rather
+  // than a rebuild: scrolling changes where the lines are drawn and not where
+  // they are. `textTop` is the border the column is anchored outside of and the
+  // measurements are taken inside of; without it every number is one pixel high.
+  const slide = () => {
+    rows.style.transform =
+      'translateY(' + (textTop(area, wrap) - area.scrollTop) + 'px)';
+  };
+
+  // Named for what it draws, and not `draw`. This block ships on six pages, two
+  // of which have no body editor at all, and the table page declares a top-level
+  // `draw` of its own — so a generic name here is a name that reads as the
+  // table's to anything looking at the page as text. It is nested and therefore
+  // lexically safe, and the suite went red anyway: the test that greps out the
+  // table's sort routine by name matched this one first, because it comes
+  // earlier in the document. The same collision, arriving through the one door
+  // that was open.
+  let off = false;
+  // The column that is currently applied, or `null` for none. Kept because
+  // changing it changes where every line WRAPS — see the dispatch at the foot of
+  // this function — and a change has to be told from a redraw at the same width.
+  let column = null;
+  function drawGutter() {
+    // The same question `place` asks, and for the same reason: a box nothing is
+    // drawing measures zero, and a mirror given a width of zero wraps the
+    // document one character per row. Read mode is exactly that, and
+    // `openproj:editing` is what brings the gutter back.
+    if (!area.getClientRects().length) return;
+    const count = area.value.split('\n').length;
+    if (count > GUTTER_MAX) {
+      wrap.classList.remove('numbered');
+      rows.replaceChildren();
+      const said = 'Line numbers are off above ' + GUTTER_MAX.toLocaleString()
+        + ' lines — this document has ' + count.toLocaleString() + '.';
+      if (note) note.textContent = said;
+      // Both channels, and each is doing a different job. The label beside the
+      // box is the one that persists, and it is the one being relied on — but it
+      // lives in `.bodybar`, which is `display: none` until the article is
+      // editing, and a live region that is not displayed when its text is set is
+      // one a screen reader may never read out. `announce` is the page's single
+      // place for "something was refused and here is why" and it is always on the
+      // page. Said once per crossing, not once per keystroke: a live region that
+      // repeats itself on every input is one people turn off.
+      if (!off) announce(said);
+      off = true;
+      moved(null);
+      return;
+    }
+    if (note) note.textContent = '';
+    off = false;
+    // The column's width first, then the measurement: the width is the box's
+    // left padding, the padding decides the content box, and the content box
+    // decides where every line wraps. Measured before it is applied, the mirror
+    // answers about a box one gutter wider than the one on the screen.
+    const want = 'calc(' + String(count).length + 'ch + 1.1rem)';
+    wrap.style.setProperty('--gutter', want);
+    wrap.classList.add('numbered');
+    rows.replaceChildren(...lineTops(area).map((top, at) => {
+      const number = document.createElement('span');
+      number.className = 'lineno';
+      number.style.top = top + 'px';
+      number.textContent = String(at + 1);
+      return number;
+    }));
+    slide();
+    moved(want);
+  }
+
+  // This column is the box's own `padding-left`, so switching it on — or growing
+  // it from two digits to three, or taking it away again at the ceiling — narrows
+  // or widens the content box and rewraps every line in the document. Anything
+  // else drawn over the box is then on the wrong line, which is the exact defect
+  // this stage exists to remove, arriving through the stage's own new feature:
+  // measured in Chrome, turning the gutter on left the band for a caret below a
+  // wrapping paragraph one whole 20.15px row above where it belonged.
+  //
+  // So the gutter says so, through the event every layer over this box already
+  // listens to. Only on a real change, which is what stops it being a loop: this
+  // function is one of the listeners, and the redraw a dispatch causes writes the
+  // same column and dispatches nothing.
+  function moved(now) {
+    if (now === column) return;
+    column = now;
+    dispatchEvent(new Event('openproj:editing'));
+  }
+
+  // Coalesced, because one resize is a burst of events and each of these is a
+  // layout of the whole document. A frame AND a timer, whichever arrives first:
+  // `requestAnimationFrame` is the right clock for something about to be
+  // painted, and it is also a clock that does not tick in a tab nobody is
+  // looking at — the finding `announce` records — nor under the headless virtual
+  // clock every pixel question in this repository is asked through, which would
+  // make the gutter the one drawing here that no test can see.
+  let frame = 0;
+  let backstop = 0;
+  function now() {
+    cancelAnimationFrame(frame);
+    clearTimeout(backstop);
+    backstop = 0;
+    drawGutter();
+  }
+  function later() {
+    if (backstop) return;
+    frame = requestAnimationFrame(now);
+    backstop = setTimeout(now, 32);
+  }
+
+  area.addEventListener('scroll', slide);
+  area.addEventListener('input', later);
+  addEventListener('resize', later);
+  // Every view change, and the one that turns editing on: the box arrives, or
+  // changes width by half a window, and the numbers are a function of its width.
+  addEventListener('openproj:editing', later);
+  // And the box changing shape without any of those, which is three things at
+  // once: the width grip writes `--measure` and calls `place()` and dispatches
+  // nothing; this column IS the box's left padding, so turning it on narrows the
+  // content box and rewraps every line under it; and the box carries a
+  // `resize: vertical` handle of its own. All three are the CONTENT box
+  // changing, which is what a `ResizeObserver` observes by default, so one
+  // observer answers all three rather than three events being remembered
+  // separately. Measured before this: dragging the grip to 30rem left six of
+  // nine numbers between 20.8 and 122.1px off their lines until the window was
+  // resized. The redraw this observer causes can itself change the column's
+  // width, which fires the observer once more and then settles, because the
+  // second pass writes the same `--gutter` and changes no size.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(later).observe(area);
+  // A mirror in a fallback face measures the fallback's line height, and every
+  // number then lands on the wrong row on the one machine whose webfont has not
+  // arrived yet.
+  if (document.fonts) document.fonts.ready.then(later);
+  drawGutter();
 }
 
 function attachEditing(area, bar) {
@@ -8705,6 +8963,26 @@ BODY.addEventListener('input', () => { sourcePoints = null; refreshPreview(); })
 TITLED.addEventListener('input', () => refreshPreview());
 // Both maps are in pixels and every pixel here is a function of the width.
 addEventListener('resize', () => { sourcePoints = null; previewPoints = null; });
+// Both maps again, on anything that moves the box or changes the text under it
+// without an `input` event — a view change, the gutter's column, the width
+// handle, somebody else's keystroke. The same event the seat layer and the
+// gutter are woken by, for the same reason: every number in both lists is a
+// pixel, and all four of those change pixels.
+//
+// The rendered side matters as much as the source side and was being thrown away
+// only on a window resize: going from the split to preview-only doubles the
+// pane's width and rewraps every block in it, so the map the sync reads was
+// measured in a pane half that wide.
+//
+// **And no preview is asked for here**, which is the line that is deliberately
+// absent. The rendered document is a function of the text and the title and of
+// nothing about the box, so a render on a view change is a round trip for a
+// document the server has already been sent — measured, one extra per view
+// opened, arriving on top of the one `showView` asks for itself.
+addEventListener('openproj:editing', () => {
+  sourcePoints = null;
+  previewPoints = null;
+});
 
 // --- how a view is asked for ------------------------------------------------
 
@@ -8844,6 +9122,11 @@ _NEW = """
         <p class="field bodybar markbar">
           <span id="marks" class="marks"></span>
           <span class="hint" id="upload" role="status" aria-live="polite"></span>
+          {#- Where the gutter says it has switched itself off, and why. A count
+              of lines is a fact about the document, so it belongs beside the box
+              and not in a banner: a gutter that simply vanishes on a long
+              document is the one somebody reports as broken. -#}
+          <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
         </p>
         <div class="bodysplit">
           <div class="bodywrap">
@@ -8909,6 +9192,7 @@ const BODY = FORM.querySelector('[name=body]');
 const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
 attachEditing(BODY, document.getElementById('marks'));
+attachGutter(BODY, document.getElementById('gutter-note'));
 
 // The body a new entity starts from. Switching kind switches template, because
 // picking "pitch" and getting a task's headings is the wrong default in the one
@@ -9163,6 +9447,11 @@ _DETAIL = """
       <p class="field bodybar markbar">
         <span id="marks" class="marks"></span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
+        {#- Where the gutter says it has switched itself off, and why. A count of
+            lines is a fact about the document, so it belongs beside the box and
+            not in a banner: a gutter that simply vanishes on a long document is
+            the one somebody reports as broken. -#}
+        <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
       </p>
       {#- The two panes of the split view, in one box so the view can hand them a
           column each and so each scrolls on its own. The box, and a layer over it
@@ -9247,6 +9536,17 @@ grip.onpointerdown = event => {
     const width = Math.max(320, (e.clientX - innerWidth / 2) * 2);
     root.style.setProperty('--measure', width + 'px');
     place();
+    // The one control whose entire job is to change the width of the box has to
+    // tell the two layers drawn over it, because every pixel either of them draws
+    // is a function of that width. Measured before this: dragging to 30rem left
+    // six of nine line numbers between 20.8 and 122.1px off their lines — up to
+    // six whole rows — and the seat bands with them, until a window resize
+    // happened to put them back. A `ResizeObserver` also catches this and is
+    // installed for the box's own resize handle, but it is delivered on the
+    // rendering step, which the headless clock every pixel question here is asked
+    // through runs exactly once; a redraw only an observer can cause is a redraw
+    // no test in this repository can see.
+    dispatchEvent(new Event('openproj:editing'));
   };
   const stop = () => {
     grip.classList.remove('dragging');
@@ -9276,6 +9576,7 @@ const BODY = FORM.querySelector('[name=body]');
 const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
 attachEditing(BODY, document.getElementById('marks'));
+attachGutter(BODY, document.getElementById('gutter-note'));
 // The commit this page was rendered at, and what every save is compared against.
 // Read through this one box rather than looked up at each write, because a
 // restored draft moves it back to the commit that draft was written on top of.
@@ -9656,6 +9957,22 @@ const COEDIT = (() => {
     // else typed is the thing nobody asked for.
     if (document.activeElement === BODY) BODY.setSelectionRange(moved(start), moved(end));
     dirty();
+    // Assigning `.value` fires no `input` event, and everything drawn over this
+    // box hangs off one. `heard` already calls `drawSeats(); sit();` here for
+    // exactly that reason and says so; the gutter, the source line map and the
+    // live preview were added later and were not given the same wake-up, so
+    // somebody else adding a line left your numbers with the wrong count, the
+    // scroll sync reading a stale map, and the rendered pane showing a document
+    // nobody has any more. One event, dispatched from the one place that changes
+    // the text without typing it, rather than a fourth call added here every time
+    // something new listens.
+    dispatchEvent(new Event('openproj:editing'));
+    // And the rendered pane, asked for by name rather than folded into the event
+    // above: this is the one caller of the four that changed a CHARACTER, and the
+    // other three would each be paying for a render of a document the server has
+    // already been sent. `_VIEWS` is a block above this one in the same scope, and
+    // the guard is for the pages that do not carry it.
+    if (typeof refreshPreview === 'function') refreshPreview();
   }
 
   doc.on('update', (update, origin) => {
@@ -9697,6 +10014,17 @@ const COEDIT = (() => {
 
   // Drawn again when the box appears. See `showEditing`.
   addEventListener('openproj:editing', () => { drawSeats(); sit(); });
+  // And again whenever the box changes shape, which no event on this page says.
+  // Three ways it happens and one observer for all three, because all three are
+  // the content box changing: the width grip writes `--measure` and dispatches
+  // nothing, the gutter's column is the box's own left padding so switching it on
+  // rewraps every line under the bands, and the box has a `resize: vertical`
+  // handle. Measured before this: turning the gutter on left the band for a caret
+  // below a wrapping paragraph a whole 20.15px row above where it belonged, and
+  // it stayed there until something else forced a redraw.
+  if (BODY && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => drawSeats()).observe(BODY);
+  }
 
   // One hue per login, from the name itself: no server-side allocation, no
   // colour that changes when somebody leaves and rejoins, and the same person is
@@ -9709,44 +10037,34 @@ const COEDIT = (() => {
     return hash;
   }
 
-  // The mirror. Built once, kept out of the accessibility tree, and given the
-  // textarea's own metrics every time it is measured — a mirror whose font is a
-  // fallback measures the fallback's line height, and every band lands somewhere
-  // else on the machine that has no webfont yet.
-  const ghost = document.createElement('div');
-  ghost.className = 'ghost';
-  ghost.setAttribute('aria-hidden', 'true');
-
-  function measure(at) {
-    const style = getComputedStyle(BODY);
-    for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
-                        'letterSpacing', 'padding', 'border', 'whiteSpace',
-                        'wordBreak', 'overflowWrap', 'tabSize', 'boxSizing']) {
-      ghost.style[name] = style[name];
-    }
-    ghost.style.width = BODY.clientWidth + 'px';
-    ghost.textContent = BODY.value.slice(0, at);
-    const mark = document.createElement('span');
-    // A zero-width space so the marker has a box on an empty line, and so the
-    // line it is on does not get one character wider than the real one.
-    mark.textContent = '\u200b';
-    ghost.appendChild(mark);
-    const top = mark.offsetTop;
-    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
-    return {top, height};
-  }
-
+  // The mirror is `rowTops`, in the shared editing block, and this code used to
+  // carry a second copy of it — same twelve styles, same zero-width marker, and
+  // the width bug that copy is named for. One mirror now: it is measured as a
+  // fractional content box, so the bands stop landing whole line heights out at
+  // widths sitting on a wrap boundary, and it is laid out ONCE for everybody in
+  // the room rather than once per person.
   function drawSeats() {
     const layer = document.getElementById('seats');
     if (!layer || !BODY) return;
     const others = seats.filter(seat => seat.login !== me);
     if (!others.length) { layer.replaceChildren(); return; }
-    document.body.appendChild(ghost);
-    const drawn = others.map(seat => {
-      const {top, height} = measure(Math.min(seat.at, BODY.value.length));
+    // A box nothing is drawing has no rows to sit on. The roster arrives while
+    // the page is still in read mode, where the textarea is `display: none` and
+    // every measurement is zero — and a mirror given a width of zero wraps the
+    // whole document one character per row before answering with a number that
+    // means nothing. `openproj:editing` is what brings everyone back.
+    if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
+    const style = getComputedStyle(BODY);
+    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
+    const tops = rowTops(BODY, others.map(seat => Math.min(seat.at, BODY.value.length)));
+    // The layer fills `.bodywrap`, whose top is the box's border box, while
+    // `rowTops` answers from its padding box. One border-width, on every band.
+    const origin = textTop(BODY, layer);
+    const drawn = others.map((seat, which) => {
+      const top = tops[which];
       const band = document.createElement('div');
       band.className = 'seat';
-      band.style.top = (top - BODY.scrollTop) + 'px';
+      band.style.top = (origin + top - BODY.scrollTop) + 'px';
       band.style.height = height + 'px';
       band.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .22)`;
       const who = document.createElement('span');
@@ -9757,7 +10075,6 @@ const COEDIT = (() => {
       band.appendChild(who);
       return band;
     });
-    ghost.remove();
     layer.replaceChildren(...drawn);
   }
 
@@ -10103,11 +10420,6 @@ article.entity:not(.editing) .req { display: none; }
 .seatname { position: absolute; right: .25rem; top: 0;
             font-size: 10px; line-height: 1.4; padding: 0 .3rem; border-radius: 3px;
             color: var(--bg); font-family: var(--font-sans); }
-/* Off the page and measured, never seen. It carries the textarea's own metrics —
-   a mirror in a fallback face measures the fallback's line height, and every band
-   then lands on the wrong row on the one machine whose webfont has not arrived. */
-.ghost { position: absolute; visibility: hidden; top: -9999px; left: -9999px;
-         white-space: pre-wrap; word-break: break-word; }
 .bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
 /* The second row sits under the first rather than a paragraph's worth away: they
    are two halves of one bar, and the box they belong to is below both. */
@@ -10143,10 +10455,34 @@ input.field, select.field, textarea.field {
   background: var(--surface); color: inherit;
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
-textarea.body-field {
-  min-height: 60vh; font-family: var(--font-mono);
-  font-size: 13px; line-height: 1.55; resize: vertical;
-}
+/* One declaration for the box and for the numbers beside it. Written twice, the
+   gutter walks out of step with the lines it names by a pixel a line, which is
+   invisible at the top of a document and half a row down at the bottom of one —
+   and an invariant written twice is an invariant guarded once. */
+/* The seat layer is in the list because `--gutter` is written in `ch`, and `ch`
+   is resolved by whoever USES the value: the column and the box's padding both
+   resolve it in this face, and `.bodywrap.numbered .seat { left: var(--gutter) }`
+   was resolving the same token in the page's sans face and starting the bands a
+   pixel to the right of the text they sit behind. */
+textarea.body-field, .gutter, .seats { font-family: var(--font-mono);
+                                       font-size: 13px; line-height: 1.55; }
+textarea.body-field { min-height: 60vh; resize: vertical; }
+/* Ask 4. The column is the box's own left padding, so the numbers sit in space
+   the text has already been kept out of rather than over the top of it — which
+   also means the mirror that measures the lines is measuring the same content
+   box the reader is looking at, because it copies the padding.
+   `--gutter` is set from the page, in `ch` of this face, so the column is as
+   wide as the widest number and no wider. */
+.gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--gutter, 0);
+          overflow: hidden; pointer-events: none; color: var(--muted);
+          text-align: right; }
+.gutterrows { position: absolute; left: 0; right: 0; top: 0; }
+.lineno { position: absolute; right: .45rem; }
+.bodywrap.numbered textarea.body-field { padding-left: var(--gutter); }
+/* And the bands start where the text does. A band that runs under the numbers
+   tints them with somebody else's colour, which reads as the gutter belonging to
+   whoever is in the room. */
+.bodywrap.numbered .seat { left: var(--gutter); }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }

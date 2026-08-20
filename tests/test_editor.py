@@ -1311,6 +1311,13 @@ area.value = Array.from({length: 200}, (_, i) => `line ${i + 1} ` + 'w'.repeat(9
 area.dispatchEvent(new Event('input', {bubbles: true}));
 const editing = state();
 
+// Let the gutter settle before counting. Its column is the box's own left
+// padding, so switching it on rewraps every line — it says so through this same
+// event, on purpose, and it says it once for the document below because two
+// hundred lines is three digits from the first draw to the last. Counting from
+// before that first draw would count a redraw as a view change.
+await new Promise(go => setTimeout(go, 80));
+
 // Every view change has to tell the seat layer the box moved. The Preview button
 // this replaces set `BODY.hidden = true` and dispatched nothing.
 let told = 0;
@@ -1806,6 +1813,195 @@ def test_a_view_change_tells_the_seat_layer_the_box_moved(client: TestClient):
     # And `drawSeats` is still listening for it, which is the other end of the
     # seam and the half a grep of one file cannot see.
     assert "addEventListener('openproj:editing', () => { drawSeats(); sit(); });" in page
+
+
+# Ask 4: the numbers down the side of the box, asked of Chrome because a line
+# number is a pixel claim and nothing else can answer one.
+#
+# Six lines chosen for the six ways a run of text decides where to break, because
+# the whole feature is a mirror agreeing with a textarea about exactly that: prose
+# that wraps on spaces, CJK that wraps between any two characters, a ZWJ sequence
+# and a regional-indicator pair that must not be broken through the middle of a
+# character, a hard tab whose width is `tab-size` and not a space, a URL with
+# nothing in it to break on, and an empty line — which has no box at all unless
+# something is put in it.
+_GUTTER_BODY = "\n".join((
+    "line one is short",
+    # Long on purpose, and this is the sensitivity of the whole test. A line of
+    # two rows changes its row count only at the few widths where its one break
+    # moves; a line of fifty changes it at most of them, so an error of two pixels
+    # in the mirror's width — which is exactly the error the old seat mirror had —
+    # shows up as every number below it being a whole row out.
+    "and the second line is ordinary prose, long enough that it has to wrap many "
+    "times over at any of the widths below, which is the case the whole mirror "
+    "exists for and the one a count of characters gets wrong. " * 12,
+    "這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字這是一段中文字",
+    "\tone\ttwo\tthree tabbed columns and then a run of words long enough to wrap",
+    "family 👨‍👩‍👧‍👦 flags 🇨🇭🇩🇪 and coders "
+    "👩‍💻👨‍🚒 with words after them to carry the line past a break",
+    "https://example.com/a/very/long/unbreakable/path/that/has/nothing/in/it/to/break/on/at/all",
+    "",
+    "last line",
+))
+
+_NUMBERING = f"const GUTTER_BODY = {json.dumps(_GUTTER_BODY)};" + """
+const area = document.querySelector('textarea[name=body]');
+const article = document.querySelector('article.entity');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+
+// The ground truth, built here and owing nothing to the page. It is a
+// CONTENT-box div with no padding and no border, given the box's real content
+// width term by term, where the page's mirror is a BORDER-box div handed the
+// box's padding and border and a width that includes them. Two constructions
+// that must agree; if the test used the page's own it would agree with whatever
+// the page did, which is how the scroll-sync test came to pin its own defect.
+function truth() {
+  const style = getComputedStyle(area);
+  const mirror = document.createElement('div');
+  for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+                      'letterSpacing', 'whiteSpace', 'wordBreak', 'overflowWrap',
+                      'tabSize']) {
+    mirror.style[name] = style[name];
+  }
+  mirror.style.position = 'absolute';
+  mirror.style.top = '0';
+  mirror.style.left = '-9999px';
+  mirror.style.boxSizing = 'content-box';
+  mirror.style.padding = '0';
+  mirror.style.border = '0';
+  const bars = area.offsetWidth - area.clientWidth
+    - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+  mirror.style.width = (area.getBoundingClientRect().width
+    - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth)
+    - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - bars) + 'px';
+  const lines = area.value.split('\\n');
+  for (const line of lines) {
+    const row = document.createElement('div');
+    row.textContent = line || '\\u200b';
+    mirror.append(row);
+  }
+  document.body.append(mirror);
+  const zero = mirror.getBoundingClientRect().top;
+  const tops = [...mirror.children].map(row => row.getBoundingClientRect().top - zero);
+  const rows = Math.round(
+    mirror.getBoundingClientRect().height / parseFloat(style.lineHeight));
+  mirror.remove();
+  // Where the box's first row of text is drawn on the screen: its border box,
+  // plus its border, plus its padding. Every term written out, because the one
+  // that was missing is what put every number a pixel high.
+  const origin = area.getBoundingClientRect().top
+    + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+  return {tops, rows, lines: lines.length, origin};
+}
+
+document.getElementById('toggle').click();
+area.value = GUTTER_BODY;
+area.dispatchEvent(new Event('input', {bubbles: true}));
+// The gutter coalesces onto a frame with a 32ms backstop, and under the headless
+// clock the rendering step runs once, so the backstop is the one that fires.
+await settle(120);
+
+// Swept one CSS pixel at a time, because the failure this stage is named for
+// only shows at a width sitting on a wrap boundary: two pixels of error in the
+// mirror's width flips one break and puts every line below it a whole row out,
+// and a coarse sweep steps straight over the widths where that happens.
+const answers = [];
+for (let measure = 520; measure < 580; measure++) {
+  article.style.setProperty('--measure', measure + 'px');
+  dispatchEvent(new Event('openproj:editing'));
+  // The gutter's backstop is 32ms.
+  await settle(40);
+  const ground = truth();
+  const numbers = [...document.querySelectorAll('.lineno')];
+  answers.push({
+    measure,
+    count: numbers.length,
+    lines: ground.lines,
+    wrapped: ground.rows - ground.lines,
+    labels: numbers.map(number => number.textContent).join(','),
+    boxWidth: Math.round(area.getBoundingClientRect().width * 100) / 100,
+    worst: numbers.length === ground.lines ? Math.max(...numbers.map(
+      (number, at) => Math.abs(
+        number.getBoundingClientRect().top - (ground.origin + ground.tops[at])))) : null,
+  });
+}
+
+// And the one control whose entire job is to change the width of the box. The
+// handle writes `--measure` and calls `place()`; before this it dispatched
+// nothing, so the numbers stayed where the old width had put them — measured, up
+// to six whole rows out — until a window resize happened to put them back. The
+// inline property this sweep has been using is removed first, or it would beat
+// the one the handle writes on the root and the drag would move nothing.
+article.style.removeProperty('--measure');
+const grip = document.getElementById('grip');
+grip.dispatchEvent(new PointerEvent(
+  'pointerdown', {bubbles: true, pointerId: 1, clientX: innerWidth / 2 + 400}));
+dispatchEvent(new PointerEvent(
+  'pointermove', {bubbles: true, pointerId: 1, clientX: innerWidth / 2 + 231}));
+dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
+await settle(80);
+const ground = truth();
+const numbers = [...document.querySelectorAll('.lineno')];
+const dragged = {
+  boxWidth: Math.round(area.getBoundingClientRect().width * 100) / 100,
+  count: numbers.length,
+  lines: ground.lines,
+  worst: numbers.length === ground.lines ? Math.max(...numbers.map(
+    (number, at) => Math.abs(
+      number.getBoundingClientRect().top - (ground.origin + ground.tops[at])))) : null,
+};
+
+return {answers, dragged};
+"""
+
+
+def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_path: Path):
+    """Ask 4, pinned against a mirror this test builds itself.
+
+    One number per LOGICAL line, on the first visual row of it — which is what the
+    note this is modelled on draws, and what makes the number mean the same thing
+    as a line number in a diff, a stack trace or a review comment. A count of
+    visual rows would be a number that changes when you drag the width handle.
+
+    The corpus is chosen for the ways a run of text decides where to break, and
+    the widths are swept because the failure this whole stage is about only
+    appears at a width sitting on a wrap boundary. The tolerance is under a pixel
+    on purpose: the two errors this catches are a whole border-width (the column
+    is anchored to the box's border box and the rows are measured from its padding
+    box) and the accumulating rounding of an integer `offsetTop` against a
+    20.15625px row.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "gutter.html", 1400,
+        _NUMBERING, budget=6000,
+    )
+
+    for answer in got["answers"]:
+        where = f"at --measure: {answer['measure']}px (box {answer['boxWidth']}px)"
+        assert answer["count"] == answer["lines"], (
+            f"{where}: {answer['count']} numbers for {answer['lines']} logical lines"
+        )
+        assert answer["wrapped"] > 0, (
+            f"{where}: nothing wrapped, so this width proves nothing about a gutter "
+            "that counts logical lines rather than visual rows"
+        )
+        assert answer["labels"] == ",".join(
+            str(n + 1) for n in range(answer["lines"])
+        ), f"{where}: the numbers are not 1..n in order"
+        assert answer["worst"] < 0.25, (
+            f"{where}: a line number is {answer['worst']:.3f}px off the line it numbers"
+        )
+
+    assert got["dragged"]["boxWidth"] != got["answers"][-1]["boxWidth"], (
+        "the width handle moved nothing, so the drag below asks nothing"
+    )
+    assert got["dragged"]["count"] == got["dragged"]["lines"]
+    assert got["dragged"]["worst"] < 0.25, (
+        f"after a drag of the width handle a line number is "
+        f"{got['dragged']['worst']:.3f}px off the line it numbers — the one control "
+        "whose whole job is to change the width of the box did not tell the column "
+        "of numbers beside it"
+    )
 
 
 _LEAVING = _STUB_PREVIEW + """

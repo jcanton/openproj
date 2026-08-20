@@ -404,7 +404,7 @@ Zero vendored bytes. Ships asks 1 and 3 — the two highest felt value on the li
 Zero vendored bytes. Ships ask 4. **One shared block plus `_DETAIL`'s seat code**, since
 `drawSeats` lives in `_COEDIT`.
 
-- [ ] **S3.1** **Alone, first, as a correctness fix to shipped code:** `render.py:8838` is
+- [x] **S3.1** **Alone, first, as a correctness fix to shipped code:** `render.py:8838` is
       `ghost.style.width = BODY.clientWidth + 'px'` — an integer, while the textarea's real
       content box is fractional. Measured across six corpora × 481 widths, that mismatches
       at 1.7%–10.4% of widths, never by a pixel and always by a whole line height, up to
@@ -412,13 +412,13 @@ Zero vendored bytes. Ships ask 4. **One shared block plus `_DETAIL`'s seat code*
       `getBoundingClientRect().width` minus fractional borders, padding and the integer
       scrollbar gutter. `VENDOR.md` holds this feature to "a caret one line off is worse
       than no caret".
-- [ ] **S3.2** One `display:block` span per **logical** line in that same mirror; numbers
+- [x] **S3.2** One `display:block` span per **logical** line in that same mirror; numbers
       positioned absolutely from `offsetTop`; rAF-coalesced; redrawn on
       `document.fonts.ready` and `resize` — the mirror's own comment already records that a
       mirror whose font is a fallback measures the fallback's line height.
-- [ ] **S3.3** A line-count ceiling above which the gutter turns itself off **out loud**,
+- [x] **S3.3** A line-count ceiling above which the gutter turns itself off **out loud**,
       rather than stuttering. 4.4 ms to rebuild 400 logical lines, 22 ms at 2,000.
-- [ ] **S3.4** Repoint `drawSeats` (`render.py:8850`) to read band tops from the same
+- [x] **S3.4** Repoint `drawSeats` (`render.py:8850`) to read band tops from the same
       mirror, deleting its per-caret `measure()` loop (`render.py:8831`). Co-editing gets
       cheaper as a side effect — the only item in this plan that reduces existing risk.
 

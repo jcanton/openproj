@@ -380,6 +380,14 @@ class Element {
   // sized box, and takes an empty list to mean "not laid out" — which is exactly
   // the state a run in here is in. Without the method at all the shell's script
   // stopped on a TypeError instead, taking the two lines after it with it.
+  //
+  // **It answers that for every element, which makes two functions no-ops in
+  // here.** The gutter's `drawGutter` and the room's `drawSeats` both open with
+  // `if (!area.getClientRects().length) return;` — "a box nothing is drawing has
+  // no rows to sit on" — so under this shim neither ever draws anything. A test
+  // written for either one in here would pass without executing the code it is
+  // about, which is the vacuous green this file has produced three times. Line
+  // numbers and seat bands are asked of Chrome, through `tests/browser.py`.
   getClientRects() { return []; }
   // The graph measures its labels against a canvas before it draws anything, so
   // without this the script stops above every line that saves a dependency.
@@ -651,6 +659,11 @@ async function run(html, expression, options) {
     setInterval: () => 0,
     clearInterval: () => {},
     requestAnimationFrame: () => 0,
+    // Its pair, which was missing: a page that coalesces work onto a frame
+    // cancels the frame when a timer beats it to the work, and a bare
+    // identifier that is not on the sandbox is a ReferenceError that stops
+    // the script on the line it appears in.
+    cancelAnimationFrame: () => {},
     Event: DriverEvent,
     CustomEvent: DriverEvent,
     EventSource: class { constructor() { this.onmessage = null; } close() {} },
