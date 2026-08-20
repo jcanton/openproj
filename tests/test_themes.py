@@ -147,7 +147,8 @@ for (const scheme of SCHEMES) {
     worst.accent = ratio(token('--accent'), bg);
     for (const status of STATUSES) {
       // The chip: its word on its own soft ground.
-      worst['chip:' + status] = ratio(token(`--st-${status}-text`), token(`--st-${status}-soft`));
+      worst['chip:' + status] = ratio(token(`--st-${status}-text`),
+                                      token(`--st-${status}-soft`));
       // The node and the bar: the title on the fill it is drawn on.
       worst['fill:' + status] = ratio(token(`--st-${status}-ink`), token(`--st-${status}`));
     }
@@ -273,7 +274,9 @@ def test_a_scheme_reaches_the_boxes_people_type_into(tmp_path: Path):
 
 _CANVAS = """
 const fills = {};
-cy.nodes().filter(n => n.isChildless()).forEach(n => { fills[n.data('status')] = n.style('background-color'); });
+cy.nodes().filter(n => n.isChildless()).forEach(n => {
+  fills[n.data('status')] = n.style('background-color');
+});
 return {fills, token: token('--st-done'), edge: cy.edges()[0].style('line-color')};
 """
 

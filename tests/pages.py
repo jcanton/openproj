@@ -232,7 +232,7 @@ def selects(page: str) -> list[list[tuple[str, str]]]:
     # The scheme picker is not a filter and has no "all". Dropped here rather
     # than in each caller, because every caller is asking about filters.
     return [
-        options for options, which in zip(parser.found, parser.ids)
+        options for options, which in zip(parser.found, parser.ids, strict=True)
         if which != "scheme"
     ]
 
