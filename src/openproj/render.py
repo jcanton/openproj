@@ -9435,6 +9435,19 @@ const INDENT_WIDTHS = [2, 4, 8];
 // draft this browser is holding. An interval coarser than it would let somebody
 // set their own floor below the thing that catches them.
 const DRAFT_SECONDS = [1, 2, 5, 10, 20];
+// How lopsided the split view may be remembered as being: the writing box over
+// the preview, which is what `--split` is in `fr`. Every other value here is one
+// of a list and `one()` checks it; this is a ratio, so it gets its own guard and
+// the guard has to be its own kind of strict. `{"split": "wide"}` is one
+// hand-edit away and it would reach `minmax(0, wide)`, which is not a track size
+// — the whole `grid-template-columns` declaration is then invalid at computed
+// value time and the three tracks lay out as three auto columns, which is the
+// split view with its panes in the wrong places rather than a value quietly
+// ignored. And a bound as well as a number, because a ratio dragged out on a
+// wide monitor and restored on a laptop is a pane at a few pixels: `applySplit`
+// clamps to what fits on the screen it is actually on, and this is the outer
+// fence around what may be stored at all.
+const SPLIT_RANGE = 8;
 // The two surfaces, spelled the way the query string spells them, because these
 // are the same two strings the server reads — one vocabulary and not two.
 // `ace` first now, because it is the one a page carries when nobody said
@@ -9470,6 +9483,17 @@ const EDITOR = (() => {
     mode: one(held.mode, ['edit', 'both', 'view'], null),
     indent: one(held.indent, INDENT_WIDTHS, 2),
     autosave: one(held.autosave, DRAFT_SECONDS, 2),
+    // Added to this key rather than bumping it to `openproj:editor:2`. A bump
+    // says "the SHAPE changed and the old value cannot be read"; every field
+    // here is read one at a time against its own fallback, so a stored map from
+    // before this commit simply has no `split` and gets the default. Bumping
+    // would throw away four settings people have chosen to introduce a fifth
+    // that costs nothing to be absent.
+    //
+    // `Number.isFinite` and not a `>` chain: it rejects `null`, `"2"` and `NaN`
+    // by itself, and a string is exactly what a hand-edited entry is.
+    split: Number.isFinite(held.split) && held.split >= 1 / SPLIT_RANGE
+           && held.split <= SPLIT_RANGE ? held.split : 1,
     editor: chose ?? kept ?? 'ace',
     // Whether anybody actually said so, as against this being the default — and
     // it is a separate fact because the default must not announce its own
@@ -9485,7 +9509,7 @@ const EDITOR = (() => {
 // What is written down, named rather than "whatever is on the object": the
 // object also carries things that are true of this load and not of this browser,
 // and a preference store that quietly grows a field is one nothing forgets.
-const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'keymap'];
+const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'keymap', 'split'];
 
 function rememberEditor(change) {
   Object.assign(EDITOR, change);
@@ -10696,6 +10720,36 @@ _VIEW_SEGMENTS = (
 )
 
 
+# The join between the two panes of the split view, and the one control that
+# moves it — jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you
+# make it possible to horizontally resize the editor vs the preview boxes?"
+#
+# **A real separator, not a div with a drag handler.** `role="separator"` with a
+# `tabindex` is the window-splitter pattern: it is announced as what it is, it
+# carries its position as a value, and it answers the arrow keys and Home and End
+# as well as a pointer. A splitter that answers only a mouse is the same defect as
+# the thirteen mouse-only toolbar buttons earlier in this branch, which jcanton's
+# reviewers caught and which cost a commit each to put right.
+#
+# The three `aria-value*` numbers are the writing box's share of the two panes as
+# a percentage, and they are corrected by `applySplit` the moment the split view
+# opens — the floor is measured in pixels against the window, so what 0 and 100
+# actually resolve to is not knowable from here. `aria-valuetext` because "62"
+# read out on its own says nothing about what it is 62 of.
+#
+# One constant and four templates, for the same reason `_VIEW_SEGMENTS` is one:
+# the four pages that draw this surface are one surface, and four copies of a
+# control is four places for it to drift.
+_SPLIT_HANDLE = Markup(
+    '<div id="splitter" role="separator" tabindex="0" aria-orientation="vertical"'
+    ' aria-label="Split between the writing box and the preview"'
+    ' aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"'
+    ' aria-valuetext="50% writing, 50% preview"'
+    ' title="Drag, or use the arrow keys, to divide the two panes.'
+    ' Double-click evens them."></div>'
+)
+
+
 # Which of the two editors, beside the three views — jcanton, 2026-08-20: "can we
 # have the editor toggle as a toggle switch next to the three views buttons".
 #
@@ -11095,9 +11149,154 @@ function showView(mode) {
   // The width handle belongs to the measure, and full page has none. `place` is
   // the detail page's; the create form has no grip and no such function.
   if (typeof place === 'function') place();
+  // And the other handle, whose whole existence is this one view: the classes
+  // are on the article by here, so the stylesheet has already decided whether
+  // there is a splitter to have and `applySplit` can simply look.
+  applySplit();
   sourcePoints = null;
   refreshPreview(true);
 }
+
+// --- where the join between the two panes is --------------------------------
+//
+// The stylesheet beside `.bodysplit` carries the argument: the constant total is
+// structural, so what lives here is one ratio, one clamp and the four ways a
+// person moves it.
+//
+// **This is not the width grip and the two are never on screen together.**
+// `#grip` drags `--measure`, the reading measure of the page, and `place()` hides
+// it the moment the article goes full page; `#splitter` divides two panes and the
+// stylesheet draws it in the split view and nowhere else. Two handles that both
+// change widths on one screen would be two controls nobody can tell apart, and
+// the answer to that is that there is only ever one of them there.
+//
+// No null check on the handle, which is the contract this block already keeps
+// with `BODY`, `VIEW_PANE` and `VIEW_BAR`: the four templates that emit `_VIEWS`
+// emit `_SPLIT_HANDLE` inside the same `{% if editable %}` as the box this whole
+// script is built around.
+const SPLITTER = VIEW_ARTICLE.querySelector('#splitter');
+const SPLIT = VIEW_ARTICLE.querySelector('.bodysplit');
+// Neither pane may collapse, in either direction: a pane dragged to nothing is a
+// pane you cannot drag back. In px because a pointer is in px, and 240 is the
+// 15rem at which a pane still shows the shape of a document.
+const SPLIT_FLOOR = 240;
+// What one arrow press moves — small enough to place the join exactly, large
+// enough to cross a 1400px window in under twenty presses.
+const SPLIT_STEP = 32;
+// Written on the root beside `--measure`, for the reason the comment there gives:
+// it is a property of the screen this is being read on, not of the plan. `root`
+// is the detail page's name for the same element and exists on one of the four
+// pages that reach here, so it cannot be reused — one global lexical scope, and a
+// second `const root` is a SyntaxError for the whole document.
+const SPLIT_ROOT = document.documentElement;
+
+// How much width the two panes have between them, and 0 when there is no handle
+// to divide it with. `getClientRects()` rather than reading the breakpoint back
+// with `matchMedia`: the width at which the handle stops existing is written
+// once, in the stylesheet, and an invariant written in two languages is an
+// invariant guarded in one. A box with no rects is one nothing is drawing, which
+// is the question actually being asked — `place()` arrived at the same test.
+function splitSpace() {
+  if (!SPLITTER.getClientRects().length) return 0;
+  return SPLIT.clientWidth - SPLITTER.offsetWidth;
+}
+
+// The ratio the panes are drawn at: the remembered one, clamped to what fits on
+// THIS screen. Clamped and not written back — a division chosen on a monitor is
+// still that person's choice when the same browser opens a narrow window.
+function applySplit() {
+  const space = splitSpace();
+  // The branch that decides not to act, said out loud. Any view but the split,
+  // or a window under the width the stylesheet keeps the handle for, and there
+  // is nothing to divide: `--split` is cleared, so the panes are `1fr` and `1fr`
+  // again rather than holding a ratio nobody on this screen can change.
+  if (space < SPLIT_FLOOR * 2) {
+    SPLIT_ROOT.style.removeProperty('--split');
+    return;
+  }
+  const most = (space - SPLIT_FLOOR) / SPLIT_FLOOR;
+  const ratio = Math.min(most, Math.max(1 / most, EDITOR.split));
+  SPLIT_ROOT.style.setProperty('--split', ratio + 'fr');
+  // What the separator says it is at: the share of the two PANES, because the
+  // handle's own 1.5rem is not width either of them could have had.
+  const share = Math.round(100 * ratio / (1 + ratio));
+  const least = Math.round(100 * SPLIT_FLOOR / space);
+  SPLITTER.setAttribute('aria-valuenow', String(share));
+  SPLITTER.setAttribute('aria-valuemin', String(least));
+  SPLITTER.setAttribute('aria-valuemax', String(100 - least));
+  SPLITTER.setAttribute('aria-valuetext', share + '% writing, ' + (100 - share) + '% preview');
+}
+
+// Where a pointer or a key has just put the join, in px of writing box, and the
+// one way it moves — so the clamp, the property and the announcement cannot come
+// apart. It does not write the preference down: a drag is one gesture, not one
+// `localStorage` write per `pointermove`, and both `#grip` and the table's column
+// grips already store at the end of theirs.
+function moveSplit(paneWidth) {
+  const space = splitSpace();
+  if (space < SPLIT_FLOOR * 2) return;      // nothing to divide; see `applySplit`
+  const want = Math.min(space - SPLIT_FLOOR, Math.max(SPLIT_FLOOR, paneWidth));
+  EDITOR.split = want / (space - want);
+  applySplit();
+  // Every pixel the gutter, the seat bands and the two scroll maps draw is a
+  // function of the box's width, and this control's whole job is to change it.
+  // The width grip carries the same line and the measurement behind it: without
+  // it, six of nine line numbers sat up to six whole rows off the lines they
+  // name until a window resize happened to put them back.
+  dispatchEvent(new Event('openproj:editing'));
+}
+
+SPLITTER.onpointerdown = event => {
+  // `setPointerCapture`, and the move listener added on down and removed on up,
+  // exactly as `#grip` does it: a drag that loses the pointer outside the window
+  // is a handle stuck to the cursor.
+  SPLITTER.setPointerCapture(event.pointerId);
+  SPLITTER.classList.add('dragging');
+  // Or the drag selects the prose in whichever pane it crosses. The focus the
+  // default would have given is taken by hand instead, so that letting go and
+  // then nudging with the arrow keys is one gesture.
+  event.preventDefault();
+  SPLITTER.focus();
+  // Measured from the left edge of the grid rather than from where the pointer
+  // started, so the join lands under the pointer instead of a handle's width
+  // away from it wherever along the handle it was taken hold of.
+  const from = SPLIT.getBoundingClientRect().left;
+  const move = e => moveSplit(e.clientX - from - SPLITTER.offsetWidth / 2);
+  const stop = () => {
+    SPLITTER.classList.remove('dragging');
+    rememberEditor({});
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', stop);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', stop);
+};
+// Both directions and both extremes, because a separator that answers only a
+// mouse is the same defect as the thirteen mouse-only toolbar buttons this branch
+// shipped and had to fix. `moveSplit` clamps, so Home and End are written as the
+// ends of the space and arrive at the floor.
+SPLITTER.onkeydown = event => {
+  const at = SPLITTER.getBoundingClientRect().left - SPLIT.getBoundingClientRect().left;
+  const to = {
+    ArrowLeft: at - SPLIT_STEP, ArrowRight: at + SPLIT_STEP,
+    Home: 0, End: splitSpace(),
+  }[event.key];
+  if (to === undefined) return;           // every other key is still the page's
+  event.preventDefault();
+  moveSplit(to);
+  rememberEditor({});
+};
+// The way back to even, which is the one position a drag cannot be trusted to hit
+// and which the table's column grips already use this gesture for.
+SPLITTER.ondblclick = () => {
+  moveSplit(splitSpace() / 2);
+  rememberEditor({});
+};
+
+// A remembered ratio is a ratio and the floor is pixels: the 70/30 that leaves
+// 400px of preview on a monitor leaves 150px on a laptop. So the clamp is redone
+// when the window changes, without touching what is remembered.
+addEventListener('resize', applySplit);
 
 // --- the preview, live ------------------------------------------------------
 //
@@ -11609,6 +11808,10 @@ _NEW = """
                       aria-label="Shaping document"
                       placeholder="The shaping document."></textarea>
           </div>
+          {#- Between the two panes and not over them: it is a grid track of its
+              own, so the width it takes is width the panes never had rather than
+              a strip drawn on top of one of them. -#}
+          {{ splitter }}
           {#- The same id and the same classes the detail page's preview pane
               carries, so one implementation serves both. It was a bare `.doc`
               found by `querySelector`, which is one more thing for the two pages
@@ -12042,6 +12245,7 @@ _DETAIL = """
           <textarea name="body" class="field body-field"
                     aria-label="Shaping document">{{ e.raw_body }}</textarea>
         </div>
+        {{ splitter }}
         <div id="body-preview" class="field doc" hidden></div>
       </div>
       {#- The strip along the foot of the box. Filled by `attachStatus`, which
@@ -13554,20 +13758,95 @@ article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: n
    there is nothing above it to be separated from. */
 article.entity.full #body-preview { min-height: 0; overflow-y: auto;
                                     border-top: 0; padding-top: 0; }
-/* Two columns only in the middle view. `minmax(0, 1fr)` twice and not `1fr`
-   twice: a grid track's default minimum is its content, and a line of prose with
-   no break in it is wider than half a window — which would have pushed the other
-   pane off the side rather than wrapping. */
+/* Two columns in the middle view, and the reader says where the join is —
+   jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you make it
+   possible to horizontally resize the editor vs the preview boxes? keeping their
+   total width constant (so they don't move the fields which are displayed on
+   their right)".
+
+   **The constant total is structural, not arithmetic**, and that is why this is
+   one property and a track rather than a layout engine: `.panes` gives `.facts` a
+   fixed `20rem` track beside this whole grid, so a ratio inside `.bodysplit`
+   cannot move that column however far the handle is dragged. There is no sum to
+   keep balanced and so nothing that can drift out of balance.
+
+   **One number, and the second track takes the remainder** — no second value that
+   can disagree with the first. `fr` shares out what is left after the handle's
+   own track, so that number IS the two panes' share of each other at every
+   window width, and a window resize cannot make it stale.
+
+   `minmax(0, …)` on both prose tracks and not a bare fraction, which is older
+   than this change and must not be lost: a grid track's default minimum is its
+   content, and one unbroken line of prose is wider than half a window — which
+   pushed the other pane off the side instead of wrapping.
+
+   The middle track is the 1.5rem this grid used to spend on `column-gap`, so the
+   handle lands exactly where the space between the panes already was. */
 article.entity.full.view-both .bodysplit {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr);
+  column-gap: 0;
 }
-/* And a line down the middle of it. The source has a border of its own and the
-   rendered pane has none, so without this the split is a box on the left and
-   loose text on the right, which reads as one pane with an overflow rather than
-   as two. The gap is halved on each side of the rule so the line sits in the
-   middle of the space rather than against the prose. */
-article.entity.full.view-both #body-preview {
-  border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
+/* Not a control in either of the other two views, on the six pages that inline
+   this sheet with no document to split, or outside the surface. Absent rather
+   than disabled: a separator in the tab order that divides nothing is a control
+   that lies about what the page can do. */
+#splitter { display: none; }
+article.entity.full.view-both #splitter {
+  display: block; position: relative; cursor: col-resize;
+}
+/* The line down the middle, which was `#body-preview`'s `border-left` and its
+   centring padding and negative margin. The same pixel in the same place, drawn
+   by the handle now, because the affordance has to land on the line that is
+   already there and two lines down the middle is worse than none. The rule this
+   replaces is in the `width <` block below, where there is no handle to draw it. */
+article.entity.full.view-both #splitter::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 1px; background: var(--line);
+}
+/* And the grip, which is `#grip::before` in every dimension the two can share.
+   What it does not copy is the fade, deliberately: the width grip floats in the
+   page's margin with nothing else to say it is there, this one is an ink change
+   on a rule the reader can already see, and a second animated rule in an app
+   whose motion is one rule, one comment and one inventory test would cost all
+   three to buy nothing. */
+article.entity.full.view-both #splitter::after {
+  content: ""; position: absolute; left: 2px; right: 2px; top: 50%; height: 48px;
+  transform: translateY(-50%); border-radius: 2px; background: var(--line-strong);
+  opacity: .35;
+}
+article.entity.full.view-both #splitter:hover::after,
+article.entity.full.view-both #splitter.dragging::after {
+  opacity: 1; background: var(--accent);
+}
+/* Below the width where the facts stop being a column on the right there is
+   nothing to hold still, which is the whole of what this handle is for — so it
+   goes, and what is left is exactly the layout of the two panes before it
+   existed.
+
+   58.5rem is arithmetic rather than taste. `.panes` hands the facts their own
+   track at a CONTAINER width of 56rem; the container is `article.entity.full`,
+   which is `position: fixed; inset: 0` with `1.25rem` of padding a side. So the
+   two agree at 56 + 2 × 1.25, and there is no room below it either: the panes
+   have `window - 424px` between them on that page, which is 512 here against a
+   floor of 240 each.
+
+   `@media` and not `@container`, for the reason the `.marks` block gives at
+   length: the only `container-type: inline-size` in this file is in
+   `_DETAIL_STYLE`, and the note and issue pages ship `_RECORD_STYLE` and never
+   load it — a container query here would never match on two of the four pages
+   that draw this surface. On this element the viewport is not a proxy for the
+   container anyway: the surface IS the window.
+
+   Same selectors as above, so this takes the ties on order and not on weight.
+   `cascade.py` skips at-rules by construction, so that half is asked of Chrome. */
+@media (width < 58.5rem) {
+  article.entity.full.view-both .bodysplit {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1.5rem;
+  }
+  article.entity.full.view-both #splitter { display: none; }
+  article.entity.full.view-both #body-preview {
+    border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
+  }
 }
 /* Preview only is reading, and reading has a measure — the one the reader set
    with the grip on the page they came from, which is still in `--measure` and
@@ -14893,6 +15172,7 @@ def render_new(
             _ace_wanted(editor, base_commit, may_write),
         ),
         views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         templates=TEMPLATES,
     )
     return _page(
@@ -17239,6 +17519,7 @@ def render_issue(
             _ace_wanted(editor, base_commit, may_write),
         ),
         views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         # The same machinery the notes page uses, and now the same shape as well:
         # two kinds and a picker to choose between them. A pitch when the fix is
         # worth a bet somebody argues for, a task when it is only worth doing —
@@ -17475,6 +17756,7 @@ def render_note(
             _ace_wanted(editor, base_commit, may_write),
         ),
         views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         promote=(
             _promote_html(
                 view["id"],
@@ -17831,6 +18113,7 @@ def render_detail(
             _ace_wanted(editor, base_commit, may_write),
         ),
         views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         # The same gate the two lines below carry, and one more: the address had
         # to ask. See `_ace`.
         ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
@@ -18273,6 +18556,7 @@ _ISSUE = """
                 placeholder="What happened, and how to see it again."
                 >{{ issue.body }}</textarea>
     </div>
+    {{ splitter }}
     <div id="body-preview" class="field doc" hidden></div>
   </div>
   <p class="bodybar statusbar" id="statusbar"></p>
@@ -18618,6 +18902,7 @@ _NOTE = """
         placeholder="What is the idea, and what is confusing about it."
         >{{ note.body }}</textarea>
     </div>
+    {{ splitter }}
     <div id="body-preview" class="field doc" hidden></div>
   </div>
   <p class="bodybar statusbar" id="statusbar"></p>

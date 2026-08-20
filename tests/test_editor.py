@@ -2002,6 +2002,437 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     )
 
 
+# The handle between the two panes, driven the way a hand drives it. Everything
+# here is geometry, selection and keys, so all of it is asked of Chrome and none
+# of it of `tests/js/drive.js`, where `getClientRects()` answers `[]` for every
+# element and the one question this feature turns on — is there a handle drawn —
+# would answer "no" for ever.
+_DIVIDING = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const split = article.querySelector('.bodysplit');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+const pane = article.querySelector('#body-preview');
+const facts = article.querySelector('.panes > .facts');
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 80));
+
+const where = () => ({
+  // The one number this whole change is about. `left` and not `width`, because a
+  // column that grew leftwards by the amount it moved rightwards would keep its
+  // width and still be somewhere else.
+  facts: facts.getBoundingClientRect().left,
+  box: box.getBoundingClientRect().width,
+  pane: pane.getBoundingClientRect().width,
+  handle: handle.getBoundingClientRect().left,
+  wide: handle.getBoundingClientRect().width,
+  now: Number(handle.getAttribute('aria-valuenow')),
+  least: Number(handle.getAttribute('aria-valuemin')),
+  most: Number(handle.getAttribute('aria-valuemax')),
+  says: handle.getAttribute('aria-valuetext'),
+});
+
+// Taken hold of in the middle of the handle and moved by `by` pixels, which is
+// the gesture: the join should end up exactly that far along, wherever on the
+// handle it was grabbed.
+const drag = by => {
+  const grip = handle.getBoundingClientRect();
+  const from = grip.left + grip.width / 2;
+  handle.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true, cancelable: true, pointerId: 1,
+    clientX: from, clientY: grip.top + 40}));
+  dispatchEvent(new PointerEvent('pointermove', {
+    bubbles: true, pointerId: 1, clientX: from + by}));
+  dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
+  return where();
+};
+
+const before = where();
+const wider = drag(200);
+const stored = JSON.parse(localStorage.getItem('openproj:editor:1'));
+// Dragged clean off the side of the window, which is what a fast drag is and
+// what a clamp exists for: a pane crushed to nothing is a pane nobody can take
+// hold of again.
+const crushed = drag(innerWidth);
+const back = drag(-innerWidth);
+const evened = (() => {
+  handle.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+  return where();
+})();
+return {
+  before, wider, crushed, back, evened, stored,
+  role: handle.getAttribute('role'),
+  orientation: handle.getAttribute('aria-orientation'),
+  name: handle.getAttribute('aria-label'),
+  focusable: handle.tabIndex,
+  cursor: getComputedStyle(handle).cursor,
+  // The two width handles on this application, and the answer to "two controls
+  // that both change widths on one page".
+  grip: document.getElementById('grip').hidden,
+};
+"""
+
+
+def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you make
+    it possible to horizontally resize the editor vs the preview boxes? keeping
+    their total width constant (so they don't move the fields which are displayed
+    on their right)".
+
+    The second half of that sentence is the requirement and this is the assertion
+    for it: the facts column's left edge, to the pixel, before and after a drag
+    that moves 200px of width from one pane to the other.
+
+    **It holds structurally rather than arithmetically**, and that is worth
+    knowing about this assertion before trusting it. `.panes` gives `.facts` a
+    fixed `20rem` track beside a `minmax(0, 1fr)` one, so no ratio inside
+    `.bodysplit` can reach the facts at all — which means nothing that could be
+    got wrong INSIDE this feature makes this line fail. Measured, rather than
+    assumed: with the handle's `--split` deleted it still passes, and with the
+    first track written `minmax(0, max-content)`, `auto` or
+    `fit-content(100%)` it still passes. It fails on `min-content 20rem`, which
+    is the shape of the defect it is for — the day the column on the right stops
+    being a fixed track, the panes start pushing it and this says so.
+
+    The clamp is measured through the gesture that produces it rather than by
+    calling the clamp: a drag off the side of the window is what a fast hand does,
+    and a pane crushed to nothing is one that cannot be taken hold of again.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "split.html",
+        1400, _DIVIDING, patience=4800,
+    )
+
+    # It is a separator, it says which way it lies, it has a name, and it can be
+    # reached from the keyboard. A splitter that answers only a mouse is the same
+    # defect as the thirteen mouse-only toolbar buttons earlier on this branch.
+    assert got["role"] == "separator" and got["orientation"] == "vertical"
+    assert got["name"] and got["focusable"] == 0, got["name"]
+    assert got["cursor"] == "col-resize"
+
+    # Even at rest, and both panes actually drawn.
+    before = got["before"]
+    assert before["box"] == before["pane"] > 0, before
+    assert before["now"] == 50 and before["says"] == "50% writing, 50% preview"
+
+    # THE assertion. Same pixel, and the width really did move.
+    for name in ("wider", "crushed", "back", "evened"):
+        at = got[name]
+        assert at["facts"] == before["facts"], (
+            f"the facts column moved from {before['facts']} to {at['facts']} when the "
+            f"panes were resized ({name}), which is the one thing that must not happen"
+        )
+        assert at["box"] + at["pane"] == before["box"] + before["pane"], (
+            f"the two panes stopped summing to a constant at {name}: "
+            f"{at['box']} + {at['pane']} against {before['box']} + {before['pane']}"
+        )
+
+    assert got["wider"]["box"] == before["box"] + 200, (
+        f"a 200px drag moved the join to {got['wider']['box']} from {before['box']}"
+    )
+    assert got["wider"]["pane"] == before["pane"] - 200
+    assert got["wider"]["now"] > 50 and got["wider"]["says"].startswith(
+        f"{got['wider']['now']}% writing"
+    )
+
+    # Neither pane collapses, in either direction, and the floor is the same one
+    # from both sides.
+    assert got["crushed"]["pane"] == got["back"]["box"] > 0, (
+        f"dragged off the edge of the window the panes were "
+        f"{got['crushed']['pane']} and {got['back']['box']}"
+    )
+    assert got["crushed"]["now"] == got["crushed"]["most"]
+    assert got["back"]["now"] == got["back"]["least"]
+
+    # And the way back to even, which is the one position a drag cannot be
+    # trusted to hit.
+    assert got["evened"]["box"] == got["evened"]["pane"] == before["box"]
+
+    # Written down, per browser rather than per document, in the key that already
+    # holds this reader's other four editor settings.
+    assert got["stored"]["split"] > 1, got["stored"]
+    assert got["stored"]["mode"] == "both"
+
+    # The other width handle is not on the screen at the same time. `#grip` drags
+    # the reading measure and full page has none, so the page never shows two
+    # controls that both change widths.
+    assert got["grip"], "the width grip is on screen beside the pane splitter"
+
+
+@pytest.mark.parametrize("where", ["/detail/{task}", "/new", "/issue/new", "/note/new"])
+def test_every_surface_that_splits_carries_the_same_handle(client: TestClient, where: str):
+    """One control, four templates — the argument `_VIEW_SEGMENTS` is one constant
+    for, applied to the thing between the panes.
+
+    The four pages that inline a body editor are one surface in four places, and a
+    fifth copy of a separator is a fifth place for its role, its name and its
+    position in the markup to drift. Position is what this reads: the handle has
+    to be a grid item of `.bodysplit`, between the box and the rendered pane and
+    not before or after both, because the stylesheet places it by track order and
+    nothing else.
+    """
+    page = client.get(where.format(task=TASK)).text
+    split = re.search(r'<div class="bodysplit">(.*?)</div>\s*(?:{#-|<p|</div>)', page, re.S)
+    assert split, "no split on a page that carries an editing surface"
+
+    assert page.count('id="splitter"') == 1, "one handle, or an id naming two elements"
+    inside = split.group(1)
+    assert 'id="splitter"' in inside, "the handle is outside the grid it divides"
+    assert (
+        inside.index("bodywrap") < inside.index('id="splitter"') < inside.index("body-preview")
+    ), "the handle is not between the two panes it divides"
+    assert 'role="separator"' in inside and 'aria-orientation="vertical"' in inside
+    assert 'tabindex="0"' in inside, "a splitter no key can reach"
+
+_SPLIT_BY_KEY = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+const pane = article.querySelector('#body-preview');
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 80));
+
+const where = () => ({box: box.getBoundingClientRect().width,
+                      pane: pane.getBoundingClientRect().width,
+                      now: Number(handle.getAttribute('aria-valuenow'))});
+const press = key => {
+  handle.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true}));
+  return where();
+};
+handle.focus();
+const before = where();
+const focused = document.activeElement === handle;
+const right = press('ArrowRight');
+const left = press('ArrowLeft');
+const end = press('End');
+const past = press('ArrowRight');
+const home = press('Home');
+const ignored = press('a');
+return {before, focused, right, left, end, past, home, ignored,
+        stored: JSON.parse(localStorage.getItem('openproj:editor:1')).split};
+"""
+
+
+def test_the_join_between_the_panes_moves_for_the_keyboard_too(
+    client: TestClient, tmp_path: Path
+):
+    """A splitter that answers only a mouse is the same defect as the thirteen
+    mouse-only toolbar buttons this branch shipped and had to fix, and it is one
+    jcanton's reviewers have already caught once here.
+
+    Both directions, both extremes, and one key that is none of the four — a
+    handler that swallowed everything would take a `Tab` out of the tab order and
+    an `a` out of the box the moment focus was anywhere near it.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "keys.html",
+        1400, _SPLIT_BY_KEY, patience=4800,
+    )
+
+    assert got["focused"], "the separator cannot take focus, so no key can reach it"
+    assert got["right"]["box"] == got["before"]["box"] + 32, got["right"]
+    assert got["left"] == got["before"], (
+        f"a press each way did not come back to where it started: {got['left']}"
+    )
+    # The extremes are the floor, from both sides, and pressing past one does
+    # nothing rather than going through it.
+    assert got["end"]["pane"] < got["before"]["pane"], got["end"]
+    assert got["past"] == got["end"], "ArrowRight went through the end stop"
+    assert got["home"]["box"] == got["end"]["pane"] > 0, (
+        f"the two extremes are not the same floor: {got['home']} against {got['end']}"
+    )
+    assert got["ignored"] == got["home"], "a key that is not a nudge moved the join"
+    assert got["stored"] == pytest.approx(
+        got["home"]["box"] / got["home"]["pane"], rel=1e-6
+    ), "the keyboard moved the join without writing down where it left it"
+
+
+_SPLIT_AT_A_WIDTH = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const facts = article.querySelector('.panes > .facts');
+const main = article.querySelector('.panes > .main');
+const pane = article.querySelector('#body-preview');
+const seg = name => document.getElementById(
+  {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
+seg('both').click();
+await new Promise(go => setTimeout(go, 80));
+const drawn = () => handle.getClientRects().length > 0;
+const inTheSplit = {
+  handle: drawn(),
+  // Beside the document, or under it: the container query this breakpoint is
+  // written to agree with, asked as the pixels it produces.
+  factsBeside: facts.getBoundingClientRect().left > main.getBoundingClientRect().left + 10,
+  // One line down the middle and not two: where the handle draws it, the pane
+  // must not, and where the handle is gone the pane must.
+  paneBorder: parseFloat(getComputedStyle(pane).borderLeftWidth),
+  // And the line the handle draws in its place. Asked of the pseudo-element,
+  // which is the only thing that draws it and which `querySelectorAll` cannot be
+  // asked about at all.
+  handleLine: handle.getClientRects().length
+    ? parseFloat(getComputedStyle(handle, '::before').width) : 0,
+};
+const elsewhere = {};
+for (const name of ['edit', 'view']) { seg(name).click(); elsewhere[name] = drawn(); }
+seg('view').click();               // out of full page altogether
+const outside = drawn();
+return {inTheSplit, elsewhere, outside, win: innerWidth};
+"""
+
+
+@pytest.mark.parametrize("width", [1400, 936, 934, 700])
+def test_there_is_no_handle_where_there_is_nothing_to_divide(
+    client: TestClient, tmp_path: Path, width: int
+):
+    """Only where it means something: the split view, and only while the facts are
+    still a column on the right.
+
+    58.5rem is the width at which `.panes` hands the facts their own track — a
+    CONTAINER width of 56rem plus the surface's `1.25rem` of padding on each side
+    — and the two flip at the same pixel, which is the point of the number. Below
+    it there is no fixed column on the right to hold still, which is the whole of
+    what the handle is for, and the two panes are 256px each against a floor of
+    240.
+
+    The divider goes with it, both ways round: where the handle draws the line the
+    pane must not, and where the handle is gone the pane must — two lines down the
+    middle of a split is worse than none.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / f"where-{width}.html", width, _SPLIT_AT_A_WIDTH, patience=4800,
+    )
+    wide = width >= 936
+
+    assert got["inTheSplit"]["handle"] is wide, (
+        f"at {width}px the handle is "
+        f"{'missing' if wide else 'drawn'} in the split view"
+    )
+    assert got["inTheSplit"]["factsBeside"] is wide, (
+        f"at {width}px the facts are {'under' if wide else 'beside'} the document, "
+        "so this width is no longer the one the breakpoint was written for"
+    )
+    assert got["inTheSplit"]["paneBorder"] == (0 if wide else 1), (
+        f"at {width}px the rendered pane draws {got['inTheSplit']['paneBorder']}px of "
+        "border down its left edge and the handle draws one too"
+    )
+    assert got["inTheSplit"]["handleLine"] == (1 if wide else 0), (
+        f"at {width}px the handle draws {got['inTheSplit']['handleLine']}px down the "
+        "middle, so the split has no divider at all or two of them"
+    )
+    assert got["elsewhere"] == {"edit": False, "view": False}, (
+        f"a splitter in a view with one pane in it: {got['elsewhere']}"
+    )
+    assert not got["outside"], "a splitter on the page outside the writing surface"
+
+
+_SPLIT_REMEMBERED = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const handle = article.querySelector('#splitter');
+const box = article.querySelector('.bodywrap');
+const pane = article.querySelector('#body-preview');
+const split = article.querySelector('.bodysplit');
+document.getElementById('toggle').click();
+await new Promise(go => setTimeout(go, 80));
+return {
+  view: VIEW,
+  box: box.getBoundingClientRect().width,
+  pane: pane.getBoundingClientRect().width,
+  now: Number(handle.getAttribute('aria-valuenow')),
+  held: EDITOR.split,
+  // Three tracks and not the `none` an invalid `grid-template-columns` computes
+  // to, which is what a `--split` of `wide` would leave behind.
+  tracks: getComputedStyle(split).gridTemplateColumns.split(' ').length,
+};
+"""
+
+
+@pytest.mark.parametrize(
+    "held, wider",
+    [(2.5, True), (1, False), ("wide", False), (400, False), (None, False)],
+)
+def test_the_split_a_reader_chose_is_there_the_next_time(
+    client: TestClient, tmp_path: Path, held: object, wider: bool
+):
+    """Remembered per browser and not per document, for the reason `#grip`'s
+    comment gives about the reading measure: it is a property of the screen this
+    is being read on, not of the plan. So it is a field of the one editor
+    preference — same key, same version, same `remembered` — and it comes back
+    when the next session opens the split view.
+
+    The three that are not a ratio are the point of the parametrisation. A stored
+    value is a string in a store anybody can hand-edit, and `{"split": "wide"}`
+    would reach `minmax(0, wide)` — not a track size, so the whole
+    `grid-template-columns` declaration is invalid at computed value time and the
+    three tracks compute to `none`. That is the split view with its panes in the
+    wrong places rather than a value quietly ignored, which is why the guard is
+    `Number.isFinite` and a bound rather than a truthiness test.
+    """
+    stored = {"mode": "both"} if held is None else {"mode": "both", "split": held}
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % json.dumps(stored)
+        ),
+        tmp_path / f"held-{held}.html", 1400, _SPLIT_REMEMBERED, patience=4800,
+    )
+
+    assert got["view"] == "both", "the remembered view did not open, so nothing was split"
+    assert got["tracks"] == 3, (
+        f"the grid has {got['tracks']} tracks, so a stored {held!r} reached the "
+        "stylesheet and took the template down with it"
+    )
+    if wider:
+        assert got["held"] == held
+        assert got["box"] > got["pane"], (
+            f"a remembered {held} split came back as {got['box']} to {got['pane']}"
+        )
+        assert got["now"] == round(100 * held / (1 + held))
+    else:
+        assert got["held"] == 1, f"{held!r} was taken for a ratio"
+        assert got["box"] == got["pane"], (
+            f"{held!r} left the panes at {got['box']} and {got['pane']}"
+        )
+
+
+def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
+    client: TestClient, tmp_path: Path
+):
+    """The same pair of screenshots the editor switch is held to, for the same
+    reason: `outline: 2px solid` resolving on the element says nothing about
+    paint, and the ring is drawn entirely OUTSIDE the border box — so an
+    `overflow: hidden` ancestor throws it away with every assertion about it still
+    passing. `article.entity.full` is one, `.panes` is another, and this handle is
+    full height inside both of them.
+
+    Two shots of the same page, differing only in which element has focus.
+    """
+    from browser import screenshot
+
+    browser = chrome()
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+
+    def shot(name: str, focus: str) -> bytes:
+        html = tmp_path / f"splitring-{name}.html"
+        html.write_text(page.replace(
+            "</body>",
+            "<script>setTimeout(() => {"
+            "  document.getElementById('view-both').click();"
+            f" {focus}"
+            "}, 900);</script></body>",
+        ))
+        return screenshot(browser, html, tmp_path / f"splitring-{name}.png", 1400, 900)
+
+    dark = shot("off", "")
+    lit = shot("on", "document.querySelector('#splitter').focus({focusVisible: true});")
+    assert dark != lit, (
+        "focusing the pane splitter changed not one pixel, so the ring the shell "
+        "draws for it is being clipped away or is not being drawn at all"
+    )
+
+
 # The document the scroll sync is asked about: 161 lines, one of which is long
 # enough to wrap. One that wrapped nowhere would be a corpus that does not
 # contain the string that matters — `scrollTop / lineHeight` is exactly right on

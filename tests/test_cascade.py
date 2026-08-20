@@ -861,6 +861,68 @@ def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
     assert detail.value(marks, "flex") == "none", says(detail, marks, "flex")
 
 
+def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
+    detail: Sheet
+):
+    """The splitter, resolved by name, because "the rule is in the stylesheet" is
+    not what a reader sees.
+
+    Three fights, and each of them is one somebody could lose by accident:
+
+    * the handle is `display: none` by default and the split view is what turns it
+      on. `#splitter` is (1,0,0) and every rule that could give it back a box is a
+      class selector, so the *default* has to be the id — an `article.entity.full
+      .bodysplit > div` written to lay the panes out would otherwise draw a
+      separator on six pages that have no document to split;
+    * the two prose tracks keep `minmax(0, …)`. A bare fraction there is a track
+      whose minimum is its content, and one unbroken line of prose is wider than
+      half a window;
+    * and the rendered pane draws no line of its own where the handle draws one.
+      Two lines down the middle of a split is worse than none, and the pane's
+      border is the line that was there first.
+
+    **`cascade.py` skips at-rules by construction**, which is a real limit here
+    and is stated rather than papered over: the `@media (width < 58.5rem)` block
+    that takes the handle away and hands the pane its border back is invisible to
+    this engine, so that half is asked of Chrome in
+    `test_there_is_no_handle_where_there_is_nothing_to_divide`. What is resolved
+    here is the wide window, which is the state the feature exists in.
+    """
+    split = _writing("both")
+    won = detail.winner(split, "grid-template-columns")
+    assert won and won.selector == "article.entity.full.view-both .bodysplit", (
+        f"the split's columns are decided by {won}\n"
+        + says(detail, split, "grid-template-columns")
+    )
+    assert won.value == "minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr)", won.value
+
+    handle = _writing("both") + [el("div", id="splitter")]
+    on = detail.winner(handle, "display")
+    assert on and on.value == "block", (
+        f"the handle is displayed by {on} in the split view\n"
+        + says(detail, handle, "display")
+    )
+    # And every other place it could be drawn, which is every other place it is
+    # rendered into: the two one-pane views, and the page outside the surface.
+    for where in (
+        _writing("edit") + [el("div", id="splitter")],
+        _writing("view") + [el("div", id="splitter")],
+        PAGE + [el("article", "entity editing"), el("form", id="edit"),
+                el("div", "bodysplit"), el("div", id="splitter")],
+    ):
+        off = detail.winner(where, "display")
+        assert off and off.value == "none" and off.selector == "#splitter", (
+            f"a splitter outside the split view is displayed by {off}\n"
+            + says(detail, where, "display")
+        )
+
+    pane = _writing("both") + [el("div", "field doc", id="body-preview")]
+    assert detail.value(pane, "border-left") is None, (
+        "the rendered pane draws a line down its left edge and so does the handle "
+        "beside it, which is two lines down the middle of one split\n"
+        + says(detail, pane, "border-left")
+    )
+
 # --------------------------------------------------------------------------- #
 # One editing surface, two stylesheets
 # --------------------------------------------------------------------------- #
