@@ -157,6 +157,68 @@ still not being built.
   the outline or table-of-contents toggle. Not confirmed.
 - Line 17 wraps to two visual rows under a single gutter number, again.
 
+## S0, half-answered: the migrated corpus, counted
+
+`~/projects/icon4py-plan` is the plan repository — the notes already migrated out of HackMD into
+records. It is **part** of the corpus, not all of it; the rest is still in HackMD behind a login.
+29 files, 1,090 lines, at `e5dde0e`. Counted 2026-08-20:
+
+| construct | lines |
+|---|---|
+| heading | 123 |
+| bullet | 103 |
+| task list `- [ ]` | 26 |
+| inline code span | 26 |
+| markdown link | 18 |
+| fenced block | 6 |
+| bold | 2 |
+| `[TOC]`, `:::info`, `> [name=`, `{%youtube%}`, `[^fn]`, `$math$`, mermaid fence, `![... =200x]`, table row, raw HTML | **0 each** |
+
+Two things follow, and both are decisions rather than curiosities.
+
+**No HackMD extension appears anywhere.** Not one container, embed, footnote, formula, diagram or
+sized image. So the renderer batch owes this corpus no HackMD-specific feature, and the version of
+that work carried on the seed counts was carrying the right answer for the wrong reason. If the
+un-migrated half contradicts this it will do so loudly — these are constructs you notice.
+
+**Task lists and links are real, and the toolbar was right to gain them.** 26 lines carry a
+checkbox and 18 carry a markdown link, against the 8 links `d6997e3` counted when it cut the link
+button. The override recorded in `ba2cb72` now rests on a number rather than only on a request.
+
+### `Breaks` is answered for this half, and the answer is no
+
+57 places have one prose line directly under another — the case CommonMark joins into one
+paragraph and `breaks: true` would separate. Reading them settles what they are: **hard-wrapped
+paragraphs.** `README.md:3` is one sentence wrapped across two lines at about column 90, and so
+are the rest.
+
+So `{"breaks": True}` would be actively wrong here. It would not restore anyone's intent; it would
+split every wrapped sentence mid-line, 57 times in the migrated half alone. **The renderer stays
+CommonMark**, written down so it is not revisited as an obvious improvement.
+
+The caveat is real. This half is hard-wrapped because it was written into files by people using
+editors that wrap at 90 columns. Notes still living in HackMD are written in a soft-wrapping
+editor where `breaks` is on by default, and the screenshot shows exactly that style — line 17 is a
+single logical line the editor wraps for display. Those notes may hold consecutive short prose
+lines that do rely on it. Until the other half is counted, the finding is "no for what has been
+migrated", not "no".
+
+### How the rest of the corpus can be counted
+
+A link to one note cannot answer a question that is a count across many, and
+`hackmd.io/ppDzW8W0QnmS2y8eFyU1Tw?both=` is gated to anything without jcanton's session — fetched
+2026-08-20, it returns the login page.
+
+The route already exists here. `docs/probes/hackmd_probe.py` speaks the HackMD API, and its
+`inspect` phase already lists a team's notes:
+
+    GET /teams/<team>/notes         -> every note's id
+    GET /teams/<team>/notes/<id>    -> that note's `content`
+
+One token — hackmd.io, settings, API, new token — exported as `HACKMD_TOKEN` makes the whole
+corpus countable in a single read-only pass, with the same greps as the table above and no note
+written to. That is the cheapest thing that finishes S0.
+
 ## What this screenshot does not settle
 
 It shows one view of one note, so none of the following is answered and none of it should be
