@@ -292,13 +292,21 @@ function aceSurface(area, seeded) {
   document_.setNewLineMode('unix');
 
   // Seeded once, on construction, and this is the ONE `setValue` in the file.
-  // It is not a binding operation: nothing observes this document yet, the room
-  // has not been joined, and `-1` puts the caret at the top and resets Ace's
-  // undo history, which is what "this is where the document starts" means. Every
-  // write after this one goes through `splice`, and
+  // It is not a binding operation: nothing observes this document yet and the
+  // room has not been joined. `-1` puts the caret at the top. Every write after
+  // this one goes through `splice`, and
   // `test_the_second_surface_never_sets_or_replaces_the_whole_document` holds it
   // to that by reading the shipped page.
   editor.setValue(seeded, -1);
+  // **The seed is not an edit and does not go on the undo stack.** The comment
+  // here used to say `-1` reset Ace's history. It does not: `editor.setValue` is
+  // `session.doc.setValue`, an ordinary insert to the manager, while it is
+  // `session.setValue` that calls `reset()`. Measured in Chrome the moment the
+  // toolbar gained a button that reaches this stack from outside Ace's own key
+  // handling — one press of undo on a freshly opened document took it from 119
+  // characters to 0, which in a room goes out as an update frame and is
+  // committed. There is nothing behind the seed to give anybody back.
+  session.getUndoManager().reset();
   // And having seeded it, SAY if that changed anything, rather than silently
   // rewriting somebody's file the moment they opened it in the other editor.
   // Nothing should reach here — the room and `parse_text` both hand over LF —
@@ -503,7 +511,23 @@ function aceSurface(area, seeded) {
       });
     },
 
-    provides: {gutter: true, seats: false},
+    // `history: true`, and true only because of the four lines above that bind
+    // `history.add`. Ace keeps its own stack across a remote change, that stack
+    // is right about whose deltas are in it, and Ace's command table is what
+    // Ctrl+Z reaches here — `stopEvent` stops propagation, so the key never gets
+    // to `attachEditing`. Two histories with the key on one and the button on
+    // the other is worse than either, so `historyOf` gives both to this one.
+    provides: {gutter: true, seats: false, history: true},
+
+    // `canUndo`/`canRedo` and not the `hasUndo`/`hasRedo` aliases beside them,
+    // for the reason `add` above is the public one: an alias is what a
+    // re-vendoring drops. Through `editor` rather than the manager, so the caret
+    // and the folds come back with the text.
+    history: {
+      can: what => what === 'undo' ? history.canUndo() : history.canRedo(),
+      step(what) { editor.focus(); if (what === 'undo') editor.undo(); else editor.redo(); },
+      keyed: false,
+    },
 
     // Ask 6, and the whole reason 594 KB is in this page. `null` and not
     // `'ace'`: `setKeyboardHandler` with a string that is not `ace` goes through
@@ -8012,6 +8036,37 @@ function textareaSurface(area) {
     // visual row, in the box's own scroll space. See `rowTops`.
     coordsAt(indexes) { return rowTops(area, area.value, indexes); },
 
+    // 8. Undo and redo, which on a `<textarea>` belong to the browser.
+    // `execCommand` for the same reason `replaceRange` uses it: it is the one
+    // API in any shipping browser that reaches the stack Ctrl+Z reaches.
+    //
+    // **Truthful only while nothing has assigned `.value`.** Measured in Chrome:
+    // type, then `area.value = 'x'`, and `queryCommandEnabled('undo')` goes on
+    // answering TRUE while `execCommand('undo')` returns true and moves nothing.
+    // A wiped native stack does not come up empty, it LIES — which is why
+    // `provides.history` is false and why a room takes this question off the box.
+    history: {
+      // Asked rather than trusted: `queryCommandEnabled` is not a standard and a
+      // throw inside a listener that runs on every keyup is a toolbar that stops
+      // redrawing itself.
+      can(what) {
+        try { return document.queryCommandEnabled(what); } catch (error) { return true; }
+      },
+      // Focused first, for the reason `replaceRange` focuses the box: a toolbar
+      // press is a continuation of typing. And a refusal says so out loud.
+      step(what) {
+        area.focus();
+        if (document.execCommand && document.execCommand(what)) return;
+        announce(`This browser would not ${what} from a button. `
+                 + `${what === 'undo' ? 'Ctrl+Z' : 'Ctrl+Shift+Z'} still works — `
+                 + 'that one is the browser’s own.');
+      },
+      // Whether the page has to take the keystroke. It does not: the browser's
+      // binding reaches this stack and restores the SELECTION the edit was made
+      // with, which `execCommand` alone does not.
+      keyed: false,
+    },
+
     // What this surface does for itself, so the page does not do it twice or
     // ask for something that is not there. A capability and not a type name:
     // `if (surface.kind === 'ace')` puts the second surface's name in six
@@ -8025,7 +8080,12 @@ function textareaSurface(area) {
     // that is NOT built in this stage: an untested band is a band one line off,
     // and `static/VENDOR.md` already holds this feature to "a caret one line
     // off is worse than no caret". `drawSeats` says so out loud instead.
-    provides: {gutter: false, seats: true},
+    // `history` — whether this surface's undo stack SURVIVES somebody else
+    // typing. False, and that is a fact about textareas: a remote change reaches
+    // the box as an assignment to `.value` (`splice` under `apply`, the one
+    // place allowed to), which wipes the native stack. `historyOf` reads this to
+    // decide whether the room's `Y.UndoManager` answers the buttons instead.
+    provides: {gutter: false, seats: true, history: false},
 
     // The scroll offset, and the three ways the page asks about it. These used
     // to be `el.scrollTop` and `el.addEventListener('scroll')` at four call
@@ -8133,11 +8193,13 @@ function bodySurface(area) {
 // * **No comment button.** It is a HackMD collaboration feature, not markdown,
 //   and there is nothing behind it here. The review channel this team uses is
 //   the PR, which every pitch already names in `prs:`.
-// * **No undo and redo yet.** They are the first two buttons in the shot and
-//   they belong with the defect that makes them necessary: `reflect()` wipes the
-//   browser's native undo stack on every remote keystroke, and a history button
-//   that does nothing after somebody else types is worse than no button. They
-//   arrive with `Y.UndoManager`.
+// * **No comment button** (above), and — until this stage — no undo and redo
+//   either. They are the first two buttons in the shot and they were held back
+//   with the defect that makes them necessary: a remote keystroke reaches the
+//   box as an assignment to `.value`, which wipes the browser's native undo
+//   stack, and a history button that does nothing after somebody else types is
+//   worse than no button. `Y.UndoManager` in `_COEDIT` is what answers that, so
+//   they are here now, leftmost, as the shot has them.
 //
 // The check list and the strikethrough are still guesses on the shape of the
 // documents rather than on a count — a checklist is what a pitch's Progress
@@ -8147,7 +8209,17 @@ function bodySurface(area) {
 //
 // `group: true` opens a new group; `attachEditing` draws a rule before it.
 const FORMATS = [
-  {key: 'b', label: 'B', title: 'Bold  ⌘B', wrap: '**'},
+  // The history group: the two entries here that write no markdown at all.
+  // `history` rather than a shape, so `applyMark` never sees one — both the
+  // pointer binding and the keyboard branch ask for it first. Drawn rather than
+  // typed, because no arrow is in the vendored subset (see `HISTORY_MARKS`), so
+  // `label` is the ACCESSIBLE name and not a visible one. ⌘Z and ⌘⇧Z are taken
+  // off the browser only where the browser's own has been destroyed —
+  // `historyOf`.
+  {key: 'z', label: 'Undo', title: 'Undo  ⌘Z', history: 'undo'},
+  {key: 'z', shift: true, label: 'Redo', title: 'Redo  ⌘⇧Z', history: 'redo'},
+
+  {key: 'b', group: true, label: 'B', title: 'Bold  ⌘B', wrap: '**'},
   {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
   // ⌘⇧X and not ⌘⇧S: the shortcut is matched on `event.key`, and every shifted
   // binding here is a letter, because shift-8 on a US layout is `*` rather than
@@ -8181,6 +8253,39 @@ const FORMATS = [
    insert: '| Heading | Heading |\n| --- | --- |\n| Cell | Cell |', chooses: [2, 7]},
   {label: '—', title: 'Horizontal rule', insert: '---'},
 ];
+
+// The two drawings the history buttons wear, rendered on the server: a template
+// variable and not a `.replace` into finished markup, the same crossing the
+// table's draft row makes with `MARK`. `innerHTML` at the one use site because
+// it IS markup and nothing of anybody's reaches it — the value is the constant
+// `HISTORY_MARKS` in `render.py`.
+const HISTORY_ART = {{ history_art|tojson }};
+
+// The room's undo history, once there is a room wired to this box. Declared here
+// and assigned in `_COEDIT`, which is a separate `<script>` inlined AFTER this
+// one and after `attachEditing` has run — so the toolbar cannot capture it at
+// setup, and `typeof COEDIT` is not an option either: a `const` that has not
+// been reached yet is in its temporal dead zone and `typeof` on one THROWS.
+let COEDIT_HISTORY = null;
+
+// Which undo history a press reaches. Three states, each served by the only
+// thing that can serve it:
+//
+// 1. **No room.** The browser's own, through the surface: nothing has assigned
+//    `.value`, so it is complete, and the keyboard reaches it unaided.
+// 2. **A room, on the textarea.** `Y.UndoManager` over the `'typed'` origin
+//    alone — the state this whole stage exists for, because there every
+//    keystroke of somebody else's arrives as an assignment to `.value`.
+// 3. **Ace, room or not.** Ace's own manager, taught to ignore deltas this tab
+//    did not make, and the one Ace's command table binds Ctrl+Z to. The surface
+//    is asked FIRST for that reason: button and key must reach one stack.
+//
+// Asked at the press, because a room binds seconds after the toolbar is built
+// and can be lost again at any moment.
+function historyOf(surface) {
+  if (surface.provides.history) return surface.history;
+  return COEDIT_HISTORY || surface.history;
+}
 
 // A numbered list, on any of the ways somebody has already written one —
 // including an indented one. Written `^\d+\.` at first, which made this the one
@@ -9013,6 +9118,11 @@ function attachStatus(surface, bar) {
 
 function attachEditing(surface, bar) {
   const area = surface.el;
+  // The two history buttons, so their disabled state can be kept honest. Empty
+  // on a bar that was never drawn, which is what makes `syncHistory` a no-op on
+  // the two pages that inline this block and have no editor. Named rather than
+  // called `history`, which is a global this page has no business shadowing.
+  const historyButtons = [];
   if (bar) {
     for (const mark of FORMATS) {
       if (mark.group) {
@@ -9037,7 +9147,23 @@ function attachEditing(surface, bar) {
       // opens only on a real user gesture, and `preventDefault` on mousedown
       // takes the activation away from the `.click()` that opens it. It has no
       // selection to protect, so nothing is lost by waiting.
-      if (mark.upload) {
+      //
+      // Three shapes, then: history, which moves a stack; the upload, which
+      // opens a dialog; and a mark, which writes markdown.
+      if (mark.history) {
+        // A drawing and no letters, so the name is said twice: `aria-label` for
+        // a reader who cannot see it, `title` for one who can and cannot tell
+        // what it is. The draft row's check and cross do the same.
+        button.classList.add('hist');
+        button.innerHTML = HISTORY_ART[mark.history];
+        button.setAttribute('aria-label', mark.label);
+        historyButtons.push([button, mark.history]);
+        // mousedown so the box keeps the focus and the caret, and a keyboard
+        // click beside it: Enter and Space produce no mousedown at all, and
+        // thirteen of fourteen buttons on this bar were once mouse-only.
+        button.onmousedown = event => { event.preventDefault(); step(mark.history); };
+        button.onclick = event => { if (event.detail === 0) step(mark.history); };
+      } else if (mark.upload) {
         button.onclick = () => area.dispatchEvent(new Event('openproj:pick-image'));
       } else {
         button.onmousedown = event => { event.preventDefault(); applyMark(surface, mark); };
@@ -9051,6 +9177,38 @@ function attachEditing(surface, bar) {
       bar.append(button);
     }
   }
+
+  // One press of undo or redo, sent to whichever history owns the document now.
+  function step(what) {
+    historyOf(surface).step(what);
+    // The step may fire nothing this page hears: `execCommand('undo')` does fire
+    // an `input`, but `Y.UndoManager.undo()` reaches the box through `reflect()`
+    // inside `apply`, which deliberately fires none.
+    syncHistory();
+  }
+
+  // **Disabled-ness has to be honest.** A control that looks pressable and does
+  // nothing is worse than no control, and this bar has the conditions to produce
+  // one: the native stack answers `queryCommandEnabled` truthfully only until
+  // something assigns `.value`, and which history owns the document changes
+  // under the toolbar when a room binds or drops. `disabled` and not a class —
+  // it is the one state a screen reader, a pointer and the stylesheet all agree
+  // about already.
+  function syncHistory() {
+    if (!historyButtons.length) return;
+    const owner = historyOf(surface);
+    for (const [button, what] of historyButtons) button.disabled = !owner.can(what);
+  }
+  // Every moment the answer can change and no more. `onCaret` is the five events
+  // a person's hands produce, and each is a moment when the box is the browser's
+  // editing host — the only moment `queryCommandEnabled` is answering about THIS
+  // box rather than about whatever was focused last. `openproj:editing` is the
+  // box arriving or somebody else writing into it; `openproj:history` is the
+  // room binding, dropping, or its stack moving.
+  surface.onCaret(syncHistory);
+  addEventListener('openproj:editing', syncHistory);
+  addEventListener('openproj:history', syncHistory);
+  syncHistory();
 
   // Armed by Escape, spent by the next Tab, and cleared by typing — which is
   // what `input` is for rather than a second keydown branch: the Shift in
@@ -9112,6 +9270,19 @@ function attachEditing(surface, bar) {
         m => m.key === event.key.toLowerCase() && !!m.shift === event.shiftKey
       );
       if (mark && !event.altKey) {
+        // ⌘Z and ⌘⇧Z are the browser's before they are this page's, and the
+        // page takes them only where the browser's own has been destroyed —
+        // `keyed` says which. False on a textarea with no room, and that is not
+        // laziness: the native binding restores the SELECTION the edit was made
+        // with and `execCommand('undo')` does not. False on Ace, whose command
+        // table took the key before this listener saw it. True in a live room.
+        if (mark.history) {
+          const owner = historyOf(surface);
+          if (!owner.keyed) return;
+          event.preventDefault();
+          step(mark.history);
+          return;
+        }
         event.preventDefault();
         applyMark(surface, mark);
       }
@@ -9539,6 +9710,24 @@ button.mark {
   background: var(--surface); color: var(--muted); cursor: pointer;
 }
 button.mark:hover { border-color: var(--accent); color: var(--accent); }
+/* The history group. A drawing has no baseline to sit on, so the box centres it
+   the way `.draft-do` centres the check and the cross rather than padding it
+   like a word. */
+.marks .hist { display: inline-flex; align-items: center; justify-content: center;
+               line-height: 0; }
+/* An SVG nothing sizes lays out at 0x0, and this application has shipped that
+   twice. 13px against the 12px letters beside it, because a stroked outline
+   reads a shade smaller than a glyph in the same box. */
+.marks .hist svg { display: block; width: 13px; height: 13px; }
+/* **Empty says so**, which is the failure mode this group was held back for.
+   `:hover` is named explicitly because `button.mark:hover` is (0,2,1) and would
+   otherwise beat a bare `button.mark:disabled` at (0,2,1) on order alone and
+   light up a control that will not act; `button.mark:disabled:hover` is (0,3,1)
+   and wins outright — resolved with `tests/cascade.py`, not guessed at. */
+button.mark:disabled, button.mark:disabled:hover {
+  cursor: default; background: var(--surface-2);
+  border-color: var(--line); color: var(--muted); opacity: .45;
+}
 .doc img { max-width: 100%; height: auto; }
 /* A table in a shaping document. Tables have parsed since the day `_MD` was
    given the rule, and drew as four words in a row with no lines anywhere —
@@ -11058,6 +11247,60 @@ const COEDIT = (() => {
   let arrived = false;  // the socket has worked at least once
   let attempts = 0;
 
+  // --- undo, in a document somebody else is also writing ---------------------
+  //
+  // **This defect needs no action from you at all — only somebody else typing.**
+  // A remote keystroke reaches the box through `reflect()`, which splices under
+  // `apply`, which assigns `.value` — the correct write for a change nobody here
+  // made, since a remote change cannot be merged into a native undo stack. What
+  // was never written down is the cost: in a live room every character somebody
+  // else types destroys your undo history. And it does not come up empty, it
+  // lies — measured in Chrome, `queryCommandEnabled('undo')` still answers TRUE
+  // afterwards. That is `d6997e3`'s image-upload data loss by another road, and
+  // worse, because that one at least needed you to do something.
+  //
+  // `trackedOrigins` is the whole design, in one line: `'typed'` is what
+  // `typed()` and `spliced()` already pass to `doc.transact`, and a frame off the
+  // socket arrives as `'remote'`. So one press gives back YOUR last thing and
+  // never Bob's sentence, which is the failure `f7bde59` measured on the other
+  // surface. The default `captureTimeout` of 500ms stands: it is what makes a
+  // run of typing one step rather than one per character.
+  //
+  // Zero new vendored bytes — `UndoManager` is in the bundle's export clause and
+  // `_yjs()` carries that clause over verbatim, asserted in
+  // `test_the_yjs_bundle_inlines_as_a_classic_script`.
+  const undos = new YJS.UndoManager(text, {trackedOrigins: new Set(['typed'])});
+  // Said rather than polled, so the buttons are honest about an empty stack the
+  // instant it becomes one.
+  const toldHistory = () => dispatchEvent(new Event('openproj:history'));
+  for (const when of ['stack-item-added', 'stack-item-popped', 'stack-cleared']) {
+    undos.on(when, toldHistory);
+  }
+
+  // Who answers the toolbar's history buttons, handed over through the one `let`
+  // the shared block declares for it.
+  //
+  // **Not gated on the socket being open.** A room that has bound has spliced
+  // under `apply` at least once, so from then on the box's native stack is a
+  // lying stack whether or not the connection survives — and Cloud Run closes
+  // every socket at five minutes, so a down socket is ordinary rather than a
+  // fault. `bound` is the condition; `stop()` is the one place that ends it.
+  function ownHistory() {
+    COEDIT_HISTORY = bound && !dead ? {
+      can: what => what === 'undo' ? undos.canUndo() : undos.canRedo(),
+      step(what) {
+        // Anything typed since the last `input` event first, so the step taken
+        // back is the whole of the last thing. `save()` opens with it too.
+        typed();
+        if (what === 'undo') undos.undo(); else undos.redo();
+      },
+      // Here the page HAS to take ⌘Z: the stack the browser would reach is the
+      // one `reflect()` destroyed.
+      keyed: true,
+    } : null;
+    dispatchEvent(new Event('openproj:history'));
+  }
+
   // `btoa` over a spread argument list throws on a document of any size, and a
   // full state update is tens of kilobytes. In chunks, which is the only reason
   // this is not one line.
@@ -11376,6 +11619,10 @@ const COEDIT = (() => {
     bound = false;
     settle(null);
     names([]);
+    // The room no longer answers for the document, so it no longer answers for
+    // the undo buttons: they go back to the box's own stack rather than staying
+    // pressable over a history nothing will send.
+    ownHistory();
     if (why) {
       // Into its own box, never into the textarea: text put into the editing
       // surface is text somebody saves back.
@@ -11443,6 +11690,17 @@ const COEDIT = (() => {
       SURFACE.onScroll(drawSeats);
       addEventListener('resize', drawSeats);
       sit();
+      // **The ground state is the document as you first see it.** Exactly one
+      // thing above this line can have left a step on the stack: the `mine`
+      // branch's `typed()`, which pushes a restored draft in as one tracked
+      // transaction — so without this, the first press of undo throws that draft
+      // away in one go. Undo is for what you type from here; the draft banner is
+      // the control for the other thing.
+      undos.clear();
+      // And only NOW does the room own the buttons. `bound` is what makes
+      // `reflect()` write to the box, and that write is what makes the native
+      // stack untrustworthy; before this line the browser's own is correct.
+      ownHistory();
     } else {
       // A reconnection. The document already merged everything typed while the
       // socket was down, so there is nothing to decide.
@@ -12322,6 +12580,33 @@ def icon_svg(name: str) -> Markup:
 DRAFT_MARKS = {
     "create": _ICON_SVG.format('<path d="M5 12.6 9.7 17.3 19 6.9"/>'),
     "cancel": _ICON_SVG.format('<path d="M6.6 6.6 17.4 17.4M17.4 6.6 6.6 17.4"/>'),
+}
+
+
+# The toolbar's first group, drawn for exactly the reason `DRAFT_MARKS` above is.
+#
+# Every arrow anybody would reach for here is outside the vendored latin subset —
+# measured against the 230 codepoints in `inter-latin-wght-normal.woff2`: U+21B6
+# and U+21B7 (the curved arrows), U+27F2 and U+27F3 (the circular ones), U+2190,
+# U+2192, U+21A9, U+21AA and U+238C are all absent, and `•` (U+2022) and `—`
+# (U+2014) are the only two marks the shipped toolbar types that are present. So
+# a typed arrow makes the two most-pressed buttons on the bar a pair of tofu
+# boxes on any machine without a font that has them, which is precisely the
+# failure the draft row's check and cross were redrawn to avoid.
+#
+# Hand-drawn rather than copied, on the rule `_ICON_ART` is written under:
+# stroked outlines in `currentColor` at the interface's own weight, so they
+# follow the theme and the drawing in the file is the drawing on screen. The two
+# are mirrored about x=12 so that "the other direction" is legible as the same
+# shape reversed rather than as a second icon to learn.
+#
+# Sized by `.marks .hist svg` — an SVG nothing sizes lays out at 0x0, and this
+# application has shipped that twice.
+HISTORY_MARKS = {
+    "undo": _ICON_SVG.format('<path d="M9.5 4.5 5 9l4.5 4.5"/>'
+                             '<path d="M5 9h9a5 5 0 0 1 0 10h-3.5"/>'),
+    "redo": _ICON_SVG.format('<path d="M14.5 4.5 19 9l-4.5 4.5"/>'
+                             '<path d="M19 9h-9a5 5 0 0 0 0 10h3.5"/>'),
 }
 
 
@@ -15983,7 +16268,9 @@ def _combobox_html(index: Index | None) -> Markup:
         if index
         else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
     )
-    return _fragment(_COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES)
+    return _fragment(
+        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS
+    )
 
 
 # The nav, as the field on `Links` each item points at and the word it wears. One

@@ -1921,6 +1921,18 @@ def test_the_yjs_bundle_inlines_as_a_classic_script():
     source = (Path(__file__).resolve().parents[1] / "static" / "yjs.bundle.mjs").read_text()
     assert len(script) > 90_000 and abs(len(script) - len(source)) < 4000
 
+    # **`UndoManager` costs zero new vendored bytes, confirmed rather than
+    # assumed.** S4 rests on it: the whole of the undo history the room owns is
+    # a class that has been sitting in this file since the day it was vendored,
+    # because `_yjs` turns upstream's export clause into the returned object
+    # verbatim and every name in it comes along. If a re-vendoring ever drops it,
+    # the failure without this line is `YJS.UndoManager is not a constructor`
+    # thrown inside an IIFE at page load, which takes the whole room with it.
+    assert "as UndoManager," in source, "upstream no longer exports UndoManager"
+    assert re.search(r"[{,]UndoManager:", script), (
+        "UndoManager survived the export clause but not the rewriting"
+    )
+
 
 def test_the_vendored_yjs_and_the_server_write_the_same_seed():
     """Two implementations, one document, byte for byte.
@@ -3565,3 +3577,241 @@ def test_undo_never_takes_back_something_somebody_else_typed(
         f"the undo was broadcast and the room lost Bob's writing: {room.body()!r}"
     )
     assert "ANN " not in room.body(), "Ann's undo was not broadcast, so the room has diverged"
+
+
+_UNDO_IN_A_ROOM_ON_THE_BOX = r"""
+document.getElementById('toggle').click();
+const box = document.querySelector('textarea[name=body]');
+const undo = [...document.querySelectorAll('#marks .hist')]
+  .find(one => one.title.startsWith('Undo'));
+if (!undo) return {missing: true};
+
+// Ann's own edit, made the way a person makes one: through the box, with an
+// `insertText`, so the page hears an `input` and recovers the splice exactly as
+// it does for typing.
+box.focus();
+box.setSelectionRange(0, 0);
+document.execCommand('insertText', false, 'ANN ');
+await new Promise(go => setTimeout(go, 100));
+const mineWas = box.value.startsWith('ANN ');
+const offered = !undo.disabled;
+
+// And then Bob types: a real update off the socket, applied inside `apply`,
+// which is what makes it a change this tab did not make — and what assigns
+// `.value`, which is what destroys the browser's own stack.
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+await new Promise(go => setTimeout(go, 150));
+const theirsWas = box.value;
+// The defect, in one line: the native stack has just been wiped and goes on
+// answering that it has something to give back.
+const nativeSaysYes = document.queryCommandEnabled('undo');
+const stillOffered = !undo.disabled;
+
+// One press of the leftmost button on the bar.
+window.__sent.length = 0;
+undo.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+await new Promise(go => setTimeout(go, 200));
+return {
+  errors: window.__errors, sent: window.__sent,
+  mineWas, offered, theirsWas, nativeSaysYes, stillOffered,
+  after: box.value, spent: undo.disabled,
+  frames: window.__sent.filter(frame => frame.t === 'update').length,
+};
+"""
+
+
+def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """S4, and the same sentence `f7bde59` proved on the other surface.
+
+    Two people, one document, one presses undo, and what comes back is their own
+    last edit. On the `<textarea>` there was nothing to press and no history to
+    press it against: a remote keystroke reaches the box as an assignment to
+    `.value` — correctly, because a change nobody here made cannot be merged into
+    a native undo stack — and that assignment wipes the browser's history. So in
+    a live room every character somebody else typed destroyed your undo, with no
+    action from you at all. `nativeSaysYes` is the half that makes it worse than
+    an empty stack: Chrome goes on answering `queryCommandEnabled('undo')` with
+    true afterwards, so nothing on the page could even tell.
+
+    `Y.UndoManager` with `trackedOrigins` of `'typed'` alone is the fix, and the
+    two assertions that matter are the two directions of the same claim: Bob's
+    sentence is still there, and Ann's is not. Both are asked of the real `Room`
+    as well as of the box, because the room's text is the document that gets
+    committed and a `<textarea>` agreeing with itself proves nothing about it.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("reading", "reading and BOB WAS HERE"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+
+    answer = in_chrome_room(
+        client, tmp_path / "undo-box.html", room, welcome,
+        _UNDO_IN_A_ROOM_ON_THE_BOX.replace(
+            "REMOTE", json.dumps(base64.b64encode(update).decode())
+        ),
+    )
+
+    assert not answer.get("missing"), "the toolbar carries no history buttons"
+    assert answer["mineWas"], "Ann's own edit never reached the document"
+    assert answer["offered"], (
+        "the undo button was still disabled after Ann typed, so the room's history "
+        "is not the one the toolbar is asking"
+    )
+    assert "BOB WAS HERE" in answer["theirsWas"], (
+        "Bob's keystroke never reached the box, so there is nothing here to take back"
+    )
+    # Not an aside: this is the measurement that says the native stack cannot be
+    # the answer in a room. If Chrome ever starts reporting this honestly, the
+    # design is still right and this line is the one that will say why it changed.
+    assert answer["nativeSaysYes"], (
+        "Chrome no longer claims an undo it cannot perform after `.value` is assigned — "
+        "re-measure, because the argument for owning this history rests on it"
+    )
+    assert answer["stillOffered"], (
+        "somebody else typing took the undo button away, which is the defect wearing "
+        "a different face"
+    )
+
+    assert "BOB WAS HERE" in answer["after"], (
+        f"one press of undo deleted what somebody else typed: the box now reads "
+        f"{answer['after']!r}"
+    )
+    assert not answer["after"].startswith("ANN "), (
+        "and it did not take back Ann's own edit either, which is what she pressed it for"
+    )
+    assert answer["spent"], (
+        "the stack is empty and the button still looks pressable — empty must not look "
+        "like something you can do"
+    )
+    assert answer["frames"] >= 1, "the undo never went to anybody else in the room"
+
+    # The document that would be committed, not the one on screen: every frame
+    # the page sent has been applied to the real room by `in_chrome_room`.
+    assert "BOB WAS HERE" in room.body(), (
+        f"the undo was broadcast and the room lost Bob's writing: {room.body()!r}"
+    )
+    assert "ANN " not in room.body(), "Ann's undo was not broadcast, so the room has diverged"
+
+
+_HISTORY_KEYS_IN_A_ROOM = r"""
+document.getElementById('toggle').click();
+const box = document.querySelector('textarea[name=body]');
+const of = word => [...document.querySelectorAll('#marks .hist')]
+  .find(one => one.title.startsWith(word));
+const undo = of('Undo'), redo = of('Redo');
+if (!undo || !redo) return {missing: true};
+
+// Nothing typed yet, and the room has just cleared the stack: both directions
+// are empty and both have to say so.
+const atRest = {undo: undo.disabled, redo: redo.disabled};
+
+box.focus();
+box.setSelectionRange(box.value.length, box.value.length);
+document.execCommand('insertText', false, 'a sentence');
+await new Promise(go => setTimeout(go, 100));
+const typed = {text: box.value, undo: undo.disabled, redo: redo.disabled};
+
+// The keyboard, at the box, the way a person presses it. In a room the page has
+// to take this key: the stack the browser would reach is the one `reflect` wiped.
+const press = (key, shift) => {
+  const event = new KeyboardEvent('keydown', {
+    key, code: key === 'z' ? 'KeyZ' : key, ctrlKey: true, shiftKey: !!shift,
+    bubbles: true, cancelable: true,
+  });
+  box.dispatchEvent(event);
+  return event.defaultPrevented;
+};
+const tookUndo = press('z', false);
+await new Promise(go => setTimeout(go, 150));
+const undone = {text: box.value, undo: undo.disabled, redo: redo.disabled};
+
+// And redo from the OTHER channel, because a control that only answers a pointer
+// is half a control: a scripted `.click()` carries `detail === 0`, which is
+// exactly what Enter and Space on a focused button produce and nothing a pointer
+// ever produces.
+redo.focus();
+redo.click();
+await new Promise(go => setTimeout(go, 150));
+const redone = {text: box.value, undo: undo.disabled, redo: redo.disabled};
+
+// The shifted chord, back the other way, once more.
+const tookUndoAgain = press('z', false);
+await new Promise(go => setTimeout(go, 150));
+const tookRedo = press('z', true);
+await new Promise(go => setTimeout(go, 150));
+return {errors: window.__errors, sent: window.__sent, atRest, typed, undone, redone,
+        tookUndo, tookUndoAgain, tookRedo, ended: box.value};
+"""
+
+
+def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """Both channels and both directions, and the disabled state at each step.
+
+    Two things are being held here that this branch has already got wrong once.
+    **Thirteen of fourteen toolbar buttons were mouse-only**, because they were
+    bound on `mousedown` alone and Enter and Space on a focused button produce a
+    click and no mousedown at all; a scripted `.click()` carries `detail === 0`,
+    which is the keyboard's signature and never a pointer's, so pressing one that
+    way is the real path. And **empty must not look like broken**: a history
+    button with nothing on its stack is `disabled` rather than pressable and
+    inert, at rest, after typing, after undoing and after redoing.
+
+    ⌘Z itself is taken off the browser here and only here — `keyed` on the
+    history that owns the document says so — because in a live room the stack
+    the browser would reach is the one `reflect` destroyed. On the same page with
+    no room the key is left alone, which `test_the_history_buttons_use_the_browser
+    _s_own_stack_when_there_is_no_room` is the other half of.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+
+    answer = in_chrome_room(
+        client, tmp_path / "undo-keys.html", room, _welcome(room), _HISTORY_KEYS_IN_A_ROOM
+    )
+
+    assert not answer.get("missing"), "the toolbar carries no history buttons"
+    assert answer["atRest"] == {"undo": True, "redo": True}, (
+        "a document nobody has typed in offers an undo, which is a button that does nothing"
+    )
+    assert answer["typed"]["text"].endswith("a sentence")
+    assert answer["typed"] == {"text": answer["typed"]["text"], "undo": False, "redo": True}
+
+    assert answer["tookUndo"], (
+        "Ctrl+Z was left to the browser inside a live room, where the browser's own "
+        "stack is the one every remote keystroke wipes"
+    )
+    assert not answer["undone"]["text"].endswith("a sentence"), (
+        f"Ctrl+Z gave nothing back: {answer['undone']['text']!r}"
+    )
+    assert answer["undone"] == {
+        "text": answer["undone"]["text"], "undo": True, "redo": False
+    }, "after the last step is taken back, undo is empty and redo is not"
+
+    assert answer["redone"]["text"].endswith("a sentence"), (
+        f"the redo button did not answer a keyboard press: {answer['redone']['text']!r}"
+    )
+    assert answer["redone"] == {
+        "text": answer["redone"]["text"], "undo": False, "redo": True
+    }
+
+    assert answer["tookUndoAgain"] and answer["tookRedo"], "the shifted chord was not claimed"
+    assert answer["ended"].endswith("a sentence"), (
+        f"Ctrl+Z then Ctrl+Shift+Z did not end where it started: {answer['ended']!r}"
+    )

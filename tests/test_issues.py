@@ -517,7 +517,10 @@ def test_an_issue_is_written_in_the_same_surface_a_pitch_is(
     )
     assert got["onOpening"]["caret"] == "Line 1, Column 1 — 1 Lines", got["onOpening"]
 
-    assert got["before"]["toolbar"] == 14, got["before"]["toolbar"]
+    # Sixteen: the shot's four groups, history included. The issue page inlines
+    # the same shared block as the detail page, so a toolbar that grew there and
+    # not here would mean the two had come apart again.
+    assert got["before"]["toolbar"] == 16, got["before"]["toolbar"]
     assert got["before"]["status"] == 3, (
         "the caret readout, the indent picker and the length — this page has no "
         f"draft, so it has no interval in the middle: {got['before']['status']}"

@@ -908,6 +908,22 @@ def _ace_surface_source(page: str) -> str:
     return page[opens:closes]
 
 
+def _shared_editing_source(page: str) -> str:
+    """Everything in the shared block that is NOT the textarea surface.
+
+    Defined by subtraction, and that is the whole point of the spelling. The
+    previous window was `const FORMATS = \\[.*?\\n\\}\\n` — non-greedy, so it
+    stopped at the first closing brace after the mark table and never once
+    reached `applyMark`, which is the largest thing in this block that writes to
+    the document. A guard that names the functions it checks goes out of step
+    with the code the day somebody adds one; a guard that says "the surface, and
+    then everything else" cannot.
+    """
+    opens = page.index(_SURFACE_CLOSES)
+    closes = page.index("</script>", opens)
+    return page[opens:closes]
+
+
 def _coedit_source(page: str) -> str:
     """The room's script, as it ships."""
     found = re.search(r"const COEDIT = \(\(\) => \{.*?\n\}\)\(\);", page, re.S)
@@ -1093,22 +1109,37 @@ def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
     named that omission as a live defect: `reflect()` assigned `.value` on every
     remote update while the comment forty lines above said what that costs, and
     this test's scope — `replaceRange`, `FORMATS` and `attachUploads` — was
-    exactly why nobody noticed. The room's script now writes through the
-    surface's `splice` like everything else, so it can be held to the same rule.
-    It is still not a fix for the undo stack: `splice` under `apply` assigns
-    `.value` inside the implementation, which is the one place allowed to, and
-    S4's `Y.UndoManager` is what answers it.
+    exactly why nobody noticed.
+
+    **And then widened again, because the scope was still a list of names.** It
+    read `const FORMATS = \\[.*?\\n\\}\\n`, which is non-greedy and stops at the
+    first closing brace after the mark table: `applyMark` — the biggest write
+    path in the block and the newest — was four functions past the end of the
+    window, so a mutation of it left this green. The window is the surface
+    subtracted from the shared block now, which is the rule itself rather than a
+    list that goes stale.
+
+    `splice` under `apply` still assigns `.value` inside the implementation,
+    which is the one place allowed to. What that costs — the browser's undo stack,
+    on every remote keystroke — is answered by `Y.UndoManager` in `_COEDIT` and
+    by the two buttons that reach it, not by moving this assignment.
     """
     page = client.get(f"/detail/{TASK}").text
     helpers = _surface_source(page)
-    # Everything that edits the body while somebody is working in it — plus, now,
-    # the room, which is the caller that had a `.value` assignment in it all
-    # along. A draft restored at page load replaces the whole field rather than
-    # part of it, and it says so through `splice(0, length, …)` inside `apply`
-    # rather than by writing to the box behind the boundary's back.
-    editing = re.search(r"const FORMATS = \[.*?\n\}\n", page, re.S).group(0)
-    editing += re.search(r"function attachUploads.*?\n\}\n", page, re.S).group(0)
-    editing += _coedit_source(page)
+    # Everything that edits the body while somebody is working in it — the whole
+    # of the shared block below the surface, plus the room, which is the caller
+    # that had a `.value` assignment in it all along. A draft restored at page
+    # load replaces the whole field rather than part of it, and it says so
+    # through `splice(0, length, …)` inside `apply` rather than by writing to the
+    # box behind the boundary's back.
+    editing = _shared_editing_source(page) + _coedit_source(page)
+    # The window is derived, so it is asserted to contain the things it is
+    # supposed to be judging. A guard scanning nothing passes for ever, and the
+    # spelling this replaced was scanning a window that stopped four functions
+    # short of `applyMark` — the largest write path in the block, and the newest.
+    for named in ("function applyMark", "function indentLines", "function attachEditing",
+                  "function attachUploads", "function historyOf"):
+        assert named in editing, f"the guard's window does not contain {named}"
 
     assert "document.execCommand('insertText', false, text)" in helpers
     assert "area.value =" not in editing, "only the fallback inside replaceRange may assign"
@@ -1133,12 +1164,17 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     Somebody has now asked. The count is overruled, not refuted, and this test
     holds the toolbar to the shot rather than to the corpus.
 
-    Three deliberate departures, each of which this test pins: two code buttons,
+    Two deliberate departures, each of which this test pins: two code buttons,
     because a backtick is a dead key on a Swiss-German layout and a fence is
-    three in a row; no comment button, which is a HackMD collaboration feature
-    with nothing behind it here; and no undo and redo yet, because they are the
-    first two in the shot and they belong with the `reflect()` defect that makes
-    them necessary.
+    three in a row; and no comment button, which is a HackMD collaboration
+    feature with nothing behind it here.
+
+    **Sixteen now, not fourteen.** Undo and redo are the leftmost group in the
+    shot and they were held back until there was a history for them to reach:
+    in a live room every keystroke of somebody else's arrives as an assignment
+    to `.value` and destroys the browser's stack, so a history button was a
+    button that did nothing the moment a second person joined. `Y.UndoManager`
+    is what answers that, and they are the first two entries here now.
     """
     page = client.get(f"/detail/{TASK}").text
     marks = re.search(r"const FORMATS = \[(.*?)\n\];", page, re.S).group(1)
@@ -1150,15 +1186,21 @@ def test_the_toolbar_is_the_one_in_the_screenshot_and_that_overrules_a_count(
     named = [re.search(r"title: '([^']*)'", entry).group(1).split("  ")[0] for entry in entries]
 
     assert named == [
+        "Undo", "Redo",
         "Bold", "Italic", "Strikethrough", "Heading",
         "Code", "Code block", "Quote", "Bullet list", "Numbered list", "Check list",
         "Link", "Image", "Table", "Horizontal rule",
     ]
     # Where the rules fall, and not merely how many there are: a separator in the
     # wrong place groups the buttons into a claim about them that is false.
-    assert [i for i, entry in enumerate(entries) if "group: true" in entry] == [4, 10]
+    assert [i for i, entry in enumerate(entries) if "group: true" in entry] == [2, 6, 12]
     assert "comment" not in marks.lower(), "a collaboration feature with nothing behind it"
-    assert "undo" not in marks.lower(), "history arrives with the UndoManager that answers it"
+    # And the two that are not marks say so in the table rather than being told
+    # apart by their titles: `applyMark` never sees one, and neither does the
+    # keyboard branch that applies one.
+    assert [i for i, entry in enumerate(entries) if "history:" in entry] == [0, 1]
+    for entry in entries[2:]:
+        assert "history:" not in entry, entry
     # Every shifted shortcut is bound to a letter. The handler matches on
     # `event.key`, and shift-8 on a US layout is `*` and not `8` — so ⌘⇧8 beside
     # the bullet's ⌘8 would have been a shortcut that could never once fire.
@@ -1561,11 +1603,11 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     )
     assert "![" not in got["wrote"], "and it wrote markdown into the box instead"
     assert got["bar"] == {
-        "buttons": 14,
-        "rules": 2,
-        "before": ["Code", "Link"],
+        "buttons": 16,
+        "rules": 3,
+        "before": ["Bold", "Code", "Link"],
         "rows": 1,
-    }, "the drawn toolbar is not the shot's three groups, on one row"
+    }, "the drawn toolbar is not the shot's four groups, on one row"
 
     assert got["nestedOff"] == "  one\n  two", (
         "a nested numbered list was numbered a second time instead of being taken "
@@ -3072,6 +3114,10 @@ _VIM_ON = r"""
   const started = SURFACE.text();
   for (const button of document.querySelectorAll('#marks .mark')) {
     if (button.title === 'Image') continue;   // opens a file picker, writes nothing
+    // Undo and redo write no markdown at all — they move a stack. Excluded here
+    // rather than asserted as "wrote something", which they would pass by taking
+    // back the mark before them and would therefore say nothing.
+    if (button.classList.contains('hist')) continue;
     SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, started));
     SURFACE.setCaret(0, 5);
     button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
@@ -3121,7 +3167,7 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
     nothing, and leaves the document unchanged. Every toolbar button and the
     image-paste placeholder-then-replace go through `replaceRange`, which is that
     call, so with vim on they would all have done nothing at all, in silence, on
-    a bar of fourteen buttons.
+    a bar of sixteen buttons.
 
     On the second surface the toolbar goes through `splice`, which is
     `Document.remove` and `Document.insert` — the same two calls Ace makes for a
@@ -3148,6 +3194,8 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
 
     inert = [title for title, wrote in got["marks"] if not wrote]
     assert inert == [], f"these toolbar buttons do nothing with vim on: {inert}"
+    # Thirteen: the sixteen in the shot, less Image, less the two history buttons,
+    # which are not marks and are asserted where the stack they move is.
     assert len(got["marks"]) == 13, got["marks"]
 
     # The record, asserted rather than described: this is the call that would have
@@ -3433,3 +3481,207 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
         "the gutter and the status bar do not agree on how long the document is"
     )
     assert f"Length: {got['project']['length']:,}" in got["project"]["said"]
+
+
+_HISTORY_WITH_NO_ROOM = r"""
+document.getElementById('toggle').click();
+const area = document.querySelector('textarea[name=body]');
+const of = word => [...document.querySelectorAll('#marks .hist')]
+  .find(one => one.title.startsWith(word));
+const undo = of('Undo'), redo = of('Redo');
+if (!undo || !redo) return {missing: true};
+// The two most-pressed buttons on the bar are drawings, because every arrow
+// anybody would type is outside the vendored latin subset. An SVG nothing sizes
+// lays out at 0x0, and this application has shipped that twice.
+const drawn = [undo, redo].map(one => {
+  const art = one.querySelector('svg');
+  if (!art) return null;
+  const seen = art.getBoundingClientRect();
+  return {w: Math.round(seen.width), h: Math.round(seen.height),
+          paths: art.querySelectorAll('path').length,
+          ink: getComputedStyle(art).stroke};
+});
+// No socket has ever welcomed this page — it is a `file://` URL with no server
+// behind it — so this is the ordinary state the export and every signed-out
+// reader are in, and the browser's own stack is the whole of the history here.
+const live = typeof COEDIT === 'undefined' ? null : COEDIT.live();
+const roomOwns = COEDIT_HISTORY !== null;
+
+const atRest = {undo: undo.disabled, redo: redo.disabled};
+area.focus();
+area.setSelectionRange(area.value.length, area.value.length);
+document.execCommand('insertText', false, ' a sentence');
+const typed = {text: area.value, undo: undo.disabled, redo: redo.disabled};
+
+// The key is the browser's here and stays the browser's: its own binding
+// restores the selection the edit was made with, and `execCommand('undo')` does
+// not. `defaultPrevented` false is the assertion that the page kept its hands off.
+const key = new KeyboardEvent('keydown', {key: 'z', code: 'KeyZ', ctrlKey: true,
+                                          bubbles: true, cancelable: true});
+area.dispatchEvent(key);
+const tookTheKey = key.defaultPrevented;
+
+undo.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+await new Promise(go => setTimeout(go, 50));
+const undone = {text: area.value, undo: undo.disabled, redo: redo.disabled};
+// From the keyboard, which is the channel thirteen of fourteen buttons on this
+// bar did not answer.
+redo.focus();
+redo.click();
+await new Promise(go => setTimeout(go, 50));
+const redone = {text: area.value, undo: undo.disabled, redo: redo.disabled};
+return {drawn, live, roomOwns, atRest, typed, tookTheKey, undone, redone,
+        named: [undo.getAttribute('aria-label'), redo.getAttribute('aria-label')]};
+"""
+
+
+def test_the_history_buttons_use_the_browsers_own_stack_when_there_is_no_room(
+    client: TestClient, tmp_path: Path
+):
+    """The third of the three states the two buttons have to serve, and the one
+    everybody is in most of the time: a page with no socket at all.
+
+    The static export over `file://`, a proxy that drops the upgrade, a reader
+    who is not signed in — none of them has a room, nothing ever assigns `.value`
+    behind the box, and the browser's own undo stack is therefore complete and
+    honest. So the page uses it and does not take ⌘Z off the browser: the native
+    binding restores the *selection* the edit was made with, and
+    `execCommand('undo')` does not. A page that intercepted here would be trading
+    a better undo for a worse one, and `tookTheKey` is that promise.
+
+    The drawings are asserted in the same run because they are the same claim
+    about the same two controls. Every arrow anybody would type — U+21B6, U+21B7,
+    U+27F2, U+27F3, U+2190, U+2192, U+21A9, U+21AA, U+238C — is outside the 230
+    codepoints of the vendored latin subset, so a typed one is two tofu boxes on
+    any machine without a font that has it; and an SVG that nothing sizes lays
+    out at 0x0, which this application has already shipped twice. Both are
+    questions about pixels and both are asked of Chrome.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "history.html",
+        1400, _HISTORY_WITH_NO_ROOM,
+    )
+
+    assert not got.get("missing"), "the toolbar carries no history buttons"
+    for seen in got["drawn"]:
+        assert seen, "a history button holds no drawing, so it holds nothing at all"
+        assert (seen["w"], seen["h"]) == (13, 13), (
+            f"the drawing laid out at {seen['w']}x{seen['h']} — an SVG nothing sizes is 0x0"
+        )
+        assert seen["paths"] == 2, "the arrow is a head and a shaft"
+        assert seen["ink"] != "none", "drawn in `currentColor`, so it follows the theme"
+    assert got["named"] == ["Undo", "Redo"], (
+        "an icon-only control with no accessible name is a button nobody can find"
+    )
+
+    assert got["live"] is False and got["roomOwns"] is False, (
+        "this page has a room after all, so it is not measuring the state it says it is"
+    )
+    assert got["atRest"] == {"undo": True, "redo": True}, (
+        "a document nobody has typed in offers an undo, which is a button that does nothing"
+    )
+    assert got["typed"]["text"].endswith(" a sentence")
+    assert got["typed"]["undo"] is False, "the browser's own stack was not asked"
+    assert got["tookTheKey"] is False, (
+        "the page took ⌘Z off a browser whose own undo is complete and better than "
+        "the one this page could give back"
+    )
+    assert not got["undone"]["text"].endswith(" a sentence"), (
+        f"the undo button gave nothing back: {got['undone']['text']!r}"
+    )
+    assert got["redone"]["text"].endswith(" a sentence"), (
+        f"redo did not answer a keyboard press: {got['redone']['text']!r}"
+    )
+
+
+_HISTORY_ON_ACE = r"""
+document.getElementById('toggle').click();
+await new Promise(go => setTimeout(go, 300));
+const editor = SURFACE.editor;
+const of = word => [...document.querySelectorAll('#marks .hist')]
+  .find(one => one.title.startsWith(word));
+const undo = of('Undo'), redo = of('Redo');
+if (!undo || !redo || !editor) return {missing: true};
+// Seeded with `setValue(seeded, -1)`, which resets Ace's history: the document
+// as it opened is the ground state and there is nothing behind it.
+const atRest = {undo: undo.disabled, redo: redo.disabled};
+const lengthWas = SURFACE.text().length;
+if (!undo.disabled) {
+  undo.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+  await new Promise(go => setTimeout(go, 100));
+}
+const lengthAfterAnUndoAtRest = SURFACE.text().length;
+
+// Whose history this surface's buttons reach, asked of the decision itself and
+// not inferred from what happened. Ace keeps its own across a remote change —
+// `aceSurface` taught the manager to ignore deltas this tab did not make — and
+// Ace's command table owns Ctrl+Z before this page can see it, so button and key
+// have to arrive at the same stack.
+const ownsItself = historyOf(SURFACE) === SURFACE.history;
+
+editor.focus();
+editor.selection.moveTo(0, 0);
+editor.insert('ACE ');
+await new Promise(go => setTimeout(go, 100));
+const typed = {head: SURFACE.text().slice(0, 4), undo: undo.disabled, redo: redo.disabled};
+
+undo.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+await new Promise(go => setTimeout(go, 100));
+const undone = {head: SURFACE.text().slice(0, 4), undo: undo.disabled, redo: redo.disabled};
+redo.focus();
+redo.click();
+await new Promise(go => setTimeout(go, 100));
+return {atRest, lengthWas, lengthAfterAnUndoAtRest, ownsItself, typed, undone,
+        redone: SURFACE.text().slice(0, 4)};
+"""
+
+
+def test_the_history_buttons_reach_the_second_editors_own_stack(
+    client: TestClient, tmp_path: Path
+):
+    """The fourth state, and the one where the answer is "not this page's".
+
+    `f7bde59` taught Ace's own `UndoManager` to ignore the deltas this tab did
+    not make, which is the half that stops one press of Ctrl+Z deleting somebody
+    else's sentence for everybody. That manager is also what Ace's own command
+    table reaches, and it reaches it before this page's keydown listener sees the
+    key at all — `stopEvent` does `stopPropagation` as well as `preventDefault`.
+    So the toolbar is pointed at the same stack rather than at the room's: two
+    histories over one document, with the key going to one and the button to the
+    other, is worse than either.
+
+    `provides.history` is what says so, and `ownsItself` asks the decision rather
+    than inferring it from an outcome — an outcome the room's manager would
+    produce too, on this document, in this order.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "ace-history.html",
+        1400, _HISTORY_ON_ACE, query="?editor=ace", budget=8000,
+    )
+
+    assert not got.get("missing"), "the second editor carries no history buttons"
+    assert got["ownsItself"], (
+        "the toolbar is asking the room for a history Ace keeps itself, which leaves "
+        "the button and Ctrl+Z pointed at two different stacks"
+    )
+    assert got["atRest"] == {"undo": True, "redo": True}, (
+        "a freshly seeded document offers an undo, and there is nothing behind the seed "
+        "to give anybody back"
+    )
+    # And what that button did before it was disabled, kept as the measurement
+    # rather than as a sentence: `editor.setValue` is `session.doc.setValue`,
+    # which is an ordinary insert to the undo manager, while it is
+    # `session.setValue` that calls `reset()`. One press at rest took the
+    # document from 119 characters to 0 — and in a room that goes out as an
+    # update frame and is committed.
+    assert got["lengthWas"] > 0, "nothing was seeded, so this measures nothing"
+    assert got["lengthAfterAnUndoAtRest"] == got["lengthWas"], (
+        f"one undo on a freshly opened document took it from {got['lengthWas']} "
+        f"characters to {got['lengthAfterAnUndoAtRest']}"
+    )
+    assert got["typed"] == {"head": "ACE ", "undo": False, "redo": True}
+    assert got["undone"]["head"] != "ACE ", (
+        f"the undo button did not reach Ace's stack: {got['undone']['head']!r}"
+    )
+    assert got["undone"]["redo"] is False, "and nothing was offered back the other way"
+    assert got["redone"] == "ACE ", "redo did not answer a keyboard press"

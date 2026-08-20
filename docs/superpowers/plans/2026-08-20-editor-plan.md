@@ -443,40 +443,83 @@ that_wraps`.
 
 ---
 
-## S4 — `Y.UndoManager`, and the undo defect that is already shipped
+## S4 — Built. `Y.UndoManager`, two buttons, and three states
 
-Zero new vendored bytes: `UndoManager` is already in the export clause of
-`static/yjs.bundle.mjs` (confirmed by grep). **`_DETAIL` only** — it is the only template
-with a room.
+Zero new vendored bytes, and confirmed rather than trusted: `UndoManager` is in the export
+clause of `static/yjs.bundle.mjs`, `_yjs()` carries that clause into the returned object
+verbatim, and `test_the_yjs_bundle_inlines_as_a_classic_script` now asserts both halves.
+`static/SHA256SUMS` verifies unchanged. **`_DETAIL` only** for the room half — it is the
+only template with one — but the two buttons are in `_COMBOBOX` and reach all four editing
+pages, because the state with no room is a state that has to be served too.
 
-- [ ] **S4.1** `Y.UndoManager` over the room's `Y.Text` with `trackedOrigins {'typed'}` —
-      the origin `typed()` already passes to `doc.transact(…, 'typed')` (`render.py:8741`).
-      Ctrl-Z undoes what this tab wrote and nothing else.
-- [ ] **S4.2** This closes a live bug nobody in the audit named: `reflect()`
-      (`render.py:8756`, the write at `:8764`) does `BODY.value = want` on every remote
-      update, and `render.py:7357` records that assigning `.value` wipes the browser's
-      native undo stack. In a live room, every remote keystroke already destroys your undo
-      history, unguarded and unnamed.
-- [ ] **S4.3** Extend `test_no_script_ever_assigns_a_textarea_its_value`
-      (`tests/test_editor.py:787`) to scope `_COEDIT`. It greps `replaceRange`, `FORMATS`
-      and `attachUploads` today and deliberately does not look at the room's script — which
-      is exactly why the defect above survived.
+- [x] **S4.1** `Y.UndoManager` over the room's `Y.Text` with `trackedOrigins {'typed'}` —
+      the origin `typed()` and `spliced()` already pass to `doc.transact`. One press gives
+      back this tab's last edit and never anybody else's. Cleared once at the welcome,
+      because the one thing that can already be on the stack there is the `mine` branch's
+      `typed()` — a restored draft, which an undo would otherwise throw away whole.
+- [x] **S4.2** The live bug nobody in the audit named, now measured: a remote keystroke
+      reaches the box as `.value` under `apply`, and that wipes the browser's stack. Worse
+      than empty — Chrome goes on answering `queryCommandEnabled('undo')` with `true`
+      afterwards while `execCommand('undo')` returns `true` and moves nothing, so nothing
+      on the page could tell. That measurement is what decides `provides.history`.
+- [x] **S4.3** `test_no_script_ever_assigns_a_textarea_its_value` widened — and further
+      than the stage asked. Scoping `_COEDIT` was done in an earlier commit; the window
+      was still `const FORMATS = \[.*?\n\}\n`, which is non-greedy and ended four
+      functions short of `applyMark`, the biggest and newest write path in the block. It is
+      the surface subtracted from the shared block now, which is the rule rather than a
+      list of names, and it asserts that the window contains the five functions it judges.
+- [x] **S4.4** *(not in the plan, found by building it.)* One press of undo on a freshly
+      opened Ace document took it from 119 characters to **0**, and in a room that goes out
+      as an update frame and is committed. `editor.setValue` is `session.doc.setValue`,
+      which is an ordinary insert to the undo manager; it is `session.setValue` — a
+      different method — that calls `reset()`, and the comment claiming `-1` reset the
+      history was simply wrong. The seed is not an edit and no longer goes on the stack.
+      Found because honest disabled-ness made the toolbar ask a question Ace's own key
+      handling never had to answer.
+
+**The three states, each served, none silent:**
+
+| | undo history | ⌘Z |
+|---|---|---|
+| textarea, no room | the browser's own, through `execCommand` | left to the browser — its binding restores the selection and `execCommand` does not |
+| textarea, live room | `Y.UndoManager`, `'typed'` only | taken by the page: the browser's stack is the one `reflect()` destroyed |
+| Ace, room or not | Ace's own, which `f7bde59` taught to ignore other people's deltas | Ace's command table has it before the page sees it |
+
+`historyOf(surface)` is the one place that decides, asked at the press rather than at setup,
+because `_COEDIT` is inlined after `attachEditing` has already run and a room binds seconds
+later still. `surface.provides.history` is what the branch reads — never a surface's name.
 
 **Proved by:**
 
-- **Chrome + a real `Room`** — `test_undo_never_takes_back_something_somebody_else_typed`:
-  two documents, A types, B types into A's room through the real `Room`, A presses undo,
-  assert B's characters are still there and that nothing was propagated as a deletion. This
-  is the measured Ace failure (`"REMOTE LOCAL mine"` → one undo → `"mine"`) asked of the
-  design we actually ship.
-- **Chrome** — `test_a_remote_keystroke_leaves_the_caret_the_scroll_and_the_history_where_
-  they_were`: caret position, `scrollTop` and undo availability before and after a remote
-  update.
-- `tests/test_editor.py:787`, extended, is the static half.
+- **Chrome + a real `Room`** — `test_undo_in_a_room_gives_back_your_own_last_thing_on_the_
+  textarea`: Ann types, Bob types through the real `Room`, Ann presses the leftmost button,
+  and both directions of the claim are asked of `room.body()` as well as of the box — Bob's
+  sentence is still there and Ann's is not.
+- **Chrome + a real `Room`** — `test_the_history_buttons_answer_the_keyboard_and_say_when_a_
+  stack_is_empty`: both channels, both directions, and the disabled state at rest, after
+  typing, after undoing and after redoing.
+- **Chrome** — `test_the_history_buttons_use_the_browsers_own_stack_when_there_is_no_room`,
+  which also asks the pixels: 13×13 drawn, two paths, in `currentColor`. Every arrow anybody
+  would type is outside the vendored 230-codepoint subset, so a typed one is two tofu boxes.
+- **Chrome** — `test_the_history_buttons_reach_the_second_editors_own_stack`, including the
+  119→0 measurement above.
+- `test_no_script_ever_assigns_a_textarea_its_value`, widened, is the static half.
+
+**Not built, and said rather than left as an absence:** the caret is not moved to the place
+an undo happened. `reflect()` shifts it by the splice, which is where the text came back;
+putting it *at* the edit means carrying a `StackItem`'s meta through the observer, and
+nothing has measured whether that is better than where the caret already is.
+
+**Cost:** +14,335 B raw / +4,785 B gz on the detail page measured with the command above
+(435,101 → 449,436 B raw, 172,239 → 177,024 B gz). Almost all of it is prose: the three
+states are a thing the next reader would otherwise re-derive, and the two measurements that
+decide the design — Chrome's lying `queryCommandEnabled` and Ace's 119→0 — are written where
+the code that rests on them is.
 
 **Hazards answered:** *reflecting somebody else's keystroke must not move the caret, the
-scroll or the undo history*; *undo must never delete text this tab did not write*; and half
-of *a guard that greps source must follow the code it guards*.
+scroll or the undo history*; *undo must never delete text this tab did not write*; *a
+control that does nothing must not look pressable*; and half of *a guard that greps source
+must follow the code it guards*.
 
 ---
 

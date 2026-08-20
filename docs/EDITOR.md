@@ -577,6 +577,17 @@ and `attachUploads` — it deliberately does not look at `_COEDIT`. So every rem
 already destroys your undo history, unguarded and unnamed. Both are fixable with zero
 vendored bytes, and the plan fixes them early.
 
+**Both are fixed, and the second one turned out to be worse than this paragraph knew.** The
+write stays — a remote change cannot be merged into a native undo stack, so `.value` under
+`apply` is the right call — and S4 gives the document a history of its own instead:
+`Y.UndoManager` tracking the `'typed'` origin alone, with the two buttons the screenshot
+puts leftmost on the bar. What was not known when this was written is that the wiped stack
+does not come up *empty*. Measured in Chrome: after `.value` is assigned,
+`queryCommandEnabled('undo')` goes on answering `true` while `execCommand('undo')` returns
+`true` and moves nothing at all. An empty stack a page can see and say so about; a lying one
+it cannot, which is why the room takes the question off the box entirely rather than
+falling back to it.
+
 ## What must not be lost
 
 In the terms the current code uses. Every one of these is either load-bearing or the
@@ -671,7 +682,7 @@ otherwise lets somebody set their own floor coarser than the window it backstops
 **The two shipped defects are fixed early and regardless** — the seat bands measuring
 through an integer `clientWidth`, and `reflect()` wiping the native undo stack on every
 remote keystroke in a live room. Neither costs a vendored byte and both are in this
-repository today.
+repository today. Both are done; the undo one is S4 and its record is in the plan.
 
 ## What is still open
 
