@@ -7503,8 +7503,13 @@ const FORMATS = [
   {label: '—', title: 'Horizontal rule', insert: '---'},
 ];
 
-// A numbered list, on any of the ways somebody has already written one.
-const ORDERED = /^\d+\.\s+/;
+// A numbered list, on any of the ways somebody has already written one —
+// including an indented one. Written `^\d+\.` at first, which made this the one
+// prefix in the toolbar that was blind to indentation while `LIST_ITEM` four
+// lines below is not: ⌘7 over `  1. one` wrote `1.   1. one` instead of taking
+// the numbers off, and a nested list is what this repository's own documents are
+// made of.
+const ORDERED = /^(\s*)\d+\.\s+/;
 
 function lineRange(area) {
   const from = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1;
@@ -7528,6 +7533,12 @@ function blockPadding(before, after) {
 }
 
 function applyMark(area, mark) {
+  // The image button is the one entry that writes nothing: it opens a file
+  // picker, and `attachEditing` binds it to that instead of to here. Refused at
+  // the top rather than left to fall out of the bottom, because the tail of this
+  // function reads `mark.wrap.length` — so "anything I do not recognise is a
+  // wrap" is what a fifth shape gets, and what it gets is a TypeError.
+  if (mark.upload) return;
   if (mark.fence) {
     // Whole lines, and on their own lines: a fence only opens a block if nothing
     // shares its line, so wrapping a selection in place would produce three
@@ -7570,7 +7581,15 @@ function applyMark(area, mark) {
         // Numbered, and not `1.` on every line. Commonmark renumbers, so both
         // render the same — but the file is the record here and people read and
         // edit it in git, where a list of five `1.`s reads as a mistake.
-        if (mark.ordered) return on ? line.replace(ORDERED, '') : `${at + 1}. ${line}`;
+        //
+        // The line's own indent is kept on both sides of the toggle: numbering a
+        // nested list must not un-nest it, and un-numbering it must not either.
+        if (mark.ordered) {
+          const lead = /^\s*/.exec(line)[0];
+          return on
+            ? line.replace(ORDERED, '$1')
+            : `${lead}${at + 1}. ${line.slice(lead.length)}`;
+        }
         if (!boxed) return on ? line.slice(mark.prefix.length) : mark.prefix + line;
         const [, indent, bullet, gap, , text] = LIST_ITEM.exec(line);
         return `${indent}${bullet}${gap}${on ? '' : '[ ] '}${text}`;
@@ -7587,7 +7606,12 @@ function applyMark(area, mark) {
     // when there are already words to link, and the words when there are not.
     const {selectionStart: from, selectionEnd: to} = area;
     const chosen = area.value.slice(from, to);
-    const label = chosen || 'text';
+    // A bracket inside the label ends the label. `[a]b]` selected and linked
+    // wrote `[a]b](url)`, which the committed renderer draws as literal text
+    // with no link in it and no sign that anything failed. Escaped rather than
+    // dropped, for the same reason `pastedAs` escapes a cell's own pipe — and
+    // the caret arithmetic below counts the escaped label, not the raw one.
+    const label = (chosen || 'text').replace(/([[\]])/g, '\\$1');
     replaceRange(area, `[${label}](url)`);
     const at = from + 1;
     if (chosen) area.setSelectionRange(at + label.length + 2, at + label.length + 5);
@@ -7704,12 +7728,62 @@ function indentLines(area, out) {
   area.setSelectionRange(carried(start), carried(end));
 }
 
+// Where every source line of a textarea starts, in the box's own pixels.
+//
+// A textarea has no DOM inside it, so there is no range to measure and no other
+// way to ask this: the answer comes from a mirror that is given the box's own
+// metrics and one block per logical line, and `offsetTop` then reads each line's
+// top straight off. Measured rather than assumed — `scrollTop / lineHeight` is
+// only right for a document in which nothing wraps, and in a pane half a window
+// wide most lines wrap.
+//
+// **The width is the fractional content box, and that is the whole of the
+// accuracy.** `BODY.clientWidth` is an integer while the real content box is
+// fractional, and at a width sitting on a wrap boundary that integer flips one
+// break — after which every line below it is a whole line height out, up to
+// three. Measured across six corpora and 481 widths each: 1.7% to 10.4% of
+// widths wrong with the integer, 0 of 481 with this. `_COEDIT`'s seat mirror
+// still has the integer; it is the same mirror and the stage that draws the
+// gutter deletes that copy rather than fixing it.
+function lineTops(area) {
+  const style = getComputedStyle(area);
+  const mirror = document.createElement('div');
+  mirror.setAttribute('aria-hidden', 'true');
+  for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+                      'letterSpacing', 'padding', 'border', 'whiteSpace',
+                      'wordBreak', 'overflowWrap', 'tabSize']) {
+    mirror.style[name] = style[name];
+  }
+  mirror.style.position = 'absolute';
+  mirror.style.visibility = 'hidden';
+  mirror.style.top = mirror.style.left = '-9999px';
+  mirror.style.boxSizing = 'border-box';
+  // The scrollbar is the browser's own furniture and is an integer; everything
+  // else in this sum is fractional and is kept so.
+  const bars = area.offsetWidth - area.clientWidth
+    - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+  mirror.style.width = (area.getBoundingClientRect().width - bars) + 'px';
+  // One block per logical line, so a line that wraps is one box however many
+  // rows it draws on — which is what "line 17" means in the gutter of the editor
+  // this is modelled on, and what `data-startline` counts on the other side.
+  // A zero-width space on an empty line, or the box has no height at all.
+  mirror.append(...area.value.split('\n').map(line => {
+    const row = document.createElement('div');
+    row.textContent = line || '\u200b';
+    return row;
+  }));
+  document.body.append(mirror);
+  const tops = [...mirror.children].map(row => row.offsetTop);
+  mirror.remove();
+  return tops;
+}
+
 function attachEditing(area, bar) {
   if (bar) {
     for (const mark of FORMATS) {
       if (mark.group) {
-        // A rule and not a gap. Four groups of adjacent buttons say "these four
-        // do the same kind of thing" only if the boundary is visible; spacing
+        // A rule and not a gap. Three groups of adjacent buttons say "these do
+        // the same kind of thing" only if the boundary is visible; spacing
         // alone reads as a toolbar that wrapped.
         const rule = document.createElement('span');
         rule.className = 'sep';
@@ -7733,6 +7807,12 @@ function attachEditing(area, bar) {
         button.onclick = () => area.dispatchEvent(new Event('openproj:pick-image'));
       } else {
         button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };
+        // And the keyboard, which `onmousedown` alone left out: Enter and Space
+        // on a focused button produce a click and no mousedown at all, so every
+        // mark in this bar was a focus stop that did nothing. `detail === 0` is
+        // how a click synthesised from a key is told from one a pointer made, so
+        // a mouse press still applies the mark exactly once.
+        button.onclick = event => { if (event.detail === 0) applyMark(area, mark); };
       }
       bar.append(button);
     }
@@ -7747,10 +7827,30 @@ function attachEditing(area, bar) {
 
   area.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
-      // Tab indents here, which takes away the only way out of the box for
-      // somebody with no pointer. Escape gives it back for one press, and says
-      // so: an escape hatch nobody is told about is not one, and swallowing Tab
-      // in silence is the version of this feature that traps people.
+      // Escape has three claimants, and this is where they are arbitrated. In
+      // order of who gets it and why:
+      //
+      // 1. **The page, while there is something to come back out of.** On the
+      //    two pages with a full-page view, Escape leaves it. It goes first
+      //    because it is what a person pressing Escape in a screen-filling
+      //    editor means, because the change is visible the instant it happens,
+      //    and because one click puts it back. Announced by nothing, because the
+      //    whole screen answering is the answer.
+      // 2. **The Tab hatch.** Tab indents here, which takes away the only way
+      //    out of the box for somebody with no pointer. Escape gives it back for
+      //    one press, and says so: an escape hatch nobody is told about is not
+      //    one, and swallowing Tab in silence is the version of this feature
+      //    that traps people.
+      // 3. **Ending the editing session: never.** That is Cancel, a button with
+      //    a name, because ending a session drops a restored draft — and a key
+      //    that discards writing is a key somebody presses by mistake once.
+      //
+      // The seam is an event on the element, the way the image button's is: this
+      // block is shared by six pages and only two of them have a view to leave.
+      // Where nothing listens, nothing is cancelled and the hatch opens straight
+      // away. Vim, if it is ever bought, claims Escape ahead of all three while
+      // it is in insert mode, and the same `cancelable` answer is how it says so.
+      if (!area.dispatchEvent(new Event('openproj:escaped', {cancelable: true}))) return;
       leaving = true;
       announce('Press Tab to leave the document, or carry on typing to stay in it');
       return;
@@ -7837,7 +7937,18 @@ function attachUploads(area, status) {
   const insert = markdown => replaceRange(area, markdown);
 
   async function send(file) {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    // The branch that decides not to act, saying so. `accept="image/*"` filters
+    // the dialog and does not bind it — macOS Chrome's format popup still offers
+    // All Files — so somebody who presses Image, picks a PDF and comes back used
+    // to get no status text, no announcement and no change. "Nothing happened"
+    // is a plausible outcome of a paste; it is not a plausible outcome of
+    // pressing a button called Image.
+    if (!file.type.startsWith('image/')) {
+      status.textContent = `${file.name || 'that file'} is not an image`;
+      announce(status.textContent);
+      return;
+    }
     status.textContent = `uploading ${file.name || 'image'}…`;
     // A placeholder first, so a slow upload does not look like nothing happened
     // and the text cannot be typed over the spot it is going to land in.
@@ -8102,6 +8213,45 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 </script>
 """
 
+# The three views of one document, drawn as one control.
+#
+# **Page chrome, not editor chrome.** `docs/hackmd-observed.md` reads it off the
+# pixels of a real note: it sits in the header, immediately after the note's
+# identity, as a segmented control of three icons with the active one pressed —
+# not as three more buttons in the row that already holds a template picker and a
+# status message. Three adjacent segments in one bordered box say "three states of
+# one thing"; three buttons in a row of unrelated controls say "three unrelated
+# actions", which is the thing this is not.
+#
+# Icons and not words, for the reason `_ICON_ART` gives and by the same means:
+# paths, in the page, in `currentColor`, so they follow the theme, scale, and are
+# the same drawing on every machine. Each carries the words in `aria-label`, so
+# the control is nameable by everybody — an icon that is only an icon is a
+# control a screen reader announces as "button".
+#
+# One constant and two templates, because the create form and the detail page are
+# the same page in two modes and a second copy of this is a second thing to keep
+# in step.
+_VIEWBAR = Markup(
+    '<span id="views" class="views" role="group"'
+    ' aria-label="How the document is shown">'
+    '<button type="button" id="view-edit" class="seg" aria-pressed="false"'
+    ' aria-label="Write" title="Write  Ctrl+Alt+E">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<path d="M4 20h4L19.2 8.8a2.55 2.55 0 0 0-3.6-3.6L4.4 16.4 4 20Z"/></svg></button>'
+    '<button type="button" id="view-both" class="seg" aria-pressed="false"'
+    ' aria-label="Write and preview" title="Write and preview  Ctrl+Alt+B">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<rect x="3" y="5" width="18" height="14" rx="1.6"/><path d="M12 5v14"/></svg></button>'
+    '<button type="button" id="preview" class="seg" aria-pressed="false"'
+    ' aria-label="Preview" title="Preview  Ctrl+Alt+V">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<path d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"/>'
+    '<circle cx="12" cy="12" r="2.7"/></svg></button>'
+    "</span>"
+)
+
+
 _SUGGEST_STYLE = """
 /* Absolute against the page, not against the cell it belongs to: `attachSuggest`
    parks the list on the body and writes its `top` and `left` in page
@@ -8117,7 +8267,18 @@ _SUGGEST_STYLE = """
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
 .suggest li.on { background: var(--accent); color: var(--on-accent); }
 textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
-.marks { display: inline-flex; gap: .15rem; align-items: stretch; flex-wrap: wrap; }
+/* `flex: none`, and it is the whole of what keeps the toolbar on one row. The
+   bar is a flex line the toolbar shares with a status message, and a flex item's
+   default `min-width: auto` still lets it shrink to its content — so the marks
+   resolved to 430.9px where the fourteen buttons and their two rules need 482.8,
+   and wrapped, with the break falling inside the third group and no rule in
+   front of the two buttons that landed on the second row. Measured in Chrome at
+   1000, 1200, 1440 and 1920 CSS px: two rows at every one of them. The message
+   beside it takes the shrink instead, which is the right way round — it is a
+   sentence and it can wrap. `flex-wrap` stays as the answer to a window narrower
+   than the toolbar itself, where wrapping beats a scrollbar. */
+.marks { display: inline-flex; gap: .15rem; align-items: stretch; flex-wrap: wrap;
+         flex: none; }
 /* The line between one group of marks and the next. `align-self: stretch` so it
    is the height of the buttons rather than of the text inside them. */
 .marks .sep { width: 1px; background: var(--line); margin: 0 .3rem; align-self: stretch; }
@@ -8253,6 +8414,275 @@ def _control_html(field: dict) -> Markup:
 # reader, and dead code that still renders is code somebody wires back up.
 
 
+# Three views of one document, and the full page they are shown on. Asks 1 and 3,
+# which are the two highest on jcanton's list.
+#
+# Emitted by the detail page and the create form and by nothing else, because it
+# reaches for `BODY` and `TITLED` — the two boxes those two pages declare — and
+# because the other four pages that inline `_COMBOBOX` have no document to have a
+# view of. The blocks share one lexical scope, so this runs after theirs and the
+# names are simply there.
+#
+# **A fourth state, which HackMD does not have.** HackMD is always full page, so
+# exactly one of its three segments is always pressed. Here the facts column, the
+# width grip and the reading measure are the ordinary page, and the writing
+# surface is somewhere you go and come back from — so full page OFF is a real
+# state, no segment is pressed in it, and `aria-pressed="false"` on all three is
+# what says so. It is left by pressing the pressed segment, by the same chord
+# that entered it, or by Escape.
+_VIEWS = Markup(r"""
+<script>
+const VIEW_ARTICLE = BODY.closest('article.entity');
+const VIEW_PANE = document.getElementById('body-preview');
+// The segment ids: the third is `preview`, which is the id the in-place Preview
+// button had. That button is gone — full page in preview-only is the same thing
+// and more of it — and the id stays where the control's job stayed, so that
+// `/new` and `/detail` still carry the same shapes and the test that says so
+// still passes without being rewritten to agree with the change.
+const VIEW_IDS = {edit: 'view-edit', both: 'view-both', view: 'preview'};
+const VIEWS = ['edit', 'both', 'view'];
+// null is full page off. See the comment on `_VIEWS` in render.py for why there
+// are four states here and three in the note this is modelled on.
+let VIEW = null;
+
+function showView(mode) {
+  VIEW = mode;
+  for (const name of VIEWS) {
+    VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
+    document.getElementById(VIEW_IDS[name]).setAttribute('aria-pressed', String(mode === name));
+  }
+  VIEW_ARTICLE.classList.toggle('full', mode !== null);
+  // The page behind a fixed, viewport-filling article has nothing left to show
+  // and a scrollbar that scrolls it anyway is a scrollbar that moves nothing.
+  document.body.classList.toggle('fullpage', mode !== null);
+  // One mechanism for whether the preview pane is on the page, and it is the
+  // `hidden` attribute the pane was already drawn with. A second, in CSS, would
+  // be a second thing to keep in step — and a stale attribute underneath it is
+  // exactly how a pane comes to be invisible to a reader and present to a test.
+  VIEW_PANE.hidden = mode === null || mode === 'edit';
+  // A view of the document is a way into editing it: on the detail page the
+  // segments turn edit mode on rather than showing a preview of a page that is
+  // already showing one. They never turn it off — that is Cancel, which is where
+  // the draft is dealt with.
+  if (mode !== null && typeof showEditing === 'function'
+      && !VIEW_ARTICLE.classList.contains('editing')) {
+    showEditing(true);
+  }
+  // The room's bands are measured against a box that has a size, and a view
+  // change is exactly when the box changes size. The Preview button this
+  // replaces took the box away by setting its `hidden` attribute and dispatched
+  // nothing, so `drawSeats` never learnt the box had gone and every band stayed
+  // where it used to be — a transient wrong that a three-view page would have
+  // made the normal case.
+  dispatchEvent(new Event('openproj:editing'));
+  // The width handle belongs to the measure, and full page has none. `place` is
+  // the detail page's; the create form has no grip and no such function.
+  if (typeof place === 'function') place();
+  sourcePoints = null;
+  refreshPreview(true);
+}
+
+// --- the preview, live ------------------------------------------------------
+//
+// Still the server's markdown, and still the same round trip: two renderers
+// disagree eventually and the one people would trust is not the one whose output
+// gets committed. What is new is that it keeps up — debounced, skipped when
+// nothing changed, aborted when it is overtaken, and with the pane's own scroll
+// left where the reader put it. A naive `innerHTML` on every keystroke scrolls
+// the pane back to the top on every keystroke, which is worse than no live
+// preview at all.
+const PREVIEW_MS = 300;
+let previewTimer = 0;
+let previewFlight = null;
+// The exact request body the pane is currently showing, which doubles as the
+// skip: one string, compared once, rather than two fields compared separately
+// and then rebuilt into the same JSON anyway.
+let previewShown = null;
+
+function refreshPreview(now) {
+  if (VIEW_PANE.hidden) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(askPreview, now ? 0 : PREVIEW_MS);
+}
+
+async function askPreview() {
+  // The title goes with it: the page drops a leading heading that only restates
+  // the title, so a preview without one shows a heading the saved page will not.
+  // The title in the FORM, not the stored one — this same Save may change it.
+  const want = JSON.stringify({body: BODY.value, title: TITLED.value});
+  if (want === previewShown) return;
+  if (previewFlight) previewFlight.abort();
+  previewFlight = new AbortController();
+  let html;
+  try {
+    const response = await fetch('/api/preview', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: want, signal: previewFlight.signal,
+    });
+    html = (await response.json()).html;
+  } catch (error) {
+    // An abort is this function overtaking itself and is not news. Anything else
+    // leaves the pane showing the last thing that rendered, which is the honest
+    // state: an emptied pane reads as an empty document.
+    return;
+  }
+  previewShown = want;
+  // `innerHTML` and nothing around it. The plan this was built from says a naive
+  // replace scrolls the pane to the top on every keystroke and that the offset
+  // has to be saved and put back; measured in Chrome, that is not true — a
+  // scroller keeps its offset across a wholesale replacement of its contents as
+  // long as the new contents are still tall enough to hold it, with content of
+  // the same height and of a different one. The save and the restore were
+  // written, and then deleted rather than left in: three lines that look like a
+  // guarantee and change nothing are worse than the absence of them, because the
+  // next person reads them as the reason it works.
+  //
+  // What does move the pane is text getting SHORTER than the offset, and no
+  // amount of saving fixes that — there is nowhere to put it back to.
+  VIEW_PANE.innerHTML = html;
+  previewPoints = null;
+}
+
+// --- the two panes, scrolled together ---------------------------------------
+//
+// Both sides of the split are a list of (source line, pixel top), so both
+// directions are one interpolation read the other way round. The rendered side
+// gets its lines from `data-startline`, which the renderer stamps on every
+// top-level block from markdown-it's own token map; the source side gets its
+// pixels from `lineTops`, which measures rather than assuming that one line is
+// one row — in a pane half a window wide most lines wrap, and `scrollTop /
+// lineHeight` is only right for a document in which none of them do.
+let sourcePoints = null;
+let previewPoints = null;
+
+function sourceMap() {
+  if (!sourcePoints) sourcePoints = lineTops(BODY).map((top, at) => ({line: at + 1, top}));
+  return sourcePoints;
+}
+
+function previewMap() {
+  if (!previewPoints) {
+    // A point at the top, because the first block of a document need not start
+    // on line 1 and without it every line above it interpolates off the end.
+    previewPoints = [{line: 1, top: 0}];
+    for (const block of VIEW_PANE.querySelectorAll('[data-startline]')) {
+      const line = Number(block.dataset.startline);
+      if (line > previewPoints[previewPoints.length - 1].line) {
+        previewPoints.push({line, top: block.offsetTop});
+      }
+    }
+    previewPoints.push({
+      line: previewPoints[previewPoints.length - 1].line + 1,
+      top: VIEW_PANE.scrollHeight,
+    });
+  }
+  return previewPoints;
+}
+
+function pixelOfLine(points, line) {
+  let at = 0;
+  while (at + 1 < points.length && points[at + 1].line <= line) at++;
+  const here = points[at];
+  const next = points[at + 1];
+  if (!next) return here.top;
+  const span = next.line - here.line;
+  return here.top + (next.top - here.top) * (span ? (line - here.line) / span : 0);
+}
+
+function lineOfPixel(points, top) {
+  let at = 0;
+  while (at + 1 < points.length && points[at + 1].top <= top) at++;
+  const here = points[at];
+  const next = points[at + 1];
+  if (!next) return here.line;
+  const span = next.top - here.top;
+  return here.line + (next.line - here.line) * (span ? (top - here.top) / span : 0);
+}
+
+// One flag each way, because setting the other pane's `scrollTop` fires its
+// scroll event and that would set this one's back — a loop that does not
+// diverge but does fight the hand on the wheel. Whoever is scrolling drives, and
+// the pane being driven does not drive back.
+//
+// Cleared on a timer and not on a frame, which is the same finding `announce`
+// records two hundred lines up: a frame never comes in a tab nobody is looking
+// at, so a flag cleared in `requestAnimationFrame` is a flag that stays set for
+// as long as the tab is in the background — and a sync that is switched off
+// until the page is next reloaded is worse than one that lags. The delay is long
+// enough to be after the scroll event this write is about to cause and short
+// enough that letting go of one pane and taking hold of the other feels like one
+// gesture.
+const SYNC_MS = 50;
+let editScrolling = false;
+let viewScrolling = false;
+
+function syncFromSource() {
+  if (VIEW !== 'both' || viewScrolling) return;
+  editScrolling = true;
+  VIEW_PANE.scrollTop = pixelOfLine(previewMap(), lineOfPixel(sourceMap(), BODY.scrollTop));
+  setTimeout(() => { editScrolling = false; }, SYNC_MS);
+}
+
+function syncFromPreview() {
+  if (VIEW !== 'both' || editScrolling) return;
+  viewScrolling = true;
+  BODY.scrollTop = pixelOfLine(sourceMap(), lineOfPixel(previewMap(), VIEW_PANE.scrollTop));
+  setTimeout(() => { viewScrolling = false; }, SYNC_MS);
+}
+
+BODY.addEventListener('scroll', syncFromSource);
+VIEW_PANE.addEventListener('scroll', syncFromPreview);
+BODY.addEventListener('input', () => { sourcePoints = null; refreshPreview(); });
+TITLED.addEventListener('input', () => refreshPreview());
+// Both maps are in pixels and every pixel here is a function of the width.
+addEventListener('resize', () => { sourcePoints = null; previewPoints = null; });
+
+// --- how a view is asked for ------------------------------------------------
+
+for (const name of VIEWS) {
+  // Pressing the pressed segment is how you come back out with a pointer, which
+  // is the same gesture as the chord below and the only one that needs no
+  // fourth control on the bar.
+  document.getElementById(VIEW_IDS[name]).onclick =
+    () => showView(VIEW === name ? null : name);
+}
+
+addEventListener('keydown', event => {
+  // Ctrl+Alt, which is Ctrl+Option on a Mac and never Cmd: the page already
+  // claims ⌘S, and ⌘B ⌘I ⌘⇧X ⌘2 ⌘E ⌘⇧E ⌘. ⌘8 ⌘7 ⌘⇧L ⌘K through `attachEditing`.
+  //
+  // Matched on `event.code`, and that is not a preference. With Option held,
+  // macOS hands the layout's alternate character to `event.key` — Option+E is a
+  // dead acute and arrives as `Dead` — so a binding read off `key` here is one
+  // that could never once fire, which is the trap the shifted marks fell into
+  // when ⌘⇧8 was tried and shift-8 turned out to be `*`.
+  if (!event.ctrlKey || !event.altKey || event.metaKey) return;
+  const mode = {KeyE: 'edit', KeyB: 'both', KeyV: 'view'}[event.code];
+  if (!mode) return;
+  event.preventDefault();
+  showView(VIEW === mode ? null : mode);
+});
+
+// Escape, arbitrated: see the block in `attachEditing` that dispatches this.
+// Answered here only when there is something to come back out of, so on a page
+// that is not full the hatch that gives Tab back opens on the first press.
+BODY.addEventListener('openproj:escaped', event => {
+  if (VIEW === null) return;
+  event.preventDefault();
+  showView(null);
+});
+
+// `?edit`, `?both`, `?view`, read once at load. Flags and not values: the
+// address bar in the observed note reads `?both=`, so `has` is the question and
+// `get` — which answers the empty string — would read as false. Off the search
+// and not the hash, which this page's router already owns and uses to say which
+// entity you are looking at.
+const VIEW_ASKED = new URLSearchParams(location.search);
+showView(VIEWS.find(name => VIEW_ASKED.has(name)) || null);
+</script>
+""")
+
+
 _NEW = """
 <article class="entity editing">
   <p class="back"><a href="{{ links.table }}">← table</a></p>
@@ -8276,6 +8706,11 @@ _NEW = """
   <input name="title" data-type="text" form="edit" value="" aria-label="Title"
          class="field title-field" placeholder="Title">
   <p class="meta">the id and the file are the server's to choose</p>
+  {#- The same bar the detail page carries, in the same place, holding the same
+      control: this page is that page in edit mode, and a switcher that moves
+      between the two is a switcher somebody has to find twice. There is no Edit
+      button beside it because this article never leaves edit mode. -#}
+  <p class="editbar">{{ viewbar }}</p>
   <form id="edit" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <div class="panes">
@@ -8300,7 +8735,6 @@ _NEW = """
             single-character buttons, and nothing on the line lined up with
             anything else on it. -#}
         <p class="field bodybar">
-          <button type="button" id="preview">Preview the body</button>
           {#- The template is offered, never imposed: it fills an untouched box
               and refuses to overwrite one somebody has typed in. `template` and
               not `start from`: the label names the control, and the sentence it
@@ -8315,15 +8749,25 @@ _NEW = """
           </label>
           <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
         </p>
+        {#- The hint that was here — "paste or drop an image to put it in the
+            plan" — is gone, and the Image button is what replaced it: a sentence
+            describing a gesture is what a toolbar puts in a control. -#}
         <p class="field bodybar markbar">
           <span id="marks" class="marks"></span>
-          <span class="hint">paste or drop an image to put it in the plan</span>
           <span class="hint" id="upload" role="status" aria-live="polite"></span>
         </p>
-        <textarea name="body" class="field body-field" rows="14"
-                  aria-label="Shaping document"
-                  placeholder="The shaping document."></textarea>
-        <div class="doc" hidden></div>
+        <div class="bodysplit">
+          <div class="bodywrap">
+            <textarea name="body" class="field body-field" rows="14"
+                      aria-label="Shaping document"
+                      placeholder="The shaping document."></textarea>
+          </div>
+          {#- The same id and the same classes the detail page's preview pane
+              carries, so one implementation serves both. It was a bare `.doc`
+              found by `querySelector`, which is one more thing for the two pages
+              to disagree about. -#}
+          <div id="body-preview" class="field doc" hidden></div>
+        </div>
       </div>
     </div>
   </form>
@@ -8367,8 +8811,6 @@ function read(control) {
   return raw === '' ? null : raw;
 }
 
-const PREVIEW = document.getElementById('preview');
-const DOC = document.querySelector('.doc');
 const BODY = FORM.querySelector('[name=body]');
 // The box holding the title, for the preview: the page suppresses the document's
 // own leading heading when it repeats the title, and a preview that does not know
@@ -8413,26 +8855,6 @@ KIND.onchange = () => {
 };
 TPL.value = TEMPLATES[KIND.value] !== undefined ? KIND.value : 'blank';
 applyTemplate(TPL.value);
-
-PREVIEW.onclick = async () => {
-  if (!DOC.hidden) {
-    DOC.hidden = true;
-    BODY.hidden = false;
-    PREVIEW.textContent = 'Preview the body';
-    return;
-  }
-  // The title goes with it: the page drops a leading heading that only restates
-  // the title, so a preview without one shows a heading the saved page will not.
-  // The title in the FORM, not the stored one — this same Save may change it.
-  const response = await fetch('/api/preview', {
-    method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: BODY.value, title: TITLED.value}),
-  });
-  DOC.innerHTML = (await response.json()).html;
-  DOC.hidden = false;
-  BODY.hidden = true;
-  PREVIEW.textContent = 'Back to the source';
-};
 
 document.getElementById('save').onclick = async () => {
   const fields = {kind: KIND.value};
@@ -8511,6 +8933,7 @@ document.getElementById('save').onclick = async () => {
   }
 };
 </script>
+{{ views }}
 """
 
 _DETAIL = """
@@ -8563,7 +8986,10 @@ _DETAIL = """
       just decided to change. Save stays down there, where what is being
       committed ends. -#}
   {% if editable %}
-  <p class="editbar"><button type="button" id="toggle">Edit</button></p>
+  {#- Edit and the view switcher share this bar and are never on it together:
+      Edit is the way in and is hidden the moment you are in, and a view of an
+      editing surface is nothing at all when there is no editing surface. -#}
+  <p class="editbar"><button type="button" id="toggle">Edit</button>{{ viewbar }}</p>
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
@@ -8630,29 +9056,39 @@ _DETAIL = """
       {% endif %}
       <div class="doc read">{{ e.body }}</div>
       {% if editable %}
-      <p class="field bodybar">
-        {#- Who else is in this document, by name. A name is the channel that
-            survives every reader; a colour is not, and a caret drawn one line
-            off a `<textarea>` through a mirror element is worse than no caret at
-            all. Empty when nobody else is here, which is most of the time. -#}
+      {#- Who else is in this document, by name. A name is the channel that
+          survives every reader; a colour is not, and a caret drawn one line off
+          a `<textarea>` through a mirror element is worse than no caret at all.
+          Empty when nobody else is here, which is most of the time — and this
+          row carries no margin of its own for exactly that reason, so an empty
+          room costs no space above the toolbar and somebody arriving pushes it
+          down by the one line they are announced on. -#}
+      <p id="seatbar" class="field bodybar">
         <span id="together" class="together" role="status" aria-live="polite"></span>
-        <button type="button" id="preview">Preview the body</button>
       </p>
+      {#- The hint that was here — "paste or drop an image to put it in the
+          plan" — is gone, and it is the Image button that replaced it: a
+          sentence describing a gesture is what a toolbar puts in a control. It
+          was also 214px of a flex line the toolbar had to share, which is what
+          wrapped the toolbar onto two rows. -#}
       <p class="field bodybar markbar">
         <span id="marks" class="marks"></span>
-        <span class="hint">paste or drop an image to put it in the plan</span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
       </p>
-      {#- The box, and a layer over it for where everybody else is. The layer is
-          a sibling rather than a background, because a `<textarea>` cannot hold
-          anything but text: the bands are drawn on top, translucent, and take no
-          pointer events — the thing under them is the thing being typed in. -#}
-      <div class="bodywrap">
-        <div id="seats" class="seats" aria-hidden="true"></div>
-        <textarea name="body" class="field body-field"
-                  aria-label="Shaping document">{{ e.raw_body }}</textarea>
+      {#- The two panes of the split view, in one box so the view can hand them a
+          column each and so each scrolls on its own. The box, and a layer over it
+          for where everybody else is: the layer is a sibling rather than a
+          background, because a `<textarea>` cannot hold anything but text — the
+          bands are drawn on top, translucent, and take no pointer events, so the
+          thing under them is the thing being typed in. -#}
+      <div class="bodysplit">
+        <div class="bodywrap">
+          <div id="seats" class="seats" aria-hidden="true"></div>
+          <textarea name="body" class="field body-field"
+                    aria-label="Shaping document">{{ e.raw_body }}</textarea>
+        </div>
+        <div id="body-preview" class="field doc" hidden></div>
       </div>
-      <div id="body-preview" class="field doc" hidden></div>
       <div id="conflict" role="status" aria-live="polite" hidden></div>
       {% endif %}
     </div>
@@ -8695,10 +9131,20 @@ function place() {
   // The visible one. On the index view every article is hidden, and measuring a
   // hidden element gives zero — which parked the handle against the left edge of
   // the page, a rule down the side of a list it has nothing to do with.
+  //
+  // `getClientRects()` and not `offsetParent`, which was the test until the full
+  // page arrived: an element with `position: fixed` has no offset parent, so the
+  // full-page article answered "hidden" and the handle would have parked at the
+  // left edge again — the same bug, through a second door. A box with no rects
+  // is one nothing is drawing, which is the question actually being asked.
   const article = [...document.querySelectorAll('article.entity')]
-    .find(candidate => candidate.offsetParent !== null);
-  grip.hidden = !article;
-  if (article) grip.style.left = article.getBoundingClientRect().right + 'px';
+    .find(candidate => candidate.getClientRects().length > 0);
+  // And in full page there is no handle to have. It drags `--measure`, and the
+  // full-page surface is the window: a control that changes nothing is worse
+  // than an absent one, because somebody drags it and concludes the page is
+  // broken.
+  grip.hidden = !article || article.classList.contains('full');
+  if (!grip.hidden) grip.style.left = article.getBoundingClientRect().right + 'px';
 }
 place();
 addEventListener('resize', place);
@@ -8851,33 +9297,6 @@ function flipEditing() {
 document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
 
-document.getElementById('preview').onclick = async () => {
-  // Only the body, and without leaving edit mode. It used to swap the whole page
-  // back to the read view, which showed the *stored* fields — so adding a reviewer
-  // and pressing Preview appeared to lose the change.
-  const pane = document.getElementById('body-preview');
-  const button = document.getElementById('preview');
-  if (!pane.hidden) {
-    pane.hidden = true;
-    BODY.hidden = false;
-    button.textContent = 'Preview the body';
-    return;
-  }
-  // A round trip, not a second markdown implementation: two renderers disagree
-  // eventually, and the one people trust would not be the one that gets committed.
-  // The title goes with it: the page drops a leading heading that only restates
-  // the title, so a preview without one shows a heading the saved page will not.
-  // The title in the FORM, not the stored one — this same Save may change it.
-  const response = await fetch('/api/preview', {
-    method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: BODY.value, title: TITLED.value}),
-  });
-  pane.innerHTML = (await response.json()).html;
-  pane.hidden = false;
-  BODY.hidden = true;
-  button.textContent = 'Back to the source';
-};
-
 async function save() {
   let fields;
   try {
@@ -8980,6 +9399,7 @@ if (typeof draft.text === 'string' && draft.text !== BODY.value) {
   showEditing(true);
 }
 </script>{% endif %}
+{% if editable %}{{ views }}{% endif %}
 {% if editable %}<script>{{ yjs }}</script>
 <script>{{ coedit }}</script>{% endif %}
 {% if not single %}<script>
@@ -9642,6 +10062,102 @@ textarea.body-field {
    loads both. */
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
+/* Three states of one thing, drawn as one control: adjacent segments inside a
+   single bordered box, the pressed one filled. Three separate buttons in a row
+   would say "three unrelated actions", which is exactly what these are not.
+   Hidden until the article is editing, for the same reason as every other
+   `.field` here: a view of an editing surface is nothing at all when there is no
+   editing surface, and the create form is always editing so it always has it. */
+.views { display: none; }
+.entity.editing .views {
+  display: inline-flex; vertical-align: middle; overflow: hidden;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+}
+.views .seg { font: inherit; line-height: 0; padding: .3rem .55rem; border: 0;
+              cursor: pointer; background: var(--surface); color: var(--muted); }
+.views .seg + .seg { border-left: 1px solid var(--line); }
+.views .seg:hover { color: var(--accent); }
+.views .seg[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+/* An SVG that nothing sizes lays out at 0x0, and this application has already
+   shipped two empty boxes where a check and a cross should have been. Sized
+   here, drawn in `currentColor`, so a pressed segment's icon is the ink the
+   segment sets and not a colour of its own. */
+.views .seg svg { display: block; width: 15px; height: 15px; fill: none;
+                  stroke: currentColor; stroke-width: 1.6;
+                  stroke-linecap: round; stroke-linejoin: round; }
+/* No margin of its own: this row holds one live region that is empty whenever
+   nobody else is in the document, which is most of the time, and a margin around
+   nothing is a gap above the toolbar that nothing explains. */
+#seatbar { margin: 0; }
+
+/* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
+   panes scroll on their own.
+   `position: fixed` rather than a taller box, because the page behind it — the
+   nav, the banner, the reading measure — is not part of writing, and because a
+   surface that is exactly the window cannot be scrolled past. z-index 15 is
+   argued rather than picked: it clears the page (nothing else on it is
+   positioned above 10) and stays under the suggestion list and the hover card at
+   20, both of which are parked on `<body>` and would otherwise be painted behind
+   the surface that opened them. The width handle is 30 and is hidden here; see
+   `place`. */
+body.fullpage { overflow: hidden; }
+article.entity.full {
+  position: fixed; inset: 0; z-index: 15; overflow: hidden;
+  width: auto; max-width: none; margin: 0; padding: .6rem 1.25rem 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+}
+/* `min-height: 0` at every level between the surface and the panes, and it is
+   the whole of what makes them scroll instead of the page. A flex item's default
+   `min-height: auto` is its content, and a four-hundred-line textarea's content
+   is taller than any window — so without these the box grows past the bottom of
+   the screen and takes the commit bar with it. */
+article.entity.full > form { flex: 1 1 auto; min-height: 0;
+                             display: flex; flex-direction: column; }
+article.entity.full > .commitbar { flex: none; }
+/* `align-items: stretch`, against the container query that sets `start`: outside
+   full page the facts are a short column beside a long document and should not
+   be stretched to its height; inside it, a pane that is its content's height is
+   a pane that overflows the window. The at-rule adds no specificity, so this
+   (0,3,1) wins wherever both apply. */
+article.entity.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
+                             align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
+article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column; }
+article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
+                                 gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
+article.entity.full .bodywrap { min-height: 0; }
+article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: none; }
+/* The rendered pane is a document, not a field: it loses the rule and the space
+   above it that separate a shaping document from the facts, because in this view
+   there is nothing above it to be separated from. */
+article.entity.full #body-preview { min-height: 0; overflow-y: auto;
+                                    border-top: 0; padding-top: 0; }
+/* Two columns only in the middle view. `minmax(0, 1fr)` twice and not `1fr`
+   twice: a grid track's default minimum is its content, and a line of prose with
+   no break in it is wider than half a window — which would have pushed the other
+   pane off the side rather than wrapping. */
+article.entity.full.view-both .bodysplit {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* And a line down the middle of it. The source has a border of its own and the
+   rendered pane has none, so without this the split is a box on the left and
+   loose text on the right, which reads as one pane with an overflow rather than
+   as two. The gap is halved on each side of the rule so the line sits in the
+   middle of the space rather than against the prose. */
+article.entity.full.view-both #body-preview {
+  border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
+}
+/* Preview only is reading, and reading has a measure — the one the reader set
+   with the grip on the page they came from, which is still in `--measure` and
+   still theirs. Capped per block rather than on the pane, because the pane is
+   the scroll container and a narrow scroll container puts its scrollbar down the
+   middle of the window. */
+article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
+/* Preview only: the box goes, and the marks go with it. A toolbar over no box is
+   fourteen buttons that write into nothing. */
+article.entity.full.view-view .bodywrap,
+article.entity.full.view-view .markbar { display: none; }
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
@@ -10646,6 +11162,8 @@ def render_new(
         links=links,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        viewbar=_VIEWBAR,
+        views=_VIEWS,
         templates=TEMPLATES,
     )
     return _page(
@@ -13536,6 +14054,8 @@ def render_detail(
         statuses=STATUSES,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        viewbar=_VIEWBAR,
+        views=_VIEWS,
         # Only where there is a server to talk to, and only for somebody it would
         # take a frame from. The static export renders the same template with
         # `editable` false, so it carries neither the library nor the script — a

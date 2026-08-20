@@ -1754,7 +1754,15 @@ def test_the_create_button_follows_the_form_it_commits(new_page: str):
     assert new_page.index('id="commitbar"') > new_page.index('<dl id="facts">')
     assert new_page.index('id="commitbar"') > new_page.index('class="field body-field"')
     assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", new_page, re.S)
-    assert '<p class="editbar">' not in new_page, "the bar it replaced"
+    # `.editbar` is on this page again, and this assertion is re-argued rather
+    # than deleted. It used to read `'<p class="editbar">' not in new_page`,
+    # which pinned the fix by the name of the bar that carried the bug; the bar
+    # now holds the view switcher, which is page chrome and belongs in the same
+    # place on this page as on the detail page. The argument was never about a
+    # class name — it is that the button which commits this form lives with the
+    # form's end and nowhere else — so that is what is asked.
+    editbar = re.search(r'<p class="editbar">.*?</p>', new_page, re.S).group(0)
+    assert 'id="save"' not in editbar and "Create" not in editbar, "the bar it replaced"
 
 
 def test_the_columns_and_the_cells_agree_on_their_order(page: str):

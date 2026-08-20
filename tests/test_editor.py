@@ -890,7 +890,11 @@ def test_a_toolbar_button_keeps_the_selection_it_acts_on(client: TestClient):
 
     bound = "button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };"
     assert bound in page
-    assert "button.onclick" not in page.split("const FORMATS")[1][:2000]
+    # And a click as well, which is the only thing Enter and Space produce.
+    # `detail === 0` is how a click synthesised from a key is told from one a
+    # pointer made, so the two bindings cannot both fire for one press.
+    assert "button.onclick = event => { if (event.detail === 0) applyMark(area, mark); };" in page
+    assert "event.detail" in page
 
 
 def test_the_create_form_does_not_echo_the_dates_it_is_asking_for(page: str):
@@ -1075,6 +1079,11 @@ const boxed = apply('Check list', '- one\\n- two', 0, 11);
 const unboxed = apply('Check list', '- [ ] one\\n- [ ] two', 0, 19);
 // A block goes in on lines of its own, or `---` under a line of text is a
 // heading and a table does not interrupt a paragraph at all.
+const nestedOff = apply('Numbered list', '  1. one\\n  2. two', 0, 17);
+const nestedOn = apply('Numbered list', '  one\\n  two', 0, 11);
+// A bracket inside the label ends the label, so `[a]b](url)` renders as literal
+// text with no link in it and no sign that anything failed.
+const bracketed = apply('Link', 'a]b', 0, 3);
 const table = apply('Table', 'alpha', 5, 5);
 const picked = area.value.slice(area.selectionStart, area.selectionEnd);
 const rule = apply('Horizontal rule', 'alpha', 5, 5);
@@ -1117,29 +1126,74 @@ document.createElement = built;
 const picker = opened ? {type: opened.type, accept: opened.accept} : null;
 const wrote = area.value;
 
+// The image entry is a fifth shape and `applyMark`'s tail is "anything I do not
+// recognise is a wrap", which reads `mark.wrap.length`. Nothing reaches it today
+// — the button is bound to click and the shortcut matcher cannot match a mark
+// with no key — so this is the trap the next mark falls into rather than a live
+// bug, and it is cheaper to shut than to rediscover.
+let threw = null;
+try { applyMark(area, mark('Image')); } catch (error) { threw = String(error); }
+
+// The keyboard. Enter and Space on a focused button produce a click and no
+// mousedown at all, so a bar bound only to mousedown is a row of focus stops
+// that do nothing.
+set('alpha beta', 0, 5);
+button('Bold').focus();
+button('Bold').dispatchEvent(
+  new MouseEvent('click', {bubbles: true, cancelable: true, detail: 0}));
+const keyed = area.value;
+// And a pointer press still applies it exactly once, which is what `detail` is
+// being read for.
+set('alpha beta', 0, 5);
+button('Bold').dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+button('Bold').dispatchEvent(
+  new MouseEvent('click', {bubbles: true, cancelable: true, detail: 1}));
+const pressed = area.value;
+
+// A file the dialog offered that is not an image. `accept="image/*"` filters the
+// dialog and does not bind it — macOS Chrome's format popup still offers All
+// Files — so this is the branch that decides not to act, and it has to say so.
+const chosen = new DataTransfer();
+chosen.items.add(new File(['x'], 'appetite.pdf', {type: 'application/pdf'}));
+opened.files = chosen.files;
+opened.dispatchEvent(new Event('change'));
+const refused = document.getElementById('upload').textContent;
+
+// One row, and where the rows are is the only thing that can tell. Every count
+// and every `nextElementSibling` below is identical whether the bar is drawn on
+// one row or on four.
+//
+// Measured with the longest thing that shares the line actually on it: an upload
+// says `assets/<sha256>.png — already in the plan`, which is 97 characters, and
+// the toolbar has to keep its row while a sentence that long is beside it.
+document.getElementById('upload').textContent =
+  `assets/${'0'.repeat(64)}.png — already in the plan`;
 const bar = {
   buttons: document.querySelectorAll('#marks button').length,
   rules: document.querySelectorAll('#marks .sep').length,
   // Where the rules fall in the drawn bar, not only how many there are.
   before: [...document.querySelectorAll('#marks .sep')]
     .map(rule => rule.nextElementSibling.title.split('  ')[0]),
+  rows: [...new Set([...document.getElementById('marks').children]
+    .map(one => Math.round(one.getBoundingClientRect().y)))].length,
 };
 
-return {struck, numbered, unnumbered, linkedUp, urlChosen, bareLink, wordChosen,
-        checked, boxed, unboxed, table, picked, rule,
-        linked, tabled, plain, bare, picker, wrote, bar};
+return {struck, numbered, unnumbered, nestedOff, nestedOn, linkedUp, urlChosen, bareLink,
+        wordChosen, bracketed, checked, boxed, unboxed, table, picked, rule,
+        linked, tabled, plain, bare, picker, wrote, threw, keyed, pressed, refused, bar};
 """
 
 
+@pytest.mark.parametrize("width", [1200, 1000])
 def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, width: int
 ):
     """A button that emits syntax the committed renderer does not honour is worse
     than no button, which is why these arrived in the commit that taught `_MD`
     strikethrough and task lists — and why a table and a rule are a fourth shape
     in `applyMark` rather than a wrap with newlines in it."""
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "marks.html", 1200, _MARKING
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "marks.html", width, _MARKING
     )
 
     assert got["struck"] == "~~alpha~~ beta"
@@ -1171,4 +1225,513 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
         "buttons": 14,
         "rules": 2,
         "before": ["Code", "Link"],
-    }, "the drawn toolbar is not the shot's three groups"
+        "rows": 1,
+    }, "the drawn toolbar is not the shot's three groups, on one row"
+
+    assert got["nestedOff"] == "  one\n  two", (
+        "a nested numbered list was numbered a second time instead of being taken "
+        "back — the indent it is nested by is what the toggle could not see, and "
+        "a nested list is what this repository's own documents are made of"
+    )
+    assert got["nestedOn"] == "  1. one\n  2. two", "and numbering it un-nested it"
+    assert got["bracketed"] == "[a\\]b](url)", "a bracket in the label ended the label"
+    assert got["threw"] is None, "the image mark fell through into the branch for wraps"
+    assert got["keyed"] == "**alpha** beta", "the toolbar cannot be reached from the keyboard"
+    assert got["pressed"] == "**alpha** beta", "a mouse press applied the mark twice"
+    assert got["refused"] == "appetite.pdf is not an image", (
+        "a file that is not an image was refused in silence"
+    )
+# --- three views, a full page, and the two panes -----------------------------
+#
+# Layout, selection and pixels, so Chrome: `tests/js/drive.js` has no box model
+# at all and would answer that every pane is visible, the right size and in the
+# right place on a page where nothing is drawn.
+#
+# `fetch` is stubbed, and that is deliberate rather than a shortcut. The page is
+# opened over `file://` and there is no server behind it; and the claim being
+# made here is about what the pane does with an answer — when it asks, when it
+# does not, what it keeps when it redraws — not about the markdown, which
+# `test_the_preview_renders_markdown_without_a_client_side_library` already asks
+# of the real endpoint. The stub answers with blocks carrying `data-startline`,
+# which is the renderer's real output shape and what the scroll sync reads.
+_STUB_PREVIEW = """
+window.asked = [];
+window.replies = 0;
+window.fetch = async (url, options) => {
+  window.asked.push(JSON.parse(options.body).body);
+  if (options.signal) options.signal.addEventListener('abort', () => { window.aborted = true; });
+  await new Promise(go => setTimeout(go, 20));
+  window.replies++;
+  return {json: async () => ({html:
+    '<h2 data-startline="1" data-endline="1">One</h2>'
+    + '<p data-startline="3" data-endline="3">' + 'alpha '.repeat(600) + '</p>'
+    + '<h2 data-startline="5" data-endline="5">Two</h2>'
+    + '<p data-startline="7" data-endline="7">' + 'omega '.repeat(600) + '</p>'})};
+};
+"""
+
+_VIEWING = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const area = document.querySelector('textarea[name=body]');
+const pane = document.getElementById('body-preview');
+const marks = document.getElementById('marks');
+const seg = name => document.getElementById(
+  {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
+const drawn = element => element.getClientRects().length > 0;
+const state = () => ({
+  classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  pressed: ['edit', 'both', 'view'].filter(
+    n => seg(n).getAttribute('aria-pressed') === 'true'),
+  box: drawn(area),
+  pane: drawn(pane),
+  marks: drawn(marks),
+  position: getComputedStyle(article).position,
+});
+
+document.getElementById('toggle').click();
+// Enough lines that the box has something to scroll, and enough that a source
+// line is not a visual row.
+area.value = Array.from({length: 200}, (_, i) => `line ${i + 1} ` + 'w'.repeat(90)).join('\\n');
+area.dispatchEvent(new Event('input', {bubbles: true}));
+const editing = state();
+
+// Every view change has to tell the seat layer the box moved. The Preview button
+// this replaces set `BODY.hidden = true` and dispatched nothing.
+let told = 0;
+addEventListener('openproj:editing', () => { told++; });
+
+seg('both').click();
+const both = state();
+await new Promise(go => setTimeout(go, 400));
+const split = {
+  // Side by side, not stacked, and both inside the window.
+  sideBySide: area.getBoundingClientRect().right <= pane.getBoundingClientRect().left + 1,
+  inside: area.getBoundingClientRect().bottom <= innerHeight + 1
+          && pane.getBoundingClientRect().bottom <= innerHeight + 1,
+  // Each pane scrolls on its own, and the page does not scroll at all.
+  boxScrolls: area.scrollHeight > area.clientHeight + 1,
+  paneScrolls: pane.scrollHeight > pane.clientHeight + 1,
+  pageScrolls: document.documentElement.scrollHeight > innerHeight + 1,
+};
+
+seg('view').click();
+const viewing = state();
+seg('edit').click();
+const writing = state();
+// Pressing the pressed segment is the way back out with a pointer.
+seg('edit').click();
+const out = state();
+
+// The chord, matched on `event.code`: with Option held macOS hands `key` the
+// layout's alternate character, and Option+E arrives as `Dead`.
+const chord = code => dispatchEvent(new KeyboardEvent(
+  'keydown', {ctrlKey: true, altKey: true, code, key: 'Dead', bubbles: true}));
+chord('KeyB');
+const chorded = state();
+chord('KeyB');
+const unchorded = state();
+
+// Escape in the box, arbitrated: the page first while there is something to come
+// back out of, then the hatch that gives Tab back.
+seg('both').click();
+const escape = () => area.dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+area.focus();
+escape();
+const escaped = state();
+// `announce` writes into `#state` on a page that has one, which this page does.
+document.getElementById('state').textContent = '';
+escape();
+const said = document.getElementById('state').textContent;
+
+return {editing, both, split, viewing, writing, out, chorded, unchorded, escaped, said,
+        told, asked: window.asked.length};
+"""
+
+
+def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
+    client: TestClient, tmp_path: Path
+):
+    """Asks 1 and 3, which are the top two on the list, and they are one feature:
+    the three views are three shapes of the full-page surface.
+
+    Four states and not three. The note this is modelled on is always full page,
+    so exactly one of its three segments is always pressed; here the reading
+    measure, the facts column and the width handle are the ordinary page, and the
+    surface is somewhere you go and come back from. So `full page off` is a real
+    state with nothing pressed, and the way back out is the pressed segment, the
+    same chord, or Escape.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "views.html", 1400, _VIEWING
+    )
+
+    assert got["editing"] == {
+        "classes": [], "pressed": [], "box": True, "pane": False, "marks": True,
+        "position": "relative",
+    }, "editing on its own is not full page and presses nothing"
+
+    assert got["both"]["classes"] == ["full", "view-both"]
+    assert got["both"]["pressed"] == ["both"], "two segments pressed is not a choice of three"
+    assert got["both"]["position"] == "fixed", "the surface does not fill the window"
+    assert got["both"]["box"] and got["both"]["pane"]
+
+    assert got["split"] == {
+        "sideBySide": True, "inside": True,
+        "boxScrolls": True, "paneScrolls": True, "pageScrolls": False,
+    }, "the two panes do not scroll on their own inside the window"
+
+    assert got["viewing"] == {
+        "classes": ["full", "view-view"], "pressed": ["view"],
+        "box": False, "pane": True, "marks": False, "position": "fixed",
+    }, "preview only still draws the box, or draws a toolbar over no box"
+    assert got["writing"] == {
+        "classes": ["full", "view-edit"], "pressed": ["edit"],
+        "box": True, "pane": False, "marks": True, "position": "fixed",
+    }
+    assert got["out"]["classes"] == [] and got["out"]["pressed"] == []
+    assert got["out"]["position"] == "relative", "the pressed segment did not leave full page"
+
+    assert got["chorded"]["pressed"] == ["both"], "Ctrl+Alt+B was not read off event.code"
+    assert got["unchorded"]["pressed"] == [], "and the same chord did not take it back"
+
+    assert got["escaped"]["classes"] == [], "Escape did not leave full page"
+    assert "Tab" in got["said"], (
+        "and the next Escape did not open the hatch that gives Tab back, which is "
+        "the claimant Escape has when there is nothing to leave"
+    )
+
+    # Eight view changes above this line, and the seat layer told about every
+    # one of them: three segments, the pressed one again, the chord on and off,
+    # the split re-entered, and Escape.
+    assert got["told"] == 8, "a view change the seat layer was not told about"
+    assert got["asked"] >= 1, "the preview was never asked for"
+
+
+_DEEP_LINK = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+return {
+  classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  editing: article.classList.contains('editing'),
+  pressed: ['view-edit', 'view-both', 'preview'].filter(
+    id => document.getElementById(id).getAttribute('aria-pressed') === 'true'),
+};
+"""
+
+
+def test_a_link_to_the_split_view_opens_in_the_split_view(client: TestClient, tmp_path: Path):
+    """`?both`, off `location.search`, read once at load — the spelling the
+    address bar in the observed note actually carries. A flag and not a value:
+    `?both=` answers the empty string to `get`, which reads as false."""
+    page = client.get(f"/detail/{TASK}").text
+    got = measured_in(
+        chrome(), page, tmp_path / "deep.html", 1400, _DEEP_LINK, query="?both="
+    )
+
+    assert got["classes"] == ["full", "view-both"]
+    assert got["pressed"] == ["view-both"]
+    assert got["editing"], "a link into a writing view that does not open the writing view"
+
+    plain = measured_in(chrome(), page, tmp_path / "plain.html", 1400, _DEEP_LINK)
+    assert plain["classes"] == [] and plain["pressed"] == []
+    assert not plain["editing"], "no link, and the page opened in a view anyway"
+
+
+_GRIPPING = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const grip = document.getElementById('grip');
+const seg = name => document.getElementById(
+  {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
+// Against the pane's own right edge, and how far that is from the window's — a
+// handle parked at the edge of the screen is the bug this is about, and it is
+// the one arrangement that looks deliberate.
+const where = () => ({
+  hidden: grip.hidden,
+  onEdge: Math.abs(parseFloat(grip.style.left || '0')
+                   - article.getBoundingClientRect().right) < 1,
+  spare: Math.round(innerWidth - article.getBoundingClientRect().right),
+});
+
+const reading = where();
+document.getElementById('toggle').click();
+const editing = where();
+const full = {};
+for (const name of ['edit', 'both', 'view']) { seg(name).click(); full[name] = where(); }
+seg('view').click();
+const back = where();
+return {reading, editing, full, back};
+"""
+
+
+def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_path: Path):
+    """`place` exists because a handle measured against a hidden element parks
+    itself against the left edge of the page, and that shipped once. Full page is
+    a second way to produce the same thing by a different route: it drags
+    `--measure`, and in full page there is no measure — the surface is the
+    window — so a handle drawn there would sit against the right edge of the
+    screen and change nothing when dragged."""
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "grip.html", 1400, _GRIPPING
+    )
+
+    for mode in ("reading", "editing"):
+        assert not got[mode]["hidden"], f"no handle while {mode}"
+        assert got[mode]["onEdge"], f"the handle is not on the column's edge while {mode}"
+        assert got[mode]["spare"] > 20, f"the handle is against the window edge while {mode}"
+
+    for name in ("edit", "both", "view"):
+        assert got["full"][name]["hidden"], f"a width handle in the {name} view"
+
+    assert not got["back"]["hidden"] and got["back"]["onEdge"], (
+        "the handle did not come back with the column"
+    )
+
+
+# The document the scroll sync is asked about: 161 lines, one of which is long
+# enough to wrap. One that wrapped nowhere would be a corpus that does not
+# contain the string that matters — `scrollTop / lineHeight` is exactly right on
+# it, and the measuring mirror this replaces it with would have nothing to prove.
+_WRAPPING_BODY = (
+    "\n".join(
+        ("word " * 60).strip() if at == 40 else f"line {at + 1}"
+        for at in range(161)
+    )
+)
+
+# The stub's blocks, moved onto the lines the body above actually has: this is
+# the shape the renderer emits and the sync reads, not a document of its own.
+_SYNC_STUB = _STUB_PREVIEW
+for _was, _now in (("3", "41"), ("5", "82"), ("7", "121")):
+    _SYNC_STUB = _SYNC_STUB.replace(f'data-startline="{_was}"', f'data-startline="{_now}"')
+
+_SYNCING = f"const WRAPPING_BODY = {json.dumps(_WRAPPING_BODY)};" + _SYNC_STUB + """
+const area = document.querySelector('textarea[name=body]');
+const pane = document.getElementById('body-preview');
+// A timer and not `requestAnimationFrame`, and that is worth recording: under
+// `--virtual-time-budget` a frame never comes at all, so a test that waited for
+// one waited for ever and reported nothing. The page has the same problem for
+// the same reason in a background tab, which is why the sync clears its flags on
+// a timer too.
+const settle = ms => new Promise(go => setTimeout(go, ms));
+const after = () => settle(90);
+
+document.getElementById('toggle').click();
+area.value = WRAPPING_BODY;
+area.dispatchEvent(new Event('input', {bubbles: true}));
+document.getElementById('view-both').click();
+await settle(500);
+
+// The ground truth for the source side, measured off the textarea itself rather
+// than off the mirror under test: 160 lines that cannot wrap plus one that does,
+// so the box's own scrollHeight says how many rows the long one took.
+const style = getComputedStyle(area);
+const step = parseFloat(style.lineHeight);
+const padTop = parseFloat(style.paddingTop);
+// Rounded, because `scrollHeight` is an integer and a row is 20.15px: the count
+// of visual rows is a whole number and the division is only an approximation of
+// it. Still independent of the mirror under test — it comes off the textarea.
+const rows = Math.round(
+  (area.scrollHeight - padTop - parseFloat(style.paddingBottom)) / step);
+const longRows = rows - 160;
+const topOfEightyTwo = padTop + (80 + longRows) * step;
+const blockOfEightyTwo = pane.querySelector('[data-startline="82"]').offsetTop;
+
+area.scrollTop = topOfEightyTwo;
+area.dispatchEvent(new Event('scroll'));
+await after();
+const followed = pane.scrollTop;
+
+// Back to the top first, so driving from the rendered side has somewhere to
+// move the box to — otherwise this direction passes without running at all.
+area.scrollTop = 0;
+await after();
+pane.scrollTop = blockOfEightyTwo;
+pane.dispatchEvent(new Event('scroll'));
+await after();
+const backAgain = area.scrollTop;
+// And the pane did not then drive the box back: one more turn of the loop would
+// move one of them off the line they agreed on.
+await after();
+const settled = {box: area.scrollTop, pane: pane.scrollTop};
+
+return {longRows, step, topOfEightyTwo, blockOfEightyTwo, followed, backAgain, settled};
+"""
+
+
+def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Path):
+    """The rendered side knows which source line each block came from, because the
+    renderer stamps `data-startline` on every top-level block from markdown-it's
+    own token map. The source side has to be measured: a textarea has no DOM
+    inside it, one logical line is any number of visual rows, and this document
+    contains one line that wraps precisely so that `scrollTop / lineHeight` — the
+    obvious answer — is wrong on it.
+
+    The ground truth here is not the mirror under test. The 160 lines that cannot
+    wrap and the one that does mean the textarea's own `scrollHeight` says how
+    many rows the long line took, and everything else is arithmetic.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "sync.html", 1400,
+        _SYNCING, budget=3000,
+    )
+
+    assert got["longRows"] > 1, (
+        "nothing wrapped, so this document cannot tell a measured line from a counted one"
+    )
+    assert abs(got["followed"] - got["blockOfEightyTwo"]) < 2, (
+        "scrolling the source to line 82 did not bring line 82's block to the top"
+    )
+    assert abs(got["backAgain"] - got["topOfEightyTwo"]) < 2, (
+        "and scrolling the rendered pane back did not bring the source with it"
+    )
+    assert abs(got["settled"]["box"] - got["backAgain"]) < 2, "the two panes drove each other"
+    assert abs(got["settled"]["pane"] - got["blockOfEightyTwo"]) < 2
+
+
+_LIVE = _STUB_PREVIEW + """
+const area = document.querySelector('textarea[name=body]');
+const pane = document.getElementById('body-preview');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+const type = text => {
+  area.value = text;
+  area.dispatchEvent(new Event('input', {bubbles: true}));
+};
+
+document.getElementById('toggle').click();
+document.getElementById('view-both').click();
+await settle(400);
+const opened = window.asked.length;
+
+// Three keystrokes, one round trip: a request per keystroke is what a debounce
+// exists to stop.
+type('one'); type('one t'); type('one two');
+const duringTyping = window.asked.length - opened;
+// And still nothing a fifth of a second later, which is the half of this a
+// debounce of zero would pass: three keystrokes in one turn of the event loop
+// coalesce into one request whatever the delay is.
+await settle(180);
+const soonAfter = window.asked.length - opened;
+await settle(400);
+const afterTyping = window.asked.length - opened;
+const sent = window.asked[window.asked.length - 1];
+
+// An input event that changes nothing asks for nothing. This is the case a
+// keystroke that is undone, or a caret move that fires input, actually produces.
+type('one two');
+await settle(400);
+const unchanged = window.asked.length - opened;
+
+// And the pane keeps its place when it is redrawn. `innerHTML` with no memory
+// scrolls back to the top on every keystroke, which is worse than no live
+// preview at all.
+pane.scrollTop = 200;
+const held = pane.scrollTop;
+type('one two three');
+await settle(400);
+const kept = pane.scrollTop;
+
+return {opened, duringTyping, soonAfter, afterTyping, sent, unchanged, held, kept,
+        replies: window.replies};
+"""
+
+
+def test_the_preview_keeps_up_and_stays_where_the_reader_left_it(
+    client: TestClient, tmp_path: Path
+):
+    """Still the server's markdown, and still the same round trip — a second
+    markdown implementation in JavaScript is refused on record, because two
+    renderers disagree eventually and the one people would trust is not the one
+    whose output gets committed. What is asked here is the other half: that
+    making it live did not make it either expensive or annoying.
+
+    `fetch` is stubbed. The page is opened over `file://` and there is no server
+    behind it, and the claim is about when the pane asks and what it keeps —
+    `test_the_preview_renders_markdown_without_a_client_side_library` asks the
+    real endpoint what it renders.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "live.html", 1400,
+        _LIVE, budget=3400,
+    )
+
+    assert got["opened"] == 1, "opening the split view did not draw a preview"
+    assert got["duringTyping"] == 0, "a round trip on every keystroke"
+    assert got["soonAfter"] == 0, "the wait is not long enough to be one"
+
+    assert got["afterTyping"] == 1, "and then one for the three of them together"
+    assert got["sent"] == "one two", "the request carried a version of the text nobody has"
+    assert got["unchanged"] == 1, "an input that changed nothing asked for a re-render"
+    # Honest about what this one is: Chrome keeps a scroller's offset across a
+    # wholesale replacement of its contents, so no line of ours is what makes it
+    # pass — measured, and the save-and-restore the plan asked for was deleted
+    # rather than left in as three lines that look like the reason. It stays as
+    # a regression test, because the ways to break it are ordinary: building the
+    # pane's children and calling `replaceChildren`, or setting `scrollTop = 0`
+    # to "start at the top", and both of them look like tidying.
+    assert got["held"] == 200 and got["kept"] == 200, (
+        "the pane scrolled back to the top when it redrew"
+    )
+
+
+_OVERTAKEN = """
+window.asked = [];
+window.aborted = 0;
+window.fetch = async (url, options) => {
+  window.asked.push(1);
+  if (options.signal) options.signal.addEventListener('abort', () => { window.aborted++; });
+  // Slower than the debounce, which is the only way two of these are ever in the
+  // air at once — and the case an AbortController is for.
+  await new Promise(go => setTimeout(go, 500));
+  return {json: async () => ({html: '<p data-startline="1" data-endline="1">x</p>'})};
+};
+const area = document.querySelector('textarea[name=body]');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+const type = text => {
+  area.value = text;
+  area.dispatchEvent(new Event('input', {bubbles: true}));
+};
+document.getElementById('toggle').click();
+document.getElementById('view-both').click();
+await settle(340);
+type('later');
+await settle(340);
+return {asked: window.asked.length, aborted: window.aborted};
+"""
+
+
+def test_a_preview_that_has_been_overtaken_is_called_off(client: TestClient, tmp_path: Path):
+    """A render that is already out of date is a render nobody wants, and one that
+    arrives after the one that replaced it draws the wrong document. The debounce
+    is 300ms and a slow render is longer than that, so this is not a corner: it is
+    what a big pitch on a busy server does every time."""
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "abort.html", 1400,
+        _OVERTAKEN, budget=2400,
+    )
+
+    assert got["asked"] == 2, "the second render was never asked for"
+    assert got["aborted"] == 1, "the first render was left in the air to land on top of it"
+
+
+def test_a_view_change_tells_the_seat_layer_the_box_moved(client: TestClient):
+    """The `#preview` toggle this replaces set `BODY.hidden = true` and dispatched
+    nothing, so `drawSeats` never learnt that the box it measures against had gone
+    — every band stayed where the box used to be. That was transient, because the
+    only way to reach it was pressing one button; three views make it the normal
+    case, so every change now says so.
+
+    The count is asked of Chrome in
+    `test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own`,
+    which listens for the event through eight of them. This is the static half:
+    that the dispatch is in the one function every view change goes through, and
+    that the line that caused the defect is gone from the page altogether.
+    """
+    page = client.get(f"/detail/{TASK}").text
+    switching = re.search(r"function showView\(mode\) \{.*?\n\}", page, re.S).group(0)
+
+    assert "dispatchEvent(new Event('openproj:editing'))" in switching
+    # The box is taken away by a class the seat layer can see, never behind its back.
+    assert "BODY.hidden" not in page
+    # And `drawSeats` is still listening for it, which is the other end of the
+    # seam and the half a grep of one file cannot see.
+    assert "addEventListener('openproj:editing', () => { drawSeats(); sit(); });" in page

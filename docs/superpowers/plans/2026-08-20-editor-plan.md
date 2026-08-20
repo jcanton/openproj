@@ -305,38 +305,69 @@ S8); the bulk-gesture rule is stated in the commit and enforced in S5.
 Zero vendored bytes. Ships asks 1 and 3 — the two highest felt value on the list.
 **Markup and CSS, so `_DETAIL` and `_NEW` in this stage; `_ISSUE` and `_NOTE` in S5.**
 
-- [ ] **S2.1** `article.entity` becomes a viewport-filling grid with two independently
+- [x] **S2.1** `article.entity` becomes a viewport-filling grid with two independently
       scrolling panes, as a tri-state class. `_DETAIL_STYLE` (`render.py:9097`), rules
       beside `:9115` (`article.entity { width: var(--measure, 64rem) }`) and `:9202-9203`
       (the `.field` / `.read` / `.editing` swap). Read mode and edit mode are one class
       apart today; full page is a third mode that has to compose with both.
-- [ ] **S2.2** An explicit rule for `#grip` (`render.py:9142`) and `--measure` in the new
+- [x] **S2.2** An explicit rule for `#grip` (`render.py:9142`) and `--measure` in the new
       mode, and `place()` (`render.py:8322`) taught about it, or the drag handle parks at
       the left edge — which is the bug `place()` already exists to fix on the index view.
-- [ ] **S2.3** Three mutually exclusive buttons in the existing bodybar
-      (`render.py:8261-8272`, which today holds `#together` at `:8266` and a single
-      `#preview` toggle at `:8267`), bound to Ctrl+Alt+E / Ctrl+Alt+B / Ctrl+Alt+V —
-      Ctrl+Option on Mac, **never Cmd**: the page already claims Cmd+S (`render.py:8566`) and Cmd+B/I/E/2/8/. through
-      `attachEditing`.
-- [ ] **S2.4** Live preview: the existing `/api/preview` round trip (`render.py:8482`)
-      debounced ~300 ms with an `AbortController`, an unchanged-text skip, and a preserved
-      `#body-preview.scrollTop`. A naive `innerHTML` replace scrolls to top on every
-      keystroke and is worse than no live preview.
-- [ ] **S2.5** Bidirectional scroll sync interpolating between the S1 `data-startline`
-      elements, with `editScrolling` / `viewScrolling` flags to break the feedback loop.
-- [ ] **S2.6** `?edit` / `?both` / `?view` read once on load, feeding the same tri-state,
+- [x] **S2.3** Three mutually exclusive buttons — built in the `editbar` beside Edit,
+      not in the bodybar, per correction 1, and drawn as one segmented control of three
+      icons. Bound to Ctrl+Alt+E / Ctrl+Alt+B / Ctrl+Alt+V — Ctrl+Option on Mac, **never
+      Cmd**: the page already claims Cmd+S and Cmd+B/I/E/2/8/. through `attachEditing`.
+      Matched on `event.code`, because with Option held macOS hands `event.key` the
+      layout's alternate character and Option+E arrives as `Dead`. The `#preview` id moved
+      onto the eye segment and the in-place "Preview the body" toggle is gone: full page
+      in preview-only is the same thing and more of it, and `tests/test_table.py:1638`
+      still passes unmodified because the id is still where the control's job is.
+      **A fourth state the checklist did not name:** full page OFF, with no segment
+      pressed. HackMD has no such state because it is always full page; here the measure,
+      the facts column and the width grip are the ordinary page, so there has to be a way
+      back to it.
+- [x] **S2.4** Live preview: the existing `/api/preview` round trip, debounced 300 ms,
+      with an `AbortController` and an unchanged-text skip. One correction to the
+      checklist, measured rather than assumed: **`innerHTML` does not scroll the pane to
+      the top.** Chrome keeps a scroller's offset across a wholesale replacement of its
+      contents, with content of the same height and of a different one, as long as the new
+      contents are still tall enough to hold it. The save-and-restore this asked for was
+      written and then deleted — three lines that look like a guarantee and change nothing
+      are worse than their absence. The regression test stays, because the ways to break
+      it (`replaceChildren` over a built fragment, or a `scrollTop = 0`) both look like
+      tidying.
+- [x] **S2.5** Bidirectional scroll sync interpolating between the S1 `data-startline`
+      elements, with `editScrolling` / `viewScrolling` flags to break the feedback loop —
+      cleared on a timer and not on a frame, because a frame never comes in a tab nobody
+      is looking at, which `announce` already records.
+      **This stage introduces the measuring mirror S3.2 was going to.** The source side of
+      the interpolation is `lineTops`, in the shared `_COMBOBOX` block: one block per
+      logical line, sized as a **fractional content box**, which is S3.1's fix applied at
+      birth. `_COEDIT`'s `measure()` still carries the integer width — so S3 **deletes
+      that copy** rather than fixing it, and S3.4's repoint is what closes the
+      duplication.
+- [x] **S2.6** `?edit` / `?both` / `?view` read once on load, feeding the same tri-state,
       off the existing hash router (`show()` at `render.py:8617`, `hashchange` at `:8631`).
       Ids in `_DETAIL` are subject to the `{% if single %}` rule (`render.py:8211`): the
       static export renders this template once per entity into one file, so a new id that is
       not guarded makes `getElementById` answer the wrong one seventeen times over.
-- [ ] **S2.7** **Fix in the same commit:** the existing `#preview` toggle sets
+- [x] **S2.7** **Fix in the same commit:** the existing `#preview` toggle sets
       `BODY.hidden = true` (`render.py:8482-8506`) and dispatches nothing, so `drawSeats`
       never learns the box changed size. `drawSeats` is triggered only by input, scroll,
       keyup/click, window resize and `openproj:editing` (`render.py:8810`). This stage
       turns that from transient into normal: every view change fires `openproj:editing` (or
       a `ResizeObserver` does).
-- [ ] **S2.8** Arbitrate Escape and **write the answer down here**, not in S9. It has three
-      claimants: end the editing session, leave full-page, and later leave vim insert mode.
+- [x] **S2.8** Escape, arbitrated, and the answer is written down in `attachEditing`'s
+      keydown branch. In order: **the page first**, while there is something to come back
+      out of — on the two pages with a full-page view Escape leaves it, because that is
+      what a person pressing Escape in a screen-filling editor means, the change is
+      visible the instant it happens, and one click puts it back. **Then the Tab hatch**,
+      which is the claimant on a page with nothing to leave, announced as before.
+      **Ending the editing session: never** — that is Cancel, a button with a name,
+      because ending a session drops a restored draft and a key that discards writing is
+      one somebody presses by mistake once. The seam is a `cancelable` `openproj:escaped`
+      event on the textarea, which is also how vim claims Escape ahead of all three in S9
+      while it is in insert mode.
 
 **Proved by:**
 

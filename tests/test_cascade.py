@@ -761,3 +761,69 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
     assert sheet.value(DRAFTING, "align-items") == "center"
     picker = DRAFTING + [el("select", id="draft-kind")]
     assert sheet.value(picker, "min-width") == "0", says(sheet, picker, "min-width")
+
+
+# --------------------------------------------------------------------------- #
+# The full page, which is a third mode over two that already fight
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def detail(index: Index) -> Sheet:
+    """The detail page as a writer gets it: the shell, then `_DETAIL_STYLE`, then
+    `_SUGGEST_STYLE`, in the order they are inlined."""
+    return sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+
+
+def _writing(mode: str) -> list[El]:
+    """Inside the surface, in one of the three views."""
+    return PAGE + [
+        el("article", f"entity editing full view-{mode}"),
+        el("form", id="edit"),
+        el("div", "panes"),
+        el("div", "main"),
+        el("div", "bodysplit"),
+    ]
+
+
+def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
+    """Qualifying a selector to win a fight is this stylesheet's characteristic
+    failure — twice in one week, and both times the rule that lost was one nobody
+    had asked the cascade about.
+
+    Full page is a third mode over two that are already one class apart, so every
+    one of its rules is `.entity.full …` at (0,3,x) sitting above `.entity.editing
+    .field` at (0,3,0) — the rule that puts the controls on the page at all.
+    What is asserted is that the full-page rules changed the *geometry* and left
+    the two modes to decide what exists: a `display` on the box or the pane taken
+    by a view rule is a box that edit mode cannot bring back.
+    """
+    box = _writing("both") + [el("div", "bodywrap"), el("textarea", "field body-field")]
+    pane = _writing("both") + [el("div", "field doc", id="body-preview")]
+
+    for path, what in ((box, "the box"), (pane, "the rendered pane")):
+        won = detail.winner(path, "display")
+        assert won and won.selector == ".entity.editing .field", (
+            f"{what} is displayed by {won} in the split view\n" + says(detail, path, "display")
+        )
+
+    # And the two rules that *do* take a pane away name the view they belong to,
+    # so leaving that view gives it back.
+    gone = _writing("view") + [el("div", "bodywrap")]
+    assert detail.value(gone, "display") == "none", says(detail, gone, "display")
+    assert detail.winner(gone, "display").selector.startswith("article.entity.full.view-view")
+    kept = _writing("both") + [el("div", "bodywrap")]
+    assert detail.value(kept, "display") is None, says(detail, kept, "display")
+
+    # The surface is the window, so the measure has to lose here and win
+    # everywhere else. Both are `article.entity…`, and (0,2,1) beats (0,1,1).
+    inside = PAGE + [el("article", "entity editing full view-edit")]
+    outside = PAGE + [el("article", "entity editing")]
+    assert detail.value(inside, "width") == "auto", says(detail, inside, "width")
+    assert detail.value(outside, "width") == "var(--measure, 64rem)"
+
+    # And the toolbar refuses to shrink, which is what keeps it on one row. It
+    # is the last rule in the last stylesheet, so nothing here is deciding it by
+    # order alone.
+    marks = PAGE + [el("span", "marks", id="marks")]
+    assert detail.value(marks, "flex") == "none", says(detail, marks, "flex")

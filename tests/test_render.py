@@ -2385,7 +2385,11 @@ def test_the_detail_column_is_centred_and_the_facts_sit_beside_the_document(rend
     # And it belongs to a document. On the index every article is hidden, so it
     # measured zero and parked itself down the left edge of the list.
     assert "grip.hidden = !article" in body
-    assert "candidate.offsetParent !== null" in body
+    # `getClientRects()` and not `offsetParent`, which was the visibility test
+    # until a `position: fixed` full-page article started answering null to it —
+    # the same parked handle, reached through a second door. A box with no client
+    # rects is one nothing is drawing, which is the question being asked.
+    assert "candidate.getClientRects().length > 0" in body
 
 
 def test_every_page_echoes_the_iso_value_of_a_date_box(rendered: Path):

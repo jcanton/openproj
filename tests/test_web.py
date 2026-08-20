@@ -2268,10 +2268,20 @@ def test_the_preview_renders_with_the_page_s_own_markdown(client: TestClient):
 def test_both_editors_send_the_title_they_are_previewing(client: TestClient):
     """The title that decides whether the document's own first heading is a
     repetition is the one in the box, not the one in the repository — the same
-    Save is about to change it."""
+    Save is about to change it.
+
+    It used to be two copies of one line, one per page, which is why this test
+    looped. It is one now — the live preview is a single block both pages emit —
+    so the loop asks that both still carry it and that neither has grown a second
+    copy to disagree with the first."""
     for page in (client.get(f"/detail/{TASK}").text, client.get("/new?kind=pitch").text):
         assert "const TITLED = document.querySelector('.title-field');" in page
-        assert "body: JSON.stringify({body: BODY.value, title: TITLED.value})" in page
+        asked = "JSON.stringify({body: BODY.value, title: TITLED.value})"
+        assert page.count(asked) == 1
+        # And the same string is what goes on the wire, rather than being rebuilt
+        # from the two fields a second time: it is the request body and the "has
+        # anything changed since the pane was drawn" comparison at once.
+        assert "body: want, signal: previewFlight.signal," in page
 
 
 def test_the_preview_still_refuses_html(client: TestClient):
