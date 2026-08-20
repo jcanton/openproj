@@ -346,6 +346,26 @@ The audit is three questions: does something already do this; can it be vendored
 above; and what does it cost against what it replaces. A "no" to any of them is a fine answer —
 it is the unasked question that is expensive.
 
+## The full suite runs in CI, not on the laptop
+
+Run the tests for what you touched, and `ruff check .`, and then open the PR. The whole suite is
+CI's job — `.github/workflows/ci.yml` already runs `uv run pytest -q` on every pull request, with
+real Chrome and real node, on hardware that is not somebody's working machine.
+
+This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
+several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been
+taken down once by a runaway walk in this repository's own test corpus, and that regularly has two
+agent sessions on it at once. A full local run competes with the thing you are trying to help with.
+
+So: targeted suites locally, because a test of the file you just edited answers in seconds and is
+what actually catches your mistake. The full sweep goes to the runner, and a red CI is a normal
+thing to fix on a branch rather than a failure of process.
+
+Two habits that follow from it. Push before you are certain rather than after, since the answer
+costs you nothing and arrives in about thirteen minutes. And when you do stop a local run, look at
+what you are stopping first: `pkill -f pytest` on this machine kills the OTHER session's suite too,
+and leaves its headless Chrome orphaned.
+
 ## Tag when you deploy
 
 The running revision has to have a name. Cloud Run knows a container digest and the service page
