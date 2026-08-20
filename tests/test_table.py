@@ -60,7 +60,6 @@ import pygit2
 import pytest
 from browser import chrome, measured_in, screenshot
 from fastapi.testclient import TestClient
-from openproj.model import KIND_NAMES
 from test_store import commit_directly
 from test_web import (
     ANN,
@@ -82,7 +81,7 @@ from test_web import (
 
 from openproj.auth import sign_session
 from openproj.index import build_index
-from openproj.model import PARENT_KINDS, Config, Pitch, Project, Task, load_repo
+from openproj.model import KIND_NAMES, PARENT_KINDS, Config, Pitch, Project, Task, load_repo
 from openproj.render import (
     _TABLE_COLUMNS,
     EDITABLE,
