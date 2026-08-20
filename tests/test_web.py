@@ -3457,3 +3457,255 @@ def test_a_plan_that_already_holds_a_loop_still_loads(client: TestClient):
     pages have to keep working so somebody can see what is wrong and fix it."""
     for route in ("/", "/graph", "/api/index.json"):
         assert client.get(route).status_code == 200, route
+
+
+# --- the index is not rebuilt for every request ------------------------------
+
+
+def test_two_reads_of_one_commit_build_the_index_once(client: TestClient, monkeypatch):
+    """Reading and parsing every record out of the tree was the cost that grew
+    with the plan: measured 19 ms at 31 records, 116 at 208, 502 at 518 — and
+    every request paid it, `save` twice over.
+
+    An index is a pure function of a commit and the day it is drawn around, so the
+    second request against a head that has not moved can have the first one's
+    answer. Counted rather than timed: a timing test on a build this fast is a
+    test that fails on somebody's laptop under load.
+    """
+    from openproj import web
+
+    built = []
+    real = web.build_index
+
+    def counted(*a, **kw):
+        built.append(1)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(web, "build_index", counted)
+
+    assert client.get("/").status_code == 200
+    after_first = len(built)
+    assert after_first >= 1, "the first read built nothing"
+
+    for _ in range(4):
+        assert client.get("/").status_code == 200
+        assert client.get("/api/index.json").status_code == 200
+    assert len(built) == after_first, (
+        f"the index was built {len(built) - after_first} more times for reads of a "
+        "commit that had not moved"
+    )
+
+
+def test_a_write_is_seen_by_the_very_next_read(client: TestClient):
+    """The half of a cache that matters. Keyed on `store.head()`, so a commit —
+    from this route, from a co-editing room's timer, or from a fetch that brought
+    somebody else's work in — is a different key and a different answer."""
+    assert save(client, TASK, {"title": "a new name for it"}).status_code == 200
+    assert "a new name for it" in client.get("/").text
+
+    assert save(client, TASK, {"title": "and another"}).status_code == 200
+    page = client.get("/").text
+    assert "and another" in page
+    assert "a new name for it" not in page, "the table is showing the previous commit"
+
+
+def test_the_index_is_redrawn_when_the_day_moves(repo_path: Path):
+    """An index carries the day it was drawn around — today's line on the
+    timeline, and which work is overrunning. An instance that lives across
+    midnight would serve yesterday's answer until somebody wrote something, so the
+    day is part of the key and not only the commit."""
+    from datetime import date, timedelta
+
+    from openproj.web import create_app
+
+    # Two instances of the app pinned to two days, which is what an instance that
+    # lives across midnight is: the same commit drawn around a different date.
+    pages = {}
+    for day in (date(2026, 8, 20), date(2026, 8, 20) + timedelta(days=365)):
+        app = create_app(repo_path, auth="dev", secret=SECRET, today=day)
+        with TestClient(app) as pinned:
+            pages[day] = pinned.get("/timeline").text
+
+    early, late = sorted(pages)
+    assert pages[early] != pages[late], (
+        "the timeline is identical a year apart, so the day it is drawn around is "
+        "not reaching the drawing"
+    )
+
+
+def test_a_record_is_parsed_once_however_many_commits_leave_it_alone(
+    client: TestClient, monkeypatch
+):
+    """One edit touches one file. Measured on the generated plans: after a save,
+    43 of 44 blobs are unchanged at 31 records, 209 of 210 at 208, 519 of 520 at
+    518 — so the reader can keep the answer for every file whose bytes did not
+    move, and reading the tree stops being the largest cost in a request.
+
+    Keyed on the blob and not on the path, which is what makes it correct rather
+    than merely fast: a file renamed keeps its bytes and keeps its answer, and a
+    path-keyed cache would have to be TOLD when a path changed.
+    """
+    from openproj import web
+
+    parsed = []
+    real = web.parse_text
+
+    def counted(text, path):
+        parsed.append(path)
+        return real(text, path)
+
+    monkeypatch.setattr(web, "parse_text", counted)
+
+    client.get("/")
+    parsed.clear()
+
+    assert save(client, TASK, {"title": "one small change"}).status_code == 200
+    client.get("/")
+
+    # The one that changed, and nothing else. It may be read more than once — the
+    # write parses what it is about to commit — but no OTHER record should be.
+    assert set(parsed) <= {PATH}, f"records reparsed for a one-file edit: {sorted(set(parsed))}"
+
+
+def test_an_edited_record_is_read_again_rather_than_remembered(client: TestClient):
+    """The half of a content-keyed cache that would lose work. Editing a file
+    changes its bytes, which changes its blob, which is a different key."""
+    # Distinctive, because a page this size contains most short English words
+    # somewhere — the first attempt used "first" and "second" and found both.
+    assert save(client, TASK, {"title": "zzarple"}).status_code == 200
+    assert "zzarple" in client.get("/").text
+
+    assert save(client, TASK, {"title": "qqundle"}).status_code == 200
+    page = client.get("/").text
+    assert "qqundle" in page
+    assert "zzarple" not in page, "the table is showing the version before the edit"
+
+
+def test_a_file_that_will_not_parse_is_not_remembered_as_an_answer(
+    client: TestClient, repo_path: Path
+):
+    """It has no answer to hold. And the refusal has to be produced again on every
+    read, because the banner that says the plan is incomplete is drawn from it."""
+    from test_store import commit_directly
+
+    commit_directly(
+        repo_path, {"tasks/broken.md": "---\nid: [\n---\n"}, "a file that will not read"
+    )
+
+    for _ in range(3):
+        page = client.get("/").text
+        assert "broken.md" in page, "the unreadable file stopped being reported"
+
+
+def test_two_files_with_the_same_bytes_are_two_records(client: TestClient, repo_path: Path):
+    """The defect a content-keyed cache buys if the key is only the content.
+
+    `parse_text` stamps `entity._source` with the file it came from, and
+    `_identity_problems` reads it to report the two blockers that matter most:
+    another file claims this id too, and this file is named for something else.
+    Keyed on the blob alone, two files with IDENTICAL bytes are one cached object
+    carrying the first path's `_source` — and both blockers stop firing.
+
+    Measured with the bug in place: two entities, ONE object, no blockers at all.
+    The check that stopped firing is the one whose docstring says a save
+    otherwise "lands on the wrong file" and answers 200 with no warning.
+
+    None of `tests/test_identity.py` catches this: those drive `load_repo` off the
+    filesystem and vary the content, so the cache is never asked and two identical
+    files never occur. The regression is invisible on both axes, which is why this
+    is a new test rather than an assertion added to an old one.
+    """
+    from test_store import commit_directly
+
+    # The seed AND the copy in one commit: `commit_directly` writes the tree it is
+    # given rather than adding to what is there, so a second call with one file
+    # replaces the plan with that file.
+    same = SEED[PATH]
+    commit_directly(
+        repo_path, {**SEED, f"tasks/{TASK}--copy.md": same}, "a second claimant"
+    )
+
+    problems = client.get("/api/index.json").json()["problems"]
+    claims = [p for p in problems if p["field"] == "id" and p["severity"] == "blocker"]
+    assert claims, "two files claim one id and nothing said so"
+    assert any("copy" in p["message"] for p in claims), claims
+
+
+def test_the_parse_cache_survives_readers_arriving_at_once(client: TestClient):
+    """The prune mutates a module-global dict, and 25 of this app's routes are
+    sync `def` — which Starlette dispatches through anyio's worker threads. So two
+    readers really do prune at the same time.
+
+    Without `list(...)` around the iteration and `pop(..., None)` instead of
+    `del`, that is `RuntimeError: dictionary changed size during iteration` and
+    `KeyError`, as unhandled 500s on a page route.
+    """
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        answers = [pool.submit(client.get, "/") for _ in range(24)]
+        codes = [one.result().status_code for one in answers]
+
+    assert set(codes) == {200}, f"concurrent readers got {sorted(set(codes))}"
+
+
+def test_one_save_does_not_stop_the_rest_of_the_process(tmp_path, monkeypatch):
+    """The largest single cost in a save was not the save.
+
+    Every write route is `async def` and called `store.write` bare, so the two
+    GitHub round trips ran ON the event loop — and while they did, nothing else in
+    the process moved: no other page, no SSE keepalive, no co-editing frame. With
+    a team, the lag one person feels is their own save plus everybody else's
+    ahead of it.
+
+    Measured against a write slowed to the length of a real one: a reader asking
+    for `/healthz` waited 1200 ms before, and 8 ms after.
+
+    `Store._writing` is a real `threading.Lock`, so moving the call to a thread
+    preserves the serialisation by construction rather than by hope.
+    """
+    import threading
+    import time
+
+    import pygit2
+    from test_store import commit_directly
+
+    from openproj import store as store_mod
+
+    plan = tmp_path / "plan.git"
+    pygit2.init_repository(str(plan), bare=True, initial_head="main")
+    commit_directly(plan, SEED, "seed")
+
+    real = store_mod.Store.write
+
+    def slow(self, *a, **kw):
+        time.sleep(0.6)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(store_mod.Store, "write", slow)
+
+    app = create_app(plan, auth="dev", secret=SECRET)
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        waits: list[float] = []
+        stop = threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                at = time.perf_counter()
+                client.get("/healthz")
+                waits.append((time.perf_counter() - at) * 1000)
+                time.sleep(0.02)
+
+        watching = threading.Thread(target=reader, daemon=True)
+        watching.start()
+        time.sleep(0.15)
+        assert save(client, TASK, {"title": "while somebody reads"}).status_code == 200
+        stop.set()
+        watching.join(timeout=3)
+
+    assert waits, "nobody was reading, so nothing was measured"
+    assert max(waits) < 300, (
+        f"a reader waited {max(waits):.0f} ms while one save was in flight, so the "
+        "write is still running on the event loop"
+    )

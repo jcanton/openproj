@@ -43,6 +43,42 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **A chip that overflows into the next column.** jcanton, 2026-08-20, with a
+  screenshot of a narrowed window: the status chip runs straight through the
+  Owner column — `» IN PROGRESSjcanton` — instead of wrapping or being cut.
+
+  Half-diagnosed already, so start here rather than from the screenshot. `.chip`
+  is `white-space: nowrap` (render.py, near the status tints), which is right:
+  "IN PROGRESS" broken across two lines is not a chip. What is missing is that
+  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, assignees,
+  reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
+  fit hands it a width and nothing clips what does not fit. Priority is in
+  neither either and gets away with it only because it is plain text, which wraps
+  — which is why the same screenshot shows `Medi um` on two lines. Both are the
+  same defect wearing different clothes.
+
+  **DECIDED — jcanton, 2026-08-20: drop to the mark and hide the word.** Below a
+  threshold the chip keeps its glyph and loses its text, and the priority cell
+  keeps its bars and loses "Medium". Not an ellipsis, and not a column that stops
+  shedding.
+
+  It is what the rest of the app already does rather than a fourth idea: the
+  timeline draws a status glyph inside a bar and drops it below `_GLYPH_MIN_PX`
+  when the bar is too narrow to hold it, and the graph's legend already teaches
+  `»` / `✓` / `?` and the five bars. So the narrow column falls back to a notation
+  the reader has already been taught, instead of to a word cut in half.
+
+  The two rejected, with why, so nobody re-opens them:
+
+  * *Clip with an ellipsis* — cheapest, and leaves `IN PROG…`. Legible, but it
+    teaches nothing and looks like a defect rather than a decision.
+  * *Make `status` squeezable* so the fit takes the room from `title` instead —
+    wrong way round. The title is the column somebody is actually reading.
+
+  Both columns at once. Priority is drawn with the bars now, and `Medi um`
+  wrapped under them is the same bug wearing different clothes — it went
+  unreported only because a wrap looks less broken than an overflow.
+
 * **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
@@ -69,70 +105,6 @@ and each says why it is still here.
   surface for an ordering nobody has complained about yet.
   `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
   fails on a corpus nobody touched, this is the entry to read.
-
-* **An edge that goes round a card instead of under it.** Wanted, designed, not
-  built — jcanton, 2026-08-20, on seeing a card sitting on a line: "to a
-  distracted human not noticing that there are no arrowheads, [it] may make it
-  seem like it depends on where the edge comes from and is blocking implement
-  external forcing".
-
-  **What was tried and does not work.** ELK's own edge routing. Measured on a
-  208-record plan built by `tests/plans.py`, ELK returned bend points for ZERO of
-  76 edges, in each of `ORTHOGONAL`, `POLYLINE` and `SPLINES`. That is not a bug
-  and there is nothing to patch: at the level ELK is working the route between two
-  boxes genuinely is unobstructed, because the cards it appears to cross are
-  inside other boxes, which at that level are opaque rectangles. What is wanted is
-  obstacle avoidance ACROSS hierarchy levels.
-
-  **Why not fork elkjs.** Two reasons, and the second is the one that settles it.
-  `elk.bundled.js` is the Java Eclipse Layout Kernel put through the GWT
-  transpiler, so a fork means a Java project and a GWT build in a repository whose
-  premise is `No npm, no build step`. And the capability is not in ELK's Java
-  either: hierarchy-crossing obstacle routing comes from **libavoid**, which ELK
-  binds to as native C++ and which therefore cannot be transpiled into elkjs at
-  all. A perfect fork could not reach it.
-
-  **What to build instead.** Route in the page, over the absolute positions ELK
-  has already produced — which is exactly where the obstacles are real. The
-  standard shape:
-
-  1. Take the finished drawing: every leaf card and every box as a rectangle,
-     inflated by a few pixels of clearance.
-  2. Build a visibility grid — the x of every rectangle edge and the y of every
-     rectangle edge, which is the "Hanan grid" and is `O(n²)` cells for `n`
-     rectangles but sparse in practice.
-  3. A* each edge from its source's border to its target's border, with a cost
-     that charges for length, for every turn (so it comes out orthogonal rather
-     than staircased), and heavily for entering a rectangle that is not one of its
-     own two ends.
-  4. Hand the bend points to `drawRoutes` in `render.py`, which already exists and
-     already converts a list of absolute points into cytoscape's
-     `segment-weights` / `segment-distances`. That function is the whole interface
-     — nothing else has to change.
-
-  Roughly two hundred lines, no new dependency, no licence, no build step.
-
-  **The instrument already exists.** `tests/test_graph_layout.py` measures
-  `under`: how many edges cross a card that is neither of their two ends,
-  reconstructed from the bend points, with an edge's own descendants excluded
-  because cytoscape draws from a compound's CENTRE and so an edge attached to a
-  box necessarily starts among its children. Today, at 1900x820: **4 on the real
-  plan, 13 at 208 records, 43 at 518.** Those are the numbers to beat, and the
-  test carries them as a bound rather than as an assertion of zero.
-
-  **Where it will get fiddly**, so nobody is surprised: which point on a card's
-  border an edge should leave from and arrive at; keeping parallel edges from
-  being drawn on top of each other once they are all orthogonal; not making
-  crossings worse while removing overlaps; and staying fast enough that the
-  filter, which re-lays-out on a change of the visible set, does not stutter.
-  Consider routing only after the layout settles rather than on every keystroke.
-
-  **Do not start this before using the current drawing for a few days.** Edges are
-  drawn over the cards now, so a line that crosses one is visibly a line that
-  crosses it rather than one that ends there, and anything in the way can be
-  dragged aside. The question this answers is whether the remaining crossings are
-  still annoying once they are no longer ambiguous, and that is worth finding out
-  before spending two hundred lines on it.
 
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **The editor.** Handed to a session of its own on 2026-08-19; the decisions,

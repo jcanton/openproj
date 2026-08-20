@@ -350,7 +350,21 @@ class Store:
         return node.data.decode("utf-8") if node.type_str == "blob" else None
 
     def paths(self, commit: str) -> list[str]:
-        found: list[str] = []
+        return sorted(self.blobs(commit))
+
+    def blobs(self, commit: str) -> dict[str, str]:
+        """Every file at this commit, and the id of the bytes in it.
+
+        A blob id is a hash of the content, so two commits that share one names
+        the same bytes — which is what lets a reader parse a file once and reuse
+        the answer across every commit that did not touch it. Measured on this
+        plan: one edit leaves 519 of 520 blobs untouched, and reading and parsing
+        the tree is the largest cost in a request.
+
+        Walked once and handed back whole rather than asked per path: the walk is
+        the expensive half, and a caller that wants the ids wants all of them.
+        """
+        found: dict[str, str] = {}
 
         def walk(tree, prefix: str) -> None:
             for entry in tree:
@@ -358,10 +372,10 @@ class Store:
                 if entry.type_str == "tree":
                     walk(self._repo.get(entry.id), f"{name}/")
                 else:
-                    found.append(name)
+                    found[name] = str(entry.id)
 
         walk(self._tree(commit), "")
-        return sorted(found)
+        return found
 
     # -- the remote ---------------------------------------------------------
     #
@@ -393,6 +407,21 @@ class Store:
         if not self._remote:
             return False
         self.fetch()
+        return self._send()
+
+    def _send(self, refetched: bool = False) -> bool:
+        """Push what the tracking ref already says is ahead.
+
+        Split out of `push` because a write had just fetched, milliseconds
+        earlier and inside the same lock, and then fetched again on the way out:
+        one save cost THREE round trips to GitHub — fetch, fetch, push — where a
+        round trip is about 600 ms and is most of what a save costs at all.
+
+        Divergence is still caught, and caught properly; it is just no longer
+        paid for on every write. If the remote moved inside that window the push
+        is rejected, and this fetches once and looks — so the fetch happens when
+        it is needed rather than in the hope that it will be.
+        """
         local, remote_head = self.head(), self._remote_head()
         if remote_head == local:
             return False
@@ -401,7 +430,19 @@ class Store:
                 f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
                 "refusing to guess which commits to discard"
             )
-        self._repo.remotes[_ORIGIN].push([f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks())
+        try:
+            self._repo.remotes[_ORIGIN].push(
+                [f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks()
+            )
+        except Exception:
+            # Somebody else pushed between the fetch and this. The tracking ref is
+            # stale, so it is refreshed and asked again — once, because a second
+            # rejection is a remote that is moving faster than this can answer and
+            # the commit is safe locally either way.
+            if refetched:
+                raise
+            self.fetch()
+            return self._send(refetched=True)
         return True
 
     def _callbacks(self):
@@ -420,18 +461,38 @@ class Store:
         """Store bytes under a name derived from their content, and return it.
 
         Content-addressed, so the same file uploaded twice is the same path and
-        the second upload writes nothing. That is also why this needs none of
-        `write`'s machinery: an asset is never edited, so there is no base to
-        compare against, nothing to merge, and no conflict that can exist.
+        the second upload writes nothing. An asset is never edited, so there is no
+        base to compare against, nothing to merge, and no conflict that can exist
+        — which is why this needs none of `write_all`'s compare-and-swap.
+
+        It needs the rest of it. This took no lock and never pushed, and both were
+        wrong in the same way: the commit existed only on this disk, so ONE image
+        upload followed by anybody pushing to the plan by hand left local and
+        remote genuinely forked — and from then on every write raised
+        `StoreDiverged` for the life of the container. Not the first write. All of
+        them, for ever, because nothing ever reconciled. The lock matters for a
+        second reason now that writes run on a threadpool: concurrent with a save,
+        libgit2 refuses the commit outright with "current tip is not the first
+        parent".
         """
         name = f"assets/{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
-        if self.read_asset(self.head(), name) is not None:
-            return name, False
-        blob = self._repo.create_blob(data)
-        parent = self.head()
-        tree = self._insert(self._tree(parent), name.split("/"), blob)
-        who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
-        self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
+        with self._writing:
+            if self._remote:
+                self._absorb_remote()
+            if self.read_asset(self.head(), name) is not None:
+                return name, False
+            blob = self._repo.create_blob(data)
+            parent = self.head()
+            tree = self._insert(self._tree(parent), name.split("/"), blob)
+            who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+            self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
+            # Through `_finish`, so an upload reaches the remote like every other
+            # commit and an unreachable remote is reported rather than pretended
+            # away. The name and "it is new" are what the caller wants; whether it
+            # pushed is on the result `_finish` builds, which this discards — an
+            # asset nobody can see yet is a broken image on one page, not a lost
+            # record.
+            self._finish(self.head(), "committed")
         return name, True
 
     def read_asset(self, commit: str, path: str) -> bytes | None:
@@ -589,7 +650,7 @@ class Store:
         pushed = False
         if self._remote:
             try:
-                pushed = self.push()
+                pushed = self._send()
             except StoreDiverged:
                 raise
             except Exception:

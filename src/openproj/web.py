@@ -67,7 +67,7 @@ from .auth import (
     read_session,
     sign_session,
 )
-from .index import build_index, cascade_of
+from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
@@ -400,9 +400,69 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
     )
 
 
+# One parsed record per blob id, across every commit this process has read.
+#
+# A blob id is a hash of the file's contents, so a record parsed once is the same
+# record at every commit that did not touch that file — and one edit touches one
+# file. Measured on the plans in `tests/plans.py`: after a single save, 43 of 44
+# blobs are unchanged at 31 records, 209 of 210 at 208, and 519 of 520 at 518. The
+# read-and-parse those numbers make reusable was the largest cost in a request,
+# 502 ms of a 941 ms PATCH at 518 records.
+#
+# Keyed on the blob AND the path, and the path is not decoration. `parse_text`
+# stamps `entity._source` with the file it came from, and `_source` is what
+# `_identity_problems` reads to report the two blockers that matter most here:
+# "another file claims this id too" and "its file is named for something else".
+#
+# Keyed on the blob alone — which is how this shipped, on the argument that a
+# renamed file keeps its bytes and keeps its answer — two files with IDENTICAL
+# bytes are one cached object carrying the first path's `_source`, and both
+# blockers stop firing. Reproduced: two entities, one object, no blockers, on a
+# plan where the same record is committed under two names. The docstring of the
+# check that stopped firing says a save otherwise "lands on the wrong file" and
+# answers 200 with no warning, which is the failure a cache must never buy.
+#
+# What that costs is the reuse on a pure rename, where losing it is correct: the
+# record's `_source` changed, so the answer genuinely is different.
+#
+# Pruned to the tree it just read, so the memory it holds is the size of the plan
+# rather than the size of the plan's history. An instance that lives for a week
+# would otherwise accumulate every version of every record anybody edited.
+_PARSED: dict[str, Entity] = {}
+
+
 def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
-    paths, too_deep = record_paths_in(DIRECTORY.values(), store.paths(commit))
-    entities, refused = readable(paths, lambda path: parse_text(store.read(commit, path), path))
+    blobs = store.blobs(commit)
+    paths, too_deep = record_paths_in(DIRECTORY.values(), sorted(blobs))
+
+    def parsed(path: str) -> Entity:
+        key = (blobs[path], path)
+        held = _PARSED.get(key)
+        if held is not None:
+            return held
+        entity = parse_text(store.read(commit, path), path)
+        _PARSED[key] = entity
+        return entity
+
+    entities, refused = readable(paths, parsed)
+    # Pruned, but only once it has grown to several times the plan it just read.
+    # Pruning to exactly that tree looks tidier and is worse: one process can
+    # serve more than one plan — every test in this suite builds its own — and two
+    # of them alternating would evict each other on every read, which turns a
+    # cache into an overhead. A file that would not parse is not held at all: it
+    # has no answer, and the next read has to produce the same refusal for the
+    # banner to go on saying so.
+    if len(_PARSED) > 3 * max(len(paths), 1):
+        keep = {(blobs[path], path) for path in paths}
+        # `list(...)` before iterating and `pop(..., None)` rather than `del`:
+        # this dict is a module global and 25 of this app's routes are sync `def`,
+        # which Starlette dispatches through anyio's worker threads — so two
+        # readers really do prune at once. Without both, that is
+        # `RuntimeError: dictionary changed size during iteration` from the
+        # comprehension and `KeyError` from the delete, as unhandled 500s on a
+        # page route, and the window widens as the plan grows.
+        for gone in [key for key in list(_PARSED) if key not in keep]:
+            _PARSED.pop(gone, None)
     return entities, [*refused, *too_deep]
 
 
@@ -1022,8 +1082,50 @@ def create_app(
     closing = threading.Event()
     app.state.closing = closing
 
+    # The last index built, and the commit it was built from. An index is a pure
+    # function of a commit and the day it is drawn around, so a second request
+    # against the same commit can have the first one's answer.
+    #
+    # Measured before this existed, on a plan of 518 records: reading and parsing
+    # every file out of the tree was 502 ms of a 941 ms PATCH, and every request
+    # paid it — `save` twice, once for the contested-id check and once for the
+    # loop check. 19 ms at 31 records, 116 at 208, 502 at 518: it is the cost that
+    # grows with the plan, and the one that will be felt as the plan grows.
+    #
+    # One entry and not a dictionary of them. A plan has one head, and everything
+    # in front of it is looking at that head; a cache of every commit ever served
+    # would hold the whole history of a long-lived instance in memory to answer a
+    # question nobody asks twice.
+    #
+    # `today` is part of the key because it is part of the answer: an index drawn
+    # around yesterday has yesterday's overruns and yesterday's today-line, and an
+    # instance that lives across midnight would otherwise serve them until
+    # somebody wrote something.
+    # One tuple under one name, and that shape is the point. Written as three
+    # keys in a dict, a reader can pass the commit test, be preempted while a
+    # writer replaces the entry, and then read `held["index"]` — handing back
+    # THIS commit's sha with THAT commit's index. The page would be drawn from
+    # one commit and hand the browser a different one as its `base_commit`, which
+    # is the value every save is compared against.
+    #
+    # Reading a single name is one atomic load under the GIL, so there is no
+    # window to be preempted in. 25 of this app's routes are sync `def` and
+    # Starlette dispatches those through anyio's worker threads, so concurrent
+    # readers are the normal case rather than the exotic one.
+    held: tuple[str, date, Index] | None = None
+
     def index_now():
+        nonlocal held
         commit = store.head()
+        drawn = today or date.today()
+        memo = held
+        if memo is not None and memo[0] == commit and memo[1] == drawn:
+            return commit, memo[2]
+        commit, index = _build_index_at(commit, drawn)
+        held = (commit, drawn, index)
+        return commit, index
+
+    def _build_index_at(commit: str, drawn: date):
         config, unreadable_config = _config_at(store, commit)
         entities, unreadable_entities = _entities_at(store, commit)
         return commit, build_index(
@@ -1035,7 +1137,7 @@ def create_app(
             # past — a demo of a scheduler with nothing left to schedule. A write
             # still stamps the real date, because a commit happens when it
             # happens; this is the day the plan is DRAWN around.
-            today or date.today(),
+            drawn,
             # Sorted by path, because a reader works through the list by opening
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted(
@@ -1272,7 +1374,8 @@ def create_app(
         }
         content = patch_text("---\n---\n", fields, payload.get("body") or "")
         parse_issue_text(content, issue_id)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=_issue_path(issue_id),
             content=content,
             base_commit=payload.get("base_commit") or store.head(),
@@ -1303,7 +1406,8 @@ def create_app(
         # Read back before it is written: a file the loader cannot parse would
         # take the issues page with it, and it would already be in git.
         parse_issue_text(content, path)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -1376,7 +1480,8 @@ def create_app(
         }
         content = patch_text("---\n---\n", fields, _body_in(payload) or "")
         parse_note_text(content, note_id)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=_note_path(note_id),
             content=content,
             base_commit=payload.get("base_commit") or store.head(),
@@ -1411,7 +1516,8 @@ def create_app(
         # Read back before it is written: a file the loader cannot parse would
         # take the notes page with it, and it would already be in git.
         parse_note_text(content, path)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -1554,7 +1660,8 @@ def create_app(
                 422,
                 f"that would not read back as {article}: {why_it_will_not_read(error)}",
             ) from None
-        written = store.write_all(
+        written = await asyncio.to_thread(
+            store.write_all,
             {f"{DIRECTORY[kind]}/{entity_id}.md": content, path: marked},
             base_commit=base,
             author=user.login,
@@ -1864,7 +1971,8 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].entities.values())
         if loop:
             raise HTTPException(409, loop)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -1941,7 +2049,8 @@ def create_app(
             ]
             files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
 
-        written = store.write_all(
+        written = await asyncio.to_thread(
+            store.write_all,
             files,
             base_commit=base,
             author=user.login,
@@ -1986,7 +2095,8 @@ def create_app(
             raise HTTPException(
                 422, f"that would not read back as a cycle: {why_it_will_not_read(error)}"
             ) from None
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -2125,7 +2235,8 @@ def create_app(
         if candidate is None:
             raise HTTPException(422, f"that would not read back as a person: {why}")
 
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -2172,7 +2283,7 @@ def create_app(
                 413, f"that image is {len(data) // 1024} KB; the limit is "
                      f"{MAX_ASSET_BYTES // 1024} KB"
             )
-        path, fresh = store.put_asset(data, IMAGE_TYPES[kind], user.login)
+        path, fresh = await asyncio.to_thread(store.put_asset, data, IMAGE_TYPES[kind], user.login)
         # The sha goes back to the uploader as well as out to everybody else. The
         # shell's banner suppresses news of a commit the tab made itself, and it
         # can only do that if the request that made it hands the sha back — an
@@ -2262,7 +2373,8 @@ def create_app(
                 {"problems": [p.model_dump(mode="json") for p in problems]}, status_code=422
             )
 
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=f"{DIRECTORY[kind]}/{entity_id}.md",
             content=content,
             # A base is optional here — a create has nothing to be stale against
@@ -2540,6 +2652,20 @@ def create_app(
             # Inside the try, which is the whole of this change: the write is
             # what actually fails, and it was the one step standing outside the
             # net. Everything after it only reports.
+            # NOT on a thread, alone among the twelve writers, and the test
+            # `test_a_commit_never_deletes_what_was_typed_during_it_by_construction`
+            # is what says so. Between the snapshot this is committing and
+            # `room.settled` below, the room must not suspend: anything typed
+            # during a suspension is in the room and not in the snapshot, and the
+            # absorb then deletes it from every open document. An `await` here is
+            # exactly that suspension.
+            #
+            # So this one still blocks the event loop for the length of a push.
+            # It is the rarest of the writers — a room commits when somebody
+            # presses Save, or after twenty seconds of quiet, not per keystroke —
+            # and buying the thread would mean making the absorb tolerant of text
+            # that arrived mid-commit, which is a change to the co-editing
+            # invariant rather than to where a call runs.
             written = store.write(
                 path=room.path,
                 content=content,
