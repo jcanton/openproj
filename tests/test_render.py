@@ -3974,7 +3974,9 @@ def test_the_progress_column_counts_the_bodys_own_checklist():
         Config(),
         date(2026, 8, 17),
     )
-    assert _row(index, "task-000009")["progress_text"] == "1/2"
+    # With its unit, like the rollup's weeks: one column holding `1/2` beside
+    # `0/1 wk` reads as two measurements of one thing.
+    assert _row(index, "task-000009")["progress_text"] == "1/2 items"
     assert _row(index, "task-000009")["progress"] == 0.5
     assert _row(index, "task-000010")["progress"] is None
     # And it is derived, so no cell offers to edit it.

@@ -367,17 +367,23 @@ const swatches = [...document.querySelectorAll('.keys .legend .swatch')].map(one
   return {w: +r.width.toFixed(1), h: +r.height.toFixed(1), cls: one.className,
           pri: one.classList.contains('pri')};
 });
-// The meter drawn over the thickest border. Inside a 6px border on an 11px box
-// there is nothing left to draw in, so this is the rung that tells the two
-// arrangements apart.
-const thickest = document.querySelector('.keys .swatch.pri-very_high .bars');
+// The mark inside the thickest border. A 6px border on a 12px swatch leaves
+// nothing in the middle, so this is the rung that tells a mark drawn ON the
+// border from one drawn inside it.
+const thickest = document.querySelector('.keys .swatch.pri-very_high .primark');
 const meter = thickest ? thickest.getBoundingClientRect() : null;
 const rowtops = rows.map(row => Math.round(
   row.querySelector('li:not(.legendname)').getBoundingClientRect().height));
+// Where each key STARTS, per row. Two rows of keys that line up are two rows
+// whose nth key has the same left edge; the gap between one key's word and the
+// next key's mark is then whatever each column's wider word makes it, which is
+// the point rather than a fault.
+const columns = rows.map(row => [...row.querySelectorAll('li')]
+  .map(one => Math.round(one.getBoundingClientRect().left)));
 const box = document.querySelector('[data-fills]').getBoundingClientRect();
 const keys = document.querySelector('.keys').getBoundingClientRect();
 return {
-  rows: rows.length, gaps, swatches, rowtops,
+  rows: rows.length, gaps, swatches, rowtops, columns,
   meter: meter && {w: Math.round(meter.width), h: Math.round(meter.height)},
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
@@ -411,10 +417,16 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
                       height=820, patience=3500)
 
     assert got["rows"] == 2, "priority and status are two rows"
-    assert len(set(got["gaps"])) == 1, (
-        f"the keys are spaced {sorted(set(got['gaps']))} apart, which is not one gap"
-    )
-    assert got["gaps"][0] <= 20, f"{got['gaps'][0]}px between keys is a hand's width"
+    # The two rows line up key for key. jcanton, three times about this legend,
+    # most recently: "still wonky: not aligned (make it a table with two rows
+    # maybe?)". It is one grid now, so this is the claim — the nth key of one row
+    # starts where the nth key of the other does.
+    assert len(got["columns"]) == 2 and len(got["columns"][0]) == len(got["columns"][1])
+    off = [abs(a - b) for a, b in zip(*got["columns"], strict=True)]
+    assert max(off) <= 1, f"the two rows are staggered by {max(off)}px: {got['columns']}"
+    # And the space between keys stays the width of a word, not of a hand — which
+    # is the fault the equal-width version of this had.
+    assert max(got["gaps"]) <= 40, f"{max(got['gaps'])}px between keys is too much air"
     assert got["inside"], "the keys are not over the drawing"
 
     # One swatch, whichever row it is on. jcanton, 2026-08-20: "the legend is
@@ -432,8 +444,8 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     # And the whole meter is drawn on the rung whose border would otherwise eat
     # it: 6px of border on an 11px swatch leaves nothing in the middle, so the
     # bars go over the border rather than inside it.
-    assert got["meter"] and got["meter"]["h"] >= 8 and got["meter"]["w"] >= 15, (
-        f"the very-high key has no room for its meter: {got['meter']}"
+    assert got["meter"] and got["meter"]["h"] >= 8 and got["meter"]["w"] >= 5, (
+        f"the very-high key has no room for its mark: {got['meter']}"
     )
 
 

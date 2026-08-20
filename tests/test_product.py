@@ -216,14 +216,14 @@ def test_a_product_is_drawn_differently_and_shows_no_card(plan: Path):
 
 
 def test_a_container_has_no_work_state_to_gate():
-    """`ready` on a pitch demands an owner, a reviewer and an appetite; on a
-    product it demands nothing, because a product's status is a label to filter
-    by — shelved hides a codebase and everything under it — and not a claim that
-    somebody is doing it.
+    """`ready` on a pitch demands an owner, a reviewer and an appetite. A product
+    has no status at all — jcanton, 2026-08-20: "the product should also not have
+    a status nor PRs" — so there is nothing to gate, and a file that writes one
+    is told the field is not read.
 
-    Found by the plan generator: `status: ready` on a product reported a blocker
-    for the missing owner, which is the ladder demanding the exact field it also
-    says the record does not read.
+    Both halves matter. The gate not firing is what stopped `status: ready` on a
+    container demanding an owner it is also told it must not have; the warning is
+    what stops the field being written in silence.
     """
     from openproj.model import required_at
 
@@ -234,7 +234,9 @@ def test_a_container_has_no_work_state_to_gate():
         "---\nid: prod-000001\nkind: product\ntitle: gt4py\nstatus: ready\n---\n\nx\n",
         "products/prod-000001.md",
     )
-    assert not validate_all([ready], Config())
+    said = validate_all([ready], Config())
+    assert [(p.severity, p.field) for p in said] == [("warning", "status")], said
+    assert "not read" in said[0].message
 
 
 def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
@@ -248,8 +250,12 @@ def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
         "products/prod-000001.md",
     )
     offered = {field["name"] for field in _editable_for(one)}
-    assert "title" in offered and "status" in offered
-    assert not offered & set(RUNG and ("owner", "cycle", "priority", "depends_on"))
+    assert offered == {"title", "tags"}, (
+        "a product is a title, a sentence and somewhere to file projects; every "
+        f"other box on the form belongs to the work inside it: {sorted(offered)}"
+    )
+    assert not offered & set(RUNG and ("owner", "cycle", "priority", "depends_on",
+                                       "status", "prs"))
     # And no parent picker on the top rung: there is nothing to file it under.
     assert "parent" not in offered
     assert "parent" in {f["name"] for f in _editable_for(parse_text(
