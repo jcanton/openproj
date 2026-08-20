@@ -2514,6 +2514,14 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    the word is the thing being read and the mark is what finds it — a glyph at
    full weight beside a short word reads as two words. */
 .chip .chipmark { font-weight: 700; opacity: .75; margin-right: .3rem; }
+/* Too narrow for the word: the mark stays and the word goes. The chip loses its
+   right padding and its mark loses its margin with it, or a chip holding one
+   glyph is mostly air. */
+table.tight-status td[data-col="status"] .chipword { display: none; }
+table.tight-status td[data-col="status"] .chipmark { margin-right: 0; }
+table.tight-status td[data-col="status"] .chip { padding: .1rem .3rem; }
+table.tight-priority td[data-col="priority"] .priword { display: none; }
+table.tight-priority td[data-col="priority"] .pricell { gap: 0; }
 
 .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
           list-style: none; margin: .75rem 0 0; padding: 0;
@@ -4312,14 +4320,17 @@ function shown(row, key) {
   if (key === 'status')
     return `<span class="chip ${stClass(row.status)}">` +
       `<span class="chipmark" aria-hidden="true">${esc(GLYPHS[row.status] || '')}</span>` +
-      `${esc(human(row.status))}</span>`;
+      // The word in its own element so a narrow column can drop it and keep the
+      // mark. A bare text node cannot be hidden without hiding the mark with it.
+      `<span class="chipword">${esc(human(row.status))}</span></span>`;
   // Bars and the word. The bars are what the eye picks out of a column of
   // fifteen rows; the word is what settles which rung it is. Priority was text
   // alone here while the graph drew it as line thickness — one fact, two views,
   // no shared notation, and nothing on either page saying so.
   if (key === 'priority')
     return row.priority
-      ? `<span class="pricell">${barsFor(row.priority)}${esc(human(row.priority))}</span>`
+      ? `<span class="pricell">${barsFor(row.priority)}` +
+        `<span class="priword">${esc(human(row.priority))}</span></span>`
       : '';
   // Counted out of the body's own checklist. Empty where there is no checklist,
   // rather than "0/0" — a body nobody has written a list in has no progress to
@@ -6297,7 +6308,54 @@ function applyWidths(widths) {
   // squeezes every other — which is precisely what freezing them was meant to
   // prevent. It scrolls sideways in its own container instead.
   table.style.width = total + 'px';
+  tighten();
   stickyOffset();
+}
+
+// A column too narrow for its word keeps its MARK and drops the word — jcanton,
+// 2026-08-20, having seen `» IN PROGRESSjcanton` run through the Owner column on
+// a narrowed window.
+//
+// The chip cannot wrap: "IN PROGRESS" broken over two lines is not a chip. And it
+// had nowhere to put the overflow, because `status` is in neither `CLAMPED` nor
+// `SQUEEZABLE`, so the fit hands it a width and nothing clips what does not fit.
+// Priority was in neither either and got away with it only because plain text
+// wraps — which is the `Medi um` in the same screenshot, the same defect wearing
+// different clothes.
+//
+// Dropping to the mark rather than clipping with an ellipsis: `IN PROG…` teaches
+// nothing and reads as a defect, and the marks are already taught — the graph's
+// legend explains `»` and the five bars, and the timeline already drops its own
+// glyph below `_GLYPH_MIN_PX` when a bar is too narrow to hold it. So a narrow
+// column falls back to a notation the reader has been shown rather than to a word
+// cut in half.
+//
+// Asked of the cell rather than answered with a number. A threshold in pixels has
+// to be re-derived every time the chip's padding, the mark or the typeface moves,
+// and the first version of this was measured against content that had ALREADY
+// been shrunk — so priority reported itself too narrow at every width, for ever.
+//
+// So: show the word, ask whether it fits, then decide. One forced reflow per
+// column per fit, which happens on a resize and not on a frame.
+const TIGHTENS = ['status', 'priority'];
+
+function tighten() {
+  for (const key of TIGHTENS) {
+    table.classList.remove(`tight-${key}`);
+  }
+  for (const key of TIGHTENS) {
+    let over = false;
+    for (const cell of table.querySelectorAll(`td[data-col="${key}"]`)) {
+      if (!cell.firstElementChild) continue;
+      // The CELL's own overflow, not the inner element's. `.pricell` is an
+      // inline-flex box that shrinks to whatever it is given and then reports
+      // itself content: asking it whether it fits, it always says yes while its
+      // contents hang out of the cell — which is why priority went on
+      // overflowing after status had been fixed.
+      if (cell.scrollWidth > cell.clientWidth + 1) { over = true; break; }
+    }
+    table.classList.toggle(`tight-${key}`, over);
+  }
 }
 
 // The title column has to begin exactly where the id column ends, and that width
@@ -7336,7 +7394,9 @@ function elkNode(node) {
 function edgesByContainer(edges) {
   const real = {};
   const ghosts = {};
-  const seen = new Set();
+  const weight = new Map();     // container|a>b  ->  how many dependencies run that way
+  const where = new Map();      // container|a>b  ->  the three ids that made it
+  const dropped = new Set();
   edges.forEach(edge => {
     const from = chainOf(edge.source());
     const to = chainOf(edge.target());
@@ -7355,10 +7415,41 @@ function edgesByContainer(edges) {
     if (a === edge.source().id() && b === edge.target().id()) return;
     const on = deep === 0 ? 'root' : from[deep - 1];
     const key = on + '|' + a + '>' + b;
-    if (seen.has(key)) return;
-    seen.add(key);
-    (ghosts[on] = ghosts[on] || []).push({id: 'ghost:' + key, sources: [a], targets: [b]});
+    // Counted, not deduplicated. When two boxes depend on each other the ghosts
+    // form a cycle, and how many dependencies run each way is what decides which
+    // direction is worth keeping.
+    weight.set(key, (weight.get(key) || 0) + 1);
+    where.set(key, {on, a, b});
   });
+
+  // A cycle in the ghosts is not a cycle in the plan: two projects can each hold
+  // work waiting on the other, with nothing circular about any single record.
+  // ELK cannot rank both, so it breaks one arbitrarily and an arrow comes out
+  // backwards — measured on a generated plan of 518 records, two of them, between
+  // one pair of projects with two dependencies running one way and one the other.
+  //
+  // So the WEAKER direction is dropped before ELK ever sees it. The majority then
+  // ranks correctly and only the minority reads backwards, which is the honest
+  // answer: those records really are waiting on each other, and no arrangement of
+  // two boxes on a line can say so.
+  //
+  // Two-cycles only. A longer ring — A waits on B waits on C waits on A — is left
+  // for ELK to break, because choosing which edge of a ring to sacrifice is a
+  // judgement about the plan rather than about the drawing, and a wrong guess
+  // there is worse than an arbitrary one.
+  for (const [key, {on, a, b}] of where) {
+    const other = on + '|' + b + '>' + a;
+    if (!where.has(other)) continue;
+    const mine = weight.get(key), theirs = weight.get(other) || 0;
+    // Ties keep both and let ELK choose: there is nothing to prefer.
+    if (mine < theirs) continue;
+    if (mine === theirs && key > other) continue;
+    dropped.add(other);
+  }
+  for (const [key, {on, a, b}] of where) {
+    if (dropped.has(key)) continue;
+    (ghosts[on] = ghosts[on] || []).push({id: 'ghost:' + key, sources: [a], targets: [b]});
+  }
   return {real, ghosts};
 }
 

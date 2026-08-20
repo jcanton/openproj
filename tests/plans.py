@@ -77,9 +77,21 @@ def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int
         pool = ids[kind]
         for i in range(0, len(pool) - 1, 3):
             deps.setdefault(pool[i + 1], []).append(pool[i])
-    for _ in range(max(4, len(ids["pitch"]) // 4)):
-        a, b = rng.sample(ids["pitch"], 2)
-        deps.setdefault(a, []).append(b)
+    # Across groups, and ACYCLIC by construction: a record only ever waits on one
+    # minted before it. Random pairs made rings — measured, a generated plan of
+    # 518 records held a genuine blocked-by cycle between two pitches, which
+    # `validate_all` reports as a blocker and which the write path now refuses
+    # outright. A corpus that cannot exist is a corpus that measures the wrong
+    # thing: two of the three backward arrows on this plan were the drawing
+    # correctly failing to lay out a ring, not the layout getting anything wrong.
+    #
+    # Mutual dependencies BETWEEN GROUPS are still generated, and deliberately —
+    # two projects each holding work that waits on the other is legal, common,
+    # and the one shape no arrangement of two boxes on a line can express.
+    pool = ids["pitch"]
+    for _ in range(max(4, len(pool) // 4)):
+        first, second = sorted(rng.sample(range(len(pool)), 2))
+        deps.setdefault(pool[second], []).append(pool[first])
 
     DIRS = {"project": "projects", "pitch": "pitches", "task": "tasks"}
     for eid, on in deps.items():
