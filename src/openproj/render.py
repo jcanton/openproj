@@ -1870,11 +1870,38 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    button turned back into a link the moment somebody had used it once. Written
    in link-visited-hover order, so the states later in the list win the ties they
    are supposed to. */
-.button, .button:visited { font: inherit; font-size: 13px; line-height: 1.4;
-                           padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
-                           border: 1px solid var(--line-strong); background: var(--surface);
-                           color: var(--fg); text-decoration: none; }
-.button:hover { border-color: var(--accent); color: var(--accent); }
+/* ONE LOOK FOR EVERY CONTROL, and this is the only place it is written.
+   jcanton, 2026-08-20: "buttons do not have consistent aesthetic: clear filters,
+   the timeline zoom dropdown, the issues state dropdown, notes state, edit entity
+   are all grey and different from the newer buttons".
+
+   They were grey because they were native — a `<button>` and a `<select>` with no
+   rule get the operating system's own chrome, which matches nothing else here and
+   changes between two machines looking at the same plan. So every control that
+   ACTS is listed here and none of them is styled anywhere else. A fourth spelling
+   of the same rectangle is how this happened in the first place.
+
+   The `<select>`s keep the caret the browser draws them, which is the one thing
+   this rule cannot supply — the facet buttons on the table draw their own from
+   two borders, and they can only do that because they are buttons rather than
+   selects. Same ground, same border, same radius, native caret; that was the
+   choice, made deliberately over converting four more controls into popups.
+
+   Not `.field`. A text box is somewhere to TYPE and a control is something to
+   PRESS, and drawing them the same way is how a filter bar comes to look like a
+   form somebody left half-filled. */
+.button, .button:visited,
+#unfilter, #toggle, #tl-zoom, #state-filter, #kind, #template, #into,
+.commitbar button {
+  font: inherit; font-size: 13px; line-height: 1.4;
+  padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--fg); text-decoration: none;
+}
+.button:hover,
+#unfilter:hover, #toggle:hover, #tl-zoom:hover, #state-filter:hover,
+#kind:hover, #template:hover, #into:hover,
+.commitbar button:hover { border-color: var(--accent); color: var(--accent); }
 /* Apply and Reset on the timeline were a button and a bare link, which reads as
    one control and one afterthought. They are the same pair of scissors pointed
    two ways, so they are the same size and shape; only the fill says which one is
@@ -1916,10 +1943,9 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 .commitbar.dirty { border-color: var(--warn); }
 #unsaved { font-size: 12px; color: var(--muted); }
 .commitbar.dirty #unsaved { color: var(--warn); font-weight: 600; }
-#save, .commitbar button { font: inherit; font-size: 13px; padding: .25rem .8rem;
-        border-radius: 2px; border: 1px solid var(--line-strong);
-        background: var(--surface); color: var(--fg); cursor: pointer; }
-#save:disabled { color: var(--muted); cursor: default; }
+/* The shape is the shared rule above. What is left here is what only Save has:
+   the two states that say whether pressing it would do anything. */
+#save:disabled { color: var(--muted); border-color: var(--line-strong); cursor: default; }
 #save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 /* What the status chosen in this form will make the server refuse it without.
    A warning colour because it is a refusal waiting to happen, and a word rather

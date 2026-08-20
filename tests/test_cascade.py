@@ -15,6 +15,8 @@ rule wins and what does it say. See `tests/cascade.py`.
 
 from __future__ import annotations
 
+import re
+
 from datetime import date
 from pathlib import Path
 
@@ -761,3 +763,48 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
     assert sheet.value(DRAFTING, "align-items") == "center"
     picker = DRAFTING + [el("select", id="draft-kind")]
     assert sheet.value(picker, "min-width") == "0", says(sheet, picker, "min-width")
+
+
+CONTROLS = ("#unfilter", "#toggle", "#tl-zoom", "#state-filter", "#kind", "#template", "#into")
+
+
+def test_every_control_in_the_app_wears_one_look():
+    """jcanton, 2026-08-20: the older controls were "all grey and different from
+    the newer buttons".
+
+    They were grey because they were native. A `<button>` or a `<select>` with no
+    rule gets the operating system's chrome, which matches nothing else on the
+    page and differs between two machines looking at the same plan.
+
+    Read out of the stylesheet rather than measured, because what is being pinned
+    is that there is ONE rule: a second copy of the same rectangle somewhere else
+    is exactly how the page came to have four spellings of a button, and a test
+    that measured the result would go green on the day somebody added a fifth.
+    """
+    from openproj.render import _SHELL
+
+    shared = [
+        rule
+        for rule in re.findall(r"([^{}]+)\{([^}]*)\}", _SHELL)
+        if ".button, .button:visited" in rule[0]
+    ]
+    assert len(shared) == 1, "the shared control rule is not in one piece"
+    selector, body = shared[0]
+
+    for control in CONTROLS:
+        assert control in selector, f"{control} is not wearing the shared look"
+    assert ".commitbar button" in selector, "Save and Cancel have a spelling of their own"
+
+    for property_name in ("border:", "background:", "border-radius:", "font-size:"):
+        assert property_name in body, f"the shared look does not say {property_name}"
+
+    # And nothing else re-draws them. A control named in a second rule that sets a
+    # border or a ground is a control that has quietly left the set.
+    for other_selector, other_body in re.findall(r"([^{}]+)\{([^}]*)\}", _SHELL):
+        if other_selector == selector or ":hover" in other_selector:
+            continue
+        for control in CONTROLS:
+            if re.search(rf"{re.escape(control)}(?![\w-])", other_selector):
+                assert "border:" not in other_body and "background:" not in other_body, (
+                    f"{control} is drawn a second time by `{other_selector.strip()}`"
+                )
