@@ -369,7 +369,13 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
             offered = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', select)
             assert [value for value, _ in offered] == list(values), name
             for value, word in offered:
-                assert word.strip() == LABELS.get(value, HUMAN[value]), (name, value)
+                # The mark leads and the word follows. It is a string and not
+                # markup because an `<option>` is a string — see `_CONTROL`.
+                mark, _, said = word.strip().partition(" ")
+                assert said == LABELS.get(value, HUMAN[value]), (name, value)
+                assert mark and mark not in said, (
+                    f"{name}: {value} is offered as {word!r} with no mark in front of it"
+                )
                 assert value not in word, f"{value} is its own identifier, not a word"
 
 
@@ -1903,7 +1909,8 @@ def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
     # `esc` — the closed set is a closed set today, and a rule with an exception
     # in it is a rule nobody applies to the next line.
     assert re.search(
-        r'<option value="\$\{esc\(o\)\}"[^>]*>\$\{esc\(human\(o\)\)\}</option>',
+        r'<option value="\$\{esc\(o\)\}"[^>]*>`\s*\+\s*'
+        r'`\$\{esc\(markFor\(field, o\)\)\}\$\{esc\(human\(o\)\)\}</option>',
         script(page),
     )
 

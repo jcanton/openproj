@@ -43,6 +43,29 @@ def index(seed_root: Path) -> Index:
 
 
 @pytest.fixture
+def served_pages(index: Index) -> dict[str, str]:
+    """Every page a person clicks a control on, as the server renders it — with a
+    base commit and write permission, because a reader's page is missing exactly
+    the controls this is about."""
+    from openproj.render import (
+        render_graph,
+        render_issues,
+        render_notes,
+        render_timeline,
+    )
+
+    return {
+        "table": render_table(index, ROUTES, base_commit=HEAD),
+        "graph": render_graph(index, ROUTES, base_commit=HEAD),
+        "timeline": render_timeline(index, ROUTES),
+        "detail": render_detail(index, ROUTES, only=sorted(index.entities)[0],
+                                base_commit=HEAD, may_write=True),
+        "issues": render_issues(index, ROUTES, base_commit=HEAD),
+        "notes": render_notes(index, ROUTES, base_commit=HEAD),
+    }
+
+
+@pytest.fixture
 def table(index: Index) -> Sheet:
     """The editable table: `_TABLE_STYLE` and then `_SUGGEST_STYLE`, after the
     shell — which is the order that decides every tie below."""
@@ -767,43 +790,114 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
 CONTROLS = ("#unfilter", "#toggle", "#tl-zoom", "#state-filter", "#kind", "#template", "#into")
 
 
-def test_every_control_in_the_app_wears_one_look():
-    """jcanton, 2026-08-20: the older controls were "all grey and different from
-    the newer buttons".
+# Every button and every select on the page, and what it is actually drawn with.
+# Measured, not read: the version of this test that read the stylesheet passed
+# while `#preview`, `#connect`, `#clear-filters` and a dozen others were being
+# drawn by the operating system, because it checked that ONE rule existed and
+# never asked which controls it reached.
+_DRAWN = """
+const out = [];
+for (const el of document.querySelectorAll('button, select')) {
+  if (!el.getClientRects().length) continue;
+  const s = getComputedStyle(el);
+  out.push({
+    // A sort control inside a column header. Bare on purpose: a header that
+    // looks like a button stops looking like a header.
+    header: !!el.closest('th'),
+    what: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+          + (typeof el.className === 'string' && el.className.trim()
+             ? '.' + el.className.trim().split(/\s+/).join('.') : ''),
+    border: s.borderTopWidth + ' ' + s.borderTopStyle,
+    radius: s.borderTopLeftRadius,
+    size: s.fontSize,
+    family: s.fontFamily.split(',')[0].replace(/["']/g, ''),
+  });
+}
+return out;
+"""
 
-    They were grey because they were native. A `<button>` or a `<select>` with no
-    rule gets the operating system's chrome, which matches nothing else on the
-    page and differs between two machines looking at the same plan.
+# The controls that are deliberately drawn with nothing: an icon in a corner, a
+# swatch, a grip, a filter button that draws its own caret. Each one says so in
+# its own rule, which outranks the default because a class or an id outranks an
+# element — so this list is what the page already says, written down where a test
+# can check it has not grown by accident.
+def bare(one: dict) -> bool:
+    """Whether this control is deliberately drawn with nothing.
 
-    Read out of the stylesheet rather than measured, because what is being pinned
-    is that there is ONE rule: a second copy of the same rectangle somewhere else
-    is exactly how the page came to have four spellings of a button, and a test
-    that measured the result would go green on the day somebody added a fifth.
+    Asked of the drawing rather than of a list of names, because a list is what
+    this whole test exists to replace. Three kinds of control legitimately carry
+    no rectangle: an icon in a corner, a column header that must look like a
+    header, and the filter buttons, which draw their own border and caret inside
+    themselves. Each says so in its own rule, and each of those rules outranks
+    the default because a class or an id beats an element.
     """
-    from openproj.render import _SHELL
+    return one["what"] in ("button#theme",) or one["header"] or "facetopen" in one["what"]
 
-    shared = [
-        rule
-        for rule in re.findall(r"([^{}]+)\{([^}]*)\}", _SHELL)
-        if ".button, .button:visited" in rule[0]
-    ]
-    assert len(shared) == 1, "the shared control rule is not in one piece"
-    selector, body = shared[0]
 
-    for control in CONTROLS:
-        assert control in selector, f"{control} is not wearing the shared look"
-    assert ".commitbar button" in selector, "Save and Cancel have a spelling of their own"
+@pytest.mark.parametrize("view", ["table", "graph", "timeline", "detail", "issues", "notes"])
+def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_path):
+    """jcanton, 2026-08-20, on finding "Preview the body" still native: "I thought
+    we had managed to impose the style of buttons and dropdowns to be coherent
+    across the entire app? why did that work? this is rather important for
+    preventing future drifts".
 
-    for property_name in ("border:", "background:", "border-radius:", "font-size:"):
-        assert property_name in body, f"the shared look does not say {property_name}"
+    It did not work, and the reason is the shape of the rule rather than the rule.
+    It named ids and classes, so it reached the eight controls somebody thought of
+    and none of the twenty they did not, and the failure is silent: the button
+    looks like the operating system and nobody notices until two of them are side
+    by side.
 
-    # And nothing else re-draws them. A control named in a second rule that sets a
-    # border or a ground is a control that has quietly left the set.
-    for other_selector, other_body in re.findall(r"([^{}]+)\{([^}]*)\}", _SHELL):
-        if other_selector == selector or ":hover" in other_selector:
-            continue
-        for control in CONTROLS:
-            if re.search(rf"{re.escape(control)}(?![\w-])", other_selector):
-                assert "border:" not in other_body and "background:" not in other_body, (
-                    f"{control} is drawn a second time by `{other_selector.strip()}`"
-                )
+    The rule is now the default for `button` and `select`, and this measures the
+    result in a browser rather than reading the source. A test that reads a
+    stylesheet can only ever check that a rule exists; what matters is which
+    controls it reaches.
+    """
+    from browser import chrome, measured_in
+
+    drawn = measured_in(chrome(), served_pages[view], tmp_path / f"{view}.html", 1400, _DRAWN)
+    assert drawn, f"the {view} page has no controls at all"
+
+    styled = [one for one in drawn if not bare(one)]
+    assert styled, f"every control on the {view} page claims to be deliberately bare"
+
+    # The rectangle and its border, not the type size. A "show 1 more" button
+    # inside a table cell is legitimately smaller than Save; what has to match is
+    # the shape, which is what the eye reads as "these are the same kind of thing".
+    shapes = {(one["border"], one["radius"]) for one in styled}
+    assert shapes == {("1px solid", "2px")}, (
+        f"controls on the {view} page are drawn differently: "
+        + "; ".join(
+            f"{one['what']} is {one['border']} r{one['radius']}"
+            for one in styled
+            if (one["border"], one["radius"]) != ("1px solid", "2px")
+        )
+    )
+    # `2px outset` is Chrome's own default for a button nobody styled, and it is
+    # what this page showed for half a day: the rule was there, in a stylesheet,
+    # behind a comment somebody had left unclosed. The parser threw the rule away
+    # and said nothing. Named here because the symptom is indistinguishable from
+    # a selector that simply does not match.
+    assert not [one for one in styled if one["border"] == "2px outset"], (
+        f"{view}: a control is wearing the browser's own chrome"
+    )
+
+
+def test_no_stylesheet_has_an_unclosed_comment(served_pages):
+    """A CSS comment that never closes eats the rules after it, silently.
+
+    That is not hypothetical: the rule making every control look the same was
+    written correctly, put in the shell, shipped — and did nothing, because the
+    comment above it had been edited and left with its `*/` in the middle. The
+    parser discarded everything from there to the next `*/` and reported nothing,
+    and the symptom on the page is identical to a selector that does not match.
+
+    Counted rather than parsed: every `/*` must have its `*/`, and an odd number
+    of either is a stylesheet with a hole in it.
+    """
+    for view, page in served_pages.items():
+        for style in re.findall(r"<style[^>]*>(.*?)</style>", page, re.S):
+            opens, closes = style.count("/*"), style.count("*/")
+            assert opens == closes, (
+                f"{view}: {opens} comment openings and {closes} closings — "
+                "everything after the odd one out is being thrown away"
+            )
