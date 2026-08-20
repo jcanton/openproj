@@ -225,6 +225,7 @@ def test_facets_cover_every_filterable_field(family_index: Index):
         "reviewers",
         "priority",
         "cycle",
+        "product",
         "project",
         "tags",
         "predicate",

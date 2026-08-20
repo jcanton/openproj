@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from .model import (
     PRIORITY_RANK,
+    RUNG,
     Config,
     Entity,
     ancestors,
@@ -364,7 +365,19 @@ def _unschedulable(active: dict[str, Entity]) -> set[str]:
 def schedule(
     entities: list[Entity], config: Config, today: date
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
-    live = {e.id: e for e in entities if e.status != "shelved"}
+    # Shelved work is parked, and a kind the ladder says is never scheduled has
+    # nothing to schedule. A product groups the codebases a plan spans — gt4py
+    # under icon4py, dace, pmap — and holds no work of its own; given a span it
+    # drew a bar on the timeline spanning everything beneath it, which is a
+    # rectangle behind every real bar saying nothing the bars do not.
+    #
+    # Read off `RUNG` rather than by naming the kind here, because "which kinds
+    # are scheduled" is a property of a kind and belongs beside the others.
+    live = {
+        e.id: e
+        for e in entities
+        if e.status != "shelved" and RUNG[e.kind].schedules
+    }
     children: dict[str, list[str]] = defaultdict(list)
     for entity in live.values():
         if entity.parent in live:

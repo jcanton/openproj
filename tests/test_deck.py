@@ -335,6 +335,7 @@ def test_the_sections_a_slide_leaves_out_are_read_off_the_templates():
     Minus `## Progress`, which is in the task template and is the one heading a
     review is written under. Dropping it with the rest is what made the deck
     delete the only section it existed to show."""
+    from openproj.model import RUNG
     from openproj.render import TEMPLATES, _bet_headings
 
     found = _bet_headings()
@@ -342,7 +343,15 @@ def test_the_sections_a_slide_leaves_out_are_read_off_the_templates():
     assert {"problem", "appetite", "solution", "rabbit holes", "no-gos",
             "for later"} == found
     assert "progress" not in found
-    for body in TEMPLATES.values():
+    # Skipping the kinds that carry no shaping document at all: a product is a
+    # container — `RUNG["product"].carded is False`, which is also why it shows no
+    # hover card — and it never reaches a slide, so its template is a sentence
+    # about the codebase rather than an argument under headings. Read off the
+    # ladder and not spelled `!= "product"`, so a later rung of the same sort is
+    # covered on the commit that adds it.
+    for name, body in TEMPLATES.items():
+        if name in RUNG and not RUNG[name].carded:
+            continue
         assert not without_sections(body, found | {"progress"}).strip("# \n"), body[:40]
 
 

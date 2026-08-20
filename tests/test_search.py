@@ -343,10 +343,11 @@ def test_the_two_field_lists_are_the_same():
     server and matching nothing in the table — the `(none)` sentinel's failure
     with a different name, which is why that one is pinned the same way.
     """
-    from openproj.index import _LIST_FACETS, _SCALAR_FACETS
+    from openproj.index import _HOLDER_FACETS, _LIST_FACETS, _SCALAR_FACETS
     from openproj.render import _FILTER_JS
 
-    here = [*_SCALAR_FACETS, *_LIST_FACETS, "project", "id", "title", "prs", "predicate"]
+    here = [*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS,
+            "id", "title", "prs", "predicate"]
     said = re.search(r"const QUERY_FIELDS = \[([^\]]*)\]", _FILTER_JS).group(1)
     there = re.findall(r"'([^']+)'", said)
 
