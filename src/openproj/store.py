@@ -197,6 +197,30 @@ def _deleted(path: str) -> str:
     )
 
 
+class _Rejected(Exception):
+    """The remote refused the push because it had moved.
+
+    Its own type and not a bare `Exception`, because `_finish` deliberately
+    swallows everything else a push can fail with — an unreachable remote is a
+    commit that is real and local and reported as unpushed, which is not this. A
+    rejection means somebody else's commit is on the remote and ours is not a
+    descendant of it, and that is recoverable by rewinding and trying again.
+    """
+
+
+def _lost_the_race(paths: list[str]) -> str:
+    """What a write is answered with after three attempts have all been outrun.
+
+    Not "the remote is broken" and not silence: the plan is being written to
+    faster than one save can land, which is a real thing to be told and a
+    different thing from a merge conflict. Nothing was committed.
+    """
+    return (
+        f"{', '.join(paths)} — the plan moved three times while this was being "
+        "saved.\n  Nothing was written. Reload and try again."
+    )
+
+
 def _changed_under_delete(path: str) -> str:
     """What a delete is answered with when somebody edited the file first.
 
@@ -407,9 +431,24 @@ class Store:
         if not self._remote:
             return False
         self.fetch()
+        # The tracking ref is fresh here, and only here, so this is the one place
+        # that can tell a genuine fork from a race. `_send` cannot: the write path
+        # calls it without fetching, where "local is not on top of the remote" is
+        # the ordinary consequence of having committed on a base that has since
+        # moved. Somebody force-pushed, or a second writer existed, is what this
+        # is about, and neither is recoverable by trying again.
+        local, remote_head = self.head(), self._remote_head()
+        # Equality first: `descendant_of(x, x)` is false — a commit is not its own
+        # descendant — so a store with nothing to send looked exactly like a fork.
+        if remote_head is not None and remote_head != local:
+            if not self._repo.descendant_of(local, remote_head):
+                raise StoreDiverged(
+                    f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
+                    "refusing to guess which commits to discard"
+                )
         return self._send()
 
-    def _send(self, refetched: bool = False) -> bool:
+    def _send(self) -> bool:
         """Push what the tracking ref already says is ahead.
 
         Split out of `push` because a write had just fetched, milliseconds
@@ -425,24 +464,52 @@ class Store:
         local, remote_head = self.head(), self._remote_head()
         if remote_head == local:
             return False
+        # Not a fork — a race, and the difference decides whether anything can be
+        # done about it. Without a pre-fetch, "local is not on top of the remote"
+        # is the ORDINARY case: this process committed on a base that was current
+        # when it started and is not now. Raising `StoreDiverged` here called that
+        # unrecoverable, and it is the exact case the retry recovers from.
+        #
+        # A genuine fork — somebody force-pushed, or two writers existed — is
+        # still caught, one step later: the retry rewinds and calls
+        # `_absorb_remote`, which raises `StoreDiverged` when the two histories
+        # really cannot be reconciled. So the hard answer is given by the code
+        # that can tell, after fetching, rather than guessed here from a tracking
+        # ref that is stale by design.
         if remote_head is not None and not self._repo.descendant_of(local, remote_head):
-            raise StoreDiverged(
-                f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
-                "refusing to guess which commits to discard"
+            raise _Rejected(
+                f"the remote is at {remote_head[:7]} and this is not on top of it"
             )
         try:
             self._repo.remotes[_ORIGIN].push(
                 [f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks()
             )
         except Exception:
-            # Somebody else pushed between the fetch and this. The tracking ref is
-            # stale, so it is refreshed and asked again — once, because a second
-            # rejection is a remote that is moving faster than this can answer and
-            # the commit is safe locally either way.
-            if refetched:
-                raise
-            self.fetch()
-            return self._send(refetched=True)
+            # A refusal and an unreachable host arrive as the same class, and they
+            # want opposite answers: one is recoverable by rewinding and running
+            # the compare-and-swap again, the other is a commit that is real and
+            # local and simply has not landed.
+            #
+            # Told apart by ASKING GIT rather than by reading the message. The
+            # first version matched on the text and was wrong within the hour:
+            # real GitHub over HTTPS says "cannot push non-fastforwardable
+            # reference" and a `file://` remote says "contains commits that are
+            # not present locally", so the retry fired in production and never in
+            # the tests. A fetch costs a round trip and this is the path where one
+            # is worth paying — a push has already failed.
+            try:
+                self.fetch()
+            except Exception as unreachable:
+                # The remote is unreachable, and that is what failed — not the
+                # push. Chained deliberately: the push error is the symptom and
+                # this is the cause, and a runbook wants both.
+                raise unreachable from None
+            moved = self._remote_head()
+            if moved is not None and not self._repo.descendant_of(self.head(), moved):
+                raise _Rejected(
+                    f"the remote is at {moved[:7]} and this is not on top of it"
+                ) from None
+            raise
         return True
 
     def _callbacks(self):
@@ -556,10 +623,40 @@ class Store:
         came to disagree about which commit `stored` is read at.
         """
         with self._writing:
-            # Whatever the remote has is part of "current": writing on top of a
-            # stale local view would push a commit that silently reverts somebody.
-            if self._remote:
-                self._absorb_remote()
+            # NO FETCH BEFORE THE WRITE. It was here so that "current" already
+            # included whatever the remote had, and it cost a round trip on every
+            # save whether or not the remote had moved — measured at about 600 ms
+            # from a laptop, which was half of what a save cost at all.
+            #
+            # Optimistic instead: commit against local HEAD, push, and let the
+            # push be the question. GitHub refuses a non-fast-forward and libgit2
+            # raises `cannot push non-fastforwardable reference` — verified
+            # against the real remote over HTTPS, not over `file://`, because the
+            # two answer differently and only one of them is what runs in
+            # production. `_retry` then rewinds, fetches, and runs this same loop
+            # again against what actually landed.
+            #
+            # So the fetch happens when somebody else really did write, rather
+            # than in the hope that they might have. Conflict SEMANTICS are
+            # unchanged, because the retry re-runs this identical loop: what moves
+            # is the tail latency of a collision, to about 1.8 s — which was until
+            # today the price of every save, collision or not.
+            return self._attempt(files, base_commit, author, message, tries=3)
+
+    def _attempt(
+        self,
+        files: dict[str, str | None],
+        base_commit: str,
+        author: str,
+        message: str,
+        tries: int,
+    ) -> WriteResult:
+        """One pass of the compare-and-swap, and the retry when the push loses.
+
+        Called with `self._writing` already held, and it calls itself, so the lock
+        must stay non-reentrant-safe by never being taken again in here.
+        """
+        if True:
             current = self.head()
             resolved: dict[str, str] = {}
             outcomes: list[str] = []
@@ -618,7 +715,29 @@ class Store:
             # "committed" for a set in which one file had to be merged has been
             # told the quiet half of what happened.
             worst = max(outcomes, key=_OUTCOMES.index, default="committed")
-            return self._finish(self._commit(resolved, author, message), worst)
+            before = self.head()
+            made = self._commit(resolved, author, message)
+            try:
+                return self._finish(made, worst)
+            except _Rejected:
+                # Somebody else landed a commit between this HEAD and this push.
+                # Rewind to where we started, take what they wrote, and run the
+                # whole loop again against it — which is the same three-way merge
+                # a pre-fetch would have done, arrived at from the other side.
+                if tries <= 1:
+                    # The same 409 they would have been given anyway. A remote
+                    # moving faster than three attempts is not a conflict this can
+                    # resolve by trying a fourth time.
+                    self._repo.references[_BRANCH].set_target(before)
+                    self._absorb_remote()
+                    return WriteResult(
+                        commit=None,
+                        outcome="conflict",
+                        conflict=_lost_the_race(sorted(files)),
+                    )
+                self._repo.references[_BRANCH].set_target(before)
+                self._absorb_remote()
+                return self._attempt(files, base_commit, author, message, tries - 1)
 
     def _absorb_remote(self) -> None:
         """Fast-forward onto anything the remote gained since the last write.
@@ -651,7 +770,13 @@ class Store:
         if self._remote:
             try:
                 pushed = self._send()
-            except StoreDiverged:
+            except (StoreDiverged, _Rejected):
+                # Both are answers about the plan rather than about the network,
+                # and the caller has something to do with each: a rejection is
+                # recoverable by rewinding and running the compare-and-swap again,
+                # and a genuine fork is not recoverable at all. Swallowing either
+                # into `pushed = False` would report a commit as merely unpushed
+                # when it is in fact about to be retried, or about to be lost.
                 raise
             except Exception:
                 # The remote is unreachable. The commit is real and local; the
