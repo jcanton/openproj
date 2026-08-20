@@ -3797,3 +3797,24 @@ def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
             f"{kind} is read on every request without going through the cache; "
             f"cached kinds are {sorted(held)}"
         )
+
+
+def test_the_service_says_which_version_it_is_running(client: TestClient):
+    """A tag names a commit so that "which one is live" has an answer, and for
+    two releases the answer was still a sha read out of a deploy log — because
+    nothing the service served carried its own version.
+
+    `AGENTS.md`'s deploy runbook told a reader to check the running version
+    against the tag, and there was no version string to check. `head` is the
+    PLAN's commit and moves whenever anybody saves a record; this is the code's,
+    and moves only on a release. One field's worth of confusion apart.
+    """
+    from openproj import __version__
+
+    answer = client.get("/api/health").json()
+    assert answer["version"] == __version__
+    # And through the other door, which stays for anything pointed at the
+    # convention even though Cloud Run's frontend eats it in production.
+    assert client.get("/healthz").json()["version"] == __version__
+    # The two are different facts and must not be read for one another.
+    assert answer["head"] != answer["version"]
