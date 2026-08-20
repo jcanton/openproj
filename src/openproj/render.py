@@ -7927,17 +7927,26 @@ function routeAround(blockers, anchorFrom, anchorTo) {
 // Where an edge leaves a card and where it arrives: the middle of the side that
 // faces the other end. Orthogonal by construction, which is what the grid wants,
 // and it means an edge meets a card square on rather than at a corner.
+// Where a route starts and ends: the middle of whichever side of each box faces
+// the other node, pushed one pixel clear of the border.
+//
+// The clip points — where the centre-to-centre line crosses the two boxes — were
+// tried here, because that is where cytoscape starts drawing. It refuses to draw
+// at all: with the first segment point ON the shape, the intersection it uses for
+// the endpoint is degenerate and the console says so ("invalid endpoints and so
+// it is impossible to draw"), leaving six dependencies on the real plan with no
+// line between them.
 function anchorsFor(edge) {
   const from = edge.source().boundingBox({includeLabels: false});
   const to = edge.target().boundingBox({includeLabels: false});
   const a = edge.source().position(), b = edge.target().position();
   const dx = b.x - a.x, dy = b.y - a.y;
   if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0 ? [{x: from.x2, y: a.y}, {x: to.x1, y: b.y}]
-                   : [{x: from.x1, y: a.y}, {x: to.x2, y: b.y}];
+    return dx >= 0 ? [{x: from.x2 + 1, y: a.y}, {x: to.x1 - 1, y: b.y}]
+                   : [{x: from.x1 - 1, y: a.y}, {x: to.x2 + 1, y: b.y}];
   }
-  return dy >= 0 ? [{x: a.x, y: from.y2}, {x: b.x, y: to.y1}]
-                 : [{x: a.x, y: from.y1}, {x: b.x, y: to.y2}];
+  return dy >= 0 ? [{x: a.x, y: from.y2 + 1}, {x: b.x, y: to.y1 - 1}]
+                 : [{x: a.x, y: from.y1 - 1}, {x: b.x, y: to.y2 + 1}];
 }
 
 // Route every visible edge round the cards, and draw what comes back. An edge the
@@ -7969,6 +7978,28 @@ function routeEdges() {
 // straight line between the two ends and a fraction along that line. So each one
 // is projected onto that line — which also means the two are consistent when a
 // node is dragged afterwards, because both are relative to where the ends are.
+// Where a straight line between two nodes actually starts and ends: the ray from
+// one centre to the other, cut at each node's box. This is the line cytoscape
+// measures a `segments` edge's bends against, and asking it is how that was
+// settled — see `drawRoutes`.
+//
+// The box and not the rounded outline: the corner radius is 4px on a card and
+// the ray only meets a corner when it is nearly diagonal, so the difference is a
+// pixel or two on the few edges that hit one, against hundreds of pixels of skew
+// this removes.
+function clippedLine(edge) {
+  const at = edge.source().position(), it = edge.target().position();
+  const cut = (node, from, towards) => {
+    const box = node.boundingBox({includeLabels: false});
+    const dx = towards.x - from.x, dy = towards.y - from.y;
+    const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - from.x) / dx;
+    const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - from.y) / dy;
+    const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
+    return {x: from.x + dx * t, y: from.y + dy * t};
+  };
+  return [cut(edge.source(), at, it), cut(edge.target(), it, at)];
+}
+
 function drawRoutes(paths) {
   cy.batch(() => {
     cy.edges().forEach(edge => {
@@ -7980,36 +8011,38 @@ function drawRoutes(paths) {
         return;
       }
       const points = routed.points;
-      const from = edge.source().position(), to = edge.target().position();
-      // WHERE THE LINE LEAVES THE NODE, and the reason the graph leaned.
+      // THE LINE THE BENDS ARE MEASURED AGAINST is not the one between the two
+      // centres. It is the CLIPPED line: from where the centre-to-centre ray
+      // leaves the source's shape to where it enters the target's. Asked of
+      // cytoscape rather than read in its source — an edge given
+      // `segment-weights: '0 0.5 1'` and no distances reports its three points
+      // on the two boxes' borders, not on their centres.
       //
-      // A `segments` edge runs from one node's CENTRE, through the bends, to the
-      // other's, and cytoscape then clips whatever is inside the two shapes. For
-      // a card that is invisible: a 150x44 box has its centre 22px from its
-      // border and the stub is a rounding error. For a compound it is the defect
-      // — a project's box is hundreds of pixels wide, its centre is nowhere near
-      // the side the route leaves from, and the visible first leg is a long
-      // diagonal across the box and out of it. Measured on jcanton's plan, six
-      // legs of six box-attached edges, up to 76px each, and every one of them a
-      // diagonal on a drawing whose middle was perfectly orthogonal.
-      //
-      // So the endpoints are moved to the anchors the route was actually planned
-      // between, as an offset from the node's centre. The first leg then starts
-      // where the second one begins, which is what makes the whole line one
-      // orthogonal path rather than an orthogonal path with two leaning ends.
-      edge.style({
-        'source-endpoint': `${(routed.from.x - from.x).toFixed(1)}px `
-          + `${(routed.from.y - from.y).toFixed(1)}px`,
-        'target-endpoint': `${(routed.to.x - to.x).toFixed(1)}px `
-          + `${(routed.to.y - to.y).toFixed(1)}px`,
-      });
+      // Projected against the centres, every bend is placed further along the
+      // line than it belongs, by however much the clip took off. On a card that
+      // is 22px and the drawing looks fine; on a project's box it is hundreds,
+      // and the route arrives on screen as a zig-zag leaning across the canvas
+      // with none of its right angles left. That is what jcanton photographed,
+      // twice, on the real plan and never on the seed corpus — whose boxes are
+      // small enough for the error to be invisible.
+      // (`source-endpoint` was tried here and is not settable this way: set to an
+      // offset in px it reads back as `0px 0px`, which is another reason the
+      // clipped line is what has to be projected against.)
+      const [from, to] = clippedLine(edge);
       const dx = to.x - from.x, dy = to.y - from.y;
       const span = Math.hypot(dx, dy) || 1;
       const weights = [], distances = [];
       points.forEach(point => {
         const px = point.x - from.x, py = point.y - from.y;
         weights.push(((px * dx + py * dy) / (span * span)).toFixed(4));
-        distances.push(((px * dy - py * dx) / span).toFixed(1));
+        // `py*dx - px*dy`, not the other way round. A positive distance moves a
+        // bend along `(-dy, dx)` — calibrated by giving one edge
+        // `segment-weights: '0.5'` and `segment-distances: '50'` and reading the
+        // point back — so the sign that was here reflected every route across
+        // its own reference line. A reflected staircase is still made of
+        // segments and no longer runs along either axis, which is what a
+        // zig-zag leaning across the canvas is.
+        distances.push(((py * dx - px * dy) / span).toFixed(1));
       });
       edge.style({'curve-style': 'segments',
                   'segment-weights': weights.join(' '),

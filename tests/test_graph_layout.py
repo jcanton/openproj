@@ -103,6 +103,40 @@ const crossesBox = (p, q, r) => {
   return false;
 };
 function pathOf(edge) {
+  // WHAT CYTOSCAPE SAYS IT DREW. `segmentPoints()` is the drawn path;
+  // reconstructing one out of `segment-weights` is reconstructing it from the
+  // same arithmetic that writes it — which is exactly how this probe came to
+  // report a perfectly orthogonal drawing while jcanton was looking at a
+  // zig-zag: the projection in `drawRoutes` had the sign of its perpendicular
+  // flipped, every route was drawn mirrored across its own reference line, and a
+  // probe that mirrored it back agreed with itself.
+  //
+  // The two ends come from the page's own `clippedLine` and not from
+  // `edge.sourceEndpoint()`, which answers with the node's centre: cytoscape
+  // starts the line where it crosses the shape, and a probe that starts it at a
+  // centre measures a diagonal on every edge attached to a box.
+  if (typeof edge.segmentPoints === 'function' && edge.style('curve-style') === 'segments') {
+    const drawn = edge.segmentPoints() || [];
+    if (drawn.length) {
+      // Where the drawn line meets each shape: along the ray from that node's
+      // centre TOWARDS THE NEAREST BEND, which is what cytoscape clips against —
+      // not the ray towards the other node, which is what the reference line for
+      // the weights is measured on. Two different lines, and using the second
+      // here reported a diagonal on every edge that leaves a box anywhere other
+      // than where the centre line crosses it.
+      const meet = (node, towards) => {
+        const box = node.boundingBox({includeLabels: false});
+        const c = node.position();
+        const dx = towards.x - c.x, dy = towards.y - c.y;
+        const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - c.x) / dx;
+        const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - c.y) / dy;
+        const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
+        return {x: c.x + dx * t, y: c.y + dy * t};
+      };
+      return [meet(edge.source(), drawn[0]), ...drawn,
+              meet(edge.target(), drawn[drawn.length - 1])];
+    }
+  }
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
@@ -164,7 +198,12 @@ cy.edges().forEach(edge => {
   for (let i = 0; i < path.length - 1; i++) {
     const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
     legs++;
-    if (dx > 1.5 && dy > 1.5) {
+    // 4px of slack, which is the gap between two arithmetics rather than a
+    // licence: the anchors a route is planned from are computed against a node's
+    // BOX, and cytoscape intersects its rounded shape and its border. The
+    // difference is a pixel or two. A staircase's legs are the router's own
+    // clearance, 12px, so nothing this is meant to catch hides under it.
+    if (dx > 4 && dy > 4) {
       diagonal++;
       const len = Math.hypot(dx, dy);
       if (len > longest) { longest = len; longestOf = edge.id(); }
@@ -592,6 +631,40 @@ def test_every_routed_edge_runs_along_an_axis(drawn: dict):
 _SHEAR = """
 const split = v => String(v || '').trim().split(/[\\s,]+/).filter(Boolean).map(parseFloat);
 function pathOf(edge) {
+  // WHAT CYTOSCAPE SAYS IT DREW. `segmentPoints()` is the drawn path;
+  // reconstructing one out of `segment-weights` is reconstructing it from the
+  // same arithmetic that writes it — which is exactly how this probe came to
+  // report a perfectly orthogonal drawing while jcanton was looking at a
+  // zig-zag: the projection in `drawRoutes` had the sign of its perpendicular
+  // flipped, every route was drawn mirrored across its own reference line, and a
+  // probe that mirrored it back agreed with itself.
+  //
+  // The two ends come from the page's own `clippedLine` and not from
+  // `edge.sourceEndpoint()`, which answers with the node's centre: cytoscape
+  // starts the line where it crosses the shape, and a probe that starts it at a
+  // centre measures a diagonal on every edge attached to a box.
+  if (typeof edge.segmentPoints === 'function' && edge.style('curve-style') === 'segments') {
+    const drawn = edge.segmentPoints() || [];
+    if (drawn.length) {
+      // Where the drawn line meets each shape: along the ray from that node's
+      // centre TOWARDS THE NEAREST BEND, which is what cytoscape clips against —
+      // not the ray towards the other node, which is what the reference line for
+      // the weights is measured on. Two different lines, and using the second
+      // here reported a diagonal on every edge that leaves a box anywhere other
+      // than where the centre line crosses it.
+      const meet = (node, towards) => {
+        const box = node.boundingBox({includeLabels: false});
+        const c = node.position();
+        const dx = towards.x - c.x, dy = towards.y - c.y;
+        const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - c.x) / dx;
+        const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - c.y) / dy;
+        const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
+        return {x: c.x + dx * t, y: c.y + dy * t};
+      };
+      return [meet(edge.source(), drawn[0]), ...drawn,
+              meet(edge.target(), drawn[drawn.length - 1])];
+    }
+  }
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
@@ -612,7 +685,7 @@ function diagonals() {
     for (let i = 1; i < path.length - 2; i++) {
       const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
       legs++;
-      if (dx > 1.5 && dy > 1.5) { diagonal++; longest = Math.max(longest, Math.hypot(dx, dy)); }
+      if (dx > 4 && dy > 4) { diagonal++; longest = Math.max(longest, Math.hypot(dx, dy)); }
     }
   });
   return {diagonal, legs, longest: Math.round(longest)};
