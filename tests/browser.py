@@ -80,6 +80,12 @@ def printed(browser: str, html: Path, pdf: Path) -> int:
     return len(_PDF_PAGE.findall(pdf.read_bytes()))
 
 
+# When the script is run, measured from load. The table's fit and the shell's
+# measurement both run again when the inlined typeface lands, and an answer taken
+# before that is an answer about the fallback's metrics.
+SETTLE = 1200
+
+
 def measured_in(
     browser: str,
     page: str,
@@ -88,6 +94,7 @@ def measured_in(
     script: str,
     height: int = 900,
     flags: tuple[str, ...] = (),
+    patience: int = 1300,
 ) -> dict:
     """Lay the page out in Chrome at this size, run `script` over the result and
     bring back what it found.
@@ -102,6 +109,15 @@ def measured_in(
     view sizes to the window is right or wrong *per window*, and one window is
     the one thing that cannot show it.
 
+    `patience` is how long the script itself is given after that, and it exists
+    because the failure it prevents is silent. A script that answers from a
+    continuation — anything waiting on a delay the page owns, like the hover
+    card's — writes `data-report` a second time, and if the virtual clock runs
+    out first the harness reads the placeholder and the test reports nothing at
+    all. That looks exactly like a card that never came up. Two waits of 700ms
+    were over the old fixed budget by eighty milliseconds, which is not a number
+    anybody would guess from the failure.
+
     `flags` is how a test asks about a reader who is not the default one.
     `--force-prefers-reduced-motion` is the only user in the suite: the media
     query it flips cannot be reached from the page, and a test that asserted the
@@ -113,12 +129,12 @@ def measured_in(
     where.write_text(page.replace(
         "</body>",
         "<script>setTimeout(() => { document.body.dataset.report = JSON.stringify("
-        f"(() => {{ {script} }})()); }}, 1200);</script></body>",
+        f"(() => {{ {script} }})()); }}, {SETTLE});</script></body>",
     ))
     done = subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
          "--force-device-scale-factor=1", f"--window-size={width},{height}",
-         *flags, "--virtual-time-budget=2500", "--dump-dom", str(where)],
+         *flags, f"--virtual-time-budget={SETTLE + patience}", "--dump-dom", str(where)],
         capture_output=True, text=True, check=True,
     )
     found = re.search(r'data-report="([^"]*)"', done.stdout)

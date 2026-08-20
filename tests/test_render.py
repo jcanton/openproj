@@ -131,7 +131,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: 
     # ELK replaced dagre, and a list written down in a test is a list that says
     # a page is fine while it inlines a library nobody checked.
     inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
-    assert len(inlined) == 4, inlined
+    assert len(inlined) == 3, inlined
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
@@ -217,12 +217,17 @@ def test_the_graph_is_a_compound_dag_coloured_by_status(rendered: Path):
     # and on the real plan it drew three of six dependency edges across a box
     # they are not attached to and fitted the whole thing into 7% of the canvas.
     # See `LAYOUT`, which carries the numbers.
-    assert "elk" in body and "'elk.hierarchyHandling': 'INCLUDE_CHILDREN'" in body
+    assert "elk" in body
     # The word survives in the comment that explains why it went, which is where
     # it belongs; what must be gone is the library and the call.
     assert "cytoscapeDagre" not in body, "the layout it replaced is still registered"
     assert "dagre.min.js" not in body
-    assert "packComponents" in body, "the pieces are arranged to the canvas afterwards"
+    # What the graph looks like is asserted by measuring it — see
+    # `test_graph_layout.py`. There is deliberately nothing here about which
+    # layout options are set: this test used to require `INCLUDE_CHILDREN` and
+    # `packComponents`, and both of those strings were present on the day the
+    # page shipped drawing boxes across each other. A string in a script is not
+    # a picture of anything.
 
 
 def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):

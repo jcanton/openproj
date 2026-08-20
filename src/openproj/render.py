@@ -1870,11 +1870,38 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    button turned back into a link the moment somebody had used it once. Written
    in link-visited-hover order, so the states later in the list win the ties they
    are supposed to. */
-.button, .button:visited { font: inherit; font-size: 13px; line-height: 1.4;
-                           padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
-                           border: 1px solid var(--line-strong); background: var(--surface);
-                           color: var(--fg); text-decoration: none; }
-.button:hover { border-color: var(--accent); color: var(--accent); }
+/* ONE LOOK FOR EVERY CONTROL, and this is the only place it is written.
+   jcanton, 2026-08-20: "buttons do not have consistent aesthetic: clear filters,
+   the timeline zoom dropdown, the issues state dropdown, notes state, edit entity
+   are all grey and different from the newer buttons".
+
+   They were grey because they were native — a `<button>` and a `<select>` with no
+   rule get the operating system's own chrome, which matches nothing else here and
+   changes between two machines looking at the same plan. So every control that
+   ACTS is listed here and none of them is styled anywhere else. A fourth spelling
+   of the same rectangle is how this happened in the first place.
+
+   The `<select>`s keep the caret the browser draws them, which is the one thing
+   this rule cannot supply — the facet buttons on the table draw their own from
+   two borders, and they can only do that because they are buttons rather than
+   selects. Same ground, same border, same radius, native caret; that was the
+   choice, made deliberately over converting four more controls into popups.
+
+   Not `.field`. A text box is somewhere to TYPE and a control is something to
+   PRESS, and drawing them the same way is how a filter bar comes to look like a
+   form somebody left half-filled. */
+.button, .button:visited,
+#unfilter, #toggle, #tl-zoom, #state-filter, #kind, #template, #into,
+.commitbar button {
+  font: inherit; font-size: 13px; line-height: 1.4;
+  padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--fg); text-decoration: none;
+}
+.button:hover,
+#unfilter:hover, #toggle:hover, #tl-zoom:hover, #state-filter:hover,
+#kind:hover, #template:hover, #into:hover,
+.commitbar button:hover { border-color: var(--accent); color: var(--accent); }
 /* Apply and Reset on the timeline were a button and a bare link, which reads as
    one control and one afterthought. They are the same pair of scissors pointed
    two ways, so they are the same size and shape; only the fill says which one is
@@ -1903,19 +1930,22 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
   /* Under the suggestion popup (20) and under the shell's banner (40): a bar
      that is always on screen is always in front of something. */
   position: sticky; bottom: 0; z-index: 10;
+  /* `display: flex` beats `[hidden]`'s `display: none` — the attribute is a UA
+     rule and this is an author one. Every menu on the table page opened on load
+     the day that was forgotten, so it is spelled out here. */
   display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap;
   margin: 1.5rem 0 0; padding: .5rem .75rem;
   background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
 }
+.commitbar[hidden] { display: none; }
 /* Unsaved work is a warning, not decoration: this is the state in which closing
    the tab loses something. */
 .commitbar.dirty { border-color: var(--warn); }
 #unsaved { font-size: 12px; color: var(--muted); }
 .commitbar.dirty #unsaved { color: var(--warn); font-weight: 600; }
-#save, .commitbar button { font: inherit; font-size: 13px; padding: .25rem .8rem;
-        border-radius: 2px; border: 1px solid var(--line-strong);
-        background: var(--surface); color: var(--fg); cursor: pointer; }
-#save:disabled { color: var(--muted); cursor: default; }
+/* The shape is the shared rule above. What is left here is what only Save has:
+   the two states that say whether pressing it would do anything. */
+#save:disabled { color: var(--muted); border-color: var(--line-strong); cursor: default; }
 #save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 /* What the status chosen in this form will make the server refuse it without.
    A warning colour because it is a refusal waiting to happen, and a word rather
@@ -5312,8 +5342,76 @@ function fitWidths() {
   if (overhead) fit(scroller.clientWidth - overhead);
 }
 
-function applyWidths() {
-  if (!Object.keys(WIDTHS).length) return;
+// The smallest a column is allowed to become when the stored widths are scaled
+// down to fit. The same floor the drag uses, for the same reason: past it the
+// column is a sliver with nothing readable in it, and a table that fits the
+// window by making every column unreadable has not fitted anything.
+const COLUMN_FLOOR = 40;
+
+// The dragged widths, scaled so their total is the room there is.
+//
+// A width somebody dragged is a decision about PROPORTION, not about pixels: it
+// says this column deserves twice the room of that one, on the window it was
+// dragged in. Replayed as pixels into a different window it is wrong in both
+// directions — a gap down the right when the window grows, and a table wider
+// than the page when it shrinks, which is what jcanton reported on 2026-08-20.
+//
+// Derived from the stored numbers every time rather than by scaling what is
+// already applied, so it is idempotent: ten resizes give the same answer as one,
+// where a compounding scale would drift the layout away from what was dragged.
+function scaledWidths(room) {
+  const drawn = headers.filter(th => th.offsetParent !== null);
+  const stored = drawn.map(th => WIDTHS[keyOf(th)] || 0);
+  const total = stored.reduce((sum, one) => sum + one, 0);
+  if (!total || !room) return null;
+
+  // A plain multiply does not fit. Any column the factor would push under the
+  // floor is held at the floor instead, which takes room from the others — and
+  // that can push the NEXT one under it. So the pinning repeats until nothing
+  // more goes under, and only then is the rest shared out. Multiplying once and
+  // clamping afterwards was 771px of table in a 700px window.
+  const pinned = new Array(drawn.length).fill(false);
+  let left = room;
+  let pool = total;
+  for (let pass = 0; pass < drawn.length; pass++) {
+    let moved = false;
+    for (let i = 0; i < drawn.length; i++) {
+      if (pinned[i] || pool <= 0) continue;
+      if (stored[i] * (left / pool) < COLUMN_FLOOR) {
+        pinned[i] = true;
+        left -= COLUMN_FLOOR;
+        pool -= stored[i];
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  const out = {};
+  let given = 0;
+  let widest = 0;
+  drawn.forEach((th, i) => {
+    const width = pinned[i] || pool <= 0
+      ? COLUMN_FLOOR
+      : Math.max(COLUMN_FLOOR, Math.round(stored[i] * (left / pool)));
+    out[keyOf(th)] = width;
+    given += width;
+    if (!pinned[i] && width > out[keyOf(drawn[widest])]) widest = i;
+  });
+  // The rounding remainder, onto the widest column that is not at its floor. A
+  // dozen columns each half a pixel out is six pixels of horizontal scrollbar,
+  // and a scrollbar is the thing this whole function exists to avoid.
+  const slack = room - given;
+  if (slack && !pinned[widest]) {
+    const key = keyOf(drawn[widest]);
+    out[key] = Math.max(COLUMN_FLOOR, out[key] + slack);
+  }
+  return out;
+}
+
+function applyWidths(widths) {
+  widths = widths || WIDTHS;
+  if (!Object.keys(widths).length) return;
   table.style.tableLayout = 'fixed';
   let total = 0;
   headers.forEach(th => {
@@ -5322,7 +5420,7 @@ function applyWidths() {
     // one floats away from the right edge of nothing.
     if (th.offsetParent === null) { th.style.width = ''; return; }
     const key = keyOf(th);
-    if (WIDTHS[key]) { th.style.width = WIDTHS[key] + 'px'; total += WIDTHS[key]; }
+    if (widths[key]) { th.style.width = widths[key] + 'px'; total += widths[key]; }
   });
   // The table stops being 100% wide once the columns are explicit. Left at 100%,
   // a fixed layout divides the space it is given, so widening one column silently
@@ -5478,13 +5576,20 @@ summarise();
 draw();
 // After the first draw, because there is nothing to measure before the rows
 // exist. Stored widths win: they were set by hand, on purpose.
-if (automatic) fitWidths(); else applyWidths();
+// One name for "make the table the width of the room it is in", so the load, the
+// resize and the moment the real face lands cannot answer it differently.
+function refit() {
+  if (automatic) fitWidths();
+  else applyWidths(scaledWidths(scroller.clientWidth - chromeOverhead()) || WIDTHS);
+  stickyOffset();
+}
+refit();
 // The typeface arrives as a `data:` URI with `font-display: swap`, so the layout
 // this was just measured against may still be the fallback's metrics — and then
 // a first load fits to widths a reload does not reproduce, which is exactly the
 // "broken until I reloaded" it looked like. Measured once more when the real
 // face is in, which is the moment the numbers stop moving.
-if (document.fonts) document.fonts.ready.then(() => { if (automatic) fitWidths(); });
+if (document.fonts) document.fonts.ready.then(refit);
 // The fit drops columns as the window narrows, and the sticky title column
 // starts where the id column ends — both are facts about a layout that only
 // exists once it has been laid out. An automatic fit is a fit to *this* window,
@@ -5493,12 +5598,13 @@ if (document.fonts) document.fonts.ready.then(() => { if (automatic) fitWidths()
 // Which is also why a dragged layout keeps all fourteen columns however narrow
 // the window gets: shedding exists because the fit would otherwise squeeze every
 // column past reading, and a column somebody sized by hand is not being squeezed
-// by anything. It scrolls sideways, which is what dragging a column wider than
-// the window asks for.
-addEventListener('resize', () => {
-  if (automatic) fitWidths(); else applyWidths();
-  stickyOffset();
-});
+// out of the table altogether.
+//
+// It is still fitted to the window, though — scaled, not replayed. Replaying the
+// stored pixels left the table at the width of whatever window it was dragged
+// in: a gap down the right of a widened page, and a table hanging off the edge
+// of a narrowed one.
+addEventListener('resize', refit);
 // The rule down the right of the frozen title column says "what is to the left
 // of this is being held still while the rest passes under it". At scrollLeft 0
 // nothing is passing under anything and it reads as a stray separator between
@@ -6061,7 +6167,6 @@ _GRAPH = """
       the drop target and the highlighting are the extension's now — the version
       of this written here could not tell the reader where the node would land,
       because the box it would land in moves with the node. -#}
-  <button type="button" id="refile">Refile</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
   <span id="state" role="status"></span>
@@ -6071,7 +6176,6 @@ _GRAPH = """
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
 {#- `model.PARENT_KINDS`: which kind may hold which. The extension asks before it
     lets go, so a drop the server would refuse is one the canvas never offers. -#}
-<script id="parents" type="application/json">{{ parent_kinds|tojson }}</script>
 <script>{{ cytoscape }}</script>
 {#- ELK rather than dagre, because dagre does not know what a nested node is: it
     lays a plan whose pitches hold tasks out as though it were flat, and the
@@ -6089,11 +6193,9 @@ _GRAPH = """
     before you write it` in AGENTS.md, which this is the worked example of.
     Its sibling `cytoscape-edgehandles` was audited and refused in the same pass:
     it wants two lodash modules as globals to replace a gesture that works. -#}
-<script>{{ compound_dnd }}</script>
 {{ filters }}
 <script>
 cytoscape.use(cytoscapeElk);
-cytoscape.use(cytoscapeCompoundDragAndDrop);
 
 // A payload that did not survive the trip is a third kind of empty, and an empty
 // canvas looks the same whichever one it is: a bordered box with nothing in it,
@@ -6159,16 +6261,18 @@ function groupWidth(node) {
 
 // Named once: filtering re-runs it, and a second copy of the options is how the
 // graph comes to lay itself out one way at load and another way afterwards.
-// Measured on the real plan — 31 records, six dependencies — in a 1900x820
-// canvas, against the dagre layouts this replaces:
 //
-//     dagre LR (what shipped)   7% of the canvas   3 of 6 edges across a box
-//     dagre TB + packed        57%                 3 of 6
-//     elk layered RIGHT        69%                 0 of 6
+// EACH BOX IS LAID OUT OVER ITS OWN CHILDREN AND FROZEN AS A RECTANGLE, and then
+// the rectangles are laid out. That is ELK's recursive engine — what it does when
+// `hierarchyHandling` is left alone — and it is what makes grouping the layout's
+// primary objective rather than something a later pass has to repair.
 //
-// `hierarchyHandling: INCLUDE_CHILDREN` is the whole reason: dagre lays a nested
-// plan out as though it were flat, and a pitch holding four tasks is exactly
-// what this plan is made of. ELK lays out the boxes and their contents together.
+// `INCLUDE_CHILDREN` was here and is gone. It flattens the hierarchy into one
+// layered pass, which ranks children of different boxes against each other and
+// leaves a box to be whatever rectangle its children ended up needing. Measured
+// on the real plan against the recursive engine, both with `packComponents` gone:
+// 0 overlapping boxes either way, but sibling sparseness 1.4 against 4.7-13.1
+// once the pack was in play. The pack is the story; see the note where it was.
 //
 // `RIGHT` and not `DOWN` for the reason `TB` beat `LR` under dagre — the shape of
 // this plan, not a preference. Most records depend on nothing, and the direction
@@ -6176,65 +6280,86 @@ function groupWidth(node) {
 // at 23% of the canvas against 69%.
 //
 // An edge here is a dependency and only ever a dependency. What holds what is
-// drawn as a box around its contents, which is what `INCLUDE_CHILDREN` lays out
-// — the table draws the same relationship as a tree, and neither view turns it
-// into an arrow.
+// drawn as a box around its contents — the table draws the same relationship as a
+// tree, and neither view turns it into an arrow.
+//
+// MEASURED AT SIZE, 2026-08-20, on plans built by `tests/plans.py` at 1900x820.
+// Containment holds all the way up — 0 overlapping boxes and 0 foreign cards at
+// 31, 52, 208 and 518 records — and what degrades is the zoom, because root
+// `layered` puts every top-level box in ONE ROW:
+//
+//     records   zoom, root layered   zoom, root rectpacking
+//         31           0.80                 0.80
+//        208           0.24                 0.36
+//        518           0.16                 0.27
+//
+// `algorithm: 'rectpacking'` here, keeping `layered` per parent below, is
+// therefore the switch for a plan too wide for one row. It is NOT the default,
+// and the reason is worth the four lines: reverse every dependency in the corpus
+// and root `layered` still draws 6 of 6 arrows left to right — it genuinely
+// re-ranks — while `rectpacking` drops to 2 of 6, because a packer reads no edges
+// at all and was only ever following the order the records came in. On a view
+// whose edges mean blocks/blocked-by, an arrow that reads backwards is the view
+// lying. Take the zoom when a plan actually outgrows the row, and know what it
+// costs.
 const LAYOUT = {
   name: 'elk',
-  // ELK's own fitting is off: `packComponents` below moves the pieces afterwards
-  // and fits once, and two fits fight over the same viewport.
-  fit: false,
+  fit: true,
   elk: {
     algorithm: 'layered',
     'elk.direction': 'RIGHT',
-    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-    'elk.edgeRouting': 'ORTHOGONAL',
     'elk.spacing.nodeNode': 30,
     'elk.layered.spacing.nodeNodeBetweenLayers': 50,
     // `elk.separateConnectedComponents` and `elk.aspectRatio` were here and are
-    // not any more: measured, they changed nothing at all, because
-    // `packComponents` runs afterwards and arranges the pieces itself. Two
-    // settings that read as though they do something are worse than none.
+    // not: the adapter injects `aspectRatio: cy.width() / cy.height()` into every
+    // run itself, and ELK's component packer never ran under the flattened
+    // hierarchy anyway. Two settings that read as though they do something are
+    // worse than none.
+    //
+    // `elk.edgeRouting: 'ORTHOGONAL'` was here for the same reason and is gone
+    // for a worse one: ELK really does compute bend points, and this adapter
+    // throws them away — `run()` applies positions to the non-parent nodes and
+    // never reads an edge's `sections`. Every edge on this page is cytoscape's
+    // own `round-taxi` plus `route()` below.
   },
+  // The one option that reaches a parent: `cytoscape-elk` applies
+  // `nodeLayoutOptions` in `makeNode` BEFORE its `if (!node.isParent())` guard.
+  // The key has to carry its prefix — bare `padding` is dropped in silence.
+  //
+  // 25 and not ELK's default 12, because the box ELK reserves and the box this
+  // page draws are not the same box: `:parent` is styled with `padding: 20` plus
+  // a label band above it. Measured, the drawn box came out 21px larger in each
+  // dimension than the one ELK planned, which is exactly enough for two
+  // neighbours ELK considered separate to touch. THAT PADDING AND THIS NUMBER
+  // HAVE TO MOVE TOGETHER.
+  nodeLayoutOptions: node =>
+    node.isParent() ? {'elk.padding': '[top=25,left=25,bottom=25,right=25]'} : undefined,
 };
 
-// dagre lays the whole graph out as one drawing, so the pieces that are not
-// connected to each other are strung along a single line — which is why even
-// `TB` came out 11 times wider than it was tall, and still used a third of the
-// canvas. Nothing in the plan says those pieces belong in a row: they are
-// separate projects.
+// `packComponents` was here and is the reason this page looked the way it did.
 //
-// So they are arranged afterwards, into rows whose width is chosen to make the
-// whole drawing the shape of the canvas it has to fit into. Same layout, same
-// edges, and 80% of the canvas instead of 7%, at nearly twice the zoom.
+// It ran after ELK, split the drawing with `cy.elements(':visible').components()`
+// and arranged the pieces into rows. `components()` is connectivity over EDGES —
+// and an edge here is a dependency, never containment, which is the whole design
+// of this view. So a box was not one piece: the real plan's 31 records came out
+// as 25 of them, six of the eight boxes had their children spread across more
+// than one, and the loop then moved only the childless nodes. Siblings were dealt
+// into different rows and each parent's rectangle — which in cytoscape is nothing
+// but the bounding box of wherever its children landed — stretched across
+// everything in between. One project's box went from 400x713 to 1753x1207.
 //
-// Only the leaves are moved. A compound node's position is derived from its
-// children in cytoscape, so shifting a parent as well would move its contents
-// twice.
-// ELK is asynchronous, which is what makes the handler above enough: it emits
-// `layoutstop` after this file has finished being read. dagre was synchronous and
-// had already emitted it by then — the pack was written, never called, and the
-// graph came out in one long line exactly as before it was written.
-function packComponents() {
-  const pieces = cy.elements(':visible').components()
-    .map(piece => ({piece, box: piece.boundingBox()}))
-    .sort((a, b) => b.box.h - a.box.h);
-  if (pieces.length < 2) return;
-  const gap = 40;
-  const area = pieces.reduce((sum, one) => sum + (one.box.w + gap) * (one.box.h + gap), 0);
-  // The row width that would make the arrangement as wide-to-tall as the canvas.
-  const budget = Math.sqrt(area * (cy.width() / cy.height()));
-  let x = 0, y = 0, tallest = 0;
-  for (const {piece, box} of pieces) {
-    if (x > 0 && x + box.w > budget) { x = 0; y += tallest + gap; tallest = 0; }
-    const dx = x - box.x1, dy = y - box.y1;
-    piece.nodes().filter(node => node.isChildless())
-      .positions(node => ({x: node.position('x') + dx, y: node.position('y') + dy}));
-    x += box.w + gap;
-    tallest = Math.max(tallest, box.h);
-  }
-  cy.fit(undefined, 24);
-}
+// Measured on the real plan, immediately before and immediately after that one
+// function: 0 overlapping box pairs became 17-21, 0 cards drawn inside a box they
+// do not belong to became 29-70, and sibling sparseness went from 1.30 to between
+// 4.7 and 13.1. Every screenshot of this page that looked wrong was a picture of
+// those eight lines.
+//
+// It was written for a real problem, which is now solved a level up: the
+// flattened hierarchy left the pieces of a disconnected plan in one long line at
+// 7% of the canvas. ELK's recursive engine — what it does when `hierarchyHandling`
+// is left alone — arranges the boxes itself, so there is nothing left to repair.
+// Do not reintroduce a post-layout pass here without measuring what it does to
+// containment: a unit of work that cannot see the boxes will take them apart.
 
 // Before the canvas is built, not after. Cytoscape measures its container once,
 // here, and the first layout fits the plan into whatever it measured — so a
@@ -6285,6 +6410,10 @@ const cy = cytoscape({
     // left, on its own ground: a box whose name you cannot read is a box that
     // says only that something is grouped, not what by.
     { selector: ':parent', style: {
+        // 20 here and `elk.padding: 25` in LAYOUT, and the two have to move
+        // together: ELK reserves the room and this draws the box, and when the
+        // drawn one is bigger than the reserved one two boxes ELK considered
+        // separate touch.
         'background-opacity': .08, 'padding': 20,
         'font-size': GROUP_SIZE, 'font-weight': 600, 'color': token('--fg'),
         // Ellipsis rather than wrap: the offset below is measured on one line,
@@ -6373,13 +6502,66 @@ function paint() {
   route();
 }
 addEventListener('themechange', paint);
+
+// Dragging, which is the half of the complaint no layout choice can fix. A
+// compound's rectangle in cytoscape is the bounding box of its children and
+// nothing else, so a card dragged out of its box does not leave the box — it
+// STRETCHES it, across whatever the box now has to reach. Measured on a clean
+// layout, one card dragged 250x120: 0 overlapping box pairs became 2, and 0 cards
+// inside a foreign box became 5. The drawing was correct until somebody touched it.
+//
+// So a card goes back inside the box it was picked up from. Not by re-running the
+// layout, which is the obvious answer and a worse one: ELK ignores current
+// positions and is deterministic, so a re-run puts every card back exactly where
+// it already was and the drag simply vanishes — a stranger thing to watch than a
+// card sliding home.
+let heldIn = null;
+cy.on('grab', 'node', evt => {
+  const parent = evt.target.parent();
+  if (!parent.length) { heldIn = null; return; }
+  // Inset by the box's own padding, and asked of cytoscape rather than typed:
+  // a compound's bounding box INCLUDES that padding, so a card put back exactly
+  // on the boundary sits where the padding was and the box grows to keep it —
+  // 600x400 of stretch became 23x23 with the padding alone, which is where the
+  // border came into it.
+  const pad = (parseFloat(parent.style('padding')) || 0)
+            + (parseFloat(parent.style('border-width')) || 0);
+  const box = parent.boundingBox({includeLabels: false});
+  heldIn = {x1: box.x1 + pad, x2: box.x2 - pad, y1: box.y1 + pad, y2: box.y2 - pad};
+});
+cy.on('dragfree', 'node', evt => {
+  const node = evt.target;
+  const box = heldIn;
+  heldIn = null;
+  if (!box) return;
+  const own = node.boundingBox({includeLabels: false});
+  const at = node.position();
+  // Its own half-width and half-height, so what is kept inside is the card's
+  // edges rather than its centre: a card whose middle is just inside the boundary
+  // is a card half of which is outside it.
+  const halfWide = (own.x2 - own.x1) / 2;
+  const halfTall = (own.y2 - own.y1) / 2;
+  node.position({
+    x: Math.min(Math.max(at.x, box.x1 + halfWide), box.x2 - halfWide),
+    y: Math.min(Math.max(at.y, box.y1 + halfTall), box.y2 - halfTall),
+  });
+});
+
+// And a box is not picked up at all. Cytoscape moves a parent rigidly with its
+// whole subtree — nothing stretches, but nothing stops it being shoved across its
+// neighbours either, and nothing re-lays-out afterwards. A grab on a box pans the
+// canvas instead, which is what a grab on the background already does.
+// Double-tap to open, the hover card and the edit-mode tap all still fire on it.
+function loosenBoxes() { cy.nodes(':parent').ungrabify(); }
+loosenBoxes();
+cy.on('layoutstop', loosenBoxes);
 // The face is inlined but still swaps in asynchronously, and a group label
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
 
 // Packed first and routed after: routing reads where the boxes ended up, and
 // the pack moves them.
-cy.on('layoutstop', () => { packComponents(); route(); });
+cy.on('layoutstop', route);
 cy.on('position', 'node', route);
 route();
 
@@ -6548,19 +6730,72 @@ cy.on('dbltap', 'node', evt => {
 //
 // Not while drawing an edge. In that mode the pointer is doing something else
 // entirely, and a box following it covers the node it is being dragged towards.
+// A box is hit over its whole area, and most of that area belongs to the records
+// inside it. So a compound answers for its label and not for its acres — jcanton,
+// 2026-08-20 — or reading a project's tasks means dragging the pointer through a
+// card about their parent, which is in the way of the thing being read.
+//
+// The label's rectangle, worked out from the style that draws it rather than
+// guessed: `text-halign: left` with `text-margin-x: groupWidth + 12` puts its
+// left edge twelve pixels inside the box, and `text-valign: top` with
+// `text-margin-y: 17` puts it just under the top edge. The band is generous on
+// purpose — it is the title bar somebody is aiming at, not the glyphs.
+function labelBand(node) {
+  const box = node.boundingBox({includeLabels: false});
+  return {
+    x1: box.x1, x2: box.x1 + groupWidth(node) + 24,
+    y1: box.y1, y2: box.y1 + GROUP_SIZE + 16,
+  };
+}
+function onLabel(node, at) {
+  const band = labelBand(node);
+  return at.x >= band.x1 && at.x <= band.x2 && at.y >= band.y1 && at.y <= band.y2;
+}
+
+// Which box the pointer is currently over the label of. `queueCard` restarts its
+// own delay on every call, so asking it on every `mousemove` would mean a card
+// that never appears while the pointer is still moving: it is asked on the
+// crossing, once, and `hideCard` on the way back out.
+let onLabelOf = null;
+
 cy.on('mouseover', 'node', evt => {
   if (connecting) return;
+  const node = evt.target;
+  if (node.isParent()) {
+    if (!onLabel(node, evt.position)) return;
+    onLabelOf = node.id();
+  }
   // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
   // from the same `_row` the table is drawn from — and this page has no `DATA` of
   // its own to look anything up in. The first version of this read `DATA.rows`
   // and drew nothing at all, on the one view the card was added for.
-  queueCard(evt.target.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
 });
-cy.on('mouseout', 'node', hideCard);
+
+// Entering a box below its title is not entering its label, and the pointer can
+// reach the label afterwards without ever crossing the box's edge again.
+cy.on('mousemove', 'node', evt => {
+  if (connecting) return;
+  const node = evt.target;
+  if (!node.isParent()) return;
+  if (onLabel(node, evt.position)) {
+    if (onLabelOf === node.id()) return;
+    onLabelOf = node.id();
+    queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  } else if (onLabelOf === node.id()) {
+    onLabelOf = null;
+    hideCard();
+  }
+});
+
+cy.on('mouseout', 'node', evt => {
+  if (evt.target.isParent() && onLabelOf === evt.target.id()) onLabelOf = null;
+  hideCard();
+});
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
-cy.on('drag pan zoom', hideCardNow);
+cy.on('drag pan zoom', () => { onLabelOf = null; hideCardNow(); });
 
 if (CONNECT) {
   CONNECT.onclick = () => {
@@ -6663,91 +6898,16 @@ if (CONNECT) {
 // do — the same rule the drawn ones follow.
 // --- refiling ---------------------------------------------------------------
 //
-// Drag a record onto the box that should hold it. The extension does the part
-// this repository got wrong on its own: it knows which box the pointer is over
-// while a node is in the air, draws it, and hands back the pair when the drag
-// ends. What is left here is the rule about which pairs are allowed and the
-// write — the same PATCH the table's own drag sends, because a parent is a field
-// like any other.
-const REFILE = document.getElementById('refile');
-const CAN_HOLD = (() => {
-  try { return JSON.parse(document.getElementById('parents').textContent); }
-  catch (error) { return {}; }
-})();
-let refiling = false;
-let cdnd = null;
-
-if (REFILE) {
-  REFILE.onclick = () => {
-    if (connecting) CONNECT.onclick();
-    refiling = !refiling;
-    REFILE.textContent = refiling ? 'Stop refiling' : 'Refile';
-    if (refiling) {
-      cdnd = cy.compoundDragAndDrop({
-        // Only the records that can be filed under something. A project belongs
-        // to nothing, so it is not something to pick up.
-        grabbedNode: node => (CAN_HOLD[node.data('kind')] || []).length > 0,
-        // And only into a box that may hold it. Asked before the drop rather
-        // than after, so the canvas never offers a move the server refuses.
-        dropTarget: (target, grabbed) =>
-          target.isParent() &&
-          (CAN_HOLD[grabbed.data('kind')] || []).includes(target.data('kind')),
-        // No new boxes: a project, a pitch and a task are the three kinds this
-        // plan has, and dropping one record on another must not invent a fourth
-        // thing to hold them.
-        dropSibling: () => false,
-      });
-      say('drag a record onto the box that should hold it, or out of the one it is in');
-    } else {
-      if (cdnd) { cdnd.destroy(); cdnd = null; }
-      say('');
-    }
-  };
-
-  // Filed. `dropTarget` is the box it landed in.
-  cy.on('cdnddrop', (event, dropTarget) => {
-    const child = event.target;
-    if (!refiling || !dropTarget || !dropTarget.length) return;
-    if (dropTarget.id() === (child.data('parent') || null)) return;
-    refile(child.id(), dropTarget.id());
-  });
-
-  // Taken out. The extension fires this when a node leaves the box it was in,
-  // which is the gesture that had no answer at all before: there was no point on
-  // the canvas that meant "outside".
-  cy.on('cdndout', (event, dropTarget) => {
-    const child = event.target;
-    if (!refiling || !child.data('parent')) return;
-    refile(child.id(), null);
-  });
-}
-
-// The write. Same PATCH, same base commit, same refusal as everything else this
-// page commits; the page reloads afterwards because a parent moves the record's
-// cycle, its dates, what it waits for and which project it counts against, and
-// not one of those is something this canvas can work out for itself.
-async function refile(childId, parentId) {
-  const base = document.getElementById('base');
-  dispatchEvent(new Event('openproj:writing'));
-  let committed = null;
-  try {
-    say(parentId ? `filing ${childId} into ${parentId}…` : `taking ${childId} out…`);
-    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
-      method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: base.value, fields: {parent: parentId}, body: null}),
-    });
-    const answer = await answerOf(response);
-    if (!response.ok) {
-      say(refusal(answer, response.status));
-      return;
-    }
-    committed = answer.commit;
-    base.value = answer.commit;
-  } finally {
-    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
-  }
-  location.reload();
-}
+// Refiling is not on this canvas. It was written by hand, removed, brought back
+// through `cytoscape-compound-drag-and-drop`, and removed again on 2026-08-20 —
+// jcanton, after using it: "no need to do this in the graph, let's leave it to
+// the table". Dragging a node here moves it in a drawing whose whole arrangement
+// is computed, so a record dropped into a box is a record whose position is
+// about to be recomputed anyway; the table's rows do not move under you, and a
+// row dragged onto another row is a gesture with one meaning.
+//
+// The extension went with it. A vendored library nothing calls is a library
+// nobody checks — see `static/VENDOR.md`.
 
 cy.on('tap', 'edge', evt => {
   if (!connecting) return;
@@ -8198,7 +8358,47 @@ _DETAIL = """
       just decided to change. Save stays down there, where what is being
       committed ends. -#}
   {% if editable %}
-  <p class="editbar"><button type="button" id="toggle">Edit</button></p>
+  {#- Both ways of changing this record on one line, in the same clothes. Edit is
+      the way in; Delete is the way out; a reader looking for either looks here.
+      Delete carries no styling of its own beyond the colour it turns on hover,
+      so the two buttons match by construction rather than by two rules somebody
+      has to keep in step. -#}
+  <p class="editbar"><button type="button" id="toggle">Edit</button>
+    {% if may_write %}<button type="button" class="delete">Delete</button>{% endif %}</p>
+  {% if may_write %}
+  {#- The question, under the button that asks it. Hidden until then: a page that
+      is always showing a way to delete the thing you are reading is a page that
+      is always slightly threatening you. -#}
+  <div class="confirming" data-also="{{ (e.deletes + e.frees)|join(" ") }}" hidden>
+    <p class="asking">Delete <strong>{{ e.title }}</strong>
+      (<code>{{ e.id }}</code>)?<br>
+      <span class="hint">Commit deletion? Can only be undone with
+        <code>git revert</code>.</span></p>
+    {#- The reach of it, before the press and not after. A record filed under this
+        one has nowhere to be once it is gone, so it goes too; a record that merely
+        depends on this one is somebody else's work waiting for it, and deleting
+        that would be this gesture reaching across the plan. Two sentences because
+        they are two different things happening to two different sets of files. -#}
+    {% if e.deletes %}
+    <p class="reach">This also deletes
+      <strong>{{ e.deletes|length }}</strong> record{{
+        "" if e.deletes|length == 1 else "s" }} filed under it:
+      <span class="ids">{{ e.deletes|join(", ") }}</span></p>
+    {% endif %}
+    {% if e.frees %}
+    <p class="reach mild">It also stops
+      <span class="ids">{{ e.frees|join(", ") }}</span>
+      depending on it. {{ "That record keeps" if e.frees|length == 1
+        else "Those records keep" }} {{ "its" if e.frees|length == 1 else "their"
+        }} file.</p>
+    {% endif %}
+    <p class="why" role="alert" hidden></p>
+    <span class="acts">
+      <button type="button" class="really">Delete it</button>
+      <button type="button" class="keep">Keep it</button>
+    </span>
+  </div>
+  {% endif %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
@@ -8306,58 +8506,6 @@ _DETAIL = """
         thing — the way IN — which is why it is at the top and this is not. -#}
     <button type="button" id="cancel" hidden>Cancel</button>
     <span id="state" role="status"></span>
-  </div>
-  {% endif %}
-  {#- Deliberately not in the bar above. Save and Cancel are pressed all day and
-      the bar is sticky, so it is on screen the whole time; a control that removes
-      the record from the plan does not belong within a thumb's width of the one
-      that keeps it. It sits at the very end of the record instead, past
-      everything there is to read, which is where you are when you have finished
-      deciding.
-
-      Classes and not ids, unlike everything else on this page. The static export
-      renders every entity into one document and `/detail` serves them all on one
-      route, so `id="delete"` would be seventeen elements of that name — and
-      `getElementById` answers with the first, which is a Delete button under
-      entity nine wired to entity one. The rest of this page has lived with that
-      duplication for a year because the worst it can do is edit the wrong thing
-      in a box you can see. This one commits. -#}
-  {% if editable and may_write %}
-  <div class="dangerbar">
-    <button type="button" class="delete">Delete this {{ e.kind }}</button>
-    <div class="confirming" data-also="{{ (e.deletes + e.frees)|join(" ") }}" hidden>
-      {#- The title, spelled out. "Are you sure?" over a record you cannot see
-          from the dialog is a question nobody can answer, and this page can be a
-          long way from the heading by the time you reach the foot of it. -#}
-      <p class="asking">Delete <strong>{{ e.title }}</strong>
-        (<code>{{ e.id }}</code>)?<br>
-        <span class="hint">The file leaves the plan in a commit. Git keeps every
-          version of it, so this can be undone with <code>git revert</code>.</span></p>
-      {#- The reach of it, before the press and not after. A record filed under
-          this one has nowhere to be once it is gone, so it goes too; a record
-          that merely depends on this one is somebody else's work waiting for it,
-          and deleting that would be this gesture reaching across the plan. The
-          two consequences are drawn as two sentences because they are two
-          different things happening to two different sets of files. -#}
-      {% if e.deletes %}
-      <p class="reach">This also deletes
-        <strong>{{ e.deletes|length }}</strong> record{{
-          "" if e.deletes|length == 1 else "s" }} filed under it:
-        <span class="ids">{{ e.deletes|join(", ") }}</span></p>
-      {% endif %}
-      {% if e.frees %}
-      <p class="reach mild">It also stops
-        <span class="ids">{{ e.frees|join(", ") }}</span>
-        depending on it. {{ "That record keeps" if e.frees|length == 1
-          else "Those records keep" }} {{ "its" if e.frees|length == 1 else "their"
-          }} file.</p>
-      {% endif %}
-      <p class="why" role="alert" hidden></p>
-      <span class="acts">
-        <button type="button" class="really">Delete it</button>
-        <button type="button" class="keep">Keep it</button>
-      </span>
-    </div>
   </div>
   {% endif %}
 </article>
@@ -8484,6 +8632,15 @@ function dirty() {
   try { fields = changed(); } catch (error) { fields = {}; }
   const count = Object.keys(fields).length + (BODY.value === ORIGINAL_BODY ? 0 : 1);
   const editing = document.querySelector('article.entity').classList.contains('editing');
+  // Gone entirely when there is nothing for it to say. It is a sticky bar, so it
+  // was on screen the whole time somebody was READING a record, reporting
+  // "Nothing to save" about a form they had not opened — a permanent answer to a
+  // question nobody had asked, taking up the foot of every page.
+  //
+  // Not simply `!editing`: a draft restored from a previous visit is unsaved work
+  // sitting in the page before edit mode is entered, and that is exactly when the
+  // count needs saying.
+  BAR.hidden = !editing && count === 0;
   BAR.classList.toggle('dirty', count > 0);
   UNSAVED.textContent = count
     ? `${count} unsaved change${count === 1 ? '' : 's'}`
@@ -8491,6 +8648,10 @@ function dirty() {
 }
 FORM.addEventListener('input', dirty);
 FORM.addEventListener('change', dirty);
+// Once at load, because nothing else asks until somebody types. Its job here is
+// mostly to reveal the bar for a restored draft — unsaved work sitting in the
+// page before edit mode has been entered.
+dirty();
 // The status select decides which fields the server will refuse this without,
 // and the checkbox beside it lets one of those rules off.
 watchRequired(FORM);
@@ -8539,14 +8700,14 @@ document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
 
 // Deleting a record. Two presses and a named record between them, and every
-// element found through the article the button is in rather than by id — this
-// page can hold more than one entity, and a destructive control resolved by
+// element found through the article it belongs to rather than by id — this page
+// can hold more than one entity, and a destructive control resolved by
 // `getElementById` is one that acts on whichever entity happens to be first.
-for (const bar of document.querySelectorAll('.dangerbar')) {
-  const article = bar.closest('article.entity');
-  const ask = bar.querySelector('.confirming');
-  const why = bar.querySelector('.why');
-  const open = bar.querySelector('button.delete');
+for (const article of document.querySelectorAll('article.entity')) {
+  const open = article.querySelector('.editbar button.delete');
+  if (!open) continue;
+  const ask = article.querySelector('.confirming');
+  const why = ask.querySelector('.why');
 
   // Shown and hidden rather than a `confirm()`. A native dialog cannot say which
   // record it is about in the words this page uses, cannot show the server's
@@ -8556,17 +8717,17 @@ for (const bar of document.querySelectorAll('.dangerbar')) {
     ask.hidden = !state;
     open.hidden = state;
     why.hidden = true;
-    if (state) bar.querySelector('button.keep').focus();
+    if (state) ask.querySelector('button.keep').focus();
   };
   open.onclick = () => asking(true);
-  bar.querySelector('button.keep').onclick = () => asking(false);
+  ask.querySelector('button.keep').onclick = () => asking(false);
   // Escape backs out of the question, the way it backs out of everything else
   // here. Bound on the panel and not on the document, so it cannot swallow the
   // key from the editor when nothing is being confirmed.
   ask.onkeydown = event => { if (event.key === 'Escape') asking(false); };
 
-  bar.querySelector('button.really').onclick = async () => {
-    const acts = bar.querySelector('.acts');
+  ask.querySelector('button.really').onclick = async () => {
+    const acts = ask.querySelector('.acts');
     acts.hidden = true;
     // The base commit the page was rendered against, the same one every other
     // write here sends: a delete is a compare-and-swap like the rest, and the
@@ -9405,40 +9566,39 @@ textarea.body-field {
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
-/* The way out of the plan, at the far end of the record and not in the sticky
-   bar. It is deliberately quiet until it is asked: an outline button in the
-   danger colour, not a filled red block, because a filled red block at the foot
-   of every record is a page that looks like it is warning you about something
-   when nothing is wrong. */
-.dangerbar { margin: 2.5rem 0 0; padding-top: .75rem;
-             border-top: 1px solid var(--line); }
-.dangerbar button { font: inherit; font-size: 13px; padding: .25rem .8rem;
-        border-radius: 2px; border: 1px solid var(--line-strong);
-        background: var(--surface); color: var(--muted); cursor: pointer; }
-.dangerbar button.delete:hover, .dangerbar button.really {
-        border-color: var(--danger); color: var(--danger); }
-.dangerbar .confirming { display: flex; flex-direction: column;
-        align-items: flex-start; gap: .5rem; max-width: 46ch;
+/* Delete sits beside Edit and wears what Edit wears — no font, no padding, no
+   border of its own, so the two cannot drift apart as one of them is restyled.
+   Only the colour it turns on hover is its own, and only on hover: a red button
+   sitting under every record is a page that looks like it is warning you about
+   something when nothing is wrong. */
+.editbar button.delete:hover { border-color: var(--danger); color: var(--danger); }
+
+/* The question, under the button that asks it. */
+.confirming { display: flex; flex-direction: column; align-items: flex-start;
+        gap: .5rem; max-width: 46ch; margin: 0 0 1rem;
         padding: .6rem .75rem; border: 1px solid var(--danger);
         border-radius: 3px; background: var(--surface); }
-.dangerbar .confirming[hidden] { display: none; }
-.dangerbar .asking { margin: 0; font-size: 13px; }
-.dangerbar .acts { display: flex; gap: .4rem; }
+.confirming[hidden] { display: none; }
+.confirming .asking { margin: 0; font-size: 13px; }
+.confirming .acts { display: flex; gap: .4rem; }
+.confirming button { font: inherit; font-size: 13px; padding: .25rem .8rem;
+        border-radius: 2px; border: 1px solid var(--line-strong);
+        background: var(--surface); color: var(--fg); cursor: pointer; }
+.confirming button.really { border-color: var(--danger); color: var(--danger); }
 /* What else this takes with it. The loud one is the deletion of other records —
    that is the sentence somebody has to read before pressing, so it is the danger
    colour and it is bold. The dependency line is quieter on purpose: nothing is
    destroyed there, a field is edited, and drawing the two the same way would
    teach people to skim both. */
-.dangerbar .reach { margin: 0; font-size: 13px; font-weight: 600;
-                    color: var(--danger); }
-.dangerbar .reach.mild { font-weight: 400; color: var(--fg); }
-.dangerbar .reach .ids { font-family: var(--font-mono); font-size: 12px;
-                         font-weight: 400; }
-
+.confirming .reach { margin: 0; font-size: 13px; font-weight: 600;
+                     color: var(--danger); }
+.confirming .reach.mild { font-weight: 400; color: var(--fg); }
+.confirming .reach .ids { font-family: var(--font-mono); font-size: 12px;
+                          font-weight: 400; }
 /* The server's reason, where the question was asked. A refusal that names three
    tasks is the useful half of this feature and it must not go to the console. */
-.dangerbar .why { margin: 0; font-size: 12px; color: var(--danger); }
-.dangerbar .why[hidden] { display: none; }
+.confirming .why { margin: 0; font-size: 12px; color: var(--danger); }
+.confirming .why[hidden] { display: none; }
 
 """
 
@@ -14428,11 +14588,9 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         total=len(index.entities),
         links=links,
         elements=_elements(index),
-        parent_kinds={kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         cytoscape=_library("cytoscape.min.js"),
         elk=_library("elk.bundled.js"),
         cytoscape_elk=_library("cytoscape-elk.js"),
-        compound_dnd=_library("cytoscape-compound-drag-and-drop.js"),
     )
     return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 

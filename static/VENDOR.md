@@ -14,7 +14,6 @@ below, and the bytes in git are still upstream's.
 | `elk.bundled.js` | 0.9.3 | **EPL-2.0** | https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js |
 | `elk-LICENSE.txt` | 0.9.3 | EPL-2.0 | licence text for the file above |
 | `cytoscape-elk.js` | 2.2.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-elk@2.2.0/dist/cytoscape-elk.js |
-| `cytoscape-compound-drag-and-drop.js` | 1.1.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-compound-drag-and-drop@1.1.0/cytoscape-compound-drag-and-drop.js |
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
 
@@ -36,16 +35,21 @@ edges crossing a box they are not attached to, against three of six for dagre.
 AGENTS.md: it draws the connection gesture this page writes by hand, and its browser build
 wants `lodash.memoize` and `lodash.throttle` as globals under those exact names — 28 KB
 becomes 58 KB and a shim, to replace clicking one node and then another, which works and
-which nobody has complained about. `cytoscape-compound-drag-and-drop` was taken, because
-what it replaces did not.
+which nobody has complained about.
+
+`cytoscape-compound-drag-and-drop` was here for a day. It was taken because the gesture it
+replaced had been written here and got wrong; it went because the gesture itself went —
+jcanton, 2026-08-20, after using it: refiling belongs to the table, where rows do not move
+under you. The extension is deleted rather than left in the directory for the reason dagre
+was: a vendored file nothing inlines is a file nobody checks.
 
 dagre and cytoscape-dagre were here until ELK replaced them; they are gone rather than
 left in the directory, because a vendored file nothing inlines is a file nobody checks.
 
-Only cytoscape carries its MIT notice inline in the minified file. Both cytoscape
-extensions declare theirs in their upstream `package.json`, and ELK's ships beside it as
-a file because EPL asks for that. Yjs's minified bundle
-carries none, so the MIT text ships beside it the way Inter's OFL does.
+Only cytoscape carries its MIT notice inline in the minified file. cytoscape-elk declares
+its in its upstream `package.json`, and ELK's ships beside it as a file because EPL asks
+for that. Yjs's minified bundle carries none, so the MIT text ships beside it the way
+Inter's OFL does.
 
 ## Checksums, and updating a file
 

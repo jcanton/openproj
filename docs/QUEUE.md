@@ -21,6 +21,14 @@ and each says why it is still here.
 
 ## What was tried and dropped
 
+* **A `<select>` converted into a button-and-menu, four more times.** The table's
+  filter dropdowns are buttons because a native `<select>` cannot draw the caret
+  and the ground this page wants. The timeline's zoom and the issues and notes
+  state filters were offered the same conversion and did not get it — jcanton,
+  2026-08-20: give them the border, the ground and the radius and keep the
+  browser's caret. One rule against four popups with their own keyboard handling
+  and their own tests, for a control with one choice in it.
+
 * **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
   jcanton used it: a pitch could not be dropped into a project at all, and taking
   one out looked like nothing happening — the project's outline follows the pitch
@@ -39,6 +47,29 @@ and each says why it is still here.
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
+* **Group-level ordering the layout does not guarantee.** ELK's recursive engine
+  lays each box out over its own children and then lays the boxes out — and the
+  root pass cannot reliably see a dependency between the CHILDREN of two boxes.
+  Measured on a three-box synthetic where each box also holds an internal chain:
+  all three stacked at the same x with both cross-box arrows drawn backwards. The
+  real plan is immune by accident — its two project-to-project dependencies are
+  root-level edges that carry the order — and the synthetic plans from
+  `tests/plans.py` show 5 backwards of 76 at 208 records and 24 of 189 at 518.
+
+  The fix the audit costed at twelve lines: before each layout, add invisible
+  "ghost" edges between the top-level ancestors of every cross-group dependency,
+  and remove them on `layoutstop`. Style them `opacity: 0` and `events: no` —
+  never `display: none`, which drops them out of `:visible` and out of the
+  layout.
+
+  It is written down rather than built because its whole risk is leakage. A ghost
+  that survives one `layoutstop` makes two unrelated projects neighbours in
+  `applyFilter`'s `neighborhood()`, becomes tappable in edit mode, is walked by
+  the cycle check, and would be sent to the server by Save. That is a lot of
+  surface for an ordering nobody has complained about yet.
+  `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
+  fails on a corpus nobody touched, this is the entry to read.
+
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **A write can still create a loop.** jcanton asked, 2026-08-19: "doesn't
   openproj forbid cycles? if not we should". Today it detects them — `validate_all`

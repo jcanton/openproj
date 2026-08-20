@@ -826,7 +826,7 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
         "a width belongs to a column — not to a position in the row, and not to "
         "the word printed above it"
     )
-    assert "if (automatic) fitWidths(); else applyWidths();" in page, (
+    assert re.search(r"function refit\(\) \{\s*if \(automatic\) fitWidths\(\);", page), (
         "a width somebody dragged must survive the automatic fit"
     )
     assert re.search(r"remembered\.set\(WIDTH_KEY[^\n]*\n\s*automatic = false;", page), (
@@ -882,12 +882,10 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
     assertable here is that the second measurement is asked for at all, and that
     it is skipped once the columns stop being the fit's to decide.
     """
-    assert "document.fonts.ready.then(() => { if (automatic) fitWidths(); });" in page
-    assert re.search(
-        r"addEventListener\('resize', \(\) => \{\s*if \(automatic\) fitWidths\(\); "
-        r"else applyWidths\(\);",
-        page,
-    ), "a new window gets a new fit, and a dragged width only gets re-applied"
+    assert "document.fonts.ready.then(refit);" in page
+    assert "addEventListener('resize', refit);" in page, (
+        "a new window has to get a new fit, whoever decided the columns"
+    )
 
 
 # What each column needs with its widest cell on one line, read out of Chrome by
@@ -4022,3 +4020,66 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     # And a row with its own reviewers is drawn the way it always was.
     for row in got["owning"]:
         assert not row["inherited"], f"{row['id']} names its own and is drawn as borrowing"
+
+
+# Drag a column wider, which is what ends the automatic fit, then resize the
+# window both ways and see whether the table still fits it. `dispatchEvent` and
+# not a real window resize: headless Chrome is one size for the life of the run,
+# and what is under test is the handler, not the browser's own reflow.
+_REFIT = """
+const scroller = document.getElementById('rows').parentElement;
+const table = document.getElementById('rows');
+const grip = document.querySelector('th .grip') || document.querySelector('th [class*=grip]');
+if (!grip) return {error: 'no grip to drag'};
+
+const down = new PointerEvent('pointerdown', {clientX: 400, bubbles: true});
+grip.dispatchEvent(down);
+dispatchEvent(new PointerEvent('pointermove', {clientX: 700, bubbles: true}));
+dispatchEvent(new PointerEvent('pointerup', {clientX: 700, bubbles: true}));
+
+const measure = () => ({
+  room: scroller.clientWidth,
+  table: Math.round(table.getBoundingClientRect().width),
+});
+const dragged = measure();
+
+// Narrower, then wider, then back — each time through the handler the window
+// resize would call.
+scroller.style.width = '700px';
+dispatchEvent(new Event('resize'));
+const narrow = measure();
+
+scroller.style.width = '1600px';
+dispatchEvent(new Event('resize'));
+const wide = measure();
+
+return {dragged, narrow, wide, columns: [...table.querySelectorAll('th')].length};
+"""
+
+
+def test_a_dragged_table_still_fits_the_window_it_is_looked_at_in(
+    page: str, tmp_path: Path
+):
+    """Reported by jcanton, 2026-08-20: "the table keeps its width, which means it
+    can be smaller than the page when enlarging and (worse) larger than the page
+    when reducing the size of the browser".
+
+    Both halves are the same defect. Dragging a column ended the automatic fit for
+    good, and every resize after that re-applied the stored pixels — so the table
+    stayed the width of whatever window it was dragged in.
+
+    A dragged width is a decision about PROPORTION, not about pixels: it says this
+    column deserves twice the room of that one. So it is scaled to the window
+    rather than replayed into it, and the columns keep their relative sizes while
+    the table keeps fitting the page.
+    """
+    got = measured_in(chrome(), page, tmp_path / "refit.html", 1460, _REFIT)
+
+    assert not got.get("error"), got
+    for name in ("narrow", "wide"):
+        room, drawn = got[name]["room"], got[name]["table"]
+        # A pixel of slack for the collapsed border the fit measures separately.
+        assert drawn <= room + 2, f"{name}: {drawn}px of table hanging out of {room}px"
+        assert drawn >= room - 40, f"{name}: {room - drawn}px of empty page beside the table"
+    # And nothing was shed to achieve it: a dragged layout keeps its columns.
+    assert got["columns"] > 5
