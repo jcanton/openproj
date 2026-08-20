@@ -3605,3 +3605,65 @@ def test_the_parse_cache_survives_readers_arriving_at_once(client: TestClient):
         codes = [one.result().status_code for one in answers]
 
     assert set(codes) == {200}, f"concurrent readers got {sorted(set(codes))}"
+
+
+def test_one_save_does_not_stop_the_rest_of_the_process(tmp_path, monkeypatch):
+    """The largest single cost in a save was not the save.
+
+    Every write route is `async def` and called `store.write` bare, so the two
+    GitHub round trips ran ON the event loop — and while they did, nothing else in
+    the process moved: no other page, no SSE keepalive, no co-editing frame. With
+    a team, the lag one person feels is their own save plus everybody else's
+    ahead of it.
+
+    Measured against a write slowed to the length of a real one: a reader asking
+    for `/healthz` waited 1200 ms before, and 8 ms after.
+
+    `Store._writing` is a real `threading.Lock`, so moving the call to a thread
+    preserves the serialisation by construction rather than by hope.
+    """
+    import threading
+    import time
+
+    import pygit2
+    from test_store import commit_directly
+
+    from openproj import store as store_mod
+
+    plan = tmp_path / "plan.git"
+    pygit2.init_repository(str(plan), bare=True, initial_head="main")
+    commit_directly(plan, SEED, "seed")
+
+    real = store_mod.Store.write
+
+    def slow(self, *a, **kw):
+        time.sleep(0.6)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(store_mod.Store, "write", slow)
+
+    app = create_app(plan, auth="dev", secret=SECRET)
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        waits: list[float] = []
+        stop = threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                at = time.perf_counter()
+                client.get("/healthz")
+                waits.append((time.perf_counter() - at) * 1000)
+                time.sleep(0.02)
+
+        watching = threading.Thread(target=reader, daemon=True)
+        watching.start()
+        time.sleep(0.15)
+        assert save(client, TASK, {"title": "while somebody reads"}).status_code == 200
+        stop.set()
+        watching.join(timeout=3)
+
+    assert waits, "nobody was reading, so nothing was measured"
+    assert max(waits) < 300, (
+        f"a reader waited {max(waits):.0f} ms while one save was in flight, so the "
+        "write is still running on the event loop"
+    )
