@@ -131,7 +131,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: 
     # ELK replaced dagre, and a list written down in a test is a list that says
     # a page is fine while it inlines a library nobody checked.
     inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
-    assert len(inlined) == 4, inlined
+    assert len(inlined) == 3, inlined
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found

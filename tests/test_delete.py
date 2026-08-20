@@ -27,9 +27,11 @@ from openproj.render import ROUTES, STATIC, render_detail
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
-# The control itself. `_DETAIL_STYLE` is inlined into every copy of this page,
-# reader's or not, so the bare word appears on all of them.
-MARKUP = '<div class="dangerbar">'
+# The control itself, and the panel it opens. Markup and not a bare word: the
+# stylesheet is inlined into every copy of this page, a reader's included, so a
+# substring test on the class name passes on the CSS alone.
+BUTTON = '<button type="button" class="delete">Delete</button>'
+MARKUP = '<div class="confirming"'
 
 
 @pytest.fixture
@@ -61,9 +63,9 @@ def test_only_somebody_the_server_would_take_a_write_from_is_offered_the_button(
     # The markup and not the word: the stylesheet is inlined into every copy of
     # this page whatever the reader may do, so a plain substring test passes on a
     # reader's page for the CSS alone and proves nothing about the control.
-    assert MARKUP in writer
-    assert MARKUP not in reader, "a reader was offered a delete they cannot make"
-    assert MARKUP not in exported, "a file on a memory stick offered to delete a record"
+    assert BUTTON in writer and MARKUP in writer
+    assert BUTTON not in reader, "a reader was offered a delete they cannot make"
+    assert BUTTON not in exported, "a file on a memory stick offered to delete a record"
 
 
 def test_the_question_names_the_record_it_is_about(index: Index):
@@ -81,6 +83,31 @@ def test_the_question_names_the_record_it_is_about(index: Index):
     assert "git revert" in asking
 
 
+def test_delete_stands_beside_edit_and_wears_what_edit_wears(index: Index):
+    """Both ways of changing a record on one line — jcanton, 2026-08-20.
+
+    It was at the foot of the page, past the shaping document, on the argument
+    that a destructive control should be far from the ones pressed all day. The
+    answer to that is the confirmation, not the distance: a way out you have to
+    scroll to find is one nobody finds, which is the same reason Edit moved up
+    here in the first place.
+
+    And it carries no font, padding or border of its own, so the two buttons match
+    by construction rather than by two rules somebody has to keep in step. Only
+    the colour it turns on hover is its own.
+    """
+    entity_id = one_task(index)
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+
+    bar = page[page.index('<p class="editbar">') :]
+    bar = bar[: bar.index("</p>")]
+    assert 'id="toggle"' in bar and "class=\"delete\"" in bar, bar
+
+    # No size or face of its own anywhere in the stylesheet — only the hover.
+    for rule in re.findall(r"\.editbar button\.delete[^{]*\{([^}]*)\}", page):
+        assert "font" not in rule and "padding" not in rule, rule
+
+
 def test_the_control_is_only_on_the_record_page(index: Index):
     """Asked of the other editable pages, because "only in the details view" was
     the requirement and every one of these can also write."""
@@ -90,7 +117,7 @@ def test_the_control_is_only_on_the_record_page(index: Index):
         ("table", render_table(index, ROUTES, base_commit=HEAD)),
         ("graph", render_graph(index, ROUTES, base_commit=HEAD)),
     ):
-        assert MARKUP not in page, f"the {name} offers a delete"
+        assert BUTTON not in page, f"the {name} offers a delete"
 
 
 def test_the_panel_says_what_the_delete_will_take_with_it(index: Index):
@@ -146,19 +173,20 @@ window.fetch = (url, options) => {
   window.__sent.push({url, method: options.method, body: JSON.parse(options.body)});
   return new Promise(() => {});
 };
-const bar = document.querySelector('.dangerbar');
-const panel = bar.querySelector('.confirming');
+const one = document.querySelector('article.entity');
+const open = one.querySelector('.editbar button.delete');
+const panel = one.querySelector('.confirming');
 const before = {asked: !panel.hidden, sent: window.__sent.length};
 
-bar.querySelector('button.delete').click();
+open.click();
 const opened = {asked: !panel.hidden, sent: window.__sent.length,
-                offered: !bar.querySelector('button.delete').hidden};
+                offered: !open.hidden};
 
-bar.querySelector('button.keep').click();
+panel.querySelector('button.keep').click();
 const backedOut = {asked: !panel.hidden, sent: window.__sent.length};
 
-bar.querySelector('button.delete').click();
-bar.querySelector('button.really').click();
+open.click();
+panel.querySelector('button.really').click();
 return {before, opened, backedOut, sent: window.__sent};
 """
 
@@ -199,10 +227,11 @@ window.fetch = (url, options) => {
   window.__sent.push({url});
   return new Promise(() => {});
 };
-const bars = [...document.querySelectorAll('.dangerbar')];
+const bars = [...document.querySelectorAll('article.entity')]
+  .filter(one => one.querySelector('.editbar button.delete'));
 const last = bars[bars.length - 1];
-last.querySelector('button.delete').click();
-last.querySelector('button.really').click();
+last.querySelector('.editbar button.delete').click();
+last.querySelector('.confirming button.really').click();
 return {bars: bars.length, sent: window.__sent.map(one => one.url)};
 """
 
@@ -238,15 +267,16 @@ window.fetch = () => Promise.resolve({
   ok: false, status: 409,
   json: () => Promise.resolve({detail: %s}),
 });
-const bar = document.querySelector('.dangerbar');
-bar.querySelector('button.delete').click();
-bar.querySelector('button.really').click();
+const one = document.querySelector('article.entity');
+const panel = one.querySelector('.confirming');
+one.querySelector('.editbar button.delete').click();
+panel.querySelector('button.really').click();
 setTimeout(() => {
-  const why = bar.querySelector('.why');
+  const why = panel.querySelector('.why');
   document.body.dataset.report = JSON.stringify({
     shown: !why.hidden,
     said: why.textContent,
-    canRetry: !bar.querySelector('.acts').hidden,
+    canRetry: !panel.querySelector('.acts').hidden,
   });
 }, 100);
 return {shown: null};
@@ -269,3 +299,38 @@ def test_a_refusal_is_shown_where_the_question_was_asked(index: Index, tmp_path:
     assert got["shown"], "the record survived and the page said nothing"
     assert got["said"] == reason
     assert got["canRetry"], "the buttons stayed gone, so there was no way to try again"
+
+
+_QUIET_BAR = """
+const bar = document.getElementById('commitbar');
+const before = {shown: bar.offsetParent !== null, said: bar.textContent.trim()};
+document.getElementById('toggle').click();
+const editing = {shown: bar.offsetParent !== null};
+document.getElementById('cancel').click();
+return {before, editing, after: {shown: bar.offsetParent !== null}};
+"""
+
+
+def test_the_commit_bar_is_not_on_screen_when_there_is_nothing_to_commit(
+    index: Index, tmp_path: Path
+):
+    """It is sticky, so it was on screen the whole time somebody was READING a
+    record, saying "Nothing to save" about a form they had not opened — a
+    permanent answer to a question nobody had asked, at the foot of every page.
+
+    Measured rather than asked of the attribute: `.commitbar` sets `display:
+    flex`, which beats `[hidden]`'s `display: none` because one is an author rule
+    and the other is the browser's. Every menu on the table page opened on load
+    the day that was forgotten.
+    """
+    entity_id = one_task(index)
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+
+    got = measured_in(chrome(), page, tmp_path / "bar.html", 1200, _QUIET_BAR)
+
+    assert got["before"]["shown"] is False, (
+        f"the bar was on screen over a record nobody was editing, saying "
+        f"{got['before']['said']!r}"
+    )
+    assert got["editing"]["shown"] is True, "and then it was not there when it was needed"
+    assert got["after"]["shown"] is False, "Cancel left it behind"
