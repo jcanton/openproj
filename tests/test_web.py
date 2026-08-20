@@ -3350,3 +3350,68 @@ def test_a_delete_tells_the_open_pages_which_record_went(live_server: str):
 
     assert event["commit"] == commit
     assert event["changed"] == [DONE]
+
+
+# --- a record cannot be its own ancestor, or wait for itself -----------------
+
+
+def test_a_save_cannot_file_a_record_under_its_own_child(
+    client: TestClient, repo_path: Path
+):
+    """openproj reported loops and did not refuse them — jcanton, 2026-08-19:
+    "doesn't openproj forbid cycles? if not we should".
+
+    Reporting is right for a plan that ARRIVED with one: a file in git is a fact,
+    and refusing to load it would take every page down over somebody else's
+    mistake. It is wrong for a plan about to acquire one — the blocker lands after
+    the commit, on a protected branch, about a shape nobody can see the cause of.
+    """
+    before = git_head(repo_path)
+    answer = save(client, PROJECT, {"parent": PITCH})
+
+    assert answer.status_code == 409, answer.text
+    # And it says which chain, because "that would make a loop" and "the project
+    # would be filed under its own pitch" are different amounts of help.
+    assert PROJECT in answer.text and PITCH in answer.text
+    assert git_head(repo_path) == before
+
+
+def test_a_save_cannot_make_a_record_wait_for_itself(client: TestClient, repo_path: Path):
+    """Directly, and round a chain of three."""
+    assert save(client, TASK, {"depends_on": [TASK]}).status_code == 409
+
+    assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
+    assert save(client, OTHER, {"depends_on": [DONE]}).status_code == 200
+    before = git_head(repo_path)
+
+    answer = save(client, DONE, {"depends_on": [TASK]})
+    assert answer.status_code == 409, "a three-record ring was committed"
+    assert git_head(repo_path) == before
+
+
+def test_the_refusal_names_the_chain_and_not_merely_the_record(client: TestClient):
+    """The one that says what to undo. A record's strongly connected component can
+    hold loops it is not itself on, and naming one of those would send somebody to
+    edit a record that is not the problem."""
+    assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
+    assert save(client, OTHER, {"depends_on": [DONE]}).status_code == 200
+
+    said = save(client, DONE, {"depends_on": [TASK]}).json()["detail"]
+    # Every record on the ring, in the order somebody would walk it.
+    for entity_id in (DONE, TASK, OTHER):
+        assert entity_id in said, f"{entity_id} is on the loop and is not named: {said}"
+    assert said.startswith(f"that would leave {DONE} waiting for itself")
+
+
+def test_an_honest_dependency_still_lands(client: TestClient):
+    """A check nobody can pass is indistinguishable from a check that is broken."""
+    assert save(client, TASK, {"depends_on": [OTHER]}).status_code == 200
+    assert save(client, DONE, {"parent": PROJECT}).status_code == 200
+
+
+def test_a_plan_that_already_holds_a_loop_still_loads(client: TestClient):
+    """The distinction the whole thing rests on. This tool reports a cycle rather
+    than refusing to read the plan, because a file in git is a fact — and the
+    pages have to keep working so somebody can see what is wrong and fix it."""
+    for route in ("/", "/graph", "/api/index.json"):
+        assert client.get(route).status_code == 200, route

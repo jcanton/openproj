@@ -553,6 +553,7 @@ def _payload(index: Index) -> dict:
         # that agrees until somebody adds one.
         "glyphs": STATUS_GLYPH,
         "levels": PRIORITY_LEVEL,
+        "marks": PRIORITY_GLYPH,
         # Which statuses demand which fields, derived from the gate itself by
         # `required_at` (`model.py`). The detail page has had this since it grew
         # the marks beside its labels; the table had nothing, so moving a row to
@@ -1916,8 +1917,26 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    a key that keys nothing is worse than no key, because it is believed. Only
    the ground is neutral — this says thickness and the row beside it says
    colour, and a priority key wearing a status ink would key both at once. */
+/* The bars sit INSIDE the box, the way a status glyph sits inside its swatch —
+   jcanton, 2026-08-20, so the two key rows are one swatch and one word each and
+   come out the same length. It also puts the two channels in one mark: the
+   border is the thickness the node is drawn with and the meter inside it is the
+   same rung counted, so the key is a small node rather than two things beside
+   each other.
+
+   Wider than a status swatch because it has to hold five bars and a 6px border,
+   and `box-sizing: border-box` is already set above — without the extra width
+   the very-high key is border with nothing left in the middle. */
 .legend .swatch.pri { background: var(--surface); border-style: solid;
-                      border-color: var(--fg); }
+                      border-color: var(--fg); width: 34px; height: 17px;
+                      display: inline-flex; align-items: center;
+                      justify-content: center; }
+.legend .swatch.pri .bars { height: 7px; }
+.legend .swatch.pri .bars i:nth-child(1) { height: 2px; }
+.legend .swatch.pri .bars i:nth-child(2) { height: 3px; }
+.legend .swatch.pri .bars i:nth-child(3) { height: 4px; }
+.legend .swatch.pri .bars i:nth-child(4) { height: 6px; }
+.legend .swatch.pri .bars i:nth-child(5) { height: 7px; }
 .legend .swatch.pri-very_high { border-width: 6px; }
 .legend .swatch.pri-high      { border-width: 4px; }
 .legend .swatch.pri-medium    { border-width: 2px; }
@@ -1975,9 +1994,7 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 
    They were grey because they were native — a `<button>` and a `<select>` with no
    rule get the operating system's own chrome, which matches nothing else here and
-   changes between two machines looking at the same plan. So every control that
-   ACTS is listed here and none of them is styled anywhere else. A fourth spelling
-   of the same rectangle is how this happened in the first place.
+   changes between two machines looking at the same plan.
 
    The `<select>`s keep the caret the browser draws them, which is the one thing
    this rule cannot supply — the facet buttons on the table draw their own from
@@ -1985,23 +2002,42 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    selects. Same ground, same border, same radius, native caret; that was the
    choice, made deliberately over converting four more controls into popups.
 
-   Not `.field`. A text box is somewhere to TYPE and a control is something to
-   PRESS, and drawing them the same way is how a filter bar comes to look like a
-   form somebody left half-filled. */
-.button, .button:visited,
-#unfilter, #toggle, #tl-zoom, #state-filter, #kind, #template, #into,
-.editbar button, .confirming button,
-.commitbar button {
+   THE RULE IS THE DEFAULT AND NOT A LIST. It was a list of ids and classes for
+   half a day, and in that time it missed twenty of the twenty-eight controls on
+   this site — the body preview, the dependency editor, the clear-filters button,
+   the promote control, the icon picker, the table's own new-row button. jcanton
+   found the first within the hour and asked the right question: "I thought we had
+   managed to impose the style of buttons and dropdowns to be coherent across the
+   entire app? why did that work?"
+
+   (Named in prose rather than by id, and that is not fussiness: a static export
+   is checked for the id of a control it must not carry, and a comment mentioning
+   that id put it on the page and turned the check red.)
+
+   It did not work, and a list is why. Every control added from now on would have
+   had to be remembered into a selector three thousand lines from where it was
+   written, and the failure is silent — the button simply looks like the operating
+   system and nobody notices until they are looking at two of them side by side.
+
+   So: every `button` and every `select` gets this, and a control that wants
+   something else says so in its own rule. That inverts the burden onto the
+   exception, which is the only place it can be paid attention to. A bare rule
+   already beats this one on specificity — `.facetopen`, `#who button` and the
+   half-dozen icon buttons all set `background: none; border: 0` and all of them
+   are a class or an id, which outranks an element selector — so they keep the
+   nothing they were drawn with, on purpose and by construction.
+
+   `.field` outranks it too, which is what keeps a `<select>` that is a form field
+   looking like a field: a text box is somewhere to TYPE and a control is
+   something to PRESS. */
+button, select, .button, .button:visited {
   font: inherit; font-size: 13px; line-height: 1.4;
   padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
   border: 1px solid var(--line-strong); background: var(--surface);
   color: var(--fg); text-decoration: none;
 }
-.button:hover,
-#unfilter:hover, #toggle:hover, #tl-zoom:hover, #state-filter:hover,
-#kind:hover, #template:hover, #into:hover,
-.editbar button:hover, .confirming button:hover,
-.commitbar button:hover { border-color: var(--accent); color: var(--accent); }
+button:hover, select:hover, .button:hover { border-color: var(--accent);
+                                            color: var(--accent); }
 /* Apply and Reset on the timeline were a button and a bare link, which reads as
    one control and one afterthought. They are the same pair of scissors pointed
    two ways, so they are the same size and shape; only the fill says which one is
@@ -3585,6 +3621,18 @@ const LEVELS = DATA.levels || {};
 // Five slots, of which `level` are lit — the identical markup `bars()` writes on
 // the server, because a meter drawn two ways is a meter that eventually
 // disagrees about what three bars mean.
+// The mark that goes in front of a word inside an `<option>`, which is text and
+// nothing else — the same string `mark()` writes on the server.
+// `RUNGS` and not `MARKS`: this page already has a `MARKS`, holding the
+// validation problems per cell, and two top-level declarations of one name in one
+// page is a SyntaxError that throws the whole later script away.
+const RUNGS = DATA.marks || {};
+function markFor(field, value) {
+  if (field === 'status') return GLYPHS[value] ? GLYPHS[value] + ' ' : '';
+  if (field === 'priority') return RUNGS[value] ? RUNGS[value] + ' ' : '';
+  return '';
+}
+
 function barsFor(priority) {
   const level = LEVELS[priority] || 0;
   return `<span class="bars" data-level="${level}" aria-hidden="true">` +
@@ -4390,8 +4438,12 @@ function openEditor(cell) {
   // this is the one cell whose contents are replaced without a redraw, and the
   // connector belongs to the row rather than to what is in the cell at the time.
   cell.innerHTML = treeHtml(cell.dataset.rungs) + (closed
+    // The same mark the cell was showing a moment ago, so opening an editor does
+    // not swap a marked value for an unmarked list of words. `markFor` reaches
+    // the two maps the payload already carries.
     ? `<select data-type="text" aria-label="${named}">${closed.map(o =>
-        `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>${esc(human(o))}</option>`
+        `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>` +
+        `${esc(markFor(field, o))}${esc(human(o))}</option>`
       ).join('')}</select>`
     : `<input value="${esc(was)}" data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
       `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`);
@@ -6150,12 +6202,10 @@ tr.adder > td {
   background: var(--surface); border-top: 1px solid var(--line);
   box-shadow: inset 0 1px 0 var(--line);
 }
-tr.adder button {
-  font: inherit; font-size: 12px; padding: .1rem .5rem; margin-right: .5rem;
-  border: 1px solid var(--line-strong); border-radius: 3px;
-  background: none; color: inherit; cursor: pointer;
-}
-tr.adder button:hover { border-color: var(--accent); color: var(--accent); }
+/* Only what is this button's own. The rectangle, the border and the ink come
+   from the default every control gets — a third copy of them here is how the
+   page came to have three slightly different buttons on one screen. */
+tr.adder button { font-size: 12px; padding: .1rem .5rem; margin-right: .5rem; }
 tr.adder button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 tr.adder .hint { font-size: 12px; color: var(--muted); }
 /* The draft row's controls, in whichever of their two places they were drawn:
@@ -6189,11 +6239,8 @@ tr.adder .hint { font-size: 12px; color: var(--muted); }
 .draft-do {
   display: inline-flex; align-items: center; justify-content: center;
   flex: none; margin: 0; padding: .2rem;
-  font: inherit; font-size: 12px; line-height: 0;
-  border: 1px solid var(--line-strong); border-radius: 3px;
-  background: none; color: inherit; cursor: pointer;
+  font-size: 12px; line-height: 0;
 }
-.draft-do:hover { border-color: var(--accent); color: var(--accent); }
 /* The one of the two that writes, in the ink this page gives that press
    everywhere else. `.draft-do.primary` is (0,2,0) and its hover (0,3,0), so the
    two do not have to be read in the order they happen to be written in. */
@@ -6220,6 +6267,17 @@ tr.writing > td { opacity: .55; cursor: progress; }
    screen reader on the cell hears its column header and the editor's own
    `aria-label`, which is the name of the thing, said once. */
 tr.draft > td { background: var(--surface-2); }
+/* The controls in a draft row are the size of a row, not the size of a button in
+   a bar. Only what is theirs: the rectangle and the ink come from the default
+   every control gets, and this says how much room it may take inside a cell that
+   has to stay the height of an ordinary one. */
+/* Tighter than a control in a bar, in both directions, and it has to be. The row
+   must stay the height of an ordinary row, and the picker sits in the id cell
+   where a flex `min-width` squeezes it — so every pixel of padding is a pixel
+   taken off the word, and the default's `.7rem` cut "Project" to "Projec". Only
+   the size is theirs; the rectangle and the ink come from the default. */
+tr.draft select { font-size: 11px; padding: .05rem 0; }
+tr.draft .draft-do { font-size: 12px; padding: .05rem .3rem; }
 /* While this cell holds the row's controls instead of an id it is a strip of
    controls and not a value, so it gives back the room either side of a value:
    at the column's own 8px the picker had 56px to say `Project` in and drew
@@ -6324,8 +6382,8 @@ _GRAPH = """
 <ul class="legend" aria-label="What a node's line thickness means">
   <li class="legendname">priority</li>
   {% for priority in priorities %}
-  <li>{{ bars(priority) }}<span class="swatch pri pri-{{ priority }}"
-      aria-hidden="true"></span>{{ priority|human }}</li>
+  <li><span class="swatch pri pri-{{ priority }}" aria-hidden="true">{{
+      bars(priority) }}</span>{{ priority|human }}</li>
   {% endfor %}
 </ul>
 <ul class="legend" aria-label="What a node's colour and mark mean">
@@ -6441,7 +6499,14 @@ const LINE = () => ({
 // timeline draws at a bar's left edge and the legend below shows in its swatch.
 // Not a token: a shape, so it survives a screenshot, a projector and deuteranopia.
 const GLYPH = {{ glyphs|tojson }};
+// And priority in front of it, for the reason the status glyph is there at all:
+// the channel priority is drawn with here is the border's THICKNESS, which is
+// legible only against a neighbour to compare it with — jcanton saw one project
+// drawn thicker than the rest and had to ask what it meant. A rung of the same
+// ladder, in the label, answers it without a comparison.
+const MARK = {{ marks|tojson }};
 const labelOf = node =>
+  (MARK[node.data('priority')] || '') +
   (GLYPH[node.data('status')] || '') + ' ' + (node.data('label') || '');
 
 // Cytoscape aligns a left-aligned label by its RIGHT edge against the box's left
@@ -7174,7 +7239,15 @@ _GRAPH_STYLE = """
         pointer-events: none;
         padding: .35rem .5rem; border-radius: 3px;
         background: color-mix(in srgb, var(--bg) 82%, transparent); }
-.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .7rem; }
+.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .5rem; }
+/* Both rows the same length — jcanton, 2026-08-20. Each row is five keys and a
+   name, so five keys of one width and a name of one width is two rows of one
+   length, whatever the words inside them happen to be. Without it the rows are
+   as long as their vocabulary: "Very high, High, Medium, Low, Very low" against
+   "Shaping, Ready, In progress, Done, Shelved" came out 55px apart, and two
+   ragged rows in a corner read as two unrelated things. */
+.keys .legend li { min-width: 6.6rem; }
+.keys .legend li.legendname { min-width: 4.4rem; }
 .keys #summary { margin: 0; pointer-events: auto; font-size: 12px;
                  color: var(--muted); text-align: right; }
 
@@ -8175,8 +8248,19 @@ _CONTROL = """
 {% if f.type in ("status", "priority") %}
 <select name="{{ f.name }}" id="{{ f.id }}" data-type="text" class="field"
         {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
+  {#- The mark in front of the word, the same one the graph draws on a node and
+      the table draws in a cell — jcanton, 2026-08-20: "can we have the status and
+      priority icons and colours also in the dropdowns for editing a record".
+
+      Text and not markup, because an `<option>` is text: what a browser will
+      draw inside one is a string, and every attempt to style the inside of a
+      native dropdown ends either in a control that works on one platform or in a
+      popup written from scratch. The colour is the one thing that does not come
+      with it, and that is the honest cost of keeping a real `<select>` — the
+      choice made when these were left native. -#}
   {% for s in (statuses if f.type == "status" else priorities) %}
-  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ s|human }}</option>
+  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{
+    mark(f.type, s) }}{{ s|human }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
@@ -9876,6 +9960,23 @@ PRIORITIES = ("very_high", "high", "medium", "low", "very_low")
 # two ladders that agree until somebody adds a rung.
 PRIORITY_LEVEL = {"very_low": 1, "low": 2, "medium": 3, "high": 4, "very_high": 5}
 
+# The same ladder where only text will go: a graph node's label and a `<select>`
+# option are strings, and neither can hold the five-element meter the legend and
+# the table draw. One block character per rung, rising with it — the same fact,
+# counted the same way, in the one notation those two places can carry.
+#
+# Text and not an image, which is the argument `STATUS_GLYPH` already makes and
+# it applies here unchanged: a shape survives a screenshot, a projector and
+# deuteranopia, and it arrives in the label's own ink instead of being drawn by
+# the platform's colour font at a different weight on every machine.
+PRIORITY_GLYPH = {
+    "very_low": "▁",
+    "low": "▃",
+    "medium": "▅",
+    "high": "▇",
+    "very_high": "█",
+}
+
 # The redundant channel. On the graph and the timeline a fill is the only thing
 # telling two shapes apart, and a luminance ladder makes five fills *separable*
 # without making any one of them *nameable* — you can see that a bar is darker
@@ -10296,6 +10397,13 @@ _ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
 # The five slots, of which `level` are lit. A macro rather than a string built in
 # each template, so the markup the browser writes and the markup Jinja writes are
 # the same markup.
+# The mark that goes in front of a word where only a string will do. One function
+# for both ladders, so a template asks for "the mark for this value" rather than
+# knowing which map to reach into.
+_ENV.globals["mark"] = lambda kind, value: (
+    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status"
+    else f"{PRIORITY_GLYPH.get(str(value), '')} "
+)
 _ENV.globals["bars"] = lambda priority: Markup(
     '<span class="bars" data-level="{}" aria-hidden="true">{}</span>'.format(
         PRIORITY_LEVEL.get(str(priority), 0), "<i></i>" * 5
@@ -14841,6 +14949,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         statuses=STATUSES,
         priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,
+        marks=PRIORITY_GLYPH,
         total=len(index.entities),
         links=links,
         elements=_elements(index),

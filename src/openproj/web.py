@@ -84,6 +84,7 @@ from .model import (
     Project,
     Task,
     Unreadable,
+    loop_made,
     parse_cycle_text,
     parse_issue_text,
     parse_note_text,
@@ -1803,11 +1804,22 @@ def create_app(
         # title that is a number, a date that is a word, a tag that is null —
         # came through here and committed.
         try:
-            parse_text(content, path)
+            candidate = parse_text(content, path)
         except ValueError as error:
             raise HTTPException(
                 422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
             ) from None
+        # A record cannot be its own ancestor, and cannot wait for itself.
+        # `validate_all` reports both as blockers, which is the right answer for a
+        # plan that ARRIVED with one — a file in git is a fact, and refusing to
+        # load it takes every page down over somebody else's mistake. It is the
+        # wrong answer for a plan about to acquire one: the blocker would land
+        # after the commit, on a protected branch, about a shape nobody can see
+        # the cause of. Asked of the same function the validator asks, so the
+        # refusal and the report cannot disagree.
+        loop = loop_made(candidate, index_now()[1].entities.values())
+        if loop:
+            raise HTTPException(409, loop)
         written = store.write(
             path=path,
             content=content,
