@@ -2301,7 +2301,11 @@ body { font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
        font-feature-settings: "cv05" 1, "ss03" 1;
        margin: 0; padding: 1rem 1.25rem 3rem;
        background: var(--bg); color: var(--fg); }
-nav { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 13px; align-items: center; }
+/* Wraps, because the corner grew a third control and a nav that cannot wrap is a
+   nav that pushes the whole page sideways instead: at 500px the row came out
+   587px wide and every page under it scrolled horizontally. */
+nav { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin-bottom: 1rem;
+      font-size: 13px; align-items: center; }
 /* Every link, not only the nav. The browser's default blue and its visited
    purple are both close to unreadable on a dark ground, and a link is the most
    clicked thing on every one of these pages. */
@@ -2387,7 +2391,14 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    themselves over. The toggle asked for `margin-left: auto` on its own and was
    the only thing out there; with the identity beside it, two auto margins split
    the free space and put the pair in the middle of the row. */
-.corner { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
+/* And the corner itself wraps and gives: three controls at their natural widths
+   are wider than a phone, and the picker is the one with room to lose — a
+   `<select>` is as wide as its longest option, which here is a scheme nobody has
+   chosen. */
+.corner { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center;
+          gap: .4rem .6rem; min-width: 0; }
+.schemepick { min-width: 0; }
+.schemepick select { max-width: 100%; }
 #who { display: flex; align-items: center; gap: .5rem; color: var(--muted); }
 #who form { margin: 0; }
 /* A sign-out that looks like the link it behaves as. It is a POST because a
