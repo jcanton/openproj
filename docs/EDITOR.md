@@ -767,4 +767,18 @@ which flips the one branch in the editor that can lose unsaved work. An editor i
 selection and key handling. Ask Chrome (`tests/browser.py`), not the shim. Anything about
 convergence is driven against a real `Room`.
 
+**And a second one, found by the five-lens audit and structural rather than accidental: a
+source-grep guard cannot follow a write through the surface boundary.**
+`test_no_script_ever_assigns_a_textarea_its_value` scans the shared editing block MINUS the
+textarea surface, because the surface is the one place allowed to assign `.value` — that is
+what makes the subtraction the right window rather than a list of function names. But
+`applyMark`, which is the largest write path on the page and reaches sixteen buttons, does not
+assign anything: it calls `surface.splice`, whose only implementation is inside the region the
+guard subtracts. Measured: replacing that implementation's non-`applying` branch with a
+`.value` splice left the guard green **and** left all twenty of `_MARKING`'s text assertions
+green, because the box ends up holding exactly the same characters either way. What it does
+not hold is a stack. The only question that can tell the two apart is `execCommand('undo')`,
+pressed in Chrome, and `_MARKING` presses it on both shapes that write — `mark.insert` and the
+wrap tail. Seed two words, not one, or "one step back" and "everything gone" look the same.
+
 🤖 Written by an agent on behalf of @jcanton

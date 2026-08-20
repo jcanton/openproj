@@ -955,6 +955,86 @@ property this paragraph is actually about.
 | Bytes gated on `may_write`, preference visible to the server | S8 | `test_a_reader_who_may_not_write_is_sent_no_editor_library` |
 | The mirror is measured as a fractional content box | S3 | `test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps` |
 
+## S10 — Built. The five-lens audit's surviving findings, applied
+
+A five-lens audit ran over `e56d82e..903aeab` and reported no blockers, five defects and five
+nits. Two of the defects were closed by the stages that followed it without having seen the
+report. What follows is what was left, what was applied, and the two places the audit's own
+prescription was measured wrong.
+
+### Confirmed already closed — measured, not taken on trust
+
+**The full-page grid collapse below the 56rem container query.** Closed by `acb0935`, and
+closed differently from the prescription: a floor on the row plus `grid-auto-rows: max-content`
+plus `order: -1` on `.main`, rather than a scoped copy of the base rule. Re-measured in Chrome
+on /detail and /new, in all three views, at 500, 700 and 900 px: the document is first, it gets
+18–21 lines, and the facts pane is whole and reachable at every one of them. Above 936 the
+two-column layout takes over unchanged. `test_the_full_page_surface_is_a_writing_surface_at_a_
+window_that_is_not_wide` is the suite's first sub-936px case and it is parametrised over both
+pages. 390px cannot be measured here: headless Chrome floors `--window-size` at 500.
+
+**The toolbar's `flex: none` — NOT closed, and this is the half that was reported fixed.** The
+final pass reported "one row from 500 to 1600 with no horizontal overflow". The first half was
+true and was never the finding; the second half was false. Measured at 500px on /detail while
+editing and on /new, /note/new and /issue/new: `flex: 0 0 auto`, `min-width: auto`, marks 561px
+wide, and the Link, Image, Table and Horizontal-rule buttons 101px past the right edge of
+`article.entity`, with `document.scrollWidth` at 581 on a 500px window. Fixed in `b8d1401`.
+
+### Applied
+
+| finding | fix | the test that fails if it comes back |
+|---|---|---|
+| The `textarea.value` guard never saw `applyMark` | `_MARKING` presses `execCommand('undo')` after a Table and after a Bold | `test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is` |
+| Two `await fetch` sites with no `catch` | `catch` on the upload and on Save, plus the `at < 0` branch | `test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_still_true` |
+| The draft throttle re-enters `remembered.set` per keystroke when the store refuses | two clocks: `draftTried` for the interval, `draftWritten` for the receipt | `test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_storage` |
+| `— 1 Lines` | singular at one, on both pinned spellings | `test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth` |
+| `#seatbar` survives into preview-only | kept on purpose; the comment now says what a bar IS | `test_preview_only_takes_away_the_controls_and_keeps_the_one_live_fact` |
+| The toolbar clipped below ~620px | `@media (max-width: 40rem) { .marks { flex: 0 1 auto } }` | `test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide` |
+
+**The `textarea.value` guard is the one worth writing down.** The audit prescribed re-anchoring
+its regex window as `const FORMATS = \[.*?\nfunction park\(`. `f89a8e1` had already replaced
+that window with a subtraction — the shared block minus the surface — which is a better fix and
+asserts its own contents. But the finding was only half closed by it, and the remaining half is
+structural: `applyMark` writes through `surface.splice`, and the only implementation of `splice`
+lives inside the surface block that guard subtracts on purpose. **No static window can guard a
+write that goes through the boundary.** Measured: a `.value` splice put into that branch left
+the guard green and all twenty of `_MARKING`'s text assertions green, because the box ends up
+holding the same characters either way. Only pressing undo can see it, so `_MARKING` presses it.
+
+**Two decisions rather than fixes.** `1 Lines` is copy: HackMD's own strip reads
+`Line 1, Columns 1 — 100 Lines`, plural on the column whatever the number, and this bar already
+spells `Column` singular — having departed from the shot once, `1 Lines` is the same mistake
+left in. `#seatbar` in preview-only is kept: the two bars that go are controls for a box that is
+not on the screen, and the seat bar is not a control but the only live signal left in a view
+where the room is still moving the text under the rendered pane.
+
+### Where the audit's own prescription was measured wrong
+
+- **`min-width: 0` on `.marks` is not "the load-bearing half". It is inert.** `flex: 0 1 auto`
+  alone gives all four measured cases the same answer. A flex item's automatic minimum size is
+  its min-content size, and the min-content size of a container that wraps is its widest single
+  button, about 40px — not the whole bar. Shipped without it.
+- **34rem was the wrong breakpoint**, measured against the fourteen-button toolbar at 482.8px.
+  Sixteen buttons need 561. Swept at eight widths: unpatched the overhang is 101px at 500, 41px
+  at 560 and gone by 620; patched, the bar is on two rows to 616 and back on one at 624. 40rem.
+
+The `@media`-not-`@container` half of that prescription is right and was re-confirmed as a
+mutation: a container query passes on /detail and fails on /note/new, which ships
+`_RECORD_STYLE + _SUGGEST_STYLE` and never loads the file's only `container-type`.
+
+### Left deliberately
+
+**The CRLF caret drift stays documented and unfixed**, on jcanton's instruction of 2026-08-20
+and on a count: **0 of 735 exported HackMD notes contain a CR byte**, and the migrated plan
+repository has none either. It self-heals on the reader's first keystroke, and the audit's own
+`dropped` list records that the obvious fix makes every CRLF room self-commit at birth authored
+by nobody. `docs/EDITOR.md:508-511` is where it is written down.
+
+**The missing `catch` is the house pattern on about ten further `await fetch(` calls in this
+file** and predates `e56d82e`. The two fixed here are the two that leave a sentence behind them
+— "uploading…" over a placeholder that will never resolve, and "saving…" for ever. The rest
+fail silently, which is worse in a different way and is not this branch's work.
+
 ## What is explicitly not in this plan, and why
 
 - **Remote carets with a name label.** They are drawable inside a real editor and not over a
