@@ -43,6 +43,38 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **A chip that overflows into the next column.** jcanton, 2026-08-20, with a
+  screenshot of a narrowed window: the status chip runs straight through the
+  Owner column — `» IN PROGRESSjcanton` — instead of wrapping or being cut.
+
+  Half-diagnosed already, so start here rather than from the screenshot. `.chip`
+  is `white-space: nowrap` (render.py, near the status tints), which is right:
+  "IN PROGRESS" broken across two lines is not a chip. What is missing is that
+  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, assignees,
+  reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
+  fit hands it a width and nothing clips what does not fit. Priority is in
+  neither either and gets away with it only because it is plain text, which wraps
+  — which is why the same screenshot shows `Medi um` on two lines. Both are the
+  same defect wearing different clothes.
+
+  Three ways to fix it, and the choice is a design decision rather than a
+  mechanical one:
+
+  1. Clip like the other narrow columns — add `status` to the clamp treatment so
+     the chip gets an ellipsis. Cheapest; leaves `IN PROG…`, which is legible.
+  2. Drop to the glyph when the column is too narrow for the word. The chip
+     already carries `»` / `✓` / `?`, the legend on the graph explains them, and
+     the timeline already does exactly this — see `_GLYPH_MIN_PX`. Best-looking,
+     and it is the one that keeps the column readable at any width.
+  3. Let the column stop shedding — make `status` squeezable so the fit gives it
+     what it needs and takes the room from title. Wrong way round: the title is
+     the column somebody is reading.
+
+  (2) is what the rest of the app already does, and reuses a threshold that
+  exists. Whichever is chosen, the priority column wants the same answer at the
+  same time — it is drawn with the bars now, and `Medi um` under them is the
+  version of this bug that nobody reported because it looks like a wrap.
+
 * **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
