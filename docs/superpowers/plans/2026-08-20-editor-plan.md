@@ -986,6 +986,7 @@ wide, and the Link, Image, Table and Horizontal-rule buttons 101px past the righ
 |---|---|---|
 | The `textarea.value` guard never saw `applyMark` | `_MARKING` presses `execCommand('undo')` after a Table and after a Bold | `test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is` |
 | Two `await fetch` sites with no `catch` | `catch` on the upload and on Save, plus the `at < 0` branch | `test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_still_true` |
+| …and the other two, which that fix said did not exist | `catch` on `reparent` (table) and `refile` (graph), which announce before the request too | `test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down`, `test_a_refile_on_a_dead_connection_takes_its_own_sentence_back_down` |
 | The draft throttle re-enters `remembered.set` per keystroke when the store refuses | two clocks: `draftTried` for the interval, `draftWritten` for the receipt | `test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_storage` |
 | `— 1 Lines` | singular at one, on both pinned spellings | `test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth` |
 | `#seatbar` survives into preview-only | kept on purpose; the comment now says what a bar IS | `test_preview_only_takes_away_the_controls_and_keeps_the_one_live_fact` |
@@ -1031,9 +1032,28 @@ repository has none either. It self-heals on the reader's first keystroke, and t
 by nobody. `docs/EDITOR.md:508-511` is where it is written down.
 
 **The missing `catch` is the house pattern on about ten further `await fetch(` calls in this
-file** and predates `e56d82e`. The two fixed here are the two that leave a sentence behind them
-— "uploading…" over a placeholder that will never resolve, and "saving…" for ever. The rest
-fail silently, which is worse in a different way and is not this branch's work.
+file** and predates `e56d82e`.
+
+**Corrected after `e82ce55` shipped, and this paragraph wins over that commit's message.** It
+claimed the uploader and Save were "the two that leave a sentence behind them"; they were not.
+The property is *does a present-continuous sentence go up before the request and come down only
+when an answer arrives*, and it is answered by grep: `…` appears in five places in `render.py`
+that precede an `await fetch`. Two were the editing surface's. The other two are the table's
+drag-to-refile (`reparent`) and the graph's (`refile`), which say `moving task-3 into
+project-a…` and `filing task-3 into project-a…` and had the same `try`/`finally` with no
+`catch` — so a rejection undimmed the row, paired the `openproj:wrote`, and left the sentence
+standing over a diagram nothing had moved. Both now carry the same recovery sentence as Save,
+for the same reason: a fetch rejects when the answer is lost as readily as when the request
+never left, so the honest instruction is to repeat the drag and let the compare-and-swap refuse
+it if the first one landed. `refile` `return`s out of its `catch` because `location.reload()`
+sits after the `finally` and would throw the sentence away. Held by
+`test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down` (`tests/test_table.py`) and
+`test_a_refile_on_a_dead_connection_takes_its_own_sentence_back_down` (`tests/test_edges.py`),
+both in Chrome, both mutation-checked in two directions — the `catch` emptied, and the `catch`
+removed outright. The fifth `…` is the room's `save()`, which does not go over `fetch` at all.
+
+The remaining `await fetch(` sites fail silently, which is worse in a different way and is not
+this branch's work.
 
 ## What is explicitly not in this plan, and why
 

@@ -4046,3 +4046,79 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     # And a row with its own reviewers is drawn the way it always was.
     for row in got["owning"]:
         assert not row["inherited"], f"{row['id']} names its own and is drawn as borrowing"
+
+
+_DROP_ON_A_DEAD_CONNECTION = r"""
+const loose = [];
+addEventListener('unhandledrejection', event => {
+  loose.push(String(event.reason));
+  event.preventDefault();
+});
+let paired = 0;
+addEventListener('openproj:writing', () => { paired++; });
+addEventListener('openproj:wrote', () => { paired--; });
+const region = document.getElementById('state');
+region.textContent = '';
+window.fetch = async () => { throw new TypeError('Failed to fetch'); };
+let threw = null;
+try { await reparent(CHILD, PARENT); } catch (error) { threw = String(error); }
+await new Promise(go => setTimeout(go, 120));
+const row = tbody.querySelector(`tr[data-id="${CHILD}"]`);
+return {
+  loose, threw, paired,
+  said: region.textContent,
+  // The row stopped waiting, which the `finally` has always done, and it is
+  // still drawn where it started, because nothing re-read the plan.
+  waiting: WRITING,
+  dimmed: row ? row.classList.contains('writing') : null,
+  parent: (DATA.rows[CHILD] || {}).parent || null,
+};
+"""
+
+
+def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
+    page: str, tmp_path: Path
+):
+    """`reparent` announces `moving task-3 into project-a…` before the request and
+    takes it back only when an answer arrives — and it was `try`/`finally` with no
+    `catch`.
+
+    A rejection runs the `finally` and carries on unwinding. So the row undimmed,
+    the paired `openproj:wrote` fired, and the live region went on saying the move
+    was happening, for ever, over a row still drawn where it started. `e82ce55`
+    fixed this exact shape on the editing surface and said in its message that the
+    uploader and Save were the only two sites with a sentence left behind them;
+    this is a third, on a gesture that is one drag rather than a paste some people
+    never make.
+
+    The sentence does not guess. A fetch rejects when the answer is lost as
+    readily as when the request never left, so it says what to do — drag it again,
+    and the compare-and-swap refuses the second one with the conflict report if
+    the first one landed.
+    """
+    got = measured_in(
+        chrome(), page, tmp_path / "drop-dropped.html", 1460,
+        _DROP_ON_A_DEAD_CONNECTION.replace("CHILD", json.dumps(TASK))
+        .replace("PARENT", json.dumps(PROJECT)),
+        budget=6000,
+    )
+
+    assert got["loose"] == [], f"the rejection still escapes: {got['loose']}"
+    assert got["threw"] is None, f"and it reaches the gesture that called it: {got['threw']}"
+    assert got["paired"] == 0, (
+        "an `openproj:writing` was left unpaired, which holds every later banner "
+        "on this page for ever"
+    )
+    assert "…" not in got["said"], (
+        f"the page is still saying the move is happening: {got['said']!r}"
+    )
+    assert TASK in got["said"] and "was not moved" in got["said"], got["said"]
+    assert "Drag it again" in got["said"], (
+        f"and it does not say what to do about it: {got['said']!r}"
+    )
+    assert got["waiting"] is None and got["dimmed"] is False, (
+        "the row is still drawn as though the write were in the air"
+    )
+    assert got["parent"] == PITCH, (
+        f"the row moved on a write that never landed: {got['parent']!r}"
+    )

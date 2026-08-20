@@ -5355,6 +5355,24 @@ async function reparent(childId, parentId) {
     announce(!fresh ? `${childId} was moved — reload to see where it landed`
              : parentId ? `${childId} is now in ${parentId}`
                         : `${childId} is no longer inside anything`);
+  } catch (error) {
+    // The connection went while the request was in the air, and the sentence
+    // fifteen lines up says the move is still happening. `e82ce55` fixed exactly
+    // this shape on the editing surface and recorded that the uploader and Save
+    // were "the ones with a sentence left behind them"; they were not. This
+    // gesture and `refile` on the graph both announce a present-continuous
+    // sentence BEFORE the request and take it back only when an answer arrives,
+    // so a rejection ran the `finally`, undimmed the row, and left the live
+    // region reading `moving task-3 into project-a…` for ever — over a row still
+    // drawn where it started, with nothing anywhere to say the drop did not take.
+    //
+    // And it does not guess. A fetch rejects when the ANSWER is lost as readily
+    // as when the request never left, so this says what to do rather than what
+    // happened: the drag is worth repeating either way, because the second one
+    // goes out against the same `base_commit` and the compare-and-swap refuses it
+    // with the conflict report if the first one landed.
+    announce(`${childId} was not moved — ${error.message}. Drag it again: if the `
+             + 'first one landed, the second is refused rather than repeated.');
   } finally {
     // Whatever happened — committed, refused, or the network gone — the row
     // stops waiting. A row left dimmed after a refusal is a row that looks like
@@ -7284,6 +7302,22 @@ async function refile(childId, parentId) {
     }
     committed = answer.commit;
     base.value = answer.commit;
+  } catch (error) {
+    // The other half of the sweep `e82ce55` stopped short of. `say` above puts a
+    // present-continuous sentence in the live region and only an answer takes it
+    // back out, so a rejection left this page reading `filing task-3 into
+    // project-a…` for ever, over a diagram still drawn the way it was, with the
+    // rejection escaping as an unhandled one.
+    //
+    // Same sentence as the table's drag, because it is the same gesture and the
+    // same PATCH: it does not claim to know whether the write landed, and the
+    // recovery is to do it again against the same `base_commit`.
+    say(`${childId} was not moved — ${error.message}. Drag it again: if the first `
+        + 'one landed, the second is refused rather than repeated.');
+    // And NOT the reload below, which is why this returns rather than falling
+    // through: the refusal branch above skips it for the same reason, and a page
+    // that reloaded here would throw the sentence away with itself.
+    return;
   } finally {
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
   }

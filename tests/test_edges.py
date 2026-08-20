@@ -145,3 +145,68 @@ def test_reset_and_leaving_the_mode_both_put_a_marked_edge_back(
     assert got["afterReset"] == 0, "Reset left an edge marked for removal"
     assert got["afterLeaving"] == 0, "leaving the mode left an edge marked for removal"
     assert got["stillThere"] == 1, "an edge nobody committed came off the diagram"
+
+
+def a_child(index: Index) -> tuple[str, str]:
+    """One entity the plan already files inside another, as (child, parent)."""
+    for entity_id, entity in sorted(index.entities.items()):
+        if getattr(entity, "parent", None):
+            return entity_id, entity.parent
+    raise AssertionError("the corpus has nothing filed inside anything")
+
+
+_REFILE_ON_A_DEAD_CONNECTION = """
+const loose = [];
+addEventListener('unhandledrejection', event => {
+  loose.push(String(event.reason));
+  event.preventDefault();
+});
+let paired = 0;
+addEventListener('openproj:writing', () => { paired++; });
+addEventListener('openproj:wrote', () => { paired--; });
+document.getElementById('state').textContent = '';
+window.fetch = async () => { throw new TypeError('Failed to fetch'); };
+let threw = null;
+try { await refile(%s, %s); } catch (error) { threw = String(error); }
+await new Promise(go => setTimeout(go, 120));
+return {loose, threw, paired, said: document.getElementById('state').textContent};
+"""
+
+
+def test_a_refile_on_a_dead_connection_takes_its_own_sentence_back_down(
+    index: Index, page: str, tmp_path: Path
+):
+    """Dragging a node into a box says `filing task-3 into project-a…` before the
+    request, and `refile` was `try`/`finally` with no `catch`.
+
+    A rejection runs the `finally` and carries on unwinding, so the sentence
+    stayed — over a diagram still drawn the way it was, with the rejection
+    escaping unhandled and `location.reload()` never reached. `e82ce55` fixed the
+    same shape on the editing surface and its message named the uploader and Save
+    as the only two sites with a sentence left behind them; this and the table's
+    drag are the other two.
+
+    The reload is the reason the recovery `return`s rather than falling through:
+    the refusal branch above it skips the reload for the same reason, and a page
+    that reloaded here would throw away the only thing that says what happened.
+    """
+    child, parent = a_child(index)
+    got = measured_in(
+        chrome(), page, tmp_path / "refile-dropped.html", 1400,
+        _REFILE_ON_A_DEAD_CONNECTION % (json.dumps(child), json.dumps(parent)),
+        height=1000, budget=6000,
+    )
+
+    assert got["loose"] == [], f"the rejection still escapes: {got['loose']}"
+    assert got["threw"] is None, f"and it reaches the gesture that called it: {got['threw']}"
+    assert got["paired"] == 0, (
+        "an `openproj:writing` was left unpaired, which holds every later banner "
+        "on this page for ever"
+    )
+    assert "…" not in got["said"], (
+        f"the page is still saying the move is happening: {got['said']!r}"
+    )
+    assert child in got["said"] and "was not moved" in got["said"], got["said"]
+    assert "Drag it again" in got["said"], (
+        f"and it does not say what to do about it: {got['said']!r}"
+    )
