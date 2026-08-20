@@ -453,6 +453,41 @@ function aceSurface(area, seeded) {
     fire('caret');
   }
 
+  // **A caret moves without the document moving, and until this line only the
+  // document said so.** `drain` above was the only source of `caret` on this
+  // surface, so every subscriber to it heard about an arrow key, a click in the
+  // text, `gotoLine` or a fold exactly never. Measured in Chrome on
+  // `/detail/…?editor=ace`: `gotoLine(3, 4)` and then one line down left the
+  // status bar reading `Line 1, Column 1` — ask 5's whole content — and it
+  // corrected itself only at the next keystroke. The other subscriber is
+  // `sit()`, so this tab's seat went up the socket once per burst of typing and
+  // never on the move between them: everybody else in the room had a band
+  // sitting where this person last typed rather than where they are, which is
+  // the one thing a band exists to say.
+  //
+  // `changeCursor` on the selection and not `changeSelection`, which also fires
+  // for a range that grew with the caret standing still. `sit()` sends `from`
+  // and `attachStatus` reads both ends off `caret()`, so the cursor moving is
+  // the event that means what these subscribers ask about.
+  //
+  // Coalesced onto a microtask for the reason `flush` is, and not as a
+  // precaution: `:%s/cycle/bet/g` moves the cursor once per replacement, and
+  // `attachStatus`'s refresh splits the whole document to count its lines. The
+  // subscribers are idempotent on the position — `sit` compares against what it
+  // last sent, `refresh` recomputes — which is what makes coalescing them
+  // correct rather than merely cheaper.
+  //
+  // NOT gated on `applying`, exactly as the textarea's `caret` listeners are
+  // not: a remote splice really does move this caret, because `applyDelta`
+  // moves Ace's anchors, and a readout that says where it now is is the honest
+  // answer.
+  let caretQueued = false;
+  editor.selection.on('changeCursor', () => {
+    if (caretQueued) return;
+    caretQueued = true;
+    Promise.resolve().then(() => { caretQueued = false; fire('caret'); });
+  });
+
   return {
     // The Ace container, for the questions that are about a box: class names,
     // `closest`, and the events the members below do not cover — keydown, paste

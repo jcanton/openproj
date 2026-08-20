@@ -4069,3 +4069,91 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
         assert got["rows"] == 1, (
             f"the toolbar wrapped at {width}px, where it fits: {got['rows']} rows"
         )
+
+
+_ACE_CARET_MOVES = r"""
+document.getElementById('toggle').click();
+await new Promise(go => setTimeout(go, 300));
+const editor = SURFACE.editor;
+const bar = document.getElementById('statusbar');
+if (!editor || !bar) return {missing: true};
+const where = () =>
+  [...bar.children].map(one => one.textContent).find(text => text.startsWith('Line'));
+
+// A document with room to move about in, put there through the surface so the
+// seeding path is the one everything else uses.
+editor.focus();
+editor.selection.selectAll();
+SURFACE.splice(0, SURFACE.text().length, 'alpha\nbeta\ngamma\ndelta\n');
+await new Promise(go => setTimeout(go, 120));
+const seeded = where();
+
+// Three ways a caret moves with the document standing still, and none of them
+// is an edit: a jump, an arrow key and a click in the text.
+editor.gotoLine(3, 4);
+await new Promise(go => setTimeout(go, 80));
+const afterJump = where();
+editor.navigateUp(1);
+await new Promise(go => setTimeout(go, 80));
+const afterArrow = where();
+editor.selection.moveTo(0, 2);
+await new Promise(go => setTimeout(go, 80));
+const afterClick = where();
+
+// And the caret this tab would tell a room about, which hangs off the same
+// event and is the reason this is not only a readout.
+const seats = [];
+SURFACE.onCaret(() => seats.push(SURFACE.caret().from));
+editor.selection.moveTo(3, 1);
+await new Promise(go => setTimeout(go, 80));
+return {seeded, afterJump, afterArrow, afterClick, seats,
+        at: SURFACE.caret().from};
+"""
+
+
+def test_the_second_editors_caret_is_reported_when_it_moves_and_not_when_it_types(
+    client: TestClient, tmp_path: Path
+):
+    """`drain` was the only thing on this surface that fired `caret`.
+
+    `drain` runs off a document change, so an arrow key, a click in the text, a
+    jump and a fold each moved the caret and told nobody. Measured in Chrome
+    before this: `gotoLine(3, 4)` and then one line up left the status bar
+    reading `Line 1, Column 1`, and it corrected itself at the next keystroke —
+    so ask 5's caret readout was showing where you last typed, which is the one
+    position it is never useful to know.
+
+    The second subscriber is `sit()`, which is why this is not only a readout: on
+    the second surface this tab's seat went up the socket once per burst of
+    typing and never on the move in between, so everybody else in the room drew
+    a band where this person last typed. `provides.seats` is false here, so Ace
+    does not draw anybody else's — but it still sends its own, and a textarea at
+    the other end draws it.
+
+    `changeCursor` rather than `changeSelection`, coalesced onto a microtask for
+    the reason `drain` coalesces: a substitution moves the cursor once per
+    replacement and `attachStatus`'s refresh splits the whole document.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "ace-caret.html",
+        1400, _ACE_CARET_MOVES, query="?editor=ace", budget=8000,
+    )
+
+    assert not got.get("missing"), "the second editor did not mount, or carries no status bar"
+    assert got["seeded"].startswith("Line 5, Column 1"), (
+        f"the document was not seeded where this expects: {got['seeded']!r}"
+    )
+    assert got["afterJump"].startswith("Line 3, Column 5"), (
+        f"a jump moved the caret and the bar went on describing the last edit: "
+        f"{got['afterJump']!r}"
+    )
+    assert got["afterArrow"].startswith("Line 2, Column 5"), (
+        f"an arrow key moved the caret and nothing said so: {got['afterArrow']!r}"
+    )
+    assert got["afterClick"].startswith("Line 1, Column 3"), (
+        f"a click in the text moved the caret and nothing said so: {got['afterClick']!r}"
+    )
+    assert got["seats"] and got["seats"][-1] == got["at"], (
+        "the caret this tab would send to a room was not offered when it moved, so "
+        f"everybody else's band stays where this person last typed: {got['seats']}"
+    )
