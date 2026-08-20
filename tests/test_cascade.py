@@ -50,6 +50,7 @@ def served_pages(index: Index) -> dict[str, str]:
     from openproj.render import (
         render_graph,
         render_issues,
+        render_new,
         render_notes,
         render_timeline,
     )
@@ -62,6 +63,13 @@ def served_pages(index: Index) -> dict[str, str]:
                                 base_commit=HEAD, may_write=True),
         "issues": render_issues(index, ROUTES, base_commit=HEAD),
         "notes": render_notes(index, ROUTES, base_commit=HEAD),
+        # The editing surface, which a served detail page does not show: the
+        # toolbar, the view switcher and the status bar are all `.field`s inside
+        # `article.entity.editing`, so on a record somebody is only READING they
+        # have no client rects and the sweep below never sees them. The create
+        # page is the same markup and the same stylesheet with the mode already
+        # on — twenty controls that would otherwise be measured on no page at all.
+        "create": render_new("task", HEAD, ROUTES, index, may_write=True),
     }
 
 
@@ -787,6 +795,372 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
     assert sheet.value(picker, "min-width") == "0", says(sheet, picker, "min-width")
 
 
+# --------------------------------------------------------------------------- #
+# The full page, which is a third mode over two that already fight
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def detail(index: Index) -> Sheet:
+    """The detail page as a writer gets it: the shell, then `_DETAIL_STYLE`, then
+    `_SUGGEST_STYLE`, in the order they are inlined."""
+    return sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+
+
+def _writing(mode: str) -> list[El]:
+    """Inside the surface, in one of the three views."""
+    return PAGE + [
+        el("article", f"entity editing full view-{mode}"),
+        el("form", id="edit"),
+        el("div", "panes"),
+        el("div", "main"),
+        el("div", "bodysplit"),
+    ]
+
+
+def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
+    """Qualifying a selector to win a fight is this stylesheet's characteristic
+    failure — twice in one week, and both times the rule that lost was one nobody
+    had asked the cascade about.
+
+    Full page is a third mode over two that are already one class apart, so every
+    one of its rules is `.entity.full …` at (0,3,x) sitting above `.entity.editing
+    .field` at (0,3,0) — the rule that puts the controls on the page at all.
+    What is asserted is that the full-page rules changed the *geometry* and left
+    the two modes to decide what exists: a `display` on the box or the pane taken
+    by a view rule is a box that edit mode cannot bring back.
+    """
+    box = _writing("both") + [el("div", "bodywrap"), el("textarea", "field body-field")]
+    pane = _writing("both") + [el("div", "field doc", id="body-preview")]
+
+    for path, what in ((box, "the box"), (pane, "the rendered pane")):
+        won = detail.winner(path, "display")
+        assert won and won.selector == ".entity.editing .field", (
+            f"{what} is displayed by {won} in the split view\n" + says(detail, path, "display")
+        )
+
+    # And the two rules that *do* take a pane away name the view they belong to,
+    # so leaving that view gives it back.
+    gone = _writing("view") + [el("div", "bodywrap")]
+    assert detail.value(gone, "display") == "none", says(detail, gone, "display")
+    assert detail.winner(gone, "display").selector.startswith("article.entity.full.view-view")
+    kept = _writing("both") + [el("div", "bodywrap")]
+    assert detail.value(kept, "display") is None, says(detail, kept, "display")
+
+    # The surface is the window, so the measure has to lose here and win
+    # everywhere else. Both are `article.entity…`, and (0,2,1) beats (0,1,1).
+    inside = PAGE + [el("article", "entity editing full view-edit")]
+    outside = PAGE + [el("article", "entity editing")]
+    assert detail.value(inside, "width") == "auto", says(detail, inside, "width")
+    assert detail.value(outside, "width") == "var(--measure, 64rem)"
+
+    # And the toolbar refuses to shrink, which is what keeps it on one row. It
+    # is the last rule in the last stylesheet, so nothing here is deciding it by
+    # order alone.
+    marks = PAGE + [el("span", "marks", id="marks")]
+    assert detail.value(marks, "flex") == "none", says(detail, marks, "flex")
+
+
+def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
+    detail: Sheet
+):
+    """The splitter, resolved by name, because "the rule is in the stylesheet" is
+    not what a reader sees.
+
+    Three fights, and each of them is one somebody could lose by accident:
+
+    * the handle is `display: none` by default and the split view is what turns it
+      on. `#splitter` is (1,0,0) and every rule that could give it back a box is a
+      class selector, so the *default* has to be the id — an `article.entity.full
+      .bodysplit > div` written to lay the panes out would otherwise draw a
+      separator on six pages that have no document to split;
+    * the two prose tracks keep `minmax(0, …)`. A bare fraction there is a track
+      whose minimum is its content, and one unbroken line of prose is wider than
+      half a window;
+    * and the rendered pane draws no line of its own where the handle draws one.
+      Two lines down the middle of a split is worse than none, and the pane's
+      border is the line that was there first.
+
+    **`cascade.py` skips at-rules by construction**, which is a real limit here
+    and is stated rather than papered over: the `@media (width < 58.5rem)` block
+    that takes the handle away and hands the pane its border back is invisible to
+    this engine, so that half is asked of Chrome in
+    `test_there_is_no_handle_where_there_is_nothing_to_divide`. What is resolved
+    here is the wide window, which is the state the feature exists in.
+    """
+    split = _writing("both")
+    won = detail.winner(split, "grid-template-columns")
+    assert won and won.selector == "article.entity.full.view-both .bodysplit", (
+        f"the split's columns are decided by {won}\n"
+        + says(detail, split, "grid-template-columns")
+    )
+    assert won.value == "minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr)", won.value
+
+    handle = _writing("both") + [el("div", id="splitter")]
+    on = detail.winner(handle, "display")
+    assert on and on.value == "block", (
+        f"the handle is displayed by {on} in the split view\n"
+        + says(detail, handle, "display")
+    )
+    # And every other place it could be drawn, which is every other place it is
+    # rendered into: the two one-pane views, and the page outside the surface.
+    for where in (
+        _writing("edit") + [el("div", id="splitter")],
+        _writing("view") + [el("div", id="splitter")],
+        PAGE + [el("article", "entity editing"), el("form", id="edit"),
+                el("div", "bodysplit"), el("div", id="splitter")],
+    ):
+        off = detail.winner(where, "display")
+        assert off and off.value == "none" and off.selector == "#splitter", (
+            f"a splitter outside the split view is displayed by {off}\n"
+            + says(detail, where, "display")
+        )
+
+    pane = _writing("both") + [el("div", "field doc", id="body-preview")]
+    assert detail.value(pane, "border-left") is None, (
+        "the rendered pane draws a line down its left edge and so does the handle "
+        "beside it, which is two lines down the middle of one split\n"
+        + says(detail, pane, "border-left")
+    )
+
+# --------------------------------------------------------------------------- #
+# One editing surface, two stylesheets
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def record(index: Index) -> Sheet:
+    """An issue page: `_RECORD_STYLE`, then `_EDITING_STYLE`, then
+    `_SUGGEST_STYLE`, after the shell."""
+    from openproj.render import render_issue
+
+    return sheet_of(render_issue(index, links=ROUTES, base_commit=HEAD))
+
+
+_RECORD_EDITING = [
+    el("body"), el("main", id="main"), el("article", "entity editing"),
+]
+
+
+def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record: Sheet):
+    """The fight `tests/test_issues.py` was written for, re-resolved after the
+    mode class moved off `<body>` and onto the article.
+
+    `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1), so
+    the tie is decided by order and nothing else — which is why the answer has to
+    be asked rather than assumed. The bar wins because `_EDITING_STYLE` is
+    concatenated after `_RECORD_STYLE`; and the markup carries no `.field` on the
+    bar either, so the tie does not arise on the page as it is written. Both
+    halves, because either one alone is a guard somebody can remove.
+    """
+    bar = _RECORD_EDITING + [el("p", "bodybar markbar")]
+    won = record.winner(bar, "display")
+    assert won and won.selector == ".entity.editing .bodybar" and won.value == "flex", (
+        f"the toolbar is displayed by {won}\n" + says(record, bar, "display")
+    )
+
+    # And what it would resolve to if somebody put `.field` back on it, which is
+    # the failure this is guarding: `flex`, still, and by order alone.
+    with_field = _RECORD_EDITING + [el("p", "field bodybar markbar")]
+    reaching = record.selectors_reaching(with_field, "display")
+    assert reaching[-1].selector == ".entity.editing .bodybar", (
+        "the bar loses to `.field` again the moment it carries one\n"
+        + says(record, with_field, "display")
+    )
+    assert reaching[-1].specificity == reaching[-2].specificity, (
+        "it is winning on weight, so the ordering argument above is no longer "
+        f"what is holding it up: {says(record, with_field, 'display')}"
+    )
+
+
+def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(
+    record: Sheet, index: Index
+):
+    """The one declaration for the box and the column of numbers beside it, on
+    the sheet that used to carry a second copy.
+
+    `--gutter` is written in `ch`, and `ch` is resolved in the font of whoever
+    uses the value — so a box in one face and a gutter in another is a column of
+    numbers that does not line up with the lines it names. And `width: 100%`
+    means the box: the record pages had no `box-sizing` rule of their own, so
+    their textarea hung past the container it was in.
+    """
+    box = _RECORD_EDITING + [
+        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("textarea", "field body-field"),
+    ]
+    assert record.value(box, "font-family") == "var(--font-mono)", says(
+        record, box, "font-family"
+    )
+    # **This engine cannot answer the same question on the other sheet, and that
+    # is worth stating rather than leaving as a gap.** `_DETAIL_STYLE` carries
+    # `input.field, select.field, textarea.field { font: inherit }` at the same
+    # (0,1,1) as the declaration above, and a shorthand is what decides the face
+    # there. `_declarations` records a property by the name it is written under,
+    # so `font` and `font-family` are two different properties here and no
+    # conflict is visible — while a browser expands one into the other and the
+    # order the two stylesheets are concatenated in decides which wins. So the
+    # ordering argument is asked of Chrome instead, in
+    # `test_the_box_and_the_column_beside_it_are_one_face`.
+    detail_sheet = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+    detail_box = [
+        el("body"), el("main", id="main"), el("article", "entity editing"),
+        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("textarea", "field body-field"),
+    ]
+    assert detail_sheet.value(detail_box, "font") == "inherit", (
+        "the shorthand this note is about is gone, so either the browser test it "
+        "points at is now the only guard or it is no longer needed\n"
+        + says(detail_sheet, detail_box, "font")
+    )
+
+    assert record.value(box, "box-sizing") == "border-box", says(record, box, "box-sizing")
+    assert record.value(box, "max-width") == "44rem", (
+        "the reading measure this page caps its box at outside the surface\n"
+        + says(record, box, "max-width")
+    )
+
+    # And inside the full-page surface the measure loses, because the pane IS the
+    # window. (0,2,1) against (0,1,0), so this one is weight and not order.
+    inside = [
+        el("body", "fullpage"), el("main", id="main"),
+        el("article", "entity editing full view-both"),
+        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("textarea", "field body-field"),
+    ]
+    assert record.value(inside, "max-width") == "none", says(record, inside, "max-width")
+
+
+def test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets(
+    record: Sheet, index: Index
+):
+    """`[hidden] { display: none }` is the UA sheet's, and an author rule of any
+    weight beats it. `_DETAIL_STYLE` had the guard that puts it back;
+    `_RECORD_STYLE` did not, so the rendered pane — which is a `.field` and is
+    `hidden` until a view asks for it — would have been drawn on this page from
+    the moment it gained one. The guard is now written once, for both.
+    """
+    detail = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+    for name, sheet in (("issue", record), ("detail", detail)):
+        pane = [
+            el("body"), el("main", id="main"), el("article", "entity editing"),
+            el("div", "field doc", id="body-preview", hidden="hidden"),
+        ]
+        won = sheet.winner(pane, "display")
+        assert won and won.value == "none", (
+            f"on the {name} page a hidden pane is displayed by {won}\n"
+            + says(sheet, pane, "display")
+        )
+
+
+def test_the_handle_between_the_panes_is_the_same_control_on_both_stylesheets(
+    record: Sheet, index: Index
+):
+    """The splitter resolved against `_RECORD_STYLE` as well as `_DETAIL_STYLE`.
+
+    The two are the failure mode this file exists for: a second copy of the
+    editing rules under a different mode class, where a rule that wins on one page
+    can lose on the other and nothing between them says so. The issue and note
+    pages draw this handle — `render_issue` and `render_note` emit `_SPLIT_HANDLE`
+    into the same `.bodysplit` the detail page does — so both halves have to be
+    asked, and the fight worth asking about is the DEFAULT: `#splitter` is (1,0,0)
+    and the rules that give it a box are class selectors, so if a sheet ever loses
+    the id rule the separator appears on every page that inlines it with no
+    document to divide.
+
+    `touch-action` is here for the same reason it is asserted in the browser: a
+    handle a finger can start a pan on is one the browser may take the pointer
+    back from mid-drag.
+    """
+    detail = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+    for name, sheet in (("issue", record), ("detail", detail)):
+        inside = [
+            el("body", "fullpage"), el("main", id="main"),
+            el("article", "entity editing full view-both"), el("form", id="edit"),
+            el("div", "bodysplit"), el("div", id="splitter"),
+        ]
+        won = sheet.winner(inside, "display")
+        assert won and won.value == "block", (
+            f"on the {name} page the handle in the split view is displayed by {won}\n"
+            + says(sheet, inside, "display")
+        )
+        assert sheet.value(inside, "touch-action") == "none", (
+            f"on the {name} page a finger on the handle can start a pan\n"
+            + says(sheet, inside, "touch-action")
+        )
+
+        outside = [
+            el("body"), el("main", id="main"), el("article", "entity editing"),
+            el("div", "bodysplit"), el("div", id="splitter"),
+        ]
+        off = sheet.winner(outside, "display")
+        assert off and off.value == "none" and off.selector == "#splitter", (
+            f"on the {name} page a splitter outside the split view is displayed by {off}\n"
+            + says(sheet, outside, "display")
+        )
+
+
+# --------------------------------------------------------------------------- #
+# One commit bar, four pages, one rule
+# --------------------------------------------------------------------------- #
+
+
+def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index: Index):
+    """The four pages that draw a commit bar agree about which edge it sticks to,
+    and they agree because one rule says so rather than because four sheets
+    happen to.
+
+    This is the test the defect it was written for would have failed. The detail
+    page's bar moved to the top by way of `#commitbar { top: 0; bottom: auto }` in
+    `_DETAIL_STYLE` — and `_DETAIL_STYLE` is loaded by the detail page, the create
+    form, the cycle page and the cycles index. Two of those still had their bar
+    last in the markup, so an id override written for one page took `bottom: 0`
+    away from two others and gave them nothing in its place: a `top: 0` sticky box
+    at the foot of a document is a box you cannot see until you have scrolled to
+    it, which is exactly the defect the create page's own test was written for.
+    Measured in Chrome at 1400x900: 1178px down the create page, 1113px down the
+    cycle page, on screen from neither top.
+
+    A rule being in the stylesheet says nothing about whether it wins, and on the
+    two broken pages every rule involved was in the stylesheet and read correctly.
+    What was wrong was which one won, on which pages — so that is what is asked,
+    by name, per page.
+    """
+    from openproj.render import render_cycle, render_graph, render_new
+
+    number = sorted(index.cycles)[0]
+    bar = el("div", "commitbar", id="commitbar")
+    pages = {
+        "detail": (render_detail(index, ROUTES, only=sorted(index.entities)[0],
+                                 base_commit=HEAD, may_write=True),
+                   [el("article", "entity editing"), bar]),
+        "create": (render_new("task", HEAD, ROUTES, index, may_write=True),
+                   [el("article", "entity editing"), bar]),
+        "cycle": (render_cycle(index, number, ROUTES, base_commit=HEAD), [bar]),
+        "graph": (render_graph(index, ROUTES, base_commit=HEAD), [bar]),
+    }
+
+    for name, (page, tail) in pages.items():
+        sheet = sheet_of(page)
+        path = [el("body"), el("main", id="main"), *tail]
+        for prop, edge in (("top", "0"), ("bottom", "auto")):
+            won = sheet.winner(path, prop)
+            assert won and won.selector == ".commitbar" and won.value == edge, (
+                f"on the {name} page the bar's {prop} is decided by {won}\n"
+                + says(sheet, path, prop)
+            )
+            # And decided by exactly one rule, which is the half that would have
+            # caught this: the broken pages had two, and the loser was the one
+            # every test asserted the text of.
+            reaching = sheet.selectors_reaching(path, prop)
+            assert len(reaching) == 1, (
+                f"the {name} page's bar has {len(reaching)} answers to {prop}\n"
+                + says(sheet, path, prop)
+            )
+        assert sheet.value(path, "position") == "sticky", (
+            f"the {name} page's bar is not sticky, so which edge it names is a "
+            "coordinate rather than a guarantee\n" + says(sheet, path, "position")
+        )
 # Every button and every select on the page, and what it is actually drawn with.
 # Measured, not read: the version of this test that read the stylesheet passed
 # while `#preview`, `#connect`, `#clear-filters` and a dozen others were being
@@ -797,15 +1171,23 @@ const out = [];
 for (const el of document.querySelectorAll('button, select')) {
   if (!el.getClientRects().length) continue;
   const s = getComputedStyle(el);
+  // A segment of a segmented control is drawn by the GROUP it sits in. Three
+  // states of one thing share one rectangle on purpose — giving each segment its
+  // own would draw a doubled border down every join — so the rectangle to ask
+  // about is the one a reader actually sees, and it still has to be the app's.
+  // Reported this way rather than excused: an exception measured on the wrong
+  // element is an exception that stops being measured at all.
+  const box = el.closest('.views') || el;
+  const r = getComputedStyle(box);
   out.push({
-    // A sort control inside a column header. Bare on purpose: a header that
-    // looks like a button stops looking like a header.
-    header: !!el.closest('th'),
     what: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
           + (typeof el.className === 'string' && el.className.trim()
              ? '.' + el.className.trim().split(/\s+/).join('.') : ''),
-    border: s.borderTopWidth + ' ' + s.borderTopStyle,
-    radius: s.borderTopLeftRadius,
+    border: r.borderTopWidth + ' ' + r.borderTopStyle,
+    radius: r.borderTopLeftRadius,
+    // What the control puts on the page under its border, which is the other
+    // half of "is anything drawn here at all".
+    ground: r.backgroundColor,
     size: s.fontSize,
     family: s.fontFamily.split(',')[0].replace(/["']/g, ''),
   });
@@ -813,25 +1195,33 @@ for (const el of document.querySelectorAll('button, select')) {
 return out;
 """
 
-# The controls that are deliberately drawn with nothing: an icon in a corner, a
-# swatch, a grip, a filter button that draws its own caret. Each one says so in
-# its own rule, which outranks the default because a class or an id outranks an
-# element — so this list is what the page already says, written down where a test
-# can check it has not grown by accident.
 def bare(one: dict) -> bool:
     """Whether this control is deliberately drawn with nothing.
 
-    Asked of the drawing rather than of a list of names, because a list is what
-    this whole test exists to replace. Three kinds of control legitimately carry
-    no rectangle: an icon in a corner, a column header that must look like a
-    header, and the filter buttons, which draw their own border and caret inside
-    themselves. Each says so in its own rule, and each of those rules outranks
-    the default because a class or an id beats an element.
+    Asked of the DRAWING and of nothing else, which is the correction the styling
+    rule itself needed one commit earlier. This was a list of names — an id, a
+    `closest('th')`, a substring — and a list has the two failures that argument
+    is about: it excuses the controls somebody thought of and none of the ones
+    they did not, and it cannot tell a control that is deliberately bare from one
+    that has drifted, because a name goes on matching whatever the control turns
+    into.
+
+    So the question is whether anything is drawn here at all: no border and no
+    ground. That is exactly what each of these controls already says in its own
+    rule — the theme icon in the corner, the column headers that must go on
+    looking like headers, the filter buttons that draw their own caret inside
+    themselves, the status strip's pickers that are words until you point at
+    them, all of them `background: none; border: 0` under a class or an id, which
+    outranks an element selector. The browser's own chrome is neither of those
+    things — `2px outset` over an opaque `buttonface` — so the defect this test
+    was written for still lands in the set that has to match.
     """
-    return one["what"] in ("button#theme",) or one["header"] or "facetopen" in one["what"]
+    return one["border"].endswith(" none") and one["ground"] == "rgba(0, 0, 0, 0)"
 
 
-@pytest.mark.parametrize("view", ["table", "graph", "timeline", "detail", "issues", "notes"])
+@pytest.mark.parametrize(
+    "view", ["table", "graph", "timeline", "detail", "issues", "notes", "create"]
+)
 def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_path):
     """jcanton, 2026-08-20, on finding "Preview the body" still native: "I thought
     we had managed to impose the style of buttons and dropdowns to be coherent
@@ -857,16 +1247,29 @@ def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_p
     styled = [one for one in drawn if not bare(one)]
     assert styled, f"every control on the {view} page claims to be deliberately bare"
 
-    # The rectangle and its border, not the type size. A "show 1 more" button
-    # inside a table cell is legitimately smaller than Save; what has to match is
-    # the shape, which is what the eye reads as "these are the same kind of thing".
-    shapes = {(one["border"], one["radius"]) for one in styled}
-    assert shapes == {("1px solid", "2px")}, (
-        f"controls on the {view} page are drawn differently: "
+    # The border, not the type size. A "show 1 more" button inside a table cell is
+    # legitimately smaller than Save; what has to match is the rectangle, which is
+    # what the eye reads as "these are the same kind of thing".
+    assert {one["border"] for one in styled} == {"1px solid"}, (
+        f"controls on the {view} page are bordered differently: "
         + "; ".join(
-            f"{one['what']} is {one['border']} r{one['radius']}"
-            for one in styled
-            if (one["border"], one["radius"]) != ("1px solid", "2px")
+            f"{one['what']} is {one['border']}"
+            for one in styled if one["border"] != "1px solid"
+        )
+    )
+    # And the corner, of everything that HAS one. `50%` is not a corner, it is a
+    # circle: the theme toggle is a round icon button, and giving it 3px would
+    # make it a square with a sun in it. Asked of the drawing rather than excused
+    # by name — the version of this list that named `button#theme` excused its
+    # border along with its corner, and a round control still owes the app its
+    # border. Nothing drifts into `50%` by accident, which is what a name cannot
+    # say for itself.
+    corners = {one["radius"] for one in styled if one["radius"] != "50%"}
+    assert corners == {"3px"}, (
+        f"controls on the {view} page are cornered differently: "
+        + "; ".join(
+            f"{one['what']} is r{one['radius']}"
+            for one in styled if one["radius"] not in ("3px", "50%")
         )
     )
     # `2px outset` is Chrome's own default for a button nobody styled, and it is

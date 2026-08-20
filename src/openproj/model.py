@@ -38,6 +38,23 @@ _DEFAULT_BUILD_DAYS = 28
 # functions below can be asked for.
 CALENDAR_DAYS = (date.max - date.min).days
 
+# The largest body this tool will put in git. Starlette does not bound a request
+# body and Cloud Run will happily carry 32 MB; a blob committed to git is
+# permanent and branch protection blocks the force-push that would take it back
+# out, so the only place to stop it is before the commit.
+#
+# Here rather than in `web.py`, where it was written, because it now has a second
+# reader: the editor's status bar says how long a document is, and has to say
+# when it is too long to save rather than letting a person find out from a 413
+# after pressing Save. A ceiling written out twice is the defect this repository
+# already paid for once — `MAX_UPDATE_BYTES` and this were both spelled
+# `256 * 1024` in two files, one bounding a socket frame and one bounding what
+# may be committed, and because a Yjs update is always larger than the text
+# inside it the transport refused a body the policy would have taken, in silence.
+# The transport bound is still derived from this one in `web.py`, and the number
+# the page draws is now this object rather than a third copy of the digits.
+MAX_BODY_BYTES = 256 * 1024
+
 
 def within_the_calendar(days: float) -> float:
     """`days`, bounded by the length of the calendar so that rounding it cannot raise.

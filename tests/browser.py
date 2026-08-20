@@ -44,12 +44,19 @@ def chrome() -> str:
     return found
 
 
-def screenshot(browser: str, html: Path, png: Path) -> bytes:
-    """One page, one window, one PNG. 700px wide so the table has more columns
-    than room and can actually be scrolled sideways."""
+def screenshot(
+    browser: str, html: Path, png: Path, width: int = 700, height: int = 600
+) -> bytes:
+    """One page, one window, one PNG. 700px wide by default so the table has more
+    columns than room and can actually be scrolled sideways.
+
+    The size is a parameter for the same reason `measured_in`'s is: the editing
+    surface is `position: fixed; inset: 0`, so what it draws is a function of the
+    window and 700x600 is a window nothing in it is designed for.
+    """
     subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-         "--force-device-scale-factor=1", "--window-size=700,600",
+         "--force-device-scale-factor=1", f"--window-size={width},{height}",
          f"--screenshot={png}", "--virtual-time-budget=2500", str(html)],
         capture_output=True, check=True,
     )
@@ -94,6 +101,7 @@ def measured_in(
     script: str,
     height: int = 900,
     flags: tuple[str, ...] = (),
+    query: str = "",
     patience: int = 1300,
 ) -> dict:
     """Lay the page out in Chrome at this size, run `script` over the result and
@@ -125,16 +133,34 @@ def measured_in(
     column's edge. Passed through rather than baked in, because a run under a
     forced setting has to be comparable to a run without it — the assertion is
     the difference between the two.
+
+    `query` is appended to the `file://` URL, so a test can ask what the page
+    does when it is opened at `?both`. A deep link is read off `location.search`
+    and there is no other way to give it one: a script cannot change the search
+    without navigating, and navigating loses the script.
+
+    The script is awaited, so it may be written `async` and may wait for
+    something the page does on its own clock — a debounce, a frame, a fetch. A
+    plain value is unaffected, because awaiting a non-promise is that value. That
+    waiting is what `patience` bounds, and it is why the editor's questions pass
+    numbers in the thousands: a script that outlives the clock reports nothing at
+    all, which surfaces as "the page reported nothing" rather than as a wrong
+    answer — so a question about a 300ms debounce asked three times over has to
+    raise `patience` rather than shorten the debounce it is asking about.
     """
     where.write_text(page.replace(
         "</body>",
-        "<script>setTimeout(() => { document.body.dataset.report = JSON.stringify("
-        f"(() => {{ {script} }})()); }}, {SETTLE});</script></body>",
+        "<script>setTimeout(async () => { document.body.dataset.report = JSON.stringify("
+        f"await (async () => {{ {script} }})()); }}, {SETTLE});</script></body>",
     ))
     done = subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
          "--force-device-scale-factor=1", f"--window-size={width},{height}",
-         *flags, f"--virtual-time-budget={SETTLE + patience}", "--dump-dom", str(where)],
+         # A URL and not a path, because a path is all Chrome will take it for:
+         # `…/deep.html?both=` handed over as a filename is a file that does not
+         # exist, and what loads instead is a blank page that reports nothing.
+         *flags, f"--virtual-time-budget={SETTLE + patience}", "--dump-dom",
+         where.as_uri() + query],
         capture_output=True, text=True, check=True,
     )
     found = re.search(r'data-report="([^"]*)"', done.stdout)

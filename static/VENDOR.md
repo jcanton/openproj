@@ -13,6 +13,9 @@ below, and the bytes in git are still upstream's.
 | `yjs-LICENSE.txt` | 13.6.32 | MIT | https://raw.githubusercontent.com/yjs/yjs/v13.6.32/LICENSE |
 | `elk.bundled.js` | 0.9.3 | **EPL-2.0** | https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js |
 | `elk-LICENSE.txt` | 0.9.3 | EPL-2.0 | licence text for the file above |
+| `ace.js` | 1.44.0 | **BSD-3-Clause** | `src-min-noconflict/ace.js` from https://registry.npmjs.org/ace-builds/-/ace-builds-1.44.0.tgz |
+| `keybinding-vim.js` | 1.44.0 | BSD-3-Clause | `src-min-noconflict/keybinding-vim.js` from the same tarball |
+| `ace-LICENSE.txt` | 1.44.0 | BSD-3-Clause | `LICENSE` from the same tarball |
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
 
@@ -20,6 +23,51 @@ The font was absent from this table for as long as it has been in the directory,
 is how the update procedure below came to delete its checksum. Its upstream Inter
 release was not written down when it was vendored; the SHA256 below is what identifies
 the exact bytes, and whoever replaces the file should record the version here.
+
+**Ace is BSD-3-Clause, which is this repository's own licence**, so nothing about
+combining it is in question. What is in question is the notice: all three of the
+minified files contain **zero** occurrences of `Copyright`, `BSD` and `Ajax.org` —
+upstream strips the block when it minifies, and `src-noconflict/ace.js` opens with it.
+BSD-3 clause 2 asks for the notice in a binary redistribution, and this repository
+already reads "every rendered page is a copy" as redistribution for Inter, enforced by
+`test_the_font_licence_travels_with_the_font`. So `ace-LICENSE.txt` ships here **and**
+`render._ace()` writes it into the page as a comment ahead of the bytes, where it travels
+with them.
+
+The bytes come out of the npm tarball rather than off a CDN, which is a better precedent
+than `cytoscape.min.js` set: `src-min-noconflict/` is a directory upstream publishes, so a
+SHA256 over those bytes identifies something a person can point at, not a minifier's
+output on somebody else's machine. Verified: `sha256(ace-builds-1.44.0.tgz)` is
+`a8116a1e…`, and the two files extracted from it are byte-identical to the ones here.
+
+**`mode-markdown.js` is deliberately not here**, and this is the one to re-read before
+adding it. It is 75,276 B for syntax highlighting, which is on nobody's list of asks; it
+is the only one of the three files that fails `test_no_page_asks_the_network_for_a_font`,
+twice, at offsets 9046 and 47867, on a tokeniser regex and a completion template that
+fetch nothing at all; and it bundles the javascript, css, html and xml sub-modes, each of
+which defines a `createWorker`. Those ship dormant — `MarkdownMode` inherits `TextMode`,
+whose `createWorker` returns `null` — but any later `setMode('ace/mode/javascript')` for a
+fenced-code sub-editor builds a `blob:` Worker this CSP blocks **in silence**: an `error`
+event with an empty message, no exception, and Ace's own "Could not load worker" warning
+never firing, because the constructor does not throw. Measured here, in headless Chrome,
+under the real policy, with `window.Worker` hooked before Ace parsed: `ace.js` +
+`keybinding-vim.js` with no mode set construct **0** Workers, take **0** CSP violations
+and inject **0** scripts, and `session.$worker` is `null`; the same page with the markdown
+mode added and `ace/mode/javascript` set constructs one `blob:` Worker and logs
+`worker-src <- blob` — and fires **no `error` event at all**, which is one step worse than
+the "empty `window.error`" recorded earlier and makes the point harder: the failure is
+completely silent. The forced failure is what makes the zero evidence rather than a check
+that could only pass.
+
+**Five of Ace's default commands are removed at construction**, in `render.py`, and that is
+application code rather than upstream behaviour — the bytes are verbatim, the behaviour
+deliberately is not. `find`, `replace`, `showSettingsMenu`, `goToNextError` and
+`goToPreviousError` all call `config.loadModule`, which is
+`createElement('script'); i.src = e; head.appendChild(i)`. Measured under this policy,
+Cmd-F gives `defaultPrevented=true`, one injected `ext-searchbox.js`, a `script-src-elem`
+violation, no searchbox in the DOM, and an empty `window.error` — Ace takes Cmd-F from the
+browser and gives back nothing. Removed, the key falls through to Chrome's own find, which
+works on this document and on the rendered pane beside it.
 
 **ELK is the one file here that is not permissively licensed.** EPL-2.0 is a weak,
 file-level copyleft: this repository is BSD-3-Clause and stays BSD-3-Clause, the bundle is
@@ -70,7 +118,12 @@ joined the line the day Yjs arrived, for exactly the same reason.
 
 Then check that the graph page still lays out the seed corpus left to right, and — if
 the font changed — that a rendered page still carries one `@font-face` whose `src` is a
-`data:` URI, with no `url()` pointing anywhere else.
+`data:` URI, with no `url()` pointing anywhere else. And if Ace changed, re-run the worker
+gate: open `/detail/<id>?editor=ace` in headless Chrome under the real CSP with
+`window.Worker` hooked **before** Ace parses, confirm zero Workers and zero
+`securitypolicyviolation` events, and force the failure with `ace/mode/javascript` as a
+control — a blocked worker throws nothing and logs nothing, so a gate with no forced
+failure beside it is a gate that can only pass.
 
 ## The font, and what the OFL asks of us
 
@@ -131,13 +184,127 @@ wrong trade.
 
 ## What is deliberately not here
 
-**No editor library.** CodeMirror 5 was vendored and then removed: the spec's cut line already said
-CodeMirror saves nothing and costs two days, and vim keys are a preference, not a requirement. A
-plain `<textarea>` with a preview needs no dependency at all, and the 690 KB — a third of it the vim
-keymap — buys nothing for editing a handful of fields and one markdown body. Revisit when somebody
-is actually slowed down by the textarea, not before.
+**There is an editor library now, and it is Ace 1.44.0.** This section said "No editor
+library" from the day CodeMirror 5 was removed until August 2026, and it is written out
+here rather than deleted, because the sentence that replaced it has to be legible as an
+override rather than as a correction.
 
-Co-editing did not change this, and it is the one place it costs something: drawing
+The condition this file set for revisiting was **"when somebody is actually slowed down by
+the textarea"**. Nobody has produced that measurement, and nobody has claimed to. What
+arrived instead was jcanton asking for a HackMD-like editor in seven parts, six of which
+were built on the `<textarea>` that was already in the page for about 18 KB — three views,
+the toolbar, a full page, line numbers, tabs-to-spaces and draft autosave — and one of
+which a textarea cannot have at all: **a vim keymap**. Modal editing over `selectionStart`,
+with motions, operators, registers, counts, text objects, macros and an ex line, over an
+undo stack you do not own, is not a smaller version of the same job. Asked which way to go
+with the price attached, he answered: *"implement both: improvements to our editor as well
+as ace."*
+
+So: a human overrode a written rule, deliberately, having been shown what it costs.
+**594,306 B raw / ~163 KB gzipped.**
+
+**And then, on 2026-08-20, he moved it to the default side of the parameter:** *"make ace
+the default, I think it's worth it."* That is a second override on top of the first and it
+is recorded here as one. Nothing measured changed to justify it — the revisit condition
+this file set is still "when somebody is actually slowed down by the textarea", and it is
+still unmet. What changed is which arm of `render._ace_wanted` the address has to say
+something to reach: `?editor=plain` is now the opt-out and an unsaid address means Ace, so
+**a writer pays 594 KB by default**, measured on `tests/fixtures/corpus` at 492,311 B for
+the plain box against 1,110,377 B beside it. It is the sticky preference that pays the
+reload now, because it is the plain-box people whose address has to be corrected — the
+smaller page arriving for the person who asked for a smaller page, rather than the library
+arriving twice for everybody else.
+
+**Who pays did not change, and that is the half that had to survive the flip.** `editable`
+is `base_commit is not None` and the served route passes a commit for everyone, so a
+signed-out reader already receives the box and the toolbar — and can type any parameter
+they like. `render._ace_wanted` asks `may_write` as well, the same second gate `yjs` and
+`coedit` already carry, so a reader's page is the same size with either parameter and with
+none: 366,151 B all three ways, measured. Without that gate, Ace on the default arm would
+now reach every public reader unasked, for a keymap whose every save is a 403.
+
+Both spellings are still the shape that answers "let me try both": two tabs, one document,
+one editor each — and since 2026-08-20 there is a switch beside the three view segments, so
+the choice is on the page rather than only in this file.
+
+The search that ended here follows. Everything in it was fetched, checksummed and run;
+`docs/EDITOR.md` is the long form.
+
+**The rule this leaves behind for whoever revisits it next:** the price was paid for ONE
+ask. If a second editor ever has to be argued for again, the question is not "is it good",
+it is "which ask on the list can only be had this way, and what does everybody who did not
+ask for it pay".
+
+**The record before this commit, kept because the reasoning in it is still right.**
+CodeMirror 5 was vendored and then removed: the
+spec's cut line already said CodeMirror saves nothing and costs two days, and vim keys are a
+preference, not a requirement. A plain `<textarea>` with a preview needs no dependency at all, and
+the 690 KB — a third of it the vim keymap — buys nothing for editing a handful of fields and one
+markdown body. The condition written here for revisiting was "when somebody is actually slowed down
+by the textarea".
+
+That revisit ran in August 2026, against seven asks for a HackMD-like editor, and the full search is
+`docs/EDITOR.md`. Nobody has produced the measurement this paragraph asked for; what arrived instead
+was a feature request, which is a legitimate reason for a human to override a recorded rule and is
+not the same thing as evidence that the rule was wrong. The finding, so that the next person
+inherits the search rather than repeating it:
+
+* **Ace 1.44.0 (`src-min-noconflict`) is admissible, it was measured rather than reasoned
+  about, and it was then bought.** BSD-3-Clause — this repository's own licence. Three classic self-registering scripts,
+  zero `import`, zero `export`, zero bare `require(`: they run in a `<script>` block untouched and
+  need no `_yjs()` analogue. Inlined verbatim under this exact CSP in headless Chrome with
+  `window.Worker` hooked before Ace parsed: 0 Workers constructed, 0 CSP violations, 0 network
+  requests, `session.$worker === null`, and a forced-failure control on `ace/mode/javascript` that
+  *did* build a blocked `blob:` Worker — so the detection was real and not a test that could only
+  pass. `ace.js` 475,029 B (126,124 gz), `keybinding-vim.js` 119,277 B (36,518 gz),
+  `mode-markdown.js` 75,276 B (22,165 gz). The honest purchase for the one ask a textarea cannot
+  have is core + vim, **594,306 B**; with the markdown mode, 669,582 B — 85.8% and 96.7% of the
+  number refused above, against a 318,526 B page. The unminified `src-noconflict` build is
+  1,307,387 B and fails the font-`url()` assertion 24 more times than the minified one, because of
+  how it escapes its own `data:` URIs.
+* **One supporting fact in the earlier evidence is wrong and must not be repeated.**
+  `mode-markdown.js` contains **four** `createWorker` definitions, not zero — they belong to the
+  bundled javascript, css, html and xml sub-modes. The right reason Ace spawns none for markdown is
+  structural: `MarkdownMode` inherits `TextMode`, whose `createWorker` returns `null`, and
+  `createModeDelegates` wires highlight rules only. The consequence is that four worker-spawning
+  sub-modes would ship dormant in every page, and any later `setMode('ace/mode/javascript')` for a
+  fenced-code sub-editor builds a `blob:` Worker this policy blocks *silently* — an `error` event
+  with an empty message, no exception, and Ace's own "Could not load worker" warning never firing.
+* **Ace's default keymap fetches four modules over the network** through `config.loadModule` →
+  `net.loadScript`, which is `createElement('script')`. Measured: `metaKey+f` gives
+  `defaultPrevented=true`, `scriptsInjected=['ext-searchbox.js']`, a `script-src-elem` violation,
+  and an empty `window.error`. Cmd-F is taken from the browser and nothing is given back. The source
+  regex `<script[^>]+src=` cannot see a runtime injection, so this has to be tested in a browser.
+* **CodeMirror 6 + `y-codemirror.next` is refused on the linker, not on taste.** Nine artifacts,
+  816,104 B raw / 278,694 gz, taking the writer's page to 3.56x. It was proved to work — one
+  `EditorState` built from all nine packages against this repository's own `yjs.bundle.mjs` — and
+  then refused because those nine files carry 42 `import` statements and 9 `export` clauses that
+  must be inlined in a hardcoded topological order with each file's bindings rebound to the previous
+  IIFE. `_yjs()` below handles one import and one export by string partition and its own docstring
+  already refuses the four-module version of that. Fifty-one is more of the refused thing, not less.
+  esm.sh's `/build` API answers 403 and is deprecated, so there is no single-artifact route.
+  Two traps worth inheriting: `https://esm.sh/codemirror@6?bundle` resolves to `codemirror@6.65.7`,
+  which is CodeMirror **5**.65.7 mis-published under a 6.x number and never unpublished; and the
+  naive `?bundle` route gives seven private copies of `@codemirror/state`, which is 1,967,935 B of
+  silently non-functioning editor.
+* **CodeMirror 5 is refused on its upstream.** The set is 692,765 B, vim 33.5% of it — the "690 KB"
+  above is exact and nobody rounded in their own favour. But `github.com/codemirror/CodeMirror` is
+  now archived and forwarding, and `y-codemirror` was last published in 2021 with both of its live
+  issues in the remote-cursor code, which is the part that would be the reason to take it.
+* **Toast UI Editor 3.2.2 and EasyMDE 2.21.0 do not survive contact.** Toast UI's self-contained
+  bundle exists only on `uicdn.toast.com`, carries a live beacon to `google-analytics.com/collect`
+  compiled into the bytes and on by default, and its live preview cannot be `/api/preview` because
+  the only hook is synchronous and is handed HTML its own parser has already produced. EasyMDE
+  contains the literal string `cdn.` six times, which fails `assert "cdn." not in body` outright,
+  and injects a `<link>` to a Font Awesome CDN at runtime for the glyphs its own CSS does not carry.
+
+**The rule that comes out of this and applies to anything vendored next to Yjs:** a binding library
+that externalises `yjs` must bind to the **same `Y.Doc` class the room came from**. Two copies of
+Yjs in one page are two constructors, and a document built by one is not a document the other will
+observe — silently, with nothing raising in either. So such a library can never be inlined beside
+`_yjs()` as a block of its own; it has to take this page's `Y` or it does not go in.
+
+Co-editing did not change the decision above, and it is the one place it costs something: drawing
 another person's caret over a `<textarea>` means measuring text through a mirror
 element, which is the only real pixel work in that feature. So it is not drawn. The
 presence list names who else is in the document, which is the half that survives every

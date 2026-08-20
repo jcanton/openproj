@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pygit2
 import pytest
+from browser import chrome, measured_in
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from test_injection import run_js
@@ -707,7 +708,9 @@ def test_the_page_stops_saving_when_the_room_says_there_was_nothing_to_save(
     counter comes back to zero when it does — so that is what is read, out of the
     shell's own script, on the page that ships it.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
@@ -1318,14 +1321,22 @@ def test_every_index_into_the_document_is_converted():
 
 
 def _document_indexes(script: str) -> list[str]:
-    """Every first argument handed to `text.delete(` / `text.insert(` in a script.
+    """Every first argument handed to any `.delete(` / `.insert(` in a script.
 
     A regex finds the call and then the parentheses are balanced by hand, because
     the index is itself a call with a comma in it and `[^,]+` stops in the middle
     of it. There is no JavaScript parser here and adding one would mean npm.
+
+    **The receiver is not named, and that is the widening this needed.** It was
+    `\btext\.(?:insert|delete)\(`, which is blind to `ytext.insert`,
+    `shared.insert` and `doc.getText('body').insert` — so the one guard holding
+    every index into the shared document to `units(` was dodgeable by renaming a
+    variable. Measured on the shipped scripts, the two calls below are the only
+    `.insert(`/`.delete(` in any of them, so the widening costs nothing today and
+    catches the rename it was blind to.
     """
     found = []
-    for match in re.finditer(r"\btext\.(?:insert|delete)\(", script):
+    for match in re.finditer(r"\.(?:insert|delete)\(", script):
         depth, at = 0, match.end()
         while at < len(script):
             letter = script[at]
@@ -1351,7 +1362,9 @@ def typed_in_the_page(client: TestClient, shown: str, edits: list[str]) -> coedi
     crosses two implementations. A copy of `typed()` written here would only
     prove this file agrees with itself.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",
@@ -1443,6 +1456,363 @@ def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
     )
 
 
+# --------------------------------------------------------------------------- #
+# The surface adapter, driven in Chrome against a real room
+# --------------------------------------------------------------------------- #
+#
+# `typed_in_the_page` above drives the page's script under `tests/js/drive.js`,
+# which has no layout, no selection and — the reason these tests exist — no HTML
+# parser. A `<textarea>`'s value is not the text between its tags: the parser
+# folds `\r\n` to `\n` on the way in and the API folds it again on the way out,
+# and the shim does neither. So the questions below are asked of Chrome, with a
+# real `openproj.coedit.Room` on the other end of a socket that goes nowhere.
+
+# A socket that never leaves the page. Every frame the editor writes is kept for
+# the test to hand to the room, and every frame the test wants to deliver goes in
+# through `onmessage`, so the two halves are the real ones and only the wire
+# between them is not.
+#
+# `fetch` is stubbed for the same reason every other Chrome test here stubs it:
+# a `file://` page cannot reach `/api/preview`, and an editing session opens one.
+_ROOM_STUB = """
+window.__errors = [];
+addEventListener('error', event => window.__errors.push(String(event.message)));
+window.fetch = async () => ({ok: true, json: async () => (
+  {html: '<p data-startline="1">rendered</p>'})});
+window.__sent = [];
+function FakeSocket() {
+  this.readyState = 1;
+  window.__room = this;
+  setTimeout(() => { if (this.onopen) this.onopen(); }, 0);
+}
+FakeSocket.OPEN = 1;
+FakeSocket.prototype.send = function (data) { window.__sent.push(JSON.parse(data)); };
+FakeSocket.prototype.close = function () { this.readyState = 3; };
+window.WebSocket = FakeSocket;
+"""
+
+
+def _welcome(room: coedit.Room) -> dict:
+    return {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+
+
+def in_chrome_room(
+    client: TestClient,
+    where: Path,
+    room: coedit.Room,
+    welcome: dict,
+    script: str,
+    editor: str = "plain",
+) -> dict:
+    """Open the shipped detail page in Chrome, welcome it into a real room, run
+    `script`, and hand everything it sent back to the room.
+
+    The welcome is delivered from inside the question rather than from the stub,
+    because it has to arrive after the page's own scripts have run — which is
+    exactly the ordering the room's `bound` flag is about. It is built by the
+    caller for the same reason: a test that wants somebody else to type has to
+    take the snapshot before they do.
+    """
+    # `editor` goes on the request AND on the file URL, and it has to go on both:
+    # the server decides from it whether 594 KB of second editor is in the bytes,
+    # and the page decides from `location.search` which surface to mount on them.
+    # A test that set only one would be asking a page carrying Ace to run the
+    # textarea, which is a configuration nobody ships.
+    #
+    # It defaults to `plain` and not to silence, because silence stopped meaning
+    # the textarea on 2026-08-20 when Ace became what a writer gets. Every caller
+    # below that says nothing is a convergence test about the `<textarea>` path
+    # and now says so; the ones about the second surface pass `ace` and always
+    # did.
+    query = f"?editor={editor}" if editor else ""
+    page = client.get(f"/detail/{TASK}{query}").text
+    seeded = page.replace(
+        '<link rel="icon"', f'<script>{_ROOM_STUB}</script><link rel="icon"', 1
+    )
+    answer = measured_in(
+        chrome(), seeded, where, 1400,
+        f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
+        patience=6800, query=query,
+    )
+    assert answer["errors"] == [], f"the page threw: {answer['errors']}"
+    for frame in answer.get("sent", []):
+        if frame["t"] == "update":
+            room.apply(base64.b64decode(frame["u"]), "ann")
+    return answer
+
+
+_TYPED_IN_CHROME = r"""
+const area = document.querySelector('textarea[name=body]');
+const opened = area.value;
+area.value = NEXT;
+area.dispatchEvent(new Event('input'));
+return {errors: window.__errors, sent: window.__sent, opened, box: area.value};
+"""
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # The same five bodies `test_an_edit_across_an_emoji_reaches_the_room_as_
+        # the_character_it_was` uses, asked again through the adapter and of a
+        # real browser rather than the shim. Two of them are controls that passed
+        # with the defect in place, and they are here for the same reason.
+        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
+        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
+        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
+        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
+        ("a fine result\n", "a fine \U0001f389 result\n"),
+    ],
+)
+def test_an_edit_across_an_emoji_reaches_the_room_through_the_adapter(
+    client: TestClient, plan: Path, tmp_path: Path, was: str, now: str
+):
+    """S6's claim, in one sentence: the same convergence, through the boundary.
+
+    The splice is recovered from a surface's `text()` now rather than from a
+    box's `.value`, and it is applied through a `splice(from, to, put)` that is
+    specified in UTF-16 code units. Neither of those is allowed to have moved a
+    single index, and an emoji is where an index moving is visible: a character
+    can be two code units, and two emoji that share a leading half stop a
+    unit-at-a-time scan *between* the halves of a surrogate pair.
+
+    Asked in Chrome and not under the shim, because the shim has no HTML parser
+    and this stage's whole risk is a surface whose idea of the document differs
+    from the page's.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert shown == was, "the page is not showing the body this test is about"
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "emoji.html", room, _welcome(room),
+        _TYPED_IN_CHROME.replace("NEXT", json.dumps(now)),
+    )
+    assert answer["opened"] == was, (
+        "the welcome did not reach the editing surface, so nothing below was driven"
+    )
+    assert room.body() == now, (
+        f"the browser typed {now!r} and the room ended up holding {room.body()!r}"
+    )
+
+
+def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """The case the shim structurally cannot ask, written down as what it is.
+
+    A `\\r` can genuinely be in a room's `Y.Text`: `parse_text` keeps `\\r\\n` in
+    the body, `store.py` decodes the blob with no newline translation, and there
+    is no `.gitattributes text=auto` — so the room is seeded with the carriage
+    returns the file holds and the server's copy has them.
+
+    **The browser's copy cannot.** A `<textarea>` normalises `\\r\\n` to `\\n`
+    twice over — once in the HTML parser on the way in and once in the `value`
+    getter — so the box holds LF whatever it is given. That is a fact about the
+    surface, not about this code, and it is the reason `docs/EDITOR.md` records
+    that the two editors this decision keeps normalise in OPPOSITE directions.
+
+    What this pins is that the two copies still CONVERGE, which is the invariant
+    that matters: the first thing anybody types makes the room agree with the box
+    exactly, carriage returns and all. It is asserted rather than assumed because
+    the alternative — the splice recovering a `\\r` at one end and not the other —
+    is a document held differently on each side, silently, which is what the
+    emoji defect was. The `\\r` going is a change to line endings that shows up in
+    a diff; a half-converged document does not.
+
+    **And the cost is written down rather than left to be rediscovered**, because
+    it is not free and this stage does not fix it. `reflect()` cannot make the
+    box hold a `\\r`, so the two copies stay one character apart for as long as
+    nobody types; the moment somebody does, `typed()` finds the common prefix
+    ending at the FIRST carriage return and the common suffix ending just after
+    the last one, and splices everything between them. On a document whose first
+    line ends `\\r\\n` that is one keystroke rewriting the whole body, credited
+    to whoever typed it. A textarea normalises unconditionally in both
+    directions, so there is nothing to do about it on this side of the wire; the
+    fix, if one is wanted, is the server not seeding a room with endings no
+    surface can hold.
+    """
+    front, _ = split_front_matter(stored(plan))
+    body = "Ann says\r\nand then\nlast line\r\n"
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "CRLF in the body")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert "\r\n" in shown, "the carriage returns did not survive the parse"
+
+    typed = "Ann says\nand then\nlast line and more\n"
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "crlf.html", room, _welcome(room),
+        _TYPED_IN_CHROME.replace("NEXT", json.dumps(typed)),
+    )
+    assert answer["opened"] == shown.replace("\r\n", "\n"), (
+        f"the box did not normalise the endings it was given: {answer['opened']!r}"
+    )
+    assert room.body() == typed, (
+        "the room and the box hold different documents after one keystroke: "
+        f"{room.body()!r} against {typed!r}"
+    )
+    assert "\r" not in room.body(), (
+        "a carriage return survived on one side of a surface that cannot hold one"
+    )
+
+
+_REFLECTED = r"""
+const area = document.querySelector('textarea[name=body]');
+// In an editing session and focused, because that is the tab this is about: a
+// reader with the box closed has no caret to lose, and `reflect` deliberately
+// leaves an unfocused box alone rather than calling `setSelectionRange` on it,
+// which would also scroll it.
+document.getElementById('toggle').click();
+area.focus();
+area.setSelectionRange(2, 2);
+const caretWas = area.selectionStart;
+const before = window.__sent.filter(frame => frame.t === 'update').length;
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+const after = window.__sent.filter(frame => frame.t === 'update').length;
+// Read here and not at the end: the flag experiment below deliberately takes the
+// whole document out and puts it back, which is the one gesture that does move a
+// caret, and reading afterwards would be reading about that instead.
+const caretNow = area.selectionStart;
+const reflected = area.value;
+
+// And the flag, asked directly, because a textarea will never ask it by itself.
+// Every other surface fires its change event for its OWN edits and for the
+// page's alike — `session.setValue`, `session.replace` and a hand-written delta
+// applier all do — so this is that event, made by hand, at the one moment the
+// page is writing. Without the flag it reaches `typed()`, which recovers the
+// whole document as a local splice and pushes it up the socket under this tab's
+// name: measured at 6,700x amplification on a 97,890-character body.
+let heard = 0;
+SURFACE.onInput(() => heard++);
+const outside = SURFACE.applying();
+let inside = null;
+SURFACE.apply(() => {
+  inside = SURFACE.applying();
+  const whole = SURFACE.text();
+  // What every measured "set the text" actually is, reproduced by hand:
+  // remove-all-then-insert-all, TWO change events with an EMPTY DOCUMENT
+  // between them. `session.setValue` of a document onto itself measured
+  // deleted=1532, inserted=1532, and `session.replace(Range, text)` — the API
+  // recommended as "splices in place" — does the same. The first of the two
+  // events is the dangerous one: a handler reading the document there sees
+  // nothing at all and splices that into the `Y.Text` as a local delete.
+  SURFACE.splice(0, whole.length, '');
+  area.dispatchEvent(new Event('input'));
+  SURFACE.splice(0, 0, whole);
+  area.dispatchEvent(new Event('input'));
+});
+const gated = heard;
+const sentUnderApply = window.__sent.filter(frame => frame.t === 'update').length;
+// The same event with the flag down, so the gate above is a gate and not a
+// subscriber that never fires.
+area.dispatchEvent(new Event('input'));
+return {
+  errors: window.__errors, sent: window.__sent, box: area.value, reflected,
+  before, after, caretWas, caretNow,
+  outside, inside, restored: SURFACE.applying(), gated, open: heard,
+  sentUnderApply, sentAfter: window.__sent.filter(frame => frame.t === 'update').length,
+};
+"""
+
+
+def test_somebody_elses_keystroke_is_reflected_and_never_sent_back(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """The credit invariant, and the flag that will keep it when the surface changes.
+
+    `Room._count` credits every inserted character to the socket it arrived on,
+    and `Room.credits` turns that into "one Save is one commit authored by
+    whoever typed the most". It rests entirely on a passive tab staying passive:
+    measured on the editor this boundary exists to make possible, one remote
+    four-character keystroke reflected as a set-the-text made a tab that had
+    typed nothing push 97,890 characters back up the socket and take the
+    authorship of the whole document — 6,700x wire amplification, three frames to
+    fill `MAX_OUTBOX_BYTES`.
+
+    A textarea cannot do that, because assigning `.value` fires no `input` event.
+    That is measured, it is the reason this application has never carried a
+    re-entrancy guard, and it is exactly why the guard is added HERE rather than
+    with the surface that needs it: a flag introduced alongside the boundary has
+    a written reason, and one introduced alongside a bug is a patch.
+
+    So both halves are asked. The room half is the real invariant against a real
+    `Room`. The flag half synthesises the change event a textarea will not fire,
+    and it is not vacuous: the same event with the flag down does reach the
+    subscriber and does put a frame on the wire.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    # Ann's room, and the welcome taken BEFORE anybody else types into it.
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    # Bob's five characters, made in a second copy of the same document — same
+    # body, same seed, so the update it produces is one Ann's room and Ann's
+    # browser can both apply. Then it is applied to Ann's room as Bob's, which
+    # is what the server does when it relays.
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("the body", "the long body"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+
+    answer = in_chrome_room(
+        client, tmp_path / "reflect.html", room, welcome,
+        _REFLECTED.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
+    )
+
+    assert answer["reflected"] == bob.body(), (
+        f"the remote keystroke did not reach the box: {answer['reflected']!r}"
+    )
+    assert answer["after"] == answer["before"], (
+        f"a passive tab put {answer['after'] - answer['before']} update frame(s) on the "
+        "wire because somebody else typed — that is the credit invariant gone"
+    )
+    assert answer["caretNow"] == answer["caretWas"], (
+        "reflecting somebody else's keystroke moved this tab's caret"
+    )
+    assert answer["outside"] is False and answer["inside"] is True, (
+        f"the flag is not a flag: {answer['outside']} then {answer['inside']}"
+    )
+    assert answer["restored"] is False, "the flag was left up after `apply` returned"
+    assert answer["gated"] == 0, (
+        "a change event fired while the page was writing reached the input "
+        "subscribers, so a surface that fires one would push the document back"
+    )
+    assert answer["sentUnderApply"] == answer["after"], (
+        "and it reached the room: the empty document between the two change "
+        "events went up the socket as a delete of everything, which is the "
+        "amplification measured at 6,700x"
+    )
+    assert answer["box"] == bob.body(), (
+        "the page's own write left the box holding something other than the room's text"
+    )
+    assert room.typed.get("ann", 0) == 0, (
+        f"a tab that typed nothing was credited {room.typed.get('ann')} characters — "
+        "one Save is one commit authored by whoever typed the most, and this is how "
+        "that becomes authored by whoever reflected last"
+    )
+    assert answer["open"] == 1, (
+        "the same event with the flag down reached nobody either, so the "
+        "assertion above proves nothing"
+    )
+    assert room.body() == bob.body(), "the two copies did not converge"
+
+
 def test_the_browser_splices_on_a_whole_character():
     """`test_every_index_into_the_document_is_converted`, on the other side.
 
@@ -1455,17 +1825,64 @@ def test_the_browser_splices_on_a_whole_character():
 
     So the shipped script is read and every index handed to the document has to
     come from `units` by name.
-    """
-    from openproj.render import _COEDIT
 
-    indexes = _document_indexes(str(_COEDIT))
-    assert len(indexes) >= 2, "this stopped finding the splice it was written to guard"
+    **Re-pointed at the surface adapter rather than deleted.** The splice lives
+    behind a boundary now, and this test read one module constant — so an adapter
+    that took `typed()` with it into another constant would have left the guard
+    passing over a file with no splice in it at all. Both constants are read, and
+    the count below is what says the splice is still somewhere in them.
+    """
+    from openproj.render import _ACE_SURFACE, _COEDIT, _COMBOBOX
+
+    shipped = str(_COEDIT) + _COMBOBOX + str(_ACE_SURFACE)
+    # Every place that knows what a surface is, so the guard follows the code it
+    # guards. If one of these banners moves, this test moves with it rather than
+    # quietly passing over a file the splice has left.
+    for banner in ("// --- the textarea, as a surface ---", "// --- Ace, as the same surface ---"):
+        assert banner in shipped, f"{banner} is in none of the constants this reads"
+
+    # **Two producers of an index now, and each is named with its argument.** The
+    # rule has never been "spell it `units(`" — it is "an index handed to the
+    # document is in UTF-16 code units, and it got there through one conversion
+    # at one boundary". There are two boundaries because there are two surfaces,
+    # and they are different shapes:
+    #
+    # * `units(` is the textarea's. It scans the document a CHARACTER at a time —
+    #   it has to, or a splice stops between the halves of a surrogate pair — so
+    #   the count it produces is code points and this is what turns it into code
+    #   units. It is the browser's `coedit.byte_offset`.
+    # * `run.from` is Ace's, and there is nothing to convert. The index came out
+    #   of `Document.positionToIndex` inside the Ace surface, which counts code
+    #   units already; wrapping it in `units(` would convert a number that is
+    #   in the target space into one that is not, which is the defect this test
+    #   is named for, spelled the other way round.
+    # * `positionOf(` is the same boundary read the other way — `indexToPosition`,
+    #   turning a code-unit index back into an Ace `{row, column}` — and it is
+    #   here because this scan asks about ANY document, not only the shared one.
+    #   The surface's own writes go through it, and an index reaching Ace from a
+    #   character count would cut a surrogate pair exactly as one reaching a
+    #   `Y.Text` would.
+    #
+    # So the allowlist is two entries and each one is argued, rather than one
+    # entry and a hole. A third would have to be argued here too.
+    converts = ("units(", "positionOf(")
+    already = {"run.from"}
+    indexes = _document_indexes(shipped)
+    assert len(indexes) >= 4, "this stopped finding the splices it was written to guard"
     for index in indexes:
-        assert index.startswith("units("), (
-            f"`text.insert/delete({index}, …)` in `_COEDIT` indexes the document with "
-            "something that did not come from `units`. A count of characters and a count "
-            "of UTF-16 code units are both numbers, and they differ on every emoji."
+        assert index.startswith(converts) or index in already, (
+            f"`.insert/.delete({index}, …)` in the shipped editor indexes the document "
+            "with something that came from no named conversion. A count of characters and "
+            "a count of UTF-16 code units are both numbers, and they differ on every emoji."
         )
+    # And the second entry earns its place only while it really is Ace's own
+    # index: `run.from` is built in one line, from one call, and this is what
+    # says so. A `run.from` computed from `[...text].length` would pass the loop
+    # above and be exactly the defect.
+    assert "const at = indexOf(delta.start);" in str(_ACE_SURFACE)
+    assert "const indexOf = position => document_.positionToIndex(position);" in str(
+        _ACE_SURFACE
+    ), "the second surface stopped taking its indexes from Ace's own position conversion"
 
 
 # --------------------------------------------------------------------------- #
@@ -1513,6 +1930,18 @@ def test_the_yjs_bundle_inlines_as_a_classic_script():
     # And the bytes in git stay upstream's: only those two lines differ.
     source = (Path(__file__).resolve().parents[1] / "static" / "yjs.bundle.mjs").read_text()
     assert len(script) > 90_000 and abs(len(script) - len(source)) < 4000
+
+    # **`UndoManager` costs zero new vendored bytes, confirmed rather than
+    # assumed.** S4 rests on it: the whole of the undo history the room owns is
+    # a class that has been sitting in this file since the day it was vendored,
+    # because `_yjs` turns upstream's export clause into the returned object
+    # verbatim and every name in it comes along. If a re-vendoring ever drops it,
+    # the failure without this line is `YJS.UndoManager is not a constructor`
+    # thrown inside an IIFE at page load, which takes the whole room with it.
+    assert "as UndoManager," in source, "upstream no longer exports UndoManager"
+    assert re.search(r"[{,]UndoManager:", script), (
+        "UndoManager survived the export clause but not the rewriting"
+    )
 
 
 def test_the_vendored_yjs_and_the_server_write_the_same_seed():
@@ -1622,7 +2051,9 @@ def test_the_parsed_editing_surface_answers_the_body_the_server_rendered(
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
     assert shown == body, "the record under test is not the one the page is showing"
 
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     answer = run_js(page, "document.querySelector('[name=body]').value", page=True)
     assert not answer["errors"], answer["errors"]
     assert answer["value"] == body, (
@@ -1644,7 +2075,9 @@ def test_a_draft_in_the_box_is_offered_to_a_room_that_has_not_moved(client: Test
     a working editor from one that throws away every restored draft.
     """
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",
@@ -1698,7 +2131,9 @@ def test_the_page_degrades_to_todays_editor_when_the_socket_never_opens(client: 
     Driven with no `WebSocket` in scope — which `tests/js/drive.js` deliberately
     does not provide — so this is the shipped script answering, not a flag.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     answer = run_js(
         page,
         "(async () => { document.querySelector('[name=body]').value = 'typed offline\\n';"
@@ -2340,7 +2775,9 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
 
         drawn, said = in_a_live_page(
             chrome(),
-            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
+            # address that says nothing mounts Ace over a stale textarea.
+            f"http://127.0.0.1:{serving}/detail/{TASK}?editor=plain",
             # The presence list, and the unsaved counter beside it. The second
             # half is not decoration: the room was first seeded from the bytes
             # after the frontmatter while the page renders what `parse_text`
@@ -2413,7 +2850,9 @@ def test_a_restored_draft_survives_the_welcome_and_is_offered_to_the_room(
         mark = "A SENTENCE NOBODY HAS SAVED YET"
         drawn, said = in_a_live_page(
             chrome(),
-            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
+            # address that says nothing mounts Ace over a stale textarea.
+            f"http://127.0.0.1:{serving}/detail/{TASK}?editor=plain",
             # Two loads in one expression, because a draft has to be in storage
             # *before* the page that restores it starts. The first pass writes
             # one and asks for a reload; `window.__staged` marks the document on
@@ -2496,7 +2935,9 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
         mark = "MY DRAFT FROM THE TRAIN"
         drawn, said = in_a_live_page(
             chrome(),
-            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
+            # address that says nothing mounts Ace over a stale textarea.
+            f"http://127.0.0.1:{serving}/detail/{TASK}?editor=plain",
             # Staged and reloaded exactly as above. What is reported is the two
             # surfaces at once, joined, because the point is that they hold
             # different things: the room in the box, the draft in the report.
@@ -2637,3 +3078,762 @@ def test_a_seat_that_is_not_a_number_is_not_a_seat(client: TestClient):
             heard = bo.take("who")
 
     assert heard["where"] == [{"login": "ann", "at": 7}]
+
+
+# --- the second surface, in a real room -------------------------------------
+#
+# Everything below drives Ace rather than the box, against the same real
+# `openproj.coedit.Room` the tests above use. It is asked of Chrome because an
+# editor is layout, selection and key handling, and `tests/js/drive.js` has no
+# HTML parser, no Ace and no way to tell either of those from a string.
+
+_ACE_RETYPED = r"""
+const editor = SURFACE.editor;
+const opened = SURFACE.text();
+// The smallest edit that turns one into the other, selected and retyped —
+// which is what a person does, and which is where an index in the wrong space
+// shows: `[...text]` walks CHARACTERS and the surface counts UTF-16 CODE UNITS,
+// so a boundary computed in one and applied in the other lands between the two
+// halves of a surrogate pair.
+const was = [...opened], now = [...NEXT];
+let head = 0;
+while (head < was.length && head < now.length && was[head] === now[head]) head++;
+let tail = 0;
+while (tail < was.length - head && tail < now.length - head
+       && was[was.length - 1 - tail] === now[now.length - 1 - tail]) tail++;
+const units = (chars, at) => chars.slice(0, at).join('').length;
+SURFACE.setCaret(units(was, head), units(was, was.length - tail));
+const put = now.slice(head, now.length - tail).join('');
+// Ace's own editing commands and not the surface's `splice`, so the delta the
+// binding consumes is one Ace made rather than one this test made.
+if (put) editor.insert(put); else editor.remove('left');
+await new Promise(r => setTimeout(r, 60));
+return {errors: window.__errors, sent: window.__sent, opened, box: SURFACE.text(),
+        surface: SURFACE.onSplice ? 'ace' : 'textarea'};
+"""
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        # The same five bodies, a third time: once under the shim, once through
+        # the adapter in Chrome over a textarea, and now through Ace. Two of them
+        # are controls that passed with the original defect in place and they are
+        # here for exactly that reason — a corpus without the one string that
+        # matters proves nothing, and "has an emoji in it" is not that string.
+        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
+        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
+        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
+        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
+        ("a fine result\n", "a fine \U0001f389 result\n"),
+    ],
+)
+def test_an_edit_in_the_second_surface_reaches_the_room_as_the_character_it_was(
+    client: TestClient, plan: Path, tmp_path: Path, was: str, now: str
+):
+    """The gating case for the second editor, and it is the case this repository
+    already knows catches the defect rather than the one that sounds like it.
+
+    Ace's `positionToIndex` counts UTF-16 code units and its clamping is
+    EMERGENT — it falls out of `moveCursorBy`'s screen-coordinate round trip and
+    not out of any guard, so `indexToPosition(1)` on a leading emoji answers
+    `{row: 0, column: 1}`, unclipped, between the halves of a surrogate pair.
+    Nothing in `Document`, `Anchor` or `applyDelta` clips. So the binding's whole
+    correctness rests on every index it hands the `Y.Text` having been produced
+    by Ace's own delta rather than by arithmetic over characters.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert shown == was, "the page is not showing the body this test is about"
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "ace-emoji.html", room, _welcome(room),
+        _ACE_RETYPED.replace("NEXT", json.dumps(now)), editor="ace",
+    )
+    assert answer["surface"] == "ace", "the page mounted the box, so nothing here was driven"
+    assert answer["opened"] == was, (
+        "the welcome did not reach the second surface, so nothing below was driven"
+    )
+    assert answer["box"] == now, f"Ace ended up holding {answer['box']!r}"
+    assert room.body() == now, (
+        f"Ace typed {now!r} and the room ended up holding {room.body()!r}"
+    )
+
+
+_ACE_BACKSPACED = r"""
+const editor = SURFACE.editor;
+const opened = SURFACE.text();
+// The caret immediately after the last character of the first line, and then
+// Ace's own backspace — an EMPTY selection, so how much comes out is Ace's
+// decision and not this test's. That is the point: the clamping is emergent.
+const firstLine = opened.split('\n')[0];
+SURFACE.setCaret(firstLine.length);
+editor.remove('left');
+await new Promise(r => setTimeout(r, 60));
+return {errors: window.__errors, sent: window.__sent, opened, box: SURFACE.text(),
+        surface: SURFACE.onSplice ? 'ace' : 'textarea'};
+"""
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # An astral emoji: one character, two UTF-16 code units.
+        "one \U0001f600\n",
+        # A ZWJ sequence: a family, seven code points and eleven code units, which
+        # a person sees and deletes as one glyph.
+        "one \U0001f469‍\U0001f469‍\U0001f467\n",
+        # A flag: two regional indicators, four code units, and the case where
+        # taking half is a DIFFERENT flag rather than a broken character.
+        "one \U0001f1e9\U0001f1ea\n",
+    ],
+)
+def test_backspacing_a_whole_glyph_in_the_second_surface_leaves_both_copies_agreeing(
+    client: TestClient, plan: Path, tmp_path: Path, body: str
+):
+    """Hazard 2, asked the way a person asks it: put the caret after the glyph
+    and press backspace.
+
+    What this does NOT assert is how much Ace takes. It takes a code point on an
+    astral emoji and a code point on a ZWJ sequence, which is not what a person
+    means by one glyph — and that is Ace's behaviour, not this binding's, and
+    pinning it here would be pinning somebody else's decision. What must hold, and
+    what the whole binding is for, is that whatever Ace decided to remove is what
+    the room removes: the browser and the server end up holding the same string,
+    with no lone surrogate and no replacement character between them.
+
+    A lone surrogate cannot be encoded, so the failure has a signature: the update
+    carries `\\ufffd` where the half was and the two copies never converge again.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "a glyph")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "ace-back.html", room, _welcome(room), _ACE_BACKSPACED,
+        editor="ace",
+    )
+    assert answer["surface"] == "ace"
+    assert answer["opened"] == body
+    assert len(answer["box"]) < len(body), "backspace removed nothing at all"
+    assert "�" not in room.body(), (
+        "a surrogate half reached the room, which is the defect this test is for"
+    )
+    assert room.body() == answer["box"], (
+        f"the browser holds {answer['box']!r} and the room holds {room.body()!r}"
+    )
+
+
+_ACE_OPENED = r"""
+return {errors: window.__errors, sent: window.__sent,
+        opened: SURFACE.text(), original: ORIGINAL_BODY,
+        surface: SURFACE.onSplice ? 'ace' : 'textarea',
+        updates: window.__sent.filter(f => f.t === 'update').length,
+        dirty: document.getElementById('unsaved').textContent};
+"""
+
+
+def test_opening_the_second_surface_changes_no_byte_of_the_document(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """A surface must not rewrite the document merely by opening on it.
+
+    Measured before this binding existed, on a 15,897-byte body whose first line
+    ending is CRLF and whose other four hundred are LF: opening Ace produced a cut
+    of 15,852 and a put of 16,252 and a 16,288-byte Yjs update **before anybody
+    typed**. `Document.$detectNewLine` picks one sequence from the first ending it
+    sees and `getValue()` rejoins every line with it, and a `<textarea>` normalises
+    CRLF to LF unconditionally — so the two surfaces normalise in OPPOSITE
+    directions and one of them rewrites the file on sight.
+
+    `setNewLineMode('unix')` is the one boundary that decides, and this is what
+    holds it there. The body below carries a CRLF on its first line and LF on the
+    rest, which is the exact shape that produced the measurement above.
+    """
+    body = "first line\r\nsecond line\nthird line\nfourth line\n"
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "mixed endings")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "ace-open.html", room, _welcome(room), _ACE_OPENED, editor="ace",
+    )
+    assert answer["surface"] == "ace"
+    # Counted in CHARACTERS CREDITED and not in frames, and the difference is the
+    # point. Every tab sends exactly one update on joining — "whatever I have that
+    # the room has not seen" — and on a surface that changed nothing it is empty.
+    # `in_chrome_room` has already applied every frame this tab sent, as this
+    # tab's login, so `Room.typed` is the room's own answer to "how much did they
+    # write", which is the number `Room.credits` puts a name on a commit with.
+    assert room.typed.get("ann", 0) == 0, (
+        f"opening the second surface credited this tab {room.typed.get('ann')} characters "
+        "before anybody typed — that is the whole document rewritten on sight"
+    )
+    assert answer["opened"] == answer["original"], (
+        "the surface holds a different document from the one the page was rendered with"
+    )
+    assert answer["dirty"] == "Nothing to save", (
+        f"opening the editor made the page think there was a change: {answer['dirty']!r}"
+    )
+    # Against the room's own normalisation and not against the file: the room
+    # holds one line ending by construction now — `coedit.one_newline`, and the
+    # argument for putting the rule there rather than in either surface is on
+    # that function. What must not have happened is a MOVE: nothing between the
+    # welcome and this line changed a character.
+    assert room.body() == coedit.one_newline(shown), (
+        "the room's copy moved without anybody typing"
+    )
+    assert "\r" in shown and "\r" not in room.body(), (
+        "the fixture is not the mixed-ending body this test is about"
+    )
+
+
+_ACE_WATCHED = r"""
+// Somebody else types, and this tab is only watching. Sent through the room, so
+// what arrives is a real Yjs update over a real socket frame.
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+await new Promise(r => setTimeout(r, 80));
+return {errors: window.__errors, sent: window.__sent,
+        box: SURFACE.text(), caret: SURFACE.caret(),
+        surface: SURFACE.onSplice ? 'ace' : 'textarea',
+        updates: window.__sent.filter(f => f.t === 'update').length};
+"""
+
+
+def test_a_tab_that_is_only_watching_the_second_surface_is_credited_zero_characters(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """One Save is one commit, authored by whoever typed the most — and the
+    characters are credited to the socket they arrived on.
+
+    Measured with the naive adapter this binding replaces: one remote four-character
+    keystroke reflected through `session.setValue` made a PASSIVE tab push the whole
+    document back up the socket and take the credit for it — 97,892 characters on a
+    97,890-character body, 6,700x amplification, `MAX_OUTBOX_BYTES` full in three
+    frames and the eviction path firing as a forced reload. `Room.credits` becomes
+    "authored by whoever reflected last".
+
+    So this asserts all three halves of what must be true instead: zero frames go
+    up, the caret does not move, and `Room.typed` credits this tab nothing.
+    """
+    body = "a line\nanother line\n"
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "a body")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    # Bob's five characters, made in a second copy of the same document — same
+    # body, same seed, so the update is one this room and this browser can both
+    # apply — then applied here as Bob's, which is what the server does when it
+    # relays. The welcome above was taken first, so the browser joins a room Bob
+    # has not typed into yet and hears him afterwards.
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("a line", "a line here"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+    remote = base64.b64encode(update).decode()
+
+    answer = in_chrome_room(
+        client, tmp_path / "ace-watch.html", room, welcome,
+        _ACE_WATCHED.replace("REMOTE", json.dumps(remote)), editor="ace",
+    )
+    assert answer["surface"] == "ace"
+    assert answer["box"] == room.body(), "the remote keystroke did not reach the surface"
+    # One frame, and it is the joining one — "whatever I have that the room has
+    # not seen", sent before Bob was heard and empty because there was nothing.
+    # Hearing him adds none: `doc.on('update')` refuses to send anything whose
+    # origin is `remote`, and the binding refuses to hear its own write.
+    assert answer["updates"] == 1, (
+        f"a watching tab put {answer['updates']} update frames on the wire, not the one "
+        "it sends on joining"
+    )
+    assert answer["caret"] == {"from": 0, "to": 0}, (
+        f"somebody else's keystroke moved this tab's caret to {answer['caret']}"
+    )
+    assert room.typed.get("ann", 0) == 0, (
+        f"a tab that only watched was credited {room.typed.get('ann')} characters"
+    )
+    assert room.typed.get("bob", 0) == 5
+
+
+_TWO_EDITORS = r"""
+const opened = SURFACE.text();
+SURFACE.setCaret(opened.indexOf('\n'));
+if (SURFACE.editor) SURFACE.editor.insert(' EDIT'); else {
+  SURFACE.splice(opened.indexOf('\n'), opened.indexOf('\n'), ' EDIT');
+}
+await new Promise(r => setTimeout(r, 60));
+return {errors: window.__errors, sent: window.__sent, opened, box: SURFACE.text(),
+        surface: SURFACE.onSplice ? 'ace' : 'textarea'};
+"""
+
+
+def test_two_editors_in_one_room_over_a_body_with_crlf_in_it_settle_on_one_document(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """Hazard 1, asked as the thing that actually goes wrong: not one editor and a
+    line ending, but TWO editors normalising in opposite directions.
+
+    A `<textarea>` turns CRLF into LF unconditionally, in the HTML parser on the
+    way in and in the `value` getter on the way out. Ace's `Document` autodetects
+    one sequence from the first ending it sees and `getValue()` rejoins every line
+    with it — so left alone, one of them writes LF into the room and the other
+    writes CRLF back, for ever, and the measured case that no length or index
+    check can see is `"a\\nb\\rc\\nd"`: same length, different bytes.
+
+    Normalised at ONE boundary — `setNewLineMode('unix')` where Ace is built — and
+    this is the test that would fail if that line went. Both tabs are driven over
+    the same seeded room, each types into it, and the two must end up holding the
+    same string as the room and as each other.
+    """
+    body = "first line\r\nsecond line\r\nthird line\n"
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "crlf")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert "\r" in shown, "the fixture lost its carriage returns before the test began"
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    # The box first, then Ace, into the SAME room — each welcomed with the state
+    # the room is in when it joins, which is what a second tab really gets.
+    box = in_chrome_room(
+        client, tmp_path / "two-box.html", room, _welcome(room), _TWO_EDITORS,
+    )
+    assert box["surface"] == "textarea"
+    ace = in_chrome_room(
+        client, tmp_path / "two-ace.html", room, _welcome(room), _TWO_EDITORS, editor="ace",
+    )
+    assert ace["surface"] == "ace"
+
+    # Both surfaces opened on the same string, which is the normalisation claim
+    # itself: the box could not have held a `\r` whatever it was given, and Ace
+    # was pinned to `unix` so that it could not put one back.
+    assert box["opened"] == ace["opened"].replace(" EDIT", ""), (
+        f"the box opened on {box['opened']!r} and the second editor on {ace['opened']!r}"
+    )
+    assert "\r" not in box["opened"] and "\r" not in ace["opened"]
+    # And the room after both of them, which is the thing that would ping-pong: a
+    # surface rejoining every line with CRLF rewrites the whole document on its
+    # first keystroke, and the other one rewrites it back on its next.
+    assert room.body() == ace["box"], (
+        f"the room holds {room.body()!r} and the second editor holds {ace['box']!r}"
+    )
+    assert "\r" not in room.body(), (
+        "a carriage return went back into the room, and the other surface cannot hold "
+        "it — which is the pair that never settles"
+    )
+    # Two edits, one from each surface, and both survived. A whole-document
+    # rewrite by either would have taken the other's with it.
+    assert room.body().count("EDIT") == 2, (
+        f"one of the two edits was rewritten away: {room.body()!r}"
+    )
+
+
+_SUBSTITUTED = r"""
+const editor = SURFACE.editor;
+const keymap = [...document.querySelectorAll('#statusbar button')]
+  .find(b => b.textContent.startsWith('Keymap'));
+keymap.click();
+await new Promise(r => setTimeout(r, 60));
+const Vim = ace.require('ace/keyboard/vim').CodeMirror.Vim;
+const opened = SURFACE.text();
+// The ex line, through vim's own handler — which is what typing `:%s/…/…/g` and
+// pressing Enter reaches. Driven this way rather than by synthesising thirteen
+// keystrokes, because what is under test is the gesture's effect on the room and
+// not vim's own command parser.
+Vim.handleEx(editor.state.cm, '%s/cycle/bet/g');
+await new Promise(r => setTimeout(r, 250));
+return {errors: window.__errors, sent: window.__sent, opened, box: SURFACE.text(),
+        said: document.getElementById('state').textContent,
+        handler: String(editor.getKeyboardHandler().$id),
+        updates: window.__sent.filter(f => f.t === 'update').length};
+"""
+
+
+def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """S9.4. One keypress, the whole document, and everybody in it.
+
+    `:%s/cycle/bet/g` is one gesture and hundreds of deltas. Three things have to
+    be true about it and none of them is free:
+
+    * **It converges.** The runs are applied to the `Y.Text` in the order they
+      happened, each index into the document as it stood after the one before —
+      which is what applying them in order to a copy that started in step
+      reproduces. A single whole-document write instead would be
+      remove-all-then-insert-all and the room would credit this tab with the
+      entire body.
+    * **It is one frame.** Batched into one `doc.transact`, so a substitution is
+      one update on the wire rather than one per replacement. Measured before the
+      batching: 722 change events, and `typed()` materialising two full code-point
+      arrays per call is 1.90ms on a 250 KB body — about 1.4s of blocked main
+      thread for one Replace All.
+    * **It is announced.** Not refused: it is a legitimate thing to do to your own
+      document. But a thousand characters changing at one keypress, in a document
+      somebody else is also typing in, is a thing this application has to say out
+      loud — three of its shipped defects were branches that decided something in
+      silence.
+    """
+    body = ("A cycle is six weeks and a cycle is what a bet is made for.\n"
+            "Every cycle has a cool-down, and the cycle after it starts cold.\n") * 12
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "cycles")
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    assert shown.count("cycle") >= 40, "the fixture is not the bulk gesture this is about"
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    answer = in_chrome_room(
+        client, tmp_path / "ace-subst.html", room, _welcome(room), _SUBSTITUTED, editor="ace",
+    )
+    assert answer["handler"] == "ace/keyboard/vim", "the keymap did not come on"
+    assert answer["opened"] == shown
+    assert "cycle" not in answer["box"] and answer["box"].count("bet") >= 48, (
+        f"the substitution did not run: {answer['box'][:80]!r}"
+    )
+    assert room.body() == answer["box"], (
+        "the room and the editor disagree after a substitution over the whole document"
+    )
+    # One gesture, one frame. Two, counting the empty one every tab sends on
+    # joining — which is what makes the number here 2 rather than 1.
+    assert answer["updates"] == 2, (
+        f"a substitution went out as {answer['updates'] - 1} update frames, not one"
+    )
+    assert "characters changed at once" in answer["said"], (
+        f"a whole-document change went to everybody and the page said {answer['said']!r}"
+    )
+    # And the credit: the characters belong to whoever pressed the key.
+    assert room.typed.get("ann", 0) >= 100, (
+        f"the substitution was credited {room.typed.get('ann')} characters"
+    )
+
+
+_UNDO_IN_A_ROOM = r"""
+document.getElementById('toggle').click();
+const editor = ace.edit(document.querySelector('.acebox'));
+editor.focus();
+// Ann's own edit, made the way a person makes one, at the top of the document.
+editor.selection.moveTo(0, 0);
+editor.insert('ANN ');
+await new Promise(go => setTimeout(go, 100));
+const mineWas = SURFACE.text().startsWith('ANN ');
+
+// And then Bob types, through the real observer path: a real update off the
+// socket, applied inside `apply`, which is what makes it a delta this tab did
+// not make.
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+await new Promise(go => setTimeout(go, 150));
+const theirsWas = SURFACE.text();
+
+// Ann presses undo. One press, the ordinary key, on the ordinary editor.
+window.__sent.length = 0;
+editor.undo();
+await new Promise(go => setTimeout(go, 200));
+return {
+  errors: window.__errors, sent: window.__sent,
+  mineWas, theirsWas, after: SURFACE.text(),
+  frames: window.__sent.filter(frame => frame.t === 'update').length,
+};
+"""
+
+
+def test_undo_never_takes_back_something_somebody_else_typed(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """One press of the key that means "give me back my last thing".
+
+    Measured in Chrome against a real `Room`, before this: what came back out was
+    BOB's sentence. Ace's `UndoManager` records every delta the session sees and a
+    delta applied from the socket is a delta the session sees, so Bob's insert sat
+    on top of Ann's undo stack. And an undo is an ordinary edit to the change
+    handler, so the undone delta went out through `spliced` as an `update` frame —
+    Bob's writing was deleted in Bob's window as well, and then committed that way.
+
+    Ann's own edit must still come back, which is the half a blanket
+    `undoManager.reset()` would have thrown away, so both are asserted here. The
+    room is asked as well as the browser: `in_chrome_room` feeds every frame the
+    page sent into the real `Room`, so "the room still holds Bob's text" is a
+    claim about the document that gets committed rather than about a `<div>`.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("reading", "reading and BOB WAS HERE"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+
+    answer = in_chrome_room(
+        client, tmp_path / "undo.html", room, welcome,
+        _UNDO_IN_A_ROOM.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
+        editor="ace",
+    )
+
+    assert answer["mineWas"], "Ann's own edit never reached the document"
+    assert "BOB WAS HERE" in answer["theirsWas"], (
+        "Bob's keystroke never reached the box, so there is nothing here to take back"
+    )
+    assert "BOB WAS HERE" in answer["after"], (
+        "one press of undo deleted what somebody else typed: the box now reads "
+        f"{answer['after']!r}"
+    )
+    assert not answer["after"].startswith("ANN "), (
+        "and it did not take back Ann's own edit either, which is what she pressed it for"
+    )
+    # The document that would be committed, not the one on screen. Every frame the
+    # page sent has been applied to the real room by `in_chrome_room`.
+    assert "BOB WAS HERE" in room.body(), (
+        f"the undo was broadcast and the room lost Bob's writing: {room.body()!r}"
+    )
+    assert "ANN " not in room.body(), "Ann's undo was not broadcast, so the room has diverged"
+
+
+_UNDO_IN_A_ROOM_ON_THE_BOX = r"""
+document.getElementById('toggle').click();
+const box = document.querySelector('textarea[name=body]');
+const undo = [...document.querySelectorAll('#marks .hist')]
+  .find(one => one.title.startsWith('Undo'));
+if (!undo) return {missing: true};
+
+// Ann's own edit, made the way a person makes one: through the box, with an
+// `insertText`, so the page hears an `input` and recovers the splice exactly as
+// it does for typing.
+box.focus();
+box.setSelectionRange(0, 0);
+document.execCommand('insertText', false, 'ANN ');
+await new Promise(go => setTimeout(go, 100));
+const mineWas = box.value.startsWith('ANN ');
+const offered = !undo.disabled;
+
+// And then Bob types: a real update off the socket, applied inside `apply`,
+// which is what makes it a change this tab did not make — and what assigns
+// `.value`, which is what destroys the browser's own stack.
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+await new Promise(go => setTimeout(go, 150));
+const theirsWas = box.value;
+// The defect, in one line: the native stack has just been wiped and goes on
+// answering that it has something to give back.
+const nativeSaysYes = document.queryCommandEnabled('undo');
+const stillOffered = !undo.disabled;
+
+// One press of the leftmost button on the bar.
+window.__sent.length = 0;
+undo.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+await new Promise(go => setTimeout(go, 200));
+return {
+  errors: window.__errors, sent: window.__sent,
+  mineWas, offered, theirsWas, nativeSaysYes, stillOffered,
+  after: box.value, spent: undo.disabled,
+  frames: window.__sent.filter(frame => frame.t === 'update').length,
+};
+"""
+
+
+def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """S4, and the same sentence `f7bde59` proved on the other surface.
+
+    Two people, one document, one presses undo, and what comes back is their own
+    last edit. On the `<textarea>` there was nothing to press and no history to
+    press it against: a remote keystroke reaches the box as an assignment to
+    `.value` — correctly, because a change nobody here made cannot be merged into
+    a native undo stack — and that assignment wipes the browser's history. So in
+    a live room every character somebody else typed destroyed your undo, with no
+    action from you at all. `nativeSaysYes` is the half that makes it worse than
+    an empty stack: Chrome goes on answering `queryCommandEnabled('undo')` with
+    true afterwards, so nothing on the page could even tell.
+
+    `Y.UndoManager` with `trackedOrigins` of `'typed'` alone is the fix, and the
+    two assertions that matter are the two directions of the same claim: Bob's
+    sentence is still there, and Ann's is not. Both are asked of the real `Room`
+    as well as of the box, because the room's text is the document that gets
+    committed and a `<textarea>` agreeing with itself proves nothing about it.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("reading", "reading and BOB WAS HERE"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+
+    answer = in_chrome_room(
+        client, tmp_path / "undo-box.html", room, welcome,
+        _UNDO_IN_A_ROOM_ON_THE_BOX.replace(
+            "REMOTE", json.dumps(base64.b64encode(update).decode())
+        ),
+    )
+
+    assert not answer.get("missing"), "the toolbar carries no history buttons"
+    assert answer["mineWas"], "Ann's own edit never reached the document"
+    assert answer["offered"], (
+        "the undo button was still disabled after Ann typed, so the room's history "
+        "is not the one the toolbar is asking"
+    )
+    assert "BOB WAS HERE" in answer["theirsWas"], (
+        "Bob's keystroke never reached the box, so there is nothing here to take back"
+    )
+    # Not an aside: this is the measurement that says the native stack cannot be
+    # the answer in a room. If Chrome ever starts reporting this honestly, the
+    # design is still right and this line is the one that will say why it changed.
+    assert answer["nativeSaysYes"], (
+        "Chrome no longer claims an undo it cannot perform after `.value` is assigned — "
+        "re-measure, because the argument for owning this history rests on it"
+    )
+    assert answer["stillOffered"], (
+        "somebody else typing took the undo button away, which is the defect wearing "
+        "a different face"
+    )
+
+    assert "BOB WAS HERE" in answer["after"], (
+        f"one press of undo deleted what somebody else typed: the box now reads "
+        f"{answer['after']!r}"
+    )
+    assert not answer["after"].startswith("ANN "), (
+        "and it did not take back Ann's own edit either, which is what she pressed it for"
+    )
+    assert answer["spent"], (
+        "the stack is empty and the button still looks pressable — empty must not look "
+        "like something you can do"
+    )
+    assert answer["frames"] >= 1, "the undo never went to anybody else in the room"
+
+    # The document that would be committed, not the one on screen: every frame
+    # the page sent has been applied to the real room by `in_chrome_room`.
+    assert "BOB WAS HERE" in room.body(), (
+        f"the undo was broadcast and the room lost Bob's writing: {room.body()!r}"
+    )
+    assert "ANN " not in room.body(), "Ann's undo was not broadcast, so the room has diverged"
+
+
+_HISTORY_KEYS_IN_A_ROOM = r"""
+document.getElementById('toggle').click();
+const box = document.querySelector('textarea[name=body]');
+const of = word => [...document.querySelectorAll('#marks .hist')]
+  .find(one => one.title.startsWith(word));
+const undo = of('Undo'), redo = of('Redo');
+if (!undo || !redo) return {missing: true};
+
+// Nothing typed yet, and the room has just cleared the stack: both directions
+// are empty and both have to say so.
+const atRest = {undo: undo.disabled, redo: redo.disabled};
+
+box.focus();
+box.setSelectionRange(box.value.length, box.value.length);
+document.execCommand('insertText', false, 'a sentence');
+await new Promise(go => setTimeout(go, 100));
+const typed = {text: box.value, undo: undo.disabled, redo: redo.disabled};
+
+// The keyboard, at the box, the way a person presses it. In a room the page has
+// to take this key: the stack the browser would reach is the one `reflect` wiped.
+const press = (key, shift) => {
+  const event = new KeyboardEvent('keydown', {
+    key, code: key === 'z' ? 'KeyZ' : key, ctrlKey: true, shiftKey: !!shift,
+    bubbles: true, cancelable: true,
+  });
+  box.dispatchEvent(event);
+  return event.defaultPrevented;
+};
+const tookUndo = press('z', false);
+await new Promise(go => setTimeout(go, 150));
+const undone = {text: box.value, undo: undo.disabled, redo: redo.disabled};
+
+// And redo from the OTHER channel, because a control that only answers a pointer
+// is half a control: a scripted `.click()` carries `detail === 0`, which is
+// exactly what Enter and Space on a focused button produce and nothing a pointer
+// ever produces.
+redo.focus();
+redo.click();
+await new Promise(go => setTimeout(go, 150));
+const redone = {text: box.value, undo: undo.disabled, redo: redo.disabled};
+
+// The shifted chord, back the other way, once more.
+const tookUndoAgain = press('z', false);
+await new Promise(go => setTimeout(go, 150));
+const tookRedo = press('z', true);
+await new Promise(go => setTimeout(go, 150));
+return {errors: window.__errors, sent: window.__sent, atRest, typed, undone, redone,
+        tookUndo, tookUndoAgain, tookRedo, ended: box.value};
+"""
+
+
+def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """Both channels and both directions, and the disabled state at each step.
+
+    Two things are being held here that this branch has already got wrong once.
+    **Thirteen of fourteen toolbar buttons were mouse-only**, because they were
+    bound on `mousedown` alone and Enter and Space on a focused button produce a
+    click and no mousedown at all; a scripted `.click()` carries `detail === 0`,
+    which is the keyboard's signature and never a pointer's, so pressing one that
+    way is the real path. And **empty must not look like broken**: a history
+    button with nothing on its stack is `disabled` rather than pressable and
+    inert, at rest, after typing, after undoing and after redoing.
+
+    ⌘Z itself is taken off the browser here and only here — `keyed` on the
+    history that owns the document says so — because in a live room the stack
+    the browser would reach is the one `reflect` destroyed. On the same page with
+    no room the key is left alone, which `test_the_history_buttons_use_the_browser
+    _s_own_stack_when_there_is_no_room` is the other half of.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+
+    answer = in_chrome_room(
+        client, tmp_path / "undo-keys.html", room, _welcome(room), _HISTORY_KEYS_IN_A_ROOM
+    )
+
+    assert not answer.get("missing"), "the toolbar carries no history buttons"
+    assert answer["atRest"] == {"undo": True, "redo": True}, (
+        "a document nobody has typed in offers an undo, which is a button that does nothing"
+    )
+    assert answer["typed"]["text"].endswith("a sentence")
+    assert answer["typed"] == {"text": answer["typed"]["text"], "undo": False, "redo": True}
+
+    assert answer["tookUndo"], (
+        "Ctrl+Z was left to the browser inside a live room, where the browser's own "
+        "stack is the one every remote keystroke wipes"
+    )
+    assert not answer["undone"]["text"].endswith("a sentence"), (
+        f"Ctrl+Z gave nothing back: {answer['undone']['text']!r}"
+    )
+    assert answer["undone"] == {
+        "text": answer["undone"]["text"], "undo": True, "redo": False
+    }, "after the last step is taken back, undo is empty and redo is not"
+
+    assert answer["redone"]["text"].endswith("a sentence"), (
+        f"the redo button did not answer a keyboard press: {answer['redone']['text']!r}"
+    )
+    assert answer["redone"] == {
+        "text": answer["redone"]["text"], "undo": False, "redo": True
+    }
+
+    assert answer["tookUndoAgain"] and answer["tookRedo"], "the shifted chord was not claimed"
+    assert answer["ended"].endswith("a sentence"), (
+        f"Ctrl+Z then Ctrl+Shift+Z did not end where it started: {answer['ended']!r}"
+    )

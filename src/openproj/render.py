@@ -31,6 +31,7 @@ from markdown_it.renderer import RendererHTML
 from markdown_it.rules_core import StateCore
 from markdown_it.token import Token
 from markupsafe import Markup, escape
+from mdit_py_plugins.tasklists import tasklists_plugin
 from pydantic import BaseModel
 
 from .index import (
@@ -44,6 +45,7 @@ from .index import (
 )
 from .model import (
     ISSUE_STATUS,
+    MAX_BODY_BYTES,
     NOTE_STATES,
     NOTE_STATUS,
     PARENT_KINDS,
@@ -188,6 +190,553 @@ def _library(name: str) -> Markup:
     because every graph page carries 670 KB of it and the read is not free.
     """
     return Markup(_inline(name))
+
+
+# --- the second editor's adapter, and where it is NOT ------------------------
+#
+# Out of `_COMBOBOX` and into its own block, on a measurement: `_COMBOBOX` is
+# emitted on SIX pages — table, new, detail, cycle, issue, note — and two of
+# them have no body editor at all. Leaving this beside `textareaSurface` cost
+# 12,978 B on every one of those pages including the two, for an adapter that
+# can only be reached where 594 KB of library is also in the page. It goes out
+# with the library or it does not go out.
+#
+# Inlined AFTER `ace.js`, so `ace.require` is there when it parses, and BEFORE
+# the page script that calls `bodySurface`.
+_ACE_SURFACE = Markup(r"""
+<style>
+/* Ace's own look, re-expressed in this page's tokens.
+   `ace.js` carries 27 hex colours and 53 `rgb()` literals and injects them at
+   runtime through `importCssString`, so the second editor arrives wearing a 2010
+   TextMate theme on a page with a dark mode. **No new colour value is defined
+   here**, and that is deliberate: every declaration below resolves a token that
+   already exists in all three of the blocks this repository requires — bare
+   `:root`, `:root[data-theme="dark"]` and the guarded `prefers-color-scheme`
+   media query — so there is nothing that could be right in one block and wrong
+   in another, which is the failure that rule exists to prevent.
+   Ace's rules are `.ace-tm .ace_gutter` and the like, (0,2,0); these are the
+   same or heavier, and they are inlined in the page while Ace's are injected
+   into the head at construction — later in the document either way. */
+/* The same box as `textarea.field`, because it is the same box: 3px, the app's
+   corner, and not the 4px this was written with — the writing surface and the
+   fifteen fields beside it are read together, and one of them rounder than the
+   rest is the drift the shell's rule exists to stop. */
+.acebox { position: relative; width: 100%; min-height: 60vh; box-sizing: border-box;
+          border: 1px solid var(--line-strong); border-radius: 3px; }
+.ace_editor { font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
+              border-radius: 3px; }
+.ace-tm, .ace-tm .ace_scroller { background: var(--surface); color: var(--fg); }
+.ace-tm .ace_gutter { background: var(--surface-2); color: var(--muted);
+                      border-right: 1px solid var(--line); }
+.ace-tm .ace_gutter-active-line { background: var(--surface); }
+.ace-tm .ace_cursor { color: var(--fg); }
+.ace-tm .ace_marker-layer .ace_selection { background: var(--band); }
+.ace-tm .ace_marker-layer .ace_active-line { background: var(--surface-2); }
+.ace-tm .ace_indent-guide { background: none; border-right: 1px solid var(--line); }
+/* The keyboard ring, and the reason it needs a rule of its own. Ace's real input
+   is a 2.5x1 CSS px `<textarea>` with `opacity: 0` parked at the caret, so the
+   shell's floor — `:where(a, button, input, select, textarea, summary,
+   [tabindex]) :focus-visible { outline: 2px solid var(--focus) }` — draws a
+   two-pixel ring around a two-pixel box in the middle of the document. The ring
+   belongs on the thing a person can see, which is the editor. */
+.ace_text-input:focus, .ace_text-input:focus-visible { outline: none; }
+.acebox:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Full page and the split view, matched to the rules the box already has: the
+   pane gives its height and the editor takes all of it, rather than a `60vh`
+   minimum pushing the status bar off the bottom of the screen. */
+article.entity.full .acebox, body.fullpage .acebox { height: 100%; min-height: 0; }
+</style>
+<script>
+// --- Ace, as the same surface ----------------------------------------------
+//
+// The second editor, and the only ask a textarea cannot have: ask 6, a vim
+// keymap. `static/VENDOR.md` records the search and the price — 594,306 B for
+// `ace.js` and `keybinding-vim.js`, the markdown mode deliberately dropped — and
+// records that this is a HUMAN OVERRIDE of a written rule rather than evidence
+// that the rule was wrong. Nobody has been measurably slowed down by the
+// textarea, which was the condition written down for revisiting; somebody asked
+// for vim, which is a different and legitimate reason.
+//
+// Everything between this banner and the one that closes it is the only code on
+// these pages that knows the document may be being written in Ace. It builds the
+// same ten members `textareaSurface` does, so `applyMark`, `indentLines`,
+// `attachStatus`, `attachUploads`, the draft writer, the room and the toolbar
+// reach it without knowing which one they got.
+//
+// **The textarea stays in the page and stays in the form**, hidden. `ace.edit`
+// on the box itself REMOVES it from the DOM and from the form — measured — and
+// every test in `tests/test_seats.py` and every page-mode shim test selects
+// `textarea[name=body]` and would have gone on passing against a surface nothing
+// reads. It is stale here and nothing reads it: the one place that could,
+// `SURFACE.text()`, is this object.
+// `seeded` is handed in rather than read off the box, and that is the one-place
+// rule holding: `textareaSurface` is still the only code that knows a
+// `<textarea>` has a `.value`, and this surface is given the document by it.
+function aceSurface(area, seeded) {
+  const Range = ace.require('ace/range').Range;
+  // Ace lays out an absolutely-positioned renderer inside a box it is given, so
+  // it needs a box of its own rather than the textarea's place in the flow.
+  // Inside `.bodywrap`, so the width, the split view's column and the seat
+  // layer's containing block are all the ones the textarea had.
+  const host = document.createElement('div');
+  host.className = 'acebox field';
+  area.after(host);
+  area.hidden = true;
+  const editor = ace.edit(host);
+  const session = editor.session;
+  const document_ = session.doc;
+
+  // **One line ending, pinned.** Ace's `Document` autodetects a newline
+  // sequence and `getValue()` then rejoins EVERY line with it, while a
+  // `<textarea>` normalises CRLF to LF unconditionally in both directions — so
+  // the two surfaces this application now ships normalise in OPPOSITE
+  // directions, and `"a\nb\rc\nd"` is the case no length or index check can
+  // see: same length, different bytes.
+  //
+  // **This is the second of two places, and the first one is the room.**
+  // `coedit.one_newline` normalises where text ENTERS the room, so a surface
+  // opening on it never sees a carriage return — that is what stops the two
+  // rewriting each other's endings once a keystroke, and deleting this line
+  // alone does not reintroduce it. What this line answers is the OTHER door:
+  // `Document.insert` re-detects when the document is one line
+  // (`getLength() <= 1 && this.$detectNewLine(t)`), so pasting Windows text into
+  // a new entity would set `$autoNewLine` and rejoin the whole document with
+  // CRLF. `test_the_second_surface_holds_one_line_ending_whatever_is_pasted_
+  // into_it` is that case and it fails without this.
+  document_.setNewLineMode('unix');
+
+  // Seeded once, on construction, and this is the ONE `setValue` in the file.
+  // It is not a binding operation: nothing observes this document yet and the
+  // room has not been joined. `-1` puts the caret at the top. Every write after
+  // this one goes through `splice`, and
+  // `test_the_second_surface_never_sets_or_replaces_the_whole_document` holds it
+  // to that by reading the shipped page.
+  editor.setValue(seeded, -1);
+  // **The seed is not an edit and does not go on the undo stack.** The comment
+  // here used to say `-1` reset Ace's history. It does not: `editor.setValue` is
+  // `session.doc.setValue`, an ordinary insert to the manager, while it is
+  // `session.setValue` that calls `reset()`. Measured in Chrome the moment the
+  // toolbar gained a button that reaches this stack from outside Ace's own key
+  // handling — one press of undo on a freshly opened document took it from 119
+  // characters to 0, which in a room goes out as an update frame and is
+  // committed. There is nothing behind the seed to give anybody back.
+  session.getUndoManager().reset();
+  // And having seeded it, SAY if that changed anything, rather than silently
+  // rewriting somebody's file the moment they opened it in the other editor.
+  // Nothing should reach here — the room and `parse_text` both hand over LF —
+  // and a branch that decides not to act in silence has shipped here three
+  // times, so the one that decides it DID act says so.
+  if (session.getValue() !== seeded) {
+    announce('This document contains line endings the editor cannot hold, and they '
+             + 'have been made ordinary newlines. Saving writes the change.');
+  }
+
+  // Ace's own affordances, set from the same preferences the textarea's are.
+  editor.setOptions({
+    // Ask 5, which Ace answers itself: soft tabs at the remembered width. The
+    // page's own `indentLines` does not run here, and the reason is Ace's rather
+    // than this page's — its `stopEvent` does `stopPropagation` as well as
+    // `preventDefault`, so Tab never reaches the keydown listener `attachEditing`
+    // put on this box. Measured, with a listener beside it.
+    useSoftTabs: true,
+    tabSize: INDENT.length,
+    wrap: true,
+    showPrintMargin: false,
+    // The default is a `<textarea>` 2.5x1 CSS px at the caret with opacity 0,
+    // and Ace rewrites its `aria-label` — so the box that used to say "Shaping
+    // document" to a screen reader says whatever Ace last put there.
+    placeholder: '',
+  });
+  editor.renderer.setScrollMargin(0, 0);
+  if (EDITOR.keymap !== 'default') {
+    editor.setKeyboardHandler(EDITOR.keymap === 'vim' ? 'ace/keyboard/vim' : null);
+  }
+  editor.textInput.getElement().setAttribute('aria-label', area.getAttribute('aria-label') || '');
+
+  // **The five default commands that fetch a module over the network, removed.**
+  // Ace's command table calls `config.loadModule`, which is
+  // `createElement('script'); i.src = e; head.appendChild(i)` — measured under
+  // this exact CSP: Cmd-F gives `defaultPrevented=true`, one injected
+  // `ext-searchbox.js`, a `script-src-elem` violation, no searchbox in the DOM
+  // and an EMPTY `window.error`. Ace takes Cmd-F away from the browser and gives
+  // back nothing, in silence. Removing them hands the key back to Chrome, whose
+  // own find works on this document and on the rendered pane beside it.
+  //
+  // This is application code and not upstream behaviour: the bytes are verbatim,
+  // the behaviour deliberately is not, and `docs/EDITOR.md` says why in-editor
+  // find is not being bought.
+  for (const name of ['find', 'replace', 'showSettingsMenu',
+                      'goToNextError', 'goToPreviousError']) {
+    editor.commands.removeCommand(name);
+  }
+
+  let applying = false;
+
+  // **Undo must never reach a delta this tab did not make**, and until this line
+  // it did. Measured in Chrome against a real room: Ann types, Bob types, Ann
+  // presses Ctrl+Z — and what came back out was BOB's sentence, not Ann's. Worse
+  // than a wrong window: an undo is an ordinary edit as far as the change handler
+  // is concerned, so it went out through `spliced` as an `update` frame and
+  // deleted Bob's writing in Bob's window too, and then in the commit. One
+  // keystroke of somebody else's, taken back for everybody, by the key people
+  // press when they want their OWN last thing back.
+  //
+  // The cause is not this binding's: Ace's `UndoManager` records every delta the
+  // session sees, and a delta applied from the socket is a delta the session
+  // sees. `applying` already says which are which, so the manager is told to
+  // ignore those and nothing else.
+  //
+  // The PUBLIC `add`, and not `session.$fromUndo` — which is the flag Ace itself
+  // uses at this exact seam and which also works, measured. A private field that
+  // a re-vendoring renames leaves this silently doing nothing again; `add`
+  // missing throws on the line below, at construction, where somebody reads it.
+  //
+  // What this is NOT: S4. The `<textarea>` still loses its native undo history
+  // on every remote keystroke — `splice` under `apply` assigns `.value` there,
+  // which is what wipes it — and there are still no undo and redo buttons. This
+  // stops the half that destroys somebody else's writing; `Y.UndoManager` is
+  // still owed the half that gives you back your own.
+  const history = session.getUndoManager();
+  const remember = history.add.bind(history);
+  history.add = (delta, merge, forSession) => {
+    if (!applying) remember(delta, merge, forSession);
+  };
+
+  const heard = {input: [], caret: [], splice: []};
+  const fire = (kind, ...args) => { for (const listener of heard[kind]) listener(...args); };
+
+  const indexOf = position => document_.positionToIndex(position);
+  const positionOf = index => document_.indexToPosition(index);
+
+  // **Ace's own change deltas, converted at the moment they arrive.** This is
+  // the binding, and the whole reason it is not `typed()`'s prefix/suffix walk
+  // is written in `docs/EDITOR.md`: `session.setValue` and `session.replace` are
+  // both remove-then-insert with an EMPTY DOCUMENT between the two events, which
+  // no prefix/suffix walk can recover a splice from, and the one measured
+  // consequence was a passive tab pushing 97,890 characters up the socket under
+  // its own name.
+  //
+  // A delta arrives AFTER it has been applied, and that is why `start` is
+  // converted here and not at flush time: everything before `start` is untouched
+  // by the delta, so its index is the same on both sides of it, while everything
+  // after it has moved. The length is `lines.join('\n').length` — UTF-16 code
+  // units, the same space `Y.Text`, `selectionStart` and `Room.sits` count in.
+  const pending = [];
+  session.on('change', delta => {
+    if (applying) return;
+    const at = indexOf(delta.start);
+    const run = delta.lines.join('\n');
+    pending.push(delta.action === 'insert'
+      ? {from: at, to: at, put: run} : {from: at, to: at + run.length, put: ''});
+    flush();
+  });
+
+  // Batched once per Ace operation, because one gesture is one edit: `:%s/x/y/g`
+  // and multi-cursor each fire hundreds of deltas, and measured, one keystroke
+  // under multi-cursor deleted 14,789 characters and reinserted 13,345. Sent as
+  // one transaction they are one update on the wire; sent one at a time they are
+  // hundreds, and `MAX_OUTBOX_BYTES` fills in three.
+  //
+  // Two ways out of the queue and they drain the same list, so whichever comes
+  // first wins and the other finds it empty. `beforeEndOperation` is Ace's own
+  // end-of-gesture; the microtask is for a programmatic edit made outside an
+  // operation, and it is a MICROtask rather than a timeout because a frame off
+  // the socket is a macrotask — a queue still holding this tab's keystrokes when
+  // a remote update arrives is a queue `reflect()` would splice away.
+  let queued = false;
+  function flush() {
+    if (queued) return;
+    queued = true;
+    Promise.resolve().then(drain);
+  }
+  editor.on('beforeEndOperation', drain);
+  function drain() {
+    queued = false;
+    if (!pending.length) return;
+    const runs = pending.splice(0, pending.length);
+    fire('splice', runs);
+    // ONE `input` for the gesture and not one per delta, and that is the same
+    // argument as the transaction above rather than a separate optimisation.
+    // `attachStatus`'s refresh splits the whole document to count its lines, the
+    // gutter relays out every line, the draft writer serialises the body: a
+    // substitution firing them seventy-four times does seventy-four documents'
+    // worth of work for one press. The subscribers are all idempotent on the
+    // result, which is what makes coalescing them correct rather than merely
+    // cheaper.
+    fire('input');
+    fire('caret');
+  }
+
+  // **A caret moves without the document moving, and until this line only the
+  // document said so.** `drain` above was the only source of `caret` on this
+  // surface, so every subscriber to it heard about an arrow key, a click in the
+  // text, `gotoLine` or a fold exactly never. Measured in Chrome on
+  // `/detail/…?editor=ace`: `gotoLine(3, 4)` and then one line down left the
+  // status bar reading `Line 1, Column 1` — ask 5's whole content — and it
+  // corrected itself only at the next keystroke. The other subscriber is
+  // `sit()`, so this tab's seat went up the socket once per burst of typing and
+  // never on the move between them: everybody else in the room had a band
+  // sitting where this person last typed rather than where they are, which is
+  // the one thing a band exists to say.
+  //
+  // `changeCursor` on the selection and not `changeSelection`, which also fires
+  // for a range that grew with the caret standing still. `sit()` sends `from`
+  // and `attachStatus` reads both ends off `caret()`, so the cursor moving is
+  // the event that means what these subscribers ask about.
+  //
+  // Coalesced onto a microtask for the reason `flush` is, and not as a
+  // precaution: `:%s/cycle/bet/g` moves the cursor once per replacement, and
+  // `attachStatus`'s refresh splits the whole document to count its lines. The
+  // subscribers are idempotent on the position — `sit` compares against what it
+  // last sent, `refresh` recomputes — which is what makes coalescing them
+  // correct rather than merely cheaper.
+  //
+  // NOT gated on `applying`, exactly as the textarea's `caret` listeners are
+  // not: a remote splice really does move this caret, because `applyDelta`
+  // moves Ace's anchors, and a readout that says where it now is is the honest
+  // answer.
+  let caretQueued = false;
+  editor.selection.on('changeCursor', () => {
+    if (caretQueued) return;
+    caretQueued = true;
+    Promise.resolve().then(() => { caretQueued = false; fire('caret'); });
+  });
+
+  return {
+    // The Ace container, for the questions that are about a box: class names,
+    // `closest`, and the events the members below do not cover — keydown, paste
+    // and drop, which bubble here from Ace's own hidden input.
+    el: host,
+    editor,
+
+    text: () => session.getValue(),
+
+    caret() {
+      const range = editor.selection.getRange();
+      return {from: indexOf(range.start), to: indexOf(range.end)};
+    },
+
+    setCaret(from, to) {
+      editor.selection.setRange(
+        Range.fromPoints(positionOf(from), positionOf(to === undefined ? from : to)));
+    },
+
+    // The only write, and NEVER `session.setValue` or `session.replace`. Both
+    // are remove-then-insert as far as a change handler can see; `Document`'s
+    // own `remove` and `insert` are the two halves said separately, in a bounded
+    // range, which is what a person's edit is made of too. Ace's anchors — the
+    // caret, every fold, every marker — are moved by `applyDelta` itself, so a
+    // remote keystroke leaves this tab's caret where its owner put it without
+    // anything here arithmetic-ing it.
+    splice(from, to, put) {
+      const run = () => {
+        if (to > from) document_.remove(Range.fromPoints(positionOf(from), positionOf(to)));
+        if (put) document_.insert(positionOf(from), put);
+      };
+      if (applying) { run(); return; }
+      // A person's edit: one undo step, and Ace's history merges by operation
+      // exactly as `execCommand` gives the textarea one. Focused first for the
+      // same reason `replaceRange` focuses the box — a toolbar press is a
+      // continuation of typing, not a departure from it.
+      editor.focus();
+      editor.startOperation({command: {name: 'openproj'}});
+      try { run(); } finally { editor.endOperation(); }
+    },
+
+    onInput(listener) { heard.input.push(listener); },
+    onCaret(listener) { heard.caret.push(listener); },
+
+    // The eighth capability, and the one a textarea does not have: what changed,
+    // as ranges, rather than the whole document to be diffed against. A surface
+    // that can say gets asked; one that cannot is recovered from. `_COEDIT`
+    // branches on the presence of this member and on nothing else.
+    onSplice(listener) { heard.splice.push(listener); },
+
+    coordsAt(indexes) {
+      const height = editor.renderer.lineHeight;
+      return indexes.map(index => {
+        const at = positionOf(index);
+        return session.documentToScreenRow(at.row, at.column) * height;
+      });
+    },
+
+    // `history: true`, and true only because of the four lines above that bind
+    // `history.add`. Ace keeps its own stack across a remote change, that stack
+    // is right about whose deltas are in it, and Ace's command table is what
+    // Ctrl+Z reaches here — `stopEvent` stops propagation, so the key never gets
+    // to `attachEditing`. Two histories with the key on one and the button on
+    // the other is worse than either, so `historyOf` gives both to this one.
+    provides: {gutter: true, seats: false, history: true},
+    // The label, and never a branch. See the note on the textarea surface's.
+    editorName: 'ace',
+
+    // `canUndo`/`canRedo` and not the `hasUndo`/`hasRedo` aliases beside them,
+    // for the reason `add` above is the public one: an alias is what a
+    // re-vendoring drops. Through `editor` rather than the manager, so the caret
+    // and the folds come back with the text.
+    history: {
+      can: what => what === 'undo' ? history.canUndo() : history.canRedo(),
+      step(what) { editor.focus(); if (what === 'undo') editor.undo(); else editor.redo(); },
+      keyed: false,
+    },
+
+    // Ask 6, and the whole reason 594 KB is in this page. `null` and not
+    // `'ace'`: `setKeyboardHandler` with a string that is not `ace` goes through
+    // `config.loadModule(['keybinding', name])`, which is the network path the
+    // five removed commands were removed for — `ace/keyboard/vim` is the one
+    // that is already defined here, by the second file, and every other name
+    // would fetch.
+    keymaps: KEYMAPS,
+    setKeymap(name) {
+      editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
+    },
+
+    scrolled: () => session.getScrollTop(),
+    scrollTo(top) { session.setScrollTop(top); },
+    onScroll(listener) { session.on('changeScrollTop', listener); },
+
+    apply(run) {
+      const before = applying;
+      applying = true;
+      try { return run(); } finally { applying = before; }
+    },
+    applying: () => applying,
+
+    lineCoords() {
+      const height = editor.renderer.lineHeight;
+      const tops = [];
+      for (let row = 0; row < session.getLength(); row++) {
+        tops.push(session.documentToScreenRow(row, 0) * height);
+      }
+      return tops;
+    },
+  };
+}
+
+// --- end of Ace as a surface -----------------------------------------------
+</script>
+""")
+
+
+# The two spellings the query string has, and the only two. `ace` is the second
+# editor and `plain` is the box that was here before it.
+ACE = "ace"
+PLAIN = "plain"
+
+
+def _ace_wanted(editor: str, base_commit: str | None, may_write: bool) -> bool:
+    """All three halves, in one place, because the question is asked on four pages.
+
+    **The parameter is an opt-OUT now, and that is jcanton's decision rather than
+    a measurement's.** It was `?editor=ace` opting in; it is `?editor=plain`
+    opting out, because "make ace the default, I think it's worth it" — 2026-08-20.
+    Nothing in `static/VENDOR.md` moved to make that true: the revisit condition
+    that file records is "when somebody is actually slowed down by a textarea",
+    and nobody has produced that measurement. A person wanting the editor they
+    want is a legitimate reason and it is a different one, and this is the line
+    where the difference is decided, so it is written here.
+
+    What did NOT change is who pays, and that is the whole of the rest of this
+    docstring. There still has to be an editing surface to put it on, which is
+    `editable`, which is `base_commit is not None` everywhere in this file. And
+    this reader still has to be somebody the server would take a write from.
+
+    **That second gate is the one the audit found missing, and it is not the same
+    as the first.** `editable` is `base_commit is not None` and the served route
+    passes a commit for EVERYONE, so a signed-out reader's detail page already
+    carries the `<textarea>`, the toolbar and two `attachEditing(` calls. Gating
+    594 KB on `editable` alone would have taken that page to 4.19x itself, for a
+    keymap whose every save the server refuses. `yjs` and `coedit` already carry
+    this same gate, for the same reason. Inverting the parameter is exactly the
+    change that could have quietly removed it — the default arm is now the one
+    that ships the library — so it is asserted rather than assumed:
+    `test_a_reader_who_may_not_write_is_sent_no_editor_library` renders a reader's
+    page with no parameter at all and with each of the two.
+
+    `may_write` defaults to False at every caller, so a page rendered by anything
+    that has not thought about it — the static export among them — still gets no
+    library rather than getting one by omission. The default that flipped is the
+    default of the *address*, not the default of this function's other two
+    arguments.
+    """
+    return editor != PLAIN and _either_editor_possible(base_commit, may_write)
+
+
+def _either_editor_possible(base_commit: str | None, may_write: bool) -> bool:
+    """The two gates that are not the address, asked on their own by the switch.
+
+    A control offering a choice this page could not honour whichever way it was
+    pressed is a control that lies about what the page can do, so the switch
+    beside the three views is drawn only where this is true. Split out of
+    `_ace_wanted` rather than written a second time beside it, because two copies
+    of one gate is exactly how the switch and the bytes come to disagree.
+    """
+    return base_commit is not None and may_write
+
+
+@cache
+def _ace() -> Markup:
+    """Ace and its vim keymap, as the two classic scripts they already are.
+
+    594,306 B, inlined only when the address asked for them, and every part of
+    that sentence is load-bearing.
+
+    **Why they are here at all.** Ask 6 of the seven is a vim keymap, and it is
+    the one a `<textarea>` cannot have: modal editing over `selectionStart`, with
+    motions, operators, registers, counts, text objects, macros and an ex line,
+    over an undo stack you do not own. `static/VENDOR.md` records the search that
+    ended here and records that this is a HUMAN OVERRIDE of a written refusal
+    rather than a re-derivation of it: the condition that file set for revisiting
+    was "when somebody is actually slowed down by the textarea", and nobody has
+    produced that measurement. Somebody asked for vim. That is a legitimate
+    reason and it is a different one.
+
+    **Why the markdown mode is not here.** `mode-markdown.js` is another
+    75,276 B for syntax highlighting, which is on nobody's list; it is the only
+    one of the three files that fails `test_no_page_asks_the_network_for_a_font`,
+    twice, on a tokeniser regex and a completion template that fetch nothing; and
+    it inlines four dormant worker-spawning sub-modes, so a later
+    `setMode('ace/mode/javascript')` for a fenced-code sub-editor would build a
+    `blob:` Worker this policy blocks IN SILENCE — an `error` event with an empty
+    message, no exception, and Ace's own "Could not load worker" warning never
+    firing because the constructor does not throw. Measured here, in Chrome,
+    under this exact `CSP`, with `window.Worker` hooked before Ace parsed: the
+    two files below construct 0 Workers, take 0 CSP violations, inject 0 scripts
+    and leave `session.$worker` null, and the same probe with the markdown mode
+    added and `ace/mode/javascript` set constructs a `blob:` Worker and logs
+    `worker-src <- blob` — which is what makes the zero evidence rather than a
+    check that could only pass.
+
+    **Why the two are one block.** `keybinding-vim.js` registers
+    `ace/keyboard/vim` against the `ace.define` registry `ace.js` created, so it
+    is not a library beside Ace, it is the rest of Ace. They are concatenated
+    with a newline between them because a minified file may end in a line comment
+    and the next byte after it would be inside it.
+
+    Verbatim, both of them, byte for byte from the `ace-builds` 1.44.0 npm
+    tarball's `src-min-noconflict/` — not a CDN-generated derivative — and
+    checksummed in `static/SHA256SUMS`. BSD-3-Clause, this repository's own
+    licence; the minified files carry no notice at all, so `ace-LICENSE.txt`
+    ships beside them and the notice goes in the page, on the precedent Inter
+    already set here: every rendered page is a copy, and a copy is a
+    redistribution.
+    """
+    # The notice travels with the bytes, and this is the only way it can: all
+    # three minified files contain zero occurrences of `Copyright`, `BSD` and
+    # `Ajax.org` — upstream strips the block when it minifies — so a page that
+    # inlines them and says nothing has redistributed the software without the
+    # notice BSD-3 clause 2 asks for. Read from the file rather than typed here,
+    # so a re-vendoring that changes the licence changes this too.
+    notice = _inline("ace-LICENSE.txt")
+    # `*/` cannot appear in it and does not, but a licence is exactly the kind of
+    # file somebody edits, and a stray one would end the comment and leave the
+    # rest of the text as code.
+    if "*/" in notice:
+        raise ValueError("static/ace-LICENSE.txt would end the comment it is written into")
+    return Markup(
+        f"/* Ace 1.44.0 (ace.js and keybinding-vim.js), BSD-3-Clause.\n\n{notice}*/\n"
+        + _inline("ace.js") + "\n" + _inline("keybinding-vim.js")
+    )
 
 
 # The two lines of `yjs.bundle.mjs` that are not JavaScript this page can run,
@@ -979,7 +1528,23 @@ ROUTES = Links(
     asset="/assets/", deck="/deck/", body="/api/body/",
 )
 
-_MD = MarkdownIt("commonmark", {"html": False}).enable("table")
+# Commonmark, plus the two things people were already typing and getting back as
+# punctuation. `~~dropped~~` rendered as four literal tildes and `- [ ] a task`
+# as the literal text `[ ]`, because commonmark has neither — so a struck-out
+# line read as emphasis nobody could see, and a checklist, which is what the
+# Progress section of a pitch is made of, read as a bullet with a box drawn in
+# ASCII. Both are GitHub's spelling and HackMD's, which is where these documents
+# were written before they were migrated here.
+#
+# The plugin is a dependency and not a hand-rolled rule for the reason
+# `AGENTS.md` gives: `mdit-py-plugins` is markdown-it-py's own companion package,
+# it costs the browser nothing at all, and a second implementation of the one
+# checkbox syntax is a second thing to keep in step with the parser under it.
+_MD = (
+    MarkdownIt("commonmark", {"html": False})
+    .enable(["table", "strikethrough"])
+    .use(tasklists_plugin)
+)
 _PR = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 
 
@@ -1010,6 +1575,37 @@ _ASSET_MEDIA = {
 _ASSET_SRC = re.compile(
     r"assets/([0-9a-f]{16}(?:" + "|".join(re.escape(s) for s in _ASSET_MEDIA) + "))"
 )
+
+
+def _source_lines(state: StateCore) -> None:
+    """Every top-level block, stamped with the lines of source it came from.
+
+    The box and the rendered document are two views of one text, and nothing in
+    the browser can line them up unless the rendered half says where each piece
+    was written. `token.map` is markdown-it's own answer to that and is already
+    computed by the time this runs — nothing here re-parses, and no line is
+    counted a second time in JavaScript, which is how the two would come to
+    disagree.
+
+    A core rule and not a `RendererHTML` override per tag: this belongs on a
+    heading exactly as much as on a paragraph, a list, a table, a fence and a
+    rule, and a method per tag is a method per tag plus one more the day a plugin
+    adds a block. Written as an attribute on the token rather than into a string,
+    so it leaves through the same escaper as every other attribute.
+
+    `token.level == 0`, so only the blocks a reader scrolls past are marked. Every
+    paragraph inside every list item would be stamped too, which is bytes on every
+    page for a resolution nothing wants: what a scroll position interpolates
+    between is top-level blocks.
+
+    `map` is [start, end) and zero-based; both numbers here are one-based and
+    inclusive, because that is what the editing surface counts in and a second
+    convention is a second place to be off by one.
+    """
+    for token in state.tokens:
+        if token.level == 0 and token.nesting >= 0 and token.map:
+            token.attrSet("data-startline", str(token.map[0] + 1))
+            token.attrSet("data-endline", str(token.map[1]))
 
 
 def _pr_refs(state: StateCore) -> None:
@@ -1126,6 +1722,7 @@ def _image(
     return RendererHTML.image(self, tokens, idx, options, env)
 
 
+_MD.core.ruler.push("openproj_source_lines", _source_lines)
 _MD.core.ruler.push("openproj_pr_refs", _pr_refs)
 _MD.add_render_rule("image", _image)
 
@@ -1312,8 +1909,16 @@ const remembered = {
   // Writing throws too, and for a second reason: Safari's private mode reports a
   // quota of zero, so the first setItem raises QuotaExceededError. A width
   // nobody can save is still a width.
+  //
+  // It answers whether the value stuck, and that is not for the callers that
+  // ignore it — a remembered width, measure or theme is a convenience and a
+  // caller that had to check would be a caller that has to have an opinion about
+  // a refusal it does not care about. It is for the one caller that does: the
+  // unsaved draft is the only thing here that git cannot get back, and a receipt
+  // reading "draft saved just now" over a store that threw is this application
+  // claiming somebody's writing is somewhere it is not.
   set(key, value) {
-    try { localStorage.setItem(key, value); } catch (e) { /* not remembered */ }
+    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
   },
   forget(key) {
     try { localStorage.removeItem(key); } catch (e) { /* nothing to forget */ }
@@ -1782,6 +2387,18 @@ body:has([data-fills]) { padding-bottom: 1rem; }
 #card .card-body p, #card .card-body ul, #card .card-body ol { margin: .2rem 0; }
 #card .card-body pre { overflow-x: auto; }
 #card .card-body img { max-width: 100%; }
+/* A checklist, and the one markdown-body rule in this stylesheet that is not
+   scoped to a view. Every other copy of "how a rendered document looks" is
+   written three times on purpose — the card here, `.doc` in `_SUGGEST_STYLE`,
+   `.slide .doc` in the deck — because each is a different size of the same
+   prose. This is not that: without it a task list carries a bullet AND the box
+   the renderer drew, on every page that shows a body, and the correction is the
+   same two declarations whichever page it is. So it is written once, unscoped,
+   against the classes the renderer itself emits. `list-style: none` and a negative
+   indent rather than `padding-left: 0`, so the boxes line up with the bullets of
+   an ordinary list beside them instead of hanging a character to their left. */
+li.task-list-item { list-style: none; margin-left: -1.1em; }
+li.task-list-item input { margin-right: .35em; }
 .hint { color: var(--muted); font-size: 12px; }
 .empty { color: var(--empty); }
 .num { font-variant-numeric: tabular-nums; }
@@ -1853,7 +2470,7 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 /* A drawing with no size of its own. `_ICON_SVG` carries a `viewBox` and no
    `width` or `height`, so an SVG that nothing sizes lays out at 0x0. Every use
@@ -2050,9 +2667,13 @@ table.tight-priority td[data-col="priority"] .pricell { gap: 0; }
    `.field` outranks it too, which is what keeps a `<select>` that is a form field
    looking like a field: a text box is somewhere to TYPE and a control is
    something to PRESS. */
+/* 3px and not the 2px this was written with. jcanton looked at the editor's
+   toolbar, which had been drawing its own corner, and preferred it — so the
+   toolbar stops being the exception and the app moves to its corner. One number,
+   here, is what makes that a decision rather than a drift. */
 button, select, .button, .button:visited {
   font: inherit; font-size: 13px; line-height: 1.4;
-  padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
+  padding: .2rem .7rem; border-radius: 3px; cursor: pointer;
   border: 1px solid var(--line-strong); background: var(--surface);
   color: var(--fg); text-decoration: none;
 }
@@ -2072,20 +2693,37 @@ button:hover, select:hover, .button:hover { border-color: var(--accent);
    `--sev-blocker`: nothing is broken, a sentence is half-typed — and the rows
    come back the moment the bracket is closed. */
 #query-error { font-size: 12px; color: var(--sev-warn); align-self: center; }
-#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
-                 border: 1px solid var(--line-strong); background: var(--surface);
-                 color: var(--fg); cursor: pointer; }
-#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
-/* The one action that writes, on every page that writes. It follows the form it
-   commits instead of sitting above it, and it is sticky rather than merely last:
-   these forms are the length of the plan, and a Save at the far end of one is a
-   Save you go looking for while holding an unsaved decision in your head.
+/* Nothing of its own. It carried a full copy of the rectangle above — the same
+   border, the same background, the same hover — and the copy is how it came to
+   be the one control still drawn with the old corner after the line above moved
+   to 3px. A control that wants the default says nothing. */
+/* The one action that writes, on every page that writes, and it is at the TOP of
+   what it writes — jcanton, 2026-08-20, "move the create bar up top too,
+   consistency!".
+
+   The stickiness is what delivers reachability and the edge it sticks to never
+   did: a bar that is on screen wherever you have scrolled to is as reachable
+   from the head of a form as from its foot. So the edge is free to be the one
+   that puts the controls where the eye already is — under the button that opened
+   the edit, beside the record's identity, which is where the detail page put
+   Save and Cancel when Edit moved up there.
+
+   `bottom: auto` is as load-bearing as `top`: with both set the browser keeps
+   the first and the bar stays at the foot.
+
    Defined here rather than per page because four pages have one, and four copies
-   of a commit bar is four answers to "have I saved this yet". */
+   of a commit bar is four answers to "have I saved this yet". It was per page for
+   half of it, and that is exactly how the create form and the cycle page came to
+   have a bar stuck to neither edge: `#commitbar { top: 0; bottom: auto }` was
+   written for the detail page and put in `_DETAIL_STYLE`, which four pages load —
+   so two pages whose bar is still last in the markup lost `bottom: 0` to it and
+   became a plain block at the foot, off screen from the top of a form that
+   scrolls. Measured in Chrome at 1400x900 before the move: 1178px down the create
+   page and 1113px down the cycle page, with nothing on screen at all. */
 .commitbar {
   /* Under the suggestion popup (20) and under the shell's banner (40): a bar
      that is always on screen is always in front of something. */
-  position: sticky; bottom: 0; z-index: 10;
+  position: sticky; top: 0; bottom: auto; z-index: 10;
   /* `display: flex` beats `[hidden]`'s `display: none` — the attribute is a UA
      rule and this is an author one. Every menu on the table page opened on load
      the day that was forgotten, so it is spelled out here. */
@@ -5084,6 +5722,24 @@ async function reparent(childId, parentId) {
     announce(!fresh ? `${childId} was moved — reload to see where it landed`
              : parentId ? `${childId} is now in ${parentId}`
                         : `${childId} is no longer inside anything`);
+  } catch (error) {
+    // The connection went while the request was in the air, and the sentence
+    // fifteen lines up says the move is still happening. `e82ce55` fixed exactly
+    // this shape on the editing surface and recorded that the uploader and Save
+    // were "the ones with a sentence left behind them"; they were not. This
+    // gesture and `refile` on the graph both announce a present-continuous
+    // sentence BEFORE the request and take it back only when an answer arrives,
+    // so a rejection ran the `finally`, undimmed the row, and left the live
+    // region reading `moving task-3 into project-a…` for ever — over a row still
+    // drawn where it started, with nothing anywhere to say the drop did not take.
+    //
+    // And it does not guess. A fetch rejects when the ANSWER is lost as readily
+    // as when the request never left, so this says what to do rather than what
+    // happened: the drag is worth repeating either way, because the second one
+    // goes out against the same `base_commit` and the compare-and-swap refuses it
+    // with the conflict report if the first one landed.
+    announce(`${childId} was not moved — ${error.message}. Drag it again: if the `
+             + 'first one landed, the second is refused rather than repeated.');
   } finally {
     // Whatever happened — committed, refused, or the network gone — the row
     // stops waiting. A row left dimmed after a refusal is a row that looks like
@@ -6115,9 +6771,11 @@ td.clamp .clamped { display: flex; align-items: baseline; }
 td.clamp .clamped > .first { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 td.clamp .clamped > .more, td.clamp .clamped > .sev-mark { flex: none; }
 td.clamp .rest { display: none; }
-td.clamp .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
-                padding: 0 .25rem; border: 1px solid var(--line-strong); border-radius: 2px;
-                background: none; color: var(--muted); cursor: pointer; }
+/* The border and the ground are the default's; what is written here is the size
+   it has to be to stand inside a table cell, and the muted ink that keeps a
+   count of hidden tags from outweighing the tags themselves. */
+td.clamp .more { font-size: 11px; line-height: 1.2; margin-left: .3rem;
+                padding: 0 .25rem; color: var(--muted); }
 /* The sign, from the class that opens the cell rather than from the script that
    sets it: `+2` and `−2` are one count seen from either side, and drawn this way
    the glyph cannot end up disagreeing with the state it is describing. The badge
@@ -6166,10 +6824,18 @@ td[data-col="blocked_by"].waiting { background: var(--waiting); }
    whose width is a different number in each of the four columns — and clear of
    the grip, which owns the last 7px of the cell. The room it stands in is
    reserved below rather than taken from the label. */
+/* The same little rectangle as `td.clamp .more`, and unlike that one it has to
+   SAY so: `th button` two rules up strips every control in a header of its border
+   and its ground at (0,0,2), which outranks the shell's `button`, so a `+` that
+   declared nothing would be drawn as the bare sort control beside it. The corner
+   still comes from the default — `th button` says nothing about one — which is
+   what keeps this badge on the app's corner without another copy of the number.
+   `th .expand` is (0,1,1) and wins on weight rather than on the order two
+   stylesheets happen to be concatenated in. */
 th .expand {
   position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
-  font: inherit; font-size: 11px; line-height: 1.2; padding: 0 .25rem;
-  border: 1px solid var(--line-strong); border-radius: 2px; background: none;
+  font-size: 11px; line-height: 1.2; padding: 0 .25rem;
+  border: 1px solid var(--line-strong); background: none;
   color: var(--muted); cursor: pointer;
 }
 th .expand::before { content: "+"; }
@@ -6429,6 +7095,36 @@ _GRAPH = """
     dichromat cannot use. The count says how much of the plan survived the
     filters. Neither is a control, and between them they were two of the six rows
     that left 268px of an 806px window for the drawing. -#}
+{% if editable %}
+{#- Above the drawing it writes, which is where every other page now keeps the
+    control that commits it — jcanton, 2026-08-20, "consistency!". It was under
+    the canvas, on F15's argument that a commit action belongs below the form it
+    commits; what that argument actually bought was reachability, and the sticky
+    it shipped alongside is what delivers that from either edge.
+
+    Moving it costs the drawing nothing, and that is measured rather than
+    asserted: `measureRoom` sizes the canvas to `innerHeight - above - below` off
+    the laid-out page, so a bar that crosses from `below` to `above` moves itself
+    from one term to the other. `--room` went 595px to 607px at 1400x900 — the
+    canvas GAINED twelve pixels, because up here the bar's 1.5rem top margin
+    collapses with the filter row's and down there it did not. What the move
+    actually buys is the short window: below 430px the page finally scrolls, and a
+    bar last in the markup under a `top: 0` shell rule is a bar you cannot see
+    from the top of the page. Measured at 1400x380, both ways. -#}
+<div class="commitbar" id="commitbar">
+  <button type="button" id="connect">Edit dependencies</button>
+  {#- A mode, for the same reason the other one is: a plain drag on this canvas
+      means "move the node" and always has, so the gesture that files one record
+      inside another has to say which it is. What is new is that the dragging,
+      the drop target and the highlighting are the extension's now — the version
+      of this written here could not tell the reader where the node would land,
+      because the box it would land in moves with the node. -#}
+  <button type="button" id="save" hidden>Save</button>
+  <button type="button" id="discard" hidden>Reset</button>
+  <span id="state" role="status"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</div>
+{% endif %}
 <div class="canvas">
 {#- Over the drawing rather than above it — jcanton, 2026-08-20, to get the
     vertical space back. The canvas is the tallest thing on the page and the
@@ -6484,29 +7180,6 @@ _GRAPH = """
     <button type="button" id="clear-filters" hidden>Clear filters</button>
   </div>
 </div>
-{% if editable %}
-{#- Under the canvas it writes to, like every other page's primary action: Create,
-    Edit and Save the setup all moved below their forms and the graph was the
-    fourth page with one. Sticky as well as last, because the drawing you are
-    committing fills the window and a Save at the far end of it is a Save you go
-    looking for while holding an unsaved decision in your head. Sticky is also why
-    the canvas above is measured rather than assumed: a bar that is always on
-    screen is always in front of something, and for two rounds that something was
-    140px of graph. -#}
-<div class="commitbar" id="commitbar">
-  <button type="button" id="connect">Edit dependencies</button>
-  {#- A mode, for the same reason the other one is: a plain drag on this canvas
-      means "move the node" and always has, so the gesture that files one record
-      inside another has to say which it is. What is new is that the dragging,
-      the drop target and the highlighting are the extension's now — the version
-      of this written here could not tell the reader where the node would land,
-      because the box it would land in moves with the node. -#}
-  <button type="button" id="save" hidden>Save</button>
-  <button type="button" id="discard" hidden>Reset</button>
-  <span id="state" role="status"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</div>
-{% endif %}
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
 {#- `model.PARENT_KINDS`: which kind may hold which. The extension asks before it
     lets go, so a drop the server would refuse is one the canvas never offers. -#}
@@ -8268,6 +8941,39 @@ def _status_paint_css() -> str:
 _COMBOBOX = r"""
 <script id="suggest" type="application/json">{{ suggest|tojson }}</script>
 <script>
+// --- the textarea, as a surface --------------------------------------------
+//
+// Everything between this banner and the one that closes it is the only code on
+// any of these six pages that knows the document is being written in a
+// `<textarea>`. Nothing outside it reads `.value`, `selectionStart`,
+// `selectionEnd` or calls `setSelectionRange`, and
+// `test_the_body_is_read_through_one_place_and_nothing_else` holds it there.
+//
+// **Seven operations, and the shape of them is measured rather than guessed.**
+// `docs/EDITOR.md`'s "What the skeptics broke" is the evidence, in full, against
+// a real editor and this repository's own `Room`; three findings decide what is
+// here and what deliberately is not:
+//
+// * A textarea's programmatic `.value =` fires ZERO input events, and that —
+//   nothing else — is why this application has never needed a re-entrancy guard.
+//   Every other surface fires its change event for its own edits and the page's
+//   alike, indistinguishably. So `applying` is here NOW, with a test.
+// * **There is no "set the text", and that absence is the design.** Every
+//   measured one is remove-all-then-insert-all: two change events with an EMPTY
+//   DOCUMENT between them, which no prefix/suffix walk can recover a splice
+//   from. One remote four-character keystroke reflected that way made a PASSIVE
+//   tab push a whole 97,890-character body up the socket and take the authorship
+//   credit for it — 6,700x, `MAX_OUTBOX_BYTES` full in three frames. The one
+//   write is `splice`, and a whole-document replacement has to say so in words.
+// * **Every index here is a UTF-16 CODE UNIT** — what `selectionStart` counts,
+//   what a `Y.Text` is counted in inside a browser, and what `Room.sits` relays.
+//   `units()` in `_COEDIT` is the one conversion at the one boundary and
+//   `coedit.byte_offset` is its server twin.
+//
+// The seven: `text`, `caret`, `setCaret`, `splice`, `onInput`, `onCaret`,
+// `coordsAt`. Three more are on the object and are NOT of that set, each for a
+// reason given where it is defined: `apply`, `lineCoords` and `el`.
+
 // Every programmatic edit to a textarea goes through here.
 //
 // `textarea.value = ...` wipes the browser's native undo stack: paste a diagram
@@ -8277,6 +8983,9 @@ _COMBOBOX = r"""
 // had typed — one undo step, selection handled, `input` fired for free. The
 // fallback keeps the feature working if it is ever removed; it loses undo, which
 // is the least bad of the things that can be lost.
+//
+// Called from one place now — `splice` below — rather than from fifteen, which
+// is what lets the guard test say "one place" and mean it.
 function replaceRange(area, text) {
   area.focus();
   if (document.execCommand && document.execCommand('insertText', false, text)) return;
@@ -8286,96 +8995,1295 @@ function replaceRange(area, text) {
   area.dispatchEvent(new Event('input', {bubbles: true}));
 }
 
+function textareaSurface(area) {
+  // The re-entrancy flag: belt and braces on a textarea, and the whole of the
+  // difference on anything else between reflecting somebody's keystroke and
+  // pushing the document back up the socket under your own name. A flag
+  // introduced with the boundary has a written reason; one introduced with the
+  // second surface is one added under pressure.
+  let applying = false;
+  const heard = {input: [], caret: []};
+  const fire = kind => { for (const listener of heard[kind]) listener(); };
 
-// A small toolbar, sized to what this team writes rather than to what an editor
-// usually offers. Counted across the seed and the migrated HackMD corpus: 485
-// lines carry an inline code span, 161 a bullet, 124 a heading, 83 bold — and
-// eight carry a markdown link, which is why there is no link button: people write
-// `C2SM/icon4py#1364` bare and the renderer already turns it into a link.
-//
-// The two code buttons are here for a different reason than frequency, and it is
-// the better reason. The team types on a mix of US and Swiss-German layouts, and
-// on CH a backtick is a dead key — so a fence is three of them in a row, and the
-// two fenced blocks in the whole corpus are a measure of how awkward that is
-// rather than of how little code people would paste. A button is worth more than
-// a count here.
-const FORMATS = [
-  {key: 'b', label: 'B', title: 'Bold  ⌘B', wrap: '**'},
-  {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
-  {key: 'e', label: '<>', title: 'Code  ⌘E', wrap: '`'},
-  {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
-  {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
-  {key: '8', label: '•', title: 'Bullet  ⌘8', prefix: '- '},
-  {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
-];
+  // Two element listeners for the whole page, and the order between them is
+  // fixed rather than left to whoever attached first: on an `input` event every
+  // `onInput` subscriber runs, then every `onCaret` one.
+  area.addEventListener('input', () => { if (!applying) fire('input'); });
+  // What moves a caret, and none of it is an `input` — except typing, which is
+  // why `input` is in the list too. Every subscriber here is idempotent on the
+  // position: `sit()` compares against what it last sent, `refresh()` recomputes.
+  //
+  // NOT gated on `applying`: a position that really did move is one the caret
+  // readout and the seat layer both want, and it moving because somebody else
+  // typed is the case the seat layer exists for.
+  for (const kind of ['input', 'keyup', 'click', 'select', 'focus']) {
+    area.addEventListener(kind, () => fire('caret'));
+  }
 
-function lineRange(area) {
-  const from = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1;
-  let to = area.value.indexOf('\n', area.selectionEnd);
-  return [from, to === -1 ? area.value.length : to];
+  return {
+    // The box, for the questions that are about a box rather than a document:
+    // scroll offsets, class names, `closest`, and the events the seven do not
+    // cover — keydown, paste, drop, scroll. Never for its text.
+    el: area,
+
+    // 1. The whole document, in UTF-16 code units.
+    text: () => area.value,
+
+    // 2. Where the caret is, as a range, because it is one: an empty selection
+    // is `from === to`. Both in UTF-16 code units.
+    caret: () => ({from: area.selectionStart, to: area.selectionEnd}),
+
+    // 3. And where to put it. One argument means an empty selection there.
+    setCaret(from, to) { area.setSelectionRange(from, to === undefined ? from : to); },
+
+    // 4. The only write. `[from, to)` in UTF-16 code units, replaced by `put`.
+    //
+    // Two ways, and `applying` is which. A person's edit — a toolbar button, an
+    // indent, an upload's placeholder — goes through `execCommand`: one undo
+    // step, `input` fired, and the room hears it as typing, which is what it is.
+    // The page's own write goes through the `.value` setter with the caret
+    // carried across, which fires nothing and steals no focus.
+    //
+    // That setter wiping the native undo stack is a live defect and it is this
+    // stage's job NOT to fix it: `reflect()` has done exactly this on every
+    // remote keystroke since rooms shipped, S4 answers it with `Y.UndoManager`,
+    // and a commit that changes the co-editing path and a behaviour at once is
+    // one whose regression cannot be attributed to it.
+    splice(from, to, put) {
+      if (!applying) {
+        area.setSelectionRange(from, to);
+        replaceRange(area, put);
+        return;
+      }
+      const was = area.value;
+      const start = area.selectionStart, end = area.selectionEnd;
+      const shift = put.length - (to - from);
+      // Anything before the splice stays put; anything after it moves by the
+      // difference, and nothing may end up before where the splice began.
+      const moved = at => at <= from ? at : Math.max(from, at + shift);
+      area.value = was.slice(0, from) + put + was.slice(to);
+      // Only when this box has the caret: `setSelectionRange` on an unfocused
+      // textarea also scrolls it, and a page scrolling itself because somebody
+      // else typed is the thing nobody asked for.
+      if (document.activeElement === area) area.setSelectionRange(moved(start), moved(end));
+    },
+
+    // 5 and 6. The two subscriptions. `onInput` is "the text changed and a
+    // person did it"; `onCaret` is "the caret is somewhere else".
+    onInput(listener) { heard.input.push(listener); },
+    onCaret(listener) { heard.caret.push(listener); },
+
+    // 7. Where the carets at these indexes are DRAWN — the top of each one's
+    // visual row, in the box's own scroll space. See `rowTops`.
+    coordsAt(indexes) { return rowTops(area, area.value, indexes); },
+
+    // 8. Undo and redo, which on a `<textarea>` belong to the browser.
+    // `execCommand` for the same reason `replaceRange` uses it: it is the one
+    // API in any shipping browser that reaches the stack Ctrl+Z reaches.
+    //
+    // **Truthful only while nothing has assigned `.value`.** Measured in Chrome:
+    // type, then `area.value = 'x'`, and `queryCommandEnabled('undo')` goes on
+    // answering TRUE while `execCommand('undo')` returns true and moves nothing.
+    // A wiped native stack does not come up empty, it LIES — which is why
+    // `provides.history` is false and why a room takes this question off the box.
+    history: {
+      // Asked rather than trusted: `queryCommandEnabled` is not a standard and a
+      // throw inside a listener that runs on every keyup is a toolbar that stops
+      // redrawing itself.
+      can(what) {
+        try { return document.queryCommandEnabled(what); } catch (error) { return true; }
+      },
+      // Focused first, for the reason `replaceRange` focuses the box: a toolbar
+      // press is a continuation of typing. And a refusal says so out loud.
+      step(what) {
+        area.focus();
+        if (document.execCommand && document.execCommand(what)) return;
+        announce(`This browser would not ${what} from a button. `
+                 + `${what === 'undo' ? 'Ctrl+Z' : 'Ctrl+Shift+Z'} still works — `
+                 + 'that one is the browser’s own.');
+      },
+      // Whether the page has to take the keystroke. It does not: the browser's
+      // binding reaches this stack and restores the SELECTION the edit was made
+      // with, which `execCommand` alone does not.
+      keyed: false,
+    },
+
+    // What this surface does for itself, so the page does not do it twice or
+    // ask for something that is not there. A capability and not a type name:
+    // `if (surface.kind === 'ace')` puts the second surface's name in six
+    // functions that have no other business knowing it, and the third surface
+    // then has to be added to all six. Two entries, because two things differ.
+    //
+    // `gutter` — a textarea has no line numbers, so `attachGutter` draws them
+    // through a mirror. Ace draws its own, and two gutters is one too many.
+    // `seats` — where somebody else's caret is, drawn as a band over the box.
+    // The mirror answers it here. Ace can answer it too, from screen rows, and
+    // that is NOT built in this stage: an untested band is a band one line off,
+    // and `static/VENDOR.md` already holds this feature to "a caret one line
+    // off is worse than no caret". `drawSeats` says so out loud instead.
+    // `history` — whether this surface's undo stack SURVIVES somebody else
+    // typing. False, and that is a fact about textareas: a remote change reaches
+    // the box as an assignment to `.value` (`splice` under `apply`, the one
+    // place allowed to), which wipes the native stack. `historyOf` reads this to
+    // decide whether the room's `Y.UndoManager` answers the buttons instead.
+    provides: {gutter: false, seats: true, history: false},
+    // Which of the two this IS, in the vocabulary the address and the preference
+    // already use — and it exists for exactly one consumer, the switch beside the
+    // three view segments, which has to say out loud which editor a person is
+    // writing in. **Never branch on it.** A behavioural difference between the
+    // surfaces goes in `provides` above, for the reason written there; this is a
+    // label, and the one question a capability cannot answer is what to call the
+    // thing. It is the mounted surface and not `EDITOR.editor`, which is only
+    // what was asked for: on a copy of this page saved to a file the two come
+    // apart, because there is no server to fetch the other bytes from.
+    //
+    // Not `editor`, which was the first spelling and lasted one test run: the Ace
+    // surface already publishes `editor`, and it is the Ace instance. A second
+    // key of that name later in the same object literal is not an error anywhere
+    // — it silently wins, and every use of the real one became a string.
+    editorName: 'plain',
+
+    // The scroll offset, and the three ways the page asks about it. These used
+    // to be `el.scrollTop` and `el.addEventListener('scroll')` at four call
+    // sites, which the adapter's own report named as the hole left open: `el`
+    // let anything reach the box, and a surface that is not a box has no
+    // `scrollTop` and fires no `scroll`. Ace's scroller is an inner element and
+    // its offset arrives as `changeScrollTop` on the session, so the two sides
+    // agree on the number and on nothing else.
+    scrolled: () => area.scrollTop,
+    scrollTo(top) { area.scrollTop = top; },
+    onScroll(listener) { area.addEventListener('scroll', listener); },
+
+    // The page writing rather than a person. The previous value is restored
+    // rather than `false` assumed, so nesting is safe; the `finally` is what
+    // stops one throw inside a reflect leaving this page deaf to every keystroke
+    // after it.
+    apply(run) {
+      const before = applying;
+      applying = true;
+      try { return run(); } finally { applying = before; }
+    },
+    applying: () => applying,
+
+    // NOT one of the seven, and here rather than as a bare `lineTops(el)` at two
+    // call sites so the mirror stays on this side of the boundary. Where every
+    // logical LINE starts — the gutter's question on every keystroke, the scroll
+    // sync's on every resize. Separate from `coordsAt` because it is ONE layout
+    // of the document where `coordsAt` is one forced reflow per index: asking it
+    // as `coordsAt(lineStarts)` would turn the gutter's measured 6.5ms at 1,000
+    // lines into a thousand reflows.
+    lineCoords() { return lineTops(area, area.value); },
+  };
 }
 
-function applyMark(area, mark) {
+// --- end of the textarea surface -------------------------------------------
+
+
+// Which of the two the page got. The decision is the SERVER's, because the
+// server is what decides whether 594 KB is in the page at all. `remembered` is
+// `localStorage` and the server cannot read it, which is why the address carries
+// the choice and the preference only carries it back on the next visit.
+//
+// **The default is Ace, and the parameter is the way out of it** — jcanton,
+// 2026-08-20, on Ace becoming what a writer gets: "I think it's worth it". Only
+// the default arm moved; the machinery is the same machinery. The reload the
+// sticky preference costs moved with it, onto the people who want the plain
+// box — and that is the better side to pay it on, because the alternative was an
+// Ace writer paying a redirect on every record and paying it by downloading
+// 594 KB twice.
+//
+// `editable` is gated on `base_commit` alone, so a signed-out reader already
+// receives the textarea and `attachEditing` — an Ace block at that gate would
+// have shipped 594 KB to every public reader, 4.19x their page. `_ace_wanted`'s
+// `may_write` is what keeps that at zero, and it did not move.
+//
+// The branch where the second editor was ASKED for and the bytes are not here
+// says so. A static export has no server to ask, so `detail.html?editor=ace`
+// opened from a memory stick is exactly that case, and a page that silently
+// gives you the other editor is a page you report as broken.
+function bodySurface(area) {
+  // Built either way, because it is the one place that reads the box — the Ace
+  // surface is SEEDED from it rather than reading the textarea itself, so "the
+  // document is read in exactly one place" stays literally true with two
+  // surfaces in the tree. An unsubscribed surface is two listeners on an element
+  // nothing else touches.
+  const box = textareaSurface(area);
+  if (EDITOR.editor !== 'ace') {
+    // Wanted the plain box and the library came anyway, which means the address
+    // has not told the server yet. One reload gets the page this person asked
+    // for, and it is the only place in this function that navigates for the sake
+    // of BYTES rather than for the sake of a feature — the surface below would
+    // work perfectly well over 594 KB nobody is going to use, and shipping it
+    // silently is how a preference becomes decorative.
+    if (typeof ace !== 'undefined') stickyEditor();
+    return box;
+  }
+  if (typeof ace !== 'undefined') return aceSurface(area, box.text());
+  // Ace, and it is not here. Two situations, and only one of them is news.
+  //
+  // **The default is not news**, and this line is what the flip made necessary.
+  // Every signed-out reader now resolves to `ace` without having said anything,
+  // and `may_write` correctly sends them no library — so without this guard the
+  // sentence below would be read out on every record to every reader, about a
+  // thing they never asked for. `chosen` is the difference between a decision
+  // that cannot be honoured and a default that was never going to be.
+  if (!EDITOR.chosen) return box;
+  // Either this browser remembers the choice and the address does not carry it —
+  // go and ask the server for it, which is what makes the preference stick at
+  // all — or there is no server to ask, and then say so.
+  if (stickyEditor()) return box;
+  // Said in what is true rather than in a guess at why: there are two ways to be
+  // here — a page saved to a file, which has no server to ask, and a reader the
+  // server would refuse a save from, who gets the box and the toolbar and would
+  // get no use out of a keymap. The sentence covers both.
+  announce('This page does not carry the second editor. It is inlined only where the '
+           + 'server would take a save from you, and this copy of the page has none of '
+           + 'it. Still editing in the ordinary box.');
+  // And then stop asking. The address DID carry the request, the server answered
+  // it by sending no library, and a remembered choice that cannot be honoured
+  // costs a redirect on every page for nothing. Only in that case: a page opened
+  // from a file was never asked, and forgetting there would clear somebody's
+  // choice because they read an export.
+  if (new URLSearchParams(location.search).has('editor')) {
+    rememberEditor({editor: 'plain', chosen: true});
+  }
+  return box;
+}
+
+
+// The toolbar in the screenshot, in the order and the groups it is drawn in:
+// `docs/hackmd-observed.md`, read off the pixels of a real note.
+//
+// **This overrules a measurement, and the measurement was not wrong.** `d6997e3`
+// counted the seed and the migrated HackMD corpora — 485 lines carry an inline
+// code span, 161 a bullet, 124 a heading, 83 bold, against 8 markdown links —
+// and cut the link button on that count, correctly, because you do not add a
+// button before somebody asks for it. Somebody has now asked for it by name:
+// "the buttons along the top of the editor", as ask 2 of seven, pointing at that
+// screenshot. So link, image and a numbered list are here, and the count is not
+// refuted — it is overruled, and the difference is written down so that whoever
+// reads this in a year does not mistake one for the other.
+//
+// Three deliberate departures from the shot, each with a reason:
+//
+// * **Two code buttons, not one.** The team types on a mix of US and
+//   Swiss-German layouts, and on CH a backtick is a dead key — so a fence is
+//   three of them in a row, and the two fenced blocks in the whole corpus
+//   measure how awkward that is rather than how little code people would paste.
+// * **No comment button.** It is a HackMD collaboration feature, not markdown,
+//   and there is nothing behind it here. The review channel this team uses is
+//   the PR, which every pitch already names in `prs:`.
+// * **No comment button** (above), and — until this stage — no undo and redo
+//   either. They are the first two buttons in the shot and they were held back
+//   with the defect that makes them necessary: a remote keystroke reaches the
+//   box as an assignment to `.value`, which wipes the browser's native undo
+//   stack, and a history button that does nothing after somebody else types is
+//   worse than no button. `Y.UndoManager` in `_COEDIT` is what answers that, so
+//   they are here now, leftmost, as the shot has them.
+//
+// The check list and the strikethrough are still guesses on the shape of the
+// documents rather than on a count — a checklist is what a pitch's Progress
+// section is made of, a strikethrough is how a dropped line is marked — because
+// the migrated corpus is not in this repository and the seed one is synthetic
+// and answers zero for both. That grep is still owed.
+//
+// `group: true` opens a new group; `attachEditing` draws a rule before it.
+const FORMATS = [
+  // The history group: the two entries here that write no markdown at all.
+  // `history` rather than a shape, so `applyMark` never sees one — both the
+  // pointer binding and the keyboard branch ask for it first. Drawn rather than
+  // typed, because no arrow is in the vendored subset (see `HISTORY_MARKS`), so
+  // `label` is the ACCESSIBLE name and not a visible one. ⌘Z and ⌘⇧Z are taken
+  // off the browser only where the browser's own has been destroyed —
+  // `historyOf`.
+  {key: 'z', label: 'Undo', title: 'Undo  ⌘Z', history: 'undo'},
+  {key: 'z', shift: true, label: 'Redo', title: 'Redo  ⌘⇧Z', history: 'redo'},
+
+  {key: 'b', group: true, label: 'B', title: 'Bold  ⌘B', wrap: '**'},
+  {key: 'i', label: 'I', title: 'Italic  ⌘I', wrap: '*', style: 'font-style: italic'},
+  // ⌘⇧X and not ⌘⇧S: the shortcut is matched on `event.key`, and every shifted
+  // binding here is a letter, because shift-8 on a US layout is `*` rather than
+  // `8` and a shortcut on a digit is one that could never once fire.
+  {key: 'x', shift: true, label: 'S', title: 'Strikethrough  ⌘⇧X', wrap: '~~',
+   style: 'text-decoration: line-through'},
+  {key: '2', label: 'H', title: 'Heading  ⌘2', prefix: '## '},
+
+  {key: 'e', group: true, label: '<>', title: 'Code  ⌘E', wrap: '`'},
+  {key: 'e', shift: true, label: '{ }', title: 'Code block  ⌘⇧E', fence: true},
+  {key: '.', label: '❝', title: 'Quote  ⌘.', prefix: '> '},
+  {key: '8', label: '•', title: 'Bullet list  ⌘8', prefix: '- '},
+  // ⌘7 beside ⌘8, on the precedent ⌘8 already set: both are browser tab
+  // shortcuts and both are taken back by `preventDefault`, and a numbered list
+  // one key from the bulleted one is the pairing anybody would guess.
+  {key: '7', label: '1.', title: 'Numbered list  ⌘7', prefix: '1. ', ordered: true},
+  {key: 'l', shift: true, label: '[x]', title: 'Check list  ⌘⇧L', prefix: '- [ ] ', box: true},
+
+  {key: 'k', group: true, label: '[]()', title: 'Link  ⌘K', link: true},
+  // The one button that does not write markdown. An `![alt](https://…)` typed
+  // into this tool draws no picture: `_image` refuses anything that is not an
+  // asset this repository stored, on the allowlist rule, and renders it as a
+  // link instead. So the image button does what paste and drop already do —
+  // uploads the bytes and writes the path they landed at.
+  {label: '![]', title: 'Image', upload: true},
+  // No shortcut on the last three: every letter this page could spare is spoken
+  // for, and none of them is something anybody inserts twice a minute.
+  // `chooses` is an offset and a length into the inserted text, so the word you
+  // are about to replace is already selected.
+  {label: '▤', title: 'Table',
+   insert: '| Heading | Heading |\n| --- | --- |\n| Cell | Cell |', chooses: [2, 7]},
+  {label: '—', title: 'Horizontal rule', insert: '---'},
+];
+
+// The two drawings the history buttons wear, rendered on the server: a template
+// variable and not a `.replace` into finished markup, the same crossing the
+// table's draft row makes with `MARK`. `innerHTML` at the one use site because
+// it IS markup and nothing of anybody's reaches it — the value is the constant
+// `HISTORY_MARKS` in `render.py`.
+const HISTORY_ART = {{ history_art|tojson }};
+
+// The room's undo history, once there is a room wired to this box. Declared here
+// and assigned in `_COEDIT`, which is a separate `<script>` inlined AFTER this
+// one and after `attachEditing` has run — so the toolbar cannot capture it at
+// setup, and `typeof COEDIT` is not an option either: a `const` that has not
+// been reached yet is in its temporal dead zone and `typeof` on one THROWS.
+let COEDIT_HISTORY = null;
+
+// Which undo history a press reaches. Three states, each served by the only
+// thing that can serve it:
+//
+// 1. **No room.** The browser's own, through the surface: nothing has assigned
+//    `.value`, so it is complete, and the keyboard reaches it unaided.
+// 2. **A room, on the textarea.** `Y.UndoManager` over the `'typed'` origin
+//    alone — the state this whole stage exists for, because there every
+//    keystroke of somebody else's arrives as an assignment to `.value`.
+// 3. **Ace, room or not.** Ace's own manager, taught to ignore deltas this tab
+//    did not make, and the one Ace's command table binds Ctrl+Z to. The surface
+//    is asked FIRST for that reason: button and key must reach one stack.
+//
+// Asked at the press, because a room binds seconds after the toolbar is built
+// and can be lost again at any moment.
+function historyOf(surface) {
+  if (surface.provides.history) return surface.history;
+  return COEDIT_HISTORY || surface.history;
+}
+
+// A numbered list, on any of the ways somebody has already written one —
+// including an indented one. Written `^\d+\.` at first, which made this the one
+// prefix in the toolbar that was blind to indentation while `LIST_ITEM` four
+// lines below is not: ⌘7 over `  1. one` wrote `1.   1. one` instead of taking
+// the numbers off, and a nested list is what this repository's own documents are
+// made of.
+const ORDERED = /^(\s*)\d+\.\s+/;
+
+function lineRange(surface) {
+  const text = surface.text();
+  const {from: start, to: end} = surface.caret();
+  const from = text.lastIndexOf('\n', start - 1) + 1;
+  const to = text.indexOf('\n', end);
+  return [from, to === -1 ? text.length : to];
+}
+
+// How much blank line is missing on each side of a block about to be written in.
+//
+// A block only is one if it stands apart: `---` written directly under a line of
+// text is a setext heading rather than a rule, and a table cannot interrupt a
+// paragraph at all — so both of the toolbar's templates and a pasted grid would
+// otherwise go in and render as punctuation. One function because that is one
+// rule about markdown, and the two callers would have been the same four
+// conditionals twice.
+function blockPadding(before, after) {
+  return [
+    !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n',
+    !after ? '' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n',
+  ];
+}
+
+function applyMark(surface, mark) {
+  const text = surface.text();
   if (mark.fence) {
     // Whole lines, and on their own lines: a fence only opens a block if nothing
     // shares its line, so wrapping a selection in place would produce three
     // paragraphs of literal backticks.
-    const [from, to] = lineRange(area);
-    const chosen = area.value.slice(from, to);
+    const [from, to] = lineRange(surface);
+    const chosen = text.slice(from, to);
     const fenced = /^```/.test(chosen) && /```$/.test(chosen);
-    area.setSelectionRange(from, to);
     if (fenced) {
       const inner = chosen.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
-      replaceRange(area, inner);
-      area.setSelectionRange(from, from + inner.length);
+      surface.splice(from, to, inner);
+      surface.setCaret(from, from + inner.length);
       return;
     }
-    replaceRange(area, '```\n' + chosen + '\n```');
+    surface.splice(from, to, '```\n' + chosen + '\n```');
     // The caret lands on the language, which is the one word you type before the
     // code and cannot paste from anywhere.
-    area.setSelectionRange(from + 3, from + 3);
+    surface.setCaret(from + 3);
     return;
   }
   if (mark.prefix) {
     // Whole lines, and a toggle: pressing bullet twice is how somebody undoes a
     // bullet, and it costs one `startsWith`.
-    const [from, to] = lineRange(area);
-    const lines = area.value.slice(from, to).split('\n');
-    const on = lines.every(line => line.startsWith(mark.prefix));
+    const [from, to] = lineRange(surface);
+    const lines = text.slice(from, to).split('\n');
+    // Three ways a line prefix can already be on, because two of these marks are
+    // not a fixed string. A check list is a bullet with a box on it, so on lines
+    // that are already bullets the box goes onto the bullet that is there —
+    // stacking the whole prefix wrote `- [ ] - a`, which renders as one checked
+    // item whose text is a dash, and the toggle could never find its way back
+    // because the line no longer started with what it was given.
+    const boxed = mark.box && lines.every(line => LIST_ITEM.test(line));
+    const on = mark.ordered
+      ? lines.every(line => ORDERED.test(line))
+      : boxed
+        ? lines.every(line => LIST_ITEM.exec(line)[4])
+        : lines.every(line => line.startsWith(mark.prefix));
     const next = lines
-      .map(line => (on ? line.slice(mark.prefix.length) : mark.prefix + line))
+      .map((line, at) => {
+        // Numbered, and not `1.` on every line. Commonmark renumbers, so both
+        // render the same — but the file is the record here and people read and
+        // edit it in git, where a list of five `1.`s reads as a mistake.
+        //
+        // The line's own indent is kept on both sides of the toggle: numbering a
+        // nested list must not un-nest it, and un-numbering it must not either.
+        if (mark.ordered) {
+          const lead = /^\s*/.exec(line)[0];
+          return on
+            ? line.replace(ORDERED, '$1')
+            : `${lead}${at + 1}. ${line.slice(lead.length)}`;
+        }
+        if (!boxed) return on ? line.slice(mark.prefix.length) : mark.prefix + line;
+        const [, indent, bullet, gap, , rest] = LIST_ITEM.exec(line);
+        return `${indent}${bullet}${gap}${on ? '' : '[ ] '}${rest}`;
+      })
       .join('\n');
-    area.setSelectionRange(from, to);
-    replaceRange(area, next);
-    area.setSelectionRange(from, from + next.length);
+    surface.splice(from, to, next);
+    surface.setCaret(from, from + next.length);
     return;
   }
-  const {selectionStart: from, selectionEnd: to} = area;
-  const chosen = area.value.slice(from, to);
+  if (mark.link) {
+    // `[text](url)`: two halves that differ, so it is neither a wrap nor an
+    // insert. What ends up selected is what you are about to replace — the URL
+    // when there are already words to link, and the words when there are not.
+    const {from, to} = surface.caret();
+    const chosen = text.slice(from, to);
+    // A bracket inside the label ends the label. `[a]b]` selected and linked
+    // wrote `[a]b](url)`, which the committed renderer draws as literal text
+    // with no link in it and no sign that anything failed. Escaped rather than
+    // dropped, for the same reason `pastedAs` escapes a cell's own pipe — and
+    // the caret arithmetic below counts the escaped label, not the raw one.
+    //
+    // The backslash is escaped with them, because an escaper that escapes the
+    // metacharacter and not the escape character reproduces the bug it closes
+    // one character over: `a\]b` became `[a\\]b](url)`, in which the `\\` is a
+    // literal backslash and the `]` is the one that ends the label again.
+    const label = (chosen || 'text').replace(/([\\[\]])/g, '\\$1');
+    surface.splice(from, to, `[${label}](url)`);
+    const at = from + 1;
+    if (chosen) surface.setCaret(at + label.length + 2, at + label.length + 5);
+    else surface.setCaret(at, at + label.length);
+    return;
+  }
+  if (mark.insert) {
+    // A fourth shape, because a table and a rule are neither a wrap nor a prefix
+    // nor a fence: they are blocks that replace nothing, and they land after the
+    // line the caret is on rather than inside it.
+    const [, to] = lineRange(surface);
+    const [lead, tail] = blockPadding(text.slice(0, to), text.slice(to));
+    surface.splice(to, to, lead + mark.insert + tail);
+    const at = to + lead.length;
+    const [start, width] = mark.chooses || [mark.insert.length, 0];
+    surface.setCaret(at + start, at + start + width);
+    return;
+  }
+  // The tail is the WRAP shape, and it is reached only by a mark that is one.
+  //
+  // It used to be the fall-through — "anything I do not recognise is a wrap" —
+  // and `FORMATS` now holds a fifth shape that is not: the image button writes no
+  // markdown at all, it opens a file picker, and reaching here with it read
+  // `undefined.length` and threw inside a click handler, which is a button that
+  // does nothing and a console nobody has open. A guard naming that one entry was
+  // written first and is the wrong shape of fix: it closes the case that exists
+  // and leaves the trap set for the sixth. So the last branch asks whether it is
+  // the one it can do, and a mark it cannot do is refused out loud — which is the
+  // rule this application has broken three times by returning in silence.
+  if (typeof mark.wrap !== 'string') {
+    announce(`${mark.title} writes nothing into the document`);
+    return;
+  }
+  const {from, to} = surface.caret();
+  const chosen = text.slice(from, to);
   const width = mark.wrap.length;
   const wrapped =
-    area.value.slice(from - width, from) === mark.wrap &&
-    area.value.slice(to, to + width) === mark.wrap;
+    text.slice(from - width, from) === mark.wrap &&
+    text.slice(to, to + width) === mark.wrap;
   if (wrapped) {
     // Already marked: unwrap, taking the marks with it rather than leaving a
     // stray pair behind for somebody to delete by hand.
-    area.setSelectionRange(from - width, to + width);
-    replaceRange(area, chosen);
-    area.setSelectionRange(from - width, to + width - 2 * width);
+    surface.splice(from - width, to + width, chosen);
+    surface.setCaret(from - width, to + width - 2 * width);
     return;
   }
-  replaceRange(area, mark.wrap + chosen + mark.wrap);
+  surface.splice(from, to, mark.wrap + chosen + mark.wrap);
   // An empty selection leaves the caret between the marks, ready to type. A
   // selection stays selected, so a second press undoes it.
-  if (chosen) area.setSelectionRange(from + width, to + width);
-  else area.setSelectionRange(from + width, from + width);
+  if (chosen) surface.setCaret(from + width, to + width);
+  else surface.setCaret(from + width);
 }
 
 const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
 
-function attachEditing(area, bar) {
+// --- what this browser remembers about the editor ---------------------------
+//
+// One key, one JSON object, and the version in the key: `{mode, indent,
+// autosave}`, on the precedent of `openproj:widths:4`. One object rather than
+// three keys because a preference that grows a fourth field grows a fourth key
+// otherwise, and nothing then forgets the third when the shape changes.
+//
+// **There is no earlier spelling to forget**, and that is worth stating rather
+// than leaving as an absence: this key is new in this commit, so the `forget`
+// that every other bumped key here carries would be forgetting something that
+// was never written. The version is in the name so the NEXT shape is
+// `openproj:editor:2` and forgets this one out loud, the way the draft key's
+// bump already does.
+//
+// Through `remembered` and never a bare `localStorage`, which throws on the
+// property itself in a private window, behind a blocked cookie or under an
+// enterprise policy — `remembered.map` answers `{}` there and the defaults below
+// are the answer. That is the right way round for a preference about controls
+// that have to exist before it can be read.
+//
+// And every value is checked against what the control actually offers rather
+// than trusted. `{"indent": "four"}` is one hand-edit away, and it would reach
+// `' '.repeat("four")` in the one script six pages share.
+const EDITOR_KEY = 'openproj:editor:1';
+// What the indent picker offers. Two first, because that is what the plan is
+// already written at: 48 of the 56 nested bullets in it are indented by two.
+const INDENT_WIDTHS = [2, 4, 8];
+// How often a draft may be written, in seconds — and the coarsest offer is not a
+// taste. The room commits a document everybody has stopped typing in after
+// `QUIET_SECONDS` (20, in `coedit.py`), and that window is what backstops a
+// draft this browser is holding. An interval coarser than it would let somebody
+// set their own floor below the thing that catches them.
+const DRAFT_SECONDS = [1, 2, 5, 10, 20];
+// How lopsided the split view may be remembered as being: the writing box over
+// the preview, which is what `--split` is in `fr`. Every other value here is one
+// of a list and `one()` checks it; this is a ratio, so it gets its own guard and
+// the guard has to be its own kind of strict. `{"split": "wide"}` is one
+// hand-edit away and it would reach `minmax(0, wide)`, which is not a track size
+// — the whole `grid-template-columns` declaration is then invalid at computed
+// value time and the three tracks lay out as three auto columns, which is the
+// split view with its panes in the wrong places rather than a value quietly
+// ignored. And a bound as well as a number, because a ratio dragged out on a
+// wide monitor and restored on a laptop is a pane at a few pixels: `applySplit`
+// clamps to what fits on the screen it is actually on, and this is the outer
+// fence around what may be stored at all.
+//
+// **The same fence bounds the writing**, in `splitBound` beside the clamp, and it
+// did not at first: a drag on a 3440px screen stored 11.57 and this line then
+// threw it away on the very next load. A number a control can produce and its own
+// guard refuses is a preference that vanishes for exactly the people with the
+// biggest monitors.
+const SPLIT_RANGE = 8;
+// The two surfaces, spelled the way the query string spells them, because these
+// are the same two strings the server reads — one vocabulary and not two.
+// `ace` first now, because it is the one a page carries when nobody said
+// anything — jcanton, 2026-08-20, on that becoming the default: "I think it's
+// worth it".
+const EDITORS = ['ace', 'plain'];
+// `textarea` was this branch's own name for the plain box, in the address and in
+// the preference alike, and it is accepted on the way in for exactly one reason:
+// a stored `textarea` is somebody who OPTED OUT, and the fallback below is now
+// `ace`. Reading an old opt-out as "nothing was said" would hand 594 KB to the
+// one person who had asked not to have it. It is never written back — a value
+// read here is rewritten as `plain` by the first `rememberEditor` — so this list
+// shrinks by itself rather than being a second spelling to keep alive.
+const EDITORS_WERE = {textarea: 'plain'};
+// And the keymaps the second one offers. A textarea has one and it is the
+// browser's, which is why this list is read only where Ace is.
+const KEYMAPS = ['default', 'vim'];
+const EDITOR = (() => {
+  const held = remembered.map(EDITOR_KEY);
+  const one = (value, offered, fallback) => offered.includes(value) ? value : fallback;
+  // **The URL wins over the preference, and it has to.** This is the one setting
+  // on the page that decides which BYTES the server rendered, and the server
+  // cannot read `localStorage`. So the address is what put this surface in the
+  // page and is therefore what says whether it is here; the remembered value is
+  // only how a person who chose gets that choice again tomorrow without typing
+  // it. A remembered value the page was not rendered for is a preference for
+  // something that is not here — which `bodySurface` deals with out loud rather
+  // than quietly ignoring.
+  const named = value => one(EDITORS_WERE[value] ?? value, EDITORS, null);
+  const chose = named(new URLSearchParams(location.search).get('editor'));
+  const kept = named(held.editor);
+  return {
+    mode: one(held.mode, ['edit', 'both', 'view'], null),
+    indent: one(held.indent, INDENT_WIDTHS, 2),
+    autosave: one(held.autosave, DRAFT_SECONDS, 2),
+    // Added to this key rather than bumping it to `openproj:editor:2`. A bump
+    // says "the SHAPE changed and the old value cannot be read"; every field
+    // here is read one at a time against its own fallback, so a stored map from
+    // before this commit simply has no `split` and gets the default. Bumping
+    // would throw away four settings people have chosen to introduce a fifth
+    // that costs nothing to be absent.
+    //
+    // `Number.isFinite` and not a `>` chain: it rejects `null`, `"2"` and `NaN`
+    // by itself, and a string is exactly what a hand-edited entry is.
+    split: Number.isFinite(held.split) && held.split >= 1 / SPLIT_RANGE
+           && held.split <= SPLIT_RANGE ? held.split : 1,
+    editor: chose ?? kept ?? 'ace',
+    // Whether anybody actually said so, as against this being the default — and
+    // it is a separate fact because the default must not announce its own
+    // absence. `bodySurface` says "this page does not carry the second editor"
+    // when a choice cannot be honoured, and with `ace` as the fallback every
+    // signed-out reader on every detail page would now be told that about a
+    // library they never asked for.
+    chosen: (chose ?? kept) !== null,
+    keymap: one(held.keymap, KEYMAPS, 'default'),
+  };
+})();
+
+// What is written down, named rather than "whatever is on the object": the
+// object also carries things that are true of this load and not of this browser,
+// and a preference store that quietly grows a field is one nothing forgets.
+const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'keymap', 'split'];
+
+function rememberEditor(change) {
+  Object.assign(EDITOR, change);
+  const kept = Object.fromEntries(EDITOR_KEPT.map(k => [k, EDITOR[k]]));
+  // The surface is written down only when somebody CHOSE it, which is why it is
+  // not in the list above. `ace` is the default now, so a page that merely
+  // resolved that default and then stored it would make every later load look
+  // like a decision — and `chosen` is what decides whether a page that cannot
+  // honour a decision says so out loud. Without this, choosing the split view
+  // once (`rememberEditor({mode})`) would have signed a reader up to be told, on
+  // every record afterwards, that a library they never asked for is missing.
+  if (EDITOR.chosen) kept.editor = EDITOR.editor;
+  remembered.set(EDITOR_KEY, JSON.stringify(kept));
+}
+
+// Typing the parameter is choosing, and choosing is what makes it stick — in
+// both directions now, because `?editor=plain` is a choice as much as
+// `?editor=ace` is and the way back out of either has to be the other one. A
+// setting whose only way out is editing `localStorage` by hand is a trap, and
+// with the default on the expensive side it would be the expensive trap.
+if (new URLSearchParams(location.search).has('editor')) rememberEditor({});
+
+// And the other half of sticky: the preference put back into the URL, because
+// the URL is the only part of this the server can see. Called from
+// `bodySurface` and nowhere else, so the table and the cycle page — which share
+// this block and have no body editor — never navigate.
+//
+// Only over http(s). A static export IS the case where the parameter can never
+// work: there is no server to render the other bytes, so reloading a file to add
+// a parameter to it costs a reload and buys nothing. Returns whether the page is
+// going away, so the caller can tell "fetching it" from "it is not obtainable".
+function stickyEditor() {
+  if (!location.protocol.startsWith('http')) return false;
+  const url = new URL(location.href);
+  if (url.searchParams.has('editor')) return false;
+  url.searchParams.set('editor', EDITOR.editor);
+  // `replace` and not `assign`: a preference carried forward is not a place in
+  // the history somebody wants the back button to take them to. It matters more
+  // now than it did — with the default on the other side, this fires for the
+  // people who chose the plain box, on every record they open, and `assign`
+  // would put a bounce in the back button for each one of them.
+  location.replace(url);
+  return true;
+}
+// Spaces, because a tab character is two columns here, four in git's diff view
+// and eight in a terminal, and the place these documents are read that this tool
+// does not draw is GitHub.
+//
+// It is a TYPING setting and never a "convert this document" command. A global
+// re-indent reaches the room as one delete-everything-insert-everything, which
+// `tests/test_coedit.py` already measures as larger than a body is allowed to
+// be — so the whole document is never re-indented here, and the picker that
+// makes the width settable changes what the next Tab types and not one character
+// of what is already written.
+//
+// `let`, because the picker moves it. `OUTDENT` is derived from the same number
+// in the same call rather than written down a second time: one tab, or up to as
+// many spaces as an indent puts in, and two constants that are the same number
+// are the same defect.
+let INDENT;
+let OUTDENT;
+
+function setIndentWidth(width) {
+  INDENT = ' '.repeat(width);
+  OUTDENT = new RegExp('^(?:\\t| {1,' + width + '})');
+}
+setIndentWidth(EDITOR.indent);
+
+// Tab indents what the selection touches, and Shift-Tab takes it back.
+//
+// Every write goes through `replaceRange`, so the whole gesture is one undo step
+// and the native history survives it — including the outdent, which deletes
+// through `execCommand('insertText', false, '')` exactly as the empty-list-item
+// branch below already does.
+function indentLines(surface, out) {
+  const text = surface.text();
+  const {from: start, to: end} = surface.caret();
+  const [from, to] = lineRange(surface);
+  const chosen = text.slice(from, to);
+  const item = LIST_ITEM.exec(chosen);
+  const head = text.slice(from, start);
+  // Whole lines when there is a selection, when the caret is in the indent, and
+  // when it is anywhere inside a bullet's marker — which is the gesture that
+  // nests a list item under the one above it, and the reason `LIST_ITEM` is
+  // consulted here rather than a plain `^\s*`. A caret in the middle of a
+  // sentence means the other thing: type spaces to the next stop, the way a tab
+  // key does on a line of prose.
+  const lead = item ? item[1].length + item[2].length + item[3].length : 0;
+  const whole = out || start !== end || /^\s*$/.test(head) || (item && head.length <= lead);
+  if (!whole) {
+    surface.splice(start, end, ' '.repeat(INDENT.length - ((start - from) % INDENT.length)));
+    return;
+  }
+  const lines = chosen.split('\n');
+  const moves = [];
+  const next = lines
+    .map(line => {
+      if (!out) { moves.push(INDENT.length); return INDENT + line; }
+      const cut = OUTDENT.exec(line);
+      moves.push(cut ? -cut[0].length : 0);
+      return cut ? line.slice(cut[0].length) : line;
+    })
+    .join('\n');
+  // Nothing to take away. Without this, Shift-Tab on a line with no indent still
+  // wrote the line back over itself and cost somebody an undo press to find out
+  // that nothing had happened.
+  if (next === chosen) return;
+  surface.splice(from, to, next);
+  // The caret ends where the text it was on ended up, not at the end of what was
+  // rewritten: an indent moves the line under you and leaves you on the word you
+  // were typing. Clamped to the start of its own line, for a caret that was
+  // sitting inside indentation an outdent has just removed.
+  const carried = at => {
+    let opens = from;
+    let before = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const ends = opens + lines[i].length;
+      if (at <= ends) return Math.max(opens + before, at + before + moves[i]);
+      opens = ends + 1;
+      before += moves[i];
+    }
+    return at + before;
+  };
+  surface.setCaret(carried(start), carried(end));
+}
+
+// The mirror. One of them, and every pixel question about a textarea is asked of
+// it: where each logical line starts, and where a caret at a given index is
+// drawn. There were two — this one and `_COEDIT`'s `ghost`, built the same way
+// for the seat bands and carrying the width bug below — and two mirrors is two
+// places for the same answer to be wrong in.
+//
+// A textarea has no DOM inside it, so there is no range to measure and no other
+// way to ask any of this: the answer comes from a mirror that is given the box's
+// own metrics and one block per logical line, and `offsetTop` then reads a
+// position straight off. Measured rather than assumed — `scrollTop / lineHeight`
+// is only right for a document in which nothing wraps, and in a pane half a
+// window wide most lines wrap.
+//
+// **The width is the fractional content box, and that is the whole of the
+// accuracy.** The seat mirror this replaces set `ghost.style.width =
+// BODY.clientWidth + 'px'` on a `border-box` element it had also handed the
+// textarea's padding and border to — so it took the padding box for a border box
+// and came out a whole border narrower than the real content box, on top of
+// `clientWidth` being an integer where the content box is fractional. At a width
+// sitting on a wrap boundary that flips one break, and every line below it lands
+// a whole line height out, up to three: 1.7% to 10.4% of widths across six
+// corpora and 481 widths each, against 0 of 481 with this. `VENDOR.md` holds
+// this feature to "a caret one line off is worse than no caret".
+//
+// `ask` is handed the mirror rather than the mirror handed back, so the thing
+// cannot outlive the question: an off-screen copy of the document left in the
+// page is one that goes stale and one a later `querySelector` finds.
+//
+// **Every top this answers is in the box's own SCROLL space** — zero is the top
+// of the padding box, which is what `scrollTop` counts from, so a consumer that
+// has already subtracted `scrollTop` is done. Anything drawn OVER the box is
+// positioned from its BORDER box instead and has one more term to add; that is
+// `textTop` below, and it is a whole border-width, which is why every line
+// number was a pixel above the line it numbered before it existed.
+//
+// `ask` is handed a `topOf` rather than being left to read `offsetTop`, and that
+// is the second half of the accuracy. `offsetTop` is an integer while a row here
+// is 20.15625px tall, so it rounds — and the rounding accumulates down the
+// document, up to half a row by the foot of a long one. A rect is fractional.
+function measuredLines(area, text, ask) {
+  const style = getComputedStyle(area);
+  const mirror = document.createElement('div');
+  mirror.setAttribute('aria-hidden', 'true');
+  for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+                      'letterSpacing', 'padding', 'border', 'whiteSpace',
+                      'wordBreak', 'overflowWrap', 'tabSize']) {
+    mirror.style[name] = style[name];
+  }
+  mirror.style.position = 'absolute';
+  mirror.style.visibility = 'hidden';
+  mirror.style.top = mirror.style.left = '-9999px';
+  mirror.style.boxSizing = 'border-box';
+  // The scrollbar is the browser's own furniture and is an integer; everything
+  // else in this sum is fractional and is kept so.
+  const bars = area.offsetWidth - area.clientWidth
+    - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+  mirror.style.width = (area.getBoundingClientRect().width - bars) + 'px';
+  // One block per logical line, so a line that wraps is one box however many
+  // rows it draws on — which is what "line 17" means in the gutter of the editor
+  // this is modelled on, and what `data-startline` counts on the other side.
+  // A zero-width space on an empty line, or the box has no height at all.
+  //
+  // The text is handed in rather than read off the box, and that is the boundary
+  // above showing through: the mirror is about GEOMETRY — a font, a width, a
+  // wrap — and the document it lays out belongs to the surface. Reading
+  // the box's own value here would be a second place that knows this is a
+  // textarea.
+  const lines = text.split('\n');
+  mirror.append(...lines.map(line => {
+    const row = document.createElement('div');
+    row.textContent = line || '\u200b';
+    return row;
+  }));
+  document.body.append(mirror);
+  // The mirror's own border box, plus its border, is the origin the box's
+  // `scrollTop` counts from — so a row's distance from it is the number a
+  // consumer can subtract `scrollTop` from directly.
+  const zero = mirror.getBoundingClientRect().top + parseFloat(style.borderTopWidth);
+  const topOf = element => element.getBoundingClientRect().top - zero;
+  try {
+    return ask([...mirror.children], lines, topOf);
+  } finally {
+    mirror.remove();
+  }
+}
+
+// Where every logical line of a textarea starts, in the box's own scroll space.
+function lineTops(area, text) {
+  return measuredLines(area, text, (rows, lines, topOf) => rows.map(topOf));
+}
+
+// And where the top of the box's first row of text is drawn, in the coordinates
+// of a layer that fills `host` — the gutter's column and the seat layer are both
+// absolutely positioned inside `.bodywrap`, whose top is the box's BORDER box,
+// while `lineTops` and `rowTops` answer from its padding box.
+//
+// One border-width apart, which sounds like nothing and is not: measured in
+// Chrome against an independent overlay, every line number came out exactly
+// 1.000px above the line it numbered, on every line, in a column of numbers
+// whose whole job is to line up with something.
+function textTop(area, host) {
+  return area.getBoundingClientRect().top - host.getBoundingClientRect().top
+    + (parseFloat(getComputedStyle(area).borderTopWidth) || 0);
+}
+
+// And where the carets at these indexes are drawn — the top of the visual ROW
+// each one sits on, which is not the top of its logical line the moment that line
+// wraps. A band on the first row of a paragraph somebody is typing the fourth row
+// of is a band pointing at the wrong sentence.
+//
+// Every index in one pass over one mirror, because the loop this replaces built a
+// mirror, filled it with a prefix of the whole document and laid it out once PER
+// PERSON in the room — the only item in this plan that makes something already
+// shipped cheaper.
+function rowTops(area, text, indexes) {
+  return measuredLines(area, text, (rows, lines, topOf) => {
+    const mark = document.createElement('span');
+    // A zero-width space, so the marker has a box on an empty line and so the
+    // line it is on does not come out one character wider than the real one.
+    mark.textContent = '\u200b';
+    return indexes.map(index => {
+      let line = 0;
+      let opens = 0;
+      // The line the index is IN, so an index at the very end of a line stays on
+      // that line rather than jumping to the top of the next one.
+      while (line < lines.length - 1 && index > opens + lines[line].length) {
+        opens += lines[line].length + 1;
+        line++;
+      }
+      const row = rows[line];
+      row.textContent = lines[line].slice(0, Math.max(0, index - opens));
+      row.append(mark);
+      const top = topOf(mark);
+      // Put the line back, or the second index measured is measured against a
+      // document the first one truncated.
+      row.textContent = lines[line] || '\u200b';
+      return top;
+    });
+  });
+}
+
+// Ask 4: the numbers down the side of the box.
+//
+// LOGICAL lines, one number each, aligned to the first visual row of the line it
+// numbers — which is what the note this is modelled on does, and what makes the
+// number mean the same thing as the line number in a diff, a stack trace or a
+// review comment. A count of visual rows would be a number that changes when you
+// drag the width handle.
+//
+// The ceiling exists because the rebuild is a layout of the whole document and
+// it happens on every keystroke. Measured in Chrome, mirror and numbers
+// together: 0.8ms at 100 lines, 2.6 at 400, 6.5 at 1,000, 8 at 1,200, 15.6 at
+// 2,000 and 25.3 at 4,000. A 60Hz frame is 16.7ms, so 2,000 already spends one
+// on a fast machine and the ceiling is set at half of one instead — the longest
+// document in this repository's own corpus is 124 lines, so a thousand is eight
+// times anything anybody has written here and still leaves room for a machine
+// three times slower than this one.
+//
+// Above it the gutter goes off and SAYS SO, in the bar above the box, with the
+// count it went off for. This application has shipped three branches that
+// decided not to act and said nothing about it, and a gutter that silently
+// vanishes on a long document is the one somebody reports as "the line numbers
+// are broken".
+const GUTTER_MAX = 1000;
+
+function attachGutter(surface, note) {
+  // A surface that draws its own numbers is left to draw them. Not silence: the
+  // numbers are there, drawn by the thing that owns the rows, and a second
+  // column of them measured through a mirror of a box that is not on screen
+  // would be the wrong numbers beside the right ones.
+  if (surface.provides.gutter) return null;
+  // The box, for the questions that are about a box: does it have a layout, how
+  // far is it scrolled, which wrapper is it in. The DOCUMENT comes off the
+  // surface, and so do the two measurements, which is why the mirror is not
+  // reached for by name here any more.
+  const area = surface.el;
+  const wrap = area.closest('.bodywrap');
+  if (!wrap) return;
+  const gutter = document.createElement('div');
+  gutter.className = 'gutter';
+  // Furniture, and out of the accessibility tree: a screen reader reading four
+  // hundred numbers before the document is worse than no gutter at all.
+  gutter.setAttribute('aria-hidden', 'true');
+  const rows = document.createElement('div');
+  rows.className = 'gutterrows';
+  gutter.append(rows);
+  // After the box and not before it, which decides which one is painted on top:
+  // both are positioned, so document order is the tie-break, and a gutter drawn
+  // under the textarea is a gutter behind an opaque background.
+  wrap.append(gutter);
+
+  // The numbers move with the box, and that is a transform on one element rather
+  // than a rebuild: scrolling changes where the lines are drawn and not where
+  // they are. `textTop` is the border the column is anchored outside of and the
+  // measurements are taken inside of; without it every number is one pixel high.
+  const slide = () => {
+    rows.style.transform =
+      'translateY(' + (textTop(area, wrap) - area.scrollTop) + 'px)';
+  };
+
+  // Named for what it draws, and not `draw`. This block ships on six pages, two
+  // of which have no body editor at all, and the table page declares a top-level
+  // `draw` of its own — so a generic name here is a name that reads as the
+  // table's to anything looking at the page as text. It is nested and therefore
+  // lexically safe, and the suite went red anyway: the test that greps out the
+  // table's sort routine by name matched this one first, because it comes
+  // earlier in the document. The same collision, arriving through the one door
+  // that was open.
+  let off = false;
+  // The column that is currently applied, or `null` for none. Kept because
+  // changing it changes where every line WRAPS — see the dispatch at the foot of
+  // this function — and a change has to be told from a redraw at the same width.
+  let column = null;
+  function drawGutter() {
+    // The same question `place` asks, and for the same reason: a box nothing is
+    // drawing measures zero, and a mirror given a width of zero wraps the
+    // document one character per row. Read mode is exactly that, and
+    // `openproj:editing` is what brings the gutter back.
+    if (!area.getClientRects().length) return;
+    const count = surface.text().split('\n').length;
+    if (count > GUTTER_MAX) {
+      wrap.classList.remove('numbered');
+      rows.replaceChildren();
+      const said = 'Line numbers are off above ' + GUTTER_MAX.toLocaleString()
+        + ' lines — this document has ' + count.toLocaleString() + '.';
+      if (note) note.textContent = said;
+      // Both channels, and each is doing a different job. The label beside the
+      // box is the one that persists, and it is the one being relied on — but it
+      // lives in `.bodybar`, which is `display: none` until the article is
+      // editing, and a live region that is not displayed when its text is set is
+      // one a screen reader may never read out. `announce` is the page's single
+      // place for "something was refused and here is why" and it is always on the
+      // page. Said once per crossing, not once per keystroke: a live region that
+      // repeats itself on every input is one people turn off.
+      if (!off) announce(said);
+      off = true;
+      moved(null);
+      return;
+    }
+    if (note) note.textContent = '';
+    off = false;
+    // The column's width first, then the measurement: the width is the box's
+    // left padding, the padding decides the content box, and the content box
+    // decides where every line wraps. Measured before it is applied, the mirror
+    // answers about a box one gutter wider than the one on the screen.
+    const want = 'calc(' + String(count).length + 'ch + 1.1rem)';
+    wrap.style.setProperty('--gutter', want);
+    wrap.classList.add('numbered');
+    rows.replaceChildren(...surface.lineCoords().map((top, at) => {
+      const number = document.createElement('span');
+      number.className = 'lineno';
+      number.style.top = top + 'px';
+      number.textContent = String(at + 1);
+      return number;
+    }));
+    slide();
+    moved(want);
+  }
+
+  // This column is the box's own `padding-left`, so switching it on — or growing
+  // it from two digits to three, or taking it away again at the ceiling — narrows
+  // or widens the content box and rewraps every line in the document. Anything
+  // else drawn over the box is then on the wrong line, which is the exact defect
+  // this stage exists to remove, arriving through the stage's own new feature:
+  // measured in Chrome, turning the gutter on left the band for a caret below a
+  // wrapping paragraph one whole 20.15px row above where it belonged.
+  //
+  // So the gutter says so, through the event every layer over this box already
+  // listens to. Only on a real change, which is what stops it being a loop: this
+  // function is one of the listeners, and the redraw a dispatch causes writes the
+  // same column and dispatches nothing.
+  function moved(now) {
+    if (now === column) return;
+    column = now;
+    dispatchEvent(new Event('openproj:editing'));
+  }
+
+  // Coalesced, because one resize is a burst of events and each of these is a
+  // layout of the whole document. A frame AND a timer, whichever arrives first:
+  // `requestAnimationFrame` is the right clock for something about to be
+  // painted, and it is also a clock that does not tick in a tab nobody is
+  // looking at — the finding `announce` records — nor under the headless virtual
+  // clock every pixel question in this repository is asked through, which would
+  // make the gutter the one drawing here that no test can see.
+  let frame = 0;
+  let backstop = 0;
+  function now() {
+    cancelAnimationFrame(frame);
+    clearTimeout(backstop);
+    backstop = 0;
+    drawGutter();
+  }
+  function later() {
+    if (backstop) return;
+    frame = requestAnimationFrame(now);
+    backstop = setTimeout(now, 32);
+  }
+
+  area.addEventListener('scroll', slide);
+  surface.onInput(later);
+  addEventListener('resize', later);
+  // Every view change, and the one that turns editing on: the box arrives, or
+  // changes width by half a window, and the numbers are a function of its width.
+  addEventListener('openproj:editing', later);
+  // And the box changing shape without any of those, which is three things at
+  // once: the width grip writes `--measure` and calls `place()` and dispatches
+  // nothing; this column IS the box's left padding, so turning it on narrows the
+  // content box and rewraps every line under it; and the box carries a
+  // `resize: vertical` handle of its own. All three are the CONTENT box
+  // changing, which is what a `ResizeObserver` observes by default, so one
+  // observer answers all three rather than three events being remembered
+  // separately. Measured before this: dragging the grip to 30rem left six of
+  // nine numbers between 20.8 and 122.1px off their lines until the window was
+  // resized. The redraw this observer causes can itself change the column's
+  // width, which fires the observer once more and then settles, because the
+  // second pass writes the same `--gutter` and changes no size.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(later).observe(area);
+  // A mirror in a fallback face measures the fallback's line height, and every
+  // number then lands on the wrong row on the one machine whose webfont has not
+  // arrived yet.
+  if (document.fonts) document.fonts.ready.then(later);
+  drawGutter();
+}
+
+// Ask 5's control, and the two facts either side of it.
+//
+// The shape is read off the note in `docs/hackmd-observed.md` rather than
+// invented: a strip along the FOOT of the box, holding `Line 1, Columns 1 — 100
+// Lines`, `Spaces: 4` and `Length: 1369`. The thing worth copying is what
+// `Spaces: 4` IS — two words that state the current value and are themselves the
+// click target. No dialog, no settings screen, no "preferences" anywhere: the
+// value is legible without opening anything and one press changes it.
+//
+// What is deliberately not built from that strip, so it is not rediscovered as
+// an omission: `Breaks` is a SERVER setting here — `_MD` is `MarkdownIt(
+// "commonmark", ...)` and CommonMark makes a single newline a space — and
+// flipping it would reflow every document already in the plan repository without
+// changing a character of any of them. It is a stated unknown in the plan
+// pending a grep of the migrated corpus, not a switch. Spellcheck and an editor
+// theme are the other two, and both are refused rather than postponed: the
+// browser's own spellcheck already works in this box, and a pane that themes
+// itself independently of the page is a colour with its only definition inside a
+// block half the readers never match.
+//
+// The bar is built rather than written into four templates, for the same reason
+// the toolbar is: this is one block and four mount sites, and four copies of a
+// row of spans is four places for one of them to fall behind. A page that wants
+// something of its own in the middle of the strip — the draft interval, on the
+// one page that has a draft — puts it in the markup and this wraps it, which is
+// why the two ends are `prepend` and `append` rather than `replaceChildren`.
+const MAX_BODY = {{ max_body_bytes|tojson }};
+
+// A status-bar picker. `label: value`, cycling on click, announced when it
+// moves — because the only thing on screen that changed is two characters in an
+// 11px strip, which is not a change a person who pressed a button can see.
+function statusPick(button, label, offered, chosen, chose) {
+  const draw = () => {
+    button.textContent = `${label}: ${chosen}`;
+    // What pressing it will do, in the words of what it will become. A picker
+    // that says only what it IS leaves a person to press it to find out.
+    const next = offered[(offered.indexOf(chosen) + 1) % offered.length];
+    button.title = `${label}: ${chosen} — press for ${next}`;
+  };
+  button.type = 'button';
+  button.classList.add('stat', 'pick');
+  button.onclick = () => {
+    chosen = offered[(offered.indexOf(chosen) + 1) % offered.length];
+    draw();
+    chose(chosen);
+  };
+  draw();
+  return button;
+}
+
+function attachStatus(surface, bar) {
+  if (!bar) return null;
+  const where = document.createElement('span');
+  where.className = 'stat';
+  const spaces = statusPick(
+    document.createElement('button'), 'Spaces', INDENT_WIDTHS, EDITOR.indent,
+    width => {
+      setIndentWidth(width);
+      rememberEditor({indent: width});
+      // In the words of what it is and what it is not. A person who has just
+      // pressed something called "Spaces" on a document full of tabs is entitled
+      // to think the document changed, and it did not: re-indenting a whole
+      // document reaches a live room as one delete-everything-insert-everything,
+      // which is measurably larger than a body is allowed to be.
+      announce(`Tab now types ${width} spaces. Nothing already written was changed.`);
+    });
+  const size = document.createElement('span');
+  size.className = 'stat';
+  bar.prepend(where, spaces);
+  bar.append(size);
+
+  // Ask 6, where the note this is modelled on puts it: a keymap glyph in the
+  // strip along the foot of the box, beside the indent width and the length.
+  //
+  // Only on a surface that HAS keymaps, and that is an absence rather than a
+  // silence: a `<textarea>`'s keymap is the browser's, there is no second one to
+  // offer, and a picker offering a choice it cannot make is worse than no
+  // picker. What that used to cost was that the second editor was reachable only
+  // by typing a parameter nothing on the page mentioned; it is the switch beside
+  // the three view segments now, so the way to a keymap is on the page as well.
+  if (surface.setKeymap) {
+    bar.append(statusPick(
+      document.createElement('button'), 'Keymap', surface.keymaps, EDITOR.keymap,
+      name => {
+        surface.setKeymap(name);
+        rememberEditor({keymap: name});
+        // What it took as well as what it gave. Vim claims Escape, Tab, and
+        // every printable key while it is in NORMAL mode, and somebody who has
+        // just pressed a two-word control in an 11px strip and finds their
+        // typing going nowhere has been given no way to work out why.
+        announce(name === 'vim'
+          ? 'Vim keys are on. Press i to type, Escape to leave insert mode.'
+          : 'Vim keys are off. The keyboard is the browser\u2019s again.');
+      }));
+  }
+
+  const bytes = new TextEncoder();
+  // Said once per crossing rather than once per keystroke, the way the gutter's
+  // ceiling is: a live region that repeats itself on every character is one
+  // people turn off.
+  let wasOver = false;
+
+  function refresh() {
+    const text = surface.text();
+    const {from: at, to: ends} = surface.caret();
+    // Counted rather than split: `text.slice(0, at).split('\n')` allocates every
+    // line above the caret, and this runs on every keystroke of a document that
+    // may be four hundred lines long.
+    let line = 1;
+    for (let i = text.indexOf('\n'); i !== -1 && i < at; i = text.indexOf('\n', i + 1)) line++;
+    const opens = text.lastIndexOf('\n', at - 1) + 1;
+    // Code points and not code units, and only over the current line so the cost
+    // is the line rather than the document: a caret after an emoji is in column
+    // 2, and reporting 3 is the same class of wrongness as a splice that cuts a
+    // surrogate pair in half.
+    const column = [...text.slice(opens, at)].length + 1;
+    const lines = text.split('\n').length;
+    const chosen = ends - at;
+    // Singular at one, which is a departure from the shot and a deliberate one.
+    // HackMD's own strip reads `Line 1, Columns 1 — 100 Lines` — plural on the
+    // column whatever the number — and this bar already spells `Column` singular
+    // because copying a typo is not what "build the toolbar in the screenshot"
+    // asked for. Having done that once, `1 Lines` is the same mistake left in:
+    // an empty document is the FIRST thing anybody sees on /new, and it opened
+    // reading `Line 1, Column 1 — 1 Lines`.
+    where.textContent = `Line ${line}, Column ${column}`
+      + (chosen ? ` — ${chosen.toLocaleString()} selected` : '')
+      + ` — ${lines.toLocaleString()} Line${lines === 1 ? '' : 's'}`;
+
+    // The count is UTF-16 code units, which is what the editor this is modelled
+    // on counts too, and it is NOT what the ceiling is in. The ceiling is UTF-8
+    // bytes, so the two are said separately rather than one being passed off as
+    // the other — and the byte figure appears only when the document is close
+    // enough to the ceiling for it to be news.
+    //
+    // Encoded only when it could possibly be over: UTF-8 is at most three bytes
+    // per UTF-16 code unit, so a shorter document cannot be, and this is a scan
+    // of the whole body on every keystroke.
+    const near = text.length * 3 >= MAX_BODY * 0.9 ? bytes.encode(text).length : 0;
+    const over = near > MAX_BODY;
+    size.textContent = `Length: ${text.length.toLocaleString()}`
+      + (near >= MAX_BODY * 0.9
+         ? ` — ${near.toLocaleString()} of ${MAX_BODY.toLocaleString()} bytes`
+         : '')
+      + (over ? ', too long to save' : '');
+    size.classList.toggle('over', over);
+    // Before Save is pressed and not after it. The server answers a body over
+    // this with a refusal, which is correct and is also the worst moment to find
+    // out: the writing is done, the tab is about to be closed, and the only copy
+    // is in a box.
+    if (over && !wasOver) {
+      announce(`This document is ${near.toLocaleString()} bytes and cannot be saved above `
+               + `${MAX_BODY.toLocaleString()}.`);
+    }
+    wasOver = over;
+  }
+
+  // The same events the seat layer's `sit` uses, for the same reason: a caret
+  // moves on a keystroke, on a click and on a selection, and none of those is an
+  // `input`. `openproj:editing` is the box arriving, changing width, or being
+  // written into by somebody else in the room — all three change what this says
+  // and none of them fires anything else here.
+  // Exactly the five events this used to name one at a time: the surface's
+  // `onCaret` IS that list, and it is one list now rather than two copies of it
+  // in two functions that both wanted "the caret may have moved".
+  surface.onCaret(refresh);
+  addEventListener('openproj:editing', refresh);
+  refresh();
+  return {refresh};
+}
+
+function attachEditing(surface, bar) {
+  const area = surface.el;
+  // The two history buttons, so their disabled state can be kept honest. Empty
+  // on a bar that was never drawn, which is what makes `syncHistory` a no-op on
+  // the two pages that inline this block and have no editor. Named rather than
+  // called `history`, which is a global this page has no business shadowing.
+  const historyButtons = [];
   if (bar) {
     for (const mark of FORMATS) {
+      if (mark.group) {
+        // A rule and not a gap. Three groups of adjacent buttons say "these do
+        // the same kind of thing" only if the boundary is visible; spacing
+        // alone reads as a toolbar that wrapped.
+        const rule = document.createElement('span');
+        rule.className = 'sep';
+        rule.setAttribute('aria-hidden', 'true');
+        bar.append(rule);
+      }
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'mark';
@@ -8384,19 +10292,149 @@ function attachEditing(area, bar) {
       if (mark.style) button.setAttribute('style', mark.style);
       // mousedown, not click: click runs after the textarea has lost focus and
       // with it the selection the mark is supposed to apply to.
-      button.onmousedown = event => { event.preventDefault(); applyMark(area, mark); };
+      //
+      // The image button is the exception and has to be a click: a file picker
+      // opens only on a real user gesture, and `preventDefault` on mousedown
+      // takes the activation away from the `.click()` that opens it. It has no
+      // selection to protect, so nothing is lost by waiting.
+      //
+      // Three shapes, then: history, which moves a stack; the upload, which
+      // opens a dialog; and a mark, which writes markdown.
+      if (mark.history) {
+        // A drawing and no letters, so the name is said twice: `aria-label` for
+        // a reader who cannot see it, `title` for one who can and cannot tell
+        // what it is. The draft row's check and cross do the same.
+        button.classList.add('hist');
+        button.innerHTML = HISTORY_ART[mark.history];
+        button.setAttribute('aria-label', mark.label);
+        historyButtons.push([button, mark.history]);
+        // mousedown so the box keeps the focus and the caret, and a keyboard
+        // click beside it: Enter and Space produce no mousedown at all, and
+        // thirteen of fourteen buttons on this bar were once mouse-only.
+        button.onmousedown = event => { event.preventDefault(); step(mark.history); };
+        button.onclick = event => { if (event.detail === 0) step(mark.history); };
+      } else if (mark.upload) {
+        button.onclick = () => area.dispatchEvent(new Event('openproj:pick-image'));
+      } else {
+        button.onmousedown = event => { event.preventDefault(); applyMark(surface, mark); };
+        // And the keyboard, which `onmousedown` alone left out: Enter and Space
+        // on a focused button produce a click and no mousedown at all, so every
+        // mark in this bar was a focus stop that did nothing. `detail === 0` is
+        // how a click synthesised from a key is told from one a pointer made, so
+        // a mouse press still applies the mark exactly once.
+        button.onclick = event => { if (event.detail === 0) applyMark(surface, mark); };
+      }
       bar.append(button);
     }
   }
 
+  // One press of undo or redo, sent to whichever history owns the document now.
+  function step(what) {
+    historyOf(surface).step(what);
+    // The step may fire nothing this page hears: `execCommand('undo')` does fire
+    // an `input`, but `Y.UndoManager.undo()` reaches the box through `reflect()`
+    // inside `apply`, which deliberately fires none.
+    syncHistory();
+  }
+
+  // **Disabled-ness has to be honest.** A control that looks pressable and does
+  // nothing is worse than no control, and this bar has the conditions to produce
+  // one: the native stack answers `queryCommandEnabled` truthfully only until
+  // something assigns `.value`, and which history owns the document changes
+  // under the toolbar when a room binds or drops. `disabled` and not a class —
+  // it is the one state a screen reader, a pointer and the stylesheet all agree
+  // about already.
+  function syncHistory() {
+    if (!historyButtons.length) return;
+    const owner = historyOf(surface);
+    for (const [button, what] of historyButtons) button.disabled = !owner.can(what);
+  }
+  // Every moment the answer can change and no more. `onCaret` is the five events
+  // a person's hands produce, and each is a moment when the box is the browser's
+  // editing host — the only moment `queryCommandEnabled` is answering about THIS
+  // box rather than about whatever was focused last. `openproj:editing` is the
+  // box arriving or somebody else writing into it; `openproj:history` is the
+  // room binding, dropping, or its stack moving.
+  surface.onCaret(syncHistory);
+  addEventListener('openproj:editing', syncHistory);
+  addEventListener('openproj:history', syncHistory);
+  syncHistory();
+
+  // Armed by Escape, spent by the next Tab, and cleared by typing — which is
+  // what `input` is for rather than a second keydown branch: the Shift in
+  // Shift-Tab is itself a keydown, so disarming on any key would have taken the
+  // hatch away from the gesture for leaving backwards.
+  let leaving = false;
+  surface.onInput(() => { leaving = false; });
+
   area.addEventListener('keydown', event => {
+    // **A `defaultPrevented` guard was written here and then measured away.**
+    // The plan promised one, in those words, as how a keymap would claim a key
+    // ahead of the three claimants below. It is not needed and it would encode
+    // nothing: Ace's `stopEvent` does `stopPropagation` as well as
+    // `preventDefault`, so a key its command table handled never reaches this
+    // listener at all. Measured in Chrome on the second surface, with a listener
+    // beside this one: Tab arrives at Ace's input and does NOT reach here — one
+    // indent, Ace's, at its own tab width — while Escape and Cmd+S both do,
+    // unprevented, so leaving the full-page view and saving still work. A guard
+    // whose condition is never true is a guard nobody can test, and the last
+    // thing this handler needs is a line that looks like arbitration and is not.
+    if (event.key === 'Escape') {
+      // Escape has three claimants, and this is where they are arbitrated. In
+      // order of who gets it and why:
+      //
+      // 1. **The page, while there is something to come back out of.** On the
+      //    two pages with a full-page view, Escape leaves it. It goes first
+      //    because it is what a person pressing Escape in a screen-filling
+      //    editor means, because the change is visible the instant it happens,
+      //    and because one click puts it back. Announced by nothing, because the
+      //    whole screen answering is the answer.
+      // 2. **The Tab hatch.** Tab indents here, which takes away the only way
+      //    out of the box for somebody with no pointer. Escape gives it back for
+      //    one press, and says so: an escape hatch nobody is told about is not
+      //    one, and swallowing Tab in silence is the version of this feature
+      //    that traps people.
+      // 3. **Ending the editing session: never.** That is Cancel, a button with
+      //    a name, because ending a session drops a restored draft — and a key
+      //    that discards writing is a key somebody presses by mistake once.
+      //
+      // The seam is an event on the element, the way the image button's is: this
+      // block is shared by six pages and only two of them have a view to leave.
+      // Where nothing listens, nothing is cancelled and the hatch opens straight
+      // away. Vim, if it is ever bought, claims Escape ahead of all three while
+      // it is in insert mode, and the same `cancelable` answer is how it says so.
+      if (!area.dispatchEvent(new Event('openproj:escaped', {cancelable: true}))) return;
+      leaving = true;
+      announce('Press Tab to leave the document, or carry on typing to stay in it');
+      return;
+    }
+    if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      // Spent, and the browser moves focus the way it does everywhere else.
+      if (leaving) { leaving = false; return; }
+      event.preventDefault();
+      indentLines(surface, event.shiftKey);
+      return;
+    }
     if (event.metaKey || event.ctrlKey) {
       const mark = FORMATS.find(
         m => m.key === event.key.toLowerCase() && !!m.shift === event.shiftKey
       );
       if (mark && !event.altKey) {
+        // ⌘Z and ⌘⇧Z are the browser's before they are this page's, and the
+        // page takes them only where the browser's own has been destroyed —
+        // `keyed` says which. False on a textarea with no room, and that is not
+        // laziness: the native binding restores the SELECTION the edit was made
+        // with and `execCommand('undo')` does not. False on Ace, whose command
+        // table took the key before this listener saw it. True in a live room.
+        if (mark.history) {
+          const owner = historyOf(surface);
+          if (!owner.keyed) return;
+          event.preventDefault();
+          step(mark.history);
+          return;
+        }
         event.preventDefault();
-        applyMark(area, mark);
+        applyMark(surface, mark);
       }
       return;
     }
@@ -8404,33 +10442,85 @@ function attachEditing(area, bar) {
     // Enter continues a list, which is the one thing everybody misses from
     // HackMD within a minute. An empty item ends the list instead of making
     // another empty one, which is how every editor that does this behaves.
-    const [from] = lineRange(area);
-    const line = area.value.slice(from, area.selectionStart);
+    const [from] = lineRange(surface);
+    const caret = surface.caret();
+    const line = surface.text().slice(from, caret.from);
     const parts = LIST_ITEM.exec(line);
     if (!parts) return;
     event.preventDefault();
     const [, indent, bullet, gap, box, text] = parts;
     if (!text.trim()) {
-      area.setSelectionRange(from, area.selectionEnd);
-      replaceRange(area, '');
+      surface.splice(from, caret.to, '');
       return;
     }
     const next = /^\d+\./.test(bullet)
       ? `${parseInt(bullet, 10) + 1}.`
       : bullet;
-    replaceRange(area, `\n${indent}${next}${gap}${box ? '[ ] ' : ''}`);
+    surface.splice(caret.from, caret.to, `\n${indent}${next}${gap}${box ? '[ ] ' : ''}`);
   });
+}
+
+// Two things a paste is nearly always the beginning of retyping by hand: a URL
+// dropped over the words it should link, and a block of cells copied out of a
+// spreadsheet. Both come back as markdown here, and both go in through
+// `replaceRange`, so one ctrl-Z gives back exactly what was on the clipboard —
+// which is the whole of the argument for doing this at all rather than leaving
+// it to a person.
+//
+// An allowlist, and a narrow one, for the same reason `_image` is one: `http`
+// and `https`, no whitespace, and only over a selection. A URL pasted with
+// nothing selected is somebody pasting a URL, and `[](url)` there would be the
+// editor guessing at what they meant.
+const URL_ONLY = /^https?:\/\/\S+$/;
+
+function pastedAs(surface, text) {
+  if (!text) return null;
+  const {from: start, to: end} = surface.caret();
+  const chosen = surface.text().slice(start, end);
+  const one = text.trim();
+  if (chosen && URL_ONLY.test(one)) return `[${chosen}](${one})`;
+  const rows = text.replace(/\n$/, '').split('\n').map(row => row.split('\t'));
+  // Two rows and two columns, every row the same width. Anything less is a line
+  // that happens to contain a tab, and a line is what it has to paste as: a
+  // paste that quietly becomes something else is worse than no help at all.
+  if (rows.length < 2 || rows[0].length < 2) return null;
+  if (!rows.every(row => row.length === rows[0].length)) return null;
+  // A cell's own pipe would end the cell. Escaped rather than dropped, because
+  // the numbers people paste here are measurements and one of them is a range.
+  const line = cells =>
+    '| ' + cells.map(cell => cell.trim().replace(/\|/g, '\\|')).join(' | ') + ' |';
+  const table = [line(rows[0]), line(rows[0].map(() => '---')), ...rows.slice(1).map(line)]
+    .join('\n');
+  const [lead, tail] = blockPadding(surface.text().slice(0, start), surface.text().slice(end));
+  return lead + table + tail;
 }
 
 // Paste or drop an image and it goes into the plan repository, content-addressed,
 // and the markdown that names it is inserted where the cursor is. The path is
 // written repository-relative so the same text reads correctly in git, on GitHub
 // and here — only the prefix in front of it differs.
-function attachUploads(area, status) {
-  const insert = markdown => replaceRange(area, markdown);
+function attachUploads(surface, status) {
+  const area = surface.el;
+  // At the caret, which the splice has to be told rather than left to infer —
+  // that explicitness is the whole point of the boundary. See `textareaSurface`.
+  const insert = markdown => {
+    const {from, to} = surface.caret();
+    surface.splice(from, to, markdown);
+  };
 
   async function send(file) {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    // The branch that decides not to act, saying so. `accept="image/*"` filters
+    // the dialog and does not bind it — macOS Chrome's format popup still offers
+    // All Files — so somebody who presses Image, picks a PDF and comes back used
+    // to get no status text, no announcement and no change. "Nothing happened"
+    // is a plausible outcome of a paste; it is not a plausible outcome of
+    // pressing a button called Image.
+    if (!file.type.startsWith('image/')) {
+      status.textContent = `${file.name || 'that file'} is not an image`;
+      announce(status.textContent);
+      return;
+    }
     status.textContent = `uploading ${file.name || 'image'}…`;
     // A placeholder first, so a slow upload does not look like nothing happened
     // and the text cannot be typed over the spot it is going to land in.
@@ -8451,24 +10541,78 @@ function attachUploads(area, status) {
       // already in the plan would swallow a banner about somebody else's write.
       if (response.ok && answer.fresh) committed = answer.commit;
       const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
-      const at = area.value.indexOf(token);
-      if (at >= 0) {
-        area.setSelectionRange(at, at + token.length);
-        replaceRange(area, response.ok ? `![${alt}](${answer.path})` : '');
+      const at = surface.text().indexOf(token);
+      // The placeholder is not there any more. It was undone, or typed over, or
+      // the whole document was replaced by a restored draft while the upload was
+      // in the air — all of which take longer than they sound over a phone
+      // connection. This used to be `if (at >= 0) { … }` with nothing else: the
+      // blob was committed, nothing was inserted, and the bar said "uploaded"
+      // over a document with no image in it. The commit is the server's and
+      // cannot be taken back from here, so the honest answer is to say the file
+      // is in the plan and hand over the line that reaches it.
+      if (at < 0) {
+        status.textContent = response.ok
+          ? `${answer.path} is in the plan, but the line that pointed at it is gone — `
+            + `type ![${alt}](${answer.path}) where you want it`
+          : (answer.detail || 'that upload was refused');
+        announce(status.textContent);
+        return;
       }
+      surface.splice(at, at + token.length, response.ok ? `![${alt}](${answer.path})` : '');
       status.textContent = response.ok
         ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
         : (answer.detail || 'that upload was refused');
+    } catch (error) {
+      // The connection went while the request was in the air: wifi dropped, the
+      // laptop slept, the tab was offline before the press. This was `try` and
+      // `finally` with no `catch`, so the rejection escaped as an unhandled one
+      // and what a person was left looking at was the placeholder sitting in
+      // their document for ever with `uploading diagram.png…` under it — a
+      // sentence that says the thing is still happening, about a thing that
+      // stopped.
+      //
+      // The token goes back out through the surface and not by assignment, so
+      // one Ctrl+Z is still one step; and the sentence names the file, because
+      // a paste of three images that half fails is otherwise unreadable.
+      const at = surface.text().indexOf(token);
+      if (at >= 0) surface.splice(at, at + token.length, '');
+      status.textContent =
+        `${file.name || 'that image'} was not uploaded — ${error.message}`;
+      announce(status.textContent);
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
   }
 
+  // The toolbar's image button, wired without either function reaching into the
+  // other. `attachEditing` builds the bar and `attachUploads` owns the upload,
+  // and every page attaches them in two lines that know nothing of each other;
+  // an event on the element they both already hold is the seam. A page with a
+  // toolbar and no uploader would draw a button that does nothing, and there is
+  // no such page — all four call both.
+  area.addEventListener('openproj:pick-image', () => {
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = 'image/*';
+    picker.multiple = true;
+    picker.onchange = () => [...picker.files].forEach(send);
+    picker.click();
+  });
+
   area.addEventListener('paste', event => {
     const files = [...(event.clipboardData?.files || [])];
-    if (!files.length) return;
+    if (files.length) {
+      event.preventDefault();
+      files.forEach(send);
+      return;
+    }
+    const made = pastedAs(surface, event.clipboardData?.getData('text/plain') || '');
+    // `null` and not `''`: everything this does not recognise is left to the
+    // browser, which pastes it as the text it is.
+    if (made === null) return;
     event.preventDefault();
-    files.forEach(send);
+    const {from, to} = surface.caret();
+    surface.splice(from, to, made);
   });
   area.addEventListener('dragover', event => {
     event.preventDefault();
@@ -8672,6 +10816,134 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 </script>
 """
 
+# The three views of one document, drawn as one control.
+#
+# **Page chrome, not editor chrome.** `docs/hackmd-observed.md` reads it off the
+# pixels of a real note: it sits in the header, immediately after the note's
+# identity, as a segmented control of three icons with the active one pressed —
+# not as three more buttons in the row that already holds a template picker and a
+# status message. Three adjacent segments in one bordered box say "three states of
+# one thing"; three buttons in a row of unrelated controls say "three unrelated
+# actions", which is the thing this is not.
+#
+# Icons and not words, for the reason `_ICON_ART` gives and by the same means:
+# paths, in the page, in `currentColor`, so they follow the theme, scale, and are
+# the same drawing on every machine. Each carries the words in `aria-label`, so
+# the control is nameable by everybody — an icon that is only an icon is a
+# control a screen reader announces as "button".
+#
+# One constant and two templates, because the create form and the detail page are
+# the same page in two modes and a second copy of this is a second thing to keep
+# in step.
+_VIEW_SEGMENTS = (
+    '<span id="views" class="views" role="group"'
+    ' aria-label="How the document is shown">'
+    '<button type="button" id="view-edit" class="seg" aria-pressed="false"'
+    ' aria-label="Write" title="Write  Ctrl+Shift+1">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<path d="M4 20h4L19.2 8.8a2.55 2.55 0 0 0-3.6-3.6L4.4 16.4 4 20Z"/></svg></button>'
+    '<button type="button" id="view-both" class="seg" aria-pressed="false"'
+    ' aria-label="Write and preview" title="Write and preview  Ctrl+Shift+2">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<rect x="3" y="5" width="18" height="14" rx="1.6"/><path d="M12 5v14"/></svg></button>'
+    '<button type="button" id="preview" class="seg" aria-pressed="false"'
+    ' aria-label="Preview" title="Preview  Ctrl+Shift+3">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<path d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"/>'
+    '<circle cx="12" cy="12" r="2.7"/></svg></button>'
+    "</span>"
+)
+
+
+# The join between the two panes of the split view, and the one control that
+# moves it — jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you
+# make it possible to horizontally resize the editor vs the preview boxes?"
+#
+# **A real separator, not a div with a drag handler.** `role="separator"` with a
+# `tabindex` is the window-splitter pattern: it is announced as what it is, it
+# carries its position as a value, and it answers the arrow keys and Home and End
+# as well as a pointer. A splitter that answers only a mouse is the same defect as
+# the thirteen mouse-only toolbar buttons earlier in this branch, which jcanton's
+# reviewers caught and which cost a commit each to put right.
+#
+# The three `aria-value*` numbers are the writing box's share of the two panes as
+# a percentage, and they are corrected by `applySplit` the moment the split view
+# opens — the floor is measured in pixels against the window, so what 0 and 100
+# actually resolve to is not knowable from here. `aria-valuetext` because "62"
+# read out on its own says nothing about what it is 62 of.
+#
+# One constant and four templates, for the same reason `_VIEW_SEGMENTS` is one:
+# the four pages that draw this surface are one surface, and four copies of a
+# control is four places for it to drift.
+_SPLIT_HANDLE = Markup(
+    '<div id="splitter" role="separator" tabindex="0" aria-orientation="vertical"'
+    ' aria-label="Split between the writing box and the preview"'
+    ' aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"'
+    ' aria-valuetext="50% writing, 50% preview"'
+    ' title="Drag, or use the arrow keys, to divide the two panes.'
+    ' Double-click evens them."></div>'
+)
+
+
+# Which of the two editors, beside the three views — jcanton, 2026-08-20: "can we
+# have the editor toggle as a toggle switch next to the three views buttons".
+#
+# **A switch and not a fourth segment, and that is the whole reason it is drawn
+# differently.** The three segments are one control with three states: exactly one
+# of them is true at a time and picking one un-picks the others. Which editor you
+# are writing in is a different question with a different shape — two states, both
+# of them a setting rather than a place — and a fourth icon in that box would read
+# as a fourth way of looking at the document. Adjacent, so the two are found in
+# one place; not joined, so they are not mistaken for one control.
+#
+# **It is a NAVIGATION and it says so.** This is the one control on the page whose
+# value decides which bytes the server rendered — 594 KB of them — and
+# `remembered` is this browser's own store, which the server cannot read. So
+# flipping it cannot be a class swap: the page has to be fetched again with the
+# other parameter on it. The resting `title` says what pressing it will do and
+# that it reloads, in the words-of-what-it-will-become shape `statusPick` uses in
+# the status bar; the press itself says it out loud through `announce`, which is
+# the visible `#state` region on every page that carries this bar; and the knob
+# does NOT move on the press. A switch that flips instantly and is then wiped out
+# by a page load looks like a control that worked and then glitched.
+#
+# `role="switch"` with `aria-checked`, rather than a class and a shape: the state
+# has to be in the accessibility tree, and `switch` is the role whose whole
+# meaning is two states one of which is on. The visible word is inside the button
+# and is not `aria-hidden`, so the accessible name IS the visible name — no
+# `aria-label` that a speech-control user could fail to say out loud.
+#
+# `aria-checked` is rendered by the SERVER from the same `_ace_wanted` that
+# decided the bytes, not written by the script afterwards: the truth is known at
+# render time, and a switch that draws itself off and corrects itself once a
+# script runs has shown a wrong state to whoever was looking.
+_EDITOR_SWITCH = (
+    '<button type="button" id="editorswitch" class="eswitch" role="switch"'
+    ' aria-checked="{checked}">'
+    '<span class="etrack" aria-hidden="true"><span class="eknob"></span></span>'
+    "<span>Ace editor</span></button>"
+)
+
+
+def _viewbar(switchable: bool, ace: bool) -> Markup:
+    """The bar of controls that says how, and in what, this document is shown.
+
+    `switchable` is whether the second editor is obtainable on this page at all —
+    the two gates `_ace_wanted` asks that are not the address. A page that cannot
+    have it does not offer a switch, because a switch that cannot move is a
+    control that lies about what the page can do: the static export has no server
+    to render the other bytes, and a reader the server would refuse a save from
+    would be pressing it for a keymap whose every save is a 403.
+
+    `ace` is which way it is set, which is `_ace_wanted`'s own answer, so the
+    switch and the bytes cannot disagree.
+    """
+    return Markup(
+        _VIEW_SEGMENTS
+        + (_EDITOR_SWITCH.format(checked="true" if ace else "false") if switchable else "")
+    )
+
+
 _SUGGEST_STYLE = """
 /* Absolute against the page, not against the cell it belongs to: `attachSuggest`
    parks the list on the body and writes its `top` and `left` in page
@@ -8687,14 +10959,111 @@ _SUGGEST_STYLE = """
 .suggest li { padding: .25rem .5rem; cursor: pointer; }
 .suggest li.on { background: var(--accent); color: var(--on-accent); }
 textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
-.marks { display: inline-flex; gap: .15rem; }
+/* `flex: none`, and it is the whole of what keeps the toolbar on one row. The
+   bar is a flex line the toolbar shares with a status message, and a flex item's
+   default `min-width: auto` still lets it shrink to its content — so the marks
+   resolved to 430.9px where the fourteen buttons and their two rules need 482.8,
+   and wrapped, with the break falling inside the third group and no rule in
+   front of the two buttons that landed on the second row. Measured in Chrome at
+   1000, 1200, 1440 and 1920 CSS px: two rows at every one of them. The message
+   beside it takes the shrink instead, which is the right way round — it is a
+   sentence and it can wrap. `flex-wrap` stays as the answer to a window narrower
+   than the toolbar itself, where wrapping beats a scrollbar. */
+.marks { display: inline-flex; gap: .15rem; align-items: stretch; flex-wrap: wrap;
+         flex: none; }
+/* And the window the toolbar does not fit in, where `flex: none` is the wrong
+   answer and `flex-wrap` above cannot engage without this.
+
+   `0 0 auto` pins the bar at its max-content width whatever the window, so the
+   wrap never happens: measured in Chrome at 500px on /detail while editing, on
+   /new, /note/new and /issue/new, the Link, Image, Table and Horizontal-rule
+   buttons sat 101px past the right edge of `article.entity` — off the surface,
+   reachable only by scrolling the whole document sideways, which is also what
+   took that page's `scrollWidth` to 581.
+
+   **`min-width: 0` is not needed here, and the fix this was written from said it
+   was the load-bearing half.** Measured both ways: `flex: 0 1 auto` alone gives
+   the same four widths the same answer. A flex item's automatic minimum size is
+   its MIN-CONTENT size, and the min-content size of a container that wraps is
+   its widest single item — one button, about 40px — not the whole bar. The
+   declaration would be inert, and an inert declaration under a comment calling
+   it load-bearing is the next reader's wasted hour.
+
+   `@media` and not `@container`, and that is not a style preference: the only
+   `container-type: inline-size` in this file is on `article.entity` inside
+   `_DETAIL_STYLE`, and the note and issue pages ship `_RECORD_STYLE +
+   _SUGGEST_STYLE` and never load it. A container query here was patched in and
+   measured byte-identical to no fix at all on /note/new, because
+   `getComputedStyle(article).containerType` is "normal" there.
+
+   40rem and not the 34rem this was first written for: that number was measured
+   against fourteen buttons needing 482.8px, and the history group made it
+   sixteen needing 561px. Swept in Chrome at eight widths on both surfaces:
+   unpatched, the overhang is 101px at 500, 41px at 560 and gone by 620; patched,
+   the bar is on two rows to 616 and back on one at 624. The query has to reach
+   past both numbers, and between 624 and 640 it applies and does nothing —
+   `flex-shrink` only shrinks an item there is not room for. */
+@media (max-width: 40rem) {
+  .marks { flex: 0 1 auto; }
+}
+/* The line between one group of marks and the next. `align-self: stretch` so it
+   is the height of the buttons rather than of the text inside them. */
+.marks .sep { width: 1px; background: var(--line); margin: 0 .3rem; align-self: stretch; }
+/* What is left after the shell's rule, and every line of it is DENSITY rather
+   than style. The corner is gone from here: 3px was this bar's own, jcanton
+   preferred it to the app's 2px, and the app moved — so keeping a copy of it
+   here would be an exception about a number that is no longer exceptional.
+   `min-width`, the padding and the 12px are what fit sixteen buttons on one row
+   above a document; `var(--line)` and `var(--muted)` in place of the default's
+   `--line-strong` and `--fg` are the same argument in ink — sixteen controls at
+   full contrast would shout over the writing they sit on. */
 button.mark {
-  font: inherit; font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
-  border: 1px solid var(--line); border-radius: 3px;
-  background: var(--surface); color: var(--muted); cursor: pointer;
+  font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
+  border-color: var(--line); color: var(--muted);
 }
 button.mark:hover { border-color: var(--accent); color: var(--accent); }
+/* The history group. A drawing has no baseline to sit on, so the box centres it
+   the way `.draft-do` centres the check and the cross rather than padding it
+   like a word. */
+.marks .hist { display: inline-flex; align-items: center; justify-content: center;
+               line-height: 0; }
+/* An SVG nothing sizes lays out at 0x0, and this application has shipped that
+   twice. 13px against the 12px letters beside it, because a stroked outline
+   reads a shade smaller than a glyph in the same box. */
+.marks .hist svg { display: block; width: 13px; height: 13px; }
+/* **Empty says so**, which is the failure mode this group was held back for.
+   `:hover` is named explicitly because `button.mark:hover` is (0,2,1) and would
+   otherwise beat a bare `button.mark:disabled` at (0,2,1) on order alone and
+   light up a control that will not act; `button.mark:disabled:hover` is (0,3,1)
+   and wins outright — resolved with `tests/cascade.py`, not guessed at. */
+button.mark:disabled, button.mark:disabled:hover {
+  cursor: default; background: var(--surface-2);
+  border-color: var(--line); color: var(--muted); opacity: .45;
+}
 .doc img { max-width: 100%; height: auto; }
+/* A table in a shaping document. Tables have parsed since the day `_MD` was
+   given the rule, and drew as four words in a row with no lines anywhere —
+   which nobody had to look at until the toolbar gained a button that writes one.
+   Here and not beside the other `.doc` rules because those are written twice,
+   once in `_DETAIL_STYLE` and once in `_RECORD_STYLE`, and a third copy of a
+   border is a third place for two pages to disagree about what a table is. This
+   stylesheet is loaded by every page that shows a document.
+   A rule under the headings and a hairline between rows: a full grid is a
+   spreadsheet, and what a reader needs is to see where a row stops.
+   Resolved with `tests/cascade.py` rather than guessed at, because this
+   stylesheet is also loaded by the entity table, whose own sheet carries a bare
+   `th`: `.doc th` is (0,1,1) against that (0,0,1) and wins every property
+   declared here, and the table page has no `.doc` on it for the rest of that
+   bare rule to reach. */
+.doc table { border-collapse: collapse; margin: 0 0 1rem; font-size: 13px; }
+.doc th, .doc td { text-align: left; vertical-align: top; padding: .25rem .9rem .25rem 0; }
+.doc th { border-bottom: 1px solid var(--line-strong); font-weight: 600; }
+.doc tbody tr + tr td { border-top: 1px solid var(--line); }
+/* And the rule the toolbar's other new button writes. Chrome's default `hr` is
+   a 1px INSET border, which the dark theme renders as a bright bar heavier than
+   every other separator on the page — a divider that shouts is a divider that
+   reads as a heading. */
+.doc hr { border: 0; border-top: 1px solid var(--line-strong); margin: 1.4rem 0; }
 .suggest .dim { opacity: .6; }
 .suggest li.on .dim { opacity: .85; }
 """
@@ -8808,6 +11177,717 @@ def _control_html(field: dict) -> Markup:
 # reader, and dead code that still renders is code somebody wires back up.
 
 
+# Three views of one document, and the full page they are shown on. Asks 1 and 3,
+# which are the two highest on jcanton's list.
+#
+# Emitted by the detail page and the create form and by nothing else, because it
+# reaches for `BODY` and `TITLED` — the two boxes those two pages declare — and
+# because the other four pages that inline `_COMBOBOX` have no document to have a
+# view of. The blocks share one lexical scope, so this runs after theirs and the
+# names are simply there.
+#
+# **A fourth state, which HackMD does not have.** HackMD is always full page, so
+# exactly one of its three segments is always pressed. Here the facts column, the
+# width grip and the reading measure are the ordinary page, and the writing
+# surface is somewhere you go and come back from — so full page OFF is a real
+# state, no segment is pressed in it, and `aria-pressed="false"` on all three is
+# what says so. It is left by pressing the pressed segment, by the same chord
+# that entered it, or by Escape.
+_VIEWS = Markup(r"""
+<script>
+const VIEW_ARTICLE = BODY.closest('article.entity');
+const VIEW_PANE = document.getElementById('body-preview');
+// The row the switcher is drawn in, and the two page-chrome controls that come
+// to live in it while the surface is up. See `showView`, which does the moving.
+const VIEW_BAR = VIEW_ARTICLE.querySelector('.editbar');
+const CORNER = document.querySelector('nav > .corner');
+const CORNER_HOME = CORNER && CORNER.parentElement;
+// The segment ids: the third is `preview`, which is the id the in-place Preview
+// button had. That button is gone — full page in preview-only is the same thing
+// and more of it — and the id stays where the control's job stayed, so that
+// `/new` and `/detail` still carry the same shapes and the test that says so
+// still passes without being rewritten to agree with the change.
+const VIEW_IDS = {edit: 'view-edit', both: 'view-both', view: 'preview'};
+const VIEWS = ['edit', 'both', 'view'];
+// null is full page off. See the comment on `_VIEWS` in render.py for why there
+// are four states here and three in the note this is modelled on.
+let VIEW = null;
+
+function showView(mode) {
+  VIEW = mode;
+  for (const name of VIEWS) {
+    VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
+    document.getElementById(VIEW_IDS[name]).setAttribute('aria-pressed', String(mode === name));
+  }
+  VIEW_ARTICLE.classList.toggle('full', mode !== null);
+  // The page behind a fixed, viewport-filling article has nothing left to show
+  // and a scrollbar that scrolls it anyway is a scrollbar that moves nothing.
+  document.body.classList.toggle('fullpage', mode !== null);
+  // And nothing behind an opaque surface may still be tabbed into or read out.
+  // Measured before this: 43 focusable elements on the page, 9 outside the
+  // article, 8 of them painted over — so shift-tabbing back past the switcher
+  // put focus on a control nobody can see, and a screen reader walked the whole
+  // page behind a surface a sighted reader could see none of.
+  //
+  // The two named, rather than a sweep over `<body>`'s children, because that
+  // sweep takes two things it must not. `#announce` is the live region every
+  // refusal on this page reaches a screen reader through, and an `inert` one is
+  // a silent one. The suggestion lists are parked on `<body>` too, drawn ABOVE
+  // this surface rather than behind it, and `inert` refuses pointer events as
+  // well as focus — so inerting them would take the owner picker away in
+  // exactly the view this stage is about.
+  for (const covered of document.querySelectorAll('body > nav, body > a.skip')) {
+    covered.inert = mode !== null;
+  }
+  // And the two controls that `inert` took with it come out from behind it —
+  // jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem to
+  // have disappeared from the edit view, bring those back please".
+  //
+  // The cause is the loop directly above, and the loop is right: those eight
+  // covered focusable elements really were in the tab order behind an opaque
+  // surface. So the nav stays inert and the two controls MOVE, into the editor's
+  // own header row beside the view switcher — where the note this is modelled on
+  // puts them, and where the editor switch beside them now is.
+  //
+  // **The same nodes, not a second copy.** `#theme` and `#who` are ids, in a
+  // document the detail template can be rendered seventeen times into; a copy
+  // would be a duplicate id, a second `labelTheme` to keep in step, and a
+  // sign-in control the shell's `/api/me` script — which fills exactly one
+  // `#who` — would leave empty. The move keeps the accessible name, the state,
+  // the listeners and the identity by construction, because it is one object.
+  //
+  // Appended, so they come after the switcher in the tab order: the controls
+  // that act on the document you are writing before the two that act on the
+  // application. `.corner`'s own `margin-left: auto` puts them at the far end,
+  // which is where they sit in the nav they came from.
+  if (CORNER) (mode === null ? CORNER_HOME : VIEW_BAR).append(CORNER);
+  // One mechanism for whether the preview pane is on the page, and it is the
+  // `hidden` attribute the pane was already drawn with. A second, in CSS, would
+  // be a second thing to keep in step — and a stale attribute underneath it is
+  // exactly how a pane comes to be invisible to a reader and present to a test.
+  VIEW_PANE.hidden = mode === null || mode === 'edit';
+  // A view of the document is a way into editing it: on the detail page the
+  // segments turn edit mode on rather than showing a preview of a page that is
+  // already showing one. They never turn it off — that is Cancel, which is where
+  // the draft is dealt with.
+  if (mode !== null && typeof showEditing === 'function'
+      && !VIEW_ARTICLE.classList.contains('editing')) {
+    showEditing(true);
+  }
+  // The room's bands are measured against a box that has a size, and a view
+  // change is exactly when the box changes size. The Preview button this
+  // replaces took the box away by setting its `hidden` attribute and dispatched
+  // nothing, so `drawSeats` never learnt the box had gone and every band stayed
+  // where it used to be — a transient wrong that a three-view page would have
+  // made the normal case.
+  dispatchEvent(new Event('openproj:editing'));
+  // The width handle belongs to the measure, and full page has none. `place` is
+  // the detail page's; the create form has no grip and no such function.
+  if (typeof place === 'function') place();
+  // And the other handle, whose whole existence is this one view: the classes
+  // are on the article by here, so the stylesheet has already decided whether
+  // there is a splitter to have and `applySplit` can simply look.
+  applySplit();
+  sourcePoints = null;
+  refreshPreview(true);
+}
+
+// --- where the join between the two panes is --------------------------------
+//
+// The stylesheet beside `.bodysplit` carries the argument: the constant total is
+// structural, so what lives here is one ratio, one clamp and the four ways a
+// person moves it.
+//
+// **This is not the width grip and the two are never on screen together.**
+// `#grip` drags `--measure`, the reading measure of the page, and `place()` hides
+// it the moment the article goes full page; `#splitter` divides two panes and the
+// stylesheet draws it in the split view and nowhere else. Two handles that both
+// change widths on one screen would be two controls nobody can tell apart, and
+// the answer to that is that there is only ever one of them there.
+//
+// No null check on the handle, which is the contract this block already keeps
+// with `BODY`, `VIEW_PANE` and `VIEW_BAR`: the four templates that emit `_VIEWS`
+// emit `_SPLIT_HANDLE` inside the same `{% if editable %}` as the box this whole
+// script is built around.
+const SPLITTER = VIEW_ARTICLE.querySelector('#splitter');
+const SPLIT = VIEW_ARTICLE.querySelector('.bodysplit');
+// Neither pane may collapse, in either direction: a pane dragged to nothing is a
+// pane you cannot drag back. In px because a pointer is in px, and 240 is the
+// 15rem at which a pane still shows the shape of a document.
+const SPLIT_FLOOR = 240;
+// What one arrow press moves — small enough to place the join exactly, large
+// enough to cross a 1400px window in under twenty presses.
+const SPLIT_STEP = 32;
+// Written on the root beside `--measure`, for the reason the comment there gives:
+// it is a property of the screen this is being read on, not of the plan. `root`
+// is the detail page's name for the same element and exists on one of the four
+// pages that reach here, so it cannot be reused — one global lexical scope, and a
+// second `const root` is a SyntaxError for the whole document.
+const SPLIT_ROOT = document.documentElement;
+
+// How much width the two panes have between them, and 0 when there is no handle
+// to divide it with. `getClientRects()` rather than reading the breakpoint back
+// with `matchMedia`: the width at which the handle stops existing is written
+// once, in the stylesheet, and an invariant written in two languages is an
+// invariant guarded in one. A box with no rects is one nothing is drawing, which
+// is the question actually being asked — `place()` arrived at the same test.
+function splitSpace() {
+  if (!SPLITTER.getClientRects().length) return 0;
+  return SPLIT.clientWidth - SPLITTER.offsetWidth;
+}
+
+// The most lopsided this split may be on a screen this wide, and there is ONE of
+// these because it has to bound what gets STORED as well as what may be read back.
+//
+// **It did not, and that was a defect with a monitor size attached to it.** The
+// pixel floor alone allows `(space - 240) / 240`, which passes `SPLIT_RANGE` as
+// soon as the panes have more than 2,160px between them — a 3440px ultrawide, or
+// a 4K screen, both of which are what a plan gets written on. Measured in Chrome
+// with a real mouse at 3440: dragging the preview down to its floor stored
+// `11.57`, the next load put that through the `<= SPLIT_RANGE` guard in `EDITOR`,
+// read it as out of range and drew 50/50 — and then wrote `1` back over it the
+// moment the split view opened again. The reader's choice was not ignored, it was
+// destroyed, in silence, and only on the big screens. A write path that stores
+// what the read path refuses is this repository's oldest recurring bug and it now
+// has one fence rather than two.
+//
+// So `SPLIT_RANGE` is the outer bound in both directions, the floor is the inner
+// one, and the smaller of the two wins. Below 2,584px of window nothing changes:
+// the floor is still what a drag runs into.
+function splitBound(space) {
+  return Math.min(SPLIT_RANGE, (space - SPLIT_FLOOR) / SPLIT_FLOOR);
+}
+
+// The ratio the panes are drawn at: the remembered one, clamped to what fits on
+// THIS screen. Clamped and not written back — a division chosen on a monitor is
+// still that person's choice when the same browser opens a narrow window.
+function applySplit() {
+  const space = splitSpace();
+  // The branch that decides not to act, said out loud. Any view but the split,
+  // or a window under the width the stylesheet keeps the handle for, and there
+  // is nothing to divide: `--split` is cleared, so the panes are `1fr` and `1fr`
+  // again rather than holding a ratio nobody on this screen can change.
+  if (space < SPLIT_FLOOR * 2) {
+    SPLIT_ROOT.style.removeProperty('--split');
+    return;
+  }
+  const most = splitBound(space);
+  const ratio = Math.min(most, Math.max(1 / most, EDITOR.split));
+  SPLIT_ROOT.style.setProperty('--split', ratio + 'fr');
+  // What the separator says it is at: the share of the two PANES, because the
+  // handle's own 1.5rem is not width either of them could have had. Both ends
+  // come off `most` rather than off the floor, so what is announced as reachable
+  // is what a key or a drag can actually reach — where the floor is the tighter
+  // of the two bounds this is the same arithmetic it was, `100 * FLOOR / space`.
+  const share = Math.round(100 * ratio / (1 + ratio));
+  SPLITTER.setAttribute('aria-valuenow', String(share));
+  SPLITTER.setAttribute('aria-valuemin', String(Math.round(100 / (1 + most))));
+  SPLITTER.setAttribute('aria-valuemax', String(Math.round(100 * most / (1 + most))));
+  SPLITTER.setAttribute('aria-valuetext', share + '% writing, ' + (100 - share) + '% preview');
+}
+
+// Where a pointer or a key has just put the join, in px of writing box, and the
+// one way it moves — so the clamp, the property and the announcement cannot come
+// apart. It does not write the preference down: a drag is one gesture, not one
+// `localStorage` write per `pointermove`, and both `#grip` and the table's column
+// grips already store at the end of theirs.
+function moveSplit(paneWidth) {
+  const space = splitSpace();
+  if (space < SPLIT_FLOOR * 2) return;      // nothing to divide; see `applySplit`
+  const want = Math.min(space - SPLIT_FLOOR, Math.max(SPLIT_FLOOR, paneWidth));
+  // Through the same fence `applySplit` draws the panes with, so that what is
+  // stored is always something a later load can read back. See `splitBound`.
+  const most = splitBound(space);
+  EDITOR.split = Math.min(most, Math.max(1 / most, want / (space - want)));
+  applySplit();
+  // Every pixel the gutter, the seat bands and the two scroll maps draw is a
+  // function of the box's width, and this control's whole job is to change it.
+  // The width grip carries the same line and the measurement behind it: without
+  // it, six of nine line numbers sat up to six whole rows off the lines they
+  // name until a window resize happened to put them back.
+  dispatchEvent(new Event('openproj:editing'));
+}
+
+SPLITTER.onpointerdown = event => {
+  // `setPointerCapture`, and the move listener added on down and removed on up,
+  // exactly as `#grip` does it: a drag that loses the pointer outside the window
+  // is a handle stuck to the cursor.
+  SPLITTER.setPointerCapture(event.pointerId);
+  SPLITTER.classList.add('dragging');
+  // Or the drag selects the prose in whichever pane it crosses. The focus the
+  // default would have given is taken by hand instead, so that letting go and
+  // then nudging with the arrow keys is one gesture.
+  event.preventDefault();
+  SPLITTER.focus();
+  // Measured from the left edge of the grid rather than from where the pointer
+  // started, so the join lands under the pointer instead of a handle's width
+  // away from it wherever along the handle it was taken hold of.
+  const from = SPLIT.getBoundingClientRect().left;
+  const move = e => moveSplit(e.clientX - from - SPLITTER.offsetWidth / 2);
+  const stop = () => {
+    SPLITTER.classList.remove('dragging');
+    rememberEditor({});
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', stop);
+    removeEventListener('pointercancel', stop);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', stop);
+  // **A drag does not always end in a `pointerup`.** The browser can take the
+  // gesture away — a touch it decides is a pan, a pointer the platform revokes —
+  // and what it sends then is `pointercancel` and no up at all. Measured in
+  // Chrome before this line: after a cancel the handle kept `.dragging`, the move
+  // listener stayed on the window, and the next `pointermove` with nothing held
+  // down moved the join 248px. That is precisely the handle stuck to the cursor
+  // that `setPointerCapture` is up there to prevent, arrived at through the one
+  // door capture does not close. `touch-action: none` beside the rule stops the
+  // browser wanting the gesture in the first place; this is the branch for when
+  // it takes it anyway.
+  //
+  // `#grip` and the table's column grips have the same gap. They are not touched
+  // here: this is one control's commit and a sweep of the other two is its own.
+  addEventListener('pointercancel', stop);
+};
+// Both directions and both extremes, because a separator that answers only a
+// mouse is the same defect as the thirteen mouse-only toolbar buttons this branch
+// shipped and had to fix. `moveSplit` clamps, so Home and End are written as the
+// ends of the space and arrive at the floor.
+SPLITTER.onkeydown = event => {
+  // **A modifier means the key is not this control's**, and until this line the
+  // separator ate four that belong to the browser and the platform. Alt+Left is
+  // Back on Windows and Linux; measured in Chrome with focus on the handle, it
+  // was `preventDefault`ed and moved the join instead of going back a page, and
+  // Ctrl+Home and Cmd+Right went the same way. This is the trap the view chord
+  // two hundred lines down already carries a paragraph about — a binding that
+  // swallows a keystroke somebody meant for something else — and the guard is the
+  // one used there.
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const at = SPLITTER.getBoundingClientRect().left - SPLIT.getBoundingClientRect().left;
+  const to = {
+    ArrowLeft: at - SPLIT_STEP, ArrowRight: at + SPLIT_STEP,
+    Home: 0, End: splitSpace(),
+  }[event.key];
+  if (to === undefined) return;           // every other key is still the page's
+  event.preventDefault();
+  moveSplit(to);
+  rememberEditor({});
+};
+// The way back to even, which is the one position a drag cannot be trusted to hit
+// and which the table's column grips already use this gesture for.
+SPLITTER.ondblclick = () => {
+  moveSplit(splitSpace() / 2);
+  rememberEditor({});
+};
+
+// A remembered ratio is a ratio and the floor is pixels: the 70/30 that leaves
+// 400px of preview on a monitor leaves 150px on a laptop. So the clamp is redone
+// when the window changes, without touching what is remembered.
+addEventListener('resize', applySplit);
+
+// --- the preview, live ------------------------------------------------------
+//
+// Still the server's markdown, and still the same round trip: two renderers
+// disagree eventually and the one people would trust is not the one whose output
+// gets committed. What is new is that it keeps up — debounced, skipped when
+// nothing changed, aborted when it is overtaken, and with the pane's own scroll
+// left where the reader put it. A naive `innerHTML` on every keystroke scrolls
+// the pane back to the top on every keystroke, which is worse than no live
+// preview at all.
+const PREVIEW_MS = 300;
+let previewTimer = 0;
+let previewFlight = null;
+// The exact request body the pane is currently showing, which doubles as the
+// skip: one string, compared once, rather than two fields compared separately
+// and then rebuilt into the same JSON anyway.
+let previewShown = null;
+
+function refreshPreview(now) {
+  // The timer is cleared before the guard and not after it. A debounce armed
+  // while the pane was on the page outlived the pane being taken off it: type in
+  // the split view and press Write inside 300ms, and a round trip went out for a
+  // pane nobody is looking at.
+  clearTimeout(previewTimer);
+  if (VIEW_PANE.hidden) return;
+  previewTimer = setTimeout(askPreview, now ? 0 : PREVIEW_MS);
+}
+
+async function askPreview() {
+  if (VIEW_PANE.hidden) return;
+  // The title goes with it: the page drops a leading heading that only restates
+  // the title, so a preview without one shows a heading the saved page will not.
+  // The title in the FORM, not the stored one — this same Save may change it.
+  const want = JSON.stringify({body: SURFACE.text(), title: TITLED.value});
+  if (want === previewShown) return;
+  if (previewFlight) previewFlight.abort();
+  previewFlight = new AbortController();
+  let html;
+  try {
+    const response = await fetch('/api/preview', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: want, signal: previewFlight.signal,
+    });
+    // Both halves of the answer are checked, because neither is guaranteed and
+    // the failure of the second is silent. A 400 or a 422 from this server
+    // answers JSON with a `detail` and no `html`, and so does a proxy's own
+    // error page — and `innerHTML = undefined` writes the six letters of the
+    // word `undefined` into the pane, which reads as a document that renders to
+    // that.
+    if (!response.ok) throw new Error('the server answered ' + response.status);
+    html = (await response.json()).html;
+    if (typeof html !== 'string') throw new Error('the answer carried no document');
+  } catch (error) {
+    // An abort is this function overtaking itself and is not news, and it is the
+    // one case told apart by name rather than by the comment above it claiming
+    // it is. Everything else is a branch that decided not to act, which this
+    // application has now shipped three of in silence: it says so once, in the
+    // live region, and leaves the pane showing the last thing that rendered —
+    // except on the first open, where the last thing that rendered is nothing
+    // and an empty pane beside a document full of text reads as a document that
+    // renders to nothing. `previewShown` is deliberately not moved, so the next
+    // keystroke asks again rather than the pane being stuck on this text for
+    // ever.
+    if (error.name === 'AbortError') return;
+    announce('the preview could not be rendered — ' + error.message);
+    if (previewShown === null) {
+      VIEW_PANE.textContent = 'The preview could not be rendered. The document is unchanged.';
+    }
+    return;
+  }
+  previewShown = want;
+  // `innerHTML` and nothing around it. The plan this was built from says a naive
+  // replace scrolls the pane to the top on every keystroke and that the offset
+  // has to be saved and put back; measured in Chrome, that is not true — a
+  // scroller keeps its offset across a wholesale replacement of its contents as
+  // long as the new contents are still tall enough to hold it, with content of
+  // the same height and of a different one. The save and the restore were
+  // written, and then deleted rather than left in: three lines that look like a
+  // guarantee and change nothing are worse than the absence of them, because the
+  // next person reads them as the reason it works.
+  //
+  // What does move the pane is text getting SHORTER than the offset, and no
+  // amount of saving fixes that — there is nowhere to put it back to.
+  VIEW_PANE.innerHTML = html;
+  previewPoints = null;
+}
+
+// --- the two panes, scrolled together ---------------------------------------
+//
+// Both sides of the split are a list of (source line, pixel top), so both
+// directions are one interpolation read the other way round. The rendered side
+// gets its lines from `data-startline`, which the renderer stamps on every
+// top-level block from markdown-it's own token map; the source side gets its
+// pixels from `lineTops`, which measures rather than assuming that one line is
+// one row — in a pane half a window wide most lines wrap, and `scrollTop /
+// lineHeight` is only right for a document in which none of them do.
+let sourcePoints = null;
+let previewPoints = null;
+
+function sourceMap() {
+  if (!sourcePoints) sourcePoints = SURFACE.lineCoords().map((top, at) => ({line: at + 1, top}));
+  return sourcePoints;
+}
+
+function previewMap() {
+  if (!previewPoints) {
+    // A point at the top, because the first block of a document need not start
+    // on line 1 and without it every line above it interpolates off the end.
+    previewPoints = [{line: 1, top: 0}];
+    // Measured against the SCROLLER, and that is the whole of the accuracy on
+    // this side. `offsetTop` is a distance from whatever happens to be
+    // positioned, and nothing positions the pane — so the offset parent was the
+    // article, which full page makes `position: fixed`, and every block reported
+    // its distance from the top of the WINDOW while the two synthetic points
+    // above and below it, and the `scrollTop` this map is read against, were in
+    // the pane's own scroll space. Measured in Chrome at 1400x900: a constant
+    // 283.625px out, the pane's own top inside the article, on a pane 458px
+    // tall — the rendered side sat a third of a screen past the heading the
+    // source side was showing. Adding `position: relative` to the pane would
+    // also have worked and would have left the number silently depending on a
+    // positioning rule staying put; this arithmetic asks the question that is
+    // actually being asked.
+    const zero = VIEW_PANE.getBoundingClientRect().top - VIEW_PANE.scrollTop;
+    for (const block of VIEW_PANE.querySelectorAll('[data-startline]')) {
+      const line = Number(block.dataset.startline);
+      if (line > previewPoints[previewPoints.length - 1].line) {
+        previewPoints.push({line, top: block.getBoundingClientRect().top - zero});
+      }
+    }
+    previewPoints.push({
+      line: previewPoints[previewPoints.length - 1].line + 1,
+      top: VIEW_PANE.scrollHeight,
+    });
+  }
+  return previewPoints;
+}
+
+function pixelOfLine(points, line) {
+  let at = 0;
+  while (at + 1 < points.length && points[at + 1].line <= line) at++;
+  const here = points[at];
+  const next = points[at + 1];
+  if (!next) return here.top;
+  const span = next.line - here.line;
+  return here.top + (next.top - here.top) * (span ? (line - here.line) / span : 0);
+}
+
+function lineOfPixel(points, top) {
+  let at = 0;
+  while (at + 1 < points.length && points[at + 1].top <= top) at++;
+  const here = points[at];
+  const next = points[at + 1];
+  if (!next) return here.line;
+  const span = next.top - here.top;
+  return here.line + (next.line - here.line) * (span ? (top - here.top) / span : 0);
+}
+
+// One flag each way, because setting the other pane's `scrollTop` fires its
+// scroll event and that would set this one's back — a loop that does not
+// diverge but does fight the hand on the wheel. Whoever is scrolling drives, and
+// the pane being driven does not drive back.
+//
+// Cleared on a timer and not on a frame, which is the same finding `announce`
+// records two hundred lines up: a frame never comes in a tab nobody is looking
+// at, so a flag cleared in `requestAnimationFrame` is a flag that stays set for
+// as long as the tab is in the background — and a sync that is switched off
+// until the page is next reloaded is worse than one that lags. The delay is long
+// enough to be after the scroll event this write is about to cause and short
+// enough that letting go of one pane and taking hold of the other feels like one
+// gesture.
+const SYNC_MS = 50;
+let editScrolling = false;
+let viewScrolling = false;
+
+function syncFromSource() {
+  if (VIEW !== 'both' || viewScrolling) return;
+  editScrolling = true;
+  VIEW_PANE.scrollTop = pixelOfLine(previewMap(), lineOfPixel(sourceMap(), SURFACE.scrolled()));
+  setTimeout(() => { editScrolling = false; }, SYNC_MS);
+}
+
+function syncFromPreview() {
+  if (VIEW !== 'both' || editScrolling) return;
+  viewScrolling = true;
+  SURFACE.scrollTo(pixelOfLine(sourceMap(), lineOfPixel(previewMap(), VIEW_PANE.scrollTop)));
+  setTimeout(() => { viewScrolling = false; }, SYNC_MS);
+}
+
+// Through the surface and not through the box: a `<textarea>` scrolls itself and
+// fires `scroll`, Ace scrolls an inner element and reports `changeScrollTop` on
+// its session, and this listener was the last of the four places that reached
+// past the boundary for `el.scrollTop`.
+SURFACE.onScroll(syncFromSource);
+VIEW_PANE.addEventListener('scroll', syncFromPreview);
+SURFACE.onInput(() => { sourcePoints = null; refreshPreview(); });
+TITLED.addEventListener('input', () => refreshPreview());
+// Both maps are in pixels and every pixel here is a function of the width.
+addEventListener('resize', () => { sourcePoints = null; previewPoints = null; });
+// Both maps again, on anything that moves the box or changes the text under it
+// without an `input` event — a view change, the gutter's column, the width
+// handle, somebody else's keystroke. The same event the seat layer and the
+// gutter are woken by, for the same reason: every number in both lists is a
+// pixel, and all four of those change pixels.
+//
+// The rendered side matters as much as the source side and was being thrown away
+// only on a window resize: going from the split to preview-only doubles the
+// pane's width and rewraps every block in it, so the map the sync reads was
+// measured in a pane half that wide.
+//
+// **And no preview is asked for here**, which is the line that is deliberately
+// absent. The rendered document is a function of the text and the title and of
+// nothing about the box, so a render on a view change is a round trip for a
+// document the server has already been sent — measured, one extra per view
+// opened, arriving on top of the one `showView` asks for itself.
+addEventListener('openproj:editing', () => {
+  sourcePoints = null;
+  previewPoints = null;
+});
+
+// --- how a view is asked for ------------------------------------------------
+
+// Chosen, as against merely shown. The preference records what a person picked,
+// and only `chooseView` writes it: `showView` is also what Cancel calls to leave
+// the surface at the end of a session, and reading that as "this reader prefers
+// no surface" would take the split away from somebody who edits, cancels, and
+// edits again.
+function chooseView(mode) {
+  showView(mode);
+  rememberEditor({mode});
+}
+
+for (const name of VIEWS) {
+  // Pressing the pressed segment is how you come back out with a pointer, which
+  // is the same gesture as the chord below and the only one that needs no
+  // fourth control on the bar.
+  document.getElementById(VIEW_IDS[name]).onclick =
+    () => chooseView(VIEW === name ? null : name);
+}
+
+// --- which editor, beside which view ----------------------------------------
+//
+// Absent rather than disabled wherever the page could not honour either answer —
+// `_viewbar` in render.py decides that and says why — so this is a null check on
+// a control that is missing on purpose.
+const EDITOR_SWITCH = document.getElementById('editorswitch');
+if (EDITOR_SWITCH) {
+  const EDITOR_NAMES = {ace: 'the Ace editor', plain: 'the plain box'};
+  // The surface that MOUNTED, not the one the address asked for. The server
+  // rendered `aria-checked` from the same `_ace_wanted` that decided the bytes,
+  // so the control is right before a line of this has run — no switch drawn off
+  // and corrected once a script arrives — and this puts it in step with what a
+  // person is actually writing in. The two come apart in exactly one place: a
+  // copy of this page saved to a file, where the address cannot be corrected and
+  // `bodySurface` hands back the box over a library that is physically present.
+  // `_VIEWS` runs after `SURFACE` is built, so by here that is decided.
+  const now = SURFACE.editorName;
+  const other = now === 'ace' ? 'plain' : 'ace';
+  EDITOR_SWITCH.setAttribute('aria-checked', String(now === 'ace'));
+  // What pressing it will do, in the words of what it will become — the shape
+  // `statusPick` uses for every picker in the status bar — plus the one fact
+  // that makes this control unlike every other one on the bar. Somebody told
+  // afterwards that the page reloaded has already lost the argument.
+  EDITOR_SWITCH.title = `Now: ${EDITOR_NAMES[now]} — press for `
+    + `${EDITOR_NAMES[other]}. This reloads the page: the editor is 594 KB the `
+    + `server either sends or does not, so the choice is in the address.`;
+  EDITOR_SWITCH.onclick = () => {
+    // A page with no server behind it cannot be asked for the other bytes, and
+    // this is the same refusal `stickyEditor` makes on the same test. It is said
+    // rather than done quietly, because a switch that moves nothing and explains
+    // nothing is the thing somebody reports as broken.
+    if (!location.protocol.startsWith('http')) {
+      announce('This is a saved copy of the page, so there is no server to ask for '
+               + 'the other editor. Open it from the tool to change this.');
+      return;
+    }
+    // The knob does NOT move here and `aria-checked` does not change. Both would
+    // claim a state this page is not in and is never going to be in — the page
+    // that IS in it is the one arriving — and a switch that completes its travel
+    // and is then replaced by a load reads as one that worked and then glitched.
+    EDITOR_SWITCH.setAttribute('aria-busy', 'true');
+    EDITOR_SWITCH.classList.add('waiting');
+    // In words as well as in pixels: `announce` writes into `#state`, which is
+    // visible on this bar and live for a screen reader, so the person who cannot
+    // see the track go dim is told the same thing.
+    announce(`Fetching this page with ${EDITOR_NAMES[other]}.`);
+    const url = new URL(location.href);
+    url.searchParams.set('editor', other);
+    // `replace`, for the reason `stickyEditor` uses it: the page being left will
+    // send anybody who comes back to it straight round again, because the
+    // preference it is about to write is why they went. A history entry that
+    // bounces is worse than no history entry.
+    //
+    // Nothing is remembered HERE. The address is the choice and the page that
+    // receives it writes it down — one mechanism, in one place; a second author
+    // of the same preference would eventually record a press that never arrived.
+    location.replace(url);
+  };
+}
+
+addEventListener('keydown', event => {
+  // Ctrl+Shift and a digit, and both halves of that are a correction.
+  //
+  // **Not Cmd**, because the page already claims ⌘S, and ⌘B ⌘I ⌘⇧X ⌘2 ⌘E ⌘⇧E ⌘.
+  // ⌘8 ⌘7 ⌘⇧L ⌘K through `attachEditing`. That much was right the first time.
+  //
+  // **Not Ctrl+Alt either**, which is what it was and what cannot stay. Ctrl+Alt
+  // IS AltGr: Chrome on Windows delivers the AltGr key as `ctrlKey` and `altKey`
+  // together, and on the Swiss-German layout that half this team types on — the
+  // mix `FORMATS` names by hand two hundred lines up — AltGr+E is the euro sign.
+  // Verified in Chrome: an AltGr+E keydown opened the split view and
+  // `preventDefault`ed the euro, so the chord ate a character people type. A
+  // guard on `getModifierState('AltGraph')` would tell the two apart on the
+  // engines that set it, and it would leave the binding resting on a modifier
+  // state that not every layout, engine and remote-desktop stack reports — for a
+  // shortcut, on a key somebody types. Moving off Alt entirely costs nothing and
+  // asks nobody to trust that report: this chord carries no Alt, so an AltGr
+  // keystroke cannot match it however it is reported. `!event.altKey` is what
+  // says so, and it is the whole of the AltGr answer.
+  //
+  // **Digits, not letters**, because Ctrl+Shift+B is Chrome's bookmarks bar on
+  // Windows and Linux and Ctrl+Shift+V is paste-as-plain-text in the box below.
+  // Ctrl+Shift+1/2/3 is unclaimed on all three platforms, and one-two-three for
+  // write / split / preview is the order the segments are drawn in.
+  //
+  // Matched on `event.code`, and that is not a preference either: shift-1 on a
+  // US layout is `!`, on a Swiss-German layout it is `+`, and a binding read off
+  // `key` here is one that could never once fire — the trap the shifted marks
+  // fell into when ⌘⇧8 was tried and shift-8 turned out to be `*`.
+  if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
+  const mode = {Digit1: 'edit', Digit2: 'both', Digit3: 'view'}[event.code];
+  if (!mode) return;
+  event.preventDefault();
+  chooseView(VIEW === mode ? null : mode);
+});
+
+// Escape, arbitrated: see the block in `attachEditing` that dispatches this.
+// Answered here only when there is something to come back out of, so on a page
+// that is not full the hatch that gives Tab back opens on the first press.
+BODY.addEventListener('openproj:escaped', event => {
+  if (VIEW === null) return;
+  event.preventDefault();
+  showView(null);
+});
+
+// `?edit`, `?both`, `?view`, read once at load. Flags and not values: the
+// address bar in the observed note reads `?both=`, so `has` is the question and
+// `get` — which answers the empty string — would read as false. Off the search
+// and not the hash, which this page's router already owns and uses to say which
+// entity you are looking at.
+const VIEW_ASKED = new URLSearchParams(location.search);
+const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
+
+// And then the remembered one, which is the second half of the preference this
+// stage carries. Two decisions in it, and both are arguments rather than
+// defaults:
+//
+// **A link beats the preference.** Somebody handed `?view` was handed a way of
+// looking at this particular document; a stored mode is only what this browser
+// last chose for itself.
+//
+// **The preference is applied when an editing SESSION starts, not when the page
+// loads.** Sticky-at-load would mean that after once choosing the split, every
+// detail page anybody opened afterwards opened as a full-screen editor over a
+// record they had come to read — and on this page reading is the ordinary case
+// and writing is the exception. So it is restored by pressing Edit, by a
+// restored draft, and by the create form, which is always editing and where
+// "when the session starts" therefore IS the load. That is the branch below.
+if (VIEW_LINKED) showView(VIEW_LINKED);
+else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) showView(EDITOR.mode);
+
+// A session beginning after this script has run — the Edit button. `VIEW ===
+// null` is what stops the loop: `showView` sets `VIEW` before it calls
+// `showEditing`, which is what dispatches this.
+//
+// **And a session ENDING leaves the surface it was in, here and nowhere else.**
+// That rule was written three times — in `flipEditing`, and again in each of the
+// issue and note pages' toggles — and the fourth door had no copy: a Save made
+// in a room does not reload, so `_COEDIT`'s `saved` branch ends the session with
+// a bare `showEditing(false)`. Measured in Chrome from the split view: the
+// article kept `full view-both`, `<body>` kept `fullpage`, the nav stayed
+// `inert` and the switcher — drawn only under `.entity.editing`, and named in
+// the commit that fixed Cancel as the documented way back — went at the same
+// instant. That is the trap `test_cancel_leaves_the_surface_it_was_pressed_in`
+// exists for, arrived at through the door nobody had written the line on.
+//
+// So it is one line on the one event that means "a session began or ended",
+// rather than a fourth copy at a fourth call site — an invariant written four
+// times is an invariant guarded three.
+//
+// `VIEW !== null` asks whether there is a surface to leave, and it is there for
+// an ordering rather than for a case that happens today: the issue and note
+// pages call `showEditing(false)` at load to draw themselves in read mode, and
+// they only get away with it because this script is inlined AFTER theirs, so
+// there is no listener yet. Nothing on the page says that has to stay true, and
+// the failure if it stopped being true is a `refreshPreview` and a class sweep
+// on every load of those two pages — quiet, and nothing would report it. Asking
+// whether a surface is up costs one comparison and does not care about order.
+addEventListener('openproj:session', event => {
+  if (event.detail && EDITOR.mode && VIEW === null) showView(EDITOR.mode);
+  if (!event.detail && VIEW !== null) showView(null);
+});
+</script>
+""")
+
+
 _NEW = """
 <article class="entity editing">
   <p class="back"><a href="{{ links.table }}">← table</a></p>
@@ -8831,6 +11911,33 @@ _NEW = """
   <input name="title" data-type="text" form="edit" value="" aria-label="Title"
          class="field title-field" placeholder="Title">
   <p class="meta">the id and the file are the server's to choose</p>
+  {#- The same bar the detail page carries, in the same place, holding the same
+      control: this page is that page in edit mode, and a switcher that moves
+      between the two is a switcher somebody has to find twice. There is no Edit
+      button beside it because this article never leaves edit mode. -#}
+  <p class="editbar">{{ viewbar }}</p>
+  {#- Create, and the count of what is unsaved, at the head of the form rather
+      than at its foot — jcanton, 2026-08-20, "move the create bar up top too,
+      consistency!". The detail page moved its bar up on the same day and the two
+      are the same document in two modes: a control that changes place between
+      reading a record and making one is a control somebody has to find twice.
+
+      The argument that put it at the foot is in the shell's `.commitbar` and it
+      was half right. It said the last thing on screen after filling this form in
+      was the body box, so the action was a scroll back up — true of a STATIC bar
+      above a long form, and the fix it shipped was two things at once. The
+      stickiness is the half that delivered it, and a bar stuck to the top is on
+      screen from wherever the form has got to just as surely as one stuck to the
+      foot. Measured in Chrome, filled in, at the top, the middle and the end.
+
+      Not hidden, unlike the detail page's: there, editing is a session you enter
+      and the bar arrives with it; here the page IS the session and a form whose
+      only way to commit it appears later is a form with no way to commit it. -#}
+  <div class="commitbar" id="commitbar">
+    <span id="unsaved">Nothing is written until you press Create</span>
+    <button type="button" id="save">Create</button>
+    <span id="state" role="status"></span>
+  </div>
   <form id="edit" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <div class="panes">
@@ -8855,7 +11962,6 @@ _NEW = """
             single-character buttons, and nothing on the line lined up with
             anything else on it. -#}
         <p class="field bodybar">
-          <button type="button" id="preview">Preview the body</button>
           {#- The template is offered, never imposed: it fills an untouched box
               and refuses to overwrite one somebody has typed in. `template` and
               not `start from`: the label names the control, and the sentence it
@@ -8871,24 +11977,55 @@ _NEW = """
           </label>
           <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
         </p>
+        {#- The hint that was here — "paste or drop an image to put it in the
+            plan" — is gone, and the Image button is what replaced it: a sentence
+            describing a gesture is what a toolbar puts in a control. -#}
         <p class="field bodybar markbar">
           <span id="marks" class="marks"></span>
-          <span class="hint">paste or drop an image to put it in the plan</span>
           <span class="hint" id="upload" role="status" aria-live="polite"></span>
+          {#- Where the gutter says it has switched itself off, and why. A count
+              of lines is a fact about the document, so it belongs beside the box
+              and not in a banner: a gutter that simply vanishes on a long
+              document is the one somebody reports as broken. -#}
+          <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
         </p>
-        <textarea name="body" class="field body-field" rows="14"
-                  aria-label="Shaping document"
-                  placeholder="The shaping document."></textarea>
-        <div class="doc" hidden></div>
+        <div class="bodysplit">
+          <div class="bodywrap">
+            <textarea name="body" class="field body-field" rows="14"
+                      aria-label="Shaping document"
+                      placeholder="The shaping document."></textarea>
+          </div>
+          {#- Between the two panes and not over them: it is a grid track of its
+              own, so the width it takes is width the panes never had rather than
+              a strip drawn on top of one of them. -#}
+          {{ splitter }}
+          {#- The same id and the same classes the detail page's preview pane
+              carries, so one implementation serves both. It was a bare `.doc`
+              found by `querySelector`, which is one more thing for the two pages
+              to disagree about. -#}
+          <div id="body-preview" class="field doc" hidden></div>
+        </div>
+        {#- The strip along the foot of the box: where the caret is, how long the
+            document is, and the one control that is a typing setting rather than
+            a command. Empty in the markup and filled by `attachStatus`, so the
+            four pages that carry one carry one line each. -#}
+        <p class="field bodybar statusbar" id="statusbar"></p>
       </div>
     </div>
   </form>
-  <div class="commitbar" id="commitbar">
-    <span id="unsaved">Nothing is written until you press Create</span>
-    <button type="button" id="save">Create</button>
-    <span id="state" role="status"></span>
-  </div>
 </article>
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {{ combobox }}
 <script>{{ required }}</script>
 <script>
@@ -8923,8 +12060,6 @@ function read(control) {
   return raw === '' ? null : raw;
 }
 
-const PREVIEW = document.getElementById('preview');
-const DOC = document.querySelector('.doc');
 const BODY = FORM.querySelector('[name=body]');
 // The box holding the title, for the preview: the page suppresses the document's
 // own leading heading when it repeats the title, and a preview that does not know
@@ -8932,8 +12067,14 @@ const BODY = FORM.querySelector('[name=body]');
 // because on the create page the title sits outside `<form>` and is bound to it
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = bodySurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 
 // The body a new entity starts from. Switching kind switches template, because
 // picking "pitch" and getting a task's headings is the wrong default in the one
@@ -8946,7 +12087,7 @@ const TPL = document.getElementById('template');
 const TPLSTATE = document.getElementById('tplstate');
 
 function untouched() {
-  return Object.values(TEMPLATES).some(text => text.trim() === BODY.value.trim());
+  return Object.values(TEMPLATES).some(text => text.trim() === SURFACE.text().trim());
 }
 
 function applyTemplate(name) {
@@ -8954,7 +12095,20 @@ function applyTemplate(name) {
     TPLSTATE.textContent = 'the body has been edited — clear it to start from a template';
     return false;
   }
-  BODY.value = TEMPLATES[name] ?? '';
+  // A whole-document replacement, said in those words and made once. `apply` is
+  // what marks it as the page writing rather than a person typing: no focus
+  // stolen from the picker that asked for it, no `input` event, and no undo step
+  // for a gesture that was not an edit to anybody's writing — this branch only
+  // runs while the box still holds one of ours.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
+  // And say that the document changed, because `apply` deliberately fires no
+  // `input` and everything drawn beside this box hangs off one. `reflect()` in
+  // `_COEDIT` dispatches this for exactly the same reason and in the same words:
+  // the one place that changes the text without typing it tells the layers once,
+  // rather than a call being added here every time something new listens.
+  // Measured without it: choosing `blank` emptied the box and left twenty-one
+  // line numbers down the side of it and `21 Lines — Length: 661` under it.
+  dispatchEvent(new Event('openproj:editing'));
   TPLSTATE.textContent = '';
   return true;
 }
@@ -8969,26 +12123,6 @@ KIND.onchange = () => {
 };
 TPL.value = TEMPLATES[KIND.value] !== undefined ? KIND.value : 'blank';
 applyTemplate(TPL.value);
-
-PREVIEW.onclick = async () => {
-  if (!DOC.hidden) {
-    DOC.hidden = true;
-    BODY.hidden = false;
-    PREVIEW.textContent = 'Preview the body';
-    return;
-  }
-  // The title goes with it: the page drops a leading heading that only restates
-  // the title, so a preview without one shows a heading the saved page will not.
-  // The title in the FORM, not the stored one — this same Save may change it.
-  const response = await fetch('/api/preview', {
-    method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: BODY.value, title: TITLED.value}),
-  });
-  DOC.innerHTML = (await response.json()).html;
-  DOC.hidden = false;
-  BODY.hidden = true;
-  PREVIEW.textContent = 'Back to the source';
-};
 
 document.getElementById('save').onclick = async () => {
   const fields = {kind: KIND.value};
@@ -9040,7 +12174,7 @@ document.getElementById('save').onclick = async () => {
       method: 'POST', headers: {'content-type': 'application/json'},
       body: JSON.stringify({
         base_commit: FORM.querySelector('[name=base_commit]').value, fields,
-        body: BODY.value || '',
+        body: SURFACE.text() || '',
       }),
     });
     const answer = await answerOf(response);
@@ -9067,6 +12201,7 @@ document.getElementById('save').onclick = async () => {
   }
 };
 </script>
+{{ views }}
 """
 
 _DETAIL = """
@@ -9113,19 +12248,26 @@ _DETAIL = """
       column, level with the title, so nothing is further away than it was. -#}
   <p class="meta"><code>{{ e.id }}</code>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
-  {#- The way in, at the top. It was in the commit bar at the foot of the page,
-      under the whole shaping document — so on any record worth reading, the
-      button that lets you change it was a scroll away from the thing you had
-      just decided to change. Save stays down there, where what is being
-      committed ends. -#}
+  {#- The way in, at the top, and since 2026-08-20 the way out with it. Both were
+      in a commit bar at the foot of the page, under the whole shaping document —
+      so on any record worth reading, the button that lets you change it was a
+      scroll away from the thing you had just decided to change, and the button
+      that ends the change was somewhere else again. -#}
   {% if editable %}
   {#- Both ways of changing this record on one line, in the same clothes. Edit is
       the way in; Delete is the way out; a reader looking for either looks here.
       Delete carries no styling of its own beyond the colour it turns on hover,
       so the two buttons match by construction rather than by two rules somebody
-      has to keep in step. -#}
+      has to keep in step.
+
+      The view switcher is the third thing on this line and is never on it at the
+      same time as the other two: Edit and Delete are hidden the moment a session
+      begins, and a view of an editing surface is nothing at all when there is no
+      editing surface. So the row holds the way in, or the ways of looking at
+      what you are in — never both. -#}
   <p class="editbar"><button type="button" id="toggle">Edit</button>
-    {% if may_write %}<button type="button" class="delete">Delete</button>{% endif %}</p>
+    {% if may_write %}<button type="button" class="delete">Delete</button>{% endif %}
+    {{ viewbar }}</p>
   {#- Save, Cancel and the count of what is unsaved, directly under the button
       that started the editing rather than at the far end of the document —
       jcanton, 2026-08-20. The old argument for the foot was that a commit bar
@@ -9140,7 +12282,17 @@ _DETAIL = """
       decides it had nothing to say. -#}
   <div class="commitbar" id="commitbar" hidden>
     <span id="unsaved">Nothing to save</span>
+    {#- Ask 7's receipt, beside the count of what is unsaved because that is the
+        sentence it qualifies: a draft is what is holding the writing that has
+        not been committed, and "3 unsaved changes" with nothing beside it reads
+        as work that is nowhere. Empty until something has actually been
+        written — an autosave that says "saved" before it has saved anything is
+        the worst thing in this row. -#}
+    <span id="draftsaved" class="hint"></span>
     <button type="button" id="save" hidden>Save</button>
+    {#- Cancel stays beside Save and never beside Edit. They are the two ways one
+        editing session can end, and putting them in two places is how somebody
+        closes a tab believing the other one was the way out. -#}
     <button type="button" id="cancel" hidden>Cancel</button>
     <span id="state" role="status"></span>
   </div>
@@ -9244,29 +12396,52 @@ _DETAIL = """
       {% endif %}
       <div class="doc read">{{ e.body }}</div>
       {% if editable %}
-      <p class="field bodybar">
-        {#- Who else is in this document, by name. A name is the channel that
-            survives every reader; a colour is not, and a caret drawn one line
-            off a `<textarea>` through a mirror element is worse than no caret at
-            all. Empty when nobody else is here, which is most of the time. -#}
+      {#- Who else is in this document, by name. A name is the channel that
+          survives every reader; a colour is not, and a caret drawn one line off
+          a `<textarea>` through a mirror element is worse than no caret at all.
+          Empty when nobody else is here, which is most of the time — and this
+          row carries no margin of its own for exactly that reason, so an empty
+          room costs no space above the toolbar and somebody arriving pushes it
+          down by the one line they are announced on. -#}
+      <p id="seatbar" class="field bodybar">
         <span id="together" class="together" role="status" aria-live="polite"></span>
-        <button type="button" id="preview">Preview the body</button>
       </p>
+      {#- The hint that was here — "paste or drop an image to put it in the
+          plan" — is gone, and it is the Image button that replaced it: a
+          sentence describing a gesture is what a toolbar puts in a control. It
+          was also 214px of a flex line the toolbar had to share, which is what
+          wrapped the toolbar onto two rows. -#}
       <p class="field bodybar markbar">
         <span id="marks" class="marks"></span>
-        <span class="hint">paste or drop an image to put it in the plan</span>
         <span class="hint" id="upload" role="status" aria-live="polite"></span>
+        {#- Where the gutter says it has switched itself off, and why. A count of
+            lines is a fact about the document, so it belongs beside the box and
+            not in a banner: a gutter that simply vanishes on a long document is
+            the one somebody reports as broken. -#}
+        <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
       </p>
-      {#- The box, and a layer over it for where everybody else is. The layer is
-          a sibling rather than a background, because a `<textarea>` cannot hold
-          anything but text: the bands are drawn on top, translucent, and take no
-          pointer events — the thing under them is the thing being typed in. -#}
-      <div class="bodywrap">
-        <div id="seats" class="seats" aria-hidden="true"></div>
-        <textarea name="body" class="field body-field"
-                  aria-label="Shaping document">{{ e.raw_body }}</textarea>
+      {#- The two panes of the split view, in one box so the view can hand them a
+          column each and so each scrolls on its own. The box, and a layer over it
+          for where everybody else is: the layer is a sibling rather than a
+          background, because a `<textarea>` cannot hold anything but text — the
+          bands are drawn on top, translucent, and take no pointer events, so the
+          thing under them is the thing being typed in. -#}
+      <div class="bodysplit">
+        <div class="bodywrap">
+          <div id="seats" class="seats" aria-hidden="true"></div>
+          <textarea name="body" class="field body-field"
+                    aria-label="Shaping document">{{ e.raw_body }}</textarea>
+        </div>
+        {{ splitter }}
+        <div id="body-preview" class="field doc" hidden></div>
       </div>
-      <div id="body-preview" class="field doc" hidden></div>
+      {#- The strip along the foot of the box. Filled by `attachStatus`, which
+          wraps whatever the page put in it — here the draft's interval, because
+          this is the one page with a draft and because an interval is a setting
+          and this is where the settings are. -#}
+      <p class="field bodybar statusbar" id="statusbar">
+        <button type="button" id="draftevery"></button>
+      </p>
       <div id="conflict" role="status" aria-live="polite" hidden></div>
       {% endif %}
     </div>
@@ -9296,10 +12471,20 @@ function place() {
   // The visible one. On the index view every article is hidden, and measuring a
   // hidden element gives zero — which parked the handle against the left edge of
   // the page, a rule down the side of a list it has nothing to do with.
+  //
+  // `getClientRects()` and not `offsetParent`, which was the test until the full
+  // page arrived: an element with `position: fixed` has no offset parent, so the
+  // full-page article answered "hidden" and the handle would have parked at the
+  // left edge again — the same bug, through a second door. A box with no rects
+  // is one nothing is drawing, which is the question actually being asked.
   const article = [...document.querySelectorAll('article.entity')]
-    .find(candidate => candidate.offsetParent !== null);
-  grip.hidden = !article;
-  if (article) grip.style.left = article.getBoundingClientRect().right + 'px';
+    .find(candidate => candidate.getClientRects().length > 0);
+  // And in full page there is no handle to have. It drags `--measure`, and the
+  // full-page surface is the window: a control that changes nothing is worse
+  // than an absent one, because somebody drags it and concludes the page is
+  // broken.
+  grip.hidden = !article || article.classList.contains('full');
+  if (!grip.hidden) grip.style.left = article.getBoundingClientRect().right + 'px';
 }
 place();
 addEventListener('resize', place);
@@ -9313,6 +12498,17 @@ grip.onpointerdown = event => {
     const width = Math.max(320, (e.clientX - innerWidth / 2) * 2);
     root.style.setProperty('--measure', width + 'px');
     place();
+    // The one control whose entire job is to change the width of the box has to
+    // tell the two layers drawn over it, because every pixel either of them draws
+    // is a function of that width. Measured before this: dragging to 30rem left
+    // six of nine line numbers between 20.8 and 122.1px off their lines — up to
+    // six whole rows — and the seat bands with them, until a window resize
+    // happened to put them back. A `ResizeObserver` also catches this and is
+    // installed for the box's own resize handle, but it is delivered on the
+    // rendering step, which the headless clock every pixel question here is asked
+    // through runs exactly once; a redraw only an observer can cause is a redraw
+    // no test in this repository can see.
+    dispatchEvent(new Event('openproj:editing'));
   };
   const stop = () => {
     grip.classList.remove('dragging');
@@ -9324,6 +12520,18 @@ grip.onpointerdown = event => {
   addEventListener('pointerup', stop);
 };
 </script>
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {% if editable %}{{ combobox }}{% endif %}
 {% if editable %}<script>{{ required }}</script>{% endif %}
 {% if editable %}<script>
@@ -9340,8 +12548,14 @@ const BODY = FORM.querySelector('[name=body]');
 // because on the create page the title sits outside `<form>` and is bound to it
 // by a `form=` attribute — which `querySelector` on the form does not see.
 const TITLED = document.querySelector('.title-field');
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = bodySurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 // The commit this page was rendered at, and what every save is compared against.
 // Read through this one box rather than looked up at each write, because a
 // restored draft moves it back to the commit that draft was written on top of.
@@ -9374,7 +12588,7 @@ for (const control of CONTROLS) ORIGINAL[control.name] = JSON.stringify(read(con
 // `let`, because a room can commit this body without this tab pressing anything:
 // after that commit the saved text IS the baseline, and a `const` here left the
 // bar claiming one unsaved change forever over text that is already in git.
-let ORIGINAL_BODY = BODY.value;
+let ORIGINAL_BODY = SURFACE.text();
 
 function changed() {
   const fields = {};
@@ -9396,7 +12610,7 @@ function dirty() {
   // A number typed as a word throws in `read`; that is Save's message to deliver,
   // not a reason for the counter to stop counting the rest.
   try { fields = changed(); } catch (error) { fields = {}; }
-  const count = Object.keys(fields).length + (BODY.value === ORIGINAL_BODY ? 0 : 1);
+  const count = Object.keys(fields).length + (SURFACE.text() === ORIGINAL_BODY ? 0 : 1);
   const editing = document.querySelector('article.entity').classList.contains('editing');
   // Gone entirely when there is nothing for it to say. It is a sticky bar, so it
   // was on screen the whole time somebody was READING a record, reporting
@@ -9434,12 +12648,12 @@ function showEditing(editing) {
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
-  // Three buttons and never two of them at once: Edit is the way in and lives at
-  // the top, beside the record; Save and Cancel are the two ways one editing
-  // session ends and live together in the sticky bar at the foot of the thing
-  // being committed. The button that used to be here was Edit and Cancel by
-  // turns, in one place, which put the way out under the document you were
-  // editing.
+  // Three buttons and never two of them at once: Edit is the way in, Save and
+  // Cancel are the two ways one editing session ends, and all three are in the
+  // same place at the top of the record — the bar swaps one for the other two.
+  // The button that used to be here was Edit and Cancel by turns, in ONE
+  // element, which is how a page comes to disagree with itself about what
+  // pressing it does.
   document.getElementById('cancel').hidden = !editing;
   document.getElementById('toggle').hidden = editing;
   // Delete leaves while an edit is open. Two destructive-ish answers to "I am
@@ -9455,6 +12669,13 @@ function showEditing(editing) {
   // first thing anybody saw on entering edit mode was no bands at all, on a
   // document somebody else was demonstrably in.
   dispatchEvent(new Event('openproj:editing'));
+  // And a second event, which is a different fact and not a louder version of
+  // the first. `openproj:editing` means "the box moved" and is dispatched by the
+  // width grip, the gutter's column and every view change; this means "a session
+  // began or ended", which happens twice a page. The view preference hangs off
+  // this one, and hanging it off the other would restore the remembered mode
+  // every time anybody dragged the width handle.
+  dispatchEvent(new CustomEvent('openproj:session', {detail: editing}));
 }
 
 // Both of the buttons that change the mode, through one handler: Edit at the top
@@ -9463,10 +12684,17 @@ function showEditing(editing) {
 function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   showEditing(editing);
+  // Ending the session leaves the surface the session was in — and the line that
+  // does it is not here any more. It was here, and in the issue page's toggle,
+  // and in the note page's, and the fourth door out of a session had no copy:
+  // a Save made in a room ends it with a bare `showEditing(false)`. It is one
+  // listener on `openproj:session` in `_VIEWS` now, which `showEditing` above
+  // dispatches, so every door is the same door. See the comment there.
+  //
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
-  if (!editing) remembered.forget(DRAFT);
+  if (!editing) forgetDraft();
 }
 document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
@@ -9544,33 +12772,6 @@ for (const article of document.querySelectorAll('article.entity')) {
   };
 }
 
-document.getElementById('preview').onclick = async () => {
-  // Only the body, and without leaving edit mode. It used to swap the whole page
-  // back to the read view, which showed the *stored* fields — so adding a reviewer
-  // and pressing Preview appeared to lose the change.
-  const pane = document.getElementById('body-preview');
-  const button = document.getElementById('preview');
-  if (!pane.hidden) {
-    pane.hidden = true;
-    BODY.hidden = false;
-    button.textContent = 'Preview the body';
-    return;
-  }
-  // A round trip, not a second markdown implementation: two renderers disagree
-  // eventually, and the one people trust would not be the one that gets committed.
-  // The title goes with it: the page drops a leading heading that only restates
-  // the title, so a preview without one shows a heading the saved page will not.
-  // The title in the FORM, not the stored one — this same Save may change it.
-  const response = await fetch('/api/preview', {
-    method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({body: BODY.value, title: TITLED.value}),
-  });
-  pane.innerHTML = (await response.json()).html;
-  pane.hidden = false;
-  BODY.hidden = true;
-  button.textContent = 'Back to the source';
-};
-
 async function save() {
   let fields;
   try {
@@ -9584,7 +12785,7 @@ async function save() {
   // the fields from this form. Sending both down this path would be two commits
   // for one press, and the second would be racing the first.
   if (COEDIT.live()) { COEDIT.save(fields); return; }
-  const body = BODY.value === ORIGINAL_BODY ? null : BODY.value;
+  const body = SURFACE.text() === ORIGINAL_BODY ? null : SURFACE.text();
   if (!Object.keys(fields).length && body === null) {
     announce('nothing changed');
     return;
@@ -9615,8 +12816,23 @@ async function save() {
     }
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
-    remembered.forget(DRAFT);
+    forgetDraft();
     location.reload();
+  } catch (error) {
+    // The same missing `catch` as the uploader's, and worse, because this is the
+    // path everybody walks. `announce('saving…')` above puts a word in the live
+    // region that only the answer takes back out; with the rejection escaping,
+    // the page went on saying "saving…" for ever, with Save still enabled and
+    // nothing anywhere to say whether the work had landed.
+    //
+    // And it does not claim to know. A fetch rejects when the answer is lost as
+    // readily as when the request never left, so "nothing was sent" would be a
+    // guess. Pressing Save again is the whole of the recovery either way: the
+    // draft is still in this browser, `BASE.value` still holds the commit this
+    // page was rendered at, and if the write did land, the compare-and-swap
+    // refuses the second press with the conflict report rather than repeating it.
+    announce(`not saved — ${error.message}. Press Save again: if it did land, `
+             + 'the next press is refused rather than repeated.');
   } finally {
     // Announced even when refused, or one 409 leaves every event after it held
     // back and the banner never appears again.
@@ -9643,9 +12859,138 @@ addEventListener('keydown', event => {
 // restore a compare-and-swap against the right commit: a merge where the edits
 // do not overlap, and the same 409 and the same report as every other write
 // path where they do.
-BODY.addEventListener('input', () => {
-  remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: BODY.value}));
+// Ask 7, and the whole of it: a throttle with a ceiling, and a receipt.
+//
+// It used to be written on every keystroke — a whole document serialised and
+// pushed into `localStorage`, synchronously, on the main thread, per character.
+// The interval is settable because that is what was asked for; it has a ceiling
+// because a settable one otherwise lets somebody set their own floor coarser
+// than the thing that backstops it (`DRAFT_SECONDS`, where the offers are, says
+// which thing and why).
+//
+// **Nothing here reaches git on a timer**, and that is the part of ask 7 that
+// was answered with a no. A draft lives in this browser. The only writers to the
+// repository are Save and — while somebody else is in the document — the room's
+// own commit once everybody has been quiet, which is what `#draftevery`'s title
+// says out loud rather than leaving somebody to assume one or the other.
+//
+// Leading edge and trailing edge both, which is what makes it a throttle rather
+// than a debounce. The first keystroke of a burst is written at once, so a tab
+// closed a second after somebody starts typing still holds their sentence; the
+// last one is written when the interval is up. A debounce is the version that
+// writes nothing at all while somebody types steadily for a minute, which is
+// exactly the person this feature exists for.
+const RECEIPT = document.getElementById('draftsaved');
+let draftMs = EDITOR.autosave * 1000;
+// Two clocks, and they mean different things. `draftWritten` is when a draft
+// last LANDED, which is the only thing `sayDraft` may count from — a receipt
+// reading "draft saved 4s ago" over a store that refused the write is this
+// application claiming somebody's writing is somewhere it is not, so a refusal
+// has to put it back to zero. `draftTried` is when the last ATTEMPT was made,
+// which is what the throttle is throttling.
+//
+// One variable for both is the bug: with the store refusing, `draftWritten` was
+// zeroed on every refusal and then read as "when the last write happened", so
+// `wait` came out at about minus fifty-seven years and every keystroke re-entered
+// `remembered.set` — a synchronous `setItem`, a throw and a catch, per character,
+// on the main thread, in exactly the browser the throttle was worth adding for.
+// The `if (!draftRefused)` guard suppressed the announcement, never the work.
+let draftWritten = 0;
+let draftTried = 0;
+let draftTimer = 0;
+let draftTicker = 0;
+let draftRefused = false;
+
+function sayDraft() {
+  if (!draftWritten) { RECEIPT.textContent = ''; return; }
+  const seconds = Math.round((Date.now() - draftWritten) / 1000);
+  // "just now" rather than "0s ago", and minutes past ninety seconds: a counter
+  // ticking 1s 2s 3s in the corner of the bar is a thing that draws the eye
+  // every second and says nothing new.
+  RECEIPT.textContent = seconds < 5 ? 'draft saved just now'
+    : seconds < 90 ? `draft saved ${seconds}s ago`
+    : `draft saved ${Math.round(seconds / 60)}m ago`;
+}
+
+function writeDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = 0;
+  // Before the attempt, not after it, and on both branches: a store that refuses
+  // still costs a `setItem` and a throw, which is the cost the interval is here
+  // to bound.
+  draftTried = Date.now();
+  if (remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: SURFACE.text()}))) {
+    draftRefused = false;
+    draftWritten = Date.now();
+    sayDraft();
+    // The receipt is a relative time, so it goes stale on its own even when
+    // nothing happens. One ticker for the page, started when there is something
+    // to count from and stopped when there is not.
+    if (!draftTicker) draftTicker = setInterval(sayDraft, 1000);
+    return;
+  }
+  // And the branch that decides not to act, saying so — which is the whole
+  // reason `remembered.set` now answers. A private window, a blocked cookie, an
+  // enterprise policy or a full store all end here, and every one of them is a
+  // tab whose unsaved writing is in one box and nowhere else. Said once, because
+  // it will keep being true on every keystroke; the label beside Save stays,
+  // because that is the one a person looks at before closing the tab.
+  draftWritten = 0;
+  clearInterval(draftTicker);
+  draftTicker = 0;
+  RECEIPT.textContent = 'this browser is not keeping drafts';
+  if (!draftRefused) {
+    announce('This browser will not keep an unsaved draft — a private window, a blocked '
+             + 'cookie or a full store. Press Save before closing this tab.');
+  }
+  draftRefused = true;
+}
+
+// The draft is gone — committed, or cancelled — so the receipt is gone with it.
+// One function for the three places that forget it, because a receipt left
+// saying "draft saved 4s ago" over a draft that no longer exists is the counter
+// claiming work is safe somewhere it is not.
+function forgetDraft() {
+  clearTimeout(draftTimer);
+  clearInterval(draftTicker);
+  draftTimer = 0;
+  draftTicker = 0;
+  draftWritten = 0;
+  // The attempt clock goes too: the draft this page was holding is gone, so the
+  // next keystroke starts a burst of its own and the leading edge of a burst is
+  // written at once. Leaving it set would throttle the first character typed
+  // after a save against a write that no longer has anything to do with it.
+  draftTried = 0;
+  remembered.forget(DRAFT);
+  sayDraft();
+}
+
+SURFACE.onInput(() => {
+  if (draftTimer) return;
+  const wait = draftTried + draftMs - Date.now();
+  if (wait <= 0) writeDraft();
+  else draftTimer = setTimeout(writeDraft, wait);
 });
+
+// A throttle with nothing to flush it is a throttle that loses the last thing
+// somebody typed, which is the one thing this feature exists to keep. `pagehide`
+// covers a closed tab, a navigation and a back/forward-cache eviction;
+// `visibilitychange` covers the phone and the tab that is frozen and then killed
+// without `pagehide` ever firing. Both, because `writeDraft` writing twice costs
+// one `setItem` and missing once costs a paragraph.
+addEventListener('pagehide', () => { if (draftTimer) writeDraft(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && draftTimer) writeDraft();
+});
+
+statusPick(document.getElementById('draftevery'), 'Draft', DRAFT_SECONDS, EDITOR.autosave,
+           seconds => {
+             draftMs = seconds * 1000;
+             rememberEditor({autosave: seconds});
+             announce(`An unsaved draft is kept in this browser every ${seconds} seconds. `
+                      + 'Nothing is committed on a timer.');
+           });
+
 const draft = remembered.map(DRAFT);
 // A draft from before this — bare text under the old key — records no commit,
 // and there is nothing honest to do with one: pairing it with today's base is
@@ -9659,7 +13004,7 @@ if (remembered.get(older) !== null) {
     announce('a draft saved by an older version of this page was discarded');
   }
 }
-if (typeof draft.text === 'string' && draft.text !== BODY.value) {
+if (typeof draft.text === 'string' && draft.text !== SURFACE.text()) {
   // The page is at HEAD and this text is not. Saving it is compared against the
   // commit it was drafted against, so the server can tell a merge from an
   // overwrite — and whoever restores it is told the ground moved rather than
@@ -9669,10 +13014,14 @@ if (typeof draft.text === 'string' && draft.text !== BODY.value) {
   announce(moved
     ? 'unsaved draft restored — somebody else has changed this since it was written'
     : 'unsaved draft restored');
-  BODY.value = draft.text;
+  // The whole document, replaced once and said so. `apply` because this is the
+  // page restoring, not a person typing: at load there is no history to protect
+  // and nothing may be told that somebody just wrote 400 lines.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, draft.text));
   showEditing(true);
 }
 </script>{% endif %}
+{% if editable %}{{ views }}{% endif %}
 {% if editable %}<script>{{ yjs }}</script>
 <script>{{ coedit }}</script>{% endif %}
 {% if not single %}<script>
@@ -9739,6 +13088,60 @@ const COEDIT = (() => {
   let arrived = false;  // the socket has worked at least once
   let attempts = 0;
 
+  // --- undo, in a document somebody else is also writing ---------------------
+  //
+  // **This defect needs no action from you at all — only somebody else typing.**
+  // A remote keystroke reaches the box through `reflect()`, which splices under
+  // `apply`, which assigns `.value` — the correct write for a change nobody here
+  // made, since a remote change cannot be merged into a native undo stack. What
+  // was never written down is the cost: in a live room every character somebody
+  // else types destroys your undo history. And it does not come up empty, it
+  // lies — measured in Chrome, `queryCommandEnabled('undo')` still answers TRUE
+  // afterwards. That is `d6997e3`'s image-upload data loss by another road, and
+  // worse, because that one at least needed you to do something.
+  //
+  // `trackedOrigins` is the whole design, in one line: `'typed'` is what
+  // `typed()` and `spliced()` already pass to `doc.transact`, and a frame off the
+  // socket arrives as `'remote'`. So one press gives back YOUR last thing and
+  // never Bob's sentence, which is the failure `f7bde59` measured on the other
+  // surface. The default `captureTimeout` of 500ms stands: it is what makes a
+  // run of typing one step rather than one per character.
+  //
+  // Zero new vendored bytes — `UndoManager` is in the bundle's export clause and
+  // `_yjs()` carries that clause over verbatim, asserted in
+  // `test_the_yjs_bundle_inlines_as_a_classic_script`.
+  const undos = new YJS.UndoManager(text, {trackedOrigins: new Set(['typed'])});
+  // Said rather than polled, so the buttons are honest about an empty stack the
+  // instant it becomes one.
+  const toldHistory = () => dispatchEvent(new Event('openproj:history'));
+  for (const when of ['stack-item-added', 'stack-item-popped', 'stack-cleared']) {
+    undos.on(when, toldHistory);
+  }
+
+  // Who answers the toolbar's history buttons, handed over through the one `let`
+  // the shared block declares for it.
+  //
+  // **Not gated on the socket being open.** A room that has bound has spliced
+  // under `apply` at least once, so from then on the box's native stack is a
+  // lying stack whether or not the connection survives — and Cloud Run closes
+  // every socket at five minutes, so a down socket is ordinary rather than a
+  // fault. `bound` is the condition; `stop()` is the one place that ends it.
+  function ownHistory() {
+    COEDIT_HISTORY = bound && !dead ? {
+      can: what => what === 'undo' ? undos.canUndo() : undos.canRedo(),
+      step(what) {
+        // Anything typed since the last `input` event first, so the step taken
+        // back is the whole of the last thing. `save()` opens with it too.
+        typed();
+        if (what === 'undo') undos.undo(); else undos.redo();
+      },
+      // Here the page HAS to take ⌘Z: the stack the browser would reach is the
+      // one `reflect()` destroyed.
+      keyed: true,
+    } : null;
+    dispatchEvent(new Event('openproj:history'));
+  }
+
   // `btoa` over a spread argument list throws on a document of any size, and a
   // full state update is tens of kilobytes. In chunks, which is the only reason
   // this is not one line.
@@ -9782,7 +13185,7 @@ const COEDIT = (() => {
   // jump to the top of the document on every keystroke of mine, and the commit
   // would credit whoever typed last with the whole file.
   function typed() {
-    const now = BODY.value, was = text.toString();
+    const now = SURFACE.text(), was = text.toString();
     if (now === was) return;
     // Scanned a character at a time and not a code unit at a time. Two emoji
     // that share a leading half — a thumb up and a thumb down differ only in
@@ -9814,24 +13217,80 @@ const COEDIT = (() => {
     }, 'typed');
   }
 
+  // A bulk gesture is announced before it goes to everybody, and the measure is
+  // HOW MANY PLACES rather than how many characters — which is not the obvious
+  // choice and is the right one.
+  //
+  // A keystroke is one run. A toolbar mark is two, a delete and an insert. A
+  // paste is one, however long: it is a thing somebody did on purpose with
+  // content they can see, and announcing it would be noise on the ordinary case.
+  // `:%s/cycle/bet/g`, `gg=G`, Replace All and a multi-cursor edit are one press
+  // and HUNDREDS of runs, in places nobody is looking at — one of them measured
+  // deleting 14,789 characters and reinserting 13,345 on a 14,810-character
+  // document, as one frame of 234,892 B, three of which fill the room's outbox.
+  // That is the difference worth saying out loud.
+  //
+  // Said rather than refused: it is a legitimate thing to do to your own
+  // document. The ceiling above it is the server's, and `web.py` answers it with
+  // a `reload` frame rather than a bare `continue` — which it does because a
+  // branch that decided not to act in silence has shipped here three times.
+  //
+  // Four, because a mark is two and an unwrap is two: five separate places in one
+  // press is a gesture and not a keystroke.
+  const BULK_PLACES = 4;
+
+  function spliced(runs) {
+    if (runs.length > BULK_PLACES) {
+      const touched = runs.reduce((n, run) => n + (run.to - run.from) + run.put.length, 0);
+      announce(`${touched.toLocaleString()} characters changed at once, in `
+               + `${runs.length.toLocaleString()} places, and everybody in this document `
+               + 'has them.');
+    }
+    doc.transact(() => {
+      for (const run of runs) {
+        if (run.to > run.from) text.delete(run.from, run.to - run.from);
+        if (run.put) text.insert(run.from, run.put);
+      }
+    }, 'typed');
+  }
+
   // The document back into the textarea, with the caret left where the reader
   // put it. Setting `.value` collapses the selection to the end, which on a page
   // where somebody else is typing means the caret walks to the bottom of the
   // document once a second.
   function reflect() {
-    const want = text.toString(), was = BODY.value;
+    const want = text.toString(), was = SURFACE.text();
     if (want === was) return;
+    // A SPLICE, bounded at BOTH ends, and never "set the text" — the whole of
+    // the argument is on `textareaSurface`. Counted in UTF-16 code units, which
+    // is what both of these strings and `Y.Text` are counted in.
     let head = 0;
     while (head < want.length && head < was.length && want[head] === was[head]) head++;
-    const shift = want.length - was.length;
-    const start = BODY.selectionStart, end = BODY.selectionEnd;
-    const moved = at => at <= head ? at : Math.max(head, at + shift);
-    BODY.value = want;
-    // Only when this box has the caret: `setSelectionRange` on an unfocused
-    // textarea also scrolls it, and a page scrolling itself because somebody
-    // else typed is the thing nobody asked for.
-    if (document.activeElement === BODY) BODY.setSelectionRange(moved(start), moved(end));
+    let tail = 0;
+    while (tail < want.length - head && tail < was.length - head
+           && want[want.length - 1 - tail] === was[was.length - 1 - tail]) tail++;
+    // Inside `apply`: this is the page writing, not a person. On a textarea that
+    // is observably nothing, which is why the flag has a test of its own rather
+    // than a behaviour to hide behind.
+    SURFACE.apply(
+      () => SURFACE.splice(head, was.length - tail, want.slice(head, want.length - tail)));
     dirty();
+    // Assigning `.value` fires no `input` event, and everything drawn over this
+    // box hangs off one. `heard` already calls `drawSeats(); sit();` here for
+    // exactly that reason and says so; the gutter, the source line map and the
+    // live preview were added later and were not given the same wake-up, so
+    // somebody else adding a line left your numbers with the wrong count, the
+    // scroll sync reading a stale map, and the rendered pane showing a document
+    // nobody has any more. One event, dispatched from the one place that changes
+    // the text without typing it, rather than a fourth call added here every time
+    // something new listens.
+    dispatchEvent(new Event('openproj:editing'));
+    // And the rendered pane, asked for by name rather than folded into the event
+    // above: this is the one caller of the four that changed a CHARACTER, and the
+    // other three would each be paying for a render of a document the server has
+    // already been sent. `_VIEWS` is a block above this one in the same scope, and
+    // the guard is for the pages that do not carry it.
+    if (typeof refreshPreview === 'function') refreshPreview();
   }
 
   doc.on('update', (update, origin) => {
@@ -9873,6 +13332,17 @@ const COEDIT = (() => {
 
   // Drawn again when the box appears. See `showEditing`.
   addEventListener('openproj:editing', () => { drawSeats(); sit(); });
+  // And again whenever the box changes shape, which no event on this page says.
+  // Three ways it happens and one observer for all three, because all three are
+  // the content box changing: the width grip writes `--measure` and dispatches
+  // nothing, the gutter's column is the box's own left padding so switching it on
+  // rewraps every line under the bands, and the box has a `resize: vertical`
+  // handle. Measured before this: turning the gutter on left the band for a caret
+  // below a wrapping paragraph a whole 20.15px row above where it belonged, and
+  // it stayed there until something else forced a redraw.
+  if (BODY && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => drawSeats()).observe(BODY);
+  }
 
   // One hue per login, from the name itself: no server-side allocation, no
   // colour that changes when somebody leaves and rejoins, and the same person is
@@ -9885,44 +13355,60 @@ const COEDIT = (() => {
     return hash;
   }
 
-  // The mirror. Built once, kept out of the accessibility tree, and given the
-  // textarea's own metrics every time it is measured — a mirror whose font is a
-  // fallback measures the fallback's line height, and every band lands somewhere
-  // else on the machine that has no webfont yet.
-  const ghost = document.createElement('div');
-  ghost.className = 'ghost';
-  ghost.setAttribute('aria-hidden', 'true');
-
-  function measure(at) {
-    const style = getComputedStyle(BODY);
-    for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
-                        'letterSpacing', 'padding', 'border', 'whiteSpace',
-                        'wordBreak', 'overflowWrap', 'tabSize', 'boxSizing']) {
-      ghost.style[name] = style[name];
-    }
-    ghost.style.width = BODY.clientWidth + 'px';
-    ghost.textContent = BODY.value.slice(0, at);
-    const mark = document.createElement('span');
-    // A zero-width space so the marker has a box on an empty line, and so the
-    // line it is on does not get one character wider than the real one.
-    mark.textContent = '\u200b';
-    ghost.appendChild(mark);
-    const top = mark.offsetTop;
-    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
-    return {top, height};
-  }
-
+  // The mirror is `rowTops`, in the shared editing block, and this code used to
+  // carry a second copy of it — same twelve styles, same zero-width marker, and
+  // the width bug that copy is named for. One mirror now: it is measured as a
+  // fractional content box, so the bands stop landing whole line heights out at
+  // widths sitting on a wrap boundary, and it is laid out ONCE for everybody in
+  // the room rather than once per person.
+  let saidNoSeats = false;
   function drawSeats() {
     const layer = document.getElementById('seats');
     if (!layer || !BODY) return;
     const others = seats.filter(seat => seat.login !== me);
     if (!others.length) { layer.replaceChildren(); return; }
-    document.body.appendChild(ghost);
-    const drawn = others.map(seat => {
-      const {top, height} = measure(Math.min(seat.at, BODY.value.length));
+    // A surface that does not offer seats does not get them drawn, and it is
+    // said rather than left as an empty layer somebody reports as broken. Ace
+    // can answer "where is index N drawn" — `coordsAt` above does exactly that
+    // over its screen rows — but the band's ORIGIN is the box's border box and
+    // the mirror's is its padding box, and nothing has measured that pairing in
+    // a browser. `static/VENDOR.md` holds this feature to "a caret one line off
+    // is worse than no caret", which is the reason it is not drawn here rather
+    // than drawn on a guess. The presence line still names who else is in the
+    // document, which is the half that survives every reader.
+    //
+    // FIRST, and above the rects guard, which is a fix rather than a tidy: the
+    // Ace surface hides the `<textarea>` and puts its own box beside it, so
+    // `BODY.getClientRects()` is empty on exactly the surface this branch exists
+    // for and the sentence was never once said. A fact about the surface does
+    // not depend on whether the box it replaced is being drawn.
+    if (!SURFACE.provides.seats) {
+      layer.replaceChildren();
+      if (!saidNoSeats) {
+        saidNoSeats = true;
+        announce('Who else is in this document is named beside the title. Which line they '
+                 + 'are on is not drawn in this editor.');
+      }
+      return;
+    }
+    // A box nothing is drawing has no rows to sit on. The roster arrives while
+    // the page is still in read mode, where the textarea is `display: none` and
+    // every measurement is zero — and a mirror given a width of zero wraps the
+    // whole document one character per row before answering with a number that
+    // means nothing. `openproj:editing` is what brings everyone back.
+    if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
+    const style = getComputedStyle(BODY);
+    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
+    const tops = SURFACE.coordsAt(
+      others.map(seat => Math.min(seat.at, SURFACE.text().length)));
+    // The layer fills `.bodywrap`, whose top is the box's border box, while
+    // `rowTops` answers from its padding box. One border-width, on every band.
+    const origin = textTop(BODY, layer);
+    const drawn = others.map((seat, which) => {
+      const top = tops[which];
       const band = document.createElement('div');
       band.className = 'seat';
-      band.style.top = (top - BODY.scrollTop) + 'px';
+      band.style.top = (origin + top - BODY.scrollTop) + 'px';
       band.style.height = height + 'px';
       band.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .22)`;
       const who = document.createElement('span');
@@ -9933,7 +13419,6 @@ const COEDIT = (() => {
       band.appendChild(who);
       return band;
     });
-    ghost.remove();
     layer.replaceChildren(...drawn);
   }
 
@@ -9944,7 +13429,7 @@ const COEDIT = (() => {
   let sentAt = -1;
   function sit() {
     if (!BODY || !bound) return;
-    const at = BODY.selectionStart;
+    const at = SURFACE.caret().from;
     if (at === sentAt) return;
     sentAt = at;
     send({t: 'at', at});
@@ -9975,6 +13460,10 @@ const COEDIT = (() => {
     bound = false;
     settle(null);
     names([]);
+    // The room no longer answers for the document, so it no longer answers for
+    // the undo buttons: they go back to the box's own stack rather than staying
+    // pressable over a history nothing will send.
+    ownHistory();
     if (why) {
       // Into its own box, never into the textarea: text put into the editing
       // surface is text somebody saves back.
@@ -9996,14 +13485,14 @@ const COEDIT = (() => {
       // reason with, so the three answers are decided by hand. `ORIGINAL_BODY`
       // is what the server rendered into this page, which is the only marker of
       // whether anything here is unsent work.
-      const mine = BODY.value !== ORIGINAL_BODY;
+      const mine = SURFACE.text() !== ORIGINAL_BODY;
       const theirs = text.toString() !== ORIGINAL_BODY;
       if (mine && theirs) {
         // Two edits and no common base — a restored draft against a room that
         // has already moved. Refuse to guess: the room's text is what is in the
         // box, and the draft goes in the conflict report to be pasted back by
         // the person who wrote it.
-        const draft = BODY.value;
+        const draft = SURFACE.text();
         reflect();
         box.hidden = false;
         box.textContent = 'Somebody is editing this document, and it has moved since your '
@@ -10015,17 +13504,44 @@ const COEDIT = (() => {
         reflect();
       }
       bound = true;
-      BODY.addEventListener('input', typed);
+      // **A surface that can say what changed is asked; one that cannot is
+      // recovered from.** The branch is on the capability and never on a name,
+      // and each side is the right answer for the surface it is on rather than
+      // one being a workaround for the other:
+      //
+      // * A `<textarea>` reports its whole value and nothing else, so `typed()`
+      //   recovers the splice from a common prefix and suffix. That is the path
+      //   that has shipped since rooms existed and it is not touched here.
+      // * Ace reports its own deltas, with a position and the lines, per edit.
+      //   Diffing its value instead would throw that away and buy back the two
+      //   measured failures `docs/EDITOR.md` records: `:%s/x/y/g` and
+      //   multi-cursor arrive as ONE splice of the whole document, credited to
+      //   whoever pressed the key rather than to the characters they typed, and
+      //   `typed()` materialises two full code-point arrays per call — 1.90ms on
+      //   a 250 KB body, ~1.4s of blocked main thread for one Replace All.
+      if (SURFACE.onSplice) SURFACE.onSplice(spliced); else SURFACE.onInput(typed);
       // Where this tab is sitting, and where everybody else's band should be
-      // drawn. Four events, because four different things move a band: the
-      // caret moving, the text moving under it, the box scrolling, and the
-      // window changing the wrap.
-      BODY.addEventListener('input', () => { sit(); drawSeats(); });
-      BODY.addEventListener('scroll', drawSeats);
-      BODY.addEventListener('keyup', sit);
-      BODY.addEventListener('click', sit);
+      // drawn. Four things move a band: the caret moving, the text moving under
+      // it, the box scrolling, and the window changing the wrap. Two of those
+      // are the surface's own subscriptions and two are the box's, and that
+      // split is the boundary rather than an accident — a caret and a document
+      // are the surface's, a scroll offset and a window are a box's.
+      SURFACE.onInput(drawSeats);
+      SURFACE.onCaret(sit);
+      SURFACE.onScroll(drawSeats);
       addEventListener('resize', drawSeats);
       sit();
+      // **The ground state is the document as you first see it.** Exactly one
+      // thing above this line can have left a step on the stack: the `mine`
+      // branch's `typed()`, which pushes a restored draft in as one tracked
+      // transaction — so without this, the first press of undo throws that draft
+      // away in one go. Undo is for what you type from here; the draft banner is
+      // the control for the other thing.
+      undos.clear();
+      // And only NOW does the room own the buttons. `bound` is what makes
+      // `reflect()` write to the box, and that write is what makes the native
+      // stack untrustworthy; before this line the browser's own is correct.
+      ownHistory();
     } else {
       // A reconnection. The document already merged everything typed while the
       // socket was down, so there is nothing to decide.
@@ -10080,7 +13596,12 @@ const COEDIT = (() => {
       if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
       BASE.value = message.commit;
       ORIGINAL_BODY = text.toString();
-      remembered.forget(DRAFT);
+      // Through the page's own `forgetDraft` and not a bare `remembered.forget`:
+      // the room committing this document is one of the three ways a draft stops
+      // existing, and a receipt left saying "draft saved 4s ago" over a draft
+      // that no longer exists is the counter claiming work is somewhere it is
+      // not.
+      forgetDraft();
       box.hidden = true;
       settle(message.commit);
       dirty();
@@ -10159,15 +13680,400 @@ const COEDIT = (() => {
 """)
 
 
+# The editing surface, in one place, because two pages draw it and it was drawn
+# twice. `_DETAIL` (with `_NEW`) put the mode class on `article.entity`; `_ISSUE`
+# and `_NOTE` put it on `<body>` and kept their own copies of `.bodybar` and
+# `.body-field` in `_RECORD_STYLE` — so the toolbar, the box and the two bars
+# either side of it were two declarations of one thing, and only one of them ever
+# got a fix. `tests/test_issues.py` exists because one of those copies once lost
+# a specificity fight `.field` against `.bodybar` and put the textarea on the same
+# line as the buttons.
+#
+# **Which way the unification goes is decided by a structural fact, not a
+# preference.** The detail template is rendered once per entity and the static
+# export puts every entity in ONE document, so "is this being edited" is a
+# property of an article and cannot be a class on `<body>`; a record page holds
+# exactly one record, so it can be either. So the record pages move to the
+# article and this block is written against `.entity.editing` once.
+#
+# Concatenated at the END of both stylesheets, and that is load-bearing rather
+# than tidy. `textarea.body-field` and `textarea.field` are both (0,1,1), and
+# `input.field, select.field, textarea.field { font: inherit }` in `_DETAIL_STYLE`
+# sets the same two properties the declaration below does — so at the front of
+# the sheet the box would resolve to the page's sans face while the column of
+# line numbers beside it stayed monospace, which is ask 4 broken by a stylesheet
+# reordering. Resolved with `tests/cascade.py` rather than guessed at.
+_EDITING_STYLE = """
+.bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
+/* The second row sits under the first rather than a paragraph's worth away: they
+   are two halves of one bar, and the box they belong to is below both. */
+.bodybar.markbar { margin-top: .25rem; }
+.entity.editing .bodybar { display: flex; }
+.entity.editing .field[hidden] { display: none; }
+/* One declaration for the box and for the numbers beside it. Written twice, the
+   gutter walks out of step with the lines it names by a pixel a line, which is
+   invisible at the top of a document and half a row down at the bottom of one —
+   and an invariant written twice is an invariant guarded once. */
+/* The seat layer is in the list because `--gutter` is written in `ch`, and `ch`
+   is resolved by whoever USES the value: the column and the box's padding both
+   resolve it in this face, and `.bodywrap.numbered .seat { left: var(--gutter) }`
+   was resolving the same token in the page's sans face and starting the bands a
+   pixel to the right of the text they sit behind. */
+textarea.body-field, .gutter, .seats { font-family: var(--font-mono);
+                                       font-size: 13px; line-height: 1.55; }
+/* And `width: 100%` means the box, not the box plus its padding and its border.
+   The detail page got this by accident, off `input.field, select.field,
+   textarea.field`; the record pages had no such rule, so their `width: 100%`
+   textarea was content-box and hung 29px past the container it was in — visible
+   the moment that container became a pane of a split rather than a column with
+   room to spare. */
+textarea.body-field { box-sizing: border-box; }
+/* Ask 4. The column is the box's own left padding, so the numbers sit in space
+   the text has already been kept out of rather than over the top of it — which
+   also means the mirror that measures the lines is measuring the same content
+   box the reader is looking at, because it copies the padding.
+   `--gutter` is set from the page, in `ch` of this face, so the column is as
+   wide as the widest number and no wider. */
+.gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--gutter, 0);
+          overflow: hidden; pointer-events: none; color: var(--muted);
+          text-align: right; }
+.gutterrows { position: absolute; left: 0; right: 0; top: 0; }
+.lineno { position: absolute; right: .45rem; }
+.bodywrap.numbered textarea.body-field { padding-left: var(--gutter); }
+/* And the bands start where the text does. A band that runs under the numbers
+   tints them with somebody else's colour, which reads as the gutter belonging to
+   whoever is in the room. */
+.bodywrap.numbered .seat { left: var(--gutter); }
+/* Asks 5 and 7, and the two facts either side of them: the strip along the FOOT
+   of the box, which is where the note this is modelled on puts them. Under the
+   box and not above it, and that is the whole reason there are two bars rather
+   than one — the toolbar is what you reach for while writing a line and belongs
+   above the line; where the caret is and how long the document is are things you
+   look down at, and a row of numbers between the toolbar and the text is a row
+   between a control and the thing it controls.
+   Smaller than the toolbar and in the muted ink: everything in it is a fact
+   about the document rather than an instruction, except the two pickers, which
+   earn their weight by being the only things in the row that respond to a
+   press. */
+.statusbar { margin: .25rem 0 0; font-size: 11px; color: var(--muted);
+             flex-wrap: wrap; }
+.stat { white-space: nowrap; }
+/* A picker that looks like the words beside it until you point at it. `Spaces:
+   2` is a value that states itself and is its own click target; drawing it as a
+   button with a border would make it the loudest thing in a row of quiet facts,
+   which is backwards — it is a setting somebody changes twice a year. So this is
+   the shell's default declined on purpose, and declining it is what `background:
+   none; border: 0` under a class means: the class outranks the element selector,
+   which is why the exception can be made here rather than by editing the rule. */
+button.stat.pick { font: inherit; color: inherit; background: none; border: 0;
+                   border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
+button.stat.pick:hover { color: var(--accent); }
+/* Over the ceiling. The one thing in this row that is not a fact but a refusal
+   waiting to happen, so it is the one thing drawn in the colour of a refusal —
+   and the word is in the element too, because a colour on its own is a channel a
+   dichromat does not have. */
+.stat.over { color: var(--danger); font-weight: 600; }
+.bodywrap { position: relative; }
+/* Three states of one thing, drawn as one control: adjacent segments inside a
+   single bordered box, the pressed one filled. Three separate buttons in a row
+   would say "three unrelated actions", which is exactly what these are not.
+   Hidden until the article is editing, for the same reason as every other
+   `.field` here: a view of an editing surface is nothing at all when there is no
+   editing surface, and the create form is always editing so it always has it. */
+.views { display: none; }
+/* No `overflow: hidden`, and that is a correction rather than a simplification.
+   The shell's focus ring is `outline: 2px solid var(--focus)` at `outline-offset:
+   2px`, drawn entirely OUTSIDE the segment's border box, and the segments fill
+   this container's padding box exactly — so clipping the container clipped the
+   ring away on every side. Pixel-diffed against the unfocused shot: 6 differing
+   pixels on the first segment, against 404 for Save on the same page. The
+   corners the clip existed for are given to the end segments instead. */
+.entity.editing .views {
+  display: inline-flex; vertical-align: middle;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+}
+/* The one place in the app where a control does NOT wear the shell's rectangle,
+   and it says so here because that rule is the default and an exception has to be
+   argued where it is made. A segment is not a button that happens to be next to
+   two others: the three are one control, the group above draws the one rectangle
+   they share, and giving each segment its own would put a doubled border down
+   every join. So `border: 0` here, and the corners below are the group's inner
+   radius — 3px outside minus the 1px border it is inside of.
+
+   `border-radius: 0` on the segment itself and not merely on the middle one: the
+   shell's rule reaches every button, so a segment that declared nothing took the
+   app's corner, and the middle of three came out with three rounded pixels at
+   each end. Nothing was visible until a segment was pressed, at which point the
+   accent fill pulled away from its neighbours and left the group's ground showing
+   through four notches. */
+.views .seg { font: inherit; line-height: 0; padding: .3rem .55rem; border: 0;
+              border-radius: 0; cursor: pointer;
+              background: var(--surface); color: var(--muted); }
+.views .seg:first-child { border-radius: 2px 0 0 2px; }
+.views .seg:last-child { border-radius: 0 2px 2px 0; }
+/* And above its neighbours while it has the ring: the segments are adjacent, and
+   a later sibling's background paints over the two pixels of ring that reach it. */
+.views .seg:focus-visible { position: relative; z-index: 1; }
+.views .seg + .seg { border-left: 1px solid var(--line); }
+.views .seg:hover { color: var(--accent); }
+.views .seg[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+/* An SVG that nothing sizes lays out at 0x0, and this application has already
+   shipped two empty boxes where a check and a cross should have been. Sized
+   here, drawn in `currentColor`, so a pressed segment's icon is the ink the
+   segment sets and not a colour of its own. */
+.views .seg svg { display: block; width: 15px; height: 15px; fill: none;
+                  stroke: currentColor; stroke-width: 1.6;
+                  stroke-linecap: round; stroke-linejoin: round; }
+/* Which editor, beside which view — a switch and not a fourth segment, because
+   it is a different question: the segments are one control with three states,
+   this is two states of a setting. It wears the same rectangle as the group next
+   to it by saying NOTHING about border, ground or corner — the shell's `button`
+   rule is the app's one look, and a control that wants the default says so by
+   not overriding it. Only the arrangement inside that rectangle is here.
+
+   Hidden until the article is editing, like the segments: a choice of editing
+   surface is nothing at all when there is no editing surface. */
+.eswitch { display: none; }
+.entity.editing .eswitch { display: inline-flex; align-items: center; gap: .4rem;
+                           vertical-align: middle; color: var(--muted); }
+.entity.editing .eswitch:hover { color: var(--accent); }
+/* Every colour here resolves a token already defined in all three blocks, so
+   there is no new value that could be right in one and wrong in another — the
+   failure that rule exists to prevent. `--line-strong` off, `--accent` on, and
+   the knob takes the ink that is legible on each. */
+.eswitch .etrack { display: block; width: 26px; height: 14px; border-radius: 7px;
+                   background: var(--line-strong); flex: none; padding: 2px;
+                   box-sizing: border-box; }
+/* No transition on the knob, and it was written and then taken out again rather
+   than left in. A switch normally animates because it flips in place; this one
+   never flips in place at all — its resting position is rendered by the server
+   and the only thing that changes it is a page load, so the travel a transition
+   would smooth is travel that never happens. The one move it does make is the
+   half-step below, and that one has to be instant: it is the acknowledgement of
+   a press, and an acknowledgement racing a navigation is one nobody sees. */
+.eswitch .eknob { display: block; width: 10px; height: 10px; border-radius: 50%;
+                  background: var(--surface); }
+.eswitch[aria-checked="true"] .etrack { background: var(--accent); }
+.eswitch[aria-checked="true"] .eknob { background: var(--on-accent);
+                                       transform: translateX(12px); }
+/* Pressed, and going. The knob stops HALFWAY rather than arriving, because
+   halfway is what is true — this page will never be the page with the other
+   editor in it, and the one that is has not landed yet. `aria-busy` says the
+   same thing to a screen reader and `announce` says it in words. */
+.eswitch.waiting .eknob { transform: translateX(6px); }
+.eswitch.waiting { opacity: .55; }
+/* The two page-chrome controls, while they are lodged in this bar rather than in
+   the nav they came from. `.corner` brings its own `margin-left: auto`, which is
+   what puts them at the far end here exactly as it does there; what it does not
+   bring is the room between them and the switcher when the row wraps. */
+.editbar > .corner { margin-left: auto; padding-left: .6rem; }
+/* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
+   panes scroll on their own.
+   `position: fixed` rather than a taller box, because the page behind it — the
+   nav, the banner, the reading measure — is not part of writing, and because a
+   surface that is exactly the window cannot be scrolled past. z-index 15 is
+   argued rather than picked: it clears the page (nothing else on it is
+   positioned above 10) and stays under the suggestion list and the hover card at
+   20, both of which are parked on `<body>` and would otherwise be painted behind
+   the surface that opened them. The width handle is 30 and is hidden here; see
+   `place`. */
+body.fullpage { overflow: hidden; }
+article.entity.full {
+  position: fixed; inset: 0; z-index: 15; overflow: hidden;
+  width: auto; max-width: none; margin: 0; padding: .6rem 1.25rem 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+}
+/* `min-height: 0` at every level between the surface and the panes, and it is
+   the whole of what makes them scroll instead of the page. A flex item's default
+   `min-height: auto` is its content, and a four-hundred-line textarea's content
+   is taller than any window — so without these the box grows past the bottom of
+   the screen and takes the commit bar with it. */
+article.entity.full > form { flex: 1 1 auto; min-height: 0;
+                             display: flex; flex-direction: column; }
+article.entity.full > .commitbar { flex: none; }
+/* `align-items: stretch`, against the container query that sets `start`: outside
+   full page the facts are a short column beside a long document and should not
+   be stretched to its height; inside it, a pane that is its content's height is
+   a pane that overflows the window. The at-rule adds no specificity, so this
+   (0,3,1) wins wherever both apply. */
+/* The floor on that row, and the `order` below it, are one fix and it is worth
+   saying what went wrong. Below the container query the panes are ONE column and
+   `.facts` comes first in the markup, so the facts took the explicit
+   `minmax(0, 1fr)` row and the document got the implicit `auto` one — and a
+   `height: 100%` box in an auto row is a box the size of its `rows` attribute.
+   Measured in Chrome at every width from 900px down, in all three views and on
+   both surfaces: the writing box was 50px, two lines, with six hundred pixels of
+   metadata above it. Full page is the feature this branch is for and under
+   ~960px of window it was a dead end.
+   `1fr` alone could not have fixed it: `fr` distributes FREE space, and the
+   facts' auto row leaves 60px of it. So the row gets a floor as well — `min()`
+   rather than a flat `30rem`, because on a window shorter than that the floor
+   would push the commit bar off the bottom, and a pane the height of the window
+   is the honest answer there.
+   And `grid-auto-rows: max-content` for the row the facts then land in. It only
+   exists in the stacked case, so it is inert in the two-column one; without it
+   the facts drew as a 59px box with fifteen fields scrolling inside it, because
+   `overflow-y: auto` on that pane makes its automatic minimum size zero and an
+   `auto` track with no space left gives it exactly that. `.panes` is the
+   scroller here, so the facts get their whole height one flick below the
+   document rather than a scrollbar of their own inside three lines. */
+article.entity.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
+                             align-items: stretch;
+                             grid-template-rows: minmax(min(30rem, 100%), 1fr);
+                             grid-auto-rows: max-content; }
+article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
+/* `order: -1` so the document takes that row and not the facts. It changes
+   nothing in the two-column case — the container query places BOTH panes
+   explicitly, at `grid-row: 1`, and `order` has no say over an item that is
+   definitely placed — and everything in the stacked one, where both are
+   auto-placed in modified document order. Reordering here rather than reversing
+   the markup, because the markup order is the reading order of the page outside
+   full page and the facts lead it there on purpose. */
+article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column;
+                                     order: -1; }
+article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
+                                 gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
+article.entity.full .bodywrap { min-height: 0; }
+/* `max-width: none` because one of the two sheets this block is concatenated to
+   caps the box at a reading measure — 44rem, right for a record page and wrong
+   for a pane that IS the window. */
+article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: none;
+                                          max-width: none; }
+/* The rendered pane is a document, not a field: it loses the rule and the space
+   above it that separate a shaping document from the facts, because in this view
+   there is nothing above it to be separated from. */
+article.entity.full #body-preview { min-height: 0; overflow-y: auto;
+                                    border-top: 0; padding-top: 0; }
+/* Two columns in the middle view, and the reader says where the join is —
+   jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you make it
+   possible to horizontally resize the editor vs the preview boxes? keeping their
+   total width constant (so they don't move the fields which are displayed on
+   their right)".
+
+   **The constant total is structural, not arithmetic**, and that is why this is
+   one property and a track rather than a layout engine: `.panes` gives `.facts` a
+   fixed `20rem` track beside this whole grid, so a ratio inside `.bodysplit`
+   cannot move that column however far the handle is dragged. There is no sum to
+   keep balanced and so nothing that can drift out of balance.
+
+   **One number, and the second track takes the remainder** — no second value that
+   can disagree with the first. `fr` shares out what is left after the handle's
+   own track, so that number IS the two panes' share of each other at every
+   window width, and a window resize cannot make it stale.
+
+   `minmax(0, …)` on both prose tracks and not a bare fraction, which is older
+   than this change and must not be lost: a grid track's default minimum is its
+   content, and one unbroken line of prose is wider than half a window — which
+   pushed the other pane off the side instead of wrapping.
+
+   The middle track is the 1.5rem this grid used to spend on `column-gap`, so the
+   handle lands exactly where the space between the panes already was. */
+article.entity.full.view-both .bodysplit {
+  grid-template-columns: minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr);
+  column-gap: 0;
+}
+/* Not a control in either of the other two views, on the six pages that inline
+   this sheet with no document to split, or outside the surface. Absent rather
+   than disabled: a separator in the tab order that divides nothing is a control
+   that lies about what the page can do. */
+#splitter { display: none; }
+/* `touch-action: none` because the alternative is the browser deciding this drag
+   was a pan: it then revokes the pointer with a `pointercancel` and no `pointerup`
+   at all, which is the one way a captured pointer can still leave a handle stuck
+   to the cursor. The script carries the branch for when it happens anyway; this
+   is what stops it being asked for. */
+article.entity.full.view-both #splitter {
+  display: block; position: relative; cursor: col-resize; touch-action: none;
+}
+/* The line down the middle, which was `#body-preview`'s `border-left` and its
+   centring padding and negative margin. The same pixel in the same place, drawn
+   by the handle now, because the affordance has to land on the line that is
+   already there and two lines down the middle is worse than none. The rule this
+   replaces is in the `width <` block below, where there is no handle to draw it. */
+article.entity.full.view-both #splitter::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 1px; background: var(--line);
+}
+/* And the grip, which is `#grip::before` in every dimension the two can share.
+   What it does not copy is the fade, deliberately: the width grip floats in the
+   page's margin with nothing else to say it is there, this one is an ink change
+   on a rule the reader can already see, and a second animated rule in an app
+   whose motion is one rule, one comment and one inventory test would cost all
+   three to buy nothing. */
+article.entity.full.view-both #splitter::after {
+  content: ""; position: absolute; left: 2px; right: 2px; top: 50%; height: 48px;
+  transform: translateY(-50%); border-radius: 2px; background: var(--line-strong);
+  opacity: .35;
+}
+article.entity.full.view-both #splitter:hover::after,
+article.entity.full.view-both #splitter.dragging::after {
+  opacity: 1; background: var(--accent);
+}
+/* Below the width where the facts stop being a column on the right there is
+   nothing to hold still, which is the whole of what this handle is for — so it
+   goes, and what is left is exactly the layout of the two panes before it
+   existed.
+
+   58.5rem is arithmetic rather than taste. `.panes` hands the facts their own
+   track at a CONTAINER width of 56rem; the container is `article.entity.full`,
+   which is `position: fixed; inset: 0` with `1.25rem` of padding a side. So the
+   two agree at 56 + 2 × 1.25, and there is no room below it either: the panes
+   have `window - 424px` between them on that page, which is 512 here against a
+   floor of 240 each.
+
+   `@media` and not `@container`, for the reason the `.marks` block gives at
+   length: the only `container-type: inline-size` in this file is in
+   `_DETAIL_STYLE`, and the note and issue pages ship `_RECORD_STYLE` and never
+   load it — a container query here would never match on two of the four pages
+   that draw this surface. On this element the viewport is not a proxy for the
+   container anyway: the surface IS the window.
+
+   Same selectors as above, so this takes the ties on order and not on weight.
+   `cascade.py` skips at-rules by construction, so that half is asked of Chrome. */
+@media (width < 58.5rem) {
+  article.entity.full.view-both .bodysplit {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1.5rem;
+  }
+  article.entity.full.view-both #splitter { display: none; }
+  article.entity.full.view-both #body-preview {
+    border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
+  }
+}
+/* Preview only is reading, and reading has a measure — the one the reader set
+   with the grip on the page they came from, which is still in `--measure` and
+   still theirs. Capped per block rather than on the pane, because the pane is
+   the scroll container and a narrow scroll container puts its scrollbar down the
+   middle of the window. */
+article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
+/* Preview only: the box goes, and the two bars of CONTROLS go with it. A toolbar
+   over no box is sixteen buttons that write into nothing, and a status bar over
+   no box is a caret position for a caret nobody can see.
+
+   **`#seatbar` is the third `.bodybar` here and it stays, deliberately.** The
+   list used to be described as "the two bars" over three class names, on a
+   surface that has four — which is how the next one added gets forgotten the
+   same way. So the rule is what a bar IS, not how many there are: the two named
+   below are controls for a box, and the seat bar is not a control at all. It is
+   a fact about the document — who else is in it — and the document is still on
+   the screen. It is also the ONLY live signal left in this view: the room goes
+   on applying somebody else's keystrokes to the text under the rendered pane,
+   and a reader watching a preview change under them with nothing on the page to
+   say why is the worse of the two silences. It costs no space when nobody else
+   is here, which is most of the time, because `#seatbar` carries no margin. */
+article.entity.full.view-view .bodywrap,
+article.entity.full.view-view .statusbar,
+article.entity.full.view-view .markbar { display: none; }
+"""
+
+
 _DETAIL_STYLE = """
-/* The commit bar sticks to the TOP on a record, not to the bottom. The shell
-   makes it `bottom: 0` because three other pages want it where their form ends;
-   here it sits under the button that opened the edit, and the whole point of
-   moving it was to put the three controls that begin, end and abandon one edit
-   in one place. Still sticky, so it is still reachable from the foot of a long
-   shaping document. `bottom: auto` as well as `top`, or it is stuck to both and
-   the browser keeps the first. */
-#commitbar { top: 0; bottom: auto; }
+/* No `#commitbar` here. The bar sticks to the top on this page because the SHELL
+   says every commit bar does, which is one rule for the four pages that draw
+   one — and an id override in this sheet was the wrong shape for it twice over:
+   it beat the shell only on the pages that load this sheet, and four do, of which
+   two kept their bar at the foot of the markup and so ended up stuck to neither
+   edge. See `.commitbar` in the shell. */
 
 .tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
@@ -10274,30 +14180,18 @@ article.entity:not(.editing) .req { display: none; }
    editing, and the values they replace are hidden once it is. */
 .field { display: none; }
 .entity.editing .field { display: block; }
-.entity.editing .field[hidden] { display: none; }
 /* Where the other people in the room are. One band per person on the line their
    caret is in, translucent so the text keeps its own contrast, with the login on
    the right — a colour on its own is a colour a reader has to be told the
    meaning of, and the two channels together need no legend.
    `pointer-events: none` throughout: the thing under this is the box being typed
    in, and a layer that takes a click is a click that does not reach it. */
-.bodywrap { position: relative; }
 .seats { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
          border-radius: 3px; }
 .seat { position: absolute; left: 0; right: 0; }
 .seatname { position: absolute; right: .25rem; top: 0;
             font-size: 10px; line-height: 1.4; padding: 0 .3rem; border-radius: 3px;
             color: var(--bg); font-family: var(--font-sans); }
-/* Off the page and measured, never seen. It carries the textarea's own metrics —
-   a mirror in a fallback face measures the fallback's line height, and every band
-   then lands on the wrong row on the one machine whose webfont has not arrived. */
-.ghost { position: absolute; visibility: hidden; top: -9999px; left: -9999px;
-         white-space: pre-wrap; word-break: break-word; }
-.bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
-/* The second row sits under the first rather than a paragraph's worth away: they
-   are two halves of one bar, and the box they belong to is below both. */
-.bodybar.markbar { margin-top: .25rem; }
-.entity.editing .bodybar { display: flex; }
 /* Who else is typing in this document, first in the bar because it is the one
    thing here that changes what you are about to do. `:empty` and not a `hidden`
    attribute somebody has to remember to set: the list is written with
@@ -10328,10 +14222,7 @@ input.field, select.field, textarea.field {
   background: var(--surface); color: inherit;
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
-textarea.body-field {
-  min-height: 60vh; font-family: var(--font-mono);
-  font-size: 13px; line-height: 1.55; resize: vertical;
-}
+textarea.body-field { min-height: 60vh; resize: vertical; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
@@ -10344,6 +14235,11 @@ textarea.body-field {
    loads both. */
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
+/* No margin of its own: this row holds one live region that is empty whenever
+   nobody else is in the document, which is most of the time, and a margin around
+   nothing is a gap above the toolbar that nothing explains. */
+#seatbar { margin: 0; }
+
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
@@ -10384,8 +14280,7 @@ textarea.body-field {
    tasks is the useful half of this feature and it must not go to the console. */
 .confirming .why { margin: 0; font-size: 12px; color: var(--danger); }
 .confirming .why[hidden] { display: none; }
-
-"""
+""" + _EDITING_STYLE
 
 
 # What a person owns, in the order they think about it. Everything not named here
@@ -10752,6 +14647,33 @@ def icon_svg(name: str) -> Markup:
 DRAFT_MARKS = {
     "create": _ICON_SVG.format('<path d="M5 12.6 9.7 17.3 19 6.9"/>'),
     "cancel": _ICON_SVG.format('<path d="M6.6 6.6 17.4 17.4M17.4 6.6 6.6 17.4"/>'),
+}
+
+
+# The toolbar's first group, drawn for exactly the reason `DRAFT_MARKS` above is.
+#
+# Every arrow anybody would reach for here is outside the vendored latin subset —
+# measured against the 230 codepoints in `inter-latin-wght-normal.woff2`: U+21B6
+# and U+21B7 (the curved arrows), U+27F2 and U+27F3 (the circular ones), U+2190,
+# U+2192, U+21A9, U+21AA and U+238C are all absent, and `•` (U+2022) and `—`
+# (U+2014) are the only two marks the shipped toolbar types that are present. So
+# a typed arrow makes the two most-pressed buttons on the bar a pair of tofu
+# boxes on any machine without a font that has them, which is precisely the
+# failure the draft row's check and cross were redrawn to avoid.
+#
+# Hand-drawn rather than copied, on the rule `_ICON_ART` is written under:
+# stroked outlines in `currentColor` at the interface's own weight, so they
+# follow the theme and the drawing in the file is the drawing on screen. The two
+# are mirrored about x=12 so that "the other direction" is legible as the same
+# shape reversed rather than as a second icon to learn.
+#
+# Sized by `.marks .hist svg` — an SVG nothing sizes lays out at 0x0, and this
+# application has shipped that twice.
+HISTORY_MARKS = {
+    "undo": _ICON_SVG.format('<path d="M9.5 4.5 5 9l4.5 4.5"/>'
+                             '<path d="M5 9h9a5 5 0 0 1 0 10h-3.5"/>'),
+    "redo": _ICON_SVG.format('<path d="M14.5 4.5 19 9l-4.5 4.5"/>'
+                             '<path d="M19 9h-9a5 5 0 0 0 0 10h3.5"/>'),
 }
 
 
@@ -11434,7 +15356,12 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
 
 
 def render_new(
-    kind: str, base_commit: str, links: Links = ROUTES, index: Index | None = None
+    kind: str,
+    base_commit: str,
+    links: Links = ROUTES,
+    index: Index | None = None,
+    editor: str = "",
+    may_write: bool = False,
 ) -> str:
     """The create page, which is the detail page in edit mode with nothing in it.
 
@@ -11455,8 +15382,16 @@ def render_new(
         rows=_new_rows(),
         base_commit=base_commit,
         links=links,
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
+        views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         templates=TEMPLATES,
     )
     return _page(
@@ -11561,6 +15496,27 @@ _CYCLE = """
 <p class="meta">No record yet{% if c.dated %} — config/cycles.yaml puts this cycle at
    {{ c.starts_on }} → {{ c.ends_on }}{% endif %}. Nothing holds these weeks: what is
    below is the record Save would write.</p>
+{% endif %}
+
+{% if editable %}
+{#- One Save for the whole page, at the top of it, where the detail page and the
+    create form now keep theirs. It was last in the markup — under the setup form,
+    the roster, the betting table and the notes box — which is a long way from the
+    row being argued about at a betting table, and since the shell's
+    `#commitbar { top: 0 }` reached this page through `_DETAIL_STYLE` it was not
+    even stuck to the foot any more: measured in Chrome at 1400x900, the bar sat
+    1113px down a 1206px page and was on screen from nowhere at the top of it.
+
+    The old argument here was F15 — "every commit action on this page sat above
+    the form it commits". What that fix actually bought was reachability, and the
+    sticky it shipped alongside is what keeps it: this page is one record and one
+    Save, and the bar is on screen at both ends of it either way. -#}
+<div class="commitbar" id="commitbar">
+  <span id="unsaved">Nothing to save</span>
+  <button type="button" id="save" disabled>Save</button>
+  <span id="state" role="status"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</div>
 {% endif %}
 
 {#- Three boxes that decide when the cycle runs and how long for, and not one of
@@ -11722,12 +15678,6 @@ what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
 {% endif %}
 
 {% if editable %}
-<div class="commitbar" id="commitbar">
-  <span id="unsaved">Nothing to save</span>
-  <button type="button" id="save" disabled>Save</button>
-  <span id="state" role="status"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</div>
 {{ combobox }}
 <script>
 const BASE = document.getElementById('base');
@@ -12129,10 +16079,7 @@ _CYCLE_STYLE = """
    glyph rather than appearing beside it, so the row does not jump. */
 .confirm { font-size: 12px; color: var(--warn); }
 td .confirm { white-space: nowrap; }
-.confirm button { font: inherit; font-size: 12px; margin-left: .25rem;
-                  padding: 0 .35rem; border-radius: 2px;
-                  border: 1px solid var(--line-strong); background: var(--surface);
-                  color: var(--fg); cursor: pointer; }
+.confirm button { font-size: 12px; margin-left: .25rem; padding: 0 .35rem; }
 .confirm button.yes { border-color: var(--danger); color: var(--danger); }
 /* The notes box, at the width of the prose it holds rather than the width of the
    betting table beside it. */
@@ -12223,9 +16170,9 @@ tr.carried td { color: var(--muted); }
    rule and the heading are what say so before the button does. */
 #create { border-top: 1px solid var(--line); margin-top: 2.5rem; padding-top: 1rem; }
 #create h2 { font-size: 1.05rem; margin: 0 0 .2rem; }
-#start { font: inherit; font-size: 13px; padding: .25rem .8rem; border-radius: 2px;
-         border: 1px solid var(--accent); background: var(--surface);
-         color: var(--accent); cursor: pointer; }
+/* The one control on this page that creates something, so it is the one drawn in
+   the accent. The shape is the default's; the colour is what is its own. */
+#start { padding: .25rem .8rem; border-color: var(--accent); color: var(--accent); }
 #confirm { margin: .6rem 0 0; font-size: 13px; }
 """
 
@@ -13759,6 +17706,8 @@ def render_issue(
     links: Links = ROUTES,
     base_commit: str | None = None,
     signed_in: str = "",
+    editor: str = "",
+    may_write: bool = False,
 ) -> str:
     """One issue, or a blank one. The same page either way.
 
@@ -13781,7 +17730,15 @@ def render_issue(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         signed_in=signed_in,
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
+        views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         # The same machinery the notes page uses, and now the same shape as well:
         # two kinds and a picker to choose between them. A pitch when the fix is
         # worth a bet somebody argues for, a task when it is only worth doing —
@@ -13989,6 +17946,8 @@ def render_note(
     links: Links = ROUTES,
     base_commit: str | None = None,
     signed_in: str = "",
+    editor: str = "",
+    may_write: bool = False,
 ) -> str:
     """One note, or a blank one. The same page either way, for the reason the
     issue page gives: a second, differently-shaped form for writing one down is
@@ -14008,7 +17967,15 @@ def render_note(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         signed_in=signed_in,
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
+        views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
         promote=(
             _promote_html(
                 view["id"],
@@ -14317,6 +18284,7 @@ def render_detail(
     only: str | None = None,
     base_commit: str | None = None,
     may_write: bool = False,
+    editor: str = "",
 ) -> str:
     """Every entity, or exactly one.
 
@@ -14359,6 +18327,16 @@ def render_detail(
         statuses=STATUSES,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
+        views=_VIEWS,
+        splitter=_SPLIT_HANDLE,
+        # The same gate the two lines below carry, and one more: the address had
+        # to ask. See `_ace`.
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         # Only where there is a server to talk to, and only for somebody it would
         # take a frame from. The static export renders the same template with
         # `editable` false, so it carries neither the library nor the script — a
@@ -14439,7 +18417,9 @@ def _combobox_html(index: Index | None) -> Markup:
         if index
         else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
     )
-    return _fragment(_COMBOBOX, suggest=data)
+    return _fragment(
+        _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS
+    )
 
 
 # The nav, as the field on `Links` each item points at and the word it wears. One
@@ -14719,11 +18699,21 @@ attachRecordTable({
 
 _ISSUE = """
 <p class="back"><a href="{{ links.issues }}">← all issues</a></p>
+{#- One record, wrapped in the element the mode class lives on. It used to live
+    on `<body>`, and it could: this page holds exactly one issue. The detail
+    template cannot — it is rendered once per entity and the static export puts
+    every entity in one document — so "is this being edited" is a property of an
+    article there, and unifying the two means moving this one rather than that
+    one. It is also what gives this page a box the full-page surface can be:
+    `article.entity.full` is `position: fixed; inset: 0`, and `<body>` is not
+    something you can fix to the window. -#}
+<article class="entity">
 {% if editable %}
 <p class="editbar">
   <button type="button" id="toggle">{{ 'Cancel' if creating else 'Edit' }}</button>
   <button type="button" id="save" {{ '' if creating else 'hidden' }}>
     {{ 'Open it' if creating else 'Save' }}</button>
+  {{ viewbar }}
   <span id="state" role="status" aria-live="polite"></span>
 </p>
 {% endif %}
@@ -14767,16 +18757,44 @@ _ISSUE = """
     {% for problem in issue.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc read">{{ issue.rendered }}</div>
   {% if editable %}
-  <p class="bodybar">
+  {#- No `.field` on this bar, and the test that says so is older than this
+      change: with that class on it, `.entity.editing .field` and
+      `.entity.editing .bodybar` are both (0,2,1) and the later one wins — which
+      put the textarea on the same line as the buttons. The sentence that used to
+      sit here, "paste or drop an image to put it in the plan", is gone for the
+      reason it went from the other two pages: the Image button IS that gesture,
+      and a sentence describing one is what a toolbar puts in a control. -#}
+  <p class="bodybar markbar">
     <span id="marks" class="marks"></span>
-    <span class="hint">paste or drop an image to put it in the plan</span>
     <span class="hint" id="upload" role="status" aria-live="polite"></span>
+    <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
   </p>
-  <textarea name="body" class="field body-field" rows="12"
-            placeholder="What happened, and how to see it again.">{{ issue.body }}</textarea>
+  <div class="bodysplit">
+    <div class="bodywrap">
+      <textarea name="body" class="field body-field" rows="12"
+                placeholder="What happened, and how to see it again."
+                >{{ issue.body }}</textarea>
+    </div>
+    {{ splitter }}
+    <div id="body-preview" class="field doc" hidden></div>
+  </div>
+  <p class="bodybar statusbar" id="statusbar"></p>
   {% endif %}
 </form>
 {{ promote }}
+</article>
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {{ combobox }}
 {% if editable %}
 <script>
@@ -14787,9 +18805,21 @@ const BASE = FORM.querySelector('[name=base_commit]');
 const BODY = FORM.querySelector('[name=body]');
 const CREATING = {{ 'true' if creating else 'false' }};
 const ORIGINAL = {{ original|tojson }};
+const ARTICLE = document.querySelector('article.entity');
+// The box holding the title, for the preview: the page suppresses the document's
+// own leading heading when it repeats the title, and a preview that does not know
+// the title cannot suppress it. The name `_VIEWS` reads it under, on all four
+// pages that carry an editing surface.
+const TITLED = document.querySelector('.title-field');
 
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = bodySurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
 
 function say(message) { SAY.textContent = message; }
@@ -14816,20 +18846,32 @@ function changed() {
 }
 
 function dirty() {
-  const count = Object.keys(changed()).length + (BODY.value !== ORIGINAL.body ? 1 : 0);
+  const count = Object.keys(changed()).length + (SURFACE.text() !== ORIGINAL.body ? 1 : 0);
   if (!CREATING) SAVE.hidden = !editing();
   SAVE.disabled = !CREATING && count === 0;
   if (!CREATING) say(count ? `${count} unsaved change${count === 1 ? '' : 's'}` : '');
 }
 
 function editing() {
-  return CREATING || document.body.classList.contains('editing');
+  return CREATING || ARTICLE.classList.contains('editing');
 }
 
-function show(on) {
-  document.body.classList.toggle('editing', on);
+// `showEditing` and not `show`, and that is the name the other two pages already
+// use: `_VIEWS` calls it when a segment is pressed on a page that is not editing
+// yet, because a view of an editing surface is nothing at all when there is no
+// editing surface. It was `show` here, which is also the name this page's
+// promote bar and the detail page's hash router reach for.
+function showEditing(on) {
+  ARTICLE.classList.toggle('editing', on);
   document.getElementById('toggle').textContent = on ? 'Cancel' : 'Edit';
   dirty();
+  // The box arrives or goes: it is `display: none` outside an editing session,
+  // and everything drawn beside it — the line numbers, the caret readout —
+  // measures zero against a box nothing is drawing.
+  dispatchEvent(new Event('openproj:editing'));
+  // And a session began or ended, which is the different fact the remembered
+  // view mode hangs off. See the comment on the same pair in `_DETAIL`.
+  dispatchEvent(new CustomEvent('openproj:session', {detail: on}));
 }
 
 FORM.addEventListener('input', dirty);
@@ -14837,7 +18879,7 @@ FORM.addEventListener('change', dirty);
 
 if (!CREATING) {
   document.getElementById('toggle').onclick = () => {
-    const on = !document.body.classList.contains('editing');
+    const on = !ARTICLE.classList.contains('editing');
     if (!on) {
       // Cancel puts back what was rendered rather than reloading: a reload would
       // also throw away a body somebody is part way through.
@@ -14847,16 +18889,25 @@ if (!CREATING) {
         const was = ORIGINAL[name];
         control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
       }
-      BODY.value = ORIGINAL.body;
+      // A whole-document replacement, made once and marked as the page's own:
+      // Cancel puts back what the server rendered, and nothing about that is a
+      // keystroke.
+      SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL.body));
     }
-    show(on);
+    // Ending the session leaves the surface the session was in, and the line
+    // that does it is one listener on `openproj:session` in `_VIEWS` rather
+    // than a copy here. It was a copy here, and on the note page, and in the
+    // detail page's `flipEditing` — and the fourth door out of a session had
+    // none: a Save made in a room ends it with a bare `showEditing(false)`.
+    // See the comment on that listener for what that left on the screen.
+    showEditing(on);
   };
-  show(false);
+  showEditing(false);
 } else {
   // Creating IS editing. Without this the page rendered every control and then
-  // hid all of them behind `body.editing`, so a new issue was a heading, a Save
+  // hid all of them behind the mode class, so a new issue was a heading, a Save
   // button and nothing to type in.
-  document.body.classList.add('editing');
+  ARTICLE.classList.add('editing');
   document.getElementById('toggle').onclick = () => { location.href = '{{ links.issues }}'; };
   dirty();
 }
@@ -14873,7 +18924,7 @@ SAVE.onclick = async () => {
       fields: CREATING
         ? {...changed(), title: read('title')}
         : changed(),
-      body: BODY.value,
+      body: SURFACE.text(),
     }),
   });
   const answer = await response.json();
@@ -14885,6 +18936,9 @@ SAVE.onclick = async () => {
   location.href = CREATING ? `{{ links.issue }}${answer.id}` : location.pathname;
 };
 </script>
+{#- After this page's own script and not before it: `_VIEWS` reads `BODY` at the
+    line it parses, and calls `showEditing` and `TITLED` on the way. -#}
+{{ views }}
 {% endif %}
 """
 
@@ -15000,11 +19054,17 @@ attachRecordTable({
 
 _NOTE = """
 <p class="back"><a href="{{ links.notes }}">← all notes</a></p>
+{#- The same wrapper the issue page grew, for the same two reasons: the mode
+    class moves off `<body>` so one block of CSS can serve all four editing
+    surfaces, and the full-page view needs an element it can fix to the window.
+    See the note on `_ISSUE`. -#}
+<article class="entity">
 {% if editable %}
 <p class="editbar">
   <button type="button" id="toggle">{{ 'Cancel' if creating else 'Edit' }}</button>
   <button type="button" id="save" {{ '' if creating else 'hidden' }}>
     {{ 'Write it down' if creating else 'Save' }}</button>
+  {{ viewbar }}
   <span id="state" role="status" aria-live="polite"></span>
 </p>
 {% endif %}
@@ -15048,16 +19108,39 @@ _NOTE = """
     {% for problem in note.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc read">{{ note.rendered }}</div>
   {% if editable %}
-  <p class="bodybar">
+  {#- No `.field` on this bar; see the note on `_ISSUE`, and the test that has
+      guarded it since before either page had a view switcher. -#}
+  <p class="bodybar markbar">
     <span id="marks" class="marks"></span>
-    <span class="hint">paste or drop an image to put it in the plan</span>
     <span class="hint" id="upload" role="status" aria-live="polite"></span>
+    <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
   </p>
-  <textarea name="body" class="field body-field" rows="12"
-    placeholder="What is the idea, and what is confusing about it.">{{ note.body }}</textarea>
+  <div class="bodysplit">
+    <div class="bodywrap">
+      <textarea name="body" class="field body-field" rows="12"
+        placeholder="What is the idea, and what is confusing about it."
+        >{{ note.body }}</textarea>
+    </div>
+    {{ splitter }}
+    <div id="body-preview" class="field doc" hidden></div>
+  </div>
+  <p class="bodybar statusbar" id="statusbar"></p>
   {% endif %}
 </form>
 {{ promote }}
+</article>
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {{ combobox }}
 {% if editable %}
 <script>
@@ -15069,9 +19152,19 @@ const BODY = FORM.querySelector('[name=body]');
 const CREATING = {{ 'true' if creating else 'false' }};
 const ORIGINAL = {{ original|tojson }};
 const FIELDS = ['title', 'status', 'written_by', 'became', 'tags'];
+const ARTICLE = document.querySelector('article.entity');
+// See the note on `_ISSUE`: the preview has to know the title, because the page
+// drops a leading heading that only restates it.
+const TITLED = document.querySelector('.title-field');
 
-attachUploads(BODY, document.getElementById('upload'));
-attachEditing(BODY, document.getElementById('marks'));
+// The one place any of this reads or writes the document. Seven operations,
+// every index in UTF-16 code units, one implementation — see the banner in the
+// shared block. Nothing below this line touches `.value` or a selection.
+const SURFACE = bodySurface(BODY);
+attachUploads(SURFACE, document.getElementById('upload'));
+attachEditing(SURFACE, document.getElementById('marks'));
+attachGutter(SURFACE, document.getElementById('gutter-note'));
+attachStatus(SURFACE, document.getElementById('statusbar'));
 for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
 
 function say(message) { SAY.textContent = message; }
@@ -15098,20 +19191,32 @@ function changed() {
 }
 
 function dirty() {
-  const count = Object.keys(changed()).length + (BODY.value !== ORIGINAL.body ? 1 : 0);
+  const count = Object.keys(changed()).length + (SURFACE.text() !== ORIGINAL.body ? 1 : 0);
   if (!CREATING) SAVE.hidden = !editing();
   SAVE.disabled = !CREATING && count === 0;
   if (!CREATING) say(count ? `${count} unsaved change${count === 1 ? '' : 's'}` : '');
 }
 
 function editing() {
-  return CREATING || document.body.classList.contains('editing');
+  return CREATING || ARTICLE.classList.contains('editing');
 }
 
-function show(on) {
-  document.body.classList.toggle('editing', on);
+// `showEditing` and not `show`, and that is the name the other two pages already
+// use: `_VIEWS` calls it when a segment is pressed on a page that is not editing
+// yet, because a view of an editing surface is nothing at all when there is no
+// editing surface. It was `show` here, which is also the name this page's
+// promote bar and the detail page's hash router reach for.
+function showEditing(on) {
+  ARTICLE.classList.toggle('editing', on);
   document.getElementById('toggle').textContent = on ? 'Cancel' : 'Edit';
   dirty();
+  // The box arrives or goes: it is `display: none` outside an editing session,
+  // and everything drawn beside it — the line numbers, the caret readout —
+  // measures zero against a box nothing is drawing.
+  dispatchEvent(new Event('openproj:editing'));
+  // And a session began or ended, which is the different fact the remembered
+  // view mode hangs off. See the comment on the same pair in `_DETAIL`.
+  dispatchEvent(new CustomEvent('openproj:session', {detail: on}));
 }
 
 FORM.addEventListener('input', dirty);
@@ -15119,7 +19224,7 @@ FORM.addEventListener('change', dirty);
 
 if (!CREATING) {
   document.getElementById('toggle').onclick = () => {
-    const on = !document.body.classList.contains('editing');
+    const on = !ARTICLE.classList.contains('editing');
     if (!on) {
       // Cancel puts back what was rendered rather than reloading: a reload would
       // also throw away a body somebody is part way through.
@@ -15129,16 +19234,25 @@ if (!CREATING) {
         const was = ORIGINAL[name];
         control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
       }
-      BODY.value = ORIGINAL.body;
+      // A whole-document replacement, made once and marked as the page's own:
+      // Cancel puts back what the server rendered, and nothing about that is a
+      // keystroke.
+      SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL.body));
     }
-    show(on);
+    // Ending the session leaves the surface the session was in, and the line
+    // that does it is one listener on `openproj:session` in `_VIEWS` rather
+    // than a copy here. It was a copy here, and on the note page, and in the
+    // detail page's `flipEditing` — and the fourth door out of a session had
+    // none: a Save made in a room ends it with a bare `showEditing(false)`.
+    // See the comment on that listener for what that left on the screen.
+    showEditing(on);
   };
-  show(false);
+  showEditing(false);
 } else {
   // Creating IS editing. Without this the page rendered every control and then
-  // hid all of them behind `body.editing`, so a new note was a heading, a Save
+  // hid all of them behind the mode class, so a new note was a heading, a Save
   // button and nothing to type in.
-  document.body.classList.add('editing');
+  ARTICLE.classList.add('editing');
   document.getElementById('toggle').onclick = () => { location.href = '{{ links.notes }}'; };
   dirty();
 }
@@ -15155,7 +19269,7 @@ SAVE.onclick = async () => {
       fields: CREATING
         ? {...changed(), title: read('title')}
         : changed(),
-      body: BODY.value,
+      body: SURFACE.text(),
     }),
   });
   const answer = await response.json();
@@ -15167,6 +19281,9 @@ SAVE.onclick = async () => {
   location.href = CREATING ? `{{ links.note }}${answer.id}` : location.pathname;
 };
 </script>
+{#- See `_ISSUE`: after this page's own script, which is where `BODY`, `TITLED`
+    and `showEditing` come from. -#}
+{{ views }}
 {% endif %}
 """
 
@@ -15244,34 +19361,43 @@ _RECORD_STYLE = """
 .doc code { background: var(--surface-2); padding: 0 .25em; }
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
-/* `display: flex` and not `inline-block`, and NOT carrying `.field`: with that
-   class on it, `body.editing .field` won on specificity and the bar went
-   inline — putting the textarea on the same line as the buttons. */
-.bodybar { display: none; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem; }
-/* The second row sits under the first rather than a paragraph's worth away: they
-   are two halves of one bar, and the box they belong to is below both. */
-.bodybar.markbar { margin-top: .25rem; }
-body.editing .bodybar { display: flex; }
+/* `.bodybar` is no longer written here. It was a second copy of the same three
+   rules, differing only in a top margin, and it is now in `_EDITING_STYLE` with
+   the box it belongs to. The argument the copy carried is kept where it can
+   still be acted on — it is on the bar's markup, in both templates: the bar must
+   NOT carry `.field`, because with that class on it `.entity.editing .field` and
+   `.entity.editing .bodybar` are both (0,2,1), the later one wins, and the
+   textarea ends up on the same line as the buttons. */
 #facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
          margin: 1rem 0; align-items: baseline; }
 #facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
             letter-spacing: .04em; }
 .field { display: none; }
-body.editing .field { display: inline-block; }
-body.editing .read { display: none; }
+/* `inline-block` and not the `block` the detail page uses, which is why this
+   line is here and not in the shared block: a fact on this page is a `<dd>`
+   holding a control and a hint beside it, and `block` puts the hint on its own
+   row. The `[hidden]` guard that goes with it IS shared, because it is the same
+   rule on both pages and this sheet did not have one — an author rule of any
+   specificity beats the UA's `[hidden] { display: none }`, so a hidden control
+   in an editing session was a visible one. */
+.entity.editing .field { display: inline-block; }
+.entity.editing .read { display: none; }
 .title-field { font-size: 1.4rem; font-weight: 700; width: 100%; max-width: 44rem; }
-.body-field { width: 100%; max-width: 44rem; font-family: ui-monospace, monospace;
-              font-size: 13px; }
+/* The measure this page reads at. The face and the line height are not written
+   here any more: they are one declaration shared with the column of line numbers
+   beside the box, because `--gutter` is written in `ch` and `ch` is resolved in
+   the font of whoever uses it. */
+.body-field { width: 100%; max-width: 44rem; }
 #facts .field { width: 100%; max-width: 28rem; font: inherit; font-size: 13px; }
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway
    through is offering to promote a document they cannot see. */
 #promote { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
-body.editing #promote { display: none; }
+.entity.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }
 #promote .hint { margin: 0; }
-"""
+""" + _EDITING_STYLE
 
 
 _NAV = (

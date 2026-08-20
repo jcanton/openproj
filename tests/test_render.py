@@ -13,11 +13,18 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
-from pages import headings, lit, selects
+from pages import elements, headings, lit, selects
 
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
-from openproj.render import STATUS_GLYPH, STATUSES, render_static
+from openproj.render import (
+    ROUTES,
+    STATUS_GLYPH,
+    STATUSES,
+    preview_html,
+    render_detail,
+    render_static,
+)
 
 PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
          "issues.html", "notes.html", "graph.html", "timeline.html")
@@ -99,17 +106,43 @@ def test_render_static_writes_every_page_and_says_which(rendered: Path, seed_ind
         assert render_static(seed_index, Path(directory)) == PAGES
 
 
+def fetches_nothing(body: str, where: str) -> None:
+    """Every way a page can ask the network for a file, in one place.
+
+    Written out inside the test that reads the eight exported files, this rule had
+    never once been applied to an editing surface: `render_static` calls
+    `render_detail` with no `base_commit`, so the exported `detail.html` carries
+    no textarea, no toolbar, no Yjs bundle and no room script at all. The rule was
+    unenforced exactly where the newest bytes in this repository land. It is a
+    function now so that the page which carries an editor is held to the same
+    words, and not to a second copy of them that can drift.
+    """
+    # Anchors to github.com are fine and wanted — a PR link that resolves is
+    # the point. What must never appear is a page FETCHING from the network.
+    assert not re.search(r'<script[^>]+src\s*=', body), where
+    assert not re.search(r'<link[^>]+href\s*=\s*["\']https?://', body), where
+    assert not re.search(r'<img[^>]+src\s*=\s*["\']https?://', body), where
+    assert "cdn." not in body, where
+
+
+def asks_for_no_font(body: str, where: str) -> None:
+    """The fourth way out, and the one a stylesheet can open without a tag.
+
+    A bare scan for `url(` over the whole page, `<script>` bodies included, which
+    is deliberate: it is the assertion a vendored editor mode was measured
+    failing twice on a tokeniser regex that fetches nothing at all. A rule that
+    holds only over the text it is allowed to read is not a rule.
+    """
+    for url in re.findall(r"url\(\s*[\"']?([^\"')]+)", body):
+        assert url.startswith("data:") or url.startswith("#"), (where, url[:60])
+    assert "fonts.googleapis" not in body and "fonts.gstatic" not in body, where
+
+
 def test_no_page_reaches_the_network(rendered: Path):
     """No npm, no build step, no CDN. A page that fetches from the internet is a
     page that breaks on a train, and this is the only test that would notice."""
     for name in PAGES:
-        body = read(rendered, name)
-        # Anchors to github.com are fine and wanted — a PR link that resolves is
-        # the point. What must never appear is a page FETCHING from the network.
-        assert not re.search(r'<script[^>]+src\s*=', body), name
-        assert not re.search(r'<link[^>]+href\s*=\s*["\']https?://', body), name
-        assert not re.search(r'<img[^>]+src\s*=\s*["\']https?://', body), name
-        assert "cdn." not in body, name
+        fetches_nothing(read(rendered, name), name)
 
 
 def test_the_libraries_are_inlined_rather_than_linked(rendered: Path):
@@ -118,10 +151,18 @@ def test_the_libraries_are_inlined_rather_than_linked(rendered: Path):
     assert 'src="' not in graph
 
 
-def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: Path):
+def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
+    rendered: Path, seed_index: Index
+):
     """The graph page once rendered blank because `DAGRE_JS` is a substring of
     `CYTOSCAPE_DAGRE_JS`: replacing markers in sequence inlined dagre twice and
-    cytoscape-dagre never. Nothing in the page said so — it just drew nothing."""
+    cytoscape-dagre never. Nothing in the page said so — it just drew nothing.
+
+    Rewritten when Ace arrived, because the old form — "four `.js` files, each
+    once in `graph.html`" — encoded an assumption that stopped being true rather
+    than a rule: every vendored script used to be a graph library. The rule the
+    old test meant is the one below, said properly.
+    """
     static = Path(__file__).resolve().parents[1] / "static"
     graph = read(rendered, "graph.html")
 
@@ -131,14 +172,26 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: 
     # ELK replaced dagre, and a list written down in a test is a list that says
     # a page is fine while it inlines a library nobody checked.
     inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
-    assert len(inlined) == 2, inlined
+    assert len(inlined) == 4, inlined
+
+    # **"Exactly once, into the page that uses it" — which is not the same claim
+    # as "exactly once, into the graph".** It was, when every vendored script was
+    # a graph library. Ace is the first that is not: it belongs to an editing
+    # surface, the graph page has none, and asserting it appears once there would
+    # have been asserting it is somewhere it must never be. So the pages are
+    # named beside the files, and a file nobody claims fails the last line rather
+    # than passing quietly.
+    editing = editable_page(seed_index, editor="ace")[1]
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
         # each of them twice and called one of them a defect. Same length as the
         # sibling check in test_injection.py, which is where that was learnt.
         signature = (static / name).read_text(encoding="utf-8")[:200]
-        assert graph.count(signature) == 1, name
+        wanted = editing if name in ("ace.js", "keybinding-vim.js") else graph
+        other = graph if wanted is editing else editing
+        assert wanted.count(signature) == 1, name
+        assert other.count(signature) == 0, f"{name} is in a page that does not use it"
 
 
 def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, seed_index: Index):
@@ -309,12 +362,26 @@ def test_the_graph_says_which_of_the_three_emptinesses_it_is(rendered: Path):
     assert "elements: ELEMENTS || []," in graph
 
 
-def test_the_graph_commits_below_the_canvas_like_every_other_page(
+def test_the_graph_commits_in_the_same_place_every_other_page_does(
     rendered: Path, seed_index: Index
 ):
-    """F15 moved Create, Edit and Save the setup below the forms they commit; the
-    graph is the fourth page with a primary action and was missed, so Save for a
-    dependency sat above the 78vh canvas the dependency is drawn on.
+    """The fourth page with a commit bar, and it is where the other three are —
+    above what it writes, jcanton 2026-08-20, "consistency!".
+
+    Twice re-argued, and both times the coordinate was the part that was wrong.
+    F15 moved this bar BELOW the canvas because Create, Edit and Save the setup
+    had all moved below the forms they commit; what those moves actually bought
+    was reach, and the `position: sticky` each shipped alongside is what delivers
+    reach from either edge. So when the shell's one rule became `top: 0`, a bar
+    last in the markup was a bar you could not see from the top of a page short
+    enough to scroll — measured in Chrome at 1400x380, off screen at scrollY 0.
+
+    It costs the drawing nothing, which is the objection that would otherwise
+    stop it: `measureRoom` sizes the canvas from what is above the box and what is
+    below it, both measured, so a bar crossing from one term to the other lands in
+    the other. Measured, `--room` went 595px to 607px at 1400x900 — the canvas
+    gained twelve pixels to a margin that collapses up there and did not down
+    there.
 
     Served rather than rendered: a static export has no server to write to, so it
     has no action bar at all — which is the other half of the claim.
@@ -324,10 +391,16 @@ def test_the_graph_commits_below_the_canvas_like_every_other_page(
     live = render_graph(seed_index, ROUTES, base_commit="deadbee")
 
     assert '<p class="editbar">' not in live, "the bar it replaced"
-    assert live.index('id="commitbar"') > live.index('<div class="canvas">')
-    assert live.index('id="connect"') > live.index('id="cy"')
-    # The shell's bar, not a fourth one drawn by hand.
-    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", live, re.S)
+    assert live.index('id="commitbar"') < live.index('<div class="canvas">')
+    assert live.index('id="connect"') < live.index('id="cy"')
+    # The shell's bar, not a fourth one drawn by hand. That this page has no
+    # second answer to which edge a commit bar sticks to is asked where it can be
+    # asked properly — `tests/test_cascade.py::test_every_commit_bar_sticks_to_
+    # the_same_edge_and_one_rule_decides_it`, which resolves the cascade by name
+    # over all four pages. A substring search here cannot tell a rule from the
+    # comment above it, and this one was written and deleted for saying that a
+    # paragraph explaining the old override was the old override.
+    assert re.search(r"\.commitbar \{[^}]*position: sticky; top: 0; bottom: auto", live, re.S)
     assert 'id="commitbar"' not in read(rendered, "graph.html")
 
 
@@ -1503,10 +1576,7 @@ def test_no_page_asks_the_network_for_a_font(rendered: Path):
     """The network assertion covers scripts, stylesheets and images. A font is the
     fourth way out, and the one a stylesheet can open without a tag."""
     for page in PAGES:
-        body = read(rendered, page)
-        for url in re.findall(r"url\(\s*[\"']?([^\"')]+)", body):
-            assert url.startswith("data:") or url.startswith("#"), (page, url[:60])
-        assert "fonts.googleapis" not in body and "fonts.gstatic" not in body, page
+        asks_for_no_font(read(rendered, page), page)
 
 
 def test_every_vendored_file_is_the_one_that_was_checksummed():
@@ -1571,6 +1641,32 @@ def test_the_vendoring_note_covers_every_file_it_is_about():
     assert "*.js *.mjs *.woff2 > SHA256SUMS" in doc
     assert "SIL Open Font License" in doc and "inter-LICENSE.txt" in doc
     assert "MIT" in doc and "yjs-LICENSE.txt" in doc
+
+
+def test_the_editor_licence_travels_with_the_editor(seed_index: Index):
+    """The same rule the font is held to, for the same reason.
+
+    All three of Ace's minified files contain zero occurrences of `Copyright`,
+    `BSD` and `Ajax.org` — upstream strips the notice when it minifies, and
+    `src-noconflict/ace.js` opens with the whole block. BSD-3 clause 2 asks for
+    the notice in a binary redistribution, and this repository already reads
+    "every rendered page is a copy" that way for Inter: a static export mailed to
+    somebody, or one HTML file on a memory stick, has redistributed the software.
+
+    So the notice is written into the page ahead of the bytes, where it travels
+    with them, and `static/ace-LICENSE.txt` is where it is read from — not typed
+    into `render.py`, so a re-vendoring that changed the licence would change
+    this too.
+    """
+    from openproj.render import _static_dir
+
+    _, page = editable_page(seed_index, editor="ace")
+    licence = (_static_dir() / "ace-LICENSE.txt").read_text(encoding="utf-8")
+    assert licence in page, "the editor ships in the page and its licence does not"
+    assert "Copyright (c) 2010, Ajax.org B.V." in page
+    # Ahead of the bytes rather than anywhere on the page: a notice after 475 KB
+    # of minified script is a notice nobody finds.
+    assert page.index("Ajax.org B.V.") < page.index("ace.define")
 
 
 def test_the_font_licence_travels_with_the_font(rendered: Path):
@@ -2191,7 +2287,221 @@ def test_a_first_heading_that_is_not_the_title_is_left_alone(rendered: Path, see
     article = re.search(rf'<article id="{differs.id}".*?</article>', body, re.S).group(0)
     first = differs.body.lstrip().splitlines()[0].lstrip("# ").strip()
 
-    assert f"<h1>{first}</h1>" in article
+    # Through the parser: an `<h1>` carries the source line it came from now, so
+    # the tag is no longer four characters, and it was the heading and not the
+    # characters that this ever meant.
+    assert first in [text for _, text in headings(article)]
+
+
+# The two syntaxes HackMD has that commonmark does not, and the line each block
+# was written on. Kept together because they are one commit's worth of renderer
+# and are checked the same way: through the parser, since the page also carries
+# the raw source of the same document inside a `<textarea>` and every one of
+# these claims is trivially true of a substring search over that.
+_WRITTEN = """## Progress
+
+- [ ] shape it
+- [x] bet on it
+
+~~Dropped~~ for now.
+"""
+
+
+def editable_page(
+    index: Index, body: str | None = None, editor: str = ""
+) -> tuple[str, str]:
+    """One entity's detail page as a writer receives it: the id, and the page.
+
+    `base_commit` and `may_write`, which is the combination the static export
+    never produces — `render_static` passes neither, so the exported file carries
+    no editing surface for a test to look at.
+
+    `editor` is the query string's `?editor=`, and it is a parameter here for the
+    same reason it is one on the route: it decides whether 594 KB of second
+    editor is in the page, and the rules about what a page may fetch have to be
+    asked of the page that carries the newest bytes.
+    """
+    one = next(iter(index.entities))
+    if body is not None:
+        index.entities[one].body = body
+    return one, render_detail(
+        index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor=editor
+    )
+
+
+def test_a_struck_out_line_and_a_task_list_render_as_what_they_are(seed_index: Index):
+    """`~~x~~` rendered as four literal tildes and `- [ ] a task` as the literal
+    text `[ ]`, so a dropped line read as emphasis nobody could see and a
+    checklist — which is the shape a pitch's Progress section is written in —
+    read as a bullet with a box drawn in ASCII."""
+    _, page = editable_page(seed_index, _WRITTEN)
+    drawn = elements(page)
+    boxes = [
+        e for e in drawn
+        if e.tag == "input" and "task-list-item-checkbox" in e.attrs.get("class", "")
+    ]
+
+    assert [("checked" in e.attrs) for e in boxes] == [False, True], "two boxes, one ticked"
+    assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
+    # And the source spelling is gone from the rendered half. Not from the page:
+    # the box below holds the document verbatim, which is the whole reason this
+    # is asked of the parsed elements and not of the served bytes.
+    items = [
+        e.text for e in drawn
+        if e.tag == "li" and "task-list-item" in e.attrs.get("class", "")
+    ]
+    assert items == ["shape it", "bet on it"]
+    assert "~~" not in " ".join(e.text for e in drawn if e.tag == "p")
+
+
+def test_the_preview_shows_the_same_two_syntaxes_the_page_will(seed_index: Index):
+    """The preview is the one place somebody checks a document before committing
+    it, and it renders through `_MD` for exactly this reason: a preview that
+    disagrees with the page about what a checkbox is, is worse than none."""
+    drawn = elements(preview_html(_WRITTEN))
+
+    assert [e.attrs.get("class") for e in drawn if e.tag == "ul"] == ["contains-task-list"]
+    assert ("s", "Dropped") in [(e.tag, e.text) for e in drawn]
+
+
+def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index):
+    """The box and the document are two views of one text, and nothing in the
+    browser can line them up unless the rendered half says where each piece was
+    written. One-based and inclusive, because that is what the editing surface
+    counts in."""
+    _, page = editable_page(seed_index, _WRITTEN)
+    at = {
+        (e.tag, e.attrs["data-startline"], e.attrs["data-endline"])
+        for e in elements(page)
+        if "data-startline" in e.attrs
+    }
+
+    assert ("h2", "1", "1") in at, "## Progress is on line 1"
+    # 3 to 5 and not 3 to 4: markdown-it's own span for a list runs to the blank
+    # line that ends it, and that is the number this passes on rather than one
+    # trimmed here. A second opinion about where a block stops is a second thing
+    # for the browser's half to disagree with.
+    assert ("ul", "3", "5") in at, "the list runs from line 3 to the blank line that ends it"
+    assert ("p", "6", "6") in at, "and the paragraph under it is line 6"
+    # Only the blocks a reader scrolls past. Every paragraph inside every list
+    # item stamped too would be bytes on every page for a resolution nothing
+    # wants, and the one thing a scroll position interpolates between is these.
+    assert not [e for e in elements(page) if e.tag == "li" and "data-startline" in e.attrs]
+
+
+def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_index: Index):
+    """The hole under both network assertions, and it is older than any editor.
+
+    `PAGES` is the eight static-export files; `render_static` calls
+    `render_detail` with no `base_commit`, so `editable` is False and the
+    exported `detail.html` carries no textarea, no toolbar, no Yjs bundle and no
+    room script. Neither rule had ever inspected an editing surface — the one
+    part of this application that is being added to — and that is what concealed
+    two `url(` tokens in a vendored editor mode from a green suite.
+    """
+    one, page = editable_page(seed_index)
+
+    # The page really is the editing one, or the rest of this passes over a
+    # reader's page and says nothing about the bytes it was written for.
+    assert '<textarea name="body"' in page and "attachEditing(" in page
+    assert "const YJS" in page and "WebSocket" in page
+
+    fetches_nothing(page, f"the editable detail page for {one}")
+    asks_for_no_font(page, f"the editable detail page for {one}")
+
+    # And the same page with 594 KB of second editor in it, which is where the
+    # newest bytes in this repository actually land. Both rules, unchanged and
+    # not loosened: `ace.js` carries 24 `url(` tokens and every one of them is a
+    # `data:` URI, and `keybinding-vim.js` carries none.
+    #
+    # The two that would have failed are in `mode-markdown.js`, at offsets 9046
+    # and 47867 — a tokeniser regex and a completion template, both of which
+    # fetch nothing at all — and that file is deliberately not vendored. Had it
+    # been, the honest answer would have been to say so in the assertion rather
+    # than to widen the pattern until a real remote URL could slip through it:
+    # this scan reads `<script>` bodies on purpose, because a rule that holds
+    # only over the text it is allowed to read is not a rule.
+    one, with_ace = editable_page(seed_index, editor="ace")
+    assert "ace.define" in with_ace, "?editor=ace did not put the editor in the page"
+    fetches_nothing(with_ace, f"the second editor on the detail page for {one}")
+    asks_for_no_font(with_ace, f"the second editor on the detail page for {one}")
+
+
+def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index):
+    """Who pays for the second editor, and it is the half of that question the
+    2026-08-20 flip could most easily have destroyed.
+
+    Ace is the DEFAULT now — jcanton, "make ace the default, I think it's worth
+    it" — so the arm of `_ace_wanted` that ships 594 KB is the one an address
+    reaches by saying nothing at all. `editable = base_commit is not None` and the
+    served route passes a commit for everyone, so a signed-out reader already
+    receives the `<textarea>`, the toolbar and two `attachEditing(` calls; if the
+    inversion had been written as one flipped comparison and nothing else, every
+    public reader would now carry the library unasked.
+
+    It did not, because the gate is `may_write` and `may_write` did not move. This
+    asks a reader's page all three ways round — no parameter, the opt-out, and the
+    opt-in they are free to type — and every one of them has to be the same bytes.
+    """
+    from openproj.render import ROUTES, render_detail
+
+    one = next(iter(seed_index.entities))
+    # A signed-out reader on the SERVED route, which is the case the audit
+    # measured and the one `editable` cannot see: the route passes a commit for
+    # everyone, so this page already carries the box, the toolbar and two
+    # `attachEditing(` calls. `may_write` is the gate, and it is a different
+    # question from `editable`.
+    reader = {
+        how: render_detail(
+            seed_index, ROUTES, only=one, base_commit="deadbee", may_write=False, **asked
+        )
+        for how, asked in (
+            ("saying nothing", {}),
+            ("asking for the plain box", {"editor": "plain"}),
+            ("asking for Ace", {"editor": "ace"}),
+        )
+    }
+    for how, page in reader.items():
+        assert "ace.define" not in page, (
+            f"a reader the server would refuse a write from carries 594 KB of editor, "
+            f"{how} — for a keymap whose every save is a 403"
+        )
+    # And no switch, for the same reason and it is not the same assertion: a
+    # control that offers a choice this reader cannot have either way is a control
+    # that lies about what the page can do. `_viewbar` asks the two gates that are
+    # not the address, which is what keeps the switch and the bytes agreeing.
+    for how, page in reader.items():
+        assert 'id="editorswitch"' not in page, (
+            f"a reader is offered a switch between two editors, {how} — and both "
+            "sides of it are the box they already have"
+        )
+    # Not merely "no `ace.define`": the same bytes, all three ways. A gate that
+    # dropped the library and still changed the page would mean the address was
+    # being read for a reader at all, which is the thing being denied.
+    assert len(set(reader.values())) == 1, (
+        "the address changes a reader's page, so something on it is reading a "
+        "parameter that must buy them nothing"
+    )
+    # And the static export, which passes neither gate.
+    exported = render_detail(seed_index, ROUTES, only=one, base_commit=None, editor="ace")
+    assert "ace.define" not in exported
+    # The controls, both ways round, or the assertions above pass because the
+    # parameter never works. A writer who says nothing gets it; a writer who opts
+    # out does not.
+    writing = render_detail(
+        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True
+    )
+    assert "ace.define" in writing, (
+        "Ace is the default for a writer since 2026-08-20 and this page has none of it"
+    )
+    plain = render_detail(
+        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor="plain"
+    )
+    assert "ace.define" not in plain, "?editor=plain is the way out and it did not work"
+    assert len(writing) > len(plain) + 500_000, (
+        "the second editor is not the 594 KB this gate exists for, so either the "
+        "gate or the measurement has moved"
+    )
 
 
 def test_the_leading_heading_is_matched_on_words_and_not_on_bytes():
@@ -2257,7 +2567,11 @@ def test_the_detail_column_is_centred_and_the_facts_sit_beside_the_document(rend
     # And it belongs to a document. On the index every article is hidden, so it
     # measured zero and parked itself down the left edge of the list.
     assert "grip.hidden = !article" in body
-    assert "candidate.offsetParent !== null" in body
+    # `getClientRects()` and not `offsetParent`, which was the visibility test
+    # until a `position: fixed` full-page article started answering null to it —
+    # the same parked handle, reached through a second door. A box with no client
+    # rects is one nothing is drawing, which is the question being asked.
+    assert "candidate.getClientRects().length > 0" in body
 
 
 def test_every_page_echoes_the_iso_value_of_a_date_box(rendered: Path):
@@ -2883,10 +3197,20 @@ return {
   window: innerHeight,
   scrolls: root.scrollHeight - root.clientHeight,
   boxTop: Math.round(rect.top), boxBottom: Math.round(rect.bottom),
-  // Positive is clear air between the bottom of the box and the top of the bar.
-  clearance: bars ? Math.round(bars.top - rect.bottom) : null,
+  // Positive is clear air between the box and the bar, whichever of them is on
+  // top. It used to be `bars.top - rect.bottom`, which is that gap only while the
+  // bar is BELOW the box, and read as -596px the day the bar moved above it —
+  // a number that says "the box is underneath the bar" about a page where the two
+  // do not touch. The claim was never about which one is lower; it is that a bar
+  // which is always on screen is always in front of something, and that something
+  // must not be the box. So: the larger of the two gaps, which is the real one,
+  // and negative only when they genuinely overlap.
+  clearance: bars ? Math.round(Math.max(bars.top - rect.bottom, rect.top - bars.bottom)) : null,
   drawnCount: nodes.length,
-  underBar: bars ? nodes.filter(n => n.bottom > bars.top + 0.5).map(n => n.id) : [],
+  // Under the bar means overlapping the band it occupies, for the same reason.
+  underBar: bars
+    ? nodes.filter(n => n.bottom > bars.top + 0.5 && n.top < bars.bottom - 0.5).map(n => n.id)
+    : [],
   offCanvas: nodes.filter(n => n.bottom > rect.bottom + 1 || n.top < rect.top - 1).map(n => n.id),
   // How far the drawing sits from each edge of the box it was fitted into. Equal
   // means centred in the room it got; unequal by hundreds means centred in the
@@ -2925,10 +3249,16 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
     views: dict[str, str], view: str, tmp_path: Path
 ):
     """`#cy` was `height: 78vh` — a fraction of the window that knows nothing
-    about the six rows above the canvas or the sticky commit bar below it. At an
+    about the six rows above the canvas or the sticky commit bar beside it. At an
     806px window the canvas ran from 268 to 899 while the bar sat across 759–806,
     so 140px of it was underneath the bar, two nodes loaded hidden there, and the
     page scrolled as well.
+
+    "Beside" and not "below" since 2026-08-20: the graph's bar moved above the
+    canvas so that every page keeps the control that commits it in one place. The
+    measurement did not care and the assertions did — `clearance` was written as
+    the gap under the box, which is the gap only while the bar is under it. It is
+    the gap between the two now, whichever way round they are.
 
     A fraction was always going to be wrong; only the amount was in question. So
     the number is measured, and this asks the browser what the measurement
@@ -2949,7 +3279,7 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
         assert got["scrolls"] == 0, f"{where}: the page scrolls {got['scrolls']}px"
         if got["clearance"] is not None:
             assert got["clearance"] >= 0, (
-                f"{where}: {-got['clearance']}px of the box is underneath the commit bar"
+                f"{where}: {-got['clearance']}px of the box and the commit bar overlap"
             )
         assert not got["underBar"], f"{where}: {got['underBar']} are drawn under the bar"
 
@@ -3055,7 +3385,15 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         # drawing in its top-right corner, which is the same rule as the others
         # — a sentence about the view must not cost the view a row — taken one
         # step further on the view where a row is worth the most.
-        "graph": ["h1.sr-only", "div#controls"],
+        #
+        # `div.commitbar` is a row and belongs here for the same reason
+        # `p.editbar` does on the table: this rule is about SENTENCES, and a row
+        # of controls is the thing a sentence was being asked to stop displacing.
+        # It moved above the canvas on 2026-08-20 so that every page keeps the
+        # control that commits it in one place, and it cost the drawing nothing —
+        # `--room` went 595px to 607px at 1400x900, because up here its top margin
+        # collapses with the filter row's and below the canvas it did not.
+        "graph": ["h1.sr-only", "div#controls", "div#commitbar.commitbar"],
         "table": ["h1.sr-only", "p.editbar", "div#controls"],
         "timeline": ["h1.sr-only", "div#controls", "form.tl-controls",
                      "ul.legend", "div.keyrow"],
@@ -3258,7 +3596,7 @@ def test_the_current_nav_item_is_drawn_and_not_merely_resolved(
 
 
 # The window changes under a page that is already open, and the graph's commit bar
-# grows a line of buttons under a canvas that is already drawn. Both are answered
+# grows a line of buttons above a canvas that is already drawn. Both are answered
 # by re-measuring, and both are events rather than rendering frames — which is the
 # whole reason they are the two the shell listens for.
 _AFTER = """
@@ -3268,8 +3606,17 @@ const state = () => ({
   room: document.documentElement.style.getPropertyValue('--room'),
   barHeight: Math.round(bar.getBoundingClientRect().height),
   scrolls: document.documentElement.scrollHeight - document.documentElement.clientHeight,
-  clearance: Math.round(bar.getBoundingClientRect().top
-                        - box.getBoundingClientRect().bottom),
+  // The gap between the bar and the box, whichever of them is on top. See `_ROOM`,
+  // which carries the same measurement and the reason it is written this way.
+  clearance: Math.round(Math.max(
+    bar.getBoundingClientRect().top - box.getBoundingClientRect().bottom,
+    box.getBoundingClientRect().top - bar.getBoundingClientRect().bottom)),
+  // How far the box runs past the bottom of the window. This is what a stale
+  // measurement looks like now that the bar is above the canvas rather than
+  // below it: the box does not stop where the window does. It used to show up as
+  // the box running UNDER the bar, which was the same fact seen through the one
+  // piece of furniture that happened to be in the way.
+  overflow: Math.round(box.getBoundingClientRect().bottom - innerHeight),
 });
 const settled = state();
 // A row of furniture appears above the canvas — a heading a future page adds, or
@@ -3319,23 +3666,29 @@ def test_a_window_that_changes_under_an_open_page_is_measured_again(
     got = measured_in(chrome(), views["graph"], tmp_path / "after.html", 700, _AFTER, 900)
 
     assert got["settled"]["scrolls"] == 0 and got["settled"]["clearance"] >= 0
+    assert got["settled"]["overflow"] <= 0
 
     # A row appeared and nothing has been told yet: this is the state `78vh` was
-    # in permanently, and it is what the resize has to undo.
-    assert got["stale"]["clearance"] < 0, (
-        "120px of furniture appeared above the canvas and it still cleared the bar, "
-        "so this proves nothing about the measurement that follows"
+    # in permanently, and it is what the resize has to undo. Asked as overflow
+    # rather than as clearance since the bar moved above the canvas: a spacer
+    # inserted between the two pushes the box off the bottom of the window and
+    # never into the bar, so clearance would report a page in perfect health here
+    # and this test would prove nothing about the measurement that follows.
+    assert got["stale"]["overflow"] > 0, (
+        "120px of furniture appeared above the canvas and it still stopped where "
+        "the window does, so this proves nothing about the measurement that follows"
     )
     assert got["stale"]["scrolls"] > 0
 
-    assert got["remeasured"]["clearance"] >= 0, (
-        f"after the resize the canvas still runs {-got['remeasured']['clearance']}px "
-        f"under the commit bar"
+    assert got["remeasured"]["overflow"] <= 0, (
+        f"after the resize the canvas still runs {got['remeasured']['overflow']}px "
+        f"past the bottom of the window"
     )
+    assert got["remeasured"]["clearance"] >= 0
     assert got["remeasured"]["scrolls"] == 0
     assert got["remeasured"]["room"] != got["stale"]["room"], "nothing was measured again"
 
-    # Edit mode is the one thing that changes the height *below* the box without
+    # Edit mode is the one thing that changes the height around the box without
     # the window moving, so `tally` asks for the measurement itself.
     assert got["editing"]["barHeight"] > got["before"]["barHeight"], (
         "the bar did not grow, so nothing here is a test of what happens when it does"

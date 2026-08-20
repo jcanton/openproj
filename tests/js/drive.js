@@ -343,6 +343,17 @@ class Element {
   appendChild(node) { this.append(node); return node; }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
 
+  // The other end of `append`, and it was missing. The status bar is built at
+  // both ends of a row a page may have put something in the middle of, so the
+  // page reaches for the standard pair — and a shim that has one and not the
+  // other is a shim that stops the whole script on the line the second is
+  // called, which is what it did: eleven tests about drafts and rooms failed on
+  // `bar.prepend is not a function`, none of them about a status bar.
+  prepend(...nodes) {
+    for (const node of nodes) node.parentNode = this;
+    this.children.unshift(...nodes);
+  }
+
   // A structural copy. The icon picker is the one place these pages clone rather
   // than build: the row it just chose already holds the exact `<svg>` the server
   // would send back, so the new mark is a node this page rendered instead of a
@@ -380,6 +391,14 @@ class Element {
   // sized box, and takes an empty list to mean "not laid out" — which is exactly
   // the state a run in here is in. Without the method at all the shell's script
   // stopped on a TypeError instead, taking the two lines after it with it.
+  //
+  // **It answers that for every element, which makes two functions no-ops in
+  // here.** The gutter's `drawGutter` and the room's `drawSeats` both open with
+  // `if (!area.getClientRects().length) return;` — "a box nothing is drawing has
+  // no rows to sit on" — so under this shim neither ever draws anything. A test
+  // written for either one in here would pass without executing the code it is
+  // about, which is the vacuous green this file has produced three times. Line
+  // numbers and seat bands are asked of Chrome, through `tests/browser.py`.
   getClientRects() { return []; }
   // The graph measures its labels against a canvas before it draws anything, so
   // without this the script stops above every line that saves a dependency.
@@ -651,6 +670,11 @@ async function run(html, expression, options) {
     setInterval: () => 0,
     clearInterval: () => {},
     requestAnimationFrame: () => 0,
+    // Its pair, which was missing: a page that coalesces work onto a frame
+    // cancels the frame when a timer beats it to the work, and a bare
+    // identifier that is not on the sandbox is a ReferenceError that stops
+    // the script on the line it appears in.
+    cancelAnimationFrame: () => {},
     Event: DriverEvent,
     CustomEvent: DriverEvent,
     EventSource: class { constructor() { this.onmessage = null; } close() {} },
@@ -667,6 +691,15 @@ async function run(html, expression, options) {
     crypto: nodeCrypto.webcrypto,
     btoa: value => Buffer.from(value, 'binary').toString('base64'),
     atob: value => Buffer.from(value, 'base64').toString('binary'),
+    // node's own, handed through rather than faked: the status bar weighs the
+    // document in UTF-8 bytes against the ceiling a save is refused at, and a
+    // hand-rolled counter here would be a second implementation of the one
+    // arithmetic this repository has already got wrong in two index spaces. A
+    // bare identifier that is not on the sandbox is a ReferenceError that stops
+    // the script on the line it appears in — which is what this was: the whole
+    // detail-page editor died on `new TextEncoder()`, three lines in, and eleven
+    // tests about drafts and rooms failed for a reason none of them was about.
+    TextEncoder,
     // No `WebSocket` unless `{socket: true}` asks for one, and the default is
     // the point: this shim is then the reader whose browser refuses the socket —
     // a `file://` copy, a proxy that drops the upgrade, a session that may not

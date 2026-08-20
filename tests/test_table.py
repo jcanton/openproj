@@ -1656,6 +1656,19 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
         assert shape in detail, shape
     assert "<label>" not in new_page, "the old flat list of labelled controls is gone"
 
+    # And they agree about where the control that commits the form is — jcanton,
+    # 2026-08-20, "consistency!". The two pages had it at opposite ends of the
+    # same markup for a day, which is the layout moving under you between reading
+    # an entity and making one, in the one place it matters most.
+    #
+    # Ordering here, pixels in `test_the_create_button_is_reachable_from_anywhere_
+    # in_the_form`. What this asks is that the two pages put the bar in the SAME
+    # place, which is a comparison rather than a coordinate — and a comparison of
+    # two markup orders is a thing a string can answer.
+    for page, which in ((new_page, "create"), (detail, "detail")):
+        assert page.index('id="commitbar"') < page.index('<dl id="facts">'), which
+        assert page.index('id="commitbar"') < page.index('class="field body-field"'), which
+
 
 def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str):
     """It was three links, and following one was a fresh page — so a title typed
@@ -1757,14 +1770,85 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
     assert "article.entity:not(.editing) .req { display: none; }" in new_page
 
 
-def test_the_create_button_follows_the_form_it_commits(new_page: str):
-    """It sat above the title, so the last thing on screen after filling a form in
-    was the body textarea and the action was a scroll back up. The bar is sticky,
-    so it is reachable from wherever the form has got to."""
-    assert new_page.index('id="commitbar"') > new_page.index('<dl id="facts">')
-    assert new_page.index('id="commitbar"') > new_page.index('class="field body-field"')
-    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", new_page, re.S)
-    assert '<p class="editbar">' not in new_page, "the bar it replaced"
+# Fill the title, then look at the Create button from three places in the form.
+# `top >= 0 && bottom <= innerHeight` is *wholly* on screen, not merely
+# intersecting: half a button hanging off an edge is a control somebody scrolls
+# to anyway, which is the thing this is about.
+_WHERE_CREATE_IS = """
+const SAVE = document.getElementById('save');
+const TITLE = document.querySelector('input[name=title]');
+TITLE.value = 'A pitch with a shaping document in it';
+TITLE.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(r => setTimeout(r, 200));
+const ROOT = document.documentElement;
+const out = {screens: ROOT.scrollHeight / innerHeight, at: []};
+const end = ROOT.scrollHeight - innerHeight;
+// A timer and not `requestAnimationFrame`: a headless Chrome under a virtual
+// clock manages two frames in three seconds, so a rAF here is a script that
+// never resumes and a harness that reports nothing at all.
+for (const y of [0, Math.round(end / 2), end]) {
+  scrollTo(0, y);
+  await new Promise(r => setTimeout(r, 80));
+  const box = SAVE.getBoundingClientRect();
+  out.at.push({y: Math.round(scrollY), text: SAVE.textContent.trim(),
+               on: box.height > 0 && box.top >= 0 && box.bottom <= innerHeight});
+}
+return out;
+"""
+
+
+def test_the_create_button_is_reachable_from_anywhere_in_the_form(
+    new_page: str, tmp_path: Path
+):
+    """The control that commits this form is on screen from every part of it — and
+    since 2026-08-20 that part of the screen is the top, so that the create page
+    and the detail page agree about where a Save lives. jcanton: "move the create
+    bar up top too, consistency!"
+
+    The history, because it is what decides how this has to be asked. The bar was
+    once STATIC and above the title: the last thing on screen after filling a form
+    in was the body box and the action was a scroll back up. The commit that fixed
+    that did two things at once — moved the bar to the foot of the form AND made
+    it sticky — and only the second delivered the guarantee. A bar that is on
+    screen wherever you have scrolled to is as reachable from the head of a form
+    as from its foot, so the edge was free and consistency spent it.
+
+    So this asks the guarantee and not the coordinate. It used to assert that the
+    bar came after `<dl id="facts">` and after the body field, which is the same
+    mistake this test had already corrected once for the class name: markup order
+    is how the fix was built, not what it promised.
+
+    And the ordering assertion was actively hiding the defect. `#commitbar { top:
+    0; bottom: auto }` was written for the detail page and put in `_DETAIL_STYLE`
+    — which this page loads too — so the create bar had already lost `bottom: 0`
+    while staying last in the markup, and was stuck to neither edge. Measured in
+    Chrome at 1400x900 with the form filled in: 1178px down the page, on screen
+    from nowhere near the top of it, under a green suite. Which is why the answer
+    now comes from Chrome.
+    """
+    # Short enough that the form really is several screens: a bar that never
+    # leaves a window nothing scrolls in proves nothing at all.
+    got = measured_in(chrome(), new_page, tmp_path / "create.html", 1400,
+                      _WHERE_CREATE_IS, height=600, patience=2500)
+
+    assert got["screens"] > 1.5, (
+        f"the form fits in {got['screens']:.1f} windows, so there is no scroll to "
+        "be caught out by and nothing below is evidence"
+    )
+    assert len({look["y"] for look in got["at"]}) == 3, "the page did not actually scroll"
+    for look, place in zip(got["at"], ("the top", "the middle", "the end"), strict=True):
+        assert look["text"] == "Create", look
+        assert look["on"], f"Create is off screen from {place} of the form: {look}"
+
+    # `.editbar` is on this page again, and this assertion is re-argued rather
+    # than deleted. It used to read `'<p class="editbar">' not in new_page`,
+    # which pinned the fix by the name of the bar that carried the bug; the bar
+    # now holds the view switcher, which is page chrome and belongs in the same
+    # place on this page as on the detail page. The argument was never about a
+    # class name — it is that the button which commits this form is its own
+    # control and not one of the page's — so that is what is asked.
+    editbar = re.search(r'<p class="editbar">.*?</p>', new_page, re.S).group(0)
+    assert 'id="save"' not in editbar and "Create" not in editbar, "the bar it replaced"
 
 
 def test_the_columns_and_the_cells_agree_on_their_order(page: str):
@@ -2158,7 +2242,23 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
     # that cannot tell a rule from an explanation of one.
     styles = re.sub(r"/\*.*?\*/", "", "".join(re.findall(r"<style>(.*?)</style>", page, re.S)),
                     flags=re.S)
-    assert "@media (max-width" not in styles, "the breakpoint that drifted is gone"
+    # **Not "no `@media (max-width` anywhere on this page", which is what this
+    # asked before.** That was a proxy that happened to hold, and it broke the
+    # day a rule about something else needed one: the sheet carrying the suggest
+    # list also carries the editor toolbar, and the toolbar has a narrow-window
+    # rule for a bar this page never draws. The claim is about the TABLE — that
+    # nothing decides its layout from a width written in CSS — so it is asked
+    # about the table's own selectors, inside every at-rule on the page.
+    # Brace-matched through `cascade._blocks`, because a non-greedy regex for a
+    # media block stops at the first rule inside it and would miss the second.
+    from cascade import _blocks
+
+    for prelude, body in _blocks(styles):
+        if not prelude.startswith("@media"):
+            continue
+        assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", body), (
+            f"the breakpoint that drifted is back, inside `{prelude}`: {body.strip()[:160]}"
+        )
     rule = re.search(r"\n(\.shed-.*?) \{ display: none; \}", styles, re.S).group(1)
     for column in _shed(page):
         assert f'.shed-{column} [data-col="{column}"]' in rule, column
@@ -4042,6 +4142,82 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     # And a row with its own reviewers is drawn the way it always was.
     for row in got["owning"]:
         assert not row["inherited"], f"{row['id']} names its own and is drawn as borrowing"
+
+
+_DROP_ON_A_DEAD_CONNECTION = r"""
+const loose = [];
+addEventListener('unhandledrejection', event => {
+  loose.push(String(event.reason));
+  event.preventDefault();
+});
+let paired = 0;
+addEventListener('openproj:writing', () => { paired++; });
+addEventListener('openproj:wrote', () => { paired--; });
+const region = document.getElementById('state');
+region.textContent = '';
+window.fetch = async () => { throw new TypeError('Failed to fetch'); };
+let threw = null;
+try { await reparent(CHILD, PARENT); } catch (error) { threw = String(error); }
+await new Promise(go => setTimeout(go, 120));
+const row = tbody.querySelector(`tr[data-id="${CHILD}"]`);
+return {
+  loose, threw, paired,
+  said: region.textContent,
+  // The row stopped waiting, which the `finally` has always done, and it is
+  // still drawn where it started, because nothing re-read the plan.
+  waiting: WRITING,
+  dimmed: row ? row.classList.contains('writing') : null,
+  parent: (DATA.rows[CHILD] || {}).parent || null,
+};
+"""
+
+
+def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
+    page: str, tmp_path: Path
+):
+    """`reparent` announces `moving task-3 into project-a…` before the request and
+    takes it back only when an answer arrives — and it was `try`/`finally` with no
+    `catch`.
+
+    A rejection runs the `finally` and carries on unwinding. So the row undimmed,
+    the paired `openproj:wrote` fired, and the live region went on saying the move
+    was happening, for ever, over a row still drawn where it started. `e82ce55`
+    fixed this exact shape on the editing surface and said in its message that the
+    uploader and Save were the only two sites with a sentence left behind them;
+    this is a third, on a gesture that is one drag rather than a paste some people
+    never make.
+
+    The sentence does not guess. A fetch rejects when the answer is lost as
+    readily as when the request never left, so it says what to do — drag it again,
+    and the compare-and-swap refuses the second one with the conflict report if
+    the first one landed.
+    """
+    got = measured_in(
+        chrome(), page, tmp_path / "drop-dropped.html", 1460,
+        _DROP_ON_A_DEAD_CONNECTION.replace("CHILD", json.dumps(TASK))
+        .replace("PARENT", json.dumps(PROJECT)),
+        patience=4800,
+    )
+
+    assert got["loose"] == [], f"the rejection still escapes: {got['loose']}"
+    assert got["threw"] is None, f"and it reaches the gesture that called it: {got['threw']}"
+    assert got["paired"] == 0, (
+        "an `openproj:writing` was left unpaired, which holds every later banner "
+        "on this page for ever"
+    )
+    assert "…" not in got["said"], (
+        f"the page is still saying the move is happening: {got['said']!r}"
+    )
+    assert TASK in got["said"] and "was not moved" in got["said"], got["said"]
+    assert "Drag it again" in got["said"], (
+        f"and it does not say what to do about it: {got['said']!r}"
+    )
+    assert got["waiting"] is None and got["dimmed"] is False, (
+        "the row is still drawn as though the write were in the air"
+    )
+    assert got["parent"] == PITCH, (
+        f"the row moved on a write that never landed: {got['parent']!r}"
+    )
 
 
 # Drag a column wider, which is what ends the automatic fit, then resize the

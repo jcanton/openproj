@@ -52,6 +52,7 @@ import pygit2
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+from pages import elements
 from test_store import commit_directly
 
 from openproj.auth import User, sign_session
@@ -2055,14 +2056,41 @@ def test_the_glyph_that_takes_somebody_out_of_a_cycle_says_so_and_asks(
     assert 'class="confirm" hidden>' in minted
 
 
-def test_the_save_button_follows_what_it_commits(client: TestClient):
-    """F15. Every commit action on this page sat above the form it commits, which
-    on a betting table means a screen away from the row being argued about."""
+def test_the_save_button_is_in_reach_of_the_whole_betting_table(client: TestClient):
+    """One Save for this page, at the top of it, where the detail page and the
+    create form keep theirs — jcanton, 2026-08-20, "consistency!".
+
+    F15's argument was that every commit action here sat ABOVE the form it
+    commits, a screen away from the row being argued about, and it moved this one
+    to the foot. What that bought was reach, and the sticky it shipped in the same
+    commit is what delivers reach: this page is one record and one Save, and a bar
+    that never leaves the window is a screen away from nothing.
+
+    It had stopped being either. `#commitbar { top: 0; bottom: auto }` was written
+    for the detail page and put in `_DETAIL_STYLE`, which this page loads, so the
+    bar lost `bottom: 0` while staying last in the markup — measured in Chrome at
+    1400x900, 1113px down a 1206px page, on screen from nowhere at the top of it,
+    with this test green because it only ever asked about markup order.
+
+    So the coordinate is gone and what it stood for is asked instead: the bar is
+    sticky, and it is ahead of the three things a person edits here rather than
+    behind all of them.
+
+    The pixels are asked once, on the create page, in
+    `test_the_create_button_is_reachable_from_anywhere_in_the_form`. All four bars
+    resolve to the same declaration in the same shell rule now — which
+    `tests/test_cascade.py::test_every_commit_bar_sticks_to_the_same_edge_and_one_
+    rule_decides_it` establishes by name, per page — so a second Chrome run here
+    would be measuring the same declaration through a different page. What is
+    left over that a browser would have caught, and that this asks instead, is
+    where the markup puts the bar.
+    """
     page = client.get("/cycle/37").text
 
-    assert page.index('id="commitbar"') > page.index('<form id="setup"')
-    assert page.index('id="commitbar"') > page.index('<table id="bets"')
-    assert "position: sticky; bottom: 0;" in page, "and stays in reach"
+    assert page.index('id="commitbar"') < page.index('<form id="setup"')
+    assert page.index('id="commitbar"') < page.index('<table id="bets"')
+    assert page.index('id="commitbar"') < page.index('id="notes"')
+    assert "position: sticky; top: 0; bottom: auto;" in page, "and stays in reach"
 
 
 def test_the_cycle_page_says_what_is_unsaved_and_that_a_save_landed(client: TestClient):
@@ -2268,20 +2296,34 @@ def test_the_preview_renders_with_the_page_s_own_markdown(client: TestClient):
         "/api/preview", json={"body": body, "title": "Bubble"}
     ).json()["html"]
 
-    assert "<table>" in previewed, "the same tables the saved page renders"
-    assert "<h1>Bubble</h1>" not in previewed, "and the same repeated title dropped"
+    def h1s(html: str) -> list[str]:
+        return [e.text for e in elements(html) if e.tag == "h1"]
+
+    tables = [e for e in elements(previewed) if e.tag == "table"]
+    assert tables, "the same tables the saved page renders"
+    assert "Bubble" not in h1s(previewed), "and the same repeated title dropped"
     # Without a title nothing is dropped: the heading is only a repetition when
     # there is something for it to repeat.
-    assert "<h1>Bubble</h1>" in client.post("/api/preview", json={"body": body}).json()["html"]
+    assert "Bubble" in h1s(client.post("/api/preview", json={"body": body}).json()["html"])
 
 
 def test_both_editors_send_the_title_they_are_previewing(client: TestClient):
     """The title that decides whether the document's own first heading is a
     repetition is the one in the box, not the one in the repository — the same
-    Save is about to change it."""
+    Save is about to change it.
+
+    It used to be two copies of one line, one per page, which is why this test
+    looped. It is one now — the live preview is a single block both pages emit —
+    so the loop asks that both still carry it and that neither has grown a second
+    copy to disagree with the first."""
     for page in (client.get(f"/detail/{TASK}").text, client.get("/new?kind=pitch").text):
         assert "const TITLED = document.querySelector('.title-field');" in page
-        assert "body: JSON.stringify({body: BODY.value, title: TITLED.value})" in page
+        asked = "JSON.stringify({body: SURFACE.text(), title: TITLED.value})"
+        assert page.count(asked) == 1
+        # And the same string is what goes on the wire, rather than being rebuilt
+        # from the two fields a second time: it is the request body and the "has
+        # anything changed since the pane was drawn" comparison at once.
+        assert "body: want, signal: previewFlight.signal," in page
 
 
 def test_the_preview_still_refuses_html(client: TestClient):

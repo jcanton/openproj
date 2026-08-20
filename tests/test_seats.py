@@ -123,8 +123,12 @@ def test_the_room_draws_a_band_where_somebody_else_is(index: Index, tmp_path: Pa
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
     got = measured_in(chrome(), page, tmp_path / "seat.html", 1200, _DRAWN, height=900)
@@ -163,8 +167,12 @@ def test_nobody_is_drawn_a_band_for_themselves(index: Index, tmp_path: Path):
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", MY_OWN_SEAT + "</body>"
     )
@@ -210,8 +218,12 @@ def test_two_people_get_two_colours_and_two_places(index: Index, tmp_path: Path)
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", TWO_PEOPLE + "</body>"
     )
@@ -239,12 +251,332 @@ def test_this_tab_says_where_it_is_sitting(index: Index, tmp_path: Path):
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
     got = measured_in(chrome(), page, tmp_path / "sent.html", 1200, _SENT, height=900)
 
     assert got["wanted"] in got["sent"], (
         f"the caret moved to {got['wanted']} and the room heard {got['sent']}"
+    )
+
+
+# S3.1's regression test, and the only one in this file that is about a pixel
+# rather than about a line.
+#
+# The band under test sits BELOW a paragraph long enough to wrap dozens of times,
+# so where it lands is a question about where every one of those wraps falls —
+# which is a question about the mirror's width, to a fraction of a pixel. The
+# mirror this replaces set `ghost.style.width = BODY.clientWidth + 'px'` on a
+# `border-box` element it had also handed the textarea's border, so it measured a
+# content box two whole borders narrower than the real one, and `clientWidth` is
+# an integer where the box is fractional. At a width sitting on a wrap boundary
+# that flips one break and every band below it is a whole 20.15px row out.
+#
+# So the width is SWEPT, one CSS pixel at a time. A single width proves nothing:
+# the error is invisible at most of them and a line height at a few.
+_WRAPPING = "\\n".join((
+    "first line",
+    "a paragraph of ordinary prose that has to wrap many times over at every one "
+    "of the widths this sweeps, which is what makes where it ends sensitive to a "
+    "mirror that is two pixels narrower than the box it mirrors. " * 10,
+    "third line",
+    "fourth line",
+    "fifth line, and the caret below is in this one",
+))
+
+WRAPPED_SEAT = """
+<script>
+addEventListener('load', () => setTimeout(() => {
+  document.getElementById('toggle').click();
+  const socket = window.__socket;
+  socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
+  const body = document.querySelector('textarea[name=body]');
+  body.value = '%LINES%';
+  body.dispatchEvent(new Event('input'));
+  window.__at = body.value.indexOf('the caret below is in this one');
+  socket.hear({t: 'who', people: ['ann', 'bo'],
+               where: [{login: 'bo', at: window.__at}]});
+}, 200));
+</script>
+""".replace("%LINES%", _WRAPPING)
+
+_BAND_AT_EVERY_WIDTH = """
+const body = document.querySelector('textarea[name=body]');
+const layer = document.getElementById('seats');
+const article = document.querySelector('article.entity');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+
+// The ground truth, built here and owing nothing to the page: a CONTENT-box div
+// with no padding and no border, given the box's real content width term by
+// term, and a zero-width marker at the caret. The page's mirror is a BORDER-box
+// div handed the box's padding and border — two constructions that have to
+// agree. Using the page's own would be a test that agrees with whatever the page
+// does, which is how the scroll-sync test came to pin its own defect in place.
+function truthTop(index) {
+  const style = getComputedStyle(body);
+  const mirror = document.createElement('div');
+  for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+                      'letterSpacing', 'whiteSpace', 'wordBreak', 'overflowWrap',
+                      'tabSize']) {
+    mirror.style[name] = style[name];
+  }
+  mirror.style.position = 'absolute';
+  mirror.style.top = '0';
+  mirror.style.left = '-9999px';
+  mirror.style.boxSizing = 'content-box';
+  mirror.style.padding = '0';
+  mirror.style.border = '0';
+  const bars = body.offsetWidth - body.clientWidth
+    - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+  mirror.style.width = (body.getBoundingClientRect().width
+    - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth)
+    - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - bars) + 'px';
+  mirror.textContent = body.value.slice(0, index);
+  const mark = document.createElement('span');
+  mark.textContent = '\\u200b';
+  mirror.append(mark);
+  document.body.append(mirror);
+  const top = mark.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
+  mirror.remove();
+  // On the screen: the box's border box, plus its border, plus its padding.
+  return body.getBoundingClientRect().top
+    + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop) + top;
+}
+
+// Let the gutter settle first. Its column is the box's own left padding, so it
+// changes where every line wraps — and it is the reason a band can be a whole row
+// out at a width where nothing else moved.
+await settle(120);
+
+const line = parseFloat(getComputedStyle(body).lineHeight);
+const answers = [];
+for (let measure = 460; measure < 540; measure++) {
+  article.style.setProperty('--measure', measure + 'px');
+  // Synchronous, and that is why it is the event and not a wait: `drawSeats`
+  // listens for this one directly, while a `ResizeObserver` is delivered on the
+  // rendering step, which the headless clock runs exactly once.
+  dispatchEvent(new Event('openproj:editing'));
+  const band = layer.firstElementChild;
+  answers.push({
+    measure,
+    bands: layer.children.length,
+    off: band ? Math.abs(band.getBoundingClientRect().top - truthTop(window.__at)) : null,
+  });
+}
+
+// And the last case, which is the one this stage created and had to close: the
+// gutter's column IS the box's own `padding-left`, so a document going from nine
+// lines to ten widens it by a character, narrows the content box and rewraps
+// every line under every band. Nothing dispatches an `input` for that, and the
+// bands were left where the old wrapping had put them until something else
+// happened to redraw them.
+article.style.setProperty('--measure', '500px');
+dispatchEvent(new Event('openproj:editing'));
+await settle(120);
+const narrow = getComputedStyle(body).paddingLeft;
+body.value = body.value + '\\n'
+  + Array.from({length: 12}, (_, at) => 'tail line ' + at).join('\\n');
+body.dispatchEvent(new Event('input', {bubbles: true}));
+await settle(120);
+const widened = {
+  was: narrow,
+  now: getComputedStyle(body).paddingLeft,
+  off: Math.abs(layer.firstElementChild.getBoundingClientRect().top
+                - truthTop(window.__at)),
+};
+
+return {answers, widened, line, numbered:
+        body.closest('.bodywrap').classList.contains('numbered')};
+"""
+
+
+def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(
+    index: Index, tmp_path: Path
+):
+    """S3.1, and the reason it is a correctness fix and not a tidy-up.
+
+    A band that is one line out is worse than no band: it points at the sentence
+    above the one somebody is actually typing in, and it does it silently.
+    `VENDOR.md` holds this whole feature to exactly that sentence.
+
+    The width is swept a pixel at a time because the failure only appears at a
+    width sitting on a wrap boundary — at most widths a mirror two pixels too
+    narrow gives the same answer as a correct one, which is why nothing in this
+    suite noticed for as long as it was there.
+    """
+    entity_id = a_record_with_a_document(index)
+    # `may_write`, because the socket is only offered to somebody the server
+    # would take a frame from — see `test_socket_offer.py`. Without it this page
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace(
+        "</body>", WRAPPED_SEAT + "</body>"
+    )
+
+    got = measured_in(
+        chrome(), page, tmp_path / "wrapped.html", 1200, _BAND_AT_EVERY_WIDTH,
+        height=900, patience=4800,
+    )
+
+    assert got["numbered"], (
+        "the gutter is off, so this sweep never asks the question it exists for: "
+        "the column is the box's own left padding and it decides where lines wrap"
+    )
+    worst = max(answer["off"] for answer in got["answers"])
+    where = max(got["answers"], key=lambda answer: answer["off"])
+    assert all(answer["bands"] == 1 for answer in got["answers"]), "nobody was drawn"
+    assert worst < 1.0, (
+        f"a band is {worst:.2f}px off the row its caret is in at --measure: "
+        f"{where['measure']}px, on a {got['line']:.2f}px row"
+    )
+
+    # The gutter's own column, which is the box's left padding: a document that
+    # grows past nine lines widens it, and everything under every band rewraps.
+    assert got["widened"]["now"] != got["widened"]["was"], (
+        "the column did not change width, so this half of the test asks nothing"
+    )
+    assert got["widened"]["off"] < 1.0, (
+        f"turning the gutter's column wider moved the text and left the band "
+        f"{got['widened']['off']:.2f}px behind, on a {got['line']:.2f}px row — "
+        "which is the defect this stage exists to remove, arriving through the "
+        "stage's own new feature"
+    )
+
+
+_REMOTE_LINES = """
+const body = document.querySelector('textarea[name=body]');
+const settle = ms => new Promise(go => setTimeout(go, ms));
+await settle(140);
+const before = {
+  numbers: document.querySelectorAll('.lineno').length,
+  lines: body.value.split('\\n').length,
+};
+
+// A real update, built the way the room builds one: a second document, a real
+// insert into the same named text, and `encodeStateAsUpdate` — which is byte for
+// byte what arrives down the socket when somebody else types. Not a synthetic
+// frame: applying it goes through `YJS.applyUpdate` and out through the page's
+// own `text.observe`, which is the path under test.
+const other = new YJS.Doc();
+other.getText('body').insert(0, 'a remote line\\nand a second\\nand a third\\n');
+const update = YJS.encodeStateAsUpdate(other);
+let bytes = '';
+for (const byte of update) bytes += String.fromCharCode(byte);
+window.__socket.hear({t: 'update', u: btoa(bytes)});
+await settle(140);
+
+return {before, after: {
+  numbers: document.querySelectorAll('.lineno').length,
+  lines: body.value.split('\\n').length,
+}};
+"""
+
+
+def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there_is_now(
+    index: Index, tmp_path: Path
+):
+    """`reflect` puts the room's text into the box by assigning `.value`, and
+    assigning `.value` fires no `input` event.
+
+    Everything drawn over this box hangs off one. `heard` already calls
+    `drawSeats(); sit();` here and says why — "somebody else's text arrived, so
+    every band below the change is now on the wrong line" — and the gutter is a
+    band by another name that was added later and was not given the same wake-up.
+    So in a live room somebody else adding three lines left your numbers counting
+    a document nobody had any more, until you typed or resized the window.
+    """
+    entity_id = a_record_with_a_document(index)
+    # `may_write`, because the socket is only offered to somebody the server
+    # would take a frame from — see `test_socket_offer.py`. Without it this page
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
+
+    got = measured_in(
+        chrome(), page, tmp_path / "remote.html", 1200, _REMOTE_LINES, height=900,
+        patience=2800,
+    )
+
+    assert got["before"]["numbers"] == got["before"]["lines"], (
+        "the gutter was already wrong before anybody else typed"
+    )
+    assert got["after"]["lines"] > got["before"]["lines"], (
+        "the remote update added no lines, so this test asks nothing"
+    )
+    assert got["after"]["numbers"] == got["after"]["lines"], (
+        f"somebody else added lines and the gutter still shows "
+        f"{got['after']['numbers']} numbers for {got['after']['lines']} lines"
+    )
+
+
+# The same room, on the second surface. Nothing is typed: the question is what
+# the page does when somebody else arrives and this editor cannot draw where
+# they are.
+_ACE_SEAT = """
+<script>
+addEventListener('load', () => setTimeout(() => {
+  document.getElementById('toggle').click();
+  const socket = window.__socket;
+  socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
+  socket.hear({t: 'who', people: ['ann', 'bo'], where: [{login: 'bo', at: 3}]});
+}, 300));
+</script>
+"""
+
+_REFUSED = """
+return {
+  surface: document.querySelector('.acebox') ? 'ace' : 'textarea',
+  bands: document.getElementById('seats').children.length,
+  together: document.getElementById('together').textContent,
+  // `announce` puts it in the page's own visible status region where there is
+  // one, and the detail page has one; `#announce` is the shell's fallback.
+  said: document.getElementById('state').textContent
+        + ' ' + document.getElementById('announce').textContent,
+};
+"""
+
+
+def test_the_second_surface_says_it_cannot_draw_where_anybody_is(index: Index, tmp_path: Path):
+    """`provides.seats` is false on Ace, and the refusal has to reach a person.
+
+    It did not. `drawSeats` asked `BODY.getClientRects().length` first — "a box
+    nothing is drawing has no rows to sit on" — and the Ace surface hides the
+    `<textarea>` and draws its own box beside it, so that guard is always true on
+    exactly the surface the sentence below it was written for. The branch that
+    decided not to act said nothing at all, which is the pattern `AGENTS.md`
+    records three shipped instances of; the two guards are in the other order
+    now, because whether a surface has seats is a fact about the surface and not
+    about whether the box it replaced is on screen.
+    """
+    entity_id = a_record_with_a_document(index)
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="ace"
+    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _ACE_SEAT + "</body>")
+
+    got = measured_in(
+        chrome(), page, tmp_path / "ace-seat.html", 1200, _REFUSED, height=900,
+        query="?editor=ace", patience=4800,
+    )
+
+    assert got["surface"] == "ace", "the page did not open on the second surface"
+    assert got["bands"] == 0, "a band was drawn by an editor nothing has measured bands in"
+    assert "bo" in got["together"], "and the half that does survive — the name — is missing"
+    assert "not drawn in this editor" in got["said"], (
+        "somebody else is in the document, no band is drawn, and the page says nothing: "
+        f"the live region reads {got['said']!r}"
     )

@@ -703,10 +703,16 @@ def test_no_title_can_inline_a_library_a_second_time(marker_static, marker_serve
     data block: 796 KB became 1.5–3.8 MB, `json.loads` on `<script id="elements">`
     raised, and the graph drew nothing. Counted from the files rather than from a
     size, because a size is a number somebody has to keep up to date."""
+    # The graph's four, named by what they are for rather than by "every `.js` in
+    # the directory". That listing was the whole set until Ace was vendored, and
+    # Ace belongs to an editing surface: the graph page has none, so counting it
+    # here would have asserted it appears once on a page it must never appear on
+    # at all. `test_every_library_is_inlined_exactly_once_and_no_marker_survives`
+    # is where the pairing of file to page is kept, and it holds both halves.
     heads = {
         path.name: path.read_text(encoding="utf-8")[:200]
         for path in STATIC_DIR.iterdir()
-        if path.suffix == ".js"
+        if path.suffix == ".js" and not path.name.startswith(("ace", "keybinding-"))
     }
     assert len(heads) == 2, "the graph vendors two libraries"
     for where, graph in (

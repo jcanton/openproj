@@ -72,6 +72,7 @@ from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
     KINDS,
+    MAX_BODY_BYTES,
     NOTE_ID_PATTERN,
     NOTE_STATUS,
     PEOPLE_DIR,
@@ -142,10 +143,10 @@ ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
 DIRECTORY = {rung.name: rung.directory for rung in KINDS}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 
-# Starlette does not bound a request body and Cloud Run will happily carry 32 MB.
-# A blob committed to git is permanent and branch protection blocks the force-push
-# that would take it back out, so the only place to stop it is before the commit.
-MAX_BODY_BYTES = 256 * 1024
+# `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
+# the editor's status bar gained a second reader for it, and it is re-exported
+# here by that import so every `web.MAX_BODY_BYTES` in this file and in the tests
+# still names the one object.
 # The largest update one socket frame may carry, which is a different kind of
 # bound and has to be derived from that one rather than written out beside it.
 # `MAX_BODY_BYTES` is policy — what this tool will put in git for ever. This is
@@ -1296,6 +1297,33 @@ def create_app(
         window = (_as_date(from_), _as_date(to))
         return page(render.render_timeline(index_now()[1], render.ROUTES, window, _as_zoom(zoom)))
 
+    def which_editor(request: Request) -> str:
+        """Which editing surface this page is asked to carry.
+
+        A query parameter and not a cookie, and that is the whole design: the
+        two surfaces are 594 KB apart and the server has to know before it
+        renders which one is in the page, while the preference that remembers the
+        choice is `localStorage` and the server cannot see it. So the address is
+        what decides, and the page carries the choice back into the address on
+        the next visit so it is typed once.
+
+        **The parameter opts out now, not in** — `?editor=plain`, on jcanton's
+        "make ace the default, I think it's worth it", 2026-08-20. The machinery
+        is unchanged and only its default arm moved, which means the page load
+        that the sticky preference costs moved with it: it is the people who want
+        the plain box who now pay a reload, and that is the better side to put it
+        on, because it is the smaller page arriving for the person who asked for
+        a smaller page rather than 594 KB arriving twice for everybody else.
+
+        Read as an allowlist and not as a string, for the reason `_status_class`
+        is written the way it is: whatever arrives goes nowhere near a lookup that
+        could be surprised by it. Both spellings are named, so that `?editor=ace`
+        keeps meaning what it always meant and a link somebody saved still opens
+        the editor it promised.
+        """
+        asked = request.query_params.get("editor", "")
+        return asked if asked in (render.ACE, render.PLAIN) else ""
+
     @app.get("/issues", response_class=HTMLResponse)
     def issues() -> HTMLResponse:
         commit, index = index_now()
@@ -1306,7 +1334,10 @@ def create_app(
         commit, index = index_now()
         who = viewer(request)
         return page(
-            render.render_issue(index, None, render.ROUTES, commit, who.login if who else "")
+            render.render_issue(
+                index, None, render.ROUTES, commit, who.login if who else "",
+                editor=which_editor(request), may_write=may_write(request),
+            )
         )
 
     @app.get("/issue/{issue_id}", response_class=HTMLResponse)
@@ -1316,7 +1347,8 @@ def create_app(
         try:
             return page(
                 render.render_issue(
-                    index, issue_id, render.ROUTES, commit, who.login if who else ""
+                    index, issue_id, render.ROUTES, commit, who.login if who else "",
+                    editor=which_editor(request), may_write=may_write(request),
                 )
             )
         except KeyError:
@@ -1412,7 +1444,10 @@ def create_app(
         commit, index = index_now()
         who = viewer(request)
         return page(
-            render.render_note(index, None, render.ROUTES, commit, who.login if who else "")
+            render.render_note(
+                index, None, render.ROUTES, commit, who.login if who else "",
+                editor=which_editor(request), may_write=may_write(request),
+            )
         )
 
     @app.get("/note/{note_id}", response_class=HTMLResponse)
@@ -1421,7 +1456,10 @@ def create_app(
         who = viewer(request)
         try:
             return page(
-                render.render_note(index, note_id, render.ROUTES, commit, who.login if who else "")
+                render.render_note(
+                    index, note_id, render.ROUTES, commit, who.login if who else "",
+                    editor=which_editor(request), may_write=may_write(request),
+                )
             )
         except KeyError:
             raise HTTPException(404, f"no note {note_id!r}") from None
@@ -1712,11 +1750,16 @@ def create_app(
         )
 
     @app.get("/new", response_class=HTMLResponse)
-    def new(kind: str = "task") -> HTMLResponse:
+    def new(request: Request, kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
         commit, index = index_now()
-        return page(render.render_new(kind, commit, render.ROUTES, index))
+        return page(
+            render.render_new(
+                kind, commit, render.ROUTES, index,
+                editor=which_editor(request), may_write=may_write(request),
+            )
+        )
 
     @app.get("/detail", response_class=HTMLResponse)
     def detail_index() -> HTMLResponse:
@@ -1744,6 +1787,7 @@ def create_app(
                 only=entity_id,
                 base_commit=commit,
                 may_write=may_write(request),
+                editor=which_editor(request),
             )
         )
 

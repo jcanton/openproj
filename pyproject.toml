@@ -12,6 +12,8 @@ dependencies = [
     "networkx>=3.3",
     "jinja2>=3.1",
     "markdown-it-py>=4.2.0",
+    # Task lists. markdown-it-py's own companion package, and zero browser bytes.
+    "mdit-py-plugins>=0.5",
     "pygit2>=1.15",
     "fastapi>=0.115",
     "uvicorn>=0.30",
