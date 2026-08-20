@@ -1607,6 +1607,56 @@ def _cyclic_members(edges: dict[str, list[str]]) -> set[str]:
     return caught | {node for node in edges if graph.has_edge(node, node)}
 
 
+def _loop_through(edges: dict[str, list[str]], node: str) -> list[str]:
+    """The shortest loop this node is on, as a chain that starts and ends on it.
+
+    Named rather than merely detected, because "that would make a loop" and
+    "pitch-a would be its own grandparent, through pitch-b" are different amounts
+    of help, and the second one says what to undo.
+
+    Walked from each of the node's own edges rather than by asking for any cycle
+    in the component: a strongly connected component containing this node also
+    contains loops it is not on, and naming one of those would send somebody to
+    edit a record that is not the problem.
+    """
+    graph = nx.DiGraph()
+    graph.add_nodes_from(edges)
+    for source, targets in edges.items():
+        graph.add_edges_from((source, target) for target in targets if target in edges)
+    for target in edges.get(node, []):
+        if target in graph and nx.has_path(graph, target, node):
+            return [node, *nx.shortest_path(graph, target, node)]
+    return [node]
+
+
+def loop_made(candidate: Entity, plan: Iterable[Entity]) -> str | None:
+    """The loop this record would put itself on, named, or None.
+
+    `validate_all` reports parent and blocked-by cycles as blockers, and reporting
+    is the right answer for a plan that ARRIVED with one: a file in git is a fact,
+    and refusing to load it would take every page down over somebody else's
+    mistake. It is the wrong answer for a plan about to acquire one, which is what
+    a PATCH of `parent` or `depends_on` can do — the blocker would land after the
+    commit, on a protected branch, and the repair is a second crafted PATCH
+    against a plan that is now reporting a problem nobody can see the cause of.
+
+    Both graphs are asked through the same `_cyclic_members` that `validate_all`
+    asks, so a save cannot be refused for a loop the validator would not report,
+    or committed into one it would.
+    """
+    by_id = {entity.id: entity for entity in plan if entity.id != candidate.id}
+    by_id[candidate.id] = candidate
+    for field, edges in (
+        ("parent", {i: [e.parent] if e.parent else [] for i, e in by_id.items()}),
+        ("depends_on", {i: list(e.depends_on) for i, e in by_id.items()}),
+    ):
+        if candidate.id in _cyclic_members(edges):
+            chain = " → ".join(_loop_through(edges, candidate.id))
+            word = "filed under itself" if field == "parent" else "waiting for itself"
+            return f"that would leave {candidate.id} {word}: {chain}"
+    return None
+
+
 def _dependency_problems(
     entity: Entity, by_id: dict[str, Entity], parent_cycles: set[str], dep_cycles: set[str]
 ) -> Iterator[tuple[str, str | None, str, int]]:
@@ -1625,6 +1675,36 @@ def _dependency_problems(
             yield "blocker", "depends_on", f"cannot depend on {target}: it is a descendant", 1
         elif by_id[target].status == "shelved":
             yield "warning", "depends_on", f"blocked by {target}, which is shelved", 1
+
+
+def under(entity_id: str, children: dict[str, list[str]]) -> list[str]:
+    """Every record filed below this one, however deep, each once and not itself.
+
+    What a delete has to cascade over. Read from the index's `children` map — ids
+    rather than entities, which is the shape the write path has — and returned in
+    the order the walk finds them, sorted by the caller where it is shown to
+    somebody.
+
+    Shelved work is included, unlike in `reviewers_under` below. The two ask
+    different questions: that one asks who is reviewing live work, and parked work
+    has nobody; this one asks what would be orphaned, and a shelved task under a
+    deleted pitch is orphaned exactly as much as a ready one.
+
+    **The walk remembers where it has been**, for the reason spelled out at length
+    on `reviewers_under`: a plan is allowed to contain a parent cycle, and the
+    version of that function without a `seen` set took a laptop down.
+    """
+    found: list[str] = []
+    seen: set[str] = {entity_id}
+    stack = list(children.get(entity_id, []))
+    while stack:
+        child = stack.pop()
+        if child in seen:
+            continue
+        seen.add(child)
+        found.append(child)
+        stack += children.get(child, [])
+    return found
 
 
 def reviewers_under(entity_id: str, children: dict[str, list[Entity]]) -> list[str]:

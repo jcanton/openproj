@@ -21,6 +21,14 @@ and each says why it is still here.
 
 ## What was tried and dropped
 
+* **A `<select>` converted into a button-and-menu, four more times.** The table's
+  filter dropdowns are buttons because a native `<select>` cannot draw the caret
+  and the ground this page wants. The timeline's zoom and the issues and notes
+  state filters were offered the same conversion and did not get it — jcanton,
+  2026-08-20: give them the border, the ground and the radius and keep the
+  browser's caret. One rule against four popups with their own keyboard handling
+  and their own tests, for a control with one choice in it.
+
 * **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
   jcanton used it: a pitch could not be dropped into a project at all, and taking
   one out looked like nothing happening — the project's outline follows the pitch
@@ -39,18 +47,94 @@ and each says why it is still here.
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
+* **Group-level ordering the layout does not guarantee.** ELK's recursive engine
+  lays each box out over its own children and then lays the boxes out — and the
+  root pass cannot reliably see a dependency between the CHILDREN of two boxes.
+  Measured on a three-box synthetic where each box also holds an internal chain:
+  all three stacked at the same x with both cross-box arrows drawn backwards. The
+  real plan is immune by accident — its two project-to-project dependencies are
+  root-level edges that carry the order — and the synthetic plans from
+  `tests/plans.py` show 5 backwards of 76 at 208 records and 24 of 189 at 518.
+
+  The fix the audit costed at twelve lines: before each layout, add invisible
+  "ghost" edges between the top-level ancestors of every cross-group dependency,
+  and remove them on `layoutstop`. Style them `opacity: 0` and `events: no` —
+  never `display: none`, which drops them out of `:visible` and out of the
+  layout.
+
+  It is written down rather than built because its whole risk is leakage. A ghost
+  that survives one `layoutstop` makes two unrelated projects neighbours in
+  `applyFilter`'s `neighborhood()`, becomes tappable in edit mode, is walked by
+  the cycle check, and would be sent to the server by Save. That is a lot of
+  surface for an ordering nobody has complained about yet.
+  `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
+  fails on a corpus nobody touched, this is the entry to read.
+
+* **An edge that goes round a card instead of under it.** Wanted, designed, not
+  built — jcanton, 2026-08-20, on seeing a card sitting on a line: "to a
+  distracted human not noticing that there are no arrowheads, [it] may make it
+  seem like it depends on where the edge comes from and is blocking implement
+  external forcing".
+
+  **What was tried and does not work.** ELK's own edge routing. Measured on a
+  208-record plan built by `tests/plans.py`, ELK returned bend points for ZERO of
+  76 edges, in each of `ORTHOGONAL`, `POLYLINE` and `SPLINES`. That is not a bug
+  and there is nothing to patch: at the level ELK is working the route between two
+  boxes genuinely is unobstructed, because the cards it appears to cross are
+  inside other boxes, which at that level are opaque rectangles. What is wanted is
+  obstacle avoidance ACROSS hierarchy levels.
+
+  **Why not fork elkjs.** Two reasons, and the second is the one that settles it.
+  `elk.bundled.js` is the Java Eclipse Layout Kernel put through the GWT
+  transpiler, so a fork means a Java project and a GWT build in a repository whose
+  premise is `No npm, no build step`. And the capability is not in ELK's Java
+  either: hierarchy-crossing obstacle routing comes from **libavoid**, which ELK
+  binds to as native C++ and which therefore cannot be transpiled into elkjs at
+  all. A perfect fork could not reach it.
+
+  **What to build instead.** Route in the page, over the absolute positions ELK
+  has already produced — which is exactly where the obstacles are real. The
+  standard shape:
+
+  1. Take the finished drawing: every leaf card and every box as a rectangle,
+     inflated by a few pixels of clearance.
+  2. Build a visibility grid — the x of every rectangle edge and the y of every
+     rectangle edge, which is the "Hanan grid" and is `O(n²)` cells for `n`
+     rectangles but sparse in practice.
+  3. A* each edge from its source's border to its target's border, with a cost
+     that charges for length, for every turn (so it comes out orthogonal rather
+     than staircased), and heavily for entering a rectangle that is not one of its
+     own two ends.
+  4. Hand the bend points to `drawRoutes` in `render.py`, which already exists and
+     already converts a list of absolute points into cytoscape's
+     `segment-weights` / `segment-distances`. That function is the whole interface
+     — nothing else has to change.
+
+  Roughly two hundred lines, no new dependency, no licence, no build step.
+
+  **The instrument already exists.** `tests/test_graph_layout.py` measures
+  `under`: how many edges cross a card that is neither of their two ends,
+  reconstructed from the bend points, with an edge's own descendants excluded
+  because cytoscape draws from a compound's CENTRE and so an edge attached to a
+  box necessarily starts among its children. Today, at 1900x820: **4 on the real
+  plan, 13 at 208 records, 43 at 518.** Those are the numbers to beat, and the
+  test carries them as a bound rather than as an assertion of zero.
+
+  **Where it will get fiddly**, so nobody is surprised: which point on a card's
+  border an edge should leave from and arrive at; keeping parallel edges from
+  being drawn on top of each other once they are all orthogonal; not making
+  crossings worse while removing overlaps; and staying fast enough that the
+  filter, which re-lays-out on a change of the visible set, does not stutter.
+  Consider routing only after the layout settles rather than on every keystroke.
+
+  **Do not start this before using the current drawing for a few days.** Edges are
+  drawn over the cards now, so a line that crosses one is visibly a line that
+  crosses it rather than one that ends there, and anything in the way can be
+  dragged aside. The question this answers is whether the remaining crossings are
+  still annoying once they are no longer ambiguous, and that is worth finding out
+  before spending two hundred lines on it.
+
 * **The review deck**, awaiting jcanton's feedback after a proper read.
-* **A write can still create a loop.** jcanton asked, 2026-08-19: "doesn't
-  openproj forbid cycles? if not we should". Today it detects them — `validate_all`
-  reports a parent cycle and a blocked-by cycle as blockers, through
-  `_cyclic_members` — but nothing stops a PATCH of `parent` or `depends_on` from
-  closing one, and the blocker then lands after the commit, on a protected branch.
-  The shape of the fix is a `loop_made(candidate, plan)` in `model.py` asking that
-  same `_cyclic_members` with this record's proposed edges substituted, called from
-  `save()` and `create()` in `web.py` — so a refusal and a report cannot disagree.
-  Detecting rather than refusing is right for a plan that *arrives* with a loop: a
-  file in git is a fact, and refusing to load it takes every page down over
-  somebody else's mistake. That is the distinction the fix has to keep.
 * **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
   the library shortlist and the list of what must not be lost are in
   `docs/EDITOR.md`.

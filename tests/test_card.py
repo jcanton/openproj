@@ -433,3 +433,143 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
 
     assert got["bodies"] == 1, f"{got['bodies']} documents in one card"
     assert got["text"] == 1
+
+
+# The card is queued behind a delay, so this cannot read `hidden` in the same
+# breath as the hover — it would report "no card" about a card that was on its
+# way. The answer is written from a continuation instead: `--dump-dom` reads the
+# page at the end of its virtual time, so the last write of `data-report` is the
+# one the harness brings back.
+#
+# The arithmetic matters and it is the harness's `patience` that pays for it: the
+# script is injected at 1200ms and the virtual clock stops `patience` later, so a
+# continuation that runs past it leaves the placeholder in the DOM and the test
+# reports nothing at all — which reads exactly like a card that never came up.
+# `CARD_DELAY` is 400, and this waits 460 once per box plus once at the start.
+_OVER_A_BOX = """
+const card = document.getElementById('card');
+// One box of each kind that draws one. A project holding pitches and a pitch
+// holding tasks are the same thing to cytoscape — both are `isParent()` — but
+// asking only the first parent asked only about a project, and "it is the same
+// code path" is the sort of claim that stops being true quietly.
+const boxes = {};
+for (const node of cy.nodes().filter(one => one.isParent())) {
+  const kind = node.data('kind');
+  if (!boxes[kind]) boxes[kind] = node;
+}
+const picked = Object.values(boxes);
+if (!picked.length) return {error: 'the corpus has no box'};
+
+const hover = (node, at) =>
+  node.emit({type: 'mouseover', position: at, originalEvent: {clientX: 10, clientY: 10}});
+const middleOf = node => {
+  const box = node.boundingBox({includeLabels: false});
+  return {x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2};
+};
+const titleOf = node => {
+  const box = node.boundingBox({includeLabels: false});
+  return {x: box.x1 + 20, y: box.y1 + 10};
+};
+
+// Every middle first, so nothing is showing before the titles are tried.
+picked.forEach(node => hover(node, middleOf(node)));
+setTimeout(() => {
+  const middles = card.hidden;
+  const said = {};
+  // One title at a time, each answered before the next is asked — two hovers in
+  // one frame would leave only the last one's card up.
+  const askEach = i => {
+    if (i === picked.length) {
+      document.body.dataset.report = JSON.stringify({middles, said});
+      return;
+    }
+    hover(picked[i], titleOf(picked[i]));
+    setTimeout(() => {
+      said[picked[i].data('kind')] = card.hidden ? 'nothing' : 'a card';
+      cy.emit('pan');   // put it away before the next one is asked
+      askEach(i + 1);
+    }, 460);
+  };
+  askEach(0);
+}, 460);
+return {middles: null};
+"""
+
+
+def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_path: Path):
+    """jcanton, 2026-08-20: the card should come up over a box's title, not over
+    the whole box.
+
+    A compound node is hit over its entire area, and almost all of that area is
+    where its children are drawn. So reading a project's tasks meant dragging the
+    pointer through a card about their parent — in the way of the very thing being
+    read, on the view whose whole job is showing what is inside what.
+    """
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    # Longer than the default: this answers from a continuation, and the waits it
+    # needs are one `CARD_DELAY` per box plus the first one.
+    got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX,
+                      height=1000, patience=3000)
+
+    assert not got.get("error"), got
+    assert got["middles"] is not None, "the continuation never ran, so nothing was measured"
+    assert got["middles"] is True, "a card came up over the middle of a box"
+    # A project holding pitches and a pitch holding tasks, both of them.
+    assert set(got["said"]) >= {"project", "pitch"}, (
+        f"only {sorted(got['said'])} was asked, so the other kind of box is untested"
+    )
+    for kind, answer in got["said"].items():
+        assert answer == "a card", f"a {kind}'s own title brought up {answer}"
+
+
+# How many times the card's markup changes between the hover and the card being
+# up. Two is the defect: the fields, then the body a moment later, with the box
+# growing and re-placing itself in between.
+_PAINTS = """
+// The title cell, which is what the table listens on — a hover anywhere else in
+// the row is a pointer on its way somewhere and opens nothing.
+const cell = document.querySelector('tbody tr[data-id] td[data-col="title"]');
+const card = document.getElementById('card');
+// A server, stubbed, because this page is a file and there is none — and the
+// point under test is when the document is DRAWN, not where it came from. 50ms
+// is a plausible round trip and well inside the 400ms the card waits anyway.
+window.fetch = () => new Promise(resolve => setTimeout(() => resolve({
+  ok: true, json: () => Promise.resolve({html: '<p>the shaping document</p>'}),
+}), 50));
+
+let paints = 0;
+new MutationObserver(() => paints++).observe(card, {childList: true, subtree: true});
+
+cell.dispatchEvent(new PointerEvent('pointerover', {bubbles: true, clientX: 40, clientY: 40}));
+setTimeout(() => {
+  document.body.dataset.report = JSON.stringify({
+    paints,
+    shown: !card.hidden,
+    hasBody: !!card.querySelector('.card-body'),
+  });
+}, 900);
+return {paints: null};
+"""
+
+
+def test_the_card_arrives_in_one_piece(index: Index, tmp_path: Path):
+    """jcanton, 2026-08-20: "the frontmatter is rendered faster than the body,
+    which lags behind for a split second".
+
+    The fields were drawn the moment the card appeared and the shaping document
+    was fetched afterwards, so the box grew and re-placed itself just after
+    arriving. The fetch now starts when the pointer arrives and the card is drawn
+    400ms later, which is hover-intent time that was being spent on nothing —
+    so the answer is normally already here and both halves land in one paint.
+    """
+    page = render_table(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "paint.html", 1400, _PAINTS,
+                      patience=2500)
+
+    assert got["paints"] is not None, "the continuation never ran"
+    assert got["shown"], "no card came up at all"
+    assert got["hasBody"], "the card came up without the document it exists to show"
+    assert got["paints"] <= 1, (
+        f"the card's markup changed {got['paints']} times: the body still lands "
+        "in a second pass"
+    )

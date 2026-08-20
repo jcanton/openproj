@@ -1529,7 +1529,7 @@ def in_chrome_room(
     answer = measured_in(
         chrome(), seeded, where, 1400,
         f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
-        budget=8000, query=query,
+        patience=6800, query=query,
     )
     assert answer["errors"] == [], f"the page threw: {answer['errors']}"
     for frame in answer.get("sent", []):

@@ -714,7 +714,7 @@ def test_no_title_can_inline_a_library_a_second_time(marker_static, marker_serve
         for path in STATIC_DIR.iterdir()
         if path.suffix == ".js" and not path.name.startswith(("ace", "keybinding-"))
     }
-    assert len(heads) == 4, "the graph vendors four libraries"
+    assert len(heads) == 2, "the graph vendors two libraries"
     for where, graph in (
         ("static", marker_static["hostile"]["graph.html"]),
         ("served", marker_served["hostile"]["graph"]),

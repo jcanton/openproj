@@ -35,6 +35,7 @@ from .model import (
     note_problems,
     sections,
     size_weeks,
+    under,
     validate_all,
 )
 from .query import QueryError, evaluate, parse
@@ -539,6 +540,33 @@ def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
         name for name in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, name)
     ]
     return fields
+
+
+def cascade_of(index: Index, entity_id: str) -> tuple[list[str], list[str]]:
+    """What deleting this record takes with it: (also deleted, edited).
+
+    Two different consequences, and conflating them would be the destructive
+    mistake. A record filed UNDER this one has nowhere to be once it is gone, so
+    it goes too — the whole subtree, however deep. A record that DEPENDS on this
+    one is unrelated work that merely waits for it: deleting that would be a
+    two-click gesture reaching across the plan into somebody else's task. It
+    keeps its file and loses the dependency.
+
+    Shelved work is in both lists. It is parked, not exempt: a shelved task under
+    a deleted pitch is orphaned exactly as much as a ready one.
+
+    Computed here rather than in the handler because the page has to show the same
+    two lists before anybody presses anything, and a confirmation built from a
+    second derivation of this is a confirmation that can be wrong.
+    """
+    doomed = under(entity_id, index.children)
+    going = {entity_id, *doomed}
+    edited = sorted(
+        other
+        for other, entity in index.entities.items()
+        if other not in going and going.intersection(entity.depends_on)
+    )
+    return sorted(doomed), edited
 
 
 def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> list[str]:

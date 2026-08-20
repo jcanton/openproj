@@ -13,8 +13,6 @@ below, and the bytes in git are still upstream's.
 | `yjs-LICENSE.txt` | 13.6.32 | MIT | https://raw.githubusercontent.com/yjs/yjs/v13.6.32/LICENSE |
 | `elk.bundled.js` | 0.9.3 | **EPL-2.0** | https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js |
 | `elk-LICENSE.txt` | 0.9.3 | EPL-2.0 | licence text for the file above |
-| `cytoscape-elk.js` | 2.2.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-elk@2.2.0/dist/cytoscape-elk.js |
-| `cytoscape-compound-drag-and-drop.js` | 1.1.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-compound-drag-and-drop@1.1.0/cytoscape-compound-drag-and-drop.js |
 | `ace.js` | 1.44.0 | **BSD-3-Clause** | `src-min-noconflict/ace.js` from https://registry.npmjs.org/ace-builds/-/ace-builds-1.44.0.tgz |
 | `keybinding-vim.js` | 1.44.0 | BSD-3-Clause | `src-min-noconflict/keybinding-vim.js` from the same tarball |
 | `ace-LICENSE.txt` | 1.44.0 | BSD-3-Clause | `LICENSE` from the same tarball |
@@ -84,16 +82,26 @@ edges crossing a box they are not attached to, against three of six for dagre.
 AGENTS.md: it draws the connection gesture this page writes by hand, and its browser build
 wants `lodash.memoize` and `lodash.throttle` as globals under those exact names — 28 KB
 becomes 58 KB and a shim, to replace clicking one node and then another, which works and
-which nobody has complained about. `cytoscape-compound-drag-and-drop` was taken, because
-what it replaces did not.
+which nobody has complained about.
+
+`cytoscape-compound-drag-and-drop` was here for a day. It was taken because the gesture it
+replaced had been written here and got wrong; it went because the gesture itself went —
+jcanton, 2026-08-20, after using it: refiling belongs to the table, where rows do not move
+under you. The extension is deleted rather than left in the directory for the reason dagre
+was: a vendored file nothing inlines is a file nobody checks.
 
 dagre and cytoscape-dagre were here until ELK replaced them; they are gone rather than
 left in the directory, because a vendored file nothing inlines is a file nobody checks.
 
-Only cytoscape carries its MIT notice inline in the minified file. Both cytoscape
-extensions declare theirs in their upstream `package.json`, and ELK's ships beside it as
-a file because EPL asks for that. Yjs's minified bundle
-carries none, so the MIT text ships beside it the way Inter's OFL does.
+`cytoscape-elk` was here and is gone. The graph asks elkjs directly, because the adapter
+reads node positions out of ELK's answer and never looks at an edge's `sections` — and
+going round it is what lets an edge be declared on the box that holds it, and lets the
+layout add the invisible edges that put the boxes in order. Deleted rather than left in
+the directory, for the reason dagre was.
+
+Only cytoscape carries its MIT notice inline in the minified file. ELK's ships beside it
+as a file because EPL asks for that. Yjs's minified bundle carries none, so the MIT text
+ships beside it the way Inter's OFL does.
 
 ## Checksums, and updating a file
 

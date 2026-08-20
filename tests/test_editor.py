@@ -206,25 +206,30 @@ def test_the_second_editor_is_inlined_checksummed_and_named(client: TestClient):
 
 
 def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
-    """Three buttons, and which of them belongs where is decided by what it does.
+    """All three in one place, at the top — jcanton, 2026-08-20.
 
-    Edit is the way IN, and it was in the sticky bar at the foot of the page —
-    so on any record worth reading, the button that lets you change it was a
-    scroll past the whole shaping document (jcanton, 2026-08-19, using it). It is
-    back at the top, which reverses the argument the bar was built on; that
-    argument was about Save, and Save has not moved.
+    They were split: Edit at the head of the record and Save and Cancel in a
+    sticky bar at its foot. Both halves were argued for and both arguments were
+    about reachability, which the stickiness had already settled — what the split
+    actually decided was that the three controls which begin, end and abandon one
+    edit were in two places, a shaping document apart.
 
-    Save and Cancel are the two ways one editing session ends, and they stay
-    together in the sticky bar. Splitting them is how somebody closes a tab
-    believing the button at the other end of the page was the way out.
+    Still sticky, so it is still reachable from the bottom of a long record; stuck
+    to the top, which is where it now is. `bottom: auto` matters as much as `top`:
+    with both set the browser keeps the first and the bar stays at the foot.
     """
-    assert page.index('id="commitbar"') > page.index('<dl id="facts">')
-    assert page.index('id="commitbar"') > page.index('class="field body-field"')
-    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", page, re.S)
+    assert page.index('id="commitbar"') < page.index('<dl id="facts">')
+    assert page.index('id="commitbar"') < page.index('class="field body-field"')
+    assert re.search(r"#commitbar \{[^}]*top: 0; bottom: auto", page, re.S), (
+        "the bar is not stuck to the top, or is stuck to both"
+    )
 
     bar = re.search(r'<div class="commitbar".*?</div>', page, re.S).group(0)
     assert 'id="save"' in bar and 'id="cancel"' in bar
+    # Edit stays its own control: it is the way IN, and a button that is Edit and
+    # Cancel by turns puts the way out under whatever you were doing.
     assert 'id="toggle"' not in bar, "the way in is not one of the ways out"
+    assert page.index('id="toggle"') < page.index('id="commitbar"')
     assert page.index('id="toggle"') < page.index('<dl id="facts">')
 
 
@@ -2067,7 +2072,7 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "sync.html", 1400,
-        _SYNCING, budget=3000,
+        _SYNCING, patience=1800,
     )
 
     assert got["longRows"] > 1, (
@@ -2154,7 +2159,7 @@ def test_the_preview_keeps_up_and_stays_where_the_reader_left_it(
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "live.html", 1400,
-        _LIVE, budget=3400,
+        _LIVE, patience=2200,
     )
 
     assert got["opened"] == 1, "opening the split view did not draw a preview"
@@ -2209,7 +2214,7 @@ def test_a_preview_that_has_been_overtaken_is_called_off(client: TestClient, tmp
     what a big pitch on a busy server does every time."""
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "abort.html", 1400,
-        _OVERTAKEN, budget=2400,
+        _OVERTAKEN, patience=1200,
     )
 
     assert got["asked"] == 2, "the second render was never asked for"
@@ -2398,7 +2403,7 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "gutter.html", 1400,
-        _NUMBERING, budget=6000,
+        _NUMBERING, patience=4800,
     )
 
     for answer in got["answers"]:
@@ -2478,7 +2483,7 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "leave.html", 1400,
-        _LEAVING, budget=3000,
+        _LEAVING, patience=1800,
     )
 
     for name, answer in got.items():
@@ -2547,7 +2552,7 @@ def test_a_preview_that_fails_says_so_and_never_writes_the_word_undefined(
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "failed.html", 1400,
-        _A_FAILED_PREVIEW, budget=4000,
+        _A_FAILED_PREVIEW, patience=2800,
     )
 
     # At least one, not exactly one: a failure is deliberately not remembered as
@@ -2679,7 +2684,7 @@ def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_type
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "status.html", 1400,
-        _STATUS, budget=6000,
+        _STATUS, patience=4800,
     )
 
     assert got["drawn"], "the status bar is not drawn in an editing session"
@@ -2737,7 +2742,7 @@ def test_the_length_says_the_ceiling_before_a_save_is_refused(
 
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "long.html", 1400,
-        _LONG % (MAX_BODY_BYTES // 2, MAX_BODY_BYTES + 1000), budget=6000,
+        _LONG % (MAX_BODY_BYTES // 2, MAX_BODY_BYTES + 1000), patience=4800,
     )
 
     assert got["under"]["text"] == f"Length: {MAX_BODY_BYTES // 2:,}", got["under"]
@@ -2812,7 +2817,7 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
         _before_the_page_runs(
             client.get(f"/detail/{TASK}").text, _SEED % '{"indent": 2, "autosave": 10}'
         ),
-        tmp_path / "draft.html", 1400, _DRAFTING, budget=6000,
+        tmp_path / "draft.html", 1400, _DRAFTING, patience=4800,
     )
 
     assert got["every"] == "Draft: 10", (
@@ -2910,7 +2915,7 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
 
     got = measured_in(
         chrome(), _before_the_page_runs(page, _NO_STORE), tmp_path / "denied.html",
-        1400, _REFUSED, budget=6000,
+        1400, _REFUSED, patience=4800,
     )
 
     assert got["errors"] == [], f"the page threw against a refusing store: {got['errors']}"
@@ -2975,7 +2980,7 @@ def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
         _before_the_page_runs(
             client.get(f"/detail/{TASK}").text, _SEED % '{"mode": "both"}'
         ),
-        tmp_path / "sticky.html", 1400, _STICKY, budget=6000,
+        tmp_path / "sticky.html", 1400, _STICKY, patience=4800,
     )
 
     assert got["atLoad"] == {"view": None, "full": False, "editing": False}, (
@@ -3024,7 +3029,7 @@ def test_the_box_and_the_column_beside_it_are_one_face(client: TestClient, tmp_p
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "face.html", 1400,
-        _ONE_FACE, budget=4000,
+        _ONE_FACE, patience=2800,
     )
 
     assert "mono" in got["box"].lower(), (
@@ -3108,7 +3113,7 @@ def test_no_editor_asks_for_a_script_after_the_page_has_loaded(
         client.get(f"/detail/{TASK}?editor=ace").text, _WATCH_THE_NETWORK
     )
     got = measured_in(chrome(), page, tmp_path / "keymap.html", 1400, _KEYMAP_FETCHES,
-                      query="?editor=ace", budget=8000)
+                      query="?editor=ace", patience=6800)
 
     quiet, control = got["quiet"], got["control"]
     assert quiet["gone"] == [], f"these still reach config.loadModule: {quiet['gone']}"
@@ -3185,7 +3190,7 @@ def test_the_second_surface_holds_one_line_ending_whatever_is_pasted_into_it(
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "crlf.html",
-        1400, _PASTED_CRLF, query="?editor=ace", budget=6000,
+        1400, _PASTED_CRLF, query="?editor=ace", patience=4800,
     )
     assert got["carriage"] == -1, (
         "a carriage return came back out of the second editor at offset "
@@ -3278,7 +3283,7 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "vim.html",
-        1400, _VIM_ON, query="?editor=ace", budget=8000,
+        1400, _VIM_ON, query="?editor=ace", patience=6800,
     )
     assert not got.get("noPicker"), "the second editor carries no keymap control"
     assert got["label"] == "Keymap: vim"
@@ -3355,14 +3360,14 @@ def test_the_keymap_a_person_chose_is_the_one_the_next_session_opens_in(
 
     kept = measured_in(
         chrome(), _before_the_page_runs(page, _SEED % '{"keymap": "vim"}'),
-        tmp_path / "keymap-kept.html", 1400, _KEYMAP_KEPT, query="?editor=ace", budget=8000,
+        tmp_path / "keymap-kept.html", 1400, _KEYMAP_KEPT, query="?editor=ace", patience=6800,
     )
     assert kept["handler"] == "ace/keyboard/vim", "the remembered keymap did not open"
     assert kept["label"] == "Keymap: vim"
 
     made_up = measured_in(
         chrome(), _before_the_page_runs(page, _SEED % '{"keymap": "emacs"}'),
-        tmp_path / "keymap-junk.html", 1400, _KEYMAP_KEPT, query="?editor=ace", budget=8000,
+        tmp_path / "keymap-junk.html", 1400, _KEYMAP_KEPT, query="?editor=ace", patience=6800,
     )
     assert made_up["label"] == "Keymap: default", (
         "a keymap this control does not offer was taken from the store and handed to "
@@ -3394,7 +3399,7 @@ def test_the_editor_a_person_chose_is_carried_back_into_the_address(
     got = measured_in(
         chrome(),
         _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "ace"}'),
-        tmp_path / "sticky-editor.html", 1400, _STICKY_EDITOR, budget=6000,
+        tmp_path / "sticky-editor.html", 1400, _STICKY_EDITOR, patience=4800,
     )
     assert got["editor"] == "ace", "the remembered choice was not read"
     assert got["surface"] == "textarea", "a page with no library in it mounted one"
@@ -3416,7 +3421,7 @@ def test_the_editor_a_person_chose_is_carried_back_into_the_address(
         chrome(),
         _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "ace"}'),
         tmp_path / "sticky-refused.html", 1400, _STICKY_EDITOR, query="?editor=ace",
-        budget=6000,
+        patience=4800,
     )
     assert refused["surface"] == "textarea"
     assert "does not carry the second editor" in refused["said"]
@@ -3757,7 +3762,7 @@ def test_the_history_buttons_reach_the_second_editors_own_stack(
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "ace-history.html",
-        1400, _HISTORY_ON_ACE, query="?editor=ace", budget=8000,
+        1400, _HISTORY_ON_ACE, query="?editor=ace", patience=6800,
     )
 
     assert not got.get("missing"), "the second editor carries no history buttons"
@@ -3879,7 +3884,7 @@ def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_s
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "dropped.html", 1200,
-        _CONNECTION_GONE, budget=6000,
+        _CONNECTION_GONE, patience=4800,
     )
 
     assert got["loose"] == [], f"a rejection still escapes: {got['loose']}"
@@ -3966,7 +3971,7 @@ def test_preview_only_takes_away_the_controls_and_keeps_the_one_live_fact(
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "previewbars.html",
-        1400, _PREVIEW_ONLY_BARS, budget=6000,
+        1400, _PREVIEW_ONLY_BARS, patience=4800,
     )
 
     assert got["view"] == "view" and got["full"], (
@@ -4049,7 +4054,7 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
     )
     got = measured_in(
         chrome(), page, tmp_path / f"bar-{where}-{width}.html", width, _TOOLBAR_AT_A_WIDTH,
-        budget=6000,
+        patience=4800,
     )
 
     assert got["width"] == width and got["buttons"] == 16, got
@@ -4136,7 +4141,7 @@ def test_the_second_editors_caret_is_reported_when_it_moves_and_not_when_it_type
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "ace-caret.html",
-        1400, _ACE_CARET_MOVES, query="?editor=ace", budget=8000,
+        1400, _ACE_CARET_MOVES, query="?editor=ace", patience=6800,
     )
 
     assert not got.get("missing"), "the second editor did not mount, or carries no status bar"

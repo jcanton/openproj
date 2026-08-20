@@ -15,6 +15,7 @@ rule wins and what does it say. See `tests/cascade.py`.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 
@@ -39,6 +40,37 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 def index(seed_root: Path) -> Index:
     entities, config, _ = load_repo(seed_root)
     return build_index(entities, config, date(2026, 8, 17))
+
+
+@pytest.fixture
+def served_pages(index: Index) -> dict[str, str]:
+    """Every page a person clicks a control on, as the server renders it — with a
+    base commit and write permission, because a reader's page is missing exactly
+    the controls this is about."""
+    from openproj.render import (
+        render_graph,
+        render_issues,
+        render_new,
+        render_notes,
+        render_timeline,
+    )
+
+    return {
+        "table": render_table(index, ROUTES, base_commit=HEAD),
+        "graph": render_graph(index, ROUTES, base_commit=HEAD),
+        "timeline": render_timeline(index, ROUTES),
+        "detail": render_detail(index, ROUTES, only=sorted(index.entities)[0],
+                                base_commit=HEAD, may_write=True),
+        "issues": render_issues(index, ROUTES, base_commit=HEAD),
+        "notes": render_notes(index, ROUTES, base_commit=HEAD),
+        # The editing surface, which a served detail page does not show: the
+        # toolbar, the view switcher and the status bar are all `.field`s inside
+        # `article.entity.editing`, so on a record somebody is only READING they
+        # have no client rects and the sweep below never sees them. The create
+        # page is the same markup and the same stylesheet with the mode already
+        # on — twenty controls that would otherwise be measured on no page at all.
+        "create": render_new("task", HEAD, ROUTES, index, may_write=True),
+    }
 
 
 @pytest.fixture
@@ -957,3 +989,148 @@ def test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets(
             f"on the {name} page a hidden pane is displayed by {won}\n"
             + says(sheet, pane, "display")
         )
+
+
+CONTROLS = ("#unfilter", "#toggle", "#tl-zoom", "#state-filter", "#kind", "#template", "#into")
+
+
+# Every button and every select on the page, and what it is actually drawn with.
+# Measured, not read: the version of this test that read the stylesheet passed
+# while `#preview`, `#connect`, `#clear-filters` and a dozen others were being
+# drawn by the operating system, because it checked that ONE rule existed and
+# never asked which controls it reached.
+_DRAWN = """
+const out = [];
+for (const el of document.querySelectorAll('button, select')) {
+  if (!el.getClientRects().length) continue;
+  const s = getComputedStyle(el);
+  // A segment of a segmented control is drawn by the GROUP it sits in. Three
+  // states of one thing share one rectangle on purpose — giving each segment its
+  // own would draw a doubled border down every join — so the rectangle to ask
+  // about is the one a reader actually sees, and it still has to be the app's.
+  // Reported this way rather than excused: an exception measured on the wrong
+  // element is an exception that stops being measured at all.
+  const box = el.closest('.views') || el;
+  const r = getComputedStyle(box);
+  out.push({
+    what: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+          + (typeof el.className === 'string' && el.className.trim()
+             ? '.' + el.className.trim().split(/\s+/).join('.') : ''),
+    border: r.borderTopWidth + ' ' + r.borderTopStyle,
+    radius: r.borderTopLeftRadius,
+    // What the control puts on the page under its border, which is the other
+    // half of "is anything drawn here at all".
+    ground: r.backgroundColor,
+    size: s.fontSize,
+    family: s.fontFamily.split(',')[0].replace(/["']/g, ''),
+  });
+}
+return out;
+"""
+
+def bare(one: dict) -> bool:
+    """Whether this control is deliberately drawn with nothing.
+
+    Asked of the DRAWING and of nothing else, which is the correction the styling
+    rule itself needed one commit earlier. This was a list of names — an id, a
+    `closest('th')`, a substring — and a list has the two failures that argument
+    is about: it excuses the controls somebody thought of and none of the ones
+    they did not, and it cannot tell a control that is deliberately bare from one
+    that has drifted, because a name goes on matching whatever the control turns
+    into.
+
+    So the question is whether anything is drawn here at all: no border and no
+    ground. That is exactly what each of these controls already says in its own
+    rule — the theme icon in the corner, the column headers that must go on
+    looking like headers, the filter buttons that draw their own caret inside
+    themselves, the status strip's pickers that are words until you point at
+    them, all of them `background: none; border: 0` under a class or an id, which
+    outranks an element selector. The browser's own chrome is neither of those
+    things — `2px outset` over an opaque `buttonface` — so the defect this test
+    was written for still lands in the set that has to match.
+    """
+    return one["border"].endswith(" none") and one["ground"] == "rgba(0, 0, 0, 0)"
+
+
+@pytest.mark.parametrize(
+    "view", ["table", "graph", "timeline", "detail", "issues", "notes", "create"]
+)
+def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_path):
+    """jcanton, 2026-08-20, on finding "Preview the body" still native: "I thought
+    we had managed to impose the style of buttons and dropdowns to be coherent
+    across the entire app? why did that work? this is rather important for
+    preventing future drifts".
+
+    It did not work, and the reason is the shape of the rule rather than the rule.
+    It named ids and classes, so it reached the eight controls somebody thought of
+    and none of the twenty they did not, and the failure is silent: the button
+    looks like the operating system and nobody notices until two of them are side
+    by side.
+
+    The rule is now the default for `button` and `select`, and this measures the
+    result in a browser rather than reading the source. A test that reads a
+    stylesheet can only ever check that a rule exists; what matters is which
+    controls it reaches.
+    """
+    from browser import chrome, measured_in
+
+    drawn = measured_in(chrome(), served_pages[view], tmp_path / f"{view}.html", 1400, _DRAWN)
+    assert drawn, f"the {view} page has no controls at all"
+
+    styled = [one for one in drawn if not bare(one)]
+    assert styled, f"every control on the {view} page claims to be deliberately bare"
+
+    # The border, not the type size. A "show 1 more" button inside a table cell is
+    # legitimately smaller than Save; what has to match is the rectangle, which is
+    # what the eye reads as "these are the same kind of thing".
+    assert {one["border"] for one in styled} == {"1px solid"}, (
+        f"controls on the {view} page are bordered differently: "
+        + "; ".join(
+            f"{one['what']} is {one['border']}"
+            for one in styled if one["border"] != "1px solid"
+        )
+    )
+    # And the corner, of everything that HAS one. `50%` is not a corner, it is a
+    # circle: the theme toggle is a round icon button, and giving it 3px would
+    # make it a square with a sun in it. Asked of the drawing rather than excused
+    # by name — the version of this list that named `button#theme` excused its
+    # border along with its corner, and a round control still owes the app its
+    # border. Nothing drifts into `50%` by accident, which is what a name cannot
+    # say for itself.
+    corners = {one["radius"] for one in styled if one["radius"] != "50%"}
+    assert corners == {"3px"}, (
+        f"controls on the {view} page are cornered differently: "
+        + "; ".join(
+            f"{one['what']} is r{one['radius']}"
+            for one in styled if one["radius"] not in ("3px", "50%")
+        )
+    )
+    # `2px outset` is Chrome's own default for a button nobody styled, and it is
+    # what this page showed for half a day: the rule was there, in a stylesheet,
+    # behind a comment somebody had left unclosed. The parser threw the rule away
+    # and said nothing. Named here because the symptom is indistinguishable from
+    # a selector that simply does not match.
+    assert not [one for one in styled if one["border"] == "2px outset"], (
+        f"{view}: a control is wearing the browser's own chrome"
+    )
+
+
+def test_no_stylesheet_has_an_unclosed_comment(served_pages):
+    """A CSS comment that never closes eats the rules after it, silently.
+
+    That is not hypothetical: the rule making every control look the same was
+    written correctly, put in the shell, shipped — and did nothing, because the
+    comment above it had been edited and left with its `*/` in the middle. The
+    parser discarded everything from there to the next `*/` and reported nothing,
+    and the symptom on the page is identical to a selector that does not match.
+
+    Counted rather than parsed: every `/*` must have its `*/`, and an odd number
+    of either is a stylesheet with a hole in it.
+    """
+    for view, page in served_pages.items():
+        for style in re.findall(r"<style[^>]*>(.*?)</style>", page, re.S):
+            opens, closes = style.count("/*"), style.count("*/")
+            assert opens == closes, (
+                f"{view}: {opens} comment openings and {closes} closings — "
+                "everything after the odd one out is being thrown away"
+            )

@@ -369,7 +369,13 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
             offered = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', select)
             assert [value for value, _ in offered] == list(values), name
             for value, word in offered:
-                assert word.strip() == LABELS.get(value, HUMAN[value]), (name, value)
+                # The mark leads and the word follows. It is a string and not
+                # markup because an `<option>` is a string — see `_CONTROL`.
+                mark, _, said = word.strip().partition(" ")
+                assert said == LABELS.get(value, HUMAN[value]), (name, value)
+                assert mark and mark not in said, (
+                    f"{name}: {value} is offered as {word!r} with no mark in front of it"
+                )
                 assert value not in word, f"{value} is its own identifier, not a word"
 
 
@@ -826,7 +832,7 @@ def test_the_table_sizes_itself_to_its_contents_and_the_window(page: str):
         "a width belongs to a column — not to a position in the row, and not to "
         "the word printed above it"
     )
-    assert "if (automatic) fitWidths(); else applyWidths();" in page, (
+    assert re.search(r"function refit\(\) \{\s*if \(automatic\) fitWidths\(\);", page), (
         "a width somebody dragged must survive the automatic fit"
     )
     assert re.search(r"remembered\.set\(WIDTH_KEY[^\n]*\n\s*automatic = false;", page), (
@@ -882,12 +888,10 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
     assertable here is that the second measurement is asked for at all, and that
     it is skipped once the columns stop being the fit's to decide.
     """
-    assert "document.fonts.ready.then(() => { if (automatic) fitWidths(); });" in page
-    assert re.search(
-        r"addEventListener\('resize', \(\) => \{\s*if \(automatic\) fitWidths\(\); "
-        r"else applyWidths\(\);",
-        page,
-    ), "a new window gets a new fit, and a dragged width only gets re-applied"
+    assert "document.fonts.ready.then(refit);" in page
+    assert "addEventListener('resize', refit);" in page, (
+        "a new window has to get a new fit, whoever decided the columns"
+    )
 
 
 # What each column needs with its widest cell on one line, read out of Chrome by
@@ -1913,7 +1917,8 @@ def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
     # `esc` — the closed set is a closed set today, and a rule with an exception
     # in it is a rule nobody applies to the next line.
     assert re.search(
-        r'<option value="\$\{esc\(o\)\}"[^>]*>\$\{esc\(human\(o\)\)\}</option>',
+        r'<option value="\$\{esc\(o\)\}"[^>]*>`\s*\+\s*'
+        r'`\$\{esc\(markFor\(field, o\)\)\}\$\{esc\(human\(o\)\)\}</option>',
         script(page),
     )
 
@@ -4100,7 +4105,7 @@ def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
         chrome(), page, tmp_path / "drop-dropped.html", 1460,
         _DROP_ON_A_DEAD_CONNECTION.replace("CHILD", json.dumps(TASK))
         .replace("PARENT", json.dumps(PROJECT)),
-        budget=6000,
+        patience=4800,
     )
 
     assert got["loose"] == [], f"the rejection still escapes: {got['loose']}"
@@ -4122,3 +4127,120 @@ def test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down(
     assert got["parent"] == PITCH, (
         f"the row moved on a write that never landed: {got['parent']!r}"
     )
+
+
+# Drag a column wider, which is what ends the automatic fit, then resize the
+# window both ways and see whether the table still fits it. `dispatchEvent` and
+# not a real window resize: headless Chrome is one size for the life of the run,
+# and what is under test is the handler, not the browser's own reflow.
+_REFIT = """
+const scroller = document.getElementById('rows').parentElement;
+const table = document.getElementById('rows');
+const grip = document.querySelector('th .grip') || document.querySelector('th [class*=grip]');
+if (!grip) return {error: 'no grip to drag'};
+
+const down = new PointerEvent('pointerdown', {clientX: 400, bubbles: true});
+grip.dispatchEvent(down);
+dispatchEvent(new PointerEvent('pointermove', {clientX: 700, bubbles: true}));
+dispatchEvent(new PointerEvent('pointerup', {clientX: 700, bubbles: true}));
+
+const measure = () => ({
+  room: scroller.clientWidth,
+  table: Math.round(table.getBoundingClientRect().width),
+});
+const dragged = measure();
+
+// Narrower, then wider, then back — each time through the handler the window
+// resize would call.
+scroller.style.width = '700px';
+dispatchEvent(new Event('resize'));
+const narrow = measure();
+
+scroller.style.width = '1600px';
+dispatchEvent(new Event('resize'));
+const wide = measure();
+
+return {dragged, narrow, wide, columns: [...table.querySelectorAll('th')].length};
+"""
+
+
+def test_a_dragged_table_still_fits_the_window_it_is_looked_at_in(
+    page: str, tmp_path: Path
+):
+    """Reported by jcanton, 2026-08-20: "the table keeps its width, which means it
+    can be smaller than the page when enlarging and (worse) larger than the page
+    when reducing the size of the browser".
+
+    Both halves are the same defect. Dragging a column ended the automatic fit for
+    good, and every resize after that re-applied the stored pixels — so the table
+    stayed the width of whatever window it was dragged in.
+
+    A dragged width is a decision about PROPORTION, not about pixels: it says this
+    column deserves twice the room of that one. So it is scaled to the window
+    rather than replayed into it, and the columns keep their relative sizes while
+    the table keeps fitting the page.
+    """
+    got = measured_in(chrome(), page, tmp_path / "refit.html", 1460, _REFIT)
+
+    assert not got.get("error"), got
+    for name in ("narrow", "wide"):
+        room, drawn = got[name]["room"], got[name]["table"]
+        # A pixel of slack for the collapsed border the fit measures separately.
+        assert drawn <= room + 2, f"{name}: {drawn}px of table hanging out of {room}px"
+        assert drawn >= room - 40, f"{name}: {room - drawn}px of empty page beside the table"
+    # And nothing was shed to achieve it: a dragged layout keeps its columns.
+    assert got["columns"] > 5
+
+
+def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: Path):
+    """jcanton, 2026-08-20: "make sure the counter gets updated if blocking tasks
+    are marked as done".
+
+    The column is headed Blockers and counted every entry in `depends_on`, whether
+    or not the thing it named had finished — so a record whose one dependency
+    landed last week still read 1, for ever. A count that is wrong in the
+    reassuring direction is a count people stop reading.
+
+    `depends_on` itself is untouched. That this waited for that is history worth
+    keeping, and it is what the graph draws.
+    """
+    from test_web import DONE, OTHER, TASK, save
+
+    assert save(client, TASK, {"depends_on": [OTHER, DONE]}).status_code == 200
+
+    def blockers_of(entity_id: str) -> int:
+        # Off the table's own payload, which is what the column is drawn from —
+        # `/api/index.json` is the flat index and answers a different question.
+        page = client.get("/").text
+        rows = json.loads(
+            re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S)
+            .group(1)
+        )["rows"]
+        return rows[entity_id]["blocked_by"]
+
+    # `DONE` is already done, so only the open one counts.
+    assert blockers_of(TASK) == 1, "a finished dependency is still being counted"
+
+    assert save(client, OTHER, {"status": "done"}).status_code == 200
+    assert blockers_of(TASK) == 0, "the count did not move when the blocker finished"
+
+    # And shelved work stops counting too: parked is not something anybody is
+    # waiting on either.
+    assert save(client, OTHER, {"status": "ready"}).status_code == 200
+    assert blockers_of(TASK) == 1
+    assert save(client, OTHER, {"status": "shelved"}).status_code == 200
+    assert blockers_of(TASK) == 0
+
+
+def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):
+    """A column tinted on every row says nothing. The tint is written beside the
+    number by the same function, so it cannot outlive the count it is about."""
+    assert "key === 'blocked_by' && row.blocked_by > 0 ? 'waiting' : ''" in page
+    assert 'td[data-col="blocked_by"].waiting { background: var(--waiting); }' in page
+    # Its own colour, and not the one a validation blocker wears. Those are two
+    # different facts, and one tint for both teaches a reader that the plan is
+    # broken whenever somebody is waiting for a colleague.
+    assert "--waiting:" in page
+    assert re.search(r"--waiting: (#[0-9a-f]{6})", page).group(1) != re.search(
+        r"--sev-blocker-soft: (#[0-9a-f]{6})", page
+    ).group(1)

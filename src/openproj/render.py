@@ -34,7 +34,14 @@ from markupsafe import Markup, escape
 from mdit_py_plugins.tasklists import tasklists_plugin
 from pydantic import BaseModel
 
-from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
+from .index import (
+    COMPUTED_PREDICATES,
+    Index,
+    _matches_predicate,
+    _people_on,
+    _project_of,
+    cascade_of,
+)
 from .model import (
     ISSUE_STATUS,
     MAX_BODY_BYTES,
@@ -207,8 +214,12 @@ _ACE_SURFACE = Markup(r"""
    Ace's rules are `.ace-tm .ace_gutter` and the like, (0,2,0); these are the
    same or heavier, and they are inlined in the page while Ace's are injected
    into the head at construction — later in the document either way. */
+/* The same box as `textarea.field`, because it is the same box: 3px, the app's
+   corner, and not the 4px this was written with — the writing surface and the
+   fifteen fields beside it are read together, and one of them rounder than the
+   rest is the drift the shell's rule exists to stop. */
 .acebox { position: relative; width: 100%; min-height: 60vh; box-sizing: border-box;
-          border: 1px solid var(--line-strong); border-radius: 4px; }
+          border: 1px solid var(--line-strong); border-radius: 3px; }
 .ace_editor { font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
               border-radius: 3px; }
 .ace-tm, .ace-tm .ace_scroller { background: var(--surface); color: var(--fg); }
@@ -934,7 +945,22 @@ def _row(index: Index, entity_id: str) -> dict:
         "estimated": bool(span and span.estimated),
         "unowned": bool(span and span.unowned),
         "overruns": span.overruns_cycle_weeks if span else None,
-        "blocked_by": len(index.blocked_by[entity_id]),
+        # What is still in the way, not what was ever in the way — jcanton,
+        # 2026-08-20: "make sure the counter gets updated if blocking tasks are
+        # marked as done". A record whose one dependency finished last week is
+        # not blocked by anything, and a column headed "Blockers" that says 1
+        # about it is a column people learn to ignore.
+        #
+        # `done` and `shelved` both stop counting, for the same reason by two
+        # routes: one is finished and the other is parked, and neither is work
+        # anybody is waiting on. `depends_on` itself is untouched — the fact that
+        # this waited for that is history worth keeping, and it is what the graph
+        # draws.
+        "blocked_by": sum(
+            1
+            for blocker in index.blocked_by[entity_id]
+            if index.entities[blocker].status not in ("done", "shelved")
+        ),
         # Two keys for one fact: the ratio is what a column sorts by, the text is
         # what it prints. Sorting on "7/12" as a string puts 10/12 before 7/12.
         "progress": round(counted.fraction, 4) if counted else None,
@@ -987,7 +1013,7 @@ _TABLE_WHY = {
     "start": "Derived from assigned_on, from what blocks it, and from what the people "
     "on it are already doing.",
     "end": "Derived from the start and the appetite.",
-    "blocked_by": "Counted from depends_on.",
+    "blocked_by": "Counted from depends_on, minus the ones already done or shelved.",
     "progress": "Counted from the task list in the body. Tick the boxes there.",
 }
 _TABLE_DERIVED = tuple(_TABLE_WHY)
@@ -1040,6 +1066,13 @@ def _payload(index: Index) -> dict:
         "editable": {k: v for k, v in EDITABLE.items() if k not in _TABLE_DERIVED},
         "suggests": SUGGESTS,
         "choices": {"status": list(STATUSES), "priority": list(PRIORITIES)},
+        # The two marks a row wears, shipped rather than restated in the script.
+        # The table draws its rows in the browser and the graph, the timeline and
+        # the legend are drawn here, and a second copy of either map is a rung
+        # that agrees until somebody adds one.
+        "glyphs": STATUS_GLYPH,
+        "levels": PRIORITY_LEVEL,
+        "marks": PRIORITY_GLYPH,
         # Which statuses demand which fields, derived from the gate itself by
         # `required_at` (`model.py`). The detail page has had this since it grew
         # the marks beside its labels; the table had nothing, so moving a row to
@@ -1958,6 +1991,23 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
      1.07:1 against the page — a band nobody could see, keyed in the legend by a
      different token again. One token, 1.50:1 against the page in both themes,
      and still light enough to carry an accent-coloured cycle number at 5:1. */
+  /* Priority, as five rungs of one ladder — jcanton, 2026-08-20: "lows in green,
+     med in yellow, highs in red, darker lighter shades for very low/very high".
+     Drawn as signal bars beside the border thickness the graph already uses, so
+     the same fact is said twice: colour AND count, which is the bargain status
+     already makes with its fill and its glyph. Two channels because one of them
+     fails for somebody — thickness is hard to judge without a neighbour to
+     compare against, and colour is hard for eight percent of men.
+     Related to --ok/--warn/--danger and not equal to them: those three say
+     good, careful and broken, and a very-low-priority task is none of those. */
+  --pri-very-low: #2f7248; --pri-low: #5d9a4e; --pri-medium: #b07d10;
+  --pri-high: #c0532f; --pri-very-high: #9a3327;
+  /* The ground under a cell that is waiting on something. Its own token and not
+     `--sev-blocker-soft`, which is what a validation blocker wears: those two
+     are different facts and a reader who learns one tint for both has learned
+     that the plan is broken every time somebody is waiting for a colleague.
+     Amber rather than red for the same reason — being blocked is normal. */
+  --waiting: #fdf0dd;
   --band: #c3d6de;
 }
 @media (prefers-color-scheme: dark) {
@@ -2000,6 +2050,9 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
     --sev-blocker: #e0796a; --sev-blocker-soft: #2b1b17;
     --sev-warn: #d9a557; --sev-warn-soft: #332409;
     --drop: #1e3a2b;
+    --pri-very-low: #6fc095; --pri-low: #8fc772; --pri-medium: #d9a557;
+    --pri-high: #e08a5a; --pri-very-high: #e0796a;
+    --waiting: #34291a;
     --band: #2a3941;
   }
 }
@@ -2024,6 +2077,9 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
   --sev-warn: #d9a557; --sev-warn-soft: #332409;
   --drop: #1e3a2b;
   --band: #2a3941;
+  --pri-very-low: #6fc095; --pri-low: #8fc772; --pri-medium: #d9a557;
+  --pri-high: #e08a5a; --pri-very-high: #e0796a;
+  --waiting: #34291a;
 }
 /* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
    spacing of the curly quotes and slashes that PR refs and paths are full of. */
@@ -2372,7 +2428,7 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 /* A drawing with no size of its own. `_ICON_SVG` carries a `viewBox` and no
    `width` or `height`, so an SVG that nothing sizes lays out at 0x0. Every use
@@ -2392,6 +2448,43 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    is believed. The swatch carries the glyph too: colour is no longer the only
    channel on a bar or a node, so a key to the colour alone keys half the
    drawing. */
+/* PRIORITY, AS SIGNAL BARS. One bar for very low up to five for very high, the
+   way a load meter reads, plus colour up the same ladder. It is the second
+   representation of a fact the graph already draws as line thickness — jcanton,
+   2026-08-20, having seen one project drawn thicker and had to ask why. Status
+   makes the same bargain with a fill and a glyph; priority had a number nobody
+   could read and a word in a table cell.
+
+   Built from five empty elements and a `data-level`, not from an SVG, so the
+   server and the browser cannot draw it differently: the table writes its rows
+   in JavaScript and the legend and the detail page are Jinja, and the only thing
+   both have to agree on here is one integer.
+
+   The unlit bars stay visible at low contrast. A meter showing two bars out of
+   nothing is a meter you cannot read the scale of — five slots always drawn is
+   what makes "two" mean two-of-five rather than just "two". */
+.bars { display: inline-flex; align-items: flex-end; gap: 1px; height: 11px;
+        vertical-align: -1px; flex: none; }
+.bars i { width: 3px; border-radius: 1px; background: var(--line-strong);
+          opacity: .22; }
+.bars i:nth-child(1) { height: 3px; }
+.bars i:nth-child(2) { height: 5px; }
+.bars i:nth-child(3) { height: 7px; }
+.bars i:nth-child(4) { height: 9px; }
+.bars i:nth-child(5) { height: 11px; }
+.bars[data-level="1"] i:nth-child(-n+1) { background: var(--pri-very-low); opacity: 1; }
+.bars[data-level="2"] i:nth-child(-n+2) { background: var(--pri-low); opacity: 1; }
+.bars[data-level="3"] i:nth-child(-n+3) { background: var(--pri-medium); opacity: 1; }
+.bars[data-level="4"] i:nth-child(-n+4) { background: var(--pri-high); opacity: 1; }
+.bars[data-level="5"] i:nth-child(-n+5) { background: var(--pri-very-high); opacity: 1; }
+/* In a table cell the bars lead and the word follows, because the bars are what
+   the eye picks out of a column and the word is what settles which one it is. */
+.pricell { display: inline-flex; align-items: center; gap: .4rem; }
+/* The status mark inside the chip it has always had. Slightly dimmed, because
+   the word is the thing being read and the mark is what finds it — a glyph at
+   full weight beside a short word reads as two words. */
+.chip .chipmark { font-weight: 700; opacity: .75; margin-right: .3rem; }
+
 .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
           list-style: none; margin: .75rem 0 0; padding: 0;
           font-size: 12px; color: var(--muted); }
@@ -2406,6 +2499,41 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 .legend span.swatch { display: inline-flex; align-items: center; justify-content: center;
                       font-family: var(--font-sans); font-weight: 700;
                       font-size: 9px; line-height: 1; }
+/* What the graph draws priority with, at the size the graph draws it. The five
+   numbers are the SAME five in the node style, and they have to stay that way:
+   a key that keys nothing is worse than no key, because it is believed. Only
+   the ground is neutral — this says thickness and the row beside it says
+   colour, and a priority key wearing a status ink would key both at once. */
+/* The bars sit INSIDE the box, the way a status glyph sits inside its swatch —
+   jcanton, 2026-08-20, so the two key rows are one swatch and one word each and
+   come out the same length. It also puts the two channels in one mark: the
+   border is the thickness the node is drawn with and the meter inside it is the
+   same rung counted, so the key is a small node rather than two things beside
+   each other.
+
+   Wider than a status swatch because it has to hold five bars and a 6px border,
+   and `box-sizing: border-box` is already set above — without the extra width
+   the very-high key is border with nothing left in the middle. */
+.legend .swatch.pri { background: var(--surface); border-style: solid;
+                      border-color: var(--fg); width: 34px; height: 17px;
+                      display: inline-flex; align-items: center;
+                      justify-content: center; }
+.legend .swatch.pri .bars { height: 7px; }
+.legend .swatch.pri .bars i:nth-child(1) { height: 2px; }
+.legend .swatch.pri .bars i:nth-child(2) { height: 3px; }
+.legend .swatch.pri .bars i:nth-child(3) { height: 4px; }
+.legend .swatch.pri .bars i:nth-child(4) { height: 6px; }
+.legend .swatch.pri .bars i:nth-child(5) { height: 7px; }
+.legend .swatch.pri-very_high { border-width: 6px; }
+.legend .swatch.pri-high      { border-width: 4px; }
+.legend .swatch.pri-medium    { border-width: 2px; }
+.legend .swatch.pri-low       { border-width: 1.5px; }
+.legend .swatch.pri-very_low  { border-width: 1px; }
+/* Which of the two rows this is. Not a heading element: the rows are one
+   sentence each about the same drawing, and a heading would put them in the
+   document outline as sections of the page. */
+.legend .legendname { font-weight: 600; letter-spacing: .04em;
+                      text-transform: uppercase; font-size: 10px; }
 {#- Fill, ink AND border: the shapes these key are bordered now, and a key drawn
     without the border is a key to a different shape — which on the light theme
     is the difference between a pale swatch floating on the page and the bar the
@@ -2446,11 +2574,61 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    button turned back into a link the moment somebody had used it once. Written
    in link-visited-hover order, so the states later in the list win the ties they
    are supposed to. */
-.button, .button:visited { font: inherit; font-size: 13px; line-height: 1.4;
-                           padding: .2rem .7rem; border-radius: 2px; cursor: pointer;
-                           border: 1px solid var(--line-strong); background: var(--surface);
-                           color: var(--fg); text-decoration: none; }
-.button:hover { border-color: var(--accent); color: var(--accent); }
+/* ONE LOOK FOR EVERY CONTROL, and this is the only place it is written.
+   jcanton, 2026-08-20: "buttons do not have consistent aesthetic: clear filters,
+   the timeline zoom dropdown, the issues state dropdown, notes state, edit entity
+   are all grey and different from the newer buttons".
+
+   They were grey because they were native — a `<button>` and a `<select>` with no
+   rule get the operating system's own chrome, which matches nothing else here and
+   changes between two machines looking at the same plan.
+
+   The `<select>`s keep the caret the browser draws them, which is the one thing
+   this rule cannot supply — the facet buttons on the table draw their own from
+   two borders, and they can only do that because they are buttons rather than
+   selects. Same ground, same border, same radius, native caret; that was the
+   choice, made deliberately over converting four more controls into popups.
+
+   THE RULE IS THE DEFAULT AND NOT A LIST. It was a list of ids and classes for
+   half a day, and in that time it missed twenty of the twenty-eight controls on
+   this site — the body preview, the dependency editor, the clear-filters button,
+   the promote control, the icon picker, the table's own new-row button. jcanton
+   found the first within the hour and asked the right question: "I thought we had
+   managed to impose the style of buttons and dropdowns to be coherent across the
+   entire app? why did that work?"
+
+   (Named in prose rather than by id, and that is not fussiness: a static export
+   is checked for the id of a control it must not carry, and a comment mentioning
+   that id put it on the page and turned the check red.)
+
+   It did not work, and a list is why. Every control added from now on would have
+   had to be remembered into a selector three thousand lines from where it was
+   written, and the failure is silent — the button simply looks like the operating
+   system and nobody notices until they are looking at two of them side by side.
+
+   So: every `button` and every `select` gets this, and a control that wants
+   something else says so in its own rule. That inverts the burden onto the
+   exception, which is the only place it can be paid attention to. A bare rule
+   already beats this one on specificity — `.facetopen`, `#who button` and the
+   half-dozen icon buttons all set `background: none; border: 0` and all of them
+   are a class or an id, which outranks an element selector — so they keep the
+   nothing they were drawn with, on purpose and by construction.
+
+   `.field` outranks it too, which is what keeps a `<select>` that is a form field
+   looking like a field: a text box is somewhere to TYPE and a control is
+   something to PRESS. */
+/* 3px and not the 2px this was written with. jcanton looked at the editor's
+   toolbar, which had been drawing its own corner, and preferred it — so the
+   toolbar stops being the exception and the app moves to its corner. One number,
+   here, is what makes that a decision rather than a drift. */
+button, select, .button, .button:visited {
+  font: inherit; font-size: 13px; line-height: 1.4;
+  padding: .2rem .7rem; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--fg); text-decoration: none;
+}
+button:hover, select:hover, .button:hover { border-color: var(--accent);
+                                            color: var(--accent); }
 /* Apply and Reset on the timeline were a button and a bare link, which reads as
    one control and one afterthought. They are the same pair of scissors pointed
    two ways, so they are the same size and shape; only the fill says which one is
@@ -2465,10 +2643,10 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    `--sev-blocker`: nothing is broken, a sentence is half-typed — and the rows
    come back the moment the bracket is closed. */
 #query-error { font-size: 12px; color: var(--sev-warn); align-self: center; }
-#clear-filters { font: inherit; font-size: 13px; padding: .2rem .6rem; border-radius: 2px;
-                 border: 1px solid var(--line-strong); background: var(--surface);
-                 color: var(--fg); cursor: pointer; }
-#clear-filters:hover { border-color: var(--accent); color: var(--accent); }
+/* Nothing of its own. It carried a full copy of the rectangle above — the same
+   border, the same background, the same hover — and the copy is how it came to
+   be the one control still drawn with the old corner after the line above moved
+   to 3px. A control that wants the default says nothing. */
 /* The one action that writes, on every page that writes. It follows the form it
    commits instead of sitting above it, and it is sticky rather than merely last:
    these forms are the length of the plan, and a Save at the far end of one is a
@@ -2479,19 +2657,22 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
   /* Under the suggestion popup (20) and under the shell's banner (40): a bar
      that is always on screen is always in front of something. */
   position: sticky; bottom: 0; z-index: 10;
+  /* `display: flex` beats `[hidden]`'s `display: none` — the attribute is a UA
+     rule and this is an author one. Every menu on the table page opened on load
+     the day that was forgotten, so it is spelled out here. */
   display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap;
   margin: 1.5rem 0 0; padding: .5rem .75rem;
   background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
 }
+.commitbar[hidden] { display: none; }
 /* Unsaved work is a warning, not decoration: this is the state in which closing
    the tab loses something. */
 .commitbar.dirty { border-color: var(--warn); }
 #unsaved { font-size: 12px; color: var(--muted); }
 .commitbar.dirty #unsaved { color: var(--warn); font-weight: 600; }
-#save, .commitbar button { font: inherit; font-size: 13px; padding: .25rem .8rem;
-        border-radius: 2px; border: 1px solid var(--line-strong);
-        background: var(--surface); color: var(--fg); cursor: pointer; }
-#save:disabled { color: var(--muted); cursor: default; }
+/* The shape is the shared rule above. What is left here is what only Save has:
+   the two states that say whether pressing it would do anything. */
+#save:disabled { color: var(--muted); border-color: var(--line-strong); cursor: default; }
 #save:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 /* What the status chosen in this form will make the server refuse it without.
    A warning colour because it is a refusal waiting to happen, and a word rather
@@ -2758,6 +2939,17 @@ function showCard(row, x, y, extra) {
   CARD.innerHTML = cardHtml(row, extra || []);
   CARD.hidden = false;
   placeCard(x, y);
+  // The body, in the same paint as the fields where it can be. `queueCard`
+  // starts the fetch when the pointer arrives and this runs 400ms later, so by
+  // now the answer is usually sitting in `CARD_BODIES` — and drawing it in a
+  // second pass made the card visibly grow and re-place itself a moment after
+  // appearing, which is what jcanton reported on 2026-08-20. Only the fields
+  // were ever certain, so a slow answer still falls back to the two passes
+  // rather than holding the card back and showing nothing at all.
+  if (CARD_BODY_URL && CARD_BODIES.has(row.id)) {
+    fillCardBody(row.id);
+    return Promise.resolve();
+  }
   return CARD_BODY_URL ? fillCardBody(row.id) : Promise.resolve();
 }
 
@@ -2782,6 +2974,13 @@ function queueCard(row, x, y, extra) {
   if (!CARD || !row) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
+  // Ask for the document NOW, and draw it in 400ms. The wait before a card
+  // appears is hover-intent, not politeness, and spending it on the round trip
+  // is free: by the time the card is drawn the answer is normally already here,
+  // so the fields and the body arrive in one paint. Nothing is drawn from this —
+  // `warmCardBody` only fills the cache — so a pointer crossing a table still
+  // opens no card, it just leaves a few bodies behind it.
+  if (CARD_BODY_URL) warmCardBody(row.id);
   // Already showing this one: the pointer moved inside the same row, which is
   // not a new question. Notably it does NOT move the card — a box that follows
   // the pointer is a box you cannot put the pointer into.
@@ -2789,20 +2988,29 @@ function queueCard(row, x, y, extra) {
   cardTimer = setTimeout(() => showCard(row, x, y, extra), CARD_DELAY);
 }
 
+// The fetch on its own, with nothing drawn from it. Two callers: the hover, which
+// wants the answer before it needs it, and `fillCardBody`, which needs it now.
+// One in-flight request per id, because a pointer that leaves a row and comes
+// back within the delay would otherwise ask twice for the same document.
+const CARD_ASKED = new Map();
+function warmCardBody(id) {
+  if (CARD_BODIES.has(id)) return Promise.resolve();
+  if (CARD_ASKED.has(id)) return CARD_ASKED.get(id);
+  const asking = fetch(CARD_BODY_URL + encodeURIComponent(id))
+    // A refusal is not a document. `ok` and not a `catch` alone: a 404 is a
+    // resolved promise with an error page in it, and `.json()` on that throws
+    // somewhere far away from the request that caused it.
+    .then(response => response.ok ? response.json().then(said => said.html || '') : '')
+    // Offline, or a policy that refuses the request. The card keeps what it
+    // already drew; the row's own fields are the part that was never in doubt.
+    .catch(() => '')
+    .then(html => { CARD_BODIES.set(id, html); CARD_ASKED.delete(id); });
+  CARD_ASKED.set(id, asking);
+  return asking;
+}
+
 async function fillCardBody(id) {
-  if (!CARD_BODIES.has(id)) {
-    try {
-      const response = await fetch(CARD_BODY_URL + encodeURIComponent(id));
-      // A refusal is not a document. `ok` and not a `catch` alone: a 404 is a
-      // resolved promise with an error page in it, and `.json()` on that throws
-      // somewhere far away from the request that caused it.
-      CARD_BODIES.set(id, response.ok ? (await response.json()).html || '' : '');
-    } catch (error) {
-      // Offline, or a policy that refuses the request. The card keeps what it
-      // already drew; the row's own fields are the part that was never in doubt.
-      CARD_BODIES.set(id, '');
-    }
-  }
+  if (!CARD_BODIES.has(id)) await warmCardBody(id);
   // The pointer may have moved on while the answer was in flight, and the card
   // may already be describing something else — or nothing.
   if (cardShowing !== id || CARD.hidden) return;
@@ -3996,6 +4204,32 @@ function clamped(pieces, one, many) {
     ` data-collapse="Show ${rest.length} fewer ${word}">${rest.length}</button>`;
 }
 
+// The two marks a row wears, off the payload rather than restated here. `LEVELS`
+// is the same map the legend reads through Jinja; `GLYPHS` is what the graph and
+// the timeline already draw.
+const GLYPHS = DATA.glyphs || {};
+const LEVELS = DATA.levels || {};
+// Five slots, of which `level` are lit — the identical markup `bars()` writes on
+// the server, because a meter drawn two ways is a meter that eventually
+// disagrees about what three bars mean.
+// The mark that goes in front of a word inside an `<option>`, which is text and
+// nothing else — the same string `mark()` writes on the server.
+// `RUNGS` and not `MARKS`: this page already has a `MARKS`, holding the
+// validation problems per cell, and two top-level declarations of one name in one
+// page is a SyntaxError that throws the whole later script away.
+const RUNGS = DATA.marks || {};
+function markFor(field, value) {
+  if (field === 'status') return GLYPHS[value] ? GLYPHS[value] + ' ' : '';
+  if (field === 'priority') return RUNGS[value] ? RUNGS[value] + ' ' : '';
+  return '';
+}
+
+function barsFor(priority) {
+  const level = LEVELS[priority] || 0;
+  return `<span class="bars" data-level="${level}" aria-hidden="true">` +
+    '<i></i><i></i><i></i><i></i><i></i></span>';
+}
+
 function shown(row, key) {
   const value = row[key];
   // The title is the way into the shaping doc; the id is the way to cite it.
@@ -4023,9 +4257,23 @@ function shown(row, key) {
   // of the tree, and the missing handle is that said without a sentence.
   if (key === 'id')
     return (EDITABLE && movable(row) ? GRIP : '') + `<span class="eid">${esc(row.id)}</span>`;
+  // The same mark the graph and the timeline draw, in the chip the table already
+  // had. The fill was the only channel here, and five fills on a luminance ladder
+  // are separable but not nameable — the graph has said `»` for in-progress since
+  // the day it was drawn and the table said nothing, so the two views keyed one
+  // fact differently.
   if (key === 'status')
-    return `<span class="chip ${stClass(row.status)}">${esc(human(row.status))}</span>`;
-  if (key === 'priority') return esc(human(row.priority));
+    return `<span class="chip ${stClass(row.status)}">` +
+      `<span class="chipmark" aria-hidden="true">${esc(GLYPHS[row.status] || '')}</span>` +
+      `${esc(human(row.status))}</span>`;
+  // Bars and the word. The bars are what the eye picks out of a column of
+  // fifteen rows; the word is what settles which rung it is. Priority was text
+  // alone here while the graph drew it as line thickness — one fact, two views,
+  // no shared notation, and nothing on either page saying so.
+  if (key === 'priority')
+    return row.priority
+      ? `<span class="pricell">${barsFor(row.priority)}${esc(human(row.priority))}</span>`
+      : '';
   // Counted out of the body's own checklist. Empty where there is no checklist,
   // rather than "0/0" — a body nobody has written a list in has no progress to
   // report, which is not the same as no progress.
@@ -4154,6 +4402,13 @@ function cell(row, key, place) {
     // means changing the tasks".
     key === 'reviewers' && !(row.reviewers || []).length
       && (row.reviewers_from || []).length ? 'inherited' : '',
+    // Something is still in the way. Only where there is: a column tinted on
+    // every row says nothing, and the value of this is that the few tinted cells
+    // are the ones worth looking at. Written beside the number rather than as a
+    // CSS rule on the text, so the tint cannot outlive the count — the row is
+    // rebuilt from the index after every write, and a blocker that has just been
+    // marked done takes its ground with it.
+    key === 'blocked_by' && row.blocked_by > 0 ? 'waiting' : '',
     ground,
   ].filter(Boolean).join(' ');
   const named = (FIELD_LABELS[key] || key).toLowerCase();
@@ -4774,8 +5029,12 @@ function openEditor(cell) {
   // this is the one cell whose contents are replaced without a redraw, and the
   // connector belongs to the row rather than to what is in the cell at the time.
   cell.innerHTML = treeHtml(cell.dataset.rungs) + (closed
+    // The same mark the cell was showing a moment ago, so opening an editor does
+    // not swap a marked value for an unmarked list of words. `markFor` reaches
+    // the two maps the payload already carries.
     ? `<select data-type="text" aria-label="${named}">${closed.map(o =>
-        `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>${esc(human(o))}</option>`
+        `<option value="${esc(o)}" ${o === was ? 'selected' : ''}>` +
+        `${esc(markFor(field, o))}${esc(human(o))}</option>`
       ).join('')}</select>`
     : `<input value="${esc(was)}" data-type="${esc(EDITABLE[field])}" aria-label="${named}"` +
       `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off">`);
@@ -5906,8 +6165,76 @@ function fitWidths() {
   if (overhead) fit(scroller.clientWidth - overhead);
 }
 
-function applyWidths() {
-  if (!Object.keys(WIDTHS).length) return;
+// The smallest a column is allowed to become when the stored widths are scaled
+// down to fit. The same floor the drag uses, for the same reason: past it the
+// column is a sliver with nothing readable in it, and a table that fits the
+// window by making every column unreadable has not fitted anything.
+const COLUMN_FLOOR = 40;
+
+// The dragged widths, scaled so their total is the room there is.
+//
+// A width somebody dragged is a decision about PROPORTION, not about pixels: it
+// says this column deserves twice the room of that one, on the window it was
+// dragged in. Replayed as pixels into a different window it is wrong in both
+// directions — a gap down the right when the window grows, and a table wider
+// than the page when it shrinks, which is what jcanton reported on 2026-08-20.
+//
+// Derived from the stored numbers every time rather than by scaling what is
+// already applied, so it is idempotent: ten resizes give the same answer as one,
+// where a compounding scale would drift the layout away from what was dragged.
+function scaledWidths(room) {
+  const drawn = headers.filter(th => th.offsetParent !== null);
+  const stored = drawn.map(th => WIDTHS[keyOf(th)] || 0);
+  const total = stored.reduce((sum, one) => sum + one, 0);
+  if (!total || !room) return null;
+
+  // A plain multiply does not fit. Any column the factor would push under the
+  // floor is held at the floor instead, which takes room from the others — and
+  // that can push the NEXT one under it. So the pinning repeats until nothing
+  // more goes under, and only then is the rest shared out. Multiplying once and
+  // clamping afterwards was 771px of table in a 700px window.
+  const pinned = new Array(drawn.length).fill(false);
+  let left = room;
+  let pool = total;
+  for (let pass = 0; pass < drawn.length; pass++) {
+    let moved = false;
+    for (let i = 0; i < drawn.length; i++) {
+      if (pinned[i] || pool <= 0) continue;
+      if (stored[i] * (left / pool) < COLUMN_FLOOR) {
+        pinned[i] = true;
+        left -= COLUMN_FLOOR;
+        pool -= stored[i];
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  const out = {};
+  let given = 0;
+  let widest = 0;
+  drawn.forEach((th, i) => {
+    const width = pinned[i] || pool <= 0
+      ? COLUMN_FLOOR
+      : Math.max(COLUMN_FLOOR, Math.round(stored[i] * (left / pool)));
+    out[keyOf(th)] = width;
+    given += width;
+    if (!pinned[i] && width > out[keyOf(drawn[widest])]) widest = i;
+  });
+  // The rounding remainder, onto the widest column that is not at its floor. A
+  // dozen columns each half a pixel out is six pixels of horizontal scrollbar,
+  // and a scrollbar is the thing this whole function exists to avoid.
+  const slack = room - given;
+  if (slack && !pinned[widest]) {
+    const key = keyOf(drawn[widest]);
+    out[key] = Math.max(COLUMN_FLOOR, out[key] + slack);
+  }
+  return out;
+}
+
+function applyWidths(widths) {
+  widths = widths || WIDTHS;
+  if (!Object.keys(widths).length) return;
   table.style.tableLayout = 'fixed';
   let total = 0;
   headers.forEach(th => {
@@ -5916,7 +6243,7 @@ function applyWidths() {
     // one floats away from the right edge of nothing.
     if (th.offsetParent === null) { th.style.width = ''; return; }
     const key = keyOf(th);
-    if (WIDTHS[key]) { th.style.width = WIDTHS[key] + 'px'; total += WIDTHS[key]; }
+    if (widths[key]) { th.style.width = widths[key] + 'px'; total += widths[key]; }
   });
   // The table stops being 100% wide once the columns are explicit. Left at 100%,
   // a fixed layout divides the space it is given, so widening one column silently
@@ -6072,13 +6399,20 @@ summarise();
 draw();
 // After the first draw, because there is nothing to measure before the rows
 // exist. Stored widths win: they were set by hand, on purpose.
-if (automatic) fitWidths(); else applyWidths();
+// One name for "make the table the width of the room it is in", so the load, the
+// resize and the moment the real face lands cannot answer it differently.
+function refit() {
+  if (automatic) fitWidths();
+  else applyWidths(scaledWidths(scroller.clientWidth - chromeOverhead()) || WIDTHS);
+  stickyOffset();
+}
+refit();
 // The typeface arrives as a `data:` URI with `font-display: swap`, so the layout
 // this was just measured against may still be the fallback's metrics — and then
 // a first load fits to widths a reload does not reproduce, which is exactly the
 // "broken until I reloaded" it looked like. Measured once more when the real
 // face is in, which is the moment the numbers stop moving.
-if (document.fonts) document.fonts.ready.then(() => { if (automatic) fitWidths(); });
+if (document.fonts) document.fonts.ready.then(refit);
 // The fit drops columns as the window narrows, and the sticky title column
 // starts where the id column ends — both are facts about a layout that only
 // exists once it has been laid out. An automatic fit is a fit to *this* window,
@@ -6087,12 +6421,13 @@ if (document.fonts) document.fonts.ready.then(() => { if (automatic) fitWidths()
 // Which is also why a dragged layout keeps all fourteen columns however narrow
 // the window gets: shedding exists because the fit would otherwise squeeze every
 // column past reading, and a column somebody sized by hand is not being squeezed
-// by anything. It scrolls sideways, which is what dragging a column wider than
-// the window asks for.
-addEventListener('resize', () => {
-  if (automatic) fitWidths(); else applyWidths();
-  stickyOffset();
-});
+// out of the table altogether.
+//
+// It is still fitted to the window, though — scaled, not replayed. Replaying the
+// stored pixels left the table at the width of whatever window it was dragged
+// in: a gap down the right of a widened page, and a table hanging off the edge
+// of a narrowed one.
+addEventListener('resize', refit);
 // The rule down the right of the frozen title column says "what is to the left
 // of this is being held still while the rest passes under it". At scrollLeft 0
 // nothing is passing under anything and it reads as a stray separator between
@@ -6316,9 +6651,11 @@ td.clamp .clamped { display: flex; align-items: baseline; }
 td.clamp .clamped > .first { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 td.clamp .clamped > .more, td.clamp .clamped > .sev-mark { flex: none; }
 td.clamp .rest { display: none; }
-td.clamp .more { font: inherit; font-size: 11px; line-height: 1.2; margin-left: .3rem;
-                padding: 0 .25rem; border: 1px solid var(--line-strong); border-radius: 2px;
-                background: none; color: var(--muted); cursor: pointer; }
+/* The border and the ground are the default's; what is written here is the size
+   it has to be to stand inside a table cell, and the muted ink that keeps a
+   count of hidden tags from outweighing the tags themselves. */
+td.clamp .more { font-size: 11px; line-height: 1.2; margin-left: .3rem;
+                padding: 0 .25rem; color: var(--muted); }
 /* The sign, from the class that opens the cell rather than from the script that
    sets it: `+2` and `−2` are one count seen from either side, and drawn this way
    the glyph cannot end up disagreeing with the state it is describing. The badge
@@ -6344,6 +6681,15 @@ td .sev-mark { margin-left: .25rem; }
 .eid { font-family: var(--font-mono); font-size: 12px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
+/* A cell with something still in the way. Only when there is: a column tinted on
+   every row says nothing, and the whole value of this is that the tinted cells
+   are the few worth looking at. The class is written by the same function that
+   writes the number, so the tint cannot outlive the count it is about — which is
+   what would happen if this were a CSS rule keyed on the text.
+   `--waiting` and not `--sev-blocker-soft`: a record waiting on a colleague is
+   not a record that is broken, and one tint for both teaches the reader that the
+   plan is on fire whenever anybody is waiting. */
+td[data-col="blocked_by"].waiting { background: var(--waiting); }
 /* The column's `+`, in the header of every column that clamps. It is the badge
    in the cells below it wearing the same border and the same 11px, because it
    means the same thing one level up — `+4` in a cell is four you cannot see,
@@ -6358,10 +6704,18 @@ td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
    whose width is a different number in each of the four columns — and clear of
    the grip, which owns the last 7px of the cell. The room it stands in is
    reserved below rather than taken from the label. */
+/* The same little rectangle as `td.clamp .more`, and unlike that one it has to
+   SAY so: `th button` two rules up strips every control in a header of its border
+   and its ground at (0,0,2), which outranks the shell's `button`, so a `+` that
+   declared nothing would be drawn as the bare sort control beside it. The corner
+   still comes from the default — `th button` says nothing about one — which is
+   what keeps this badge on the app's corner without another copy of the number.
+   `th .expand` is (0,1,1) and wins on weight rather than on the order two
+   stylesheets happen to be concatenated in. */
 th .expand {
   position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
-  font: inherit; font-size: 11px; line-height: 1.2; padding: 0 .25rem;
-  border: 1px solid var(--line-strong); border-radius: 2px; background: none;
+  font-size: 11px; line-height: 1.2; padding: 0 .25rem;
+  border: 1px solid var(--line-strong); background: none;
   color: var(--muted); cursor: pointer;
 }
 th .expand::before { content: "+"; }
@@ -6467,12 +6821,10 @@ tr.adder > td {
   background: var(--surface); border-top: 1px solid var(--line);
   box-shadow: inset 0 1px 0 var(--line);
 }
-tr.adder button {
-  font: inherit; font-size: 12px; padding: .1rem .5rem; margin-right: .5rem;
-  border: 1px solid var(--line-strong); border-radius: 3px;
-  background: none; color: inherit; cursor: pointer;
-}
-tr.adder button:hover { border-color: var(--accent); color: var(--accent); }
+/* Only what is this button's own. The rectangle, the border and the ink come
+   from the default every control gets — a third copy of them here is how the
+   page came to have three slightly different buttons on one screen. */
+tr.adder button { font-size: 12px; padding: .1rem .5rem; margin-right: .5rem; }
 tr.adder button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 tr.adder .hint { font-size: 12px; color: var(--muted); }
 /* The draft row's controls, in whichever of their two places they were drawn:
@@ -6506,11 +6858,8 @@ tr.adder .hint { font-size: 12px; color: var(--muted); }
 .draft-do {
   display: inline-flex; align-items: center; justify-content: center;
   flex: none; margin: 0; padding: .2rem;
-  font: inherit; font-size: 12px; line-height: 0;
-  border: 1px solid var(--line-strong); border-radius: 3px;
-  background: none; color: inherit; cursor: pointer;
+  font-size: 12px; line-height: 0;
 }
-.draft-do:hover { border-color: var(--accent); color: var(--accent); }
 /* The one of the two that writes, in the ink this page gives that press
    everywhere else. `.draft-do.primary` is (0,2,0) and its hover (0,3,0), so the
    two do not have to be read in the order they happen to be written in. */
@@ -6537,6 +6886,17 @@ tr.writing > td { opacity: .55; cursor: progress; }
    screen reader on the cell hears its column header and the editor's own
    `aria-label`, which is the name of the thing, said once. */
 tr.draft > td { background: var(--surface-2); }
+/* The controls in a draft row are the size of a row, not the size of a button in
+   a bar. Only what is theirs: the rectangle and the ink come from the default
+   every control gets, and this says how much room it may take inside a cell that
+   has to stay the height of an ordinary one. */
+/* Tighter than a control in a bar, in both directions, and it has to be. The row
+   must stay the height of an ordinary row, and the picker sits in the id cell
+   where a flex `min-width` squeezes it — so every pixel of padding is a pixel
+   taken off the word, and the default's `.7rem` cut "Project" to "Projec". Only
+   the size is theirs; the rectangle and the ink come from the default. */
+tr.draft select { font-size: 11px; padding: .05rem 0; }
+tr.draft .draft-do { font-size: 12px; padding: .05rem .3rem; }
 /* While this cell holds the row's controls instead of an id it is a strip of
    controls and not a value, so it gives back the room either side of a value:
    at the column's own 8px the picker had 56px to say `Project` in and drew
@@ -6615,17 +6975,45 @@ _GRAPH = """
     dichromat cannot use. The count says how much of the plan survived the
     filters. Neither is a control, and between them they were two of the six rows
     that left 268px of an 806px window for the drawing. -#}
-<div class="keyrow">
+<div class="canvas">
+{#- Over the drawing rather than above it — jcanton, 2026-08-20, to get the
+    vertical space back. The canvas is the tallest thing on the page and the
+    two key rows were costing it two lines before it started. Top right, out
+    of the way of a layout that runs left to right and top down, and it stops
+    taking pointer events so it cannot swallow a click on a node beneath it. -#}
+<div class="keys">
+{#- The count, over the drawing with the keys. It was in a row of its own below
+    the filters, and taking the keys out of that row left it there alone — a
+    whole line of the tallest view on the site holding "31 of 31 shown", which is
+    the exact row `test_a_sentence_about_the_view_never_costs_the_view_a_row` was
+    written to prevent. It rides with the keys instead. -#}
+<div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
+  id="context"></span></div>
+{#- Priority first, on the left, because that is the one nobody could see —
+    jcanton, 2026-08-20, having noticed one project drawn with a thicker line and
+    had to ask why. The encoding was already there and legible; the page simply
+    never said what it meant, and an encoding nobody has been told is decoration.
+
+    The key SHOWS the thickness rather than standing for it with a glyph. An
+    arrow or a set of bars would be a second thing to learn on top of the thing
+    it explains, and it would appear nowhere on the drawing — this way the key
+    and the node are the same picture at two sizes. -#}
+<ul class="legend" aria-label="What a node's line thickness means">
+  <li class="legendname">priority</li>
+  {% for priority in priorities %}
+  <li><span class="swatch pri pri-{{ priority }}" aria-hidden="true">{{
+      bars(priority) }}</span>{{ priority|human }}</li>
+  {% endfor %}
+</ul>
 <ul class="legend" aria-label="What a node's colour and mark mean">
+  <li class="legendname">status</li>
   {% for status in statuses %}
   <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
     >{{ status|human }}</li>
   {% endfor %}
 </ul>
-<div id="summary"><span id="shown" class="num">{{ total }}</span> of {{ total }} shown<span
-  id="context"></span></div>
 </div>
-<div class="canvas">
+
   {#- `data-fills`: this is the box the shell measures the window into. A canvas
       has no size of its own — whatever it is told, it draws — so it is the one
       box on these three pages that takes a `height` rather than a cap. -#}
@@ -6655,7 +7043,6 @@ _GRAPH = """
       the drop target and the highlighting are the extension's now — the version
       of this written here could not tell the reader where the node would land,
       because the box it would land in moves with the node. -#}
-  <button type="button" id="refile">Refile</button>
   <button type="button" id="save" hidden>Save</button>
   <button type="button" id="discard" hidden>Reset</button>
   <span id="state" role="status"></span>
@@ -6665,7 +7052,6 @@ _GRAPH = """
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
 {#- `model.PARENT_KINDS`: which kind may hold which. The extension asks before it
     lets go, so a drop the server would refuse is one the canvas never offers. -#}
-<script id="parents" type="application/json">{{ parent_kinds|tojson }}</script>
 <script>{{ cytoscape }}</script>
 {#- ELK rather than dagre, because dagre does not know what a nested node is: it
     lays a plan whose pitches hold tasks out as though it were flat, and the
@@ -6675,7 +7061,6 @@ _GRAPH = """
     none of them crossing. It is the one vendored file that is not permissively
     licensed — EPL-2.0, notice beside it in `static/`, see `VENDOR.md`. -#}
 <script>{{ elk }}</script>
-<script>{{ cytoscape_elk }}</script>
 {#- Filing one thing inside another was written here by hand, shipped, and
     removed the same day: a compound's outline follows the child being dragged,
     so the drop looked like nothing happening until the page reloaded. This
@@ -6683,11 +7068,8 @@ _GRAPH = """
     before you write it` in AGENTS.md, which this is the worked example of.
     Its sibling `cytoscape-edgehandles` was audited and refused in the same pass:
     it wants two lodash modules as globals to replace a gesture that works. -#}
-<script>{{ compound_dnd }}</script>
 {{ filters }}
 <script>
-cytoscape.use(cytoscapeElk);
-cytoscape.use(cytoscapeCompoundDragAndDrop);
 
 // A payload that did not survive the trip is a third kind of empty, and an empty
 // canvas looks the same whichever one it is: a bordered box with nothing in it,
@@ -6734,7 +7116,14 @@ const LINE = () => ({
 // timeline draws at a bar's left edge and the legend below shows in its swatch.
 // Not a token: a shape, so it survives a screenshot, a projector and deuteranopia.
 const GLYPH = {{ glyphs|tojson }};
+// And priority in front of it, for the reason the status glyph is there at all:
+// the channel priority is drawn with here is the border's THICKNESS, which is
+// legible only against a neighbour to compare it with — jcanton saw one project
+// drawn thicker than the rest and had to ask what it meant. A rung of the same
+// ladder, in the label, answers it without a comparison.
+const MARK = {{ marks|tojson }};
 const labelOf = node =>
+  (MARK[node.data('priority')] || '') +
   (GLYPH[node.data('status')] || '') + ' ' + (node.data('label') || '');
 
 // Cytoscape aligns a left-aligned label by its RIGHT edge against the box's left
@@ -6753,16 +7142,18 @@ function groupWidth(node) {
 
 // Named once: filtering re-runs it, and a second copy of the options is how the
 // graph comes to lay itself out one way at load and another way afterwards.
-// Measured on the real plan — 31 records, six dependencies — in a 1900x820
-// canvas, against the dagre layouts this replaces:
 //
-//     dagre LR (what shipped)   7% of the canvas   3 of 6 edges across a box
-//     dagre TB + packed        57%                 3 of 6
-//     elk layered RIGHT        69%                 0 of 6
+// EACH BOX IS LAID OUT OVER ITS OWN CHILDREN AND FROZEN AS A RECTANGLE, and then
+// the rectangles are laid out. That is ELK's recursive engine — what it does when
+// `hierarchyHandling` is left alone — and it is what makes grouping the layout's
+// primary objective rather than something a later pass has to repair.
 //
-// `hierarchyHandling: INCLUDE_CHILDREN` is the whole reason: dagre lays a nested
-// plan out as though it were flat, and a pitch holding four tasks is exactly
-// what this plan is made of. ELK lays out the boxes and their contents together.
+// `INCLUDE_CHILDREN` was here and is gone. It flattens the hierarchy into one
+// layered pass, which ranks children of different boxes against each other and
+// leaves a box to be whatever rectangle its children ended up needing. Measured
+// on the real plan against the recursive engine, both with `packComponents` gone:
+// 0 overlapping boxes either way, but sibling sparseness 1.4 against 4.7-13.1
+// once the pack was in play. The pack is the story; see the note where it was.
 //
 // `RIGHT` and not `DOWN` for the reason `TB` beat `LR` under dagre — the shape of
 // this plan, not a preference. Most records depend on nothing, and the direction
@@ -6770,65 +7161,249 @@ function groupWidth(node) {
 // at 23% of the canvas against 69%.
 //
 // An edge here is a dependency and only ever a dependency. What holds what is
-// drawn as a box around its contents, which is what `INCLUDE_CHILDREN` lays out
-// — the table draws the same relationship as a tree, and neither view turns it
-// into an arrow.
-const LAYOUT = {
-  name: 'elk',
-  // ELK's own fitting is off: `packComponents` below moves the pieces afterwards
-  // and fits once, and two fits fight over the same viewport.
-  fit: false,
-  elk: {
-    algorithm: 'layered',
-    'elk.direction': 'RIGHT',
-    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-    'elk.edgeRouting': 'ORTHOGONAL',
-    'elk.spacing.nodeNode': 30,
-    'elk.layered.spacing.nodeNodeBetweenLayers': 50,
-    // `elk.separateConnectedComponents` and `elk.aspectRatio` were here and are
-    // not any more: measured, they changed nothing at all, because
-    // `packComponents` runs afterwards and arranges the pieces itself. Two
-    // settings that read as though they do something are worse than none.
-  },
+// drawn as a box around its contents — the table draws the same relationship as a
+// tree, and neither view turns it into an arrow.
+//
+// MEASURED AT SIZE, 2026-08-20, on plans built by `tests/plans.py` at 1900x820.
+// Containment holds all the way up — 0 overlapping boxes and 0 foreign cards at
+// 31, 52, 208 and 518 records — and what degrades is the zoom, because root
+// `layered` puts every top-level box in ONE ROW:
+//
+//     records   zoom, root layered   zoom, root rectpacking
+//         31           0.80                 0.80
+//        208           0.24                 0.36
+//        518           0.16                 0.27
+//
+// `algorithm: 'rectpacking'` here, keeping `layered` per parent below, is
+// therefore the switch for a plan too wide for one row. It is NOT the default,
+// and the reason is worth the four lines: reverse every dependency in the corpus
+// and root `layered` still draws 6 of 6 arrows left to right — it genuinely
+// re-ranks — while `rectpacking` drops to 2 of 6, because a packer reads no edges
+// at all and was only ever following the order the records came in. On a view
+// whose edges mean blocks/blocked-by, an arrow that reads backwards is the view
+// lying. Take the zoom when a plan actually outgrows the row, and know what it
+// costs.
+// ELK is asked directly, not through `cytoscape-elk`. The adapter reads node
+// positions out of the answer and never looks at an edge's `sections`, and going
+// round it buys the two things this layout needs and it cannot give:
+//
+//   * an edge on the box that HOLDS it rather than at the root, and
+//   * ghost edges, which are the whole reason the boxes come out in order.
+//
+// GHOST EDGES. ELK's recursive engine lays each box out over its own children and
+// then lays the boxes out. The pass that places the boxes therefore cannot see a
+// dependency between two records INSIDE two different boxes — it sees boxes. So
+// for every dependency, an invisible edge is added between the two children of
+// its lowest common ancestor, which is the edge that pass can act on.
+//
+// At every level and not only at the root, because the problem repeats all the
+// way down: two tasks in two different pitches of one project need those pitches
+// ordered, and only the project's own layout pass can do it. Measured on a
+// generated plan of 518 records — `tests/plans.py` — dependencies drawn backwards
+// went 24 of 189 with no ghosts, to 18 with ghosts only at the root, to 3 with
+// them at every level. On the real plan it is 0 either way, which is luck of
+// shape: its two cross-project dependencies are top-level edges that carry the
+// order themselves.
+//
+// The ghosts never reach cytoscape. They exist in the object handed to ELK and
+// nowhere else, which is what makes them safe: a layout-only edge that got into
+// the graph would be tappable in edit mode, would be walked by the cycle check,
+// would fade an unrelated project in the filter, and would be sent to the server
+// by Save.
+//
+// The three left over at 518 are group-level ambiguity rather than a bug: if
+// something in A blocks something in B and something in B blocks something in A,
+// the ghost graph has a cycle the record graph does not, and one of the two
+// arrows has to come out backwards.
+const LAYOUT_OPTIONS = {
+  'elk.algorithm': 'layered',
+  'elk.direction': 'RIGHT',
+  'elk.spacing.nodeNode': '30',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '50',
+  // Routed, and mostly in vain: ELK computes bend points for an edge it can see
+  // both ends of, and returns none at all for one that spans the hierarchy.
+  // Measured on a 208-record plan, ORTHOGONAL, POLYLINE and SPLINES each gave
+  // bend points to ZERO of 76 edges. What comes back is applied — a routed edge
+  // is better than a straight one — and the rest keep cytoscape's taxi router.
+  // The edges that cross a card are the reason a person can drag them apart.
+  'elk.edgeRouting': 'ORTHOGONAL',
 };
 
-// dagre lays the whole graph out as one drawing, so the pieces that are not
-// connected to each other are strung along a single line — which is why even
-// `TB` came out 11 times wider than it was tall, and still used a third of the
-// canvas. Nothing in the plan says those pieces belong in a row: they are
-// separate projects.
-//
-// So they are arranged afterwards, into rows whose width is chosen to make the
-// whole drawing the shape of the canvas it has to fit into. Same layout, same
-// edges, and 80% of the canvas instead of 7%, at nearly twice the zoom.
-//
-// Only the leaves are moved. A compound node's position is derived from its
-// children in cytoscape, so shifting a parent as well would move its contents
-// twice.
-// ELK is asynchronous, which is what makes the handler above enough: it emits
-// `layoutstop` after this file has finished being read. dagre was synchronous and
-// had already emitted it by then — the pack was written, never called, and the
-// graph came out in one long line exactly as before it was written.
-function packComponents() {
-  const pieces = cy.elements(':visible').components()
-    .map(piece => ({piece, box: piece.boundingBox()}))
-    .sort((a, b) => b.box.h - a.box.h);
-  if (pieces.length < 2) return;
-  const gap = 40;
-  const area = pieces.reduce((sum, one) => sum + (one.box.w + gap) * (one.box.h + gap), 0);
-  // The row width that would make the arrangement as wide-to-tall as the canvas.
-  const budget = Math.sqrt(area * (cy.width() / cy.height()));
-  let x = 0, y = 0, tallest = 0;
-  for (const {piece, box} of pieces) {
-    if (x > 0 && x + box.w > budget) { x = 0; y += tallest + gap; tallest = 0; }
-    const dx = x - box.x1, dy = y - box.y1;
-    piece.nodes().filter(node => node.isChildless())
-      .positions(node => ({x: node.position('x') + dx, y: node.position('y') + dy}));
-    x += box.w + gap;
-    tallest = Math.max(tallest, box.h);
+// 25 and not ELK's default 12, because the box ELK reserves and the box this page
+// draws are not the same box: `:parent` is styled with `padding: 20` plus a label
+// band above it. Measured, the drawn box came out 21px larger in each dimension
+// than the one ELK planned, which is exactly enough for two boxes ELK considered
+// separate to touch. THAT PADDING AND THIS NUMBER HAVE TO MOVE TOGETHER.
+const BOX_PADDING = '[top=25,left=25,bottom=25,right=25]';
+
+// The chain from the outermost box down to the node itself.
+const chainOf = node => [...node.ancestors().toArray().reverse(), node].map(n => n.id());
+
+// One node, as ELK wants it. A leaf carries the size cytoscape drew it at; a box
+// carries none, because its size is what ELK is being asked to work out.
+function elkNode(node) {
+  const kids = node.children();
+  if (kids.length) {
+    return {id: node.id(), children: kids.map(elkNode),
+            layoutOptions: {'elk.padding': BOX_PADDING}};
   }
+  const box = node.boundingBox({includeLabels: false});
+  return {id: node.id(), width: box.w, height: box.h};
+}
+
+// Which container each edge belongs to. A real edge goes on the box that holds
+// BOTH its ends, so ELK routes it among that box's children with them as
+// obstacles; at the root a whole project is one opaque rectangle and the edge is
+// drawn straight through everything inside it.
+function edgesByContainer(edges) {
+  const real = {};
+  const ghosts = {};
+  const seen = new Set();
+  edges.forEach(edge => {
+    const from = chainOf(edge.source());
+    const to = chainOf(edge.target());
+    const together = from.length === to.length
+      && from.slice(0, -1).join() === to.slice(0, -1).join();
+    const holder = together && from.length > 1 ? from[from.length - 2] : 'root';
+    (real[holder] = real[holder] || []).push({
+      id: edge.id(), sources: [edge.source().id()], targets: [edge.target().id()],
+    });
+
+    let deep = 0;
+    while (deep < from.length && deep < to.length && from[deep] === to[deep]) deep++;
+    const a = from[deep], b = to[deep];
+    if (!a || !b || a === b) return;
+    // Already the edge that level will see: nothing to add.
+    if (a === edge.source().id() && b === edge.target().id()) return;
+    const on = deep === 0 ? 'root' : from[deep - 1];
+    const key = on + '|' + a + '>' + b;
+    if (seen.has(key)) return;
+    seen.add(key);
+    (ghosts[on] = ghosts[on] || []).push({id: 'ghost:' + key, sources: [a], targets: [b]});
+  });
+  return {real, ghosts};
+}
+
+const elk = new ELK();
+
+// Lay the visible graph out and draw the answer. Asynchronous, and the callers
+// treat it as such: the filter awaits nothing, it simply asks again.
+async function relayout() {
+  const nodes = cy.nodes(':visible');
+  const edges = cy.edges(':visible');
+  if (!nodes.length) return;
+  const {real, ghosts} = edgesByContainer(edges);
+  const graph = {
+    id: 'root',
+    layoutOptions: {...LAYOUT_OPTIONS,
+                    'elk.aspectRatio': String(cy.width() / cy.height())},
+    children: nodes.filter(node => !node.isChild()).map(elkNode),
+    edges: [...(real.root || []), ...(ghosts.root || [])],
+  };
+  const hang = node => {
+    const mine = [...(real[node.id] || []), ...(ghosts[node.id] || [])];
+    if (mine.length) node.edges = [...(node.edges || []), ...mine];
+    (node.children || []).forEach(hang);
+  };
+  graph.children.forEach(hang);
+
+  let laid;
+  try {
+    laid = await elk.layout(graph);
+  } catch (error) {
+    // A layout that will not run must not take the page with it: the nodes are
+    // already on the canvas and cytoscape will draw them where they are.
+    say('this plan could not be laid out — the drawing is unarranged');
+    return;
+  }
+
+  // A child's x and y are relative to its parent, so the walk carries the offset.
+  const at = {};
+  const walk = (node, dx, dy) => {
+    const x = (node.x || 0) + dx, y = (node.y || 0) + dy;
+    at[node.id] = {x, y, w: node.width, h: node.height};
+    (node.children || []).forEach(kid => walk(kid, x, y));
+  };
+  (laid.children || []).forEach(kid => walk(kid, 0, 0));
+
+  // Only the leaves are placed. A compound's position in cytoscape is derived
+  // from its children, so setting it as well moves its contents twice.
+  cy.batch(() => {
+    nodes.filter(node => node.isChildless()).forEach(node => {
+      const where = at[node.id()];
+      if (where) node.position({x: where.x + where.w / 2, y: where.y + where.h / 2});
+    });
+  });
+
+  // The routes, in the coordinates of whatever container they were declared on.
+  const bends = {};
+  const collect = (node, dx, dy) => {
+    (node.edges || []).forEach(one => {
+      if (one.id.startsWith('ghost:')) return;
+      const section = (one.sections || [])[0];
+      if (!section || !(section.bendPoints || []).length) return;
+      bends[one.id] = section.bendPoints.map(p => ({x: p.x + dx, y: p.y + dy}));
+    });
+    (node.children || []).forEach(kid => {
+      const where = at[kid.id];
+      if (where) collect(kid, where.x, where.y);
+    });
+  };
+  collect(laid, 0, 0);
+  drawRoutes(bends);
+
   cy.fit(undefined, 24);
 }
+
+// ELK gives a bend point as a position; cytoscape wants it as a distance from the
+// straight line between the two ends and a fraction along that line. So each one
+// is projected onto that line — which also means the two are consistent when a
+// node is dragged afterwards, because both are relative to where the ends are.
+function drawRoutes(bends) {
+  cy.batch(() => {
+    cy.edges().forEach(edge => {
+      const points = bends[edge.id()];
+      if (!points || !points.length) { edge.removeStyle('curve-style'); return; }
+      const from = edge.source().position(), to = edge.target().position();
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const span = Math.hypot(dx, dy) || 1;
+      const weights = [], distances = [];
+      points.forEach(point => {
+        const px = point.x - from.x, py = point.y - from.y;
+        weights.push(((px * dx + py * dy) / (span * span)).toFixed(4));
+        distances.push(((px * dy - py * dx) / span).toFixed(1));
+      });
+      edge.style({'curve-style': 'segments',
+                  'segment-weights': weights.join(' '),
+                  'segment-distances': distances.join(' ')});
+    });
+  });
+}
+
+// `packComponents` was here and is the reason this page looked the way it did.
+//
+// It ran after ELK, split the drawing with `cy.elements(':visible').components()`
+// and arranged the pieces into rows. `components()` is connectivity over EDGES —
+// and an edge here is a dependency, never containment, which is the whole design
+// of this view. So a box was not one piece: the real plan's 31 records came out
+// as 25 of them, six of the eight boxes had their children spread across more
+// than one, and the loop then moved only the childless nodes. Siblings were dealt
+// into different rows and each parent's rectangle — which in cytoscape is nothing
+// but the bounding box of wherever its children landed — stretched across
+// everything in between. One project's box went from 400x713 to 1753x1207.
+//
+// Measured on the real plan, immediately before and immediately after that one
+// function: 0 overlapping box pairs became 17-21, 0 cards drawn inside a box they
+// do not belong to became 29-70, and sibling sparseness went from 1.30 to between
+// 4.7 and 13.1. Every screenshot of this page that looked wrong was a picture of
+// those eight lines.
+//
+// It was written for a real problem, which is now solved a level up: the
+// flattened hierarchy left the pieces of a disconnected plan in one long line at
+// 7% of the canvas. ELK's recursive engine — what it does when `hierarchyHandling`
+// is left alone — arranges the boxes itself, so there is nothing left to repair.
+// Do not reintroduce a post-layout pass here without measuring what it does to
+// containment: a unit of work that cannot see the boxes will take them apart.
 
 // Before the canvas is built, not after. Cytoscape measures its container once,
 // here, and the first layout fits the plan into whatever it measured — so a
@@ -6841,7 +7416,6 @@ fitRoom();
 const cy = cytoscape({
   container: document.getElementById('cy'),
   elements: ELEMENTS || [],
-  layout: LAYOUT,
   // Filtering re-fits what is left to the window, and two boxes fitted to a
   // 1400px canvas came out at nearly 3x — the same graph reading as a different
   // app. Zooming in by hand stops at the same place, which at a 10px label is
@@ -6879,6 +7453,10 @@ const cy = cytoscape({
     // left, on its own ground: a box whose name you cannot read is a box that
     // says only that something is grouped, not what by.
     { selector: ':parent', style: {
+        // 20 here and `elk.padding: 25` in LAYOUT, and the two have to move
+        // together: ELK reserves the room and this draws the box, and when the
+        // drawn one is bigger than the reserved one two boxes ELK considered
+        // separate touch.
         'background-opacity': .08, 'padding': 20,
         'font-size': GROUP_SIZE, 'font-weight': 600, 'color': token('--fg'),
         // Ellipsis rather than wrap: the offset below is measured on one line,
@@ -6891,7 +7469,19 @@ const cy = cytoscape({
     // On the canvas only because something that did match points at it. Faded
     // rather than removed, so no arrow leaves for a box you cannot see.
     { selector: 'node.aside', style: { 'opacity': .32 } },
+    // Edges are drawn OVER the cards, not behind them. A line that disappears
+    // behind a card and comes out the other side reads as two edges meeting it —
+    // jcanton, 2026-08-20: "to a distracted human not noticing that there are no
+    // arrowheads, [it] may make it seem like it depends on where the edge comes
+    // from". A line you can see crossing is a line you can see is not connected.
+    //
+    // The alternative was an automatic layout that never puts a card on a line,
+    // and that is not reachable with what is vendored: ELK emits bend points for
+    // an edge whose obstacles are at the level it is working on, and none at all
+    // for one that spans the hierarchy — measured, zero of 76 on a 208-record
+    // plan, in each of its three routing modes.
     { selector: 'edge', style: {
+        'z-compound-depth': 'top',
         // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
         // so an edge that leaves horizontally and turns once reads as a route
         // between ranks instead of a curve drawn over whatever is in between.
@@ -6967,13 +7557,43 @@ function paint() {
   route();
 }
 addEventListener('themechange', paint);
+
+// Dragging, which is the half of the complaint no layout choice can fix. A
+// compound's rectangle in cytoscape is the bounding box of its children and
+// nothing else, so a card dragged out of its box does not leave the box — it
+// STRETCHES it, across whatever the box now has to reach. Measured on a clean
+// layout, one card dragged 250x120: 0 overlapping box pairs became 2, and 0 cards
+// inside a foreign box became 5. The drawing was correct until somebody touched it.
+//
+// So a card goes back inside the box it was picked up from. Not by re-running the
+// layout, which is the obvious answer and a worse one: ELK ignores current
+// positions and is deterministic, so a re-run puts every card back exactly where
+// it already was and the drag simply vanishes — a stranger thing to watch than a
+// card sliding home.
+// Nothing is clamped and nothing is ungrabbable. A card dragged out of its box
+// stretches the box, which is why the clamp existed — but an automatic layout
+// that never puts a card on an edge is not reachable here (see `LAYOUT_OPTIONS`:
+// ELK returns bend points for none of the edges that span the hierarchy, in any
+// of its three routing modes), so somebody has to be able to move a card off the
+// line it is sitting on. jcanton, 2026-08-20, having watched the clamp put a card
+// straight back onto the line it had been dragged off: "let people drag".
+//
+// The clamp contributed nothing to the drawing you arrive at. It ran on
+// `dragfree` and nowhere else, so the starting view has always been the layout
+// alone — worth writing down, because the obvious guess is otherwise, and it was
+// the guess made when this was agreed.
+//
+// A box can be picked up again for the same reason. Cytoscape moves a parent
+// rigidly with its whole subtree, so dragging one shoves it across its
+// neighbours and nothing re-lays-out — which was the argument for `ungrabify`,
+// and is now the argument against it: shoving a box out of the way is exactly
+// what somebody needs to do when two of them are drawn on top of each other.
 // The face is inlined but still swaps in asynchronously, and a group label
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
 
 // Packed first and routed after: routing reads where the boxes ended up, and
 // the pack moves them.
-cy.on('layoutstop', () => { packComponents(); route(); });
 cy.on('position', 'node', route);
 route();
 
@@ -7056,8 +7676,14 @@ function applyFilter() {
   const now = cy.nodes(':visible').map(node => node.id()).sort().join(',');
   if (now === laidOut || !keep.size) return;
   laidOut = now;
-  cy.elements(':visible').layout({...LAYOUT, fit: true}).run();
+  relayout();
 }
+
+// The first drawing. The constructor used to carry `layout:` and did this on the
+// way up; ELK is asked directly now, so it is asked here — and asked here rather
+// than left to `applyFilter`, which lays out only when the visible set has
+// CHANGED, and on the first pass it has not.
+relayout();
 
 addEventListener('openproj:filter', applyFilter);
 CLEAR.onclick = clearFilters;
@@ -7142,19 +7768,72 @@ cy.on('dbltap', 'node', evt => {
 //
 // Not while drawing an edge. In that mode the pointer is doing something else
 // entirely, and a box following it covers the node it is being dragged towards.
+// A box is hit over its whole area, and most of that area belongs to the records
+// inside it. So a compound answers for its label and not for its acres — jcanton,
+// 2026-08-20 — or reading a project's tasks means dragging the pointer through a
+// card about their parent, which is in the way of the thing being read.
+//
+// The label's rectangle, worked out from the style that draws it rather than
+// guessed: `text-halign: left` with `text-margin-x: groupWidth + 12` puts its
+// left edge twelve pixels inside the box, and `text-valign: top` with
+// `text-margin-y: 17` puts it just under the top edge. The band is generous on
+// purpose — it is the title bar somebody is aiming at, not the glyphs.
+function labelBand(node) {
+  const box = node.boundingBox({includeLabels: false});
+  return {
+    x1: box.x1, x2: box.x1 + groupWidth(node) + 24,
+    y1: box.y1, y2: box.y1 + GROUP_SIZE + 16,
+  };
+}
+function onLabel(node, at) {
+  const band = labelBand(node);
+  return at.x >= band.x1 && at.x <= band.x2 && at.y >= band.y1 && at.y <= band.y2;
+}
+
+// Which box the pointer is currently over the label of. `queueCard` restarts its
+// own delay on every call, so asking it on every `mousemove` would mean a card
+// that never appears while the pointer is still moving: it is asked on the
+// crossing, once, and `hideCard` on the way back out.
+let onLabelOf = null;
+
 cy.on('mouseover', 'node', evt => {
   if (connecting) return;
+  const node = evt.target;
+  if (node.isParent()) {
+    if (!onLabel(node, evt.position)) return;
+    onLabelOf = node.id();
+  }
   // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
   // from the same `_row` the table is drawn from — and this page has no `DATA` of
   // its own to look anything up in. The first version of this read `DATA.rows`
   // and drew nothing at all, on the one view the card was added for.
-  queueCard(evt.target.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
 });
-cy.on('mouseout', 'node', hideCard);
+
+// Entering a box below its title is not entering its label, and the pointer can
+// reach the label afterwards without ever crossing the box's edge again.
+cy.on('mousemove', 'node', evt => {
+  if (connecting) return;
+  const node = evt.target;
+  if (!node.isParent()) return;
+  if (onLabel(node, evt.position)) {
+    if (onLabelOf === node.id()) return;
+    onLabelOf = node.id();
+    queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  } else if (onLabelOf === node.id()) {
+    onLabelOf = null;
+    hideCard();
+  }
+});
+
+cy.on('mouseout', 'node', evt => {
+  if (evt.target.isParent() && onLabelOf === evt.target.id()) onLabelOf = null;
+  hideCard();
+});
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
-cy.on('drag pan zoom', hideCardNow);
+cy.on('drag pan zoom', () => { onLabelOf = null; hideCardNow(); });
 
 if (CONNECT) {
   CONNECT.onclick = () => {
@@ -7257,107 +7936,16 @@ if (CONNECT) {
 // do — the same rule the drawn ones follow.
 // --- refiling ---------------------------------------------------------------
 //
-// Drag a record onto the box that should hold it. The extension does the part
-// this repository got wrong on its own: it knows which box the pointer is over
-// while a node is in the air, draws it, and hands back the pair when the drag
-// ends. What is left here is the rule about which pairs are allowed and the
-// write — the same PATCH the table's own drag sends, because a parent is a field
-// like any other.
-const REFILE = document.getElementById('refile');
-const CAN_HOLD = (() => {
-  try { return JSON.parse(document.getElementById('parents').textContent); }
-  catch (error) { return {}; }
-})();
-let refiling = false;
-let cdnd = null;
-
-if (REFILE) {
-  REFILE.onclick = () => {
-    if (connecting) CONNECT.onclick();
-    refiling = !refiling;
-    REFILE.textContent = refiling ? 'Stop refiling' : 'Refile';
-    if (refiling) {
-      cdnd = cy.compoundDragAndDrop({
-        // Only the records that can be filed under something. A project belongs
-        // to nothing, so it is not something to pick up.
-        grabbedNode: node => (CAN_HOLD[node.data('kind')] || []).length > 0,
-        // And only into a box that may hold it. Asked before the drop rather
-        // than after, so the canvas never offers a move the server refuses.
-        dropTarget: (target, grabbed) =>
-          target.isParent() &&
-          (CAN_HOLD[grabbed.data('kind')] || []).includes(target.data('kind')),
-        // No new boxes: a project, a pitch and a task are the three kinds this
-        // plan has, and dropping one record on another must not invent a fourth
-        // thing to hold them.
-        dropSibling: () => false,
-      });
-      say('drag a record onto the box that should hold it, or out of the one it is in');
-    } else {
-      if (cdnd) { cdnd.destroy(); cdnd = null; }
-      say('');
-    }
-  };
-
-  // Filed. `dropTarget` is the box it landed in.
-  cy.on('cdnddrop', (event, dropTarget) => {
-    const child = event.target;
-    if (!refiling || !dropTarget || !dropTarget.length) return;
-    if (dropTarget.id() === (child.data('parent') || null)) return;
-    refile(child.id(), dropTarget.id());
-  });
-
-  // Taken out. The extension fires this when a node leaves the box it was in,
-  // which is the gesture that had no answer at all before: there was no point on
-  // the canvas that meant "outside".
-  cy.on('cdndout', (event, dropTarget) => {
-    const child = event.target;
-    if (!refiling || !child.data('parent')) return;
-    refile(child.id(), null);
-  });
-}
-
-// The write. Same PATCH, same base commit, same refusal as everything else this
-// page commits; the page reloads afterwards because a parent moves the record's
-// cycle, its dates, what it waits for and which project it counts against, and
-// not one of those is something this canvas can work out for itself.
-async function refile(childId, parentId) {
-  const base = document.getElementById('base');
-  dispatchEvent(new Event('openproj:writing'));
-  let committed = null;
-  try {
-    say(parentId ? `filing ${childId} into ${parentId}…` : `taking ${childId} out…`);
-    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
-      method: 'PATCH', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({base_commit: base.value, fields: {parent: parentId}, body: null}),
-    });
-    const answer = await answerOf(response);
-    if (!response.ok) {
-      say(refusal(answer, response.status));
-      return;
-    }
-    committed = answer.commit;
-    base.value = answer.commit;
-  } catch (error) {
-    // The other half of the sweep `e82ce55` stopped short of. `say` above puts a
-    // present-continuous sentence in the live region and only an answer takes it
-    // back out, so a rejection left this page reading `filing task-3 into
-    // project-a…` for ever, over a diagram still drawn the way it was, with the
-    // rejection escaping as an unhandled one.
-    //
-    // Same sentence as the table's drag, because it is the same gesture and the
-    // same PATCH: it does not claim to know whether the write landed, and the
-    // recovery is to do it again against the same `base_commit`.
-    say(`${childId} was not moved — ${error.message}. Drag it again: if the first `
-        + 'one landed, the second is refused rather than repeated.');
-    // And NOT the reload below, which is why this returns rather than falling
-    // through: the refusal branch above skips it for the same reason, and a page
-    // that reloaded here would throw the sentence away with itself.
-    return;
-  } finally {
-    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
-  }
-  location.reload();
-}
+// Refiling is not on this canvas. It was written by hand, removed, brought back
+// through `cytoscape-compound-drag-and-drop`, and removed again on 2026-08-20 —
+// jcanton, after using it: "no need to do this in the graph, let's leave it to
+// the table". Dragging a node here moves it in a drawing whose whole arrangement
+// is computed, so a record dropped into a box is a record whose position is
+// about to be recomputed anyway; the table's rows do not move under you, and a
+// row dragged onto another row is a gesture with one meaning.
+//
+// The extension went with it. A vendored library nothing calls is a library
+// nobody checks — see `static/VENDOR.md`.
 
 cy.on('tap', 'edge', evt => {
   if (!connecting) return;
@@ -7411,6 +7999,32 @@ cy.on('tap', 'node', evt => {
 """
 
 _GRAPH_STYLE = """
+/* The two key rows, over the drawing instead of above it. The canvas is the
+   tallest thing on this page and they were costing it two lines before it began.
+   Top right, because the layout runs left to right and top down, so that corner
+   is the emptiest one on almost every plan.
+
+   `pointer-events: none` on the box and back on for the rows: a key floating
+   over a node must not swallow the double-click that opens it, but the rows
+   themselves still need to be selectable text. */
+.canvas { position: relative; }
+.keys { position: absolute; top: .5rem; right: .75rem; z-index: 5;
+        display: flex; flex-direction: column; align-items: flex-end; gap: .1rem;
+        pointer-events: none;
+        padding: .35rem .5rem; border-radius: 3px;
+        background: color-mix(in srgb, var(--bg) 82%, transparent); }
+.keys .legend { margin: 0; pointer-events: auto; gap: .2rem .5rem; }
+/* Both rows the same length — jcanton, 2026-08-20. Each row is five keys and a
+   name, so five keys of one width and a name of one width is two rows of one
+   length, whatever the words inside them happen to be. Without it the rows are
+   as long as their vocabulary: "Very high, High, Medium, Low, Very low" against
+   "Shaping, Ready, In progress, Done, Shelved" came out 55px apart, and two
+   ragged rows in a corner read as two unrelated things. */
+.keys .legend li { min-width: 6.6rem; }
+.keys .legend li.legendname { min-width: 4.4rem; }
+.keys #summary { margin: 0; pointer-events: auto; font-size: 12px;
+                 color: var(--muted); text-align: right; }
+
 .canvas { position: relative; }
 /* The room the window actually has left, not 78vh of it. A fraction of the window
    knows nothing about the rows above the canvas or the sticky commit bar below,
@@ -9846,10 +10460,17 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
 /* The line between one group of marks and the next. `align-self: stretch` so it
    is the height of the buttons rather than of the text inside them. */
 .marks .sep { width: 1px; background: var(--line); margin: 0 .3rem; align-self: stretch; }
+/* What is left after the shell's rule, and every line of it is DENSITY rather
+   than style. The corner is gone from here: 3px was this bar's own, jcanton
+   preferred it to the app's 2px, and the app moved — so keeping a copy of it
+   here would be an exception about a number that is no longer exceptional.
+   `min-width`, the padding and the 12px are what fit sixteen buttons on one row
+   above a document; `var(--line)` and `var(--muted)` in place of the default's
+   `--line-strong` and `--fg` are the same argument in ink — sixteen controls at
+   full contrast would shout over the writing they sit on. */
 button.mark {
-  font: inherit; font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
-  border: 1px solid var(--line); border-radius: 3px;
-  background: var(--surface); color: var(--muted); cursor: pointer;
+  font-size: 12px; line-height: 1; min-width: 1.9rem; padding: .3rem .35rem;
+  border-color: var(--line); color: var(--muted);
 }
 button.mark:hover { border-color: var(--accent); color: var(--accent); }
 /* The history group. A drawing has no baseline to sit on, so the box centres it
@@ -9906,8 +10527,19 @@ _CONTROL = """
 {% if f.type in ("status", "priority") %}
 <select name="{{ f.name }}" id="{{ f.id }}" data-type="text" class="field"
         {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
+  {#- The mark in front of the word, the same one the graph draws on a node and
+      the table draws in a cell — jcanton, 2026-08-20: "can we have the status and
+      priority icons and colours also in the dropdowns for editing a record".
+
+      Text and not markup, because an `<option>` is text: what a browser will
+      draw inside one is a string, and every attempt to style the inside of a
+      native dropdown ends either in a control that works on one platform or in a
+      popup written from scratch. The colour is the one thing that does not come
+      with it, and that is the honest cost of keeping a real `<select>` — the
+      choice made when these were left native. -#}
   {% for s in (statuses if f.type == "status" else priorities) %}
-  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{ s|human }}</option>
+  <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{
+    mark(f.type, s) }}{{ s|human }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
@@ -10734,16 +11366,88 @@ _DETAIL = """
       column, level with the title, so nothing is further away than it was. -#}
   <p class="meta"><code>{{ e.id }}</code>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
-  {#- The way in, at the top. It was in the commit bar at the foot of the page,
-      under the whole shaping document — so on any record worth reading, the
-      button that lets you change it was a scroll away from the thing you had
-      just decided to change. Save stays down there, where what is being
-      committed ends. -#}
+  {#- The way in, at the top, and since 2026-08-20 the way out with it. Both were
+      in a commit bar at the foot of the page, under the whole shaping document —
+      so on any record worth reading, the button that lets you change it was a
+      scroll away from the thing you had just decided to change, and the button
+      that ends the change was somewhere else again. -#}
   {% if editable %}
-  {#- Edit and the view switcher share this bar and are never on it together:
-      Edit is the way in and is hidden the moment you are in, and a view of an
-      editing surface is nothing at all when there is no editing surface. -#}
-  <p class="editbar"><button type="button" id="toggle">Edit</button>{{ viewbar }}</p>
+  {#- Both ways of changing this record on one line, in the same clothes. Edit is
+      the way in; Delete is the way out; a reader looking for either looks here.
+      Delete carries no styling of its own beyond the colour it turns on hover,
+      so the two buttons match by construction rather than by two rules somebody
+      has to keep in step.
+
+      The view switcher is the third thing on this line and is never on it at the
+      same time as the other two: Edit and Delete are hidden the moment a session
+      begins, and a view of an editing surface is nothing at all when there is no
+      editing surface. So the row holds the way in, or the ways of looking at
+      what you are in — never both. -#}
+  <p class="editbar"><button type="button" id="toggle">Edit</button>
+    {% if may_write %}<button type="button" class="delete">Delete</button>{% endif %}
+    {{ viewbar }}</p>
+  {#- Save, Cancel and the count of what is unsaved, directly under the button
+      that started the editing rather than at the far end of the document —
+      jcanton, 2026-08-20. The old argument for the foot was that a commit bar
+      belongs where the thing being committed ends. What that actually decided
+      was whether the three controls which begin, end and abandon one edit were
+      in one place, and they were not: Edit was here and the other two were a
+      shaping document away.
+
+      Still sticky, so it is still reachable from the bottom of a long record —
+      but stuck to the TOP now, which is where it is. Hidden in the markup and
+      revealed by `dirty()`, so it does not flash on every load before the script
+      decides it had nothing to say. -#}
+  <div class="commitbar" id="commitbar" hidden>
+    <span id="unsaved">Nothing to save</span>
+    {#- Ask 7's receipt, beside the count of what is unsaved because that is the
+        sentence it qualifies: a draft is what is holding the writing that has
+        not been committed, and "3 unsaved changes" with nothing beside it reads
+        as work that is nowhere. Empty until something has actually been
+        written — an autosave that says "saved" before it has saved anything is
+        the worst thing in this row. -#}
+    <span id="draftsaved" class="hint"></span>
+    <button type="button" id="save" hidden>Save</button>
+    {#- Cancel stays beside Save and never beside Edit. They are the two ways one
+        editing session can end, and putting them in two places is how somebody
+        closes a tab believing the other one was the way out. -#}
+    <button type="button" id="cancel" hidden>Cancel</button>
+    <span id="state" role="status"></span>
+  </div>
+  {% if may_write %}
+  {#- The question, under the button that asks it. Hidden until then: a page that
+      is always showing a way to delete the thing you are reading is a page that
+      is always slightly threatening you. -#}
+  <div class="confirming" data-also="{{ (e.deletes + e.frees)|join(" ") }}" hidden>
+    <p class="asking">Delete <strong>{{ e.title }}</strong>
+      (<code>{{ e.id }}</code>)?<br>
+      <span class="hint">Commit deletion? Can only be undone with
+        <code>git revert</code>.</span></p>
+    {#- The reach of it, before the press and not after. A record filed under this
+        one has nowhere to be once it is gone, so it goes too; a record that merely
+        depends on this one is somebody else's work waiting for it, and deleting
+        that would be this gesture reaching across the plan. Two sentences because
+        they are two different things happening to two different sets of files. -#}
+    {% if e.deletes %}
+    <p class="reach">This also deletes
+      <strong>{{ e.deletes|length }}</strong> record{{
+        "" if e.deletes|length == 1 else "s" }} filed under it:
+      <span class="ids">{{ e.deletes|join(", ") }}</span></p>
+    {% endif %}
+    {% if e.frees %}
+    <p class="reach mild">It also stops
+      <span class="ids">{{ e.frees|join(", ") }}</span>
+      depending on it. {{ "That record keeps" if e.frees|length == 1
+        else "Those records keep" }} {{ "its" if e.frees|length == 1 else "their"
+        }} file.</p>
+    {% endif %}
+    <p class="why" role="alert" hidden></p>
+    <span class="acts">
+      <button type="button" class="really">Delete it</button>
+      <button type="button" class="keep">Keep it</button>
+    </span>
+  </div>
+  {% endif %}
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
@@ -10861,26 +11565,6 @@ _DETAIL = """
   </div>
   {% if editable %}
   </form>
-  {#- Save stays at the bottom, where the thing being committed ends; Edit has
-      moved to the top, beside the title, because it is the way IN and a way in
-      you have to scroll past a shaping document to find is one nobody finds. -#}
-  <div class="commitbar" id="commitbar">
-    <span id="unsaved">Nothing to save</span>
-    {#- Ask 7's receipt, beside the count of what is unsaved because that is the
-        sentence it qualifies: a draft is what is holding the writing that has
-        not been committed, and "3 unsaved changes" with nothing beside it reads
-        as work that is nowhere. Empty until something has actually been
-        written — an autosave that says "saved" before it has saved anything is
-        the worst thing in this row. -#}
-    <span id="draftsaved" class="hint"></span>
-    <button type="button" id="save" hidden>Save</button>
-    {#- Cancel stays beside Save and never beside Edit. They are the two ways one
-        editing session can end and putting them in two places is how somebody
-        closes a tab believing the other one was the way out. Edit is a third
-        thing — the way IN — which is why it is at the top and this is not. -#}
-    <button type="button" id="cancel" hidden>Cancel</button>
-    <span id="state" role="status"></span>
-  </div>
   {% endif %}
 </article>
 {% endfor %}
@@ -11042,6 +11726,15 @@ function dirty() {
   try { fields = changed(); } catch (error) { fields = {}; }
   const count = Object.keys(fields).length + (SURFACE.text() === ORIGINAL_BODY ? 0 : 1);
   const editing = document.querySelector('article.entity').classList.contains('editing');
+  // Gone entirely when there is nothing for it to say. It is a sticky bar, so it
+  // was on screen the whole time somebody was READING a record, reporting
+  // "Nothing to save" about a form they had not opened — a permanent answer to a
+  // question nobody had asked, taking up the foot of every page.
+  //
+  // Not simply `!editing`: a draft restored from a previous visit is unsaved work
+  // sitting in the page before edit mode is entered, and that is exactly when the
+  // count needs saying.
+  BAR.hidden = !editing && count === 0;
   BAR.classList.toggle('dirty', count > 0);
   UNSAVED.textContent = count
     ? `${count} unsaved change${count === 1 ? '' : 's'}`
@@ -11049,6 +11742,10 @@ function dirty() {
 }
 FORM.addEventListener('input', dirty);
 FORM.addEventListener('change', dirty);
+// Once at load, because nothing else asks until somebody types. Its job here is
+// mostly to reveal the bar for a restored draft — unsaved work sitting in the
+// page before edit mode has been entered.
+dirty();
 // The status select decides which fields the server will refuse this without,
 // and the checkbox beside it lets one of those rules off.
 watchRequired(FORM);
@@ -11065,14 +11762,20 @@ function showEditing(editing) {
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
-  // Three buttons and never two of them at once: Edit is the way in and lives at
-  // the top, beside the record; Save and Cancel are the two ways one editing
-  // session ends and live together in the sticky bar at the foot of the thing
-  // being committed. The button that used to be here was Edit and Cancel by
-  // turns, in one place, which put the way out under the document you were
-  // editing.
+  // Three buttons and never two of them at once: Edit is the way in, Save and
+  // Cancel are the two ways one editing session ends, and all three are in the
+  // same place at the top of the record — the bar swaps one for the other two.
+  // The button that used to be here was Edit and Cancel by turns, in ONE
+  // element, which is how a page comes to disagree with itself about what
+  // pressing it does.
   document.getElementById('cancel').hidden = !editing;
   document.getElementById('toggle').hidden = editing;
+  // Delete leaves while an edit is open. Two destructive-ish answers to "I am
+  // done with this record" on one line is one too many, and the one that throws
+  // the record away should not be a slip of the hand from the one that keeps it.
+  // It comes back when the edit ends, by either door.
+  const remove = document.querySelector('.editbar button.delete');
+  if (remove) remove.hidden = editing;
   dirty();
   // The room's bands are measured against a box that has a size. The socket
   // opens on load and the roster arrives while the page is still in read mode,
@@ -11110,6 +11813,79 @@ function flipEditing() {
 }
 document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
+
+// Deleting a record. Two presses and a named record between them, and every
+// element found through the article it belongs to rather than by id — this page
+// can hold more than one entity, and a destructive control resolved by
+// `getElementById` is one that acts on whichever entity happens to be first.
+for (const article of document.querySelectorAll('article.entity')) {
+  const open = article.querySelector('.editbar button.delete');
+  if (!open) continue;
+  const ask = article.querySelector('.confirming');
+  const why = ask.querySelector('.why');
+
+  // Shown and hidden rather than a `confirm()`. A native dialog cannot say which
+  // record it is about in the words this page uses, cannot show the server's
+  // reason when the delete is refused, and is the one thing on a page that stops
+  // every other script until somebody clicks it.
+  const asking = state => {
+    ask.hidden = !state;
+    open.hidden = state;
+    why.hidden = true;
+    if (state) ask.querySelector('button.keep').focus();
+  };
+  open.onclick = () => asking(true);
+  ask.querySelector('button.keep').onclick = () => asking(false);
+  // Escape backs out of the question, the way it backs out of everything else
+  // here. Bound on the panel and not on the document, so it cannot swallow the
+  // key from the editor when nothing is being confirmed.
+  ask.onkeydown = event => { if (event.key === 'Escape') asking(false); };
+
+  ask.querySelector('button.really').onclick = async () => {
+    const acts = ask.querySelector('.acts');
+    acts.hidden = true;
+    // The base commit the page was rendered against, the same one every other
+    // write here sends: a delete is a compare-and-swap like the rest, and the
+    // server refuses it if somebody has edited the record since this page drew
+    // it. Read off the form so there is one answer on the page and not two.
+    const base = article.querySelector('input[name=base_commit]').value;
+    const also = (ask.dataset.also || '').split(' ').filter(Boolean);
+    let answer;
+    try {
+      answer = await fetch('/api/entity/' + encodeURIComponent(article.id), {
+        method: 'DELETE',
+        headers: {'content-type': 'application/json'},
+        // The ids the panel showed, sent back so the question that was answered
+        // is the question the server acts on. Somebody filing a task under this
+        // pitch while the panel sat open is the whole reason: without this the
+        // cascade takes a record it never named.
+        body: JSON.stringify({base_commit: base, also: also}),
+      });
+    } catch (error) {
+      acts.hidden = false;
+      why.hidden = false;
+      why.textContent = 'The server could not be reached. Nothing was deleted.';
+      return;
+    }
+    if (answer.ok) {
+      // To the table, because the page you are on is about a record that no
+      // longer exists: staying here would show a 404 on the next reload, and
+      // reloading it is what the shell does when it hears the commit.
+      location.href = {{ links.table|tojson }};
+      return;
+    }
+    // Refused, and the reason is the useful part: "pitch-b20000 cannot be
+    // deleted while task-c00001, task-c00002 and task-c00003 are filed under it"
+    // is the difference between a button that does not work and a plan that says
+    // what to do next. `detail` for an HTTPException, `conflict` for a write
+    // that lost the swap; the two routes to a refusal spell it differently.
+    acts.hidden = false;
+    why.hidden = false;
+    const said = await answer.json().catch(() => ({}));
+    why.textContent = said.detail || said.conflict ||
+      ('The server refused: ' + answer.status);
+  };
+}
 
 async function save() {
   let fields;
@@ -12100,7 +12876,10 @@ textarea.body-field { box-sizing: border-box; }
 /* A picker that looks like the words beside it until you point at it. `Spaces:
    2` is a value that states itself and is its own click target; drawing it as a
    button with a border would make it the loudest thing in a row of quiet facts,
-   which is backwards — it is a setting somebody changes twice a year. */
+   which is backwards — it is a setting somebody changes twice a year. So this is
+   the shell's default declined on purpose, and declining it is what `background:
+   none; border: 0` under a class means: the class outranks the element selector,
+   which is why the exception can be made here rather than by editing the rule. */
 button.stat.pick { font: inherit; color: inherit; background: none; border: 0;
                    border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
 button.stat.pick:hover { color: var(--accent); }
@@ -12128,8 +12907,23 @@ button.stat.pick:hover { color: var(--accent); }
   display: inline-flex; vertical-align: middle;
   border: 1px solid var(--line-strong); border-radius: 3px;
 }
+/* The one place in the app where a control does NOT wear the shell's rectangle,
+   and it says so here because that rule is the default and an exception has to be
+   argued where it is made. A segment is not a button that happens to be next to
+   two others: the three are one control, the group above draws the one rectangle
+   they share, and giving each segment its own would put a doubled border down
+   every join. So `border: 0` here, and the corners below are the group's inner
+   radius — 3px outside minus the 1px border it is inside of.
+
+   `border-radius: 0` on the segment itself and not merely on the middle one: the
+   shell's rule reaches every button, so a segment that declared nothing took the
+   app's corner, and the middle of three came out with three rounded pixels at
+   each end. Nothing was visible until a segment was pressed, at which point the
+   accent fill pulled away from its neighbours and left the group's ground showing
+   through four notches. */
 .views .seg { font: inherit; line-height: 0; padding: .3rem .55rem; border: 0;
-              cursor: pointer; background: var(--surface); color: var(--muted); }
+              border-radius: 0; cursor: pointer;
+              background: var(--surface); color: var(--muted); }
 .views .seg:first-child { border-radius: 2px 0 0 2px; }
 .views .seg:last-child { border-radius: 0 2px 2px 0; }
 /* And above its neighbours while it has the ring: the segments are adjacent, and
@@ -12266,6 +13060,15 @@ article.entity.full.view-view .markbar { display: none; }
 
 
 _DETAIL_STYLE = """
+/* The commit bar sticks to the TOP on a record, not to the bottom. The shell
+   makes it `bottom: 0` because three other pages want it where their form ends;
+   here it sits under the button that opened the edit, and the whole point of
+   moving it was to put the three controls that begin, end and abandon one edit
+   in one place. Still sticky, so it is still reachable from the foot of a long
+   shaping document. `bottom: auto` as well as `top`, or it is stuck to both and
+   the browser keeps the first. */
+#commitbar { top: 0; bottom: auto; }
+
 .tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
 .tocgroup .tally { font-weight: 400; letter-spacing: 0; }
@@ -12434,6 +13237,43 @@ textarea.body-field { min-height: 60vh; resize: vertical; }
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
+/* Delete sits beside Edit and wears what Edit wears — no font, no padding, no
+   border of its own, so the two cannot drift apart as one of them is restyled.
+   Only the colour it turns on hover is its own, and only on hover: a red button
+   sitting under every record is a page that looks like it is warning you about
+   something when nothing is wrong. */
+/* Delete is the shared shape and its own ink — declared after the shared hover
+   above, because that rule is what it has to beat. It was left with NO rule at
+   all when this was written, on the argument that carrying nothing meant
+   matching Edit by construction; Edit was in the shared rule and Delete was not,
+   so what it actually matched was the operating system. */
+.editbar button.delete:hover, .confirming button.really:hover {
+  border-color: var(--danger); color: var(--danger); }
+.confirming button.really { border-color: var(--danger); color: var(--danger); }
+
+/* The question, under the button that asks it. */
+.confirming { display: flex; flex-direction: column; align-items: flex-start;
+        gap: .5rem; max-width: 46ch; margin: 0 0 1rem;
+        padding: .6rem .75rem; border: 1px solid var(--danger);
+        border-radius: 3px; background: var(--surface); }
+.confirming[hidden] { display: none; }
+.confirming .asking { margin: 0; font-size: 13px; }
+.confirming .acts { display: flex; gap: .4rem; }
+
+/* What else this takes with it. The loud one is the deletion of other records —
+   that is the sentence somebody has to read before pressing, so it is the danger
+   colour and it is bold. The dependency line is quieter on purpose: nothing is
+   destroyed there, a field is edited, and drawing the two the same way would
+   teach people to skim both. */
+.confirming .reach { margin: 0; font-size: 13px; font-weight: 600;
+                     color: var(--danger); }
+.confirming .reach.mild { font-weight: 400; color: var(--fg); }
+.confirming .reach .ids { font-family: var(--font-mono); font-size: 12px;
+                          font-weight: 400; }
+/* The server's reason, where the question was asked. A refusal that names three
+   tasks is the useful half of this feature and it must not go to the console. */
+.confirming .why { margin: 0; font-size: 12px; color: var(--danger); }
+.confirming .why[hidden] { display: none; }
 """ + _EDITING_STYLE
 
 
@@ -12462,6 +13302,29 @@ STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
 # Highest first, which is the order a picker is read in and the order the table
 # sorts by. Five rungs, because three left the team writing `High+` in the margin.
 PRIORITIES = ("very_high", "high", "medium", "low", "very_low")
+
+# How many bars of five a priority lights. One integer, shipped to the browser in
+# the page's own data, because the table draws its rows in JavaScript and the
+# legend and the detail page are Jinja — two hand-written copies of this map is
+# two ladders that agree until somebody adds a rung.
+PRIORITY_LEVEL = {"very_low": 1, "low": 2, "medium": 3, "high": 4, "very_high": 5}
+
+# The same ladder where only text will go: a graph node's label and a `<select>`
+# option are strings, and neither can hold the five-element meter the legend and
+# the table draw. One block character per rung, rising with it — the same fact,
+# counted the same way, in the one notation those two places can carry.
+#
+# Text and not an image, which is the argument `STATUS_GLYPH` already makes and
+# it applies here unchanged: a shape survives a screenshot, a projector and
+# deuteranopia, and it arrives in the label's own ink instead of being drawn by
+# the platform's colour font at a different weight on every machine.
+PRIORITY_GLYPH = {
+    "very_low": "▁",
+    "low": "▃",
+    "medium": "▅",
+    "high": "▇",
+    "very_high": "█",
+}
 
 # The redundant channel. On the graph and the timeline a fill is the only thing
 # telling two shapes apart, and a luminance ladder makes five fills *separable*
@@ -12907,6 +13770,21 @@ _ENV.filters["human"] = _human
 # The mark that says the same thing the colour says, for every legend and every
 # shape that draws one. Unknown values get nothing rather than a box glyph.
 _ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
+# The five slots, of which `level` are lit. A macro rather than a string built in
+# each template, so the markup the browser writes and the markup Jinja writes are
+# the same markup.
+# The mark that goes in front of a word where only a string will do. One function
+# for both ladders, so a template asks for "the mark for this value" rather than
+# knowing which map to reach into.
+_ENV.globals["mark"] = lambda kind, value: (
+    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status"
+    else f"{PRIORITY_GLYPH.get(str(value), '')} "
+)
+_ENV.globals["bars"] = lambda priority: Markup(
+    '<span class="bars" data-level="{}" aria-hidden="true">{}</span>'.format(
+        PRIORITY_LEVEL.get(str(priority), 0), "<i></i>" * 5
+    )
+)
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Every chip on every page names its rung through this, so the four templates
 # that draw one cannot disagree with the two that build one in Python. They did:
@@ -14143,10 +15021,7 @@ _CYCLE_STYLE = """
    glyph rather than appearing beside it, so the row does not jump. */
 .confirm { font-size: 12px; color: var(--warn); }
 td .confirm { white-space: nowrap; }
-.confirm button { font: inherit; font-size: 12px; margin-left: .25rem;
-                  padding: 0 .35rem; border-radius: 2px;
-                  border: 1px solid var(--line-strong); background: var(--surface);
-                  color: var(--fg); cursor: pointer; }
+.confirm button { font-size: 12px; margin-left: .25rem; padding: 0 .35rem; }
 .confirm button.yes { border-color: var(--danger); color: var(--danger); }
 /* The notes box, at the width of the prose it holds rather than the width of the
    betting table beside it. */
@@ -14237,9 +15112,9 @@ tr.carried td { color: var(--muted); }
    rule and the heading are what say so before the button does. */
 #create { border-top: 1px solid var(--line); margin-top: 2.5rem; padding-top: 1rem; }
 #create h2 { font-size: 1.05rem; margin: 0 0 .2rem; }
-#start { font: inherit; font-size: 13px; padding: .25rem .8rem; border-radius: 2px;
-         border: 1px solid var(--accent); background: var(--surface);
-         color: var(--accent); cursor: pointer; }
+/* The one control on this page that creates something, so it is the one drawn in
+   the accent. The shape is the default's; the colour is what is its own. */
+#start { padding: .25rem .8rem; border-color: var(--accent); color: var(--accent); }
 #confirm { margin: .6rem 0 0; font-size: 13px; }
 """
 
@@ -16359,6 +17234,12 @@ def render_detail(
         entity = index.entities[row["id"]]
         row["rows"] = _fact_rows(index, entity, links)
         row["raw_body"] = entity.body
+        # What deleting it would take with it, drawn into the confirmation before
+        # anybody presses anything. From `cascade_of`, which is what the route
+        # itself asks — a panel that listed the consequences from a second
+        # derivation of them would be a panel that can be wrong about the commit
+        # it is authorising.
+        row["deletes"], row["frees"] = cascade_of(index, row["id"])
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
         groups=_by_status(rows),
@@ -16370,6 +17251,12 @@ def render_detail(
         single=only is not None,
         links=links,
         editable=base_commit is not None,
+        # The Delete control asks for both, and `editable` alone is not enough.
+        # `editable` means "there is a server to talk to"; this asks "would that
+        # server take a write from you", which is the question `may_write`
+        # answers — see the note on `yjs` below, and `may_write` in `web.py`.
+        # A reader offered a Delete button is offered a 401 dressed as a control.
+        may_write=may_write,
         base_commit=base_commit or "",
         statuses=STATUSES,
         combobox=_combobox_html(index),
@@ -17603,15 +18490,14 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         facets=_facets_html(index.facets, aside=_GRAPH_HINT, titles=_titles(index)),
         filters=_FILTER_JS,
         statuses=STATUSES,
+        priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,
+        marks=PRIORITY_GLYPH,
         total=len(index.entities),
         links=links,
         elements=_elements(index),
-        parent_kinds={kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         cytoscape=_library("cytoscape.min.js"),
         elk=_library("elk.bundled.js"),
-        cytoscape_elk=_library("cytoscape-elk.js"),
-        compound_dnd=_library("cytoscape-compound-drag-and-drop.js"),
     )
     return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 

@@ -405,7 +405,7 @@ def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(
 
     got = measured_in(
         chrome(), page, tmp_path / "wrapped.html", 1200, _BAND_AT_EVERY_WIDTH,
-        height=900, budget=6000,
+        height=900, patience=4800,
     )
 
     assert got["numbered"], (
@@ -484,7 +484,7 @@ def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there
 
     got = measured_in(
         chrome(), page, tmp_path / "remote.html", 1200, _REMOTE_LINES, height=900,
-        budget=4000,
+        patience=2800,
     )
 
     assert got["before"]["numbers"] == got["before"]["lines"], (
@@ -546,7 +546,7 @@ def test_the_second_surface_says_it_cannot_draw_where_anybody_is(index: Index, t
 
     got = measured_in(
         chrome(), page, tmp_path / "ace-seat.html", 1200, _REFUSED, height=900,
-        query="?editor=ace", budget=6000,
+        query="?editor=ace", patience=4800,
     )
 
     assert got["surface"] == "ace", "the page did not open on the second surface"

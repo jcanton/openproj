@@ -80,6 +80,12 @@ def printed(browser: str, html: Path, pdf: Path) -> int:
     return len(_PDF_PAGE.findall(pdf.read_bytes()))
 
 
+# When the script is run, measured from load. The table's fit and the shell's
+# measurement both run again when the inlined typeface lands, and an answer taken
+# before that is an answer about the fallback's metrics.
+SETTLE = 1200
+
+
 def measured_in(
     browser: str,
     page: str,
@@ -89,7 +95,7 @@ def measured_in(
     height: int = 900,
     flags: tuple[str, ...] = (),
     query: str = "",
-    budget: int = 2500,
+    patience: int = 1300,
 ) -> dict:
     """Lay the page out in Chrome at this size, run `script` over the result and
     bring back what it found.
@@ -103,6 +109,15 @@ def measured_in(
     `height` is a parameter and not the 900 it used to be fixed at: the box each
     view sizes to the window is right or wrong *per window*, and one window is
     the one thing that cannot show it.
+
+    `patience` is how long the script itself is given after that, and it exists
+    because the failure it prevents is silent. A script that answers from a
+    continuation — anything waiting on a delay the page owns, like the hover
+    card's — writes `data-report` a second time, and if the virtual clock runs
+    out first the harness reads the placeholder and the test reports nothing at
+    all. That looks exactly like a card that never came up. Two waits of 700ms
+    were over the old fixed budget by eighty milliseconds, which is not a number
+    anybody would guess from the failure.
 
     `flags` is how a test asks about a reader who is not the default one.
     `--force-prefers-reduced-motion` is the only user in the suite: the media
@@ -119,18 +134,17 @@ def measured_in(
 
     The script is awaited, so it may be written `async` and may wait for
     something the page does on its own clock — a debounce, a frame, a fetch. A
-    plain value is unaffected, because awaiting a non-promise is that value.
-    Waiting has a ceiling, and `budget` is it: the report is taken at 1200ms and
-    the run ends at `budget`, so by default a script has about a second of the
-    page's own clock to wait on. A script that outlives it reports nothing at all,
-    which surfaces as "the page reported nothing" rather than as a wrong answer —
-    so a question about a 300ms debounce asked three times over has to raise it
-    rather than shorten the debounce it is asking about.
+    plain value is unaffected, because awaiting a non-promise is that value. That
+    waiting is what `patience` bounds, and it is why the editor's questions pass
+    numbers in the thousands: a script that outlives the clock reports nothing at
+    all, which surfaces as "the page reported nothing" rather than as a wrong
+    answer — so a question about a 300ms debounce asked three times over has to
+    raise `patience` rather than shorten the debounce it is asking about.
     """
     where.write_text(page.replace(
         "</body>",
         "<script>setTimeout(async () => { document.body.dataset.report = JSON.stringify("
-        f"await (async () => {{ {script} }})()); }}, 1200);</script></body>",
+        f"await (async () => {{ {script} }})()); }}, {SETTLE});</script></body>",
     ))
     done = subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
@@ -138,7 +152,8 @@ def measured_in(
          # A URL and not a path, because a path is all Chrome will take it for:
          # `…/deep.html?both=` handed over as a filename is a file that does not
          # exist, and what loads instead is a blank page that reports nothing.
-         *flags, f"--virtual-time-budget={budget}", "--dump-dom", where.as_uri() + query],
+         *flags, f"--virtual-time-budget={SETTLE + patience}", "--dump-dom",
+         where.as_uri() + query],
         capture_output=True, text=True, check=True,
     )
     found = re.search(r'data-report="([^"]*)"', done.stdout)

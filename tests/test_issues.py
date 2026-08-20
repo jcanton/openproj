@@ -507,7 +507,7 @@ def test_an_issue_is_written_in_the_same_surface_a_pitch_is(
         # measure this page caps its box at outside the surface — at 1400 it is
         # not, and the assertion below would pass without asking anything.
         chrome(), client.get(f"/issue/{issue_id}").text, tmp_path / "issue.html", 2000,
-        _SURFACE, budget=6000,
+        _SURFACE, patience=4800,
     )
 
     assert got["onOpening"]["numbers"] == 1, (

@@ -392,10 +392,13 @@ Zero vendored bytes. Ships asks 1 and 3 — the two highest felt value on the li
   same shapes (`<dl id="facts">`, `class="field title-field"`, `class="field bodybar"`,
   `class="field body-field"`, `id="preview"`), or the layout moves under you between
   reading an entity and making one.
-- `tests/test_editor.py:138` still passes: `#commitbar` after `#facts` and `.body-field`,
-  sticky at the bottom, holding `#save` and `#cancel` and not `#toggle`. That test encodes
-  an ordering argument, not a coordinate — if full-page needs it moved, it is re-argued in
-  this commit, not renumbered.
+- `tests/test_editor.py:138` encoded `#commitbar` after `#facts` and `.body-field`, sticky
+  at the BOTTOM, holding `#save` and `#cancel` and not `#toggle`. It encoded an ordering
+  argument rather than a coordinate, and the argument was re-made — on `main`, not here, on
+  2026-08-20: the bar is stuck to the top, under the button that opened the edit, so the
+  three controls that begin, end and abandon one edit are in one place. The half of the
+  test that is still the point survives verbatim — `#toggle` is not in the bar, because a
+  button that is Edit and Cancel by turns puts the way out under whatever you were doing.
 
 ---
 
@@ -986,7 +989,7 @@ wide, and the Link, Image, Table and Horizontal-rule buttons 101px past the righ
 |---|---|---|
 | The `textarea.value` guard never saw `applyMark` | `_MARKING` presses `execCommand('undo')` after a Table and after a Bold | `test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is` |
 | Two `await fetch` sites with no `catch` | `catch` on the upload and on Save, plus the `at < 0` branch | `test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_still_true` |
-| …and the other two, which that fix said did not exist | `catch` on `reparent` (table) and `refile` (graph), which announce before the request too | `test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down`, `test_a_refile_on_a_dead_connection_takes_its_own_sentence_back_down` |
+| …and the other two, which that fix said did not exist | `catch` on `reparent` (table) and `refile` (graph), which announce before the request too. The graph's went with the gesture when `main` took refiling off the canvas; the table's is the one that survived the merge | `test_a_drop_on_a_dead_connection_takes_its_own_sentence_back_down` |
 | The second surface fired `caret` only when the document changed, so ask 5's readout showed where you last typed and `sit()` sent that to the room | `editor.selection.on('changeCursor')`, coalesced onto a microtask the way `drain` is | `test_the_second_editors_caret_is_reported_when_it_moves_and_not_when_it_types` |
 | The draft throttle re-enters `remembered.set` per keystroke when the store refuses | two clocks: `draftTried` for the interval, `draftWritten` for the receipt | `test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_storage` |
 | `— 1 Lines` | singular at one, on both pinned spellings | `test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth` |
@@ -1052,6 +1055,12 @@ sits after the `finally` and would throw the sentence away. Held by
 `test_a_refile_on_a_dead_connection_takes_its_own_sentence_back_down` (`tests/test_edges.py`),
 both in Chrome, both mutation-checked in two directions — the `catch` emptied, and the `catch`
 removed outright. The fifth `…` is the room's `save()`, which does not go over `fetch` at all.
+
+**Half of that is now history.** Merging `origin/main` on 2026-08-20 brought jcanton's decision
+that refiling does not belong on the graph at all — "no need to do this in the graph, let's
+leave it to the table" — so `refile`, its `catch` and the test that held it are gone with the
+gesture. The finding is still right and the table's half still holds it; a fix deleted along
+with the code it guarded is not a fix that was wrong.
 
 The remaining `await fetch(` sites fail silently, which is worse in a different way and is not
 this branch's work.
