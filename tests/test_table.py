@@ -81,7 +81,16 @@ from test_web import (
 
 from openproj.auth import sign_session
 from openproj.index import build_index
-from openproj.model import KIND_NAMES, unread_fields, PARENT_KINDS, Config, Pitch, Project, Task, load_repo
+from openproj.model import (
+    KIND_NAMES,
+    PARENT_KINDS,
+    Config,
+    Pitch,
+    Project,
+    Task,
+    load_repo,
+    unread_fields,
+)
 from openproj.render import (
     _TABLE_COLUMNS,
     EDITABLE,

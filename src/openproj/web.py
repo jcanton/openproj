@@ -82,9 +82,6 @@ from .model import (
     Issue,
     Note,
     Person,
-    Pitch,
-    Project,
-    Task,
     Unreadable,
     loop_made,
     parse_cycle_text,
@@ -141,7 +138,11 @@ ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
 # Off the ladder in `model.py`, so a rung added there is a directory here without
 # anybody remembering to come and add one.
 DIRECTORY = {rung.name: rung.directory for rung in KINDS}
-PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
+# What a new id starts with, per kind — off the ladder, like `DIRECTORY` beside
+# it. The SEVENTH copy, written out three lines under a map that was already
+# derived: `POST /api/entity` with `kind: product` got past the models and fell
+# over here instead.
+PREFIX = {rung.name: rung.prefix for rung in KINDS}
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
 # the editor's status bar gained a second reader for it, and it is re-exported
@@ -743,7 +744,11 @@ def _schema_names(*models: type[BaseModel]) -> tuple[str, ...]:
     return tuple(names)
 
 
-ENTITY_FIELDS = _schema_names(Project, Pitch, Task)
+# Every kind's fields, off the ladder rather than by naming three of the four:
+# a rung added later brings whatever it declares with it, on the commit that adds
+# it. (A `Product` has no field of its own today, so this list is unchanged by
+# it — which is exactly why writing the kinds out here would have gone unnoticed.)
+ENTITY_FIELDS = _schema_names(*(rung.model for rung in KINDS))
 ISSUE_FIELDS = _schema_names(Issue)
 NOTE_FIELDS = _schema_names(Note)
 CYCLE_FIELDS = _schema_names(Cycle)
@@ -852,7 +857,11 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     return found[0] if found else None
 
 
-MODELS = {"project": Project, "pitch": Pitch, "task": Task}
+# The models by kind, off the ladder. Written out, this was the SIXTH copy of
+# `KINDS` — the one the test that asserts the derivation did not name — so
+# `POST /api/entity` with `kind: product` raised KeyError and answered 500 on the
+# only route that can create one.
+MODELS = {rung.name: rung.model for rung in KINDS}
 
 
 def _as_date(value: str) -> date | None:
