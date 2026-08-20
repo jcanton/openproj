@@ -168,7 +168,8 @@ green test suite missed every defect they found. Each round was cracked by exact
 | What does *one* participant's socket do to everybody else's? | The room broadcast by awaiting `send_json` per member in turn. uvicorn's send begins `await self.writable.wait()`, cleared when a transport's buffer fills, so one member who stopped draining held that coroutine — and with it every other member's keystroke and the room's own timer, which reaches the same line. Three real sockets: the second member got nothing for thirty seconds, nothing was committed again, and `/healthz` answered 200 throughout. |
 | Whose names end up in a line this server signs? | Every write path built its commit message as `', '.join(fields)` — keys off the wire, verbatim. A field named `notes\n\nCo-authored-by: Mallory <…>` committed exactly that trailer, which git's parser, `git shortlog --group=trailer:co-authored-by` and GitHub all honour. On a branch whose whole point is that `Co-authored-by:` records who wrote a document. |
 | Is the harness itself lying? (again) | `drive.js` copied a parsed element's text into `textContent` and never into `.value`, so a `<textarea>` answered `''` where a browser answers the record's body. `ORIGINAL_BODY` was therefore always empty in page mode, which flips the one branch in the editor that can lose unsaved work. Two of the three rounds before this one were misled by this same file. |
-| Which rule gives this drawing a size — and is there one? | The draft row's check and cross are `<svg class="icon">`, which carries a `viewBox` and no `width` or `height`. Every earlier icon sat in a box that sized it (`.avatar svg`, `.picker .art svg`), this one did not, and an SVG nothing sizes lays out at 0x0: the two controls that create and abandon a record were empty boxes on the served page, under a suite that was green because it only ever asked whether the markup was emitted. |
+| Is the picture wrong, or is what we did to it wrong? | The graph drew boxes lying across each other, and the question asked was whether cytoscape and ELK were the right libraries. They were. `packComponents` — written here — re-arranged the drawing afterwards by `cy.elements().components()`, which is edge-connectivity, and an edge on that page is a dependency and never containment. It took every group apart: 0 overlapping boxes became 17-21, 0 foreign cards became 29-70. Fifteen agents and forty-two library options later, the answer was to delete eight lines of ours. Measure immediately before and immediately after your own post-processing before you audit anybody else's library. |
+| The page drew. Did the script finish? | Deleting that function took the `cytoscape()` constructor, `route()` and `paint()` with it, because the deleted range ran past the closing brace. The canvas still appeared, so it looked fine; everything after the throw simply never ran, and the error was thrown before any listener existed to report it. What caught it was a test written the same hour, failing for a reason that made no sense. `typeof x` throwing `TDZ` on a `let` is the tell: execution never reached that line. || Which rule gives this drawing a size — and is there one? | The draft row's check and cross are `<svg class="icon">`, which carries a `viewBox` and no `width` or `height`. Every earlier icon sat in a box that sized it (`.avatar svg`, `.picker .art svg`), this one did not, and an SVG nothing sizes lays out at 0x0: the two controls that create and abandon a record were empty boxes on the served page, under a suite that was green because it only ever asked whether the markup was emitted. |
 | Does the fix throw out the person who was working? | The first version of the outbox evicted a member whose queue passed a byte ceiling. Three real tabs: a tab applying a burst of whole-document updates goes a megabyte behind for a moment and catches up completely, and it was thrown out beside the tab that was actually suspended — so the room emptied and committed nothing. *Behind* and *not draining* are different things, and only a clock can tell them apart. |
 
 Behind all twelve is one habit: **ask the question in the medium where the answer lives.** In
@@ -332,9 +333,14 @@ afternoon re-discovering.
 
 The same question applies to the layouts underneath: dagre knows nothing about compound nodes, so
 it lays a nested plan out as though it were flat, which is why the graph fitted into 7% of its
-canvas and drew edges through boxes. ELK's layered algorithm is hierarchy-aware and returns routed
-bend points. That is a 1.5 MB answer to a problem no amount of parameter tuning here was going to
-solve.
+canvas and drew edges through boxes. ELK's layered algorithm is hierarchy-aware. That is a 1.5 MB
+answer to a problem no amount of parameter tuning here was going to solve.
+
+It also returns routed bend points, and this said so for a fortnight while the page threw them
+away: `cytoscape-elk` applies positions to the non-parent nodes and never reads an edge's
+`sections`, so every edge on the graph is cytoscape's own `round-taxi`. Audit what a library
+gives you, and then audit whether the adapter in between is passing it on — the second question
+is the one nobody asks.
 
 The audit is three questions: does something already do this; can it be vendored under the rules
 above; and what does it cost against what it replaces. A "no" to any of them is a fine answer —

@@ -47,6 +47,29 @@ and each says why it is still here.
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test
   needs two signed-in members, and signing in is not something an agent does.
+* **Group-level ordering the layout does not guarantee.** ELK's recursive engine
+  lays each box out over its own children and then lays the boxes out — and the
+  root pass cannot reliably see a dependency between the CHILDREN of two boxes.
+  Measured on a three-box synthetic where each box also holds an internal chain:
+  all three stacked at the same x with both cross-box arrows drawn backwards. The
+  real plan is immune by accident — its two project-to-project dependencies are
+  root-level edges that carry the order — and the synthetic plans from
+  `tests/plans.py` show 5 backwards of 76 at 208 records and 24 of 189 at 518.
+
+  The fix the audit costed at twelve lines: before each layout, add invisible
+  "ghost" edges between the top-level ancestors of every cross-group dependency,
+  and remove them on `layoutstop`. Style them `opacity: 0` and `events: no` —
+  never `display: none`, which drops them out of `:visible` and out of the
+  layout.
+
+  It is written down rather than built because its whole risk is leakage. A ghost
+  that survives one `layoutstop` makes two unrelated projects neighbours in
+  `applyFilter`'s `neighborhood()`, becomes tappable in edit mode, is walked by
+  the cycle check, and would be sent to the server by Save. That is a lot of
+  surface for an ordering nobody has complained about yet.
+  `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
+  fails on a corpus nobody touched, this is the entry to read.
+
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **A write can still create a loop.** jcanton asked, 2026-08-19: "doesn't
   openproj forbid cycles? if not we should". Today it detects them — `validate_all`
