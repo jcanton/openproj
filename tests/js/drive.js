@@ -30,6 +30,9 @@
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
 //                            reading the property itself throw, the way a
 //                            private window and a blocked-cookies policy do.
+//          `__reloads()`     how many times the page asked for `location.reload()`,
+//                            which node cannot perform and a test has to be able
+//                            to read.
 //          {socket: true}    a `WebSocket` the expression drives by hand,
 //                            through `__socket.opened()`, `__socket.hear(frame)`
 //                            and `__socket.sent()`. Absent by default, which is
@@ -637,6 +640,7 @@ async function run(html, expression, options) {
     stopPropagation() {}
   }
 
+  let reloads = 0;
   const sandbox = {
     document,
     console,
@@ -679,7 +683,15 @@ async function run(html, expression, options) {
     CustomEvent: DriverEvent,
     EventSource: class { constructor() { this.onmessage = null; } close() {} },
     fetch: answer,
-    location: {search: '', pathname: '/', href: 'http://localhost/'},
+    // `reload` counts rather than navigating: node has no page to fetch, and a
+    // reload is a claim a test needs to make — "the read view under this editor
+    // is the server's HTML and is now out of date, so go and get it again".
+    // Reachable as `__reloads()`.
+    location: {
+      search: '', pathname: '/', href: 'http://localhost/',
+      reload: () => { reloads += 1; },
+    },
+    __reloads: () => reloads,
     history: {replaceState() {}, pushState() {}},
     localStorage: storage,
     // Yjs's lib0 reads `crypto.subtle` and binds `crypto.getRandomValues` at the

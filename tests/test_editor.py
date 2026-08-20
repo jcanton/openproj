@@ -3211,7 +3211,7 @@ for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view',
   document.getElementById('toggle').click();
   document.getElementById(id).click();
   const inside = shape();
-  // Exactly what the room does when its commit lands, and nothing else.
+  // Ending the session and nothing else — the call every door makes.
   showEditing(false);
   answers[name] = {inside, after: shape()};
   // Back to read mode for the next pass: this door leaves Edit on the bar.
@@ -3221,22 +3221,27 @@ return answers;
 """
 
 
-def test_the_room_s_own_save_leaves_the_surface_it_was_pressed_in():
-    """First: that `showEditing(false)` really is how a room ends the session.
+def test_the_room_s_own_save_ends_the_session_by_leaving_the_page():
+    """How a room's save ends the session, read out of the product.
 
-    The test below drives that call in Chrome, and a test that drives a line the
-    product does not call is a test that proves nothing. So the shape of the
-    `saved` branch is read out of `_COEDIT` here — it ends the session through
-    that one function, and it carries no `showView` of its own, which is the
-    whole reason the door was missed.
+    It was `showEditing(false)` — the door that had no `showView` and was the
+    reason the surface stayed up — and it is a reload now, for a defect one layer
+    further out: the read view under the editor is HTML the server rendered at the
+    commit the page LOADED at, so closing the editor onto it showed the body as it
+    was until somebody refreshed (jcanton, 2026-08-20). A reload takes the surface
+    down on its way past, which is the same ending the path without a room has
+    always had.
+
+    The claim below — that ending a session by any door leaves the surface — is
+    unchanged and still worth driving: Cancel and the view toggle are doors too.
     """
     from openproj.render import _COEDIT
 
     saved = re.search(r"if \(message\.t === 'saved'\) \{.*?\n    \}", str(_COEDIT), re.S)
     assert saved, "the room's `saved` branch is not where this test thinks it is"
-    assert "showEditing(false)" in saved.group(0), (
-        "a room's save no longer ends the session through `showEditing`, so the "
-        "browser test below is driving a line nothing calls"
+    assert "location.reload()" in saved.group(0), (
+        "a room's save no longer ends by leaving the page, so the read view under "
+        "the editor is whatever the server rendered before the save"
     )
     assert "showView" not in saved.group(0), (
         "the `saved` branch has grown its own copy of leaving the surface — that "
@@ -3249,8 +3254,10 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
     at the call sites rather than at the event.
 
     Three copies of `showView(null)` existed — `flipEditing`, the issue page's
-    toggle, the note page's — and a fourth door had none: a Save in a room does
-    not reload, so it ended the session with a bare `showEditing(false)`.
+    toggle, the note page's — and a fourth door had none: a Save in a room ended
+    the session with a bare `showEditing(false)` and did not reload. (It reloads
+    now, for a different defect — see the test above — so the door driven here is
+    the one Cancel and the view toggle use.)
     Measured in Chrome from the split view before the fix: the article kept
     `full view-both`, `<body>` kept `fullpage`, the nav stayed `inert`, and the
     switcher — drawn only under `.entity.editing`, and named by the commit that

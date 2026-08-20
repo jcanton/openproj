@@ -3837,3 +3837,100 @@ def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
     assert answer["ended"].endswith("a sentence"), (
         f"Ctrl+Z then Ctrl+Shift+Z did not end where it started: {answer['ended']!r}"
     )
+
+
+def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
+    client: TestClient, plan: Path
+):
+    """Press Save in a room and the editor closes onto the *server's* HTML.
+
+    That HTML was rendered when the page loaded, at the commit before this one,
+    so the article under the editor is the body as it was and the fact rows are
+    the fields as they were. jcanton, 2026-08-20: "editing the body of an entity
+    and saving works, the view goes back out of editing, but it shows the
+    un-edited text until I refresh."
+
+    The room's own reasoning was right about the document and wrong about the
+    page: the text really is already in every editor in the room, and the read
+    view is not an editor. The path without a room reloads and lands in read
+    mode by doing so, and this is now the same ending arrived at the same way.
+    """
+    # `?editor=plain`, as every driven test on this page does: the address that
+    # says nothing has been Ace since 2026-08-20, and Ace does not run against
+    # the driver's DOM. The claim here is about what happens after a save, which
+    # is the same on both surfaces.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    saved = {"t": "saved", "commit": "b" * 40, "outcome": "committed", "pushed": True}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        "  await save();"
+        f" __socket.hear({json.dumps(saved)});"
+        "  return __reloads() + ' reloads';"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    # The reload is the whole claim: landing in read mode follows from it, and
+    # node has no page to replace, so asking whether the class came off would be
+    # asking the harness a question only a browser can answer.
+    assert answer["value"] == "1 reloads", (
+        "the editor closed onto the article the server rendered before this save, "
+        f"so what is on the screen is the old body: {answer['value']}"
+    )
+
+
+def test_what_the_room_said_about_a_save_survives_the_reload(
+    client: TestClient, plan: Path
+):
+    """A merge is the one thing worth saying and the only tab that can say it is
+    the one that goes away.
+
+    "saved, and somebody else's change to this file was merged in" is news: it
+    means the file now holds a paragraph this person has not read. Announced into
+    a page that reloads a millisecond later, it is announced to nobody — so it is
+    handed to the page that comes back.
+    """
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    merged = {"t": "saved", "commit": "c" * 40, "outcome": "merged", "pushed": True}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  await save();"
+        f" __socket.hear({json.dumps(merged)});"
+        "  return localStorage.getItem('openproj:said');"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"] and "merged in" in answer["value"], (
+        f"the one sentence worth keeping was announced to a page on its way out: "
+        f"{answer['value']!r}"
+    )
