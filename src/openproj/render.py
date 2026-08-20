@@ -7533,12 +7533,6 @@ function blockPadding(before, after) {
 }
 
 function applyMark(area, mark) {
-  // The image button is the one entry that writes nothing: it opens a file
-  // picker, and `attachEditing` binds it to that instead of to here. Refused at
-  // the top rather than left to fall out of the bottom, because the tail of this
-  // function reads `mark.wrap.length` — so "anything I do not recognise is a
-  // wrap" is what a fifth shape gets, and what it gets is a TypeError.
-  if (mark.upload) return;
   if (mark.fence) {
     // Whole lines, and on their own lines: a fence only opens a block if nothing
     // shares its line, so wrapping a selection in place would produce three
@@ -7611,7 +7605,12 @@ function applyMark(area, mark) {
     // with no link in it and no sign that anything failed. Escaped rather than
     // dropped, for the same reason `pastedAs` escapes a cell's own pipe — and
     // the caret arithmetic below counts the escaped label, not the raw one.
-    const label = (chosen || 'text').replace(/([[\]])/g, '\\$1');
+    //
+    // The backslash is escaped with them, because an escaper that escapes the
+    // metacharacter and not the escape character reproduces the bug it closes
+    // one character over: `a\]b` became `[a\\]b](url)`, in which the `\\` is a
+    // literal backslash and the `]` is the one that ends the label again.
+    const label = (chosen || 'text').replace(/([\\[\]])/g, '\\$1');
     replaceRange(area, `[${label}](url)`);
     const at = from + 1;
     if (chosen) area.setSelectionRange(at + label.length + 2, at + label.length + 5);
@@ -7629,6 +7628,21 @@ function applyMark(area, mark) {
     const at = to + lead.length;
     const [start, width] = mark.chooses || [mark.insert.length, 0];
     area.setSelectionRange(at + start, at + start + width);
+    return;
+  }
+  // The tail is the WRAP shape, and it is reached only by a mark that is one.
+  //
+  // It used to be the fall-through — "anything I do not recognise is a wrap" —
+  // and `FORMATS` now holds a fifth shape that is not: the image button writes no
+  // markdown at all, it opens a file picker, and reaching here with it read
+  // `undefined.length` and threw inside a click handler, which is a button that
+  // does nothing and a console nobody has open. A guard naming that one entry was
+  // written first and is the wrong shape of fix: it closes the case that exists
+  // and leaves the trap set for the sixth. So the last branch asks whether it is
+  // the one it can do, and a mark it cannot do is refused out loud — which is the
+  // rule this application has broken three times by returning in silence.
+  if (typeof mark.wrap !== 'string') {
+    announce(`${mark.title} writes nothing into the document`);
     return;
   }
   const {selectionStart: from, selectionEnd: to} = area;
@@ -8236,15 +8250,15 @@ _VIEWBAR = Markup(
     '<span id="views" class="views" role="group"'
     ' aria-label="How the document is shown">'
     '<button type="button" id="view-edit" class="seg" aria-pressed="false"'
-    ' aria-label="Write" title="Write  Ctrl+Alt+E">'
+    ' aria-label="Write" title="Write  Ctrl+Shift+1">'
     '<svg viewBox="0 0 24 24" aria-hidden="true">'
     '<path d="M4 20h4L19.2 8.8a2.55 2.55 0 0 0-3.6-3.6L4.4 16.4 4 20Z"/></svg></button>'
     '<button type="button" id="view-both" class="seg" aria-pressed="false"'
-    ' aria-label="Write and preview" title="Write and preview  Ctrl+Alt+B">'
+    ' aria-label="Write and preview" title="Write and preview  Ctrl+Shift+2">'
     '<svg viewBox="0 0 24 24" aria-hidden="true">'
     '<rect x="3" y="5" width="18" height="14" rx="1.6"/><path d="M12 5v14"/></svg></button>'
     '<button type="button" id="preview" class="seg" aria-pressed="false"'
-    ' aria-label="Preview" title="Preview  Ctrl+Alt+V">'
+    ' aria-label="Preview" title="Preview  Ctrl+Shift+3">'
     '<svg viewBox="0 0 24 24" aria-hidden="true">'
     '<path d="M2.5 12S6 6.2 12 6.2 21.5 12 21.5 12 18 17.8 12 17.8 2.5 12 2.5 12Z"/>'
     '<circle cx="12" cy="12" r="2.7"/></svg></button>'
@@ -8455,6 +8469,22 @@ function showView(mode) {
   // The page behind a fixed, viewport-filling article has nothing left to show
   // and a scrollbar that scrolls it anyway is a scrollbar that moves nothing.
   document.body.classList.toggle('fullpage', mode !== null);
+  // And nothing behind an opaque surface may still be tabbed into or read out.
+  // Measured before this: 43 focusable elements on the page, 9 outside the
+  // article, 8 of them painted over — so shift-tabbing back past the switcher
+  // put focus on a control nobody can see, and a screen reader walked the whole
+  // page behind a surface a sighted reader could see none of.
+  //
+  // The two named, rather than a sweep over `<body>`'s children, because that
+  // sweep takes two things it must not. `#announce` is the live region every
+  // refusal on this page reaches a screen reader through, and an `inert` one is
+  // a silent one. The suggestion lists are parked on `<body>` too, drawn ABOVE
+  // this surface rather than behind it, and `inert` refuses pointer events as
+  // well as focus — so inerting them would take the owner picker away in
+  // exactly the view this stage is about.
+  for (const covered of document.querySelectorAll('body > nav, body > a.skip')) {
+    covered.inert = mode !== null;
+  }
   // One mechanism for whether the preview pane is on the page, and it is the
   // `hidden` attribute the pane was already drawn with. A second, in CSS, would
   // be a second thing to keep in step — and a stale attribute underneath it is
@@ -8500,12 +8530,17 @@ let previewFlight = null;
 let previewShown = null;
 
 function refreshPreview(now) {
-  if (VIEW_PANE.hidden) return;
+  // The timer is cleared before the guard and not after it. A debounce armed
+  // while the pane was on the page outlived the pane being taken off it: type in
+  // the split view and press Write inside 300ms, and a round trip went out for a
+  // pane nobody is looking at.
   clearTimeout(previewTimer);
+  if (VIEW_PANE.hidden) return;
   previewTimer = setTimeout(askPreview, now ? 0 : PREVIEW_MS);
 }
 
 async function askPreview() {
+  if (VIEW_PANE.hidden) return;
   // The title goes with it: the page drops a leading heading that only restates
   // the title, so a preview without one shows a heading the saved page will not.
   // The title in the FORM, not the stored one — this same Save may change it.
@@ -8519,11 +8554,31 @@ async function askPreview() {
       method: 'POST', headers: {'content-type': 'application/json'},
       body: want, signal: previewFlight.signal,
     });
+    // Both halves of the answer are checked, because neither is guaranteed and
+    // the failure of the second is silent. A 400 or a 422 from this server
+    // answers JSON with a `detail` and no `html`, and so does a proxy's own
+    // error page — and `innerHTML = undefined` writes the six letters of the
+    // word `undefined` into the pane, which reads as a document that renders to
+    // that.
+    if (!response.ok) throw new Error('the server answered ' + response.status);
     html = (await response.json()).html;
+    if (typeof html !== 'string') throw new Error('the answer carried no document');
   } catch (error) {
-    // An abort is this function overtaking itself and is not news. Anything else
-    // leaves the pane showing the last thing that rendered, which is the honest
-    // state: an emptied pane reads as an empty document.
+    // An abort is this function overtaking itself and is not news, and it is the
+    // one case told apart by name rather than by the comment above it claiming
+    // it is. Everything else is a branch that decided not to act, which this
+    // application has now shipped three of in silence: it says so once, in the
+    // live region, and leaves the pane showing the last thing that rendered —
+    // except on the first open, where the last thing that rendered is nothing
+    // and an empty pane beside a document full of text reads as a document that
+    // renders to nothing. `previewShown` is deliberately not moved, so the next
+    // keystroke asks again rather than the pane being stuck on this text for
+    // ever.
+    if (error.name === 'AbortError') return;
+    announce('the preview could not be rendered — ' + error.message);
+    if (previewShown === null) {
+      VIEW_PANE.textContent = 'The preview could not be rendered. The document is unchanged.';
+    }
     return;
   }
   previewShown = want;
@@ -8565,10 +8620,24 @@ function previewMap() {
     // A point at the top, because the first block of a document need not start
     // on line 1 and without it every line above it interpolates off the end.
     previewPoints = [{line: 1, top: 0}];
+    // Measured against the SCROLLER, and that is the whole of the accuracy on
+    // this side. `offsetTop` is a distance from whatever happens to be
+    // positioned, and nothing positions the pane — so the offset parent was the
+    // article, which full page makes `position: fixed`, and every block reported
+    // its distance from the top of the WINDOW while the two synthetic points
+    // above and below it, and the `scrollTop` this map is read against, were in
+    // the pane's own scroll space. Measured in Chrome at 1400x900: a constant
+    // 283.625px out, the pane's own top inside the article, on a pane 458px
+    // tall — the rendered side sat a third of a screen past the heading the
+    // source side was showing. Adding `position: relative` to the pane would
+    // also have worked and would have left the number silently depending on a
+    // positioning rule staying put; this arithmetic asks the question that is
+    // actually being asked.
+    const zero = VIEW_PANE.getBoundingClientRect().top - VIEW_PANE.scrollTop;
     for (const block of VIEW_PANE.querySelectorAll('[data-startline]')) {
       const line = Number(block.dataset.startline);
       if (line > previewPoints[previewPoints.length - 1].line) {
-        previewPoints.push({line, top: block.offsetTop});
+        previewPoints.push({line, top: block.getBoundingClientRect().top - zero});
       }
     }
     previewPoints.push({
@@ -8648,16 +8717,36 @@ for (const name of VIEWS) {
 }
 
 addEventListener('keydown', event => {
-  // Ctrl+Alt, which is Ctrl+Option on a Mac and never Cmd: the page already
-  // claims ⌘S, and ⌘B ⌘I ⌘⇧X ⌘2 ⌘E ⌘⇧E ⌘. ⌘8 ⌘7 ⌘⇧L ⌘K through `attachEditing`.
+  // Ctrl+Shift and a digit, and both halves of that are a correction.
   //
-  // Matched on `event.code`, and that is not a preference. With Option held,
-  // macOS hands the layout's alternate character to `event.key` — Option+E is a
-  // dead acute and arrives as `Dead` — so a binding read off `key` here is one
-  // that could never once fire, which is the trap the shifted marks fell into
-  // when ⌘⇧8 was tried and shift-8 turned out to be `*`.
-  if (!event.ctrlKey || !event.altKey || event.metaKey) return;
-  const mode = {KeyE: 'edit', KeyB: 'both', KeyV: 'view'}[event.code];
+  // **Not Cmd**, because the page already claims ⌘S, and ⌘B ⌘I ⌘⇧X ⌘2 ⌘E ⌘⇧E ⌘.
+  // ⌘8 ⌘7 ⌘⇧L ⌘K through `attachEditing`. That much was right the first time.
+  //
+  // **Not Ctrl+Alt either**, which is what it was and what cannot stay. Ctrl+Alt
+  // IS AltGr: Chrome on Windows delivers the AltGr key as `ctrlKey` and `altKey`
+  // together, and on the Swiss-German layout that half this team types on — the
+  // mix `FORMATS` names by hand two hundred lines up — AltGr+E is the euro sign.
+  // Verified in Chrome: an AltGr+E keydown opened the split view and
+  // `preventDefault`ed the euro, so the chord ate a character people type. A
+  // guard on `getModifierState('AltGraph')` would tell the two apart on the
+  // engines that set it, and it would leave the binding resting on a modifier
+  // state that not every layout, engine and remote-desktop stack reports — for a
+  // shortcut, on a key somebody types. Moving off Alt entirely costs nothing and
+  // asks nobody to trust that report: this chord carries no Alt, so an AltGr
+  // keystroke cannot match it however it is reported. `!event.altKey` is what
+  // says so, and it is the whole of the AltGr answer.
+  //
+  // **Digits, not letters**, because Ctrl+Shift+B is Chrome's bookmarks bar on
+  // Windows and Linux and Ctrl+Shift+V is paste-as-plain-text in the box below.
+  // Ctrl+Shift+1/2/3 is unclaimed on all three platforms, and one-two-three for
+  // write / split / preview is the order the segments are drawn in.
+  //
+  // Matched on `event.code`, and that is not a preference either: shift-1 on a
+  // US layout is `!`, on a Swiss-German layout it is `+`, and a binding read off
+  // `key` here is one that could never once fire — the trap the shifted marks
+  // fell into when ⌘⇧8 was tried and shift-8 turned out to be `*`.
+  if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
+  const mode = {Digit1: 'edit', Digit2: 'both', Digit3: 'view'}[event.code];
   if (!mode) return;
   event.preventDefault();
   showView(VIEW === mode ? null : mode);
@@ -9289,6 +9378,14 @@ function showEditing(editing) {
 function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   showEditing(editing);
+  // Ending the session leaves the surface the session was in. Without this,
+  // Cancel from any of the three views left a reader inside a fixed, opaque,
+  // window-filling article with nothing in it: the switcher is drawn only while
+  // the article is editing, so the pressed segment — the documented way back —
+  // disappeared at the same instant, the box went with it so Escape could not be
+  // reached either, and the nav was painted over. The only exits left were the
+  // undiscoverable chord, Back, and a reload.
+  if (!editing && typeof showView === 'function') showView(null);
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
@@ -10069,12 +10166,24 @@ textarea.body-field {
    `.field` here: a view of an editing surface is nothing at all when there is no
    editing surface, and the create form is always editing so it always has it. */
 .views { display: none; }
+/* No `overflow: hidden`, and that is a correction rather than a simplification.
+   The shell's focus ring is `outline: 2px solid var(--focus)` at `outline-offset:
+   2px`, drawn entirely OUTSIDE the segment's border box, and the segments fill
+   this container's padding box exactly — so clipping the container clipped the
+   ring away on every side. Pixel-diffed against the unfocused shot: 6 differing
+   pixels on the first segment, against 404 for Save on the same page. The
+   corners the clip existed for are given to the end segments instead. */
 .entity.editing .views {
-  display: inline-flex; vertical-align: middle; overflow: hidden;
+  display: inline-flex; vertical-align: middle;
   border: 1px solid var(--line-strong); border-radius: 3px;
 }
 .views .seg { font: inherit; line-height: 0; padding: .3rem .55rem; border: 0;
               cursor: pointer; background: var(--surface); color: var(--muted); }
+.views .seg:first-child { border-radius: 2px 0 0 2px; }
+.views .seg:last-child { border-radius: 0 2px 2px 0; }
+/* And above its neighbours while it has the ring: the segments are adjacent, and
+   a later sibling's background paints over the two pixels of ring that reach it. */
+.views .seg:focus-visible { position: relative; z-index: 1; }
 .views .seg + .seg { border-left: 1px solid var(--line); }
 .views .seg:hover { color: var(--accent); }
 .views .seg[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }

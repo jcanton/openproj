@@ -1126,13 +1126,19 @@ document.createElement = built;
 const picker = opened ? {type: opened.type, accept: opened.accept} : null;
 const wrote = area.value;
 
-// The image entry is a fifth shape and `applyMark`'s tail is "anything I do not
+// The image entry is a fifth shape and `applyMark`'s tail was "anything I do not
 // recognise is a wrap", which reads `mark.wrap.length`. Nothing reaches it today
 // — the button is bound to click and the shortcut matcher cannot match a mark
 // with no key — so this is the trap the next mark falls into rather than a live
-// bug, and it is cheaper to shut than to rediscover.
+// bug, and it is cheaper to shut than to rediscover. Shut by the tail asking
+// whether it is the shape it can do, and saying so when it is not: a guard
+// naming this one entry would close the case that exists and leave the trap set
+// for the sixth.
+set('untouched', 0, 0);
+document.getElementById('state').textContent = '';
 let threw = null;
 try { applyMark(area, mark('Image')); } catch (error) { threw = String(error); }
+const unwritable = {said: document.getElementById('state').textContent, wrote: area.value};
 
 // The keyboard. Enter and Space on a focused button produce a click and no
 // mousedown at all, so a bar bound only to mousedown is a row of focus stops
@@ -1180,7 +1186,8 @@ const bar = {
 
 return {struck, numbered, unnumbered, nestedOff, nestedOn, linkedUp, urlChosen, bareLink,
         wordChosen, bracketed, checked, boxed, unboxed, table, picked, rule,
-        linked, tabled, plain, bare, picker, wrote, threw, keyed, pressed, refused, bar};
+        linked, tabled, plain, bare, picker, wrote, threw, unwritable,
+        keyed, pressed, refused, bar};
 """
 
 
@@ -1236,6 +1243,13 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     assert got["nestedOn"] == "  1. one\n  2. two", "and numbering it un-nested it"
     assert got["bracketed"] == "[a\\]b](url)", "a bracket in the label ended the label"
     assert got["threw"] is None, "the image mark fell through into the branch for wraps"
+    assert got["unwritable"]["wrote"] == "untouched", (
+        "a mark this function cannot write changed the document anyway"
+    )
+    assert "Image" in got["unwritable"]["said"], (
+        f"and it was refused in silence, which is the pattern this application has "
+        f"shipped three times: {got['unwritable']['said']!r}"
+    )
     assert got["keyed"] == "**alpha** beta", "the toolbar cannot be reached from the keyboard"
     assert got["pressed"] == "**alpha** beta", "a mouse press applied the mark twice"
     assert got["refused"] == "appetite.pdf is not an image", (
@@ -1262,7 +1276,9 @@ window.fetch = async (url, options) => {
   if (options.signal) options.signal.addEventListener('abort', () => { window.aborted = true; });
   await new Promise(go => setTimeout(go, 20));
   window.replies++;
-  return {json: async () => ({html:
+  // `ok`, because the page checks it: a stub that answers a Response without one
+  // is a stub the page reads as a failure, which is the shape a real 500 has.
+  return {ok: true, json: async () => ({html:
     '<h2 data-startline="1" data-endline="1">One</h2>'
     + '<p data-startline="3" data-endline="3">' + 'alpha '.repeat(600) + '</p>'
     + '<h2 data-startline="5" data-endline="5">Two</h2>'
@@ -1322,14 +1338,25 @@ const writing = state();
 seg('edit').click();
 const out = state();
 
-// The chord, matched on `event.code`: with Option held macOS hands `key` the
-// layout's alternate character, and Option+E arrives as `Dead`.
+// The chord, matched on `event.code`: shift-2 is `@` on a US layout and `"` on a
+// Swiss-German one, so a binding read off `key` is one that could never fire.
 const chord = code => dispatchEvent(new KeyboardEvent(
-  'keydown', {ctrlKey: true, altKey: true, code, key: 'Dead', bubbles: true}));
-chord('KeyB');
+  'keydown', {ctrlKey: true, shiftKey: true, code, key: '@', bubbles: true}));
+chord('Digit2');
 const chorded = state();
-chord('KeyB');
+chord('Digit2');
 const unchorded = state();
+
+// And AltGr does not reach it. Chrome on Windows delivers the AltGr key as
+// `ctrlKey` and `altKey` together, and on the Swiss-German layout half this team
+// types on, AltGr+E is the euro sign — so the chord this replaces swallowed a
+// character people type. The euro is dispatched here exactly as Chrome reports
+// it, including the modifier state, and the view must not move.
+dispatchEvent(new KeyboardEvent('keydown', {
+  ctrlKey: true, altKey: true, modifierAltGraph: true, code: 'KeyE', key: '€',
+  bubbles: true, cancelable: true,
+}));
+const afterEuro = state();
 
 // Escape in the box, arbitrated: the page first while there is something to come
 // back out of, then the hatch that gives Tab back.
@@ -1344,8 +1371,8 @@ document.getElementById('state').textContent = '';
 escape();
 const said = document.getElementById('state').textContent;
 
-return {editing, both, split, viewing, writing, out, chorded, unchorded, escaped, said,
-        told, asked: window.asked.length};
+return {editing, both, split, viewing, writing, out, chorded, unchorded, afterEuro,
+        escaped, said, told, asked: window.asked.length};
 """
 
 
@@ -1392,8 +1419,14 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     assert got["out"]["classes"] == [] and got["out"]["pressed"] == []
     assert got["out"]["position"] == "relative", "the pressed segment did not leave full page"
 
-    assert got["chorded"]["pressed"] == ["both"], "Ctrl+Alt+B was not read off event.code"
+    assert got["chorded"]["pressed"] == ["both"], (
+        "Ctrl+Shift+2 was not read off event.code"
+    )
     assert got["unchorded"]["pressed"] == [], "and the same chord did not take it back"
+    assert got["afterEuro"]["pressed"] == [], (
+        "AltGr+E moved the view: the chord is on a modifier combination that half "
+        "this team types the euro sign with"
+    )
 
     assert got["escaped"]["classes"] == [], "Escape did not leave full page"
     assert "Tab" in got["said"], (
@@ -1534,12 +1567,32 @@ const rows = Math.round(
   (area.scrollHeight - padTop - parseFloat(style.paddingBottom)) / step);
 const longRows = rows - 160;
 const topOfEightyTwo = padTop + (80 + longRows) * step;
-const blockOfEightyTwo = pane.querySelector('[data-startline="82"]').offsetTop;
+// The block's top **inside the pane it scrolls in**, and not its `offsetTop`.
+// Nothing positions `#body-preview`, so the offset parent of every block in it is
+// `article.entity` — which full page makes `position: fixed` — and `offsetTop` is
+// therefore a distance from the top of the window while `scrollTop`, which is
+// what this number is compared against, is a distance inside the pane. The two
+// differ by a constant: the pane's own top within the article, 283.625px at this
+// size on a pane 458px tall. The page used to make the same mistake, so the test
+// agreed with it and both were wrong together; this arithmetic is the pane's own
+// scroll space and it asks the question that is actually being asked.
+const block = pane.querySelector('[data-startline="82"]');
+const inPane = element =>
+  element.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+const blockOfEightyTwo = inPane(block);
+// And the same number the other way round, as a control on the arithmetic above:
+// if this is 0 then the two really do agree, and `offsetTop` reports 283 here.
+const offsetSays = block.offsetTop;
 
 area.scrollTop = topOfEightyTwo;
 area.dispatchEvent(new Event('scroll'));
 await after();
 const followed = pane.scrollTop;
+// The assertion neither side of the implementation can produce: after the sync,
+// the block for line 82 is at the top of the pane, measured in screen pixels off
+// two rects. It is 0 whatever coordinate space either side chose, and it is the
+// thing a reader actually sees.
+const whereIsIt = block.getBoundingClientRect().top - pane.getBoundingClientRect().top;
 
 // Back to the top first, so driving from the rendered side has somewhere to
 // move the box to — otherwise this direction passes without running at all.
@@ -1554,7 +1607,8 @@ const backAgain = area.scrollTop;
 await after();
 const settled = {box: area.scrollTop, pane: pane.scrollTop};
 
-return {longRows, step, topOfEightyTwo, blockOfEightyTwo, followed, backAgain, settled};
+return {longRows, step, topOfEightyTwo, blockOfEightyTwo, offsetSays, whereIsIt,
+        followed, backAgain, settled};
 """
 
 
@@ -1569,6 +1623,15 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     The ground truth here is not the mirror under test. The 160 lines that cannot
     wrap and the one that does mean the textarea's own `scrollHeight` says how
     many rows the long line took, and everything else is arithmetic.
+
+    And the ground truth for the rendered side is not `offsetTop`. It was, and
+    that is why this test passed while both panes were a third of a screen out:
+    the page measured the blocks with `offsetTop`, the test measured them with
+    `offsetTop`, and the two agreed with each other about a number that was in the
+    wrong coordinate space. Nothing positions `#body-preview`, so the offset
+    parent is the article, which full page makes `position: fixed`. Both sides are
+    rects against the scroller now, and `whereIsIt` is the assertion that needs
+    neither: after the sync, line 82's block is at the top of the pane.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "sync.html", 1400,
@@ -1580,6 +1643,14 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     )
     assert abs(got["followed"] - got["blockOfEightyTwo"]) < 2, (
         "scrolling the source to line 82 did not bring line 82's block to the top"
+    )
+    assert abs(got["whereIsIt"]) < 2, (
+        "line 82's block is not at the top of the pane — measured off two rects, so "
+        "this is what a reader sees and not what either side of the sync computed"
+    )
+    assert abs(got["offsetSays"] - got["blockOfEightyTwo"]) > 2, (
+        "`offsetTop` and the pane's own scroll space agree here, so this document "
+        "cannot tell the two apart and the test above proves nothing"
     )
     assert abs(got["backAgain"] - got["topOfEightyTwo"]) < 2, (
         "and scrolling the rendered pane back did not bring the source with it"
@@ -1682,7 +1753,7 @@ window.fetch = async (url, options) => {
   // Slower than the debounce, which is the only way two of these are ever in the
   // air at once — and the case an AbortController is for.
   await new Promise(go => setTimeout(go, 500));
-  return {json: async () => ({html: '<p data-startline="1" data-endline="1">x</p>'})};
+  return {ok: true, json: async () => ({html: '<p data-startline="1" data-endline="1">x</p>'})};
 };
 const area = document.querySelector('textarea[name=body]');
 const settle = ms => new Promise(go => setTimeout(go, ms));
@@ -1735,3 +1806,144 @@ def test_a_view_change_tells_the_seat_layer_the_box_moved(client: TestClient):
     # And `drawSeats` is still listening for it, which is the other end of the
     # seam and the half a grep of one file cannot see.
     assert "addEventListener('openproj:editing', () => { drawSeats(); sit(); });" in page
+
+
+_LEAVING = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const nav = document.querySelector('body > nav');
+const link = nav.querySelector('a');
+// What a pointer would actually hit in the middle of the first nav link. The
+// whole finding is that the surface paints over it, so a class name is not the
+// question — `elementFromPoint` is.
+const overLink = () => {
+  const box = link.getBoundingClientRect();
+  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return hit ? hit.tagName : null;
+};
+const shape = () => ({
+  classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  fullpage: document.body.classList.contains('fullpage'),
+  navInert: !!nav.inert,
+  over: overLink(),
+  switcher: document.getElementById('views').getClientRects().length > 0,
+  editing: article.classList.contains('editing'),
+});
+
+const answers = {};
+for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view', 'preview']]) {
+  document.getElementById('toggle').click();
+  document.getElementById(id).click();
+  const inside = shape();
+  document.getElementById('cancel').click();
+  answers[name] = {inside, after: shape()};
+}
+return answers;
+"""
+
+
+def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_path: Path):
+    """The worst thing this branch shipped, and it is on the main path: press a
+    view, decide not to save, press Cancel.
+
+    `flipEditing` dropped `.editing` and left `.full` and `body.fullpage` alone —
+    and `.views` is drawn only under `.entity.editing`, so the switcher, which the
+    commit message named as the way back, vanished at the same instant. The box
+    went with it, so Escape could not be reached either; the nav was painted over
+    by an opaque fixed article; and the only exits left were an undiscoverable
+    chord, the Back button and a reload.
+
+    Ending the session leaves the surface the session was in. Asked of all three
+    views, because each one takes a different thing away.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "leave.html", 1400,
+        _LEAVING, budget=3000,
+    )
+
+    for name, answer in got.items():
+        assert answer["inside"]["classes"] == ["full", f"view-{name}"], name
+        assert answer["inside"]["navInert"], f"{name}: the page behind the surface is not inert"
+        assert answer["inside"]["over"] != "A", (
+            f"{name}: the surface does not actually cover the nav, so nothing here is proved"
+        )
+        assert answer["after"] == {
+            "classes": [], "fullpage": False, "navInert": False, "over": "A",
+            "switcher": False, "editing": False,
+        }, (
+            f"Cancel from the {name} view left the reader in the surface: "
+            f"{answer['after']}"
+        )
+
+
+_A_FAILED_PREVIEW = """
+window.asked = 0;
+window.fetch = async () => { window.asked++; return {ok: false, status: 500,
+  json: async () => ({detail: 'the body could not be rendered'})}; };
+const area = document.querySelector('textarea[name=body]');
+const pane = document.getElementById('body-preview');
+const said = () => document.getElementById('state').textContent;
+const settle = ms => new Promise(go => setTimeout(go, ms));
+
+document.getElementById('toggle').click();
+document.getElementById('view-both').click();
+await settle(400);
+const refused = {pane: pane.textContent.trim(), said: said(), asked: window.asked};
+
+// And the shape that is worse, because it is silent: a 400 from this server, and
+// a proxy's own error page, both answer JSON with no `html` in it.
+window.fetch = async () => { window.asked++; return {ok: true,
+  json: async () => ({detail: 'no document here'})}; };
+document.getElementById('state').textContent = '';
+area.value = 'a different document';
+area.dispatchEvent(new Event('input', {bubbles: true}));
+await settle(500);
+const shapeless = {pane: pane.textContent.trim(), said: said()};
+
+// A failure is not remembered as "already shown", or the pane is stuck on this
+// text for the life of the page.
+window.fetch = async () => { window.asked++; return {ok: true, json: async () => (
+  {html: '<p data-startline="1" data-endline="1">it came back</p>'})}; };
+area.dispatchEvent(new Event('input', {bubbles: true}));
+await settle(500);
+const recovered = pane.textContent.trim();
+
+return {refused, shapeless, recovered};
+"""
+
+
+def test_a_preview_that_fails_says_so_and_never_writes_the_word_undefined(
+    client: TestClient, tmp_path: Path
+):
+    """`askPreview` had no `response.ok` check and one bare `catch { return }`, so
+    every way a render can fail left the pane exactly as it was and said nothing.
+    On the first open of the split view "exactly as it was" is empty, which reads
+    as a document that renders to nothing.
+
+    The second shape is worse and is the one a proxy produces: an answer that IS
+    JSON and carries no `html`. `innerHTML = undefined` writes the nine letters of
+    the word into the pane, and `previewShown` was then set, so it was never
+    retried for that text.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "failed.html", 1400,
+        _A_FAILED_PREVIEW, budget=4000,
+    )
+
+    # At least one, not exactly one: a failure is deliberately not remembered as
+    # "already shown", so anything that asks again asks again, which is the point.
+    assert got["refused"]["asked"] >= 1, "the preview was never asked for"
+    assert "could not be rendered" in got["refused"]["pane"], (
+        "a 500 left an empty pane beside a document full of text"
+    )
+    assert "500" in got["refused"]["said"], (
+        f"and said nothing in the live region: {got['refused']['said']!r}"
+    )
+    assert "undefined" not in got["shapeless"]["pane"], (
+        f"an answer with no document in it was written into the pane: "
+        f"{got['shapeless']['pane']!r}"
+    )
+    assert got["shapeless"]["said"], "and it was not announced either"
+    assert got["recovered"] == "it came back", (
+        "the failure was remembered as the text that had been shown, so the pane "
+        "never asked again"
+    )

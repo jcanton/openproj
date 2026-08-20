@@ -30,6 +30,15 @@ wins and the stage text is wrong.**
    which three buttons in a row of unrelated controls do not. Keep the Ctrl+Alt bindings and
    the `?edit`/`?both`/`?view` deep links exactly as S2 specifies them.
 
+   **Corrected after S2 shipped, and the correction wins over this paragraph: the chord is
+   `Ctrl+Shift+1/2/3`, not Ctrl+Alt.** Ctrl+Alt IS AltGr — Chrome on Windows delivers the
+   AltGr key as `ctrlKey` and `altKey` together — and on the Swiss-German layout that half
+   this team types on, AltGr+E is the euro sign. Verified in Chrome: the Ctrl+Alt chord
+   opened the split view and swallowed a euro somebody was typing. "Never Cmd" still holds,
+   for the reason it was written; digits rather than letters because Ctrl+Shift+B is Chrome's
+   bookmarks bar and Ctrl+Shift+V is paste-as-plain-text in the box below. Matched on
+   `event.code`, unchanged.
+
 2. **Undo and redo are the first two toolbar buttons.** S4 adds `Y.UndoManager` and gives it no
    buttons. It gets two, at the left end of the toolbar ahead of every mark, and they belong
    with the `reflect()` undo-stack defect because that defect is what makes them necessary — a
