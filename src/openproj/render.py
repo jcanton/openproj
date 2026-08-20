@@ -6626,13 +6626,12 @@ const LAYOUT_OPTIONS = {
   'elk.direction': 'RIGHT',
   'elk.spacing.nodeNode': '30',
   'elk.layered.spacing.nodeNodeBetweenLayers': '50',
-  // Routed, and mostly in vain: ELK computes bend points for an edge it can see
-  // both ends of, and returns none at all for one that spans the hierarchy.
-  // Measured on a 208-record plan, ORTHOGONAL, POLYLINE and SPLINES each gave
-  // bend points to ZERO of 76 edges. What comes back is applied — a routed edge
-  // is better than a straight one — and the rest keep cytoscape's taxi router.
-  // The edges that cross a card are the reason a person can drag them apart.
-  'elk.edgeRouting': 'ORTHOGONAL',
+  // No `elk.edgeRouting`. ELK computes bend points for an edge it can see both
+  // ends of and returns none at all for one that spans the hierarchy — measured
+  // on a 208-record plan, ORTHOGONAL, POLYLINE and SPLINES each gave bend points
+  // to ZERO of 76 edges. The routing is done here instead, by `routeEdges`, over
+  // the positions ELK produces. Asking for a routing we then throw away is a
+  // setting that reads as though it does something.
 };
 
 // 25 and not ELK's default 12, because the box ELK reserves and the box this page
@@ -6741,47 +6740,159 @@ async function relayout() {
     });
   });
 
-  // The routes, in the coordinates of whatever container they were declared on.
-  const bends = {};
-  const collect = (node, dx, dy) => {
-    (node.edges || []).forEach(one => {
-      if (one.id.startsWith('ghost:')) return;
-      const section = (one.sections || [])[0];
-      if (!section || !(section.bendPoints || []).length) return;
-    section.bendPoints = section.bendPoints || [];
-      // The start and end points as well as the bends. Cytoscape draws a
-      // `segments` edge from one node's CENTRE to the other's, and ELK's route
-      // begins at the border — so without these the first and last legs cut
-      // diagonally from the middle of a card to wherever the first bend is,
-      // which is most of what an ELK-routed edge looked like.
-      bends[one.id] = [section.startPoint, ...section.bendPoints, section.endPoint]
-        .map(p => ({x: p.x + dx, y: p.y + dy}));
-    });
-    (node.children || []).forEach(kid => {
-      const where = at[kid.id];
-      if (where) collect(kid, where.x, where.y);
-    });
-  };
-  collect(laid, 0, 0);
-  drawRoutes(bends);
   // Which way each taxi edge turns, from where the boxes ACTUALLY are. It used to
   // ride on `layoutstop`, which cytoscape emits and ELK does not — so after the
   // layout became a direct call it was computed once at load, from the positions
   // the nodes had before anything had been laid out. Every edge that needed a
-  // vertical turn got a horizontal one, which is the diagonal stub jcanton saw.
+  // vertical turn got a horizontal one, which is a diagonal stub. It is the
+  // fallback now: an edge the router cannot find a way for still gets a shape.
   route();
+  routeEdges();
 
   cy.fit(undefined, 24);
+}
+
+// An orthogonal route from one card to another that goes ROUND the cards in
+// between rather than under them.
+//
+// ELK cannot do this: at the level it works, the route between two boxes is
+// genuinely unobstructed, because the cards it appears to cross are inside other
+// boxes which at that level are opaque. So the routing is done here, over the
+// absolute positions ELK has already produced, which is where the obstacles are.
+//
+// A Hanan grid and A*. The candidate lines are the edges of every obstacle,
+// inflated by a clearance, plus the two anchors — a shortest orthogonal path
+// avoiding rectangles always exists on that lattice, which is what makes a grid
+// this coarse enough. Turns are charged for, or the path staircases.
+// `CLEARANCE` and not `CLEAR`: this page already has a `CLEAR`, which is the
+// clear-filters button, and two top-level declarations of one name in one page is
+// a SyntaxError that throws the whole later script away — including the layout.
+const CLEARANCE = 12;
+
+function routeAround(blockers, anchorFrom, anchorTo) {
+  const xs = new Set([anchorFrom.x, anchorTo.x]);
+  const ys = new Set([anchorFrom.y, anchorTo.y]);
+  blockers.forEach(b => {
+    xs.add(b.x1 - CLEARANCE); xs.add(b.x2 + CLEARANCE);
+    ys.add(b.y1 - CLEARANCE); ys.add(b.y2 + CLEARANCE);
+  });
+  const X = [...xs].sort((a, b) => a - b);
+  const Y = [...ys].sort((a, b) => a - b);
+  const ix = new Map(X.map((v, i) => [v, i]));
+  const iy = new Map(Y.map((v, i) => [v, i]));
+
+  const inside = (x, y) => blockers.some(b =>
+    x > b.x1 - CLEARANCE && x < b.x2 + CLEARANCE && y > b.y1 - CLEARANCE && y < b.y2 + CLEARANCE);
+  // A leg is clear if neither end nor any lattice point between them is inside a
+  // blocker. Checking the lattice points is enough: a rectangle wide enough to
+  // block a leg has an edge line, and therefore a lattice point, inside it.
+  const clearBetween = (ax, ay, bx, by) => {
+    if (ax === bx) {
+      const lo = Math.min(ay, by), hi = Math.max(ay, by);
+      return !blockers.some(b => ax > b.x1 - CLEARANCE && ax < b.x2 + CLEARANCE
+                               && lo < b.y2 + CLEARANCE && hi > b.y1 - CLEARANCE);
+    }
+    const lo = Math.min(ax, bx), hi = Math.max(ax, bx);
+    return !blockers.some(b => ay > b.y1 - CLEARANCE && ay < b.y2 + CLEARANCE
+                             && lo < b.x2 + CLEARANCE && hi > b.x1 - CLEARANCE);
+  };
+
+  const start = {x: anchorFrom.x, y: anchorFrom.y};
+  const goal = {x: anchorTo.x, y: anchorTo.y};
+  const key = (i, j) => i * Y.length + j;
+  const open = [{i: ix.get(start.x), j: iy.get(start.y), dir: null, cost: 0}];
+  const best = new Map();
+  const came = new Map();
+  const goalKey = key(ix.get(goal.x), iy.get(goal.y));
+  const guess = (i, j) => Math.abs(X[i] - goal.x) + Math.abs(Y[j] - goal.y);
+  let found = null;
+  let guard = 0;
+
+  while (open.length && guard++ < 40000) {
+    open.sort((a, b) => (a.cost + guess(a.i, a.j)) - (b.cost + guess(b.i, b.j)));
+    const here = open.shift();
+    const at = key(here.i, here.j);
+    if (at === goalKey) { found = here; break; }
+    if (best.has(at) && best.get(at) <= here.cost) continue;
+    best.set(at, here.cost);
+    const steps = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (const [dx, dy] of steps) {
+      const i = here.i + dx, j = here.j + dy;
+      if (i < 0 || j < 0 || i >= X.length || j >= Y.length) continue;
+      if (!clearBetween(X[here.i], Y[here.j], X[i], Y[j])) continue;
+      const dir = dx ? 'h' : 'v';
+      // Distance, plus a turn charge so the path is a few long legs rather than
+      // a staircase of short ones.
+      const cost = here.cost + Math.abs(X[i] - X[here.i]) + Math.abs(Y[j] - Y[here.j])
+                 + (here.dir && here.dir !== dir ? 60 : 0);
+      const there = key(i, j);
+      if (best.has(there) && best.get(there) <= cost) continue;
+      const step = {i, j, dir, cost};
+      came.set(there, {from: at, point: {x: X[i], y: Y[j]}});
+      open.push(step);
+    }
+  }
+  if (!found) return null;
+
+  const path = [];
+  let at = goalKey;
+  while (came.has(at)) { const step = came.get(at); path.unshift(step.point); at = step.from; }
+  path.unshift({x: start.x, y: start.y});
+  // Drop the points that are not corners: three points on one line is one leg.
+  const corners = [path[0]];
+  for (let i = 1; i < path.length - 1; i++) {
+    const a = corners[corners.length - 1], b = path[i], c = path[i + 1];
+    if (!((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y))) corners.push(b);
+  }
+  corners.push(path[path.length - 1]);
+  return corners;
+}
+
+// Where an edge leaves a card and where it arrives: the middle of the side that
+// faces the other end. Orthogonal by construction, which is what the grid wants,
+// and it means an edge meets a card square on rather than at a corner.
+function anchorsFor(edge) {
+  const from = edge.source().boundingBox({includeLabels: false});
+  const to = edge.target().boundingBox({includeLabels: false});
+  const a = edge.source().position(), b = edge.target().position();
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? [{x: from.x2, y: a.y}, {x: to.x1, y: b.y}]
+                   : [{x: from.x1, y: a.y}, {x: to.x2, y: b.y}];
+  }
+  return dy >= 0 ? [{x: a.x, y: from.y2}, {x: b.x, y: to.y1}]
+                 : [{x: a.x, y: from.y1}, {x: b.x, y: to.y2}];
+}
+
+// Route every visible edge round the cards, and draw what comes back. An edge the
+// router cannot find a way for keeps cytoscape's taxi router, which is a line
+// that may cross something rather than no line at all.
+function routeEdges() {
+  const cards = cy.nodes(':visible').filter(node => node.isChildless()).toArray();
+  const boxOf = node => node.boundingBox({includeLabels: false});
+  const paths = {};
+  cy.edges(':visible').forEach(edge => {
+    const [from, to] = anchorsFor(edge);
+    // Everything except the two ends and whatever is inside them: an edge
+    // attached to a box has to be allowed among that box's own children.
+    const blockers = cards.filter(card =>
+      !card.same(edge.source()) && !card.same(edge.target())
+      && !card.ancestors().anySame(edge.source())
+      && !card.ancestors().anySame(edge.target())).map(boxOf);
+    const path = routeAround(blockers, from, to);
+    if (path && path.length > 1) paths[edge.id()] = path;
+  });
+  drawRoutes(paths);
 }
 
 // ELK gives a bend point as a position; cytoscape wants it as a distance from the
 // straight line between the two ends and a fraction along that line. So each one
 // is projected onto that line — which also means the two are consistent when a
 // node is dragged afterwards, because both are relative to where the ends are.
-function drawRoutes(bends) {
+function drawRoutes(paths) {
   cy.batch(() => {
     cy.edges().forEach(edge => {
-      const points = bends[edge.id()];
+      const points = paths[edge.id()];
       if (!points || !points.length) { edge.removeStyle('curve-style'); return; }
       const from = edge.source().position(), to = edge.target().position();
       const dx = to.x - from.x, dy = to.y - from.y;
@@ -7028,6 +7139,12 @@ if (document.fonts) document.fonts.ready.then(paint);
 // Packed first and routed after: routing reads where the boxes ended up, and
 // the pack moves them.
 cy.on('position', 'node', route);
+// Re-routed when a drag ENDS, not while it is happening. A `segments` edge keeps
+// its bends relative to its two ends, so dragging a card carries the whole route
+// along with it and a bend can end up inside something — but routing every frame
+// of a drag is an A* per edge per frame, and the point of dragging is that it is
+// immediate.
+cy.on('dragfree', 'node', () => routeEdges());
 route();
 
 // One filter model, three views — the graph's answer to it is which boxes are on

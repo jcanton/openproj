@@ -107,8 +107,18 @@ cy.edges().forEach(edge => {
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
-    const ws = String(edge.style('segment-weights') || '').trim().split(/\s+/).map(Number);
-    const ds = String(edge.style('segment-distances') || '').trim().split(/\s+/).map(Number);
+    // Split on commas as well as spaces: the value goes in as a string and comes
+    // back parsed, so `String(...)` of it is comma-joined — and a whitespace
+    // split then yields one token, every routed edge measures as a straight
+    // line, and the number this whole probe exists to report is wrong in the
+    // reassuring direction.
+    // `parseFloat` and not `Number`: cytoscape hands the distances back with
+    // their units on — "47px 5.8px" — and `Number('47px')` is NaN, which the
+    // guard below then skips. Every routed edge measured as a straight line and
+    // this probe reported the drawing was no better than before it was routed.
+    const split = v => String(v || '').trim().split(/[\s,]+/).filter(Boolean).map(parseFloat);
+    const ws = split(edge.style('segment-weights'));
+    const ds = split(edge.style('segment-distances'));
     const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
     ws.forEach((w, i) => {
       if (!isFinite(w) || !isFinite(ds[i])) return;
@@ -386,24 +396,22 @@ def test_every_card_carries_its_priority_as_a_picture(index: Index, tmp_path: Pa
         assert "rect" in image, "the meter has no bars in it"
 
 
-def test_how_many_edges_cross_a_card_they_have_nothing_to_do_with(drawn: dict):
-    """The number the routing work in `docs/QUEUE.md` exists to beat.
+def test_no_edge_crosses_a_card_it_has_nothing_to_do_with(drawn: dict):
+    """Zero, and it is reachable — which it was not before the router.
 
-    A bound and deliberately not zero: an automatic layout that never puts a card
-    on a line is not reachable with what is vendored here — ELK returns bend
-    points for none of the edges that span the hierarchy, in any of its three
-    routing modes — so this records where the drawing actually stands rather than
-    asserting a promise the page does not make.
+    ELK returns bend points for none of the edges that span the hierarchy, in any
+    of its three routing modes, because at the level ELK works the route between
+    two boxes genuinely is unobstructed: the cards it appears to cross are inside
+    other boxes. So `routeEdges` routes them here, over the absolute positions ELK
+    produces, which is where the obstacles are. Measured at 1900x820 it went from
+    4 / 13 / 43 at 31 / 208 / 518 records to 0 at all three.
 
-    It is here so that whoever writes the router has an instrument on the day they
-    start, and so that a change which makes the drawing quietly worse has
-    something to fail against. Measured at 1900x820: 4 on the real plan, 13 at 208
-    records, 43 at 518.
+    An edge the router cannot find a way for keeps cytoscape's taxi router and may
+    cross something, which is why this could fail on a plan shaped in a way nobody
+    has seen. If it does, the fallback is working as intended and the router is
+    what needs looking at.
     """
-    assert drawn["under"] <= drawn["edges"], "more crossings than there are edges"
-    # Generous, and it is the ceiling rather than the target. If this ever fails,
-    # something has made the drawing worse — do not raise it, find out what.
-    assert drawn["under"] <= max(4, drawn["edges"] // 2), (
+    assert drawn["under"] == 0, (
         f"{drawn['under']} of {drawn['edges']} edges cross a card they are not "
-        "attached to, which is worse than the layout has ever been"
+        "attached to"
     )
