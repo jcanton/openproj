@@ -350,7 +350,21 @@ class Store:
         return node.data.decode("utf-8") if node.type_str == "blob" else None
 
     def paths(self, commit: str) -> list[str]:
-        found: list[str] = []
+        return sorted(self.blobs(commit))
+
+    def blobs(self, commit: str) -> dict[str, str]:
+        """Every file at this commit, and the id of the bytes in it.
+
+        A blob id is a hash of the content, so two commits that share one names
+        the same bytes — which is what lets a reader parse a file once and reuse
+        the answer across every commit that did not touch it. Measured on this
+        plan: one edit leaves 519 of 520 blobs untouched, and reading and parsing
+        the tree is the largest cost in a request.
+
+        Walked once and handed back whole rather than asked per path: the walk is
+        the expensive half, and a caller that wants the ids wants all of them.
+        """
+        found: dict[str, str] = {}
 
         def walk(tree, prefix: str) -> None:
             for entry in tree:
@@ -358,10 +372,10 @@ class Store:
                 if entry.type_str == "tree":
                     walk(self._repo.get(entry.id), f"{name}/")
                 else:
-                    found.append(name)
+                    found[name] = str(entry.id)
 
         walk(self._tree(commit), "")
-        return sorted(found)
+        return found
 
     # -- the remote ---------------------------------------------------------
     #

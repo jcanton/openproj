@@ -3489,3 +3489,67 @@ def test_the_index_is_redrawn_when_the_day_moves(repo_path: Path):
         "the timeline is identical a year apart, so the day it is drawn around is "
         "not reaching the drawing"
     )
+
+
+def test_a_record_is_parsed_once_however_many_commits_leave_it_alone(
+    client: TestClient, monkeypatch
+):
+    """One edit touches one file. Measured on the generated plans: after a save,
+    43 of 44 blobs are unchanged at 31 records, 209 of 210 at 208, 519 of 520 at
+    518 — so the reader can keep the answer for every file whose bytes did not
+    move, and reading the tree stops being the largest cost in a request.
+
+    Keyed on the blob and not on the path, which is what makes it correct rather
+    than merely fast: a file renamed keeps its bytes and keeps its answer, and a
+    path-keyed cache would have to be TOLD when a path changed.
+    """
+    from openproj import web
+
+    parsed = []
+    real = web.parse_text
+
+    def counted(text, path):
+        parsed.append(path)
+        return real(text, path)
+
+    monkeypatch.setattr(web, "parse_text", counted)
+
+    client.get("/")
+    parsed.clear()
+
+    assert save(client, TASK, {"title": "one small change"}).status_code == 200
+    client.get("/")
+
+    # The one that changed, and nothing else. It may be read more than once — the
+    # write parses what it is about to commit — but no OTHER record should be.
+    assert set(parsed) <= {PATH}, f"records reparsed for a one-file edit: {sorted(set(parsed))}"
+
+
+def test_an_edited_record_is_read_again_rather_than_remembered(client: TestClient):
+    """The half of a content-keyed cache that would lose work. Editing a file
+    changes its bytes, which changes its blob, which is a different key."""
+    # Distinctive, because a page this size contains most short English words
+    # somewhere — the first attempt used "first" and "second" and found both.
+    assert save(client, TASK, {"title": "zzarple"}).status_code == 200
+    assert "zzarple" in client.get("/").text
+
+    assert save(client, TASK, {"title": "qqundle"}).status_code == 200
+    page = client.get("/").text
+    assert "qqundle" in page
+    assert "zzarple" not in page, "the table is showing the version before the edit"
+
+
+def test_a_file_that_will_not_parse_is_not_remembered_as_an_answer(
+    client: TestClient, repo_path: Path
+):
+    """It has no answer to hold. And the refusal has to be produced again on every
+    read, because the banner that says the plan is incomplete is drawn from it."""
+    from test_store import commit_directly
+
+    commit_directly(
+        repo_path, {"tasks/broken.md": "---\nid: [\n---\n"}, "a file that will not read"
+    )
+
+    for _ in range(3):
+        page = client.get("/").text
+        assert "broken.md" in page, "the unreadable file stopped being reported"

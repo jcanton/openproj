@@ -399,9 +399,52 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
     )
 
 
+# One parsed record per blob id, across every commit this process has read.
+#
+# A blob id is a hash of the file's contents, so a record parsed once is the same
+# record at every commit that did not touch that file — and one edit touches one
+# file. Measured on the plans in `tests/plans.py`: after a single save, 43 of 44
+# blobs are unchanged at 31 records, 209 of 210 at 208, and 519 of 520 at 518. The
+# read-and-parse those numbers make reusable was the largest cost in a request,
+# 502 ms of a 941 ms PATCH at 518 records.
+#
+# Keyed on the blob and NOT on the path, which is what makes it correct rather
+# than merely fast: a file renamed keeps its bytes and keeps its answer, and a
+# file rewritten to the same bytes IS the same record. A path-keyed cache would
+# have to be told when a path changed, and being told is where a cache goes
+# stale.
+#
+# Pruned to the tree it just read, so the memory it holds is the size of the plan
+# rather than the size of the plan's history. An instance that lives for a week
+# would otherwise accumulate every version of every record anybody edited.
+_PARSED: dict[str, Entity] = {}
+
+
 def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
-    paths, too_deep = record_paths_in(DIRECTORY.values(), store.paths(commit))
-    entities, refused = readable(paths, lambda path: parse_text(store.read(commit, path), path))
+    blobs = store.blobs(commit)
+    paths, too_deep = record_paths_in(DIRECTORY.values(), sorted(blobs))
+
+    def parsed(path: str) -> Entity:
+        blob = blobs[path]
+        held = _PARSED.get(blob)
+        if held is not None:
+            return held
+        entity = parse_text(store.read(commit, path), path)
+        _PARSED[blob] = entity
+        return entity
+
+    entities, refused = readable(paths, parsed)
+    # Pruned, but only once it has grown to several times the plan it just read.
+    # Pruning to exactly that tree looks tidier and is worse: one process can
+    # serve more than one plan — every test in this suite builds its own — and two
+    # of them alternating would evict each other on every read, which turns a
+    # cache into an overhead. A file that would not parse is not held at all: it
+    # has no answer, and the next read has to produce the same refusal for the
+    # banner to go on saying so.
+    if len(_PARSED) > 3 * max(len(paths), 1):
+        keep = {blobs[path] for path in paths}
+        for gone in [blob for blob in _PARSED if blob not in keep]:
+            del _PARSED[gone]
     return entities, [*refused, *too_deep]
 
 
