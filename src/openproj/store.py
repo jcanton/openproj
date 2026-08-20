@@ -461,18 +461,38 @@ class Store:
         """Store bytes under a name derived from their content, and return it.
 
         Content-addressed, so the same file uploaded twice is the same path and
-        the second upload writes nothing. That is also why this needs none of
-        `write`'s machinery: an asset is never edited, so there is no base to
-        compare against, nothing to merge, and no conflict that can exist.
+        the second upload writes nothing. An asset is never edited, so there is no
+        base to compare against, nothing to merge, and no conflict that can exist
+        — which is why this needs none of `write_all`'s compare-and-swap.
+
+        It needs the rest of it. This took no lock and never pushed, and both were
+        wrong in the same way: the commit existed only on this disk, so ONE image
+        upload followed by anybody pushing to the plan by hand left local and
+        remote genuinely forked — and from then on every write raised
+        `StoreDiverged` for the life of the container. Not the first write. All of
+        them, for ever, because nothing ever reconciled. The lock matters for a
+        second reason now that writes run on a threadpool: concurrent with a save,
+        libgit2 refuses the commit outright with "current tip is not the first
+        parent".
         """
         name = f"assets/{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
-        if self.read_asset(self.head(), name) is not None:
-            return name, False
-        blob = self._repo.create_blob(data)
-        parent = self.head()
-        tree = self._insert(self._tree(parent), name.split("/"), blob)
-        who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
-        self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
+        with self._writing:
+            if self._remote:
+                self._absorb_remote()
+            if self.read_asset(self.head(), name) is not None:
+                return name, False
+            blob = self._repo.create_blob(data)
+            parent = self.head()
+            tree = self._insert(self._tree(parent), name.split("/"), blob)
+            who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
+            self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
+            # Through `_finish`, so an upload reaches the remote like every other
+            # commit and an unreachable remote is reported rather than pretended
+            # away. The name and "it is new" are what the caller wants; whether it
+            # pushed is on the result `_finish` builds, which this discards — an
+            # asset nobody can see yet is a broken image on one page, not a lost
+            # record.
+            self._finish(self.head(), "committed")
         return name, True
 
     def read_asset(self, commit: str, path: str) -> bytes | None:

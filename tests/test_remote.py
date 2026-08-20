@@ -828,3 +828,40 @@ def test_a_push_rejected_by_a_moved_remote_is_retried_once(tmp_path):
     assert "tasks/task-a00001.md" in paths and "tasks/task-b00002.md" in paths
     for one in (mine, yours, landed):
         one.close()
+
+
+def test_an_upload_reaches_the_remote_like_every_other_commit(tmp_path):
+    """`put_asset` took no lock and never pushed, and both were wrong the same way.
+
+    The commit existed only on this disk, so ONE image upload followed by anybody
+    pushing to the plan by hand left local and remote genuinely forked — and from
+    then on every write raised `StoreDiverged` for the life of the container. Not
+    the first write: all of them, for ever, because nothing reconciled. And
+    because `WRITE_FAILURES` is consulted at exactly one call site, that reached
+    the eleven HTTP routes as a plain-text 500.
+
+    It is also the writer that breaks first now that writes run on a threadpool:
+    concurrent with a save, libgit2 refuses the commit outright with "current tip
+    is not the first parent".
+    """
+    upstream = tmp_path / "upstream.git"
+    pygit2.init_repository(str(upstream), bare=True, initial_head="main")
+    commit_directly(upstream, {"tasks/task-a00001.md": "---\nid: task-a00001\n---\n"}, "seed")
+
+    ours = tmp_path / "ours.git"
+    pygit2.clone_repository(str(upstream), str(ours), bare=True)
+    store = Store(ours, remote=str(upstream))
+
+    name, fresh = store.put_asset(b"\x89PNG\r\n\x1a\n" + b"0" * 32, ".png", "ann")
+    assert fresh and name.startswith("assets/")
+
+    # On the remote, not merely on this disk.
+    landed = Store(upstream)
+    assert name in landed.paths(landed.head()), "the upload never left the container"
+
+    # And the store is not wedged: a save afterwards still lands.
+    written = store.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: after\n---\n",
+                          store.head(), "ann", "a save after an upload")
+    assert written.commit and written.pushed
+    for one in (store, landed):
+        one.close()
