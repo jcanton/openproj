@@ -753,3 +753,78 @@ def test_push_refuses_to_resolve_a_divergence_by_itself(
 
     assert head(remote_path) == theirs
     assert head(repo_path) == ours
+
+
+def test_one_save_talks_to_the_remote_twice_and_not_three_times(tmp_path):
+    """A save fetched, committed, and then fetched AGAIN on its way out — the
+    push did its own fetch first, milliseconds after `_absorb_remote` had done
+    one, inside the same lock. Three round trips, and a round trip to GitHub is
+    about 600 ms measured from a laptop, which is most of what a save costs.
+
+    Counted rather than timed, because the point is the number of conversations
+    and not how slow the network happened to be.
+    """
+    upstream = tmp_path / "upstream.git"
+    pygit2.init_repository(str(upstream), bare=True, initial_head="main")
+    commit_directly(upstream, {"tasks/task-a00001.md": "---\nid: task-a00001\n---\n"}, "seed")
+    working = tmp_path / "working.git"
+    pygit2.clone_repository(str(upstream), str(working), bare=True)
+
+    said = []
+    real_fetch, real_send = Store.fetch, Store._send
+
+    def fetch(self):
+        said.append("fetch")
+        return real_fetch(self)
+
+    def send(self, refetched=False):
+        said.append("push")
+        return real_send(self, refetched)
+
+    Store.fetch, Store._send = fetch, send
+    try:
+        store = Store(working, remote=str(upstream))
+        said.clear()
+        store.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: x\n---\n",
+                    store.head(), "ann", "one save")
+        store.close()
+    finally:
+        Store.fetch, Store._send = real_fetch, real_send
+
+    assert said == ["fetch", "push"], f"one save talked to the remote {len(said)} times: {said}"
+
+
+def test_a_push_rejected_by_a_moved_remote_is_retried_once(tmp_path):
+    """The fetch that was removed from the write path was there to notice a remote
+    that had moved. It is still noticed — just when the push is actually rejected,
+    rather than on every save in the hope that one day it will be.
+    """
+    upstream = tmp_path / "upstream.git"
+    pygit2.init_repository(str(upstream), bare=True, initial_head="main")
+    commit_directly(upstream, {"tasks/task-a00001.md": "---\nid: task-a00001\n---\n"}, "seed")
+
+    ours = tmp_path / "ours.git"
+    theirs = tmp_path / "theirs.git"
+    pygit2.clone_repository(str(upstream), str(ours), bare=True)
+    pygit2.clone_repository(str(upstream), str(theirs), bare=True)
+
+    mine = Store(ours, remote=str(upstream))
+    yours = Store(theirs, remote=str(upstream))
+
+    # Somebody else lands a commit on a different file first.
+    yours.write("tasks/task-b00002.md", "---\nid: task-b00002\n---\n",
+                yours.head(), "bo", "theirs")
+
+    # Ours is now behind, and its tracking ref does not know it. The write still
+    # lands: `_absorb_remote` fetches, and the push goes on top.
+    written = mine.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: mine\n---\n",
+                         mine.head(), "ann", "ours")
+    assert written.commit, "the write did not land"
+    assert written.pushed, "the write did not reach the remote"
+
+    # And the remote holds both.
+    landed = Store(upstream)
+    paths = landed.paths(landed.head())
+    assert "tasks/task-a00001.md" in paths and "tasks/task-b00002.md" in paths
+    for one in (mine, yours, landed):
+        one.close()
