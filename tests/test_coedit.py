@@ -3479,3 +3479,89 @@ def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
     assert room.typed.get("ann", 0) >= 100, (
         f"the substitution was credited {room.typed.get('ann')} characters"
     )
+
+
+_UNDO_IN_A_ROOM = r"""
+document.getElementById('toggle').click();
+const editor = ace.edit(document.querySelector('.acebox'));
+editor.focus();
+// Ann's own edit, made the way a person makes one, at the top of the document.
+editor.selection.moveTo(0, 0);
+editor.insert('ANN ');
+await new Promise(go => setTimeout(go, 100));
+const mineWas = SURFACE.text().startsWith('ANN ');
+
+// And then Bob types, through the real observer path: a real update off the
+// socket, applied inside `apply`, which is what makes it a delta this tab did
+// not make.
+window.__room.onmessage({data: JSON.stringify({t: 'update', u: REMOTE})});
+await new Promise(go => setTimeout(go, 150));
+const theirsWas = SURFACE.text();
+
+// Ann presses undo. One press, the ordinary key, on the ordinary editor.
+window.__sent.length = 0;
+editor.undo();
+await new Promise(go => setTimeout(go, 200));
+return {
+  errors: window.__errors, sent: window.__sent,
+  mineWas, theirsWas, after: SURFACE.text(),
+  frames: window.__sent.filter(frame => frame.t === 'update').length,
+};
+"""
+
+
+def test_undo_never_takes_back_something_somebody_else_typed(
+    client: TestClient, plan: Path, tmp_path: Path
+):
+    """One press of the key that means "give me back my last thing".
+
+    Measured in Chrome against a real `Room`, before this: what came back out was
+    BOB's sentence. Ace's `UndoManager` records every delta the session sees and a
+    delta applied from the socket is a delta the session sees, so Bob's insert sat
+    on top of Ann's undo stack. And an undo is an ordinary edit to the change
+    handler, so the undone delta went out through `spliced` as an `update` frame —
+    Bob's writing was deleted in Bob's window as well, and then committed that way.
+
+    Ann's own edit must still come back, which is the half a blanket
+    `undoManager.reset()` would have thrown away, so both are asserted here. The
+    room is asked as well as the browser: `in_chrome_room` feeds every frame the
+    page sent into the real `Room`, so "the room still holds Bob's text" is a
+    claim about the document that gets committed rather than about a `<div>`.
+    """
+    front, _ = split_front_matter(stored(plan))
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
+    )
+    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = _welcome(room)
+
+    bob = coedit.Room(TASK, PATH, "0" * 40, shown)
+    update = bob.absorb(shown.replace("reading", "reading and BOB WAS HERE"))
+    assert update, "the second copy produced no update"
+    room.apply(update, "bob")
+
+    answer = in_chrome_room(
+        client, tmp_path / "undo.html", room, welcome,
+        _UNDO_IN_A_ROOM.replace("REMOTE", json.dumps(base64.b64encode(update).decode())),
+        editor="ace",
+    )
+
+    assert answer["mineWas"], "Ann's own edit never reached the document"
+    assert "BOB WAS HERE" in answer["theirsWas"], (
+        "Bob's keystroke never reached the box, so there is nothing here to take back"
+    )
+    assert "BOB WAS HERE" in answer["after"], (
+        "one press of undo deleted what somebody else typed: the box now reads "
+        f"{answer['after']!r}"
+    )
+    assert not answer["after"].startswith("ANN "), (
+        "and it did not take back Ann's own edit either, which is what she pressed it for"
+    )
+    # The document that would be committed, not the one on screen. Every frame the
+    # page sent has been applied to the real room by `in_chrome_room`.
+    assert "BOB WAS HERE" in room.body(), (
+        f"the undo was broadcast and the room lost Bob's writing: {room.body()!r}"
+    )
+    assert "ANN " not in room.body(), "Ann's undo was not broadcast, so the room has diverged"

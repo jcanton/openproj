@@ -349,6 +349,37 @@ function aceSurface(area, seeded) {
   }
 
   let applying = false;
+
+  // **Undo must never reach a delta this tab did not make**, and until this line
+  // it did. Measured in Chrome against a real room: Ann types, Bob types, Ann
+  // presses Ctrl+Z — and what came back out was BOB's sentence, not Ann's. Worse
+  // than a wrong window: an undo is an ordinary edit as far as the change handler
+  // is concerned, so it went out through `spliced` as an `update` frame and
+  // deleted Bob's writing in Bob's window too, and then in the commit. One
+  // keystroke of somebody else's, taken back for everybody, by the key people
+  // press when they want their OWN last thing back.
+  //
+  // The cause is not this binding's: Ace's `UndoManager` records every delta the
+  // session sees, and a delta applied from the socket is a delta the session
+  // sees. `applying` already says which are which, so the manager is told to
+  // ignore those and nothing else.
+  //
+  // The PUBLIC `add`, and not `session.$fromUndo` — which is the flag Ace itself
+  // uses at this exact seam and which also works, measured. A private field that
+  // a re-vendoring renames leaves this silently doing nothing again; `add`
+  // missing throws on the line below, at construction, where somebody reads it.
+  //
+  // What this is NOT: S4. The `<textarea>` still loses its native undo history
+  // on every remote keystroke — `splice` under `apply` assigns `.value` there,
+  // which is what wipes it — and there are still no undo and redo buttons. This
+  // stops the half that destroys somebody else's writing; `Y.UndoManager` is
+  // still owed the half that gives you back your own.
+  const history = session.getUndoManager();
+  const remember = history.add.bind(history);
+  history.add = (delta, merge, forSession) => {
+    if (!applying) remember(delta, merge, forSession);
+  };
+
   const heard = {input: [], caret: [], splice: []};
   const fire = (kind, ...args) => { for (const listener of heard[kind]) listener(...args); };
 
