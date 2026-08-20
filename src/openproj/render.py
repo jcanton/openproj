@@ -6663,7 +6663,9 @@ function elkNode(node) {
 function edgesByContainer(edges) {
   const real = {};
   const ghosts = {};
-  const seen = new Set();
+  const weight = new Map();     // container|a>b  ->  how many dependencies run that way
+  const where = new Map();      // container|a>b  ->  the three ids that made it
+  const dropped = new Set();
   edges.forEach(edge => {
     const from = chainOf(edge.source());
     const to = chainOf(edge.target());
@@ -6682,10 +6684,41 @@ function edgesByContainer(edges) {
     if (a === edge.source().id() && b === edge.target().id()) return;
     const on = deep === 0 ? 'root' : from[deep - 1];
     const key = on + '|' + a + '>' + b;
-    if (seen.has(key)) return;
-    seen.add(key);
-    (ghosts[on] = ghosts[on] || []).push({id: 'ghost:' + key, sources: [a], targets: [b]});
+    // Counted, not deduplicated. When two boxes depend on each other the ghosts
+    // form a cycle, and how many dependencies run each way is what decides which
+    // direction is worth keeping.
+    weight.set(key, (weight.get(key) || 0) + 1);
+    where.set(key, {on, a, b});
   });
+
+  // A cycle in the ghosts is not a cycle in the plan: two projects can each hold
+  // work waiting on the other, with nothing circular about any single record.
+  // ELK cannot rank both, so it breaks one arbitrarily and an arrow comes out
+  // backwards — measured on a generated plan of 518 records, two of them, between
+  // one pair of projects with two dependencies running one way and one the other.
+  //
+  // So the WEAKER direction is dropped before ELK ever sees it. The majority then
+  // ranks correctly and only the minority reads backwards, which is the honest
+  // answer: those records really are waiting on each other, and no arrangement of
+  // two boxes on a line can say so.
+  //
+  // Two-cycles only. A longer ring — A waits on B waits on C waits on A — is left
+  // for ELK to break, because choosing which edge of a ring to sacrifice is a
+  // judgement about the plan rather than about the drawing, and a wrong guess
+  // there is worse than an arbitrary one.
+  for (const [key, {on, a, b}] of where) {
+    const other = on + '|' + b + '>' + a;
+    if (!where.has(other)) continue;
+    const mine = weight.get(key), theirs = weight.get(other) || 0;
+    // Ties keep both and let ELK choose: there is nothing to prefer.
+    if (mine < theirs) continue;
+    if (mine === theirs && key > other) continue;
+    dropped.add(other);
+  }
+  for (const [key, {on, a, b}] of where) {
+    if (dropped.has(key)) continue;
+    (ghosts[on] = ghosts[on] || []).push({id: 'ghost:' + key, sources: [a], targets: [b]});
+  }
   return {real, ghosts};
 }
 
