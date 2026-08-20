@@ -520,3 +520,56 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     )
     for kind, answer in got["said"].items():
         assert answer == "a card", f"a {kind}'s own title brought up {answer}"
+
+
+# How many times the card's markup changes between the hover and the card being
+# up. Two is the defect: the fields, then the body a moment later, with the box
+# growing and re-placing itself in between.
+_PAINTS = """
+// The title cell, which is what the table listens on — a hover anywhere else in
+// the row is a pointer on its way somewhere and opens nothing.
+const cell = document.querySelector('tbody tr[data-id] td[data-col="title"]');
+const card = document.getElementById('card');
+// A server, stubbed, because this page is a file and there is none — and the
+// point under test is when the document is DRAWN, not where it came from. 50ms
+// is a plausible round trip and well inside the 400ms the card waits anyway.
+window.fetch = () => new Promise(resolve => setTimeout(() => resolve({
+  ok: true, json: () => Promise.resolve({html: '<p>the shaping document</p>'}),
+}), 50));
+
+let paints = 0;
+new MutationObserver(() => paints++).observe(card, {childList: true, subtree: true});
+
+cell.dispatchEvent(new PointerEvent('pointerover', {bubbles: true, clientX: 40, clientY: 40}));
+setTimeout(() => {
+  document.body.dataset.report = JSON.stringify({
+    paints,
+    shown: !card.hidden,
+    hasBody: !!card.querySelector('.card-body'),
+  });
+}, 900);
+return {paints: null};
+"""
+
+
+def test_the_card_arrives_in_one_piece(index: Index, tmp_path: Path):
+    """jcanton, 2026-08-20: "the frontmatter is rendered faster than the body,
+    which lags behind for a split second".
+
+    The fields were drawn the moment the card appeared and the shaping document
+    was fetched afterwards, so the box grew and re-placed itself just after
+    arriving. The fetch now starts when the pointer arrives and the card is drawn
+    400ms later, which is hover-intent time that was being spent on nothing —
+    so the answer is normally already here and both halves land in one paint.
+    """
+    page = render_table(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "paint.html", 1400, _PAINTS,
+                      patience=2500)
+
+    assert got["paints"] is not None, "the continuation never ran"
+    assert got["shown"], "no card came up at all"
+    assert got["hasBody"], "the card came up without the document it exists to show"
+    assert got["paints"] <= 1, (
+        f"the card's markup changed {got['paints']} times: the body still lands "
+        "in a second pass"
+    )
