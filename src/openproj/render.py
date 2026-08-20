@@ -9070,9 +9070,16 @@ function attachStatus(surface, bar) {
     const column = [...text.slice(opens, at)].length + 1;
     const lines = text.split('\n').length;
     const chosen = ends - at;
+    // Singular at one, which is a departure from the shot and a deliberate one.
+    // HackMD's own strip reads `Line 1, Columns 1 — 100 Lines` — plural on the
+    // column whatever the number — and this bar already spells `Column` singular
+    // because copying a typo is not what "build the toolbar in the screenshot"
+    // asked for. Having done that once, `1 Lines` is the same mistake left in:
+    // an empty document is the FIRST thing anybody sees on /new, and it opened
+    // reading `Line 1, Column 1 — 1 Lines`.
     where.textContent = `Line ${line}, Column ${column}`
       + (chosen ? ` — ${chosen.toLocaleString()} selected` : '')
-      + ` — ${lines.toLocaleString()} Lines`;
+      + ` — ${lines.toLocaleString()} Line${lines === 1 ? '' : 's'}`;
 
     // The count is UTF-16 code units, which is what the editor this is modelled
     // on counts too, and it is NOT what the ceiling is in. The ceiling is UTF-8
@@ -11110,7 +11117,21 @@ addEventListener('keydown', event => {
 // exactly the person this feature exists for.
 const RECEIPT = document.getElementById('draftsaved');
 let draftMs = EDITOR.autosave * 1000;
+// Two clocks, and they mean different things. `draftWritten` is when a draft
+// last LANDED, which is the only thing `sayDraft` may count from — a receipt
+// reading "draft saved 4s ago" over a store that refused the write is this
+// application claiming somebody's writing is somewhere it is not, so a refusal
+// has to put it back to zero. `draftTried` is when the last ATTEMPT was made,
+// which is what the throttle is throttling.
+//
+// One variable for both is the bug: with the store refusing, `draftWritten` was
+// zeroed on every refusal and then read as "when the last write happened", so
+// `wait` came out at about minus fifty-seven years and every keystroke re-entered
+// `remembered.set` — a synchronous `setItem`, a throw and a catch, per character,
+// on the main thread, in exactly the browser the throttle was worth adding for.
+// The `if (!draftRefused)` guard suppressed the announcement, never the work.
 let draftWritten = 0;
+let draftTried = 0;
 let draftTimer = 0;
 let draftTicker = 0;
 let draftRefused = false;
@@ -11129,6 +11150,10 @@ function sayDraft() {
 function writeDraft() {
   clearTimeout(draftTimer);
   draftTimer = 0;
+  // Before the attempt, not after it, and on both branches: a store that refuses
+  // still costs a `setItem` and a throw, which is the cost the interval is here
+  // to bound.
+  draftTried = Date.now();
   if (remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: SURFACE.text()}))) {
     draftRefused = false;
     draftWritten = Date.now();
@@ -11166,13 +11191,18 @@ function forgetDraft() {
   draftTimer = 0;
   draftTicker = 0;
   draftWritten = 0;
+  // The attempt clock goes too: the draft this page was holding is gone, so the
+  // next keystroke starts a burst of its own and the leading edge of a burst is
+  // written at once. Leaving it set would throttle the first character typed
+  // after a save against a write that no longer has anything to do with it.
+  draftTried = 0;
   remembered.forget(DRAFT);
   sayDraft();
 }
 
 SURFACE.onInput(() => {
   if (draftTimer) return;
-  const wait = draftWritten + draftMs - Date.now();
+  const wait = draftTried + draftMs - Date.now();
   if (wait <= 0) writeDraft();
   else draftTimer = setTimeout(writeDraft, wait);
 });
@@ -12110,9 +12140,21 @@ article.entity.full.view-both #body-preview {
    the scroll container and a narrow scroll container puts its scrollbar down the
    middle of the window. */
 article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
-/* Preview only: the box goes, and the two bars go with it. A toolbar over no box
-   is fourteen buttons that write into nothing, and a status bar over no box is a
-   caret position for a caret nobody can see. */
+/* Preview only: the box goes, and the two bars of CONTROLS go with it. A toolbar
+   over no box is sixteen buttons that write into nothing, and a status bar over
+   no box is a caret position for a caret nobody can see.
+
+   **`#seatbar` is the third `.bodybar` here and it stays, deliberately.** The
+   list used to be described as "the two bars" over three class names, on a
+   surface that has four — which is how the next one added gets forgotten the
+   same way. So the rule is what a bar IS, not how many there are: the two named
+   below are controls for a box, and the seat bar is not a control at all. It is
+   a fact about the document — who else is in it — and the document is still on
+   the screen. It is also the ONLY live signal left in this view: the room goes
+   on applying somebody else's keystrokes to the text under the rendered pane,
+   and a reader watching a preview change under them with nothing on the page to
+   say why is the worse of the two silences. It costs no space when nobody else
+   is here, which is most of the time, because `#seatbar` carries no margin. */
 article.entity.full.view-view .bodywrap,
 article.entity.full.view-view .statusbar,
 article.entity.full.view-view .markbar { display: none; }

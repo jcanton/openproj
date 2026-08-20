@@ -515,7 +515,7 @@ def test_an_issue_is_written_in_the_same_surface_a_pitch_is(
         "pressing Edit did not say the box had arrived, so nothing drawn beside "
         f"it redrew: {got['onOpening']}"
     )
-    assert got["onOpening"]["caret"] == "Line 1, Column 1 — 1 Lines", got["onOpening"]
+    assert got["onOpening"]["caret"] == "Line 1, Column 1 — 1 Line", got["onOpening"]
 
     # Sixteen: the shot's four groups, history included. The issue page inlines
     # the same shared block as the detail page, so a toolbar that grew there and

@@ -2596,8 +2596,12 @@ _SEED = """try { localStorage.setItem('openproj:editor:1', JSON.stringify(%s)); 
 _NO_STORE = """
 window.__errors = [];
 addEventListener('error', event => window.__errors.push(String(event.message)));
+// Counted as well as refused. The count is what tells a throttle that gave up
+// from a throttle that never engaged: both leave the receipt saying the same
+// thing, and only one of them reaches the store on every character.
+window.__reached = 0;
 Object.defineProperty(window, 'localStorage', {
-  get() { throw new DOMException('denied', 'SecurityError'); },
+  get() { window.__reached++; throw new DOMException('denied', 'SecurityError'); },
 });
 """
 
@@ -2776,7 +2780,17 @@ const flushed = held();
 // A draft that is committed or cancelled stops existing, and the receipt stops
 // claiming it.
 document.getElementById('cancel').click();
-return {first, throttled, flushed, after: {held: held(), receipt: receipt()},
+const after = {held: held(), receipt: receipt()};
+
+// And the burst that follows starts its own leading edge. Forgetting the draft
+// forgets both clocks: the one that says when a draft last landed, which the
+// receipt counts from, and the one the throttle measures the interval against.
+// Leaving the second set would hold the first character typed after a cancel
+// back by up to a whole interval, against a write that has nothing to do with it.
+document.getElementById('toggle').click();
+type('written after the cancel');
+const restarted = held();
+return {first, throttled, flushed, after, restarted,
         every: document.getElementById('draftevery').textContent};
 """
 
@@ -2822,6 +2836,11 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
         f"the receipt still claims a draft that no longer exists: "
         f"{got['after']['receipt']!r}"
     )
+    assert got["restarted"] == "written after the cancel", (
+        "the first keystroke after a cancel was throttled against the write "
+        "before it, so a tab closed a second later holds nothing again — "
+        f"{got['restarted']!r}"
+    )
 
 
 _REFUSED = _STUB_RENDER + r"""
@@ -2833,6 +2852,20 @@ bar.querySelector('button').click();
 area.value = 'writing into a browser that keeps nothing';
 area.dispatchEvent(new Event('input'));
 document.getElementById('view-both').click();
+
+// And then a burst, which is the case the throttle exists for and the case a
+// refusing store used to turn into a loop. The interval is two seconds by
+// default, so twenty characters typed inside it are one write and nineteen
+// nothings — unless the throttle is reading a clock that a refusal zeroes, in
+// which case every one of them is a synchronous `setItem`, a throw and a catch
+// on the main thread. Counted at the store rather than timed, because a slow
+// machine makes a timing assertion say the wrong thing.
+const before = window.__reached;
+for (let i = 0; i < 20; i++) {
+  area.value += 'x';
+  area.dispatchEvent(new Event('input'));
+}
+const reached = window.__reached - before;
 return {
   errors: window.__errors,
   labels: [...bar.children].map(child => child.textContent),
@@ -2841,6 +2874,7 @@ return {
   editor: JSON.parse(JSON.stringify(EDITOR)),
   receipt: document.getElementById('draftsaved').textContent,
   said: document.getElementById('state').textContent,
+  reached,
 };
 """
 
@@ -2889,6 +2923,17 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     )
     assert "will not keep an unsaved draft" in got["said"], (
         f"and it was never announced: {got['said']!r}"
+    )
+    # The throttle still throttles when the store says no. It kept two clocks in
+    # one variable: `draftWritten` has to be zeroed on a refusal, because
+    # `sayDraft` counts from it and a receipt over a write that did not happen is
+    # the lie this whole branch exists to stop — and the `input` handler then read
+    # that same zero as "the last write was in 1970", so `wait` was hugely
+    # negative and every keystroke went straight back into `remembered.set`.
+    assert got["reached"] <= 2, (
+        f"twenty characters reached the refusing store {got['reached']} times: the "
+        "throttle is re-entering the write it was added to bound, synchronously, "
+        "in the one browser where that costs something"
     )
 
 
@@ -3523,7 +3568,12 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
     assert got["blank"]["numbers"] == 1, (
         f"an empty box has {got['blank']['numbers']} line numbers beside it"
     )
-    assert "1 Lines" in got["blank"]["said"] and "Length: 0" in got["blank"]["said"], (
+    # Singular, and spelled out here rather than left as a substring: an empty
+    # document is the first thing anybody sees on this page, and `1 Lines` is
+    # what it opened with.
+    assert "— 1 Line" in got["blank"]["said"] and "1 Lines" not in got["blank"]["said"] and (
+        "Length: 0" in got["blank"]["said"]
+    ), (
         f"the status bar is still describing the document before it: {got['blank']['said']}"
     )
     assert got["project"]["length"] > 0, "and it did not put the next template in"
@@ -3870,3 +3920,67 @@ def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_s
         "Press Save again" in got["saving"]["said"]
     ), got["saving"]["said"]
     assert got["saving"]["enabled"], "the way out of a dropped connection is the same button"
+
+
+_PREVIEW_ONLY_BARS = _STUB_RENDER + r"""
+const article = document.querySelector('article.entity');
+const shows = what => getComputedStyle(document.querySelector(what)).display;
+const seatbar = document.getElementById('seatbar');
+document.getElementById('toggle').click();
+const empty = seatbar.getBoundingClientRect().height;
+document.getElementById('preview').click();
+await new Promise(go => setTimeout(go, 200));
+// Somebody else is in the document, which is when this bar has anything to say.
+document.getElementById('together').textContent = 'Also here: Ann';
+return {
+  view: VIEW,
+  full: article.classList.contains('full'),
+  box: shows('.bodywrap'),
+  markbar: shows('.markbar'),
+  statusbar: shows('.statusbar'),
+  seatbar: shows('#seatbar'),
+  emptyHeight: empty,
+  occupiedHeight: seatbar.getBoundingClientRect().height,
+};
+"""
+
+
+def test_preview_only_takes_away_the_controls_and_keeps_the_one_live_fact(
+    client: TestClient, tmp_path: Path
+):
+    """The hide list is a rule about what a bar IS, not a count of them.
+
+    It enumerated `.bodywrap`, `.statusbar` and `.markbar` under a comment saying
+    "the two bars", on a surface that has four — and the fourth, `#seatbar`, is a
+    `.bodybar` that neither name reaches, so `.entity.editing .bodybar` went on
+    winning. That was found as a leak. It is kept as a decision, and this test is
+    where the decision lives so the next person does not quietly flip it.
+
+    The two that go are CONTROLS for a box that is not on the screen: a toolbar
+    over no box writes into nothing, and a caret position is about a caret nobody
+    can see. The seat bar is not a control. It is a fact about the document, the
+    document is still on the screen, and it is the only live signal left in this
+    view — the room goes on applying somebody else's keystrokes to the text under
+    the rendered pane, and a preview changing under a reader with nothing to say
+    why is the worse silence. It costs no space while nobody else is here.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "previewbars.html",
+        1400, _PREVIEW_ONLY_BARS, budget=6000,
+    )
+
+    assert got["view"] == "view" and got["full"], (
+        f"the page is not in preview-only, so this asks nothing: {got}"
+    )
+    assert got["box"] == "none", "there is still an editing surface under the preview"
+    assert got["markbar"] == "none", "sixteen buttons over a box that is not there"
+    assert got["statusbar"] == "none", "a caret position for a caret nobody can see"
+    assert got["seatbar"] != "none", (
+        "who else is in the document went away with the controls — the room is "
+        "still live and the text under the preview is still moving"
+    )
+    assert got["emptyHeight"] == 0, (
+        "an empty room costs a line above the toolbar, which is why this bar "
+        f"carries no margin of its own: {got['emptyHeight']}"
+    )
+    assert got["occupiedHeight"] > 0, "and somebody arriving is not drawn at all"
