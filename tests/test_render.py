@@ -340,7 +340,15 @@ def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
     from openproj.render import STATUS_GLYPH, STATUSES
 
     graph = read(rendered, "graph.html")
-    legend = re.search(r'<ul class="legend".*?</ul>', graph, re.S).group(0)
+    # The status list, by name. There are two legends now — priority is the other
+    # — and taking the first `<ul class="legend">` took whichever happened to be
+    # written first, which is the priority one and holds no status at all.
+    legend = re.search(
+        r'<ul class="legend" aria-label="What a node\'s colour and mark mean">.*?</ul>',
+        graph, re.S,
+    )
+    assert legend, "the status legend is gone"
+    legend = legend.group(0)
 
     for status in STATUSES:
         assert f'<span class="swatch st-{status}" aria-hidden="true">' in legend, status
@@ -2991,6 +2999,7 @@ return {
   search: line(document.getElementById('q')),
   aside: line(document.querySelector('#controls .aside')),
   key: line(document.querySelector('.keyrow .legend')),
+  keys: line(document.querySelector('.keys')),
   count: line(document.getElementById('summary')),
   editbar: line(document.querySelector('.editbar')),
   controlsRight: Math.round(controls.getBoundingClientRect().right),
@@ -3042,7 +3051,11 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
     # Named, because the next thing anybody adds here is the row this is guarding
     # against.
     assert got["rows"] == {
-        "graph": ["h1.sr-only", "div#controls", "div.keyrow"],
+        # The graph has neither a key row nor a count row: both ride over the
+        # drawing in its top-right corner, which is the same rule as the others
+        # — a sentence about the view must not cost the view a row — taken one
+        # step further on the view where a row is worth the most.
+        "graph": ["h1.sr-only", "div#controls"],
         "table": ["h1.sr-only", "p.editbar", "div#controls"],
         "timeline": ["h1.sr-only", "div#controls", "form.tl-controls",
                      "ul.legend", "div.keyrow"],
@@ -3052,6 +3065,21 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         # No key to hang it on, so the count goes to the far end of the row the
         # page's own controls stand in.
         assert _shares_a_line(got["count"], got["editbar"])
+    elif view == "graph":
+        # Over the drawing, not above it. What matters is that neither the key
+        # nor the count is in the flow between the controls and the canvas —
+        # which the row list above has already said — and that they are inside
+        # the box they describe rather than floating somewhere else on the page.
+        assert got["keys"], "the keys are gone from the graph"
+        assert got["keys"]["top"] >= got["boxTop"], (
+            f"the keys are at {got['keys']['top']} and the drawing starts at "
+            f"{got['boxTop']}: they are still costing the view a row"
+        )
+        assert _shares_a_line(got["count"], got["keys"]) or (
+            got["count"]["top"] >= got["boxTop"]
+        ), "the count left the drawing"
+        assert got["aside"], "the view says nothing about itself"
+        assert _shares_a_line(got["aside"], got["search"])
     else:
         assert got["aside"], "the view says nothing about itself"
         assert _shares_a_line(got["aside"], got["search"]), (
@@ -3070,7 +3098,9 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
             f"{got['controlsRight']}: it is still pinned to the right edge"
         )
 
-    # Flush with the right edge of the bar above it, on every view.
+    if view == "graph":
+        return
+    # Flush with the right edge of the bar above it, on every view that has one.
     assert got["count"]["right"] == got["controlsRight"], (
         f"the count ends at {got['count']['right']} and the bar at {got['controlsRight']}"
     )

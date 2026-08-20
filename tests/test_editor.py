@@ -136,25 +136,30 @@ def test_the_editor_pulls_in_no_library_at_all(page: str):
 
 
 def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
-    """Three buttons, and which of them belongs where is decided by what it does.
+    """All three in one place, at the top — jcanton, 2026-08-20.
 
-    Edit is the way IN, and it was in the sticky bar at the foot of the page —
-    so on any record worth reading, the button that lets you change it was a
-    scroll past the whole shaping document (jcanton, 2026-08-19, using it). It is
-    back at the top, which reverses the argument the bar was built on; that
-    argument was about Save, and Save has not moved.
+    They were split: Edit at the head of the record and Save and Cancel in a
+    sticky bar at its foot. Both halves were argued for and both arguments were
+    about reachability, which the stickiness had already settled — what the split
+    actually decided was that the three controls which begin, end and abandon one
+    edit were in two places, a shaping document apart.
 
-    Save and Cancel are the two ways one editing session ends, and they stay
-    together in the sticky bar. Splitting them is how somebody closes a tab
-    believing the button at the other end of the page was the way out.
+    Still sticky, so it is still reachable from the bottom of a long record; stuck
+    to the top, which is where it now is. `bottom: auto` matters as much as `top`:
+    with both set the browser keeps the first and the bar stays at the foot.
     """
-    assert page.index('id="commitbar"') > page.index('<dl id="facts">')
-    assert page.index('id="commitbar"') > page.index('class="field body-field"')
-    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", page, re.S)
+    assert page.index('id="commitbar"') < page.index('<dl id="facts">')
+    assert page.index('id="commitbar"') < page.index('class="field body-field"')
+    assert re.search(r"#commitbar \{[^}]*top: 0; bottom: auto", page, re.S), (
+        "the bar is not stuck to the top, or is stuck to both"
+    )
 
     bar = re.search(r'<div class="commitbar".*?</div>', page, re.S).group(0)
     assert 'id="save"' in bar and 'id="cancel"' in bar
+    # Edit stays its own control: it is the way IN, and a button that is Edit and
+    # Cancel by turns puts the way out under whatever you were doing.
     assert 'id="toggle"' not in bar, "the way in is not one of the ways out"
+    assert page.index('id="toggle"') < page.index('id="commitbar"')
     assert page.index('id="toggle"') < page.index('<dl id="facts">')
 
 

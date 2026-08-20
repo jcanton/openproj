@@ -334,3 +334,32 @@ def test_the_commit_bar_is_not_on_screen_when_there_is_nothing_to_commit(
     )
     assert got["editing"]["shown"] is True, "and then it was not there when it was needed"
     assert got["after"]["shown"] is False, "Cancel left it behind"
+
+
+_WHILE_EDITING = """
+const one = document.querySelector('article.entity');
+const remove = one.querySelector('.editbar button.delete');
+const before = !remove.hidden;
+document.getElementById('toggle').click();
+const editing = !remove.hidden;
+document.getElementById('cancel').click();
+return {before, editing, after: !remove.hidden};
+"""
+
+
+def test_delete_leaves_while_an_edit_is_open(index: Index, tmp_path: Path):
+    """Two answers to "I am done with this record" on one line is one too many.
+
+    Delete now sits beside Edit, which is where it belongs — and the moment Edit
+    becomes Save and Cancel, the button that throws the record away is a slip of
+    the hand from the two that keep it. It comes back when the edit ends, by
+    either door.
+    """
+    entity_id = one_task(index)
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+
+    got = measured_in(chrome(), page, tmp_path / "editing.html", 1200, _WHILE_EDITING)
+
+    assert got["before"] is True, "there was no Delete to begin with"
+    assert got["editing"] is False, "Delete stayed out while the record was being edited"
+    assert got["after"] is True, "and it never came back"

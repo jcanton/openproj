@@ -4083,3 +4083,57 @@ def test_a_dragged_table_still_fits_the_window_it_is_looked_at_in(
         assert drawn >= room - 40, f"{name}: {room - drawn}px of empty page beside the table"
     # And nothing was shed to achieve it: a dragged layout keeps its columns.
     assert got["columns"] > 5
+
+
+def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: Path):
+    """jcanton, 2026-08-20: "make sure the counter gets updated if blocking tasks
+    are marked as done".
+
+    The column is headed Blockers and counted every entry in `depends_on`, whether
+    or not the thing it named had finished — so a record whose one dependency
+    landed last week still read 1, for ever. A count that is wrong in the
+    reassuring direction is a count people stop reading.
+
+    `depends_on` itself is untouched. That this waited for that is history worth
+    keeping, and it is what the graph draws.
+    """
+    from test_web import DONE, OTHER, TASK, save
+
+    assert save(client, TASK, {"depends_on": [OTHER, DONE]}).status_code == 200
+
+    def blockers_of(entity_id: str) -> int:
+        # Off the table's own payload, which is what the column is drawn from —
+        # `/api/index.json` is the flat index and answers a different question.
+        page = client.get("/").text
+        rows = json.loads(
+            re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S)
+            .group(1)
+        )["rows"]
+        return rows[entity_id]["blocked_by"]
+
+    # `DONE` is already done, so only the open one counts.
+    assert blockers_of(TASK) == 1, "a finished dependency is still being counted"
+
+    assert save(client, OTHER, {"status": "done"}).status_code == 200
+    assert blockers_of(TASK) == 0, "the count did not move when the blocker finished"
+
+    # And shelved work stops counting too: parked is not something anybody is
+    # waiting on either.
+    assert save(client, OTHER, {"status": "ready"}).status_code == 200
+    assert blockers_of(TASK) == 1
+    assert save(client, OTHER, {"status": "shelved"}).status_code == 200
+    assert blockers_of(TASK) == 0
+
+
+def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):
+    """A column tinted on every row says nothing. The tint is written beside the
+    number by the same function, so it cannot outlive the count it is about."""
+    assert "key === 'blocked_by' && row.blocked_by > 0 ? 'waiting' : ''" in page
+    assert 'td[data-col="blocked_by"].waiting { background: var(--waiting); }' in page
+    # Its own colour, and not the one a validation blocker wears. Those are two
+    # different facts, and one tint for both teaches a reader that the plan is
+    # broken whenever somebody is waiting for a colleague.
+    assert "--waiting:" in page
+    assert re.search(r"--waiting: (#[0-9a-f]{6})", page).group(1) != re.search(
+        r"--sev-blocker-soft: (#[0-9a-f]{6})", page
+    ).group(1)
