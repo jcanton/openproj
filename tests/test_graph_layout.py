@@ -86,6 +86,51 @@ for (const box of boxes) {
   if (ratio > worst) { worst = ratio; worstOf = box.id(); }
 }
 
+// How many edges cross a card that is neither of their two ends. The measurement
+// the routing work in `docs/QUEUE.md` has to beat, and the reason it is worth
+// having before that work starts: without a number, "the graph looks better" is
+// the only thing anybody can say about it.
+//
+// Reconstructed from the bend points, which IS the drawn path when the curve
+// style is `segments`, and from the two ends when it is not. Sampled along each
+// leg rather than solved, because the arithmetic for a segment against a
+// rectangle is where a measurement quietly starts measuring something else.
+const crossesBox = (p, q, r) => {
+  for (let i = 0; i <= 20; i++) {
+    const x = p.x + (q.x - p.x) * i / 20, y = p.y + (q.y - p.y) * i / 20;
+    if (x > r.x1 && x < r.x2 && y > r.y1 && y < r.y2) return true;
+  }
+  return false;
+};
+let under = 0;
+cy.edges().forEach(edge => {
+  const from = edge.source().position(), to = edge.target().position();
+  const path = [from];
+  if (edge.style('curve-style') === 'segments') {
+    const ws = String(edge.style('segment-weights') || '').trim().split(/\s+/).map(Number);
+    const ds = String(edge.style('segment-distances') || '').trim().split(/\s+/).map(Number);
+    const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
+    ws.forEach((w, i) => {
+      if (!isFinite(w) || !isFinite(ds[i])) return;
+      path.push({x: from.x + dx * w + (dy / span) * ds[i],
+                 y: from.y + dy * w - (dx / span) * ds[i]});
+    });
+  }
+  path.push(to);
+  for (const leaf of leaves) {
+    // A card inside one of the two records an edge joins is not a card it is
+    // crossing: cytoscape draws from the CENTRE of a box, so an edge attached to
+    // a compound necessarily starts among its children. Only a stranger counts.
+    if (leaf.same(edge.source()) || leaf.same(edge.target())) continue;
+    if (leaf.ancestors().anySame(edge.source())) continue;
+    if (leaf.ancestors().anySame(edge.target())) continue;
+    const r = rect(leaf);
+    let hit = false;
+    for (let i = 0; i < path.length - 1 && !hit; i++) hit = crossesBox(path[i], path[i + 1], r);
+    if (hit) { under++; break; }
+  }
+});
+
 // Which way the arrows read. RIGHT is the direction asked of ELK, so a
 // dependency whose source is right of its target is one drawn backwards.
 let forward = 0, backward = 0;
@@ -94,7 +139,7 @@ cy.edges().forEach(e => {
 });
 
 return {
-  boxes: boxes.length, leaves: leaves.length, edges: cy.edges().length,
+  boxes: boxes.length, leaves: leaves.length, edges: cy.edges().length, under,
   overlapping, trespassing,
   sparseWorst: +worst.toFixed(2), sparseWorstOf: worstOf,
   sparseMean: +(total / (counted || 1)).toFixed(2),
@@ -309,3 +354,26 @@ def test_every_node_says_its_priority_as_well_as_its_status(index: Index, tmp_pa
     for prefix in got["marked"]:
         assert prefix[0] in PRIORITY_GLYPH.values(), f"{prefix!r} does not start with a rung"
         assert prefix[1] in STATUS_GLYPH.values(), f"{prefix!r} has lost its status glyph"
+
+
+def test_how_many_edges_cross_a_card_they_have_nothing_to_do_with(drawn: dict):
+    """The number the routing work in `docs/QUEUE.md` exists to beat.
+
+    A bound and deliberately not zero: an automatic layout that never puts a card
+    on a line is not reachable with what is vendored here — ELK returns bend
+    points for none of the edges that span the hierarchy, in any of its three
+    routing modes — so this records where the drawing actually stands rather than
+    asserting a promise the page does not make.
+
+    It is here so that whoever writes the router has an instrument on the day they
+    start, and so that a change which makes the drawing quietly worse has
+    something to fail against. Measured at 1900x820: 4 on the real plan, 13 at 208
+    records, 43 at 518.
+    """
+    assert drawn["under"] <= drawn["edges"], "more crossings than there are edges"
+    # Generous, and it is the ceiling rather than the target. If this ever fails,
+    # something has made the drawing worse — do not raise it, find out what.
+    assert drawn["under"] <= max(4, drawn["edges"] // 2), (
+        f"{drawn['under']} of {drawn['edges']} edges cross a card they are not "
+        "attached to, which is worse than the layout has ever been"
+    )
