@@ -349,10 +349,26 @@ rows.forEach(row => {
     gaps.push(Math.round(b.left - a.right));
   }
 });
+// Every swatch on both rows, and where each key's word sits. Two rows of keys
+// that are not the same height are two rows that cannot be level, which is what
+// a 34x17 priority swatch beside a 20x11 status one did.
+const swatches = [...document.querySelectorAll('.keys .legend .swatch')].map(one => {
+  const r = one.getBoundingClientRect();
+  return {w: +r.width.toFixed(1), h: +r.height.toFixed(1), cls: one.className,
+          pri: one.classList.contains('pri')};
+});
+// The meter drawn over the thickest border. Inside a 6px border on an 11px box
+// there is nothing left to draw in, so this is the rung that tells the two
+// arrangements apart.
+const thickest = document.querySelector('.keys .swatch.pri-very_high .bars');
+const meter = thickest ? thickest.getBoundingClientRect() : null;
+const rowtops = rows.map(row => Math.round(
+  row.querySelector('li:not(.legendname)').getBoundingClientRect().height));
 const box = document.querySelector('[data-fills]').getBoundingClientRect();
 const keys = document.querySelector('.keys').getBoundingClientRect();
 return {
-  rows: rows.length, gaps,
+  rows: rows.length, gaps, swatches, rowtops,
+  meter: meter && {w: Math.round(meter.width), h: Math.round(meter.height)},
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
   marked: cy.nodes().filter(n => n.isChildless()).slice(0, 5)
@@ -390,6 +406,25 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     )
     assert got["gaps"][0] <= 20, f"{got['gaps'][0]}px between keys is a hand's width"
     assert got["inside"], "the keys are not over the drawing"
+
+    # One swatch, whichever row it is on. jcanton, 2026-08-20: "the legend is
+    # again not vertically aligned and the boxes for priority are larger than
+    # those for status" — which are one fault, because two rows of keys that are
+    # not the same height cannot be level.
+    sizes = {(one["w"], one["h"]) for one in got["swatches"]}
+    assert len(sizes) == 1, (
+        f"the two rows draw {len(sizes)} sizes of swatch: "
+        f"{[(one['cls'], one['w'], one['h']) for one in got['swatches']]}"
+    )
+    assert len(set(got["rowtops"])) == 1, (
+        f"the key rows are {got['rowtops']}px tall, so they cannot sit level"
+    )
+    # And the whole meter is drawn on the rung whose border would otherwise eat
+    # it: 6px of border on an 11px swatch leaves nothing in the middle, so the
+    # bars go over the border rather than inside it.
+    assert got["meter"] and got["meter"]["h"] >= 8 and got["meter"]["w"] >= 15, (
+        f"the very-high key has no room for its meter: {got['meter']}"
+    )
 
 
 def test_every_card_carries_its_priority_as_a_picture(index: Index, tmp_path: Path):

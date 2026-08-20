@@ -2548,10 +2548,15 @@ table.tight-priority td[data-col="priority"] .chip.pri { gap: 0; padding: .1rem 
           list-style: none; margin: .75rem 0 0; padding: 0;
           font-size: 12px; color: var(--muted); }
 .legend li { display: flex; align-items: center; gap: .35rem; }
-/* border-box so a key that carries a border is the same 20x11 as one that does
+/* border-box so a key that carries a border is the same 20x12 as one that does
    not: every status swatch grew a border with the shapes it keys, and on
-   content-box the row of keys came out at three different heights. */
-.legend .swatch { width: 20px; height: 11px; border-radius: 2px; flex: none;
+   content-box the row of keys came out at three different heights.
+
+   12 and not 11, which is the thickest border's doing: a 6px border top and
+   bottom is 12px of border, and border-box cannot shrink a box below what its
+   own borders need — so the very-high key stood one pixel taller than the other
+   nine and the two rows sat off each other by that pixel. */
+.legend .swatch { width: 20px; height: 12px; border-radius: 2px; flex: none;
                   box-sizing: border-box; }
 /* inline-flex on the span only. Two of these swatches are <svg>, where a flex
    display on the root would be laying out a replaced element as a box. */
@@ -2563,26 +2568,29 @@ table.tight-priority td[data-col="priority"] .chip.pri { gap: 0; padding: .1rem 
    a key that keys nothing is worse than no key, because it is believed. Only
    the ground is neutral — this says thickness and the row beside it says
    colour, and a priority key wearing a status ink would key both at once. */
-/* The bars sit INSIDE the box, the way a status glyph sits inside its swatch —
-   jcanton, 2026-08-20, so the two key rows are one swatch and one word each and
-   come out the same length. It also puts the two channels in one mark: the
-   border is the thickness the node is drawn with and the meter inside it is the
-   same rung counted, so the key is a small node rather than two things beside
-   each other.
+/* The bars sit ON the box, the way a status glyph sits in its swatch — so the
+   key is a small node rather than two things beside each other, and it carries
+   both channels at once: the border is the thickness the node is drawn with and
+   the meter is the same rung counted.
 
-   Wider than a status swatch because it has to hold five bars and a 6px border,
-   and `box-sizing: border-box` is already set above — without the extra width
-   the very-high key is border with nothing left in the middle. */
+   ON and not IN. Inside, a 20x11 swatch with a 6px border has nothing left in
+   the middle, and the first version of this bought the room by making the
+   priority swatch 34x17 — a key row visibly larger than the status row beside
+   it, and the two rows no longer level. jcanton, 2026-08-20: "the legend is again
+   not vertically aligned and the boxes for priority are larger than those for
+   status", and "the very_high has the bars not so visible".
+
+   Absolutely positioned over the border, both rows are the same 20x11 and every
+   rung shows its whole meter, thickest border included. */
 .legend .swatch.pri { background: var(--surface); border-style: solid;
-                      border-color: var(--fg); width: 34px; height: 17px;
-                      display: inline-flex; align-items: center;
-                      justify-content: center; }
-.legend .swatch.pri .bars { height: 7px; }
+                      border-color: var(--fg); position: relative; }
+.legend .swatch.pri .bars { position: absolute; inset: 0; margin: auto;
+                            height: 9px; width: max-content; }
 .legend .swatch.pri .bars i:nth-child(1) { height: 2px; }
-.legend .swatch.pri .bars i:nth-child(2) { height: 3px; }
-.legend .swatch.pri .bars i:nth-child(3) { height: 4px; }
-.legend .swatch.pri .bars i:nth-child(4) { height: 6px; }
-.legend .swatch.pri .bars i:nth-child(5) { height: 7px; }
+.legend .swatch.pri .bars i:nth-child(2) { height: 4px; }
+.legend .swatch.pri .bars i:nth-child(3) { height: 6px; }
+.legend .swatch.pri .bars i:nth-child(4) { height: 8px; }
+.legend .swatch.pri .bars i:nth-child(5) { height: 9px; }
 .legend .swatch.pri-very_high { border-width: 6px; }
 .legend .swatch.pri-high      { border-width: 4px; }
 .legend .swatch.pri-medium    { border-width: 2px; }
@@ -7746,13 +7754,20 @@ const cy = cytoscape({
   style: [
     { selector: 'node', style: {
         'label': labelOf, 'font-size': 10, 'shape': 'round-rectangle',
-        // The priority meter, in the card's top-left corner. `background-fit:
-        // none` and an explicit size, or cytoscape scales the image to the node
-        // and a wide card gets a stretched meter.
+        // The priority meter, at the card's left edge and level with its title.
+        // `background-fit: none` and an explicit size, or cytoscape scales the
+        // image to the node and a wide card gets a stretched meter.
+        //
+        // It was in the top-left CORNER, with the title pushed down five pixels
+        // to clear it — so a card read as a mark on one line and a title on
+        // another, and neither was level with the status glyph in front of the
+        // title. jcanton, 2026-08-20: "the priority bars are not in line with the
+        // status icon and titles in the nodes". Centred vertically, the meter,
+        // the glyph and the first line of the title are one row.
         'background-image': node => node.isParent() ? 'none' : barsImage(node.data('priority')),
         'background-image-opacity': 1,
         'background-width': 19, 'background-height': 11,
-        'background-position-x': 6, 'background-position-y': 5,
+        'background-position-x': 8, 'background-position-y': '50%',
         'background-fit': 'none', 'background-clip': 'node',
         'background-image-containment': 'inside',
         // One typeface for the whole app, this canvas included — and the ruler
@@ -7761,10 +7776,11 @@ const cy = cytoscape({
         'font-family': token('--font-sans'),
         // text-wrap alone does nothing: without a max width the label just
         // overflows the box it is supposed to sit inside.
-        'text-wrap': 'wrap', 'text-max-width': 136,
-        // Pushed down so the meter in the corner has the top of the card to
-        // itself rather than sitting on the first line of the title.
-        'text-margin-y': 5,
+        // Narrower than the card and pushed right by the meter's own width, so
+        // the two share a row without sharing any pixels: the meter has
+        // 8..27 of a 150-wide card, and a 110-wide label centred and shifted 12
+        // right starts at 32.
+        'text-wrap': 'wrap', 'text-max-width': 110, 'text-margin-x': 12,
         'background-color': e => COLOUR()[e.data('status')],
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
