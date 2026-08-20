@@ -60,6 +60,7 @@ import pygit2
 import pytest
 from browser import chrome, measured_in, screenshot
 from fastapi.testclient import TestClient
+from openproj.model import KIND_NAMES
 from test_store import commit_directly
 from test_web import (
     ANN,
@@ -455,7 +456,13 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
 
     assert owners["person_weeks"] == ["pitch", "task"]
     assert owners["shaped_by"] == ["pitch"]
-    assert owners["status"] == ["project", "pitch", "task"]
+    # Every kind, in ladder order, off the ladder — this row is the control that
+    # is drawn whatever is chosen, so listing the kinds here would be a fifth copy
+    # of `KIND_NAMES` that goes stale the day a sixth rung is added.
+    assert owners["status"] == list(KIND_NAMES)
+    # And a field the top rung does not read is not offered on it: a product has
+    # no owner, so the row that draws one says the other three kinds.
+    assert "product" not in owners["owner"]
 
 
 def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
@@ -3158,27 +3165,36 @@ def test_a_row_that_may_hold_it_says_so_before_the_mouse_arrives(page: str):
 
 
 def test_a_row_that_belongs_to_nothing_is_never_offered_a_move(page: str):
-    """A project is the top of the tree, so it has no handle at all.
+    """The top of the ladder has no handle at all.
 
     A control that is drawn and then refuses is a control that has to be tried;
     the missing grip says the same thing without a sentence — and the cell still
     carries one for the reader who asks, because an absence explains nothing on
     its own.
+
+    Which kind is the top is asked of the page's own `PARENT_KINDS` rather than
+    named here. It was `project` until a `product` was added above it, and this
+    test passed for the wrong reason the whole way: a project now has somewhere
+    to go, and the row with nowhere to go is a kind this corpus does not contain.
     """
     answer = drive_table(
         page,
         "(() => {"
         "  const grip = id => !!tbody.querySelector(`tr[data-id=\"${id}\"] .rowgrip`);"
-        "  const tip = id => tbody.querySelector("
-        "    `tr[data-id=\"${id}\"] td[data-col=\"id\"]`).getAttribute('title');"
+        "  const top = Object.keys(PARENT_KINDS)"
+        "    .filter(k => !(PARENT_KINDS[k] || []).length);"
         + f"  return {{project: grip('{PROJECT}'), task: grip('{TASK}'),"
-        + f"           said: tip('{PROJECT}')}};"
+        + "           top: top, movable: top.map(k => movable({kind: k})),"
+        + "           said: moveTip({kind: top[0]})};"
         + "})()",
     )
     got = answer["value"]
 
-    assert got["project"] is False and got["task"] is True
-    assert got["said"] == "A project belongs to nothing, so there is nothing to file it under"
+    assert got["top"] == ["product"], got["top"]
+    assert got["movable"] == [False]
+    assert got["said"] == "A product belongs to nothing, so there is nothing to file it under"
+    # And the two kinds this corpus does hold both have somewhere to go now.
+    assert got["project"] is True and got["task"] is True
 
 
 def test_a_drop_is_one_patch_of_one_field_through_the_save_path(page: str):

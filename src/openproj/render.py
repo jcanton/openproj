@@ -3566,9 +3566,12 @@ const WHY = {{ why|tojson }};
 // It decides three things on this page: which rows grow a handle, which rows
 // light up as a drop would land, and which refuse before anything is sent.
 const PARENT_KINDS = DATA.parent_kinds || {};
-// Whether this row has anywhere to go. A project belongs to nothing, so it can
-// neither be filed under something nor taken out of it, and every control that
-// would say otherwise is left undrawn rather than drawn and then refused.
+// Whether this row has anywhere to go. The top of the ladder belongs to nothing,
+// so it can neither be filed under something nor taken out of it, and every
+// control that would say otherwise is left undrawn rather than drawn and then
+// refused. Which kind that is comes off `PARENT_KINDS` and is not written here:
+// it was `project` until a `product` was added above it, and a rule that names
+// the top rung is a rule that is wrong the day the ladder grows.
 const movable = row => (PARENT_KINDS[row.kind] || []).length > 0;
 // What a kind may be filed under, in the validator's own words. `a pitch or a
 // project`, `nothing` — the sentence `_containment_problems` builds when it has
