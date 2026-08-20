@@ -391,12 +391,22 @@ changed. 1.0.0 waits for adoption, per jcanton.
 on `main`. Tagging a branch and merging afterwards gives the release a sha that no longer exists as
 anything you can check out.
 
+**`main` is protected, so the bump is a pull request like any other change.** Pushing the version
+commit straight to `main` is rejected — *"Required status check `check` is expected"* — and the tag
+has to name the commit that ends up ON `main`, which is the merge, not the commit you wrote. So the
+tag is cut after the merge and never before it.
+
 ```bash
 gh pr merge <n> --merge          # only when `check` is green; jcanton says when
 git checkout main && git pull
+git checkout -b release-X.Y.Z
 # bump pyproject.toml and src/openproj/__init__.py, then:
 uv lock                          # CI installs --locked; a bump without it goes red
-git commit -am "vX.Y.Z" && git tag vX.Y.Z && git push && git push --tags
+git commit -am "vX.Y.Z" && git push -u origin release-X.Y.Z
+gh pr create --base main --title "vX.Y.Z"
+# wait for `check`, merge it, and only then:
+git checkout main && git pull
+git tag vX.Y.Z && git push --tags
 ./gcloud_deploy.sh               # from the repository root
 ```
 
