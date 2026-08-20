@@ -272,13 +272,14 @@ Numbered in the order they were asked for; all of them go on one branch,
    save, the editor closes and the *old* text is shown until a refresh. The save
    itself lands. So the view is rendering from something the save did not update.
 
-## 8. Themes
+## 8. Themes — built, awaiting a look
 
-Its own branch and its own PR, and **not merged and not deployed**: jcanton wants
-to see it locally first. A dropdown between the sign-in corner and the light/dark
-switch, offering the base16 schemes — as many as look right, dropping any that
-fight the app. The light/dark switch stays what it is; a scheme picks the colours
-inside whichever of the two is on.
+Its own branch and its own PR, **not merged and not deployed**: jcanton wants to
+see it locally first. Nine base16 families, each a light and a dark, in a picker
+between the sign-in corner and the light/dark switch. See "Colour" in
+`docs/architecture.md` for how sixteen colours become fifty-five.
+
+To look at it: `git checkout themes && uv run openproj serve --plan <plan>`.
 
 ## What is deliberately not here
 

@@ -94,6 +94,7 @@ src/openproj/store.py      the git write layer — bare repo, one writer, scoped
 src/openproj/coedit.py     the co-editing rooms — one Y.Text per entity, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
 src/openproj/cli.py        check / render / schedule / serve / demo
+src/openproj/themes.py     the colour schemes — sixteen numbers a row, nothing else
 seed/                      the demo corpus
 tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md
@@ -114,6 +115,28 @@ combobox and the cycle roster exist only after a script has run, so nothing in a
 shows what they build. Without `node` on PATH those tests skip, and a suite missing them is green
 for the wrong reason. `pytest` names every skip; a machine that is meant to gate a merge should
 have `node` installed.
+
+## Colour
+
+Two controls in the corner, and they do different jobs. The light/dark switch is the
+polarity. The picker beside it is the palette: nine base16 families, each a light and a
+dark, plus the app's own colours — which are the absence of a choice rather than a
+family called "default", so every page nobody has chosen for is drawn by the stylesheet
+as written.
+
+A scheme is sixteen colours and the app draws with fifty-five, so the other thirty-nine
+are derived — once, in `_scheme_css`, for every scheme. `themes.py` is a table with a row
+per palette and nothing else in it; adding a family is a row. The derivation leans on
+`color-mix` in oklab, because a chip's soft ground and a node's readable fill are the hue
+and the background in some proportion, and neither exists in a palette written for a
+terminal.
+
+Three values are chosen per palette rather than taken from the slot the format names: the
+ink, the secondary ink and the link colour, each picked by contrast (`_chosen`). base05
+is nominally the foreground and a terminal scheme is free to make it something no
+paragraph has been set in. `tests/test_themes.py` measures the result twice — the palette
+in Python, and what the page paints in Chrome, at AA for every chip and every fill of
+every family in both polarities.
 
 ## Co-editing one document
 

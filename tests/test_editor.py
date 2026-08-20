@@ -3388,7 +3388,7 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     # In this order, and the order is the argument: the controls that act on the
     # document you are writing come before the two that act on the application.
     assert inside["keyboard"] == [
-        "view-edit", "view-both", "preview", "editorswitch", "A", "theme"
+        "view-edit", "view-both", "preview", "editorswitch", "A", "scheme", "theme"
     ], inside["keyboard"]
 
     assert got["themed"]["now"] != got["themed"]["was"], (

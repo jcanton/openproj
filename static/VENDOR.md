@@ -19,6 +19,19 @@ below, and the bytes in git are still upstream's.
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
 
+Not a file: the colour schemes in `src/openproj/themes.py` are data rather than a
+library, and are copied from **tinted-theming/schemes**, spec 0.11, MIT, fetched
+2026-08-20 from https://github.com/tinted-theming/schemes/tree/spec-0.11/base16 —
+`default-light`, `default-dark`, `gruvbox-light-medium`, `gruvbox-dark-medium`,
+`solarized-light`, `solarized-dark`, `tomorrow`, `tomorrow-night`, `one-light`,
+`onedark`, `papercolor-light`, `papercolor-dark`, `equilibrium-light`,
+`equilibrium-dark`, `silk-light`, `silk-dark`, `atelier-forest-light` and
+`atelier-forest`. Each palette carries the name and author it was published under,
+beside its sixteen values. Sixteen hex numbers per scheme is smaller than the
+machinery to read a directory of YAML at startup, and a scheme that changes
+upstream should arrive as a diff somebody reads rather than as a page that quietly
+looks different.
+
 The font was absent from this table for as long as it has been in the directory, which
 is how the update procedure below came to delete its checksum. Its upstream Inter
 release was not written down when it was vendored; the SHA256 below is what identifies
