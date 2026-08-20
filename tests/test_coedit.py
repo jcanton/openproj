@@ -708,7 +708,9 @@ def test_the_page_stops_saving_when_the_room_says_there_was_nothing_to_save(
     counter comes back to zero when it does — so that is what is read, out of the
     shell's own script, on the page that ships it.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
@@ -1360,7 +1362,9 @@ def typed_in_the_page(client: TestClient, shown: str, edits: list[str]) -> coedi
     crosses two implementations. A copy of `typed()` written here would only
     prove this file agrees with itself.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",
@@ -1505,7 +1509,7 @@ def in_chrome_room(
     room: coedit.Room,
     welcome: dict,
     script: str,
-    editor: str = "",
+    editor: str = "plain",
 ) -> dict:
     """Open the shipped detail page in Chrome, welcome it into a real room, run
     `script`, and hand everything it sent back to the room.
@@ -1521,6 +1525,12 @@ def in_chrome_room(
     # and the page decides from `location.search` which surface to mount on them.
     # A test that set only one would be asking a page carrying Ace to run the
     # textarea, which is a configuration nobody ships.
+    #
+    # It defaults to `plain` and not to silence, because silence stopped meaning
+    # the textarea on 2026-08-20 when Ace became what a writer gets. Every caller
+    # below that says nothing is a convergence test about the `<textarea>` path
+    # and now says so; the ones about the second surface pass `ace` and always
+    # did.
     query = f"?editor={editor}" if editor else ""
     page = client.get(f"/detail/{TASK}{query}").text
     seeded = page.replace(
@@ -2041,7 +2051,9 @@ def test_the_parsed_editing_surface_answers_the_body_the_server_rendered(
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
     assert shown == body, "the record under test is not the one the page is showing"
 
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     answer = run_js(page, "document.querySelector('[name=body]').value", page=True)
     assert not answer["errors"], answer["errors"]
     assert answer["value"] == body, (
@@ -2063,7 +2075,9 @@ def test_a_draft_in_the_box_is_offered_to_a_room_that_has_not_moved(client: Test
     a working editor from one that throws away every restored draft.
     """
     shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",
@@ -2117,7 +2131,9 @@ def test_the_page_degrades_to_todays_editor_when_the_socket_never_opens(client: 
     Driven with no `WebSocket` in scope — which `tests/js/drive.js` deliberately
     does not provide — so this is the shipped script answering, not a flag.
     """
-    page = client.get(f"/detail/{TASK}").text
+    # `?editor=plain`, because an address that says nothing has been Ace since
+    # 2026-08-20 and the claim here is about the `<textarea>` path.
+    page = client.get(f"/detail/{TASK}?editor=plain").text
     answer = run_js(
         page,
         "(async () => { document.querySelector('[name=body]').value = 'typed offline\\n';"
@@ -2759,7 +2775,9 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
 
         drawn, said = in_a_live_page(
             chrome(),
-            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
+            # address that says nothing mounts Ace over a stale textarea.
+            f"http://127.0.0.1:{serving}/detail/{TASK}?editor=plain",
             # The presence list, and the unsaved counter beside it. The second
             # half is not decoration: the room was first seeded from the bytes
             # after the frontmatter while the page renders what `parse_text`
@@ -2832,7 +2850,9 @@ def test_a_restored_draft_survives_the_welcome_and_is_offered_to_the_room(
         mark = "A SENTENCE NOBODY HAS SAVED YET"
         drawn, said = in_a_live_page(
             chrome(),
-            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
+            # address that says nothing mounts Ace over a stale textarea.
+            f"http://127.0.0.1:{serving}/detail/{TASK}?editor=plain",
             # Two loads in one expression, because a draft has to be in storage
             # *before* the page that restores it starts. The first pass writes
             # one and asks for a reload; `window.__staged` marks the document on
@@ -2915,7 +2935,9 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
         mark = "MY DRAFT FROM THE TRAIN"
         drawn, said = in_a_live_page(
             chrome(),
-            f"http://127.0.0.1:{serving}/detail/{TASK}",
+            # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
+            # address that says nothing mounts Ace over a stale textarea.
+            f"http://127.0.0.1:{serving}/detail/{TASK}?editor=plain",
             # Staged and reloaded exactly as above. What is reported is the two
             # surfaces at once, joined, because the point is that they hold
             # different things: the room in the box, the draft in the report.

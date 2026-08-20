@@ -44,12 +44,19 @@ def chrome() -> str:
     return found
 
 
-def screenshot(browser: str, html: Path, png: Path) -> bytes:
-    """One page, one window, one PNG. 700px wide so the table has more columns
-    than room and can actually be scrolled sideways."""
+def screenshot(
+    browser: str, html: Path, png: Path, width: int = 700, height: int = 600
+) -> bytes:
+    """One page, one window, one PNG. 700px wide by default so the table has more
+    columns than room and can actually be scrolled sideways.
+
+    The size is a parameter for the same reason `measured_in`'s is: the editing
+    surface is `position: fixed; inset: 0`, so what it draws is a function of the
+    window and 700x600 is a window nothing in it is designed for.
+    """
     subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
-         "--force-device-scale-factor=1", "--window-size=700,600",
+         "--force-device-scale-factor=1", f"--window-size={width},{height}",
          f"--screenshot={png}", "--virtual-time-budget=2500", str(html)],
         capture_output=True, check=True,
     )

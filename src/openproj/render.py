@@ -564,6 +564,8 @@ function aceSurface(area, seeded) {
     // to `attachEditing`. Two histories with the key on one and the button on
     // the other is worse than either, so `historyOf` gives both to this one.
     provides: {gutter: true, seats: false, history: true},
+    // The label, and never a branch. See the note on the textarea surface's.
+    editorName: 'ace',
 
     // `canUndo`/`canRedo` and not the `hasUndo`/`hasRedo` aliases beside them,
     // for the reason `add` above is the public one: an alias is what a
@@ -613,32 +615,60 @@ function aceSurface(area, seeded) {
 """)
 
 
-# The second editor's own name for itself in the query string, and the only
-# spelling that puts it in a page.
+# The two spellings the query string has, and the only two. `ace` is the second
+# editor and `plain` is the box that was here before it.
 ACE = "ace"
+PLAIN = "plain"
 
 
 def _ace_wanted(editor: str, base_commit: str | None, may_write: bool) -> bool:
     """All three halves, in one place, because the question is asked on four pages.
 
-    The address has to have asked — `?editor=ace` and no other spelling. There has
-    to be an editing surface to put it on, which is `editable`, which is
-    `base_commit is not None` everywhere in this file. And this reader has to be
-    somebody the server would take a write from.
+    **The parameter is an opt-OUT now, and that is jcanton's decision rather than
+    a measurement's.** It was `?editor=ace` opting in; it is `?editor=plain`
+    opting out, because "make ace the default, I think it's worth it" — 2026-08-20.
+    Nothing in `static/VENDOR.md` moved to make that true: the revisit condition
+    that file records is "when somebody is actually slowed down by a textarea",
+    and nobody has produced that measurement. A person wanting the editor they
+    want is a legitimate reason and it is a different one, and this is the line
+    where the difference is decided, so it is written here.
 
-    **The third is the one the audit found missing, and it is not the same as the
-    second.** `editable` is `base_commit is not None` and the served route passes
-    a commit for EVERYONE, so a signed-out reader's detail page already carries
-    the `<textarea>`, the toolbar and two `attachEditing(` calls — measured at
-    209,872 B. Gating 594 KB on `editable` alone would have taken that page to
-    879,454 B, 4.19x, for a keymap whose every save the server refuses. `yjs` and
-    `coedit` already carry this same second gate, for the same reason.
+    What did NOT change is who pays, and that is the whole of the rest of this
+    docstring. There still has to be an editing surface to put it on, which is
+    `editable`, which is `base_commit is not None` everywhere in this file. And
+    this reader still has to be somebody the server would take a write from.
+
+    **That second gate is the one the audit found missing, and it is not the same
+    as the first.** `editable` is `base_commit is not None` and the served route
+    passes a commit for EVERYONE, so a signed-out reader's detail page already
+    carries the `<textarea>`, the toolbar and two `attachEditing(` calls. Gating
+    594 KB on `editable` alone would have taken that page to 4.19x itself, for a
+    keymap whose every save the server refuses. `yjs` and `coedit` already carry
+    this same gate, for the same reason. Inverting the parameter is exactly the
+    change that could have quietly removed it — the default arm is now the one
+    that ships the library — so it is asserted rather than assumed:
+    `test_a_reader_who_may_not_write_is_sent_no_editor_library` renders a reader's
+    page with no parameter at all and with each of the two.
 
     `may_write` defaults to False at every caller, so a page rendered by anything
-    that has not thought about it — the static export among them — gets no
-    library rather than getting one by omission.
+    that has not thought about it — the static export among them — still gets no
+    library rather than getting one by omission. The default that flipped is the
+    default of the *address*, not the default of this function's other two
+    arguments.
     """
-    return editor == ACE and base_commit is not None and may_write
+    return editor != PLAIN and _either_editor_possible(base_commit, may_write)
+
+
+def _either_editor_possible(base_commit: str | None, may_write: bool) -> bool:
+    """The two gates that are not the address, asked on their own by the switch.
+
+    A control offering a choice this page could not honour whichever way it was
+    pressed is a control that lies about what the page can do, so the switch
+    beside the three views is drawn only where this is true. Split out of
+    `_ace_wanted` rather than written a second time beside it, because two copies
+    of one gate is exactly how the switch and the bytes come to disagree.
+    """
+    return base_commit is not None and may_write
 
 
 @cache
@@ -8769,6 +8799,21 @@ function textareaSurface(area) {
     // place allowed to), which wipes the native stack. `historyOf` reads this to
     // decide whether the room's `Y.UndoManager` answers the buttons instead.
     provides: {gutter: false, seats: true, history: false},
+    // Which of the two this IS, in the vocabulary the address and the preference
+    // already use — and it exists for exactly one consumer, the switch beside the
+    // three view segments, which has to say out loud which editor a person is
+    // writing in. **Never branch on it.** A behavioural difference between the
+    // surfaces goes in `provides` above, for the reason written there; this is a
+    // label, and the one question a capability cannot answer is what to call the
+    // thing. It is the mounted surface and not `EDITOR.editor`, which is only
+    // what was asked for: on a copy of this page saved to a file the two come
+    // apart, because there is no server to fetch the other bytes from.
+    //
+    // Not `editor`, which was the first spelling and lasted one test run: the Ace
+    // surface already publishes `editor`, and it is the Ace instance. A second
+    // key of that name later in the same object literal is not an error anywhere
+    // — it silently wins, and every use of the real one became a string.
+    editorName: 'plain',
 
     // The scroll offset, and the three ways the page asks about it. These used
     // to be `el.scrollTop` and `el.addEventListener('scroll')` at four call
@@ -8807,20 +8852,27 @@ function textareaSurface(area) {
 
 
 // Which of the two the page got. The decision is the SERVER's, because the
-// server is what decides whether 594 KB is in the page at all: `?editor=ace`
-// inlines it, and nothing else does. `remembered` is `localStorage` and the
-// server cannot read it, which is why the parameter carries the choice and the
-// preference only carries it back on the next visit.
+// server is what decides whether 594 KB is in the page at all. `remembered` is
+// `localStorage` and the server cannot read it, which is why the address carries
+// the choice and the preference only carries it back on the next visit.
+//
+// **The default is Ace, and the parameter is the way out of it** — jcanton,
+// 2026-08-20, on Ace becoming what a writer gets: "I think it's worth it". Only
+// the default arm moved; the machinery is the same machinery. The reload the
+// sticky preference costs moved with it, onto the people who want the plain
+// box — and that is the better side to pay it on, because the alternative was an
+// Ace writer paying a redirect on every record and paying it by downloading
+// 594 KB twice.
 //
 // `editable` is gated on `base_commit` alone, so a signed-out reader already
-// receives the textarea and `attachEditing` — an unconditional Ace block at that
-// gate would have shipped 594 KB to every public reader, 4.19x their page.
-// Behind a parameter nobody types, a reader pays nothing.
+// receives the textarea and `attachEditing` — an Ace block at that gate would
+// have shipped 594 KB to every public reader, 4.19x their page. `_ace_wanted`'s
+// `may_write` is what keeps that at zero, and it did not move.
 //
-// The branch where the parameter was typed and the bytes are not here SAYS SO.
-// A static export has no server to ask, so `detail.html?editor=ace` opened from
-// a memory stick is exactly that case, and a page that silently gives you the
-// other editor is a page you report as broken.
+// The branch where the second editor was ASKED for and the bytes are not here
+// says so. A static export has no server to ask, so `detail.html?editor=ace`
+// opened from a memory stick is exactly that case, and a page that silently
+// gives you the other editor is a page you report as broken.
 function bodySurface(area) {
   // Built either way, because it is the one place that reads the box — the Ace
   // surface is SEEDED from it rather than reading the textarea itself, so "the
@@ -8828,28 +8880,45 @@ function bodySurface(area) {
   // surfaces in the tree. An unsubscribed surface is two listeners on an element
   // nothing else touches.
   const box = textareaSurface(area);
-  if (EDITOR.editor !== 'ace') return box;
+  if (EDITOR.editor !== 'ace') {
+    // Wanted the plain box and the library came anyway, which means the address
+    // has not told the server yet. One reload gets the page this person asked
+    // for, and it is the only place in this function that navigates for the sake
+    // of BYTES rather than for the sake of a feature — the surface below would
+    // work perfectly well over 594 KB nobody is going to use, and shipping it
+    // silently is how a preference becomes decorative.
+    if (typeof ace !== 'undefined') stickyEditor();
+    return box;
+  }
   if (typeof ace !== 'undefined') return aceSurface(area, box.text());
-  // Wanted and not here, which is two different situations and two different
-  // sentences. Either this browser remembers the choice and the address does not
-  // carry it — go and ask the server for it, which is what makes the preference
-  // stick at all — or there is no server to ask, and then say so, because a page
-  // that quietly hands back the other editor is a page somebody reports as
-  // broken.
+  // Ace, and it is not here. Two situations, and only one of them is news.
+  //
+  // **The default is not news**, and this line is what the flip made necessary.
+  // Every signed-out reader now resolves to `ace` without having said anything,
+  // and `may_write` correctly sends them no library — so without this guard the
+  // sentence below would be read out on every record to every reader, about a
+  // thing they never asked for. `chosen` is the difference between a decision
+  // that cannot be honoured and a default that was never going to be.
+  if (!EDITOR.chosen) return box;
+  // Either this browser remembers the choice and the address does not carry it —
+  // go and ask the server for it, which is what makes the preference stick at
+  // all — or there is no server to ask, and then say so.
   if (stickyEditor()) return box;
   // Said in what is true rather than in a guess at why: there are two ways to be
   // here — a page saved to a file, which has no server to ask, and a reader the
   // server would refuse a save from, who gets the box and the toolbar and would
   // get no use out of a keymap. The sentence covers both.
-  announce('This page does not carry the second editor. It is inlined only when the '
-           + 'address says ?editor=ace and the server would take a save from you. Still '
-           + 'editing in the ordinary box.');
+  announce('This page does not carry the second editor. It is inlined only where the '
+           + 'server would take a save from you, and this copy of the page has none of '
+           + 'it. Still editing in the ordinary box.');
   // And then stop asking. The address DID carry the request, the server answered
   // it by sending no library, and a remembered choice that cannot be honoured
   // costs a redirect on every page for nothing. Only in that case: a page opened
   // from a file was never asked, and forgetting there would clear somebody's
   // choice because they read an export.
-  if (new URLSearchParams(location.search).has('editor')) rememberEditor({editor: 'textarea'});
+  if (new URLSearchParams(location.search).has('editor')) {
+    rememberEditor({editor: 'plain', chosen: true});
+  }
   return box;
 }
 
@@ -9167,9 +9236,20 @@ const INDENT_WIDTHS = [2, 4, 8];
 // draft this browser is holding. An interval coarser than it would let somebody
 // set their own floor below the thing that catches them.
 const DRAFT_SECONDS = [1, 2, 5, 10, 20];
-// The two surfaces. `textarea` first, because it is what everybody has had and
-// what a page carries whether or not anything was vendored into it.
-const EDITORS = ['textarea', 'ace'];
+// The two surfaces, spelled the way the query string spells them, because these
+// are the same two strings the server reads — one vocabulary and not two.
+// `ace` first now, because it is the one a page carries when nobody said
+// anything — jcanton, 2026-08-20, on that becoming the default: "I think it's
+// worth it".
+const EDITORS = ['ace', 'plain'];
+// `textarea` was this branch's own name for the plain box, in the address and in
+// the preference alike, and it is accepted on the way in for exactly one reason:
+// a stored `textarea` is somebody who OPTED OUT, and the fallback below is now
+// `ace`. Reading an old opt-out as "nothing was said" would hand 594 KB to the
+// one person who had asked not to have it. It is never written back — a value
+// read here is rewritten as `plain` by the first `rememberEditor` — so this list
+// shrinks by itself rather than being a second spelling to keep alive.
+const EDITORS_WERE = {textarea: 'plain'};
 // And the keymaps the second one offers. A textarea has one and it is the
 // browser's, which is why this list is read only where Ace is.
 const KEYMAPS = ['default', 'vim'];
@@ -9178,19 +9258,27 @@ const EDITOR = (() => {
   const one = (value, offered, fallback) => offered.includes(value) ? value : fallback;
   // **The URL wins over the preference, and it has to.** This is the one setting
   // on the page that decides which BYTES the server rendered, and the server
-  // cannot read `localStorage`. So `?editor=ace` is what put Ace in the page and
-  // is therefore what says whether it is there; the remembered value is only how
-  // a person who opted in gets it again tomorrow without typing it. A remembered
-  // `ace` on a page the server rendered without it would be a preference for
-  // something that is not here — which `bodySurface` refuses out loud rather
+  // cannot read `localStorage`. So the address is what put this surface in the
+  // page and is therefore what says whether it is here; the remembered value is
+  // only how a person who chose gets that choice again tomorrow without typing
+  // it. A remembered value the page was not rendered for is a preference for
+  // something that is not here — which `bodySurface` deals with out loud rather
   // than quietly ignoring.
-  const asked = new URLSearchParams(location.search).get('editor');
-  const chose = EDITORS.includes(asked) ? asked : null;
+  const named = value => one(EDITORS_WERE[value] ?? value, EDITORS, null);
+  const chose = named(new URLSearchParams(location.search).get('editor'));
+  const kept = named(held.editor);
   return {
     mode: one(held.mode, ['edit', 'both', 'view'], null),
     indent: one(held.indent, INDENT_WIDTHS, 2),
     autosave: one(held.autosave, DRAFT_SECONDS, 2),
-    editor: chose ?? one(held.editor, EDITORS, 'textarea'),
+    editor: chose ?? kept ?? 'ace',
+    // Whether anybody actually said so, as against this being the default — and
+    // it is a separate fact because the default must not announce its own
+    // absence. `bodySurface` says "this page does not carry the second editor"
+    // when a choice cannot be honoured, and with `ace` as the fallback every
+    // signed-out reader on every detail page would now be told that about a
+    // library they never asked for.
+    chosen: (chose ?? kept) !== null,
     keymap: one(held.keymap, KEYMAPS, 'default'),
   };
 })();
@@ -9198,17 +9286,27 @@ const EDITOR = (() => {
 // What is written down, named rather than "whatever is on the object": the
 // object also carries things that are true of this load and not of this browser,
 // and a preference store that quietly grows a field is one nothing forgets.
-const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'editor', 'keymap'];
+const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'keymap'];
 
 function rememberEditor(change) {
   Object.assign(EDITOR, change);
-  remembered.set(EDITOR_KEY,
-                 JSON.stringify(Object.fromEntries(EDITOR_KEPT.map(k => [k, EDITOR[k]]))));
+  const kept = Object.fromEntries(EDITOR_KEPT.map(k => [k, EDITOR[k]]));
+  // The surface is written down only when somebody CHOSE it, which is why it is
+  // not in the list above. `ace` is the default now, so a page that merely
+  // resolved that default and then stored it would make every later load look
+  // like a decision — and `chosen` is what decides whether a page that cannot
+  // honour a decision says so out loud. Without this, choosing the split view
+  // once (`rememberEditor({mode})`) would have signed a reader up to be told, on
+  // every record afterwards, that a library they never asked for is missing.
+  if (EDITOR.chosen) kept.editor = EDITOR.editor;
+  remembered.set(EDITOR_KEY, JSON.stringify(kept));
 }
 
-// Typing the parameter is opting in, and opting in is what makes it stick.
-// `?editor=textarea` is the way back out and it forgets in the same breath —
-// a way in whose only way out is editing `localStorage` by hand is a trap.
+// Typing the parameter is choosing, and choosing is what makes it stick — in
+// both directions now, because `?editor=plain` is a choice as much as
+// `?editor=ace` is and the way back out of either has to be the other one. A
+// setting whose only way out is editing `localStorage` by hand is a trap, and
+// with the default on the expensive side it would be the expensive trap.
 if (new URLSearchParams(location.search).has('editor')) rememberEditor({});
 
 // And the other half of sticky: the preference put back into the URL, because
@@ -9225,8 +9323,11 @@ function stickyEditor() {
   const url = new URL(location.href);
   if (url.searchParams.has('editor')) return false;
   url.searchParams.set('editor', EDITOR.editor);
-  // `replace` and not `assign`: an opt-in carried forward is not a place in the
-  // history somebody wants the back button to take them to.
+  // `replace` and not `assign`: a preference carried forward is not a place in
+  // the history somebody wants the back button to take them to. It matters more
+  // now than it did — with the default on the other side, this fires for the
+  // people who chose the plain box, on every record they open, and `assign`
+  // would put a bounce in the back button for each one of them.
   location.replace(url);
   return true;
 }
@@ -9713,8 +9814,9 @@ function attachStatus(surface, bar) {
   // Only on a surface that HAS keymaps, and that is an absence rather than a
   // silence: a `<textarea>`'s keymap is the browser's, there is no second one to
   // offer, and a picker offering a choice it cannot make is worse than no
-  // picker. What it costs is that `?editor=ace` is discoverable only from the
-  // documentation — written down rather than papered over.
+  // picker. What that used to cost was that the second editor was reachable only
+  // by typing a parameter nothing on the page mentioned; it is the switch beside
+  // the three view segments now, so the way to a keymap is on the page as well.
   if (surface.setKeymap) {
     bar.append(statusPick(
       document.createElement('button'), 'Keymap', surface.keymaps, EDITOR.keymap,
@@ -10375,7 +10477,7 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 # One constant and two templates, because the create form and the detail page are
 # the same page in two modes and a second copy of this is a second thing to keep
 # in step.
-_VIEWBAR = Markup(
+_VIEW_SEGMENTS = (
     '<span id="views" class="views" role="group"'
     ' aria-label="How the document is shown">'
     '<button type="button" id="view-edit" class="seg" aria-pressed="false"'
@@ -10393,6 +10495,65 @@ _VIEWBAR = Markup(
     '<circle cx="12" cy="12" r="2.7"/></svg></button>'
     "</span>"
 )
+
+
+# Which of the two editors, beside the three views — jcanton, 2026-08-20: "can we
+# have the editor toggle as a toggle switch next to the three views buttons".
+#
+# **A switch and not a fourth segment, and that is the whole reason it is drawn
+# differently.** The three segments are one control with three states: exactly one
+# of them is true at a time and picking one un-picks the others. Which editor you
+# are writing in is a different question with a different shape — two states, both
+# of them a setting rather than a place — and a fourth icon in that box would read
+# as a fourth way of looking at the document. Adjacent, so the two are found in
+# one place; not joined, so they are not mistaken for one control.
+#
+# **It is a NAVIGATION and it says so.** This is the one control on the page whose
+# value decides which bytes the server rendered — 594 KB of them — and
+# `remembered` is this browser's own store, which the server cannot read. So
+# flipping it cannot be a class swap: the page has to be fetched again with the
+# other parameter on it. The resting `title` says what pressing it will do and
+# that it reloads, in the words-of-what-it-will-become shape `statusPick` uses in
+# the status bar; the press itself says it out loud through `announce`, which is
+# the visible `#state` region on every page that carries this bar; and the knob
+# does NOT move on the press. A switch that flips instantly and is then wiped out
+# by a page load looks like a control that worked and then glitched.
+#
+# `role="switch"` with `aria-checked`, rather than a class and a shape: the state
+# has to be in the accessibility tree, and `switch` is the role whose whole
+# meaning is two states one of which is on. The visible word is inside the button
+# and is not `aria-hidden`, so the accessible name IS the visible name — no
+# `aria-label` that a speech-control user could fail to say out loud.
+#
+# `aria-checked` is rendered by the SERVER from the same `_ace_wanted` that
+# decided the bytes, not written by the script afterwards: the truth is known at
+# render time, and a switch that draws itself off and corrects itself once a
+# script runs has shown a wrong state to whoever was looking.
+_EDITOR_SWITCH = (
+    '<button type="button" id="editorswitch" class="eswitch" role="switch"'
+    ' aria-checked="{checked}">'
+    '<span class="etrack" aria-hidden="true"><span class="eknob"></span></span>'
+    "<span>Ace editor</span></button>"
+)
+
+
+def _viewbar(switchable: bool, ace: bool) -> Markup:
+    """The bar of controls that says how, and in what, this document is shown.
+
+    `switchable` is whether the second editor is obtainable on this page at all —
+    the two gates `_ace_wanted` asks that are not the address. A page that cannot
+    have it does not offer a switch, because a switch that cannot move is a
+    control that lies about what the page can do: the static export has no server
+    to render the other bytes, and a reader the server would refuse a save from
+    would be pressing it for a keymap whose every save is a 403.
+
+    `ace` is which way it is set, which is `_ace_wanted`'s own answer, so the
+    switch and the bytes cannot disagree.
+    """
+    return Markup(
+        _VIEW_SEGMENTS
+        + (_EDITOR_SWITCH.format(checked="true" if ace else "false") if switchable else "")
+    )
 
 
 _SUGGEST_STYLE = """
@@ -10648,6 +10809,11 @@ _VIEWS = Markup(r"""
 <script>
 const VIEW_ARTICLE = BODY.closest('article.entity');
 const VIEW_PANE = document.getElementById('body-preview');
+// The row the switcher is drawn in, and the two page-chrome controls that come
+// to live in it while the surface is up. See `showView`, which does the moving.
+const VIEW_BAR = VIEW_ARTICLE.querySelector('.editbar');
+const CORNER = document.querySelector('nav > .corner');
+const CORNER_HOME = CORNER && CORNER.parentElement;
 // The segment ids: the third is `preview`, which is the id the in-place Preview
 // button had. That button is gone — full page in preview-only is the same thing
 // and more of it — and the id stays where the control's job stayed, so that
@@ -10685,6 +10851,28 @@ function showView(mode) {
   for (const covered of document.querySelectorAll('body > nav, body > a.skip')) {
     covered.inert = mode !== null;
   }
+  // And the two controls that `inert` took with it come out from behind it —
+  // jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem to
+  // have disappeared from the edit view, bring those back please".
+  //
+  // The cause is the loop directly above, and the loop is right: those eight
+  // covered focusable elements really were in the tab order behind an opaque
+  // surface. So the nav stays inert and the two controls MOVE, into the editor's
+  // own header row beside the view switcher — where the note this is modelled on
+  // puts them, and where the editor switch beside them now is.
+  //
+  // **The same nodes, not a second copy.** `#theme` and `#who` are ids, in a
+  // document the detail template can be rendered seventeen times into; a copy
+  // would be a duplicate id, a second `labelTheme` to keep in step, and a
+  // sign-in control the shell's `/api/me` script — which fills exactly one
+  // `#who` — would leave empty. The move keeps the accessible name, the state,
+  // the listeners and the identity by construction, because it is one object.
+  //
+  // Appended, so they come after the switcher in the tab order: the controls
+  // that act on the document you are writing before the two that act on the
+  // application. `.corner`'s own `margin-left: auto` puts them at the far end,
+  // which is where they sit in the nav they came from.
+  if (CORNER) (mode === null ? CORNER_HOME : VIEW_BAR).append(CORNER);
   // One mechanism for whether the preview pane is on the page, and it is the
   // `hidden` attribute the pane was already drawn with. A second, in CSS, would
   // be a second thing to keep in step — and a stale attribute underneath it is
@@ -10950,6 +11138,66 @@ for (const name of VIEWS) {
     () => chooseView(VIEW === name ? null : name);
 }
 
+// --- which editor, beside which view ----------------------------------------
+//
+// Absent rather than disabled wherever the page could not honour either answer —
+// `_viewbar` in render.py decides that and says why — so this is a null check on
+// a control that is missing on purpose.
+const EDITOR_SWITCH = document.getElementById('editorswitch');
+if (EDITOR_SWITCH) {
+  const EDITOR_NAMES = {ace: 'the Ace editor', plain: 'the plain box'};
+  // The surface that MOUNTED, not the one the address asked for. The server
+  // rendered `aria-checked` from the same `_ace_wanted` that decided the bytes,
+  // so the control is right before a line of this has run — no switch drawn off
+  // and corrected once a script arrives — and this puts it in step with what a
+  // person is actually writing in. The two come apart in exactly one place: a
+  // copy of this page saved to a file, where the address cannot be corrected and
+  // `bodySurface` hands back the box over a library that is physically present.
+  // `_VIEWS` runs after `SURFACE` is built, so by here that is decided.
+  const now = SURFACE.editorName;
+  const other = now === 'ace' ? 'plain' : 'ace';
+  EDITOR_SWITCH.setAttribute('aria-checked', String(now === 'ace'));
+  // What pressing it will do, in the words of what it will become — the shape
+  // `statusPick` uses for every picker in the status bar — plus the one fact
+  // that makes this control unlike every other one on the bar. Somebody told
+  // afterwards that the page reloaded has already lost the argument.
+  EDITOR_SWITCH.title = `Now: ${EDITOR_NAMES[now]} — press for `
+    + `${EDITOR_NAMES[other]}. This reloads the page: the editor is 594 KB the `
+    + `server either sends or does not, so the choice is in the address.`;
+  EDITOR_SWITCH.onclick = () => {
+    // A page with no server behind it cannot be asked for the other bytes, and
+    // this is the same refusal `stickyEditor` makes on the same test. It is said
+    // rather than done quietly, because a switch that moves nothing and explains
+    // nothing is the thing somebody reports as broken.
+    if (!location.protocol.startsWith('http')) {
+      announce('This is a saved copy of the page, so there is no server to ask for '
+               + 'the other editor. Open it from the tool to change this.');
+      return;
+    }
+    // The knob does NOT move here and `aria-checked` does not change. Both would
+    // claim a state this page is not in and is never going to be in — the page
+    // that IS in it is the one arriving — and a switch that completes its travel
+    // and is then replaced by a load reads as one that worked and then glitched.
+    EDITOR_SWITCH.setAttribute('aria-busy', 'true');
+    EDITOR_SWITCH.classList.add('waiting');
+    // In words as well as in pixels: `announce` writes into `#state`, which is
+    // visible on this bar and live for a screen reader, so the person who cannot
+    // see the track go dim is told the same thing.
+    announce(`Fetching this page with ${EDITOR_NAMES[other]}.`);
+    const url = new URL(location.href);
+    url.searchParams.set('editor', other);
+    // `replace`, for the reason `stickyEditor` uses it: the page being left will
+    // send anybody who comes back to it straight round again, because the
+    // preference it is about to write is why they went. A history entry that
+    // bounces is worse than no history entry.
+    //
+    // Nothing is remembered HERE. The address is the choice and the page that
+    // receives it writes it down — one mechanism, in one place; a second author
+    // of the same preference would eventually record a press that never arrived.
+    location.replace(url);
+  };
+}
+
 addEventListener('keydown', event => {
   // Ctrl+Shift and a digit, and both halves of that are a correction.
   //
@@ -11135,13 +11383,16 @@ _NEW = """
     <span id="state" role="status"></span>
   </div>
 </article>
-{#- The second editor, and 594 KB of it, so it is here only when the address
-    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
-    alone, so a signed-out reader already receives the box and the toolbar —
-    putting Ace at that gate would have shipped this to every public reader, at
-    4.19x their page, for a keymap they did not ask for. `remembered` is this
-    browser's own store and the server cannot read it, which is why the
-    parameter and not the preference decides which bytes render. -#}
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
 {% if ace %}<script>{{ ace }}</script>
 {{ acesurface }}{% endif %}
 {{ combobox }}
@@ -11637,13 +11888,16 @@ grip.onpointerdown = event => {
   addEventListener('pointerup', stop);
 };
 </script>
-{#- The second editor, and 594 KB of it, so it is here only when the address
-    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
-    alone, so a signed-out reader already receives the box and the toolbar —
-    putting Ace at that gate would have shipped this to every public reader, at
-    4.19x their page, for a keymap they did not ask for. `remembered` is this
-    browser's own store and the server cannot read it, which is why the
-    parameter and not the preference decides which bytes render. -#}
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
 {% if ace %}<script>{{ ace }}</script>
 {{ acesurface }}{% endif %}
 {% if editable %}{{ combobox }}{% endif %}
@@ -12939,6 +13193,49 @@ button.stat.pick:hover { color: var(--accent); }
 .views .seg svg { display: block; width: 15px; height: 15px; fill: none;
                   stroke: currentColor; stroke-width: 1.6;
                   stroke-linecap: round; stroke-linejoin: round; }
+/* Which editor, beside which view — a switch and not a fourth segment, because
+   it is a different question: the segments are one control with three states,
+   this is two states of a setting. It wears the same rectangle as the group next
+   to it by saying NOTHING about border, ground or corner — the shell's `button`
+   rule is the app's one look, and a control that wants the default says so by
+   not overriding it. Only the arrangement inside that rectangle is here.
+
+   Hidden until the article is editing, like the segments: a choice of editing
+   surface is nothing at all when there is no editing surface. */
+.eswitch { display: none; }
+.entity.editing .eswitch { display: inline-flex; align-items: center; gap: .4rem;
+                           vertical-align: middle; color: var(--muted); }
+.entity.editing .eswitch:hover { color: var(--accent); }
+/* Every colour here resolves a token already defined in all three blocks, so
+   there is no new value that could be right in one and wrong in another — the
+   failure that rule exists to prevent. `--line-strong` off, `--accent` on, and
+   the knob takes the ink that is legible on each. */
+.eswitch .etrack { display: block; width: 26px; height: 14px; border-radius: 7px;
+                   background: var(--line-strong); flex: none; padding: 2px;
+                   box-sizing: border-box; }
+/* No transition on the knob, and it was written and then taken out again rather
+   than left in. A switch normally animates because it flips in place; this one
+   never flips in place at all — its resting position is rendered by the server
+   and the only thing that changes it is a page load, so the travel a transition
+   would smooth is travel that never happens. The one move it does make is the
+   half-step below, and that one has to be instant: it is the acknowledgement of
+   a press, and an acknowledgement racing a navigation is one nobody sees. */
+.eswitch .eknob { display: block; width: 10px; height: 10px; border-radius: 50%;
+                  background: var(--surface); }
+.eswitch[aria-checked="true"] .etrack { background: var(--accent); }
+.eswitch[aria-checked="true"] .eknob { background: var(--on-accent);
+                                       transform: translateX(12px); }
+/* Pressed, and going. The knob stops HALFWAY rather than arriving, because
+   halfway is what is true — this page will never be the page with the other
+   editor in it, and the one that is has not landed yet. `aria-busy` says the
+   same thing to a screen reader and `announce` says it in words. */
+.eswitch.waiting .eknob { transform: translateX(6px); }
+.eswitch.waiting { opacity: .55; }
+/* The two page-chrome controls, while they are lodged in this bar rather than in
+   the nav they came from. `.corner` brings its own `margin-left: auto`, which is
+   what puts them at the far end here exactly as it does there; what it does not
+   bring is the room between them and the switcher when the row wraps. */
+.editbar > .corner { margin-left: auto; padding-left: .6rem; }
 /* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
    panes scroll on their own.
    `position: fixed` rather than a taller box, because the page behind it — the
@@ -14347,7 +14644,10 @@ def render_new(
         acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
-        viewbar=_VIEWBAR,
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
         views=_VIEWS,
         templates=TEMPLATES,
     )
@@ -16675,7 +16975,10 @@ def render_issue(
         ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
-        viewbar=_VIEWBAR,
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
         views=_VIEWS,
         # The same machinery the notes page uses, and now the same shape as well:
         # two kinds and a picker to choose between them. A pitch when the fix is
@@ -16908,7 +17211,10 @@ def render_note(
         ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
-        viewbar=_VIEWBAR,
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
         views=_VIEWS,
         promote=(
             _promote_html(
@@ -17261,7 +17567,10 @@ def render_detail(
         statuses=STATUSES,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
-        viewbar=_VIEWBAR,
+        viewbar=_viewbar(
+            _either_editor_possible(base_commit, may_write),
+            _ace_wanted(editor, base_commit, may_write),
+        ),
         views=_VIEWS,
         # The same gate the two lines below carry, and one more: the address had
         # to ask. See `_ace`.
@@ -17712,13 +18021,16 @@ _ISSUE = """
 </form>
 {{ promote }}
 </article>
-{#- The second editor, and 594 KB of it, so it is here only when the address
-    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
-    alone, so a signed-out reader already receives the box and the toolbar —
-    putting Ace at that gate would have shipped this to every public reader, at
-    4.19x their page, for a keymap they did not ask for. `remembered` is this
-    browser's own store and the server cannot read it, which is why the
-    parameter and not the preference decides which bytes render. -#}
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
 {% if ace %}<script>{{ ace }}</script>
 {{ acesurface }}{% endif %}
 {{ combobox }}
@@ -18055,13 +18367,16 @@ _NOTE = """
 </form>
 {{ promote }}
 </article>
-{#- The second editor, and 594 KB of it, so it is here only when the address
-    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
-    alone, so a signed-out reader already receives the box and the toolbar —
-    putting Ace at that gate would have shipped this to every public reader, at
-    4.19x their page, for a keymap they did not ask for. `remembered` is this
-    browser's own store and the server cannot read it, which is why the
-    parameter and not the preference decides which bytes render. -#}
+{#- The second editor, and 594 KB of it. It is what a writer gets unless the
+    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
+    think it's worth it" — and `_ace_wanted` is where that decision is recorded
+    as his rather than as a measurement's. What did NOT move is who pays:
+    `editable` is gated on `base_commit` alone, so a signed-out reader already
+    receives the box and the toolbar, and putting Ace at that gate would have
+    shipped this to every public reader at 4.19x their page for a keymap whose
+    every save is a 403. `remembered` is this browser's own store and the server
+    cannot read it, which is why the address and not the preference decides
+    which bytes render. -#}
 {% if ace %}<script>{{ ace }}</script>
 {{ acesurface }}{% endif %}
 {{ combobox }}

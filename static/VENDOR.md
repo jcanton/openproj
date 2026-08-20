@@ -201,20 +201,31 @@ with the price attached, he answered: *"implement both: improvements to our edit
 as ace."*
 
 So: a human overrode a written rule, deliberately, having been shown what it costs.
-**594,306 B raw / ~163 KB gzipped**, and it is charged to nobody who does not ask —
-`?editor=ace` is what makes the server inline it, `openproj:editor:1` is what carries the
-choice into the next visit, and a page nobody typed that on has not one byte of it.
+**594,306 B raw / ~163 KB gzipped.**
 
-The parameter alone is not the whole gate, and the missing half is worth writing down:
-`editable` is `base_commit is not None` and the served route passes a commit for everyone,
-so a signed-out reader already receives the box and the toolbar — and can type the
-parameter too. `render._ace_wanted` therefore asks `may_write` as well, the same second
-gate `yjs` and `coedit` already carry, so a reader's page is the same size with the
-parameter as without it. Without that, Ace at the `editable` gate would have taken a public
-reader from 209,872 B to 879,454 B, 4.19x, for a keymap whose every save is a 403.
+**And then, on 2026-08-20, he moved it to the default side of the parameter:** *"make ace
+the default, I think it's worth it."* That is a second override on top of the first and it
+is recorded here as one. Nothing measured changed to justify it — the revisit condition
+this file set is still "when somebody is actually slowed down by the textarea", and it is
+still unmet. What changed is which arm of `render._ace_wanted` the address has to say
+something to reach: `?editor=plain` is now the opt-out and an unsaid address means Ace, so
+**a writer pays 594 KB by default**, measured on `tests/fixtures/corpus` at 492,311 B for
+the plain box against 1,110,377 B beside it. It is the sticky preference that pays the
+reload now, because it is the plain-box people whose address has to be corrected — the
+smaller page arriving for the person who asked for a smaller page, rather than the library
+arriving twice for everybody else.
 
-The parameter is also the shape that answers "let me try both": two tabs, one document, one
-editor each.
+**Who pays did not change, and that is the half that had to survive the flip.** `editable`
+is `base_commit is not None` and the served route passes a commit for everyone, so a
+signed-out reader already receives the box and the toolbar — and can type any parameter
+they like. `render._ace_wanted` asks `may_write` as well, the same second gate `yjs` and
+`coedit` already carry, so a reader's page is the same size with either parameter and with
+none: 366,151 B all three ways, measured. Without that gate, Ace on the default arm would
+now reach every public reader unasked, for a keymap whose every save is a 403.
+
+Both spellings are still the shape that answers "let me try both": two tabs, one document,
+one editor each — and since 2026-08-20 there is a switch beside the three view segments, so
+the choice is on the page rather than only in this file.
 
 The search that ended here follows. Everything in it was fetched, checksummed and run;
 `docs/EDITOR.md` is the long form.

@@ -123,8 +123,12 @@ def test_the_room_draws_a_band_where_somebody_else_is(index: Index, tmp_path: Pa
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
     got = measured_in(chrome(), page, tmp_path / "seat.html", 1200, _DRAWN, height=900)
@@ -163,8 +167,12 @@ def test_nobody_is_drawn_a_band_for_themselves(index: Index, tmp_path: Path):
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", MY_OWN_SEAT + "</body>"
     )
@@ -210,8 +218,12 @@ def test_two_people_get_two_colours_and_two_places(index: Index, tmp_path: Path)
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", TWO_PEOPLE + "</body>"
     )
@@ -239,8 +251,12 @@ def test_this_tab_says_where_it_is_sitting(index: Index, tmp_path: Path):
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
     got = measured_in(chrome(), page, tmp_path / "sent.html", 1200, _SENT, height=900)
@@ -397,8 +413,12 @@ def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", WRAPPED_SEAT + "</body>"
     )
@@ -478,8 +498,12 @@ def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there
     entity_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
-    # carries no room at all and there is nothing here to test.
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    # carries no room at all and there is nothing here to test. `editor="plain"`
+    # for the other half of the same sentence: the bands are drawn over a
+    # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
     got = measured_in(

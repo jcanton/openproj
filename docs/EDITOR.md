@@ -757,6 +757,64 @@ box and the mirror's is its padding box, and nothing has measured that pairing i
 rather than guessed. The presence line still names who else is in the document, and a tab on a
 textarea still draws the Ace tab's band correctly, because `sit()` sends the same index.
 
+## Three changes jcanton asked for after using it, 2026-08-20
+
+Recorded here rather than by editing the paragraphs above that argued the other way,
+which is how the rest of this file is kept.
+
+**1. Ace is the default.** *"make ace the default, I think it's worth it."* The parameter
+inverts: `?editor=plain` opts out and an address that says nothing gets the second editor.
+The machinery is unchanged — the server still has to know before it renders, because
+`remembered` is this browser's own store — and only the default arm moved. The reload the
+sticky preference costs moved with it, onto the people who want the plain box, which is the
+better side to pay it on: the smaller page arriving for the person who asked for a smaller
+page, rather than 594 KB arriving twice for everybody else.
+
+**This is a human override on top of a human override, and `static/VENDOR.md` says so.** The
+revisit condition that file records — "when somebody is actually slowed down by a textarea" —
+is still unmet by anybody. Measured on `tests/fixtures/corpus`, raw / gz -9:
+
+| page | before | after |
+|---|---|---|
+| reader, no parameter | 352,779 / 145,908 | 366,151 / 150,333 |
+| reader, either parameter | 352,779 / 145,908 | 366,151 / 150,333 |
+| writer, no parameter | 478,742 / 186,557 | **1,110,377 / 362,045** |
+| writer, `?editor=plain` | 478,742 / 186,557 | 492,311 / 191,035 |
+
+A reader still pays zero for the library and zero for the parameter, and that is the half the
+inversion could most easily have destroyed — the default arm is now the one that ships it, so
+`_ace_wanted`'s `may_write` gate is asserted three ways round rather than assumed.
+
+**2. The theme toggle and the sign-in control are in the editor's own header row.** *"the
+light/dark mode toggle and sign in button seem to have disappeared from the edit view."* The
+cause was ours and it was right: `body > nav, body > a.skip` are made `inert` while the
+full-page surface is up, because eight focusable elements were geometrically covered by an
+opaque fixed article and still in the tab order. The nav stays inert; the two controls MOVE,
+into the `.editbar` beside the view switcher, and back to the nav when the surface closes. The
+same nodes, not copies — `#theme` and `#who` are ids, and the shell's own scripts fill exactly
+one of each — so the accessible name, the listeners and the identity survive by construction.
+
+**3. Which editor is a switch beside the three view segments.** Two states drawn as a switch
+rather than as a fourth segment, because the three views are one control with three states and
+this is a different question. `role="switch"` with `aria-checked` rendered by the server from
+the same `_ace_wanted` that decided the bytes; the visible words are the accessible name; a
+real `<button>`, so Enter and Space work without a line of code; and the focus ring is asked of
+Chrome twice — once for whether anything is painted and once for whether an ancestor's
+`overflow` crops it, which are different failures and were measured to fail differently.
+
+**It is honest that it reloads.** It decides which bytes the server rendered, so flipping it is
+a navigation. The resting `title` says what pressing it will do and that it reloads; the press
+says the same thing through `announce`, into the visible `#state` region; and the knob stops
+HALFWAY rather than completing its travel, because halfway is what is true — this page will
+never be the page with the other editor in it, and a switch that arrives and is then wiped out
+by a load reads as one that worked and then glitched.
+
+One finding worth keeping. The label on the surface object was first called `editor`, and the
+Ace surface already publishes `editor` — the Ace instance. A second key of that name later in
+the same object literal is an error nowhere: it silently wins, and every use of the real one
+became the string `'ace'`. It is `editorName` now, and it is a label that must never be
+branched on; a behavioural difference between the surfaces goes in `provides`.
+
 ## The trap that is still written down
 
 `tests/js/drive.js` is a DOM shim, not a browser. `AGENTS.md` records that it has misled

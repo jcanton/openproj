@@ -1183,18 +1183,28 @@ def create_app(
         """Which editing surface this page is asked to carry.
 
         A query parameter and not a cookie, and that is the whole design: the
-        second editor is 594 KB and the server has to know before it renders
-        whether to put it in the page, while the preference that remembers the
-        choice is `localStorage` and the server cannot see it. So `?editor=ace`
-        is what puts Ace in a page; the page carries the choice back into the
-        address on the next visit, so it is typed once.
+        two surfaces are 594 KB apart and the server has to know before it
+        renders which one is in the page, while the preference that remembers the
+        choice is `localStorage` and the server cannot see it. So the address is
+        what decides, and the page carries the choice back into the address on
+        the next visit so it is typed once.
+
+        **The parameter opts out now, not in** — `?editor=plain`, on jcanton's
+        "make ace the default, I think it's worth it", 2026-08-20. The machinery
+        is unchanged and only its default arm moved, which means the page load
+        that the sticky preference costs moved with it: it is the people who want
+        the plain box who now pay a reload, and that is the better side to put it
+        on, because it is the smaller page arriving for the person who asked for
+        a smaller page rather than 594 KB arriving twice for everybody else.
 
         Read as an allowlist and not as a string, for the reason `_status_class`
         is written the way it is: whatever arrives goes nowhere near a lookup that
-        could be surprised by it.
+        could be surprised by it. Both spellings are named, so that `?editor=ace`
+        keeps meaning what it always meant and a link somebody saved still opens
+        the editor it promised.
         """
         asked = request.query_params.get("editor", "")
-        return asked if asked == render.ACE else ""
+        return asked if asked in (render.ACE, render.PLAIN) else ""
 
     @app.get("/issues", response_class=HTMLResponse)
     def issues() -> HTMLResponse:

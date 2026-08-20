@@ -2408,19 +2408,20 @@ def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_
 
 
 def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index):
-    """Who pays for the second editor, which is the question that decided its
-    shape.
+    """Who pays for the second editor, and it is the half of that question the
+    2026-08-20 flip could most easily have destroyed.
 
-    `editable = base_commit is not None` and the served route passes a commit for
-    everyone, so a signed-out reader already receives the `<textarea>`, the
-    toolbar and two `attachEditing(` calls — measured at 209,872 B. An Ace block
-    at that gate would have taken the same page to 879,454 B, 4.19x, for a vim
-    keymap the reader did not ask for and cannot use.
+    Ace is the DEFAULT now — jcanton, "make ace the default, I think it's worth
+    it" — so the arm of `_ace_wanted` that ships 594 KB is the one an address
+    reaches by saying nothing at all. `editable = base_commit is not None` and the
+    served route passes a commit for everyone, so a signed-out reader already
+    receives the `<textarea>`, the toolbar and two `attachEditing(` calls; if the
+    inversion had been written as one flipped comparison and nothing else, every
+    public reader would now carry the library unasked.
 
-    The gate is therefore not `editable` but the query string: `?editor=ace`, and
-    nothing else, puts the bytes in a page. A reader who never types it pays
-    nothing — including a reader who never types it AND asks for it, which is the
-    case below: the parameter alone is not enough, there has to be a surface.
+    It did not, because the gate is `may_write` and `may_write` did not move. This
+    asks a reader's page all three ways round — no parameter, the opt-out, and the
+    opt-in they are free to type — and every one of them has to be the same bytes.
     """
     from openproj.render import ROUTES, render_detail
 
@@ -2430,27 +2431,53 @@ def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index)
     # everyone, so this page already carries the box, the toolbar and two
     # `attachEditing(` calls. `may_write` is the gate, and it is a different
     # question from `editable`.
-    reading = render_detail(
-        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=False, editor="ace"
+    reader = {
+        how: render_detail(
+            seed_index, ROUTES, only=one, base_commit="deadbee", may_write=False, **asked
+        )
+        for how, asked in (
+            ("saying nothing", {}),
+            ("asking for the plain box", {"editor": "plain"}),
+            ("asking for Ace", {"editor": "ace"}),
+        )
+    }
+    for how, page in reader.items():
+        assert "ace.define" not in page, (
+            f"a reader the server would refuse a write from carries 594 KB of editor, "
+            f"{how} — for a keymap whose every save is a 403"
+        )
+    # And no switch, for the same reason and it is not the same assertion: a
+    # control that offers a choice this reader cannot have either way is a control
+    # that lies about what the page can do. `_viewbar` asks the two gates that are
+    # not the address, which is what keeps the switch and the bytes agreeing.
+    for how, page in reader.items():
+        assert 'id="editorswitch"' not in page, (
+            f"a reader is offered a switch between two editors, {how} — and both "
+            "sides of it are the box they already have"
+        )
+    # Not merely "no `ace.define`": the same bytes, all three ways. A gate that
+    # dropped the library and still changed the page would mean the address was
+    # being read for a reader at all, which is the thing being denied.
+    assert len(set(reader.values())) == 1, (
+        "the address changes a reader's page, so something on it is reading a "
+        "parameter that must buy them nothing"
     )
-    assert "ace.define" not in reading, (
-        "a reader the server would refuse a write from carries 594 KB of editor "
-        "for a keymap whose every save is a 403"
-    )
-    # And the static export, which passes neither.
+    # And the static export, which passes neither gate.
     exported = render_detail(seed_index, ROUTES, only=one, base_commit=None, editor="ace")
     assert "ace.define" not in exported
-    # The control: the same page a writer gets, on the same parameter, does carry
-    # it — or the assertion above passes because the parameter never works.
+    # The controls, both ways round, or the assertions above pass because the
+    # parameter never works. A writer who says nothing gets it; a writer who opts
+    # out does not.
     writing = render_detail(
-        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor="ace"
-    )
-    assert "ace.define" in writing
-    # And the default, which is what every page load that did not ask for it is.
-    plain = render_detail(
         seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True
     )
-    assert "ace.define" not in plain
+    assert "ace.define" in writing, (
+        "Ace is the default for a writer since 2026-08-20 and this page has none of it"
+    )
+    plain = render_detail(
+        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor="plain"
+    )
+    assert "ace.define" not in plain, "?editor=plain is the way out and it did not work"
     assert len(writing) > len(plain) + 500_000, (
         "the second editor is not the 594 KB this gate exists for, so either the "
         "gate or the measurement has moved"

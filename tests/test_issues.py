@@ -506,8 +506,11 @@ def test_an_issue_is_written_in_the_same_surface_a_pitch_is(
         # Wide enough that a pane of the split is wider than the 44rem reading
         # measure this page caps its box at outside the surface — at 1400 it is
         # not, and the assertion below would pass without asking anything.
-        chrome(), client.get(f"/issue/{issue_id}").text, tmp_path / "issue.html", 2000,
-        _SURFACE, patience=4800,
+        # And `?editor=plain`, because what is being asked is that an issue is
+        # written in the same `<textarea>` surface a pitch is — and since
+        # 2026-08-20 an address that says nothing is handed the other one.
+        chrome(), client.get(f"/issue/{issue_id}?editor=plain").text,
+        tmp_path / "issue.html", 2000, _SURFACE, patience=4800,
     )
 
     assert got["onOpening"]["numbers"] == 1, (

@@ -35,6 +35,16 @@ from openproj.web import SESSION_COOKIE, create_app
 # disagree with it.
 DERIVED = ("start", "end", "blocks", "overruns_cycle_weeks", "why")
 
+# The plain box, asked for by name, on every test that is ABOUT the plain box.
+#
+# Ace is what a writer gets since 2026-08-20 — jcanton, "make ace the default, I
+# think it's worth it" — so an address that says nothing now means the other
+# surface. Every test below that drives a `<textarea>` in a browser used to rest
+# on that silence and now says which surface it means; the ones that only read the
+# markup are surface-agnostic and deliberately keep the default, so the page a
+# writer actually gets is still the one most of this file is looking at.
+PLAIN = "?editor=plain"
+
 
 @pytest.fixture
 def repo_path(tmp_path: Path) -> Path:
@@ -129,36 +139,52 @@ def test_the_save_script_sends_only_what_changed(page: str):
     assert "new FormData" not in page, "a serialised form sends fields nobody touched"
 
 
-def test_the_editor_a_reader_is_sent_carries_no_library(page: str):
+def test_the_plain_box_carries_no_editor_library_at_all(client: TestClient):
     """This used to be `test_the_editor_pulls_in_no_library_at_all`, and its
     docstring said: "If this ever fails, somebody has added an editor dependency
     and should have to argue for it."
 
-    Somebody has. Ace 1.44.0 is vendored — `static/VENDOR.md` carries the search,
-    the price and the argument — and the old test passed it **unchanged**, which
-    is what makes rewriting it necessary rather than optional: it was a check on
-    the string `codemirror`, so it would have caught the library that was refused
-    and never the one that was taken. A name check is not an argument.
+    Somebody has, twice. Ace 1.44.0 is vendored — `static/VENDOR.md` carries the
+    search, the price and the argument — and then on 2026-08-20 it moved to the
+    default side of the parameter. Both times the old test would have passed
+    **unchanged**, because it was a check on the string `codemirror`: it would
+    have caught the library that was refused and never the one that was taken. A
+    name check is not an argument.
 
-    What is true now, and what this holds:
+    What this holds is the way OUT: `?editor=plain` and the page has no editor
+    bytes of any kind in it, fetches nothing, and reaches no CDN. The other half
+    of who pays — a reader the server would refuse a save from, who gets no
+    library whatever the address says — cannot be asked here and is asked where
+    it can be: `--auth dev` invents a login for every request, so `may_write` is
+    true on this fixture whatever the cookie says, and dropping the cookie proves
+    nothing. `test_a_reader_who_may_not_write_is_sent_no_editor_library` in
+    `tests/test_render.py` calls the renderer with `may_write=False` directly.
 
-    * an ordinary page — which is what `page` is, with no `?editor=` on it —
-      carries no editor library at all, so nobody pays for one by default;
-    * nothing is fetched, here or anywhere: no `<script src>`, no CDN;
-    * and CodeMirror in particular is still not here, which is a finding rather
-      than a taste — `docs/EDITOR.md` refuses CM6 on a fifty-one-import linker
-      and CM5 on an archived upstream.
+    **And the CodeMirror clause is now a measurement rather than a slogan.**
+    `keybinding-vim.js` contains the string once — Ace's vim keymap is a port of
+    CodeMirror's and ships a `CodeMirror` compatibility object — so a page that
+    carries Ace carries that name too, and asserting its absence over the default
+    page would be asserting that Ace is not there while saying something else.
+    What is actually still true is that neither CodeMirror is a dependency here:
+    `docs/EDITOR.md` refuses CM6 on a fifty-one-import linker and CM5 on an
+    archived upstream, and the page below has no editor bytes of any kind in it.
 
-    The page that DOES carry it is held to its own rules in
+    The page that DOES carry Ace is held to its own rules in
     `test_the_second_editor_is_inlined_checksummed_and_named` beside this.
     """
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
     assert "codemirror" not in page.lower()
-    assert "CodeMirror" not in page
     assert not re.search(r"<script[^>]+src=", page)
+    assert "cdn." not in page
     assert "ace.define" not in page, (
-        "the second editor is in a page nobody asked for it on. It is 594 KB, and the "
-        "default has to be no: `editable` is `base_commit is not None` and the served "
-        "route passes a commit for everyone, so `editable` is not a gate on anything"
+        "a writer who said `?editor=plain` in the address was sent 594 KB of editor "
+        "anyway, so the way out of the default does not work"
+    )
+    # The control, and it is the half that makes the assertion above evidence
+    # rather than a test of a parameter nothing reads: the same page with nothing
+    # said does carry it, because that is what jcanton asked for on 2026-08-20.
+    assert "ace.define" in client.get(f"/detail/{TASK}").text, (
+        "Ace is the default for a writer and this page has none of it"
     )
 
 
@@ -765,7 +791,7 @@ def test_a_restored_draft_is_saved_against_the_commit_it_was_drafted_against(
     from test_injection import run_js
 
     first = head(client)
-    drafted_on = client.get(f"/detail/{TASK}").text
+    drafted_on = client.get(f"/detail/{TASK}{PLAIN}").text
 
     # Ann types a paragraph and closes the tab without saving.
     typed = "Rewritten from the top, by ann.\n"
@@ -789,7 +815,7 @@ def test_a_restored_draft_is_saved_against_the_commit_it_was_drafted_against(
     second = head(client)
 
     # Ann opens the page again. It is rendered at Bo's commit; her draft is not.
-    reopened = client.get(f"/detail/{TASK}").text
+    reopened = client.get(f"/detail/{TASK}{PLAIN}").text
     assert f'name="base_commit" value="{second}"' in reopened
     restoring = run_js(
         reopened,
@@ -844,7 +870,7 @@ def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
     second = head(client)
     assert first != second
 
-    reopened = client.get(f"/detail/{TASK}").text
+    reopened = client.get(f"/detail/{TASK}{PLAIN}").text
     key = f"openproj:draft:2:{TASK}"
     draft = {"base": first, "text": "Half a paragraph, left in the box.\n"}
     after = run_js(
@@ -976,8 +1002,17 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
     The `<input>`s are deliberately not in scope: the suggestion combobox calls
     `setSelectionRange` on a text field, which is a different control with no
     document in it and no room behind it. The names below are the body's.
+
+    **`?editor=plain`, and it is not the default's absence — it is the only page
+    a substring scan can answer this on.** Ace's own minified bytes contain
+    `this.textarea.value`, `area.value` and half a dozen more of these names, and
+    a scan over text cannot tell a library's internals from application code. So
+    the page whose entire script is ours is the one asked, and the page that
+    carries the library is asked separately below, with the library cut out of it
+    by `_without_the_library` — which is the same question and a different
+    method, kept apart on purpose rather than merged into a looser pattern.
     """
-    for path in (f"/detail/{TASK}", "/new"):
+    for path in (f"/detail/{TASK}{PLAIN}", f"/new{PLAIN}"):
         page = client.get(path).text
         surface = _surface_source(page)
         assert "function textareaSurface(area)" in surface, path
@@ -1385,7 +1420,7 @@ def test_tab_indents_the_lines_the_selection_touches_and_escape_then_tab_leaves_
     indent that swallows Tab with no way out is worse than no indent, and an
     escape hatch nobody is told about is not one."""
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "tab.html", 1200, _TABBING
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "tab.html", 1200, _TABBING
     )
 
     assert got["swallowed"], "Tab was left to the browser and moved focus instead"
@@ -1597,7 +1632,8 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     put into that branch left the guard and all twenty assertions passing.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "marks.html", width, _MARKING
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "marks.html", width, _MARKING
     )
 
     assert got["struck"] == "~~alpha~~ beta"
@@ -1827,7 +1863,7 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     same chord, or Escape.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "views.html", 1400, _VIEWING
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "views.html", 1400, _VIEWING
     )
 
     assert got["editing"] == {
@@ -2071,7 +2107,7 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     neither: after the sync, line 82's block is at the top of the pane.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "sync.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "sync.html", 1400,
         _SYNCING, patience=1800,
     )
 
@@ -2158,7 +2194,7 @@ def test_the_preview_keeps_up_and_stays_where_the_reader_left_it(
     real endpoint what it renders.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "live.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "live.html", 1400,
         _LIVE, patience=2200,
     )
 
@@ -2213,7 +2249,7 @@ def test_a_preview_that_has_been_overtaken_is_called_off(client: TestClient, tmp
     is 300ms and a slow render is longer than that, so this is not a corner: it is
     what a big pitch on a busy server does every time."""
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "abort.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "abort.html", 1400,
         _OVERTAKEN, patience=1200,
     )
 
@@ -2402,7 +2438,7 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
     20.15625px row.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "gutter.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "gutter.html", 1400,
         _NUMBERING, patience=4800,
     )
 
@@ -2438,13 +2474,19 @@ _LEAVING = _STUB_PREVIEW + """
 const article = document.querySelector('article.entity');
 const nav = document.querySelector('body > nav');
 const link = nav.querySelector('a');
-// What a pointer would actually hit in the middle of the first nav link. The
-// whole finding is that the surface paints over it, so a class name is not the
-// question — `elementFromPoint` is.
+// Whether a pointer aimed at the middle of the first nav link would actually
+// reach it. The whole finding is that the surface paints over it, so a class name
+// is not the question — `elementFromPoint` is.
+//
+// Asked as `is it that link`, not as `is it an <a>`. The tag was enough until the
+// theme toggle and the sign-in control moved out of the nav into the editor's own
+// bar: the nav lost 28px of height, its links slid up, and they now sit at the
+// same y as the article's own `← table` link — which is also an `A`, and is a
+// control on the surface rather than behind it.
 const overLink = () => {
   const box = link.getBoundingClientRect();
   const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-  return hit ? hit.tagName : null;
+  return hit === link;
 };
 const shape = () => ({
   classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
@@ -2482,23 +2524,341 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
     views, because each one takes a different thing away.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "leave.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "leave.html", 1400,
         _LEAVING, patience=1800,
     )
 
     for name, answer in got.items():
         assert answer["inside"]["classes"] == ["full", f"view-{name}"], name
         assert answer["inside"]["navInert"], f"{name}: the page behind the surface is not inert"
-        assert answer["inside"]["over"] != "A", (
+        assert not answer["inside"]["over"], (
             f"{name}: the surface does not actually cover the nav, so nothing here is proved"
         )
         assert answer["after"] == {
-            "classes": [], "fullpage": False, "navInert": False, "over": "A",
+            "classes": [], "fullpage": False, "navInert": False, "over": True,
             "switcher": False, "editing": False,
         }, (
             f"Cancel from the {name} view left the reader in the surface: "
             f"{answer['after']}"
         )
+
+
+# The two page-chrome controls, followed into the surface and out of it again.
+#
+# `#who` is filled by the shell's own `/api/me` fetch, which cannot answer over
+# `file://` — so it is filled here with exactly what that script builds for a
+# stranger. What is being asked is where the control ENDS UP and whether a
+# pointer can reach it, not whether a fetch succeeded.
+_THE_CORNER = _STUB_PREVIEW + """
+const nav = document.querySelector('body > nav');
+const corner = document.querySelector('.corner');
+const theme = document.getElementById('theme');
+const who = document.getElementById('who');
+const link = document.createElement('a');
+link.textContent = 'Sign in';
+link.href = '/login';
+who.replaceChildren(link);
+who.hidden = false;
+
+const bar = document.querySelector('article.entity .editbar');
+// What a pointer aimed at the middle of a control would actually hit. A class
+// name cannot answer this: the whole finding is that an opaque fixed surface was
+// painted over these two, and `elementFromPoint` is the question.
+const reaches = el => {
+  const box = el.getBoundingClientRect();
+  return document.elementFromPoint(
+    box.left + box.width / 2, box.top + box.height / 2) === el;
+};
+const shape = () => ({
+  parent: corner.parentElement.tagName,
+  inBar: bar.contains(corner),
+  inert: corner.closest('[inert]') !== null,
+  navInert: !!nav.inert,
+  themeReachable: reaches(theme),
+  themeNamed: theme.getAttribute('aria-label'),
+  signInReachable: reaches(link),
+  keyboard: [...bar.querySelectorAll('a[href], button, select')]
+    .filter(el => el.getClientRects().length)
+    .map(el => el.id || el.tagName),
+});
+
+const before = shape();
+document.getElementById('toggle').click();
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 300));
+const inside = shape();
+// The listeners came with the node, because it IS the node: pressing the toggle
+// still changes the theme and still relabels itself.
+const was = document.documentElement.dataset.theme || '';
+theme.click();
+const themed = {
+  was, now: document.documentElement.dataset.theme,
+  named: theme.getAttribute('aria-label'),
+};
+document.getElementById('cancel').click();
+await new Promise(go => setTimeout(go, 200));
+return {before, inside, themed, after: shape()};
+"""
+
+
+def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem to
+    have disappeared from the edit view, bring those back please".
+
+    The cause is ours and it was right: `body > nav` and `body > a.skip` are made
+    `inert` while the full-page surface is up, because an audit found eight
+    focusable elements geometrically covered by an opaque fixed article and still
+    in the tab order. That fix stays — un-inerting the nav would put the defect
+    back — so the two controls move instead, into the editor's own header row
+    beside the view switcher.
+
+    The same nodes, not copies: `#theme` and `#who` are ids on a template the
+    static export renders once per entity into one file, and the shell's own
+    scripts reach for both by id. So the test asks what a MOVE has to be true of
+    and a copy would not — the listener still fires, the label still changes, and
+    the control is reachable by a pointer at the place it is drawn.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "corner.html",
+        1400, _THE_CORNER, patience=2400,
+    )
+
+    assert got["before"]["parent"] == "NAV" and not got["before"]["inBar"]
+    assert got["before"]["themeReachable"] and got["before"]["signInReachable"]
+
+    inside = got["inside"]
+    assert inside["inBar"], "the corner did not come into the editor's bar"
+    assert inside["navInert"], (
+        "the nav is not inert while the surface is up, so the tab-order defect the "
+        "move exists to keep fixed has been fixed the wrong way instead"
+    )
+    assert not inside["inert"], "the two controls came with the nav's inertness"
+    assert inside["themeReachable"], (
+        "the theme toggle is in the bar and something is painted over it"
+    )
+    assert inside["signInReachable"], "the way in is in the bar and unreachable"
+    assert inside["themeNamed"] in ("Dark mode", "Light mode"), inside["themeNamed"]
+    # In this order, and the order is the argument: the controls that act on the
+    # document you are writing come before the two that act on the application.
+    assert inside["keyboard"] == [
+        "view-edit", "view-both", "preview", "editorswitch", "A", "theme"
+    ], inside["keyboard"]
+
+    assert got["themed"]["now"] != got["themed"]["was"], (
+        "the theme toggle is in the bar and does nothing, so what moved is a "
+        "picture of it"
+    )
+    assert got["themed"]["named"] != inside["themeNamed"], (
+        "it switched the theme and went on calling itself what it was"
+    )
+
+    # And back, because a control that only travels one way is a control the nav
+    # has lost. Cancel is the ordinary way out and is what somebody presses.
+    assert got["after"]["parent"] == "NAV"
+    assert not got["after"]["navInert"]
+    assert got["after"]["themeReachable"] and got["after"]["signInReachable"]
+
+
+# The editor switch, asked of the browser. Two presses' worth of state and the
+# geometry of the ring, in one page.
+_THE_SWITCH = _STUB_PREVIEW + """
+const sw = document.getElementById('editorswitch');
+document.getElementById('toggle').click();
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 300));
+
+const track = sw.querySelector('.etrack');
+const knob = sw.querySelector('.eknob');
+const knobAt = () => Math.round(
+  knob.getBoundingClientRect().left - track.getBoundingClientRect().left);
+const drawn = getComputedStyle(sw);
+const out = {
+  tag: sw.tagName,
+  tabindex: sw.getAttribute('tabindex'),
+  role: sw.getAttribute('role'),
+  checked: sw.getAttribute('aria-checked'),
+  // The accessible name, and it comes from the visible words rather than from an
+  // `aria-label` — so what a screen reader says and what a speech-control user
+  // can say out loud are the same string.
+  name: sw.textContent.trim(),
+  labelled: sw.getAttribute('aria-label'),
+  title: sw.title,
+  border: drawn.borderTopWidth + ' ' + drawn.borderTopStyle,
+  radius: drawn.borderTopLeftRadius,
+  besideTheViews: sw.previousElementSibling && sw.previousElementSibling.id,
+  knobAtRest: knobAt(),
+};
+
+// Focused the way a keyboard focuses it, and then asked what would clip the ring
+// the shell draws. The failure this is about is not a missing outline — it is an
+// outline drawn entirely outside a border box that an ancestor's `overflow`
+// throws away, which resolves perfectly and paints nothing.
+sw.focus({focusVisible: true});
+out.focusVisible = sw.matches(':focus-visible');
+const ringed = getComputedStyle(sw);
+out.outline = ringed.outlineWidth + ' ' + ringed.outlineStyle;
+const reach = parseFloat(ringed.outlineWidth) + parseFloat(ringed.outlineOffset);
+const box = sw.getBoundingClientRect();
+out.clippers = [];
+for (let el = sw.parentElement; el; el = el.parentElement) {
+  const style = getComputedStyle(el);
+  const held = el.getBoundingClientRect();
+  if (style.overflow !== 'visible'
+      && (held.left > box.left - reach || held.right < box.right + reach
+          || held.top > box.top - reach || held.bottom < box.bottom + reach)) {
+    out.clippers.push((el.tagName + '.' + el.className).slice(0, 60));
+  }
+  // The walk stops at the surface, and that is a rule rather than a convenience:
+  // `article.entity.full` is `position: fixed`, so its containing block is the
+  // viewport and an `overflow` on anything above it — `body.fullpage`, which has
+  // one — cannot reach in. Chrome stops painting the clip there and so does this.
+  if (style.position === 'fixed') break;
+}
+
+// Pressed. This is a `file://` page, which is the one case the switch refuses
+// out loud instead of navigating — and that sentence is the proof the press
+// reached the handler at all.
+sw.click();
+await new Promise(go => setTimeout(go, 100));
+out.said = document.getElementById('state').textContent;
+out.checkedAfter = sw.getAttribute('aria-checked');
+out.busyAfter = sw.getAttribute('aria-busy');
+
+// And the look it wears while a real page is on its way, driven as the class it
+// is rather than by pressing it, because over http the press takes the document
+// away before anything can be measured.
+sw.classList.add('waiting');
+out.knobWaiting = knobAt();
+out.waitingOpacity = getComputedStyle(sw).opacity;
+return out;
+"""
+
+
+@pytest.mark.parametrize("asked, on", [("", True), (PLAIN, False)])
+def test_the_editor_switch_says_which_editor_it_is_and_that_it_reloads(
+    client: TestClient, tmp_path: Path, asked: str, on: bool
+):
+    """jcanton, 2026-08-20: "can we have the editor toggle as a toggle switch next
+    to the three views buttons (?edit / ?both / ?view)".
+
+    A switch and not a fourth segment. The three segments are one control with
+    three states; which editor you are writing in is a two-state setting, and a
+    fourth icon in that box would read as a fourth way of looking at the document.
+
+    **It is a navigation and it has to be honest about that.** It decides which
+    bytes the SERVER rendered — 594 KB of them — and the preference that would
+    remember it is this browser's own store, which the server cannot read. So
+    flipping it cannot be a class swap, and a switch whose knob completes its
+    travel and is then wiped out by a page load reads as one that worked and then
+    glitched. The knob does not move on the press; the resting `title` says what
+    pressing it will do AND that it reloads; the press says the same thing in the
+    live region.
+
+    Both ways round, because a switch that draws itself the same whatever the page
+    is carrying is a picture of a switch.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{asked}").text, tmp_path / f"switch{asked}.html",
+        1400, _THE_SWITCH, patience=6800,
+    )
+
+    # A real `<button>`, which is what makes Enter and Space work without a line
+    # of code — and a synthetic `keydown` cannot prove that, because an untrusted
+    # event fires no default action. What can be proved is that nothing here
+    # opted out of it: not a `<div>`, not `tabindex="-1"`, and it takes the ring.
+    assert got["tag"] == "BUTTON" and got["tabindex"] is None
+    assert got["focusVisible"], "the switch cannot take keyboard focus"
+
+    # The state in the accessibility tree, not only in a class.
+    assert got["role"] == "switch"
+    assert got["checked"] == str(on).lower(), (
+        f"the switch says {got['checked']} on a page that "
+        f"{'carries' if on else 'does not carry'} the second editor"
+    )
+    assert got["name"] == "Ace editor", got["name"]
+    assert got["labelled"] is None, (
+        "an `aria-label` would replace the visible words, so what a screen reader "
+        "says and what a speech-control user can say would stop being the same"
+    )
+    assert "reloads the page" in got["title"], got["title"]
+    assert ("the plain box" if on else "the Ace editor") in got["title"], got["title"]
+
+    # Beside the segments, and wearing the app's one look. `.views` draws the
+    # rectangle its three segments share; this draws its own, because it is its
+    # own control.
+    assert got["besideTheViews"] == "views"
+    assert got["border"] == "1px solid" and got["radius"] == "3px"
+
+    # The ring is drawn OUTSIDE the border box, so the failure to look for is an
+    # ancestor that throws it away. `article.entity.full` is `overflow: hidden`
+    # and the surface's own padding is what keeps the ring inside it.
+    assert got["outline"] == "2px solid", got["outline"]
+    assert got["clippers"] == [], (
+        f"the focus ring is clipped away by {got['clippers']}"
+    )
+
+    # Pressed, on a page with no server behind it: it says so and goes nowhere.
+    assert "no server to ask" in got["said"], (
+        f"the switch pressed on a saved copy of the page said {got['said']!r}"
+    )
+    assert got["checkedAfter"] == got["checked"], (
+        "the switch flipped itself over a page that is not going to change"
+    )
+    assert got["busyAfter"] is None, "it claims to be fetching a page it refused to fetch"
+
+    # At rest the knob is at one end or the other; waiting, it is between them,
+    # because between them is what is true — this page will never be the page with
+    # the other editor in it and the one that is has not arrived.
+    assert got["knobAtRest"] == (14 if on else 2), got["knobAtRest"]
+    assert 2 < got["knobWaiting"] < 14, got["knobWaiting"]
+    assert float(got["waitingOpacity"]) < 1
+
+
+def test_the_editor_switch_takes_a_focus_ring_that_is_actually_painted(
+    client: TestClient, tmp_path: Path
+):
+    """The other half of the ring, and the half a resolved value cannot give.
+
+    `outline: 2px solid` resolving on the element says nothing about paint — the
+    frozen column's edge resolved to exactly the value every test asserted and
+    Chrome drew no line at all. So: the same page twice, and the only difference
+    is which element has focus.
+
+    **What this does NOT catch, said rather than implied, because it was measured
+    while writing it:** clipping. `overflow: hidden` on `.editbar` throws the ring
+    away above and below the switch and leaves the two ends of it, and the two
+    screenshots still differ — so this passes over a ring that is two thirds
+    gone. That is the sibling test's job, and it does it by asking which ancestors
+    would crop the ring's rectangle rather than by counting pixels. The two are
+    kept apart because they fail for different reasons and a merged one would be
+    weaker than either.
+    """
+    from browser import screenshot
+
+    browser = chrome()
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+
+    def shot(name: str, focus: str) -> bytes:
+        html = tmp_path / f"ring-{name}.html"
+        html.write_text(page.replace(
+            "</body>",
+            "<script>setTimeout(() => {"
+            "  document.getElementById('toggle').click();"
+            "  document.getElementById('view-both').click();"
+            f" {focus}"
+            "}, 900);</script></body>",
+        ))
+        return screenshot(browser, html, tmp_path / f"ring-{name}.png", 1400, 900)
+
+    dark = shot("off", "")
+    lit = shot("on", "document.getElementById('editorswitch')"
+                     ".focus({focusVisible: true});")
+    assert dark != lit, (
+        "focusing the editor switch changed not one pixel, so the ring the shell "
+        "draws for it is being clipped away or is not being drawn at all"
+    )
 
 
 _A_FAILED_PREVIEW = """
@@ -2551,7 +2911,7 @@ def test_a_preview_that_fails_says_so_and_never_writes_the_word_undefined(
     retried for that text.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "failed.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "failed.html", 1400,
         _A_FAILED_PREVIEW, patience=2800,
     )
 
@@ -2683,7 +3043,7 @@ def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_type
     * and the choice is remembered under the one versioned key.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "status.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "status.html", 1400,
         _STATUS, patience=4800,
     )
 
@@ -2741,7 +3101,7 @@ def test_the_length_says_the_ceiling_before_a_save_is_refused(
     from openproj.model import MAX_BODY_BYTES
 
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "long.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "long.html", 1400,
         _LONG % (MAX_BODY_BYTES // 2, MAX_BODY_BYTES + 1000), patience=4800,
     )
 
@@ -2815,7 +3175,7 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
     got = measured_in(
         chrome(),
         _before_the_page_runs(
-            client.get(f"/detail/{TASK}").text, _SEED % '{"indent": 2, "autosave": 10}'
+            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"indent": 2, "autosave": 10}'
         ),
         tmp_path / "draft.html", 1400, _DRAFTING, patience=4800,
     )
@@ -2896,7 +3256,7 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     somebody their writing is somewhere it is not. That is the branch that
     decides not to act, and this repository has shipped three of them in silence.
     """
-    page = client.get(f"/detail/{TASK}").text
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
 
     # One key, versioned, and every read and write of it through `remembered`.
     assert page.count("const EDITOR_KEY = 'openproj:editor:1';") == 1
@@ -2906,8 +3266,22 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     # preference store that quietly grows a field is one nothing ever forgets.
     assert "remembered.set(EDITOR_KEY," in page
     assert "EDITOR_KEPT.map(k => [k, EDITOR[k]])" in page
-    assert re.search(r"const EDITOR_KEPT = \[[^\]]*'editor'[^\]]*\];", page), (
-        "which editor a person chose is a preference and has to be one of the kept fields"
+    # Which editor a person chose is still kept — but it is written on a condition
+    # and is therefore NOT one of the unconditional names, and that is the whole
+    # point of it since Ace became the default on 2026-08-20. `EDITOR.editor`
+    # resolves to `ace` for everybody who has said nothing, so storing it beside
+    # the others would make the next load read the default back as a decision —
+    # and `chosen` is what `bodySurface` reads to decide whether a page that
+    # cannot honour a decision should say so out loud. One `rememberEditor({mode})`
+    # from choosing a view would otherwise have signed every reader up to be told,
+    # on every record, that a library they never asked for is missing.
+    assert not re.search(r"const EDITOR_KEPT = \[[^\]]*'editor'[^\]]*\];", page), (
+        "the resolved editor is stored unconditionally, so the default is written "
+        "down as though somebody had chosen it"
+    )
+    assert "if (EDITOR.chosen) kept.editor = EDITOR.editor;" in page, (
+        "which editor a person chose is a preference and has to be kept when it IS "
+        "a choice"
     )
     assert not re.search(r"localStorage\.\w+\('openproj:editor", page), (
         "a bare localStorage call for the preference"
@@ -3028,7 +3402,7 @@ def test_the_box_and_the_column_beside_it_are_one_face(client: TestClient, tmp_p
     it and one to a browser. That is why this is here and not there.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "face.html", 1400,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "face.html", 1400,
         _ONE_FACE, patience=2800,
     )
 
@@ -3378,7 +3752,9 @@ def test_the_keymap_a_person_chose_is_the_one_the_next_session_opens_in(
 _STICKY_EDITOR = r"""
   return {search: location.search, editor: EDITOR.editor,
           surface: SURFACE.onSplice ? 'ace' : 'textarea',
-          kept: remembered.map('openproj:editor:1').editor,
+          // `?? null`, or `JSON.stringify` drops the key entirely and the case
+          // that asks for nothing to have been stored reads as a broken report.
+          kept: remembered.map('openproj:editor:1').editor ?? null,
           said: document.getElementById('state').textContent};
 """
 
@@ -3395,10 +3771,17 @@ def test_the_editor_a_person_chose_is_carried_back_into_the_address(
     never work — there is no server to render the other bytes — so it says so
     instead of reloading a file to add a parameter to it, which is the branch this
     drives: `measured_in` opens a `file://` URL.
+
+    Three cases, and the third is the one the 2026-08-20 flip created: with Ace on
+    the default side of the parameter, the preference that now has to be carried
+    back into the address is the one for the PLAIN box, on a page that already
+    arrived carrying the library.
     """
     got = measured_in(
         chrome(),
-        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "ace"}'),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"editor": "ace"}'
+        ),
         tmp_path / "sticky-editor.html", 1400, _STICKY_EDITOR, patience=4800,
     )
     assert got["editor"] == "ace", "the remembered choice was not read"
@@ -3419,18 +3802,64 @@ def test_the_editor_a_person_chose_is_carried_back_into_the_address(
     # `may_write` refuses, and here is the same page opened at `?editor=ace`.
     refused = measured_in(
         chrome(),
-        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "ace"}'),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"editor": "ace"}'
+        ),
         tmp_path / "sticky-refused.html", 1400, _STICKY_EDITOR, query="?editor=ace",
         patience=4800,
     )
     assert refused["surface"] == "textarea"
     assert "does not carry the second editor" in refused["said"]
-    assert refused["kept"] == "textarea", (
+    assert refused["kept"] == "plain", (
         "the address asked, the answer was no, and this browser will go on asking — "
         "one redirect a page, for ever, for something it cannot have"
     )
+    # The third: the library IS in the page, because that is what a writer who says
+    # nothing gets now, and this browser has chosen the plain box. The reload that
+    # would fetch the smaller page cannot happen over `file://`, so what is being
+    # asked here is the half that survives without it — the choice is still
+    # honoured, and the 594 KB sitting in the document is not mounted on the
+    # strength of being there.
+    opted_out = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'
+        ),
+        tmp_path / "sticky-plain.html", 1400, _STICKY_EDITOR, patience=6800,
+    )
+    assert opted_out["editor"] == "plain"
+    assert opted_out["surface"] == "textarea", (
+        "the second editor mounted itself over somebody who had chosen the box, "
+        "because its bytes happened to be in the page"
+    )
+    assert opted_out["said"] == "", (
+        "the plain box is what this browser asked for and getting it is not news: "
+        f"{opted_out['said']!r}"
+    )
+    # The fourth, and it is the one the flip made necessary rather than merely
+    # changed. `ace` is the fallback now, so a browser that has never said
+    # anything resolves to it — and this page has no library, because `may_write`
+    # or the address said so. Without `EDITOR.chosen` telling a decision that
+    # cannot be honoured apart from a default that was never going to be, the
+    # sentence above would be read out to every signed-out reader on every record,
+    # about a thing they never asked for, and the choice they never made would be
+    # written down as `plain`.
+    never_asked = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "sticky-silent.html", 1400, _STICKY_EDITOR, patience=4800,
+    )
+    assert never_asked["surface"] == "textarea"
+    assert never_asked["said"] == "", (
+        "a page nobody asked anything of announced the absence of a library: "
+        f"{never_asked['said']!r}"
+    )
+    assert never_asked["kept"] is None, (
+        "saying nothing was written down as a choice, so the next page that cannot "
+        "honour it will say so out loud"
+    )
+
     # And the source of the half that only a server can show: the navigation is a
-    # `replace` on an http(s) URL, and an opt-in carried forward is not a place
+    # `replace` on an http(s) URL, and a preference carried forward is not a place
     # the back button should return to.
     page = client.get(f"/detail/{TASK}").text
     sticky = re.search(r"function stickyEditor\(\) \{.*?\n\}", page, re.S)
@@ -3506,7 +3935,9 @@ def test_the_full_page_surface_is_a_writing_surface_at_a_window_that_is_not_wide
     two-column page and cannot see the stacked one at all. This is a question
     about which track a box ended up in, which is layout.
     """
-    page = client.get(f"/detail/{TASK}").text if where == "detail" else client.get("/new").text
+    page = client.get(
+        f"/detail/{TASK}{PLAIN}" if where == "detail" else f"/new{PLAIN}"
+    ).text
     got = measured_in(chrome(), page, tmp_path / f"narrow-{where}.html", 900, _NARROW_FULL_PAGE)
 
     assert got["width"] == 900 and got["fixed"] == "fixed"
@@ -3563,7 +3994,7 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
     `openproj:editing` from the one place that did it.
     """
     got = measured_in(
-        chrome(), client.get("/new").text, tmp_path / "template.html", 1400, _TEMPLATE_SWAP
+        chrome(), client.get(f"/new{PLAIN}").text, tmp_path / "template.html", 1400, _TEMPLATE_SWAP
     )
 
     assert got["start"]["numbers"] > 1 and got["start"]["length"] > 0, (
@@ -3664,7 +4095,7 @@ def test_the_history_buttons_use_the_browsers_own_stack_when_there_is_no_room(
     questions about pixels and both are asked of Chrome.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "history.html",
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "history.html",
         1400, _HISTORY_WITH_NO_ROOM,
     )
 
@@ -3883,7 +4314,7 @@ def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_s
     happened, and the compare-and-swap is what settles it on the next press.
     """
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "dropped.html", 1200,
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "dropped.html", 1200,
         _CONNECTION_GONE, patience=4800,
     )
 
