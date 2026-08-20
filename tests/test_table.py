@@ -60,7 +60,6 @@ import pygit2
 import pytest
 from browser import chrome, measured_in, screenshot
 from fastapi.testclient import TestClient
-from openproj.model import KIND_NAMES
 from test_store import commit_directly
 from test_web import (
     ANN,
