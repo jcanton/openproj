@@ -3736,3 +3736,137 @@ def test_the_history_buttons_reach_the_second_editors_own_stack(
     )
     assert got["undone"]["redo"] is False, "and nothing was offered back the other way"
     assert got["redone"] == "ACE ", "redo did not answer a keyboard press"
+
+
+_CONNECTION_GONE = """
+const area = document.querySelector('textarea[name=body]');
+const status = document.getElementById('upload');
+const region = document.getElementById('state');
+const loose = [];
+addEventListener('unhandledrejection', event => {
+  loose.push(String(event.reason));
+  event.preventDefault();
+});
+document.getElementById('toggle').click();
+const real = window.fetch;
+const set = text => {
+  area.value = text;
+  area.dispatchEvent(new Event('input', {bubbles: true}));
+  area.focus();
+  area.setSelectionRange(text.length, text.length);
+};
+const pasteImage = name => {
+  const data = new DataTransfer();
+  data.items.add(new File(['x'], name, {type: 'image/png'}));
+  area.focus();
+  area.dispatchEvent(new ClipboardEvent(
+    'paste', {clipboardData: data, bubbles: true, cancelable: true}));
+};
+const settle = ms => new Promise(go => setTimeout(go, ms));
+
+// 1. The upload, with the connection going while the request is in the air.
+set('before\\n');
+window.fetch = async () => { throw new TypeError('Failed to fetch'); };
+pasteImage('diagram.png');
+await settle(200);
+const dropped = {body: area.value, status: status.textContent, said: region.textContent};
+// And one press of undo still reaches the paragraph, so taking the placeholder
+// away did not cost the stack the placeholder was pushed onto.
+document.execCommand('undo');
+const afterUndo = area.value;
+
+// 2. The upload lands, and the placeholder is not there any more — undone, typed
+// over, or replaced wholesale by a restored draft while it was in the air.
+set('before\\n');
+let release;
+window.fetch = async () => {
+  await new Promise(go => { release = go; });
+  return {ok: true, status: 200,
+          json: async () => ({path: 'assets/abc.png', fresh: true, commit: 'c0ffee'})};
+};
+pasteImage('diagram.png');
+await settle(60);
+const waiting = area.value;
+set('somebody typed over the whole thing\\n');
+release();
+await settle(120);
+const orphaned = {body: area.value, status: status.textContent, said: region.textContent};
+
+// 3. Save, on the same dead connection. The one everybody presses.
+set('a different paragraph\\n');
+region.textContent = '';
+window.fetch = async () => { throw new TypeError('Failed to fetch'); };
+let threw = null;
+try { await save(); } catch (error) { threw = String(error); }
+await settle(60);
+const saving = {said: region.textContent, enabled: !document.getElementById('save').disabled};
+
+window.fetch = real;
+return {dropped, afterUndo, waiting, orphaned, threw, saving, loose};
+"""
+
+
+def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_still_true(
+    client: TestClient, tmp_path: Path
+):
+    """Both `await fetch` sites on this page were `try`/`finally` with no `catch`.
+
+    A rejection escapes a `finally`. It runs the block and carries on unwinding,
+    so the two lines that take a "still happening" sentence back down were never
+    reached and the page was left asserting something that had stopped being true:
+    the upload with `![uploading diagram.png…]()` sitting in the document under a
+    bar reading `uploading diagram.png…`, and Save with the live region reading
+    `saving…` for ever and the button still enabled.
+
+    Fixed together in one commit on purpose. A `catch` on the uploader alone
+    would have left the strictly worse silence on the path everybody walks — an
+    image paste is a gesture some people never make, and Save is the button the
+    whole form exists for.
+
+    Neither sentence guesses. A fetch rejects when the answer is lost as readily
+    as when the request never left, so Save says what to do rather than what
+    happened, and the compare-and-swap is what settles it on the next press.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "dropped.html", 1200,
+        _CONNECTION_GONE, budget=6000,
+    )
+
+    assert got["loose"] == [], f"a rejection still escapes: {got['loose']}"
+    assert got["threw"] is None, f"and `save()` rejects at its caller: {got['threw']}"
+
+    assert got["dropped"]["body"] == "before\n", (
+        "the placeholder is still in the document over a connection that is gone: "
+        f"{got['dropped']['body']!r}"
+    )
+    assert "diagram.png" in got["dropped"]["status"] and (
+        "not uploaded" in got["dropped"]["status"]
+    ), f"the bar still says the upload is happening: {got['dropped']['status']!r}"
+    assert got["dropped"]["said"] == got["dropped"]["status"], (
+        "the sentence is on the screen and nowhere a screen reader will find it"
+    )
+    # Taking the token away is an edit like any other, so it is one undo step and
+    # not a `.value` write — which would have wiped whatever was typed before it.
+    assert got["afterUndo"] != "before\n", "removing the placeholder cost the undo stack"
+
+    assert got["waiting"] == "before\n![uploading diagram.png…]()", (
+        f"the placeholder was never inserted, so step 2 asks nothing: {got['waiting']!r}"
+    )
+    assert got["orphaned"]["body"] == "somebody typed over the whole thing\n", (
+        "the upload wrote its markdown over text that is not the placeholder"
+    )
+    assert "assets/abc.png" in got["orphaned"]["status"], got["orphaned"]["status"]
+    assert "uploaded" != got["orphaned"]["status"], got["orphaned"]["status"]
+    assert "type ![diagram](assets/abc.png)" in got["orphaned"]["status"], (
+        "the blob was committed and the line that reaches it was not handed over, "
+        f"so the upload is unreachable: {got['orphaned']['status']!r}"
+    )
+    assert got["orphaned"]["said"] == got["orphaned"]["status"]
+
+    assert "saving" not in got["saving"]["said"], (
+        f"the live region is still saying the save is happening: {got['saving']['said']!r}"
+    )
+    assert "not saved" in got["saving"]["said"] and (
+        "Press Save again" in got["saving"]["said"]
+    ), got["saving"]["said"]
+    assert got["saving"]["enabled"], "the way out of a dropped connection is the same button"

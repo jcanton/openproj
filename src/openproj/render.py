@@ -9392,12 +9392,43 @@ function attachUploads(surface, status) {
       if (response.ok && answer.fresh) committed = answer.commit;
       const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '');
       const at = surface.text().indexOf(token);
-      if (at >= 0) {
-        surface.splice(at, at + token.length, response.ok ? `![${alt}](${answer.path})` : '');
+      // The placeholder is not there any more. It was undone, or typed over, or
+      // the whole document was replaced by a restored draft while the upload was
+      // in the air — all of which take longer than they sound over a phone
+      // connection. This used to be `if (at >= 0) { … }` with nothing else: the
+      // blob was committed, nothing was inserted, and the bar said "uploaded"
+      // over a document with no image in it. The commit is the server's and
+      // cannot be taken back from here, so the honest answer is to say the file
+      // is in the plan and hand over the line that reaches it.
+      if (at < 0) {
+        status.textContent = response.ok
+          ? `${answer.path} is in the plan, but the line that pointed at it is gone — `
+            + `type ![${alt}](${answer.path}) where you want it`
+          : (answer.detail || 'that upload was refused');
+        announce(status.textContent);
+        return;
       }
+      surface.splice(at, at + token.length, response.ok ? `![${alt}](${answer.path})` : '');
       status.textContent = response.ok
         ? (answer.fresh ? `${answer.path} uploaded` : `${answer.path} — already in the plan`)
         : (answer.detail || 'that upload was refused');
+    } catch (error) {
+      // The connection went while the request was in the air: wifi dropped, the
+      // laptop slept, the tab was offline before the press. This was `try` and
+      // `finally` with no `catch`, so the rejection escaped as an unhandled one
+      // and what a person was left looking at was the placeholder sitting in
+      // their document for ever with `uploading diagram.png…` under it — a
+      // sentence that says the thing is still happening, about a thing that
+      // stopped.
+      //
+      // The token goes back out through the surface and not by assignment, so
+      // one Ctrl+Z is still one step; and the sentence names the file, because
+      // a paste of three images that half fails is otherwise unreadable.
+      const at = surface.text().indexOf(token);
+      if (at >= 0) surface.splice(at, at + token.length, '');
+      status.textContent =
+        `${file.name || 'that image'} was not uploaded — ${error.message}`;
+      announce(status.textContent);
     } finally {
       dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
     }
@@ -11015,6 +11046,21 @@ async function save() {
     committed = answer.commit;
     forgetDraft();
     location.reload();
+  } catch (error) {
+    // The same missing `catch` as the uploader's, and worse, because this is the
+    // path everybody walks. `announce('saving…')` above puts a word in the live
+    // region that only the answer takes back out; with the rejection escaping,
+    // the page went on saying "saving…" for ever, with Save still enabled and
+    // nothing anywhere to say whether the work had landed.
+    //
+    // And it does not claim to know. A fetch rejects when the answer is lost as
+    // readily as when the request never left, so "nothing was sent" would be a
+    // guess. Pressing Save again is the whole of the recovery either way: the
+    // draft is still in this browser, `BASE.value` still holds the commit this
+    // page was rendered at, and if the write did land, the compare-and-swap
+    // refuses the second press with the conflict report rather than repeating it.
+    announce(`not saved — ${error.message}. Press Save again: if it did land, `
+             + 'the next press is refused rather than repeated.');
   } finally {
     // Announced even when refused, or one 409 leaves every event after it held
     // back and the banner never appears again.
