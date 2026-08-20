@@ -2056,14 +2056,41 @@ def test_the_glyph_that_takes_somebody_out_of_a_cycle_says_so_and_asks(
     assert 'class="confirm" hidden>' in minted
 
 
-def test_the_save_button_follows_what_it_commits(client: TestClient):
-    """F15. Every commit action on this page sat above the form it commits, which
-    on a betting table means a screen away from the row being argued about."""
+def test_the_save_button_is_in_reach_of_the_whole_betting_table(client: TestClient):
+    """One Save for this page, at the top of it, where the detail page and the
+    create form keep theirs — jcanton, 2026-08-20, "consistency!".
+
+    F15's argument was that every commit action here sat ABOVE the form it
+    commits, a screen away from the row being argued about, and it moved this one
+    to the foot. What that bought was reach, and the sticky it shipped in the same
+    commit is what delivers reach: this page is one record and one Save, and a bar
+    that never leaves the window is a screen away from nothing.
+
+    It had stopped being either. `#commitbar { top: 0; bottom: auto }` was written
+    for the detail page and put in `_DETAIL_STYLE`, which this page loads, so the
+    bar lost `bottom: 0` while staying last in the markup — measured in Chrome at
+    1400x900, 1113px down a 1206px page, on screen from nowhere at the top of it,
+    with this test green because it only ever asked about markup order.
+
+    So the coordinate is gone and what it stood for is asked instead: the bar is
+    sticky, and it is ahead of the three things a person edits here rather than
+    behind all of them.
+
+    The pixels are asked once, on the create page, in
+    `test_the_create_button_is_reachable_from_anywhere_in_the_form`. All four bars
+    resolve to the same declaration in the same shell rule now — which
+    `tests/test_cascade.py::test_every_commit_bar_sticks_to_the_same_edge_and_one_
+    rule_decides_it` establishes by name, per page — so a second Chrome run here
+    would be measuring the same declaration through a different page. What is
+    left over that a browser would have caught, and that this asks instead, is
+    where the markup puts the bar.
+    """
     page = client.get("/cycle/37").text
 
-    assert page.index('id="commitbar"') > page.index('<form id="setup"')
-    assert page.index('id="commitbar"') > page.index('<table id="bets"')
-    assert "position: sticky; bottom: 0;" in page, "and stays in reach"
+    assert page.index('id="commitbar"') < page.index('<form id="setup"')
+    assert page.index('id="commitbar"') < page.index('<table id="bets"')
+    assert page.index('id="commitbar"') < page.index('id="notes"')
+    assert "position: sticky; top: 0; bottom: auto;" in page, "and stays in reach"
 
 
 def test_the_cycle_page_says_what_is_unsaved_and_that_a_save_landed(client: TestClient):

@@ -2677,16 +2677,33 @@ button:hover, select:hover, .button:hover { border-color: var(--accent);
    border, the same background, the same hover — and the copy is how it came to
    be the one control still drawn with the old corner after the line above moved
    to 3px. A control that wants the default says nothing. */
-/* The one action that writes, on every page that writes. It follows the form it
-   commits instead of sitting above it, and it is sticky rather than merely last:
-   these forms are the length of the plan, and a Save at the far end of one is a
-   Save you go looking for while holding an unsaved decision in your head.
+/* The one action that writes, on every page that writes, and it is at the TOP of
+   what it writes — jcanton, 2026-08-20, "move the create bar up top too,
+   consistency!".
+
+   The stickiness is what delivers reachability and the edge it sticks to never
+   did: a bar that is on screen wherever you have scrolled to is as reachable
+   from the head of a form as from its foot. So the edge is free to be the one
+   that puts the controls where the eye already is — under the button that opened
+   the edit, beside the record's identity, which is where the detail page put
+   Save and Cancel when Edit moved up there.
+
+   `bottom: auto` is as load-bearing as `top`: with both set the browser keeps
+   the first and the bar stays at the foot.
+
    Defined here rather than per page because four pages have one, and four copies
-   of a commit bar is four answers to "have I saved this yet". */
+   of a commit bar is four answers to "have I saved this yet". It was per page for
+   half of it, and that is exactly how the create form and the cycle page came to
+   have a bar stuck to neither edge: `#commitbar { top: 0; bottom: auto }` was
+   written for the detail page and put in `_DETAIL_STYLE`, which four pages load —
+   so two pages whose bar is still last in the markup lost `bottom: 0` to it and
+   became a plain block at the foot, off screen from the top of a form that
+   scrolls. Measured in Chrome at 1400x900 before the move: 1178px down the create
+   page and 1113px down the cycle page, with nothing on screen at all. */
 .commitbar {
   /* Under the suggestion popup (20) and under the shell's banner (40): a bar
      that is always on screen is always in front of something. */
-  position: sticky; bottom: 0; z-index: 10;
+  position: sticky; top: 0; bottom: auto; z-index: 10;
   /* `display: flex` beats `[hidden]`'s `display: none` — the attribute is a UA
      rule and this is an author one. Every menu on the table page opened on load
      the day that was forgotten, so it is spelled out here. */
@@ -7005,6 +7022,36 @@ _GRAPH = """
     dichromat cannot use. The count says how much of the plan survived the
     filters. Neither is a control, and between them they were two of the six rows
     that left 268px of an 806px window for the drawing. -#}
+{% if editable %}
+{#- Above the drawing it writes, which is where every other page now keeps the
+    control that commits it — jcanton, 2026-08-20, "consistency!". It was under
+    the canvas, on F15's argument that a commit action belongs below the form it
+    commits; what that argument actually bought was reachability, and the sticky
+    it shipped alongside is what delivers that from either edge.
+
+    Moving it costs the drawing nothing, and that is measured rather than
+    asserted: `measureRoom` sizes the canvas to `innerHeight - above - below` off
+    the laid-out page, so a bar that crosses from `below` to `above` moves itself
+    from one term to the other. `--room` went 595px to 607px at 1400x900 — the
+    canvas GAINED twelve pixels, because up here the bar's 1.5rem top margin
+    collapses with the filter row's and down there it did not. What the move
+    actually buys is the short window: below 430px the page finally scrolls, and a
+    bar last in the markup under a `top: 0` shell rule is a bar you cannot see
+    from the top of the page. Measured at 1400x380, both ways. -#}
+<div class="commitbar" id="commitbar">
+  <button type="button" id="connect">Edit dependencies</button>
+  {#- A mode, for the same reason the other one is: a plain drag on this canvas
+      means "move the node" and always has, so the gesture that files one record
+      inside another has to say which it is. What is new is that the dragging,
+      the drop target and the highlighting are the extension's now — the version
+      of this written here could not tell the reader where the node would land,
+      because the box it would land in moves with the node. -#}
+  <button type="button" id="save" hidden>Save</button>
+  <button type="button" id="discard" hidden>Reset</button>
+  <span id="state" role="status"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</div>
+{% endif %}
 <div class="canvas">
 {#- Over the drawing rather than above it — jcanton, 2026-08-20, to get the
     vertical space back. The canvas is the tallest thing on the page and the
@@ -7056,29 +7103,6 @@ _GRAPH = """
     <button type="button" id="clear-filters" hidden>Clear filters</button>
   </div>
 </div>
-{% if editable %}
-{#- Under the canvas it writes to, like every other page's primary action: Create,
-    Edit and Save the setup all moved below their forms and the graph was the
-    fourth page with one. Sticky as well as last, because the drawing you are
-    committing fills the window and a Save at the far end of it is a Save you go
-    looking for while holding an unsaved decision in your head. Sticky is also why
-    the canvas above is measured rather than assumed: a bar that is always on
-    screen is always in front of something, and for two rounds that something was
-    140px of graph. -#}
-<div class="commitbar" id="commitbar">
-  <button type="button" id="connect">Edit dependencies</button>
-  {#- A mode, for the same reason the other one is: a plain drag on this canvas
-      means "move the node" and always has, so the gesture that files one record
-      inside another has to say which it is. What is new is that the dragging,
-      the drop target and the highlighting are the extension's now — the version
-      of this written here could not tell the reader where the node would land,
-      because the box it would land in moves with the node. -#}
-  <button type="button" id="save" hidden>Save</button>
-  <button type="button" id="discard" hidden>Reset</button>
-  <span id="state" role="status"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</div>
-{% endif %}
 <script id="elements" type="application/json">{{ elements|tojson }}</script>
 {#- `model.PARENT_KINDS`: which kind may hold which. The extension asks before it
     lets go, so a drop the server would refuse is one the canvas never offers. -#}
@@ -11332,6 +11356,28 @@ _NEW = """
       between the two is a switcher somebody has to find twice. There is no Edit
       button beside it because this article never leaves edit mode. -#}
   <p class="editbar">{{ viewbar }}</p>
+  {#- Create, and the count of what is unsaved, at the head of the form rather
+      than at its foot — jcanton, 2026-08-20, "move the create bar up top too,
+      consistency!". The detail page moved its bar up on the same day and the two
+      are the same document in two modes: a control that changes place between
+      reading a record and making one is a control somebody has to find twice.
+
+      The argument that put it at the foot is in the shell's `.commitbar` and it
+      was half right. It said the last thing on screen after filling this form in
+      was the body box, so the action was a scroll back up — true of a STATIC bar
+      above a long form, and the fix it shipped was two things at once. The
+      stickiness is the half that delivered it, and a bar stuck to the top is on
+      screen from wherever the form has got to just as surely as one stuck to the
+      foot. Measured in Chrome, filled in, at the top, the middle and the end.
+
+      Not hidden, unlike the detail page's: there, editing is a session you enter
+      and the bar arrives with it; here the page IS the session and a form whose
+      only way to commit it appears later is a form with no way to commit it. -#}
+  <div class="commitbar" id="commitbar">
+    <span id="unsaved">Nothing is written until you press Create</span>
+    <button type="button" id="save">Create</button>
+    <span id="state" role="status"></span>
+  </div>
   <form id="edit" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <div class="panes">
@@ -11402,11 +11448,6 @@ _NEW = """
       </div>
     </div>
   </form>
-  <div class="commitbar" id="commitbar">
-    <span id="unsaved">Nothing is written until you press Create</span>
-    <button type="button" id="save">Create</button>
-    <span id="state" role="status"></span>
-  </div>
 </article>
 {#- The second editor, and 594 KB of it. It is what a writer gets unless the
     address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
@@ -13381,14 +13422,12 @@ article.entity.full.view-view .markbar { display: none; }
 
 
 _DETAIL_STYLE = """
-/* The commit bar sticks to the TOP on a record, not to the bottom. The shell
-   makes it `bottom: 0` because three other pages want it where their form ends;
-   here it sits under the button that opened the edit, and the whole point of
-   moving it was to put the three controls that begin, end and abandon one edit
-   in one place. Still sticky, so it is still reachable from the foot of a long
-   shaping document. `bottom: auto` as well as `top`, or it is stuck to both and
-   the browser keeps the first. */
-#commitbar { top: 0; bottom: auto; }
+/* No `#commitbar` here. The bar sticks to the top on this page because the SHELL
+   says every commit bar does, which is one rule for the four pages that draw
+   one — and an id override in this sheet was the wrong shape for it twice over:
+   it beat the shell only on the pages that load this sheet, and four do, of which
+   two kept their bar at the foot of the markup and so ended up stuck to neither
+   edge. See `.commitbar` in the shell. */
 
 .tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
@@ -14779,6 +14818,27 @@ _CYCLE = """
    below is the record Save would write.</p>
 {% endif %}
 
+{% if editable %}
+{#- One Save for the whole page, at the top of it, where the detail page and the
+    create form now keep theirs. It was last in the markup — under the setup form,
+    the roster, the betting table and the notes box — which is a long way from the
+    row being argued about at a betting table, and since the shell's
+    `#commitbar { top: 0 }` reached this page through `_DETAIL_STYLE` it was not
+    even stuck to the foot any more: measured in Chrome at 1400x900, the bar sat
+    1113px down a 1206px page and was on screen from nowhere at the top of it.
+
+    The old argument here was F15 — "every commit action on this page sat above
+    the form it commits". What that fix actually bought was reachability, and the
+    sticky it shipped alongside is what keeps it: this page is one record and one
+    Save, and the bar is on screen at both ends of it either way. -#}
+<div class="commitbar" id="commitbar">
+  <span id="unsaved">Nothing to save</span>
+  <button type="button" id="save" disabled>Save</button>
+  <span id="state" role="status"></span>
+  <input type="hidden" id="base" value="{{ base_commit }}">
+</div>
+{% endif %}
+
 {#- Three boxes that decide when the cycle runs and how long for, and not one of
     them had a name: the word beside each is a `<dt>`, which is a caption to a
     reader and nothing to the accessibility tree. -#}
@@ -14938,12 +14998,6 @@ what would make it a bet next time. Markdown.">{{ c.raw_body }}</textarea>
 {% endif %}
 
 {% if editable %}
-<div class="commitbar" id="commitbar">
-  <span id="unsaved">Nothing to save</span>
-  <button type="button" id="save" disabled>Save</button>
-  <span id="state" role="status"></span>
-  <input type="hidden" id="base" value="{{ base_commit }}">
-</div>
 {{ combobox }}
 <script>
 const BASE = document.getElementById('base');

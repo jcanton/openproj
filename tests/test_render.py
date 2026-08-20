@@ -362,12 +362,26 @@ def test_the_graph_says_which_of_the_three_emptinesses_it_is(rendered: Path):
     assert "elements: ELEMENTS || []," in graph
 
 
-def test_the_graph_commits_below_the_canvas_like_every_other_page(
+def test_the_graph_commits_in_the_same_place_every_other_page_does(
     rendered: Path, seed_index: Index
 ):
-    """F15 moved Create, Edit and Save the setup below the forms they commit; the
-    graph is the fourth page with a primary action and was missed, so Save for a
-    dependency sat above the 78vh canvas the dependency is drawn on.
+    """The fourth page with a commit bar, and it is where the other three are —
+    above what it writes, jcanton 2026-08-20, "consistency!".
+
+    Twice re-argued, and both times the coordinate was the part that was wrong.
+    F15 moved this bar BELOW the canvas because Create, Edit and Save the setup
+    had all moved below the forms they commit; what those moves actually bought
+    was reach, and the `position: sticky` each shipped alongside is what delivers
+    reach from either edge. So when the shell's one rule became `top: 0`, a bar
+    last in the markup was a bar you could not see from the top of a page short
+    enough to scroll — measured in Chrome at 1400x380, off screen at scrollY 0.
+
+    It costs the drawing nothing, which is the objection that would otherwise
+    stop it: `measureRoom` sizes the canvas from what is above the box and what is
+    below it, both measured, so a bar crossing from one term to the other lands in
+    the other. Measured, `--room` went 595px to 607px at 1400x900 — the canvas
+    gained twelve pixels to a margin that collapses up there and did not down
+    there.
 
     Served rather than rendered: a static export has no server to write to, so it
     has no action bar at all — which is the other half of the claim.
@@ -377,10 +391,16 @@ def test_the_graph_commits_below_the_canvas_like_every_other_page(
     live = render_graph(seed_index, ROUTES, base_commit="deadbee")
 
     assert '<p class="editbar">' not in live, "the bar it replaced"
-    assert live.index('id="commitbar"') > live.index('<div class="canvas">')
-    assert live.index('id="connect"') > live.index('id="cy"')
-    # The shell's bar, not a fourth one drawn by hand.
-    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", live, re.S)
+    assert live.index('id="commitbar"') < live.index('<div class="canvas">')
+    assert live.index('id="connect"') < live.index('id="cy"')
+    # The shell's bar, not a fourth one drawn by hand. That this page has no
+    # second answer to which edge a commit bar sticks to is asked where it can be
+    # asked properly — `tests/test_cascade.py::test_every_commit_bar_sticks_to_
+    # the_same_edge_and_one_rule_decides_it`, which resolves the cascade by name
+    # over all four pages. A substring search here cannot tell a rule from the
+    # comment above it, and this one was written and deleted for saying that a
+    # paragraph explaining the old override was the old override.
+    assert re.search(r"\.commitbar \{[^}]*position: sticky; top: 0; bottom: auto", live, re.S)
     assert 'id="commitbar"' not in read(rendered, "graph.html")
 
 
@@ -3177,10 +3197,20 @@ return {
   window: innerHeight,
   scrolls: root.scrollHeight - root.clientHeight,
   boxTop: Math.round(rect.top), boxBottom: Math.round(rect.bottom),
-  // Positive is clear air between the bottom of the box and the top of the bar.
-  clearance: bars ? Math.round(bars.top - rect.bottom) : null,
+  // Positive is clear air between the box and the bar, whichever of them is on
+  // top. It used to be `bars.top - rect.bottom`, which is that gap only while the
+  // bar is BELOW the box, and read as -596px the day the bar moved above it —
+  // a number that says "the box is underneath the bar" about a page where the two
+  // do not touch. The claim was never about which one is lower; it is that a bar
+  // which is always on screen is always in front of something, and that something
+  // must not be the box. So: the larger of the two gaps, which is the real one,
+  // and negative only when they genuinely overlap.
+  clearance: bars ? Math.round(Math.max(bars.top - rect.bottom, rect.top - bars.bottom)) : null,
   drawnCount: nodes.length,
-  underBar: bars ? nodes.filter(n => n.bottom > bars.top + 0.5).map(n => n.id) : [],
+  // Under the bar means overlapping the band it occupies, for the same reason.
+  underBar: bars
+    ? nodes.filter(n => n.bottom > bars.top + 0.5 && n.top < bars.bottom - 0.5).map(n => n.id)
+    : [],
   offCanvas: nodes.filter(n => n.bottom > rect.bottom + 1 || n.top < rect.top - 1).map(n => n.id),
   // How far the drawing sits from each edge of the box it was fitted into. Equal
   // means centred in the room it got; unequal by hundreds means centred in the
@@ -3219,10 +3249,16 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
     views: dict[str, str], view: str, tmp_path: Path
 ):
     """`#cy` was `height: 78vh` — a fraction of the window that knows nothing
-    about the six rows above the canvas or the sticky commit bar below it. At an
+    about the six rows above the canvas or the sticky commit bar beside it. At an
     806px window the canvas ran from 268 to 899 while the bar sat across 759–806,
     so 140px of it was underneath the bar, two nodes loaded hidden there, and the
     page scrolled as well.
+
+    "Beside" and not "below" since 2026-08-20: the graph's bar moved above the
+    canvas so that every page keeps the control that commits it in one place. The
+    measurement did not care and the assertions did — `clearance` was written as
+    the gap under the box, which is the gap only while the bar is under it. It is
+    the gap between the two now, whichever way round they are.
 
     A fraction was always going to be wrong; only the amount was in question. So
     the number is measured, and this asks the browser what the measurement
@@ -3243,7 +3279,7 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
         assert got["scrolls"] == 0, f"{where}: the page scrolls {got['scrolls']}px"
         if got["clearance"] is not None:
             assert got["clearance"] >= 0, (
-                f"{where}: {-got['clearance']}px of the box is underneath the commit bar"
+                f"{where}: {-got['clearance']}px of the box and the commit bar overlap"
             )
         assert not got["underBar"], f"{where}: {got['underBar']} are drawn under the bar"
 
@@ -3349,7 +3385,15 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
         # drawing in its top-right corner, which is the same rule as the others
         # — a sentence about the view must not cost the view a row — taken one
         # step further on the view where a row is worth the most.
-        "graph": ["h1.sr-only", "div#controls"],
+        #
+        # `div.commitbar` is a row and belongs here for the same reason
+        # `p.editbar` does on the table: this rule is about SENTENCES, and a row
+        # of controls is the thing a sentence was being asked to stop displacing.
+        # It moved above the canvas on 2026-08-20 so that every page keeps the
+        # control that commits it in one place, and it cost the drawing nothing —
+        # `--room` went 595px to 607px at 1400x900, because up here its top margin
+        # collapses with the filter row's and below the canvas it did not.
+        "graph": ["h1.sr-only", "div#controls", "div#commitbar.commitbar"],
         "table": ["h1.sr-only", "p.editbar", "div#controls"],
         "timeline": ["h1.sr-only", "div#controls", "form.tl-controls",
                      "ul.legend", "div.keyrow"],
@@ -3552,7 +3596,7 @@ def test_the_current_nav_item_is_drawn_and_not_merely_resolved(
 
 
 # The window changes under a page that is already open, and the graph's commit bar
-# grows a line of buttons under a canvas that is already drawn. Both are answered
+# grows a line of buttons above a canvas that is already drawn. Both are answered
 # by re-measuring, and both are events rather than rendering frames — which is the
 # whole reason they are the two the shell listens for.
 _AFTER = """
@@ -3562,8 +3606,17 @@ const state = () => ({
   room: document.documentElement.style.getPropertyValue('--room'),
   barHeight: Math.round(bar.getBoundingClientRect().height),
   scrolls: document.documentElement.scrollHeight - document.documentElement.clientHeight,
-  clearance: Math.round(bar.getBoundingClientRect().top
-                        - box.getBoundingClientRect().bottom),
+  // The gap between the bar and the box, whichever of them is on top. See `_ROOM`,
+  // which carries the same measurement and the reason it is written this way.
+  clearance: Math.round(Math.max(
+    bar.getBoundingClientRect().top - box.getBoundingClientRect().bottom,
+    box.getBoundingClientRect().top - bar.getBoundingClientRect().bottom)),
+  // How far the box runs past the bottom of the window. This is what a stale
+  // measurement looks like now that the bar is above the canvas rather than
+  // below it: the box does not stop where the window does. It used to show up as
+  // the box running UNDER the bar, which was the same fact seen through the one
+  // piece of furniture that happened to be in the way.
+  overflow: Math.round(box.getBoundingClientRect().bottom - innerHeight),
 });
 const settled = state();
 // A row of furniture appears above the canvas — a heading a future page adds, or
@@ -3613,23 +3666,29 @@ def test_a_window_that_changes_under_an_open_page_is_measured_again(
     got = measured_in(chrome(), views["graph"], tmp_path / "after.html", 700, _AFTER, 900)
 
     assert got["settled"]["scrolls"] == 0 and got["settled"]["clearance"] >= 0
+    assert got["settled"]["overflow"] <= 0
 
     # A row appeared and nothing has been told yet: this is the state `78vh` was
-    # in permanently, and it is what the resize has to undo.
-    assert got["stale"]["clearance"] < 0, (
-        "120px of furniture appeared above the canvas and it still cleared the bar, "
-        "so this proves nothing about the measurement that follows"
+    # in permanently, and it is what the resize has to undo. Asked as overflow
+    # rather than as clearance since the bar moved above the canvas: a spacer
+    # inserted between the two pushes the box off the bottom of the window and
+    # never into the bar, so clearance would report a page in perfect health here
+    # and this test would prove nothing about the measurement that follows.
+    assert got["stale"]["overflow"] > 0, (
+        "120px of furniture appeared above the canvas and it still stopped where "
+        "the window does, so this proves nothing about the measurement that follows"
     )
     assert got["stale"]["scrolls"] > 0
 
-    assert got["remeasured"]["clearance"] >= 0, (
-        f"after the resize the canvas still runs {-got['remeasured']['clearance']}px "
-        f"under the commit bar"
+    assert got["remeasured"]["overflow"] <= 0, (
+        f"after the resize the canvas still runs {got['remeasured']['overflow']}px "
+        f"past the bottom of the window"
     )
+    assert got["remeasured"]["clearance"] >= 0
     assert got["remeasured"]["scrolls"] == 0
     assert got["remeasured"]["room"] != got["stale"]["room"], "nothing was measured again"
 
-    # Edit mode is the one thing that changes the height *below* the box without
+    # Edit mode is the one thing that changes the height around the box without
     # the window moving, so `tally` asks for the measurement itself.
     assert got["editing"]["barHeight"] > got["before"]["barHeight"], (
         "the bar did not grow, so nothing here is a test of what happens when it does"

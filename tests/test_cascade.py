@@ -991,6 +991,69 @@ def test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets(
         )
 
 
+# --------------------------------------------------------------------------- #
+# One commit bar, four pages, one rule
+# --------------------------------------------------------------------------- #
+
+
+def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index: Index):
+    """The four pages that draw a commit bar agree about which edge it sticks to,
+    and they agree because one rule says so rather than because four sheets
+    happen to.
+
+    This is the test the defect it was written for would have failed. The detail
+    page's bar moved to the top by way of `#commitbar { top: 0; bottom: auto }` in
+    `_DETAIL_STYLE` — and `_DETAIL_STYLE` is loaded by the detail page, the create
+    form, the cycle page and the cycles index. Two of those still had their bar
+    last in the markup, so an id override written for one page took `bottom: 0`
+    away from two others and gave them nothing in its place: a `top: 0` sticky box
+    at the foot of a document is a box you cannot see until you have scrolled to
+    it, which is exactly the defect the create page's own test was written for.
+    Measured in Chrome at 1400x900: 1178px down the create page, 1113px down the
+    cycle page, on screen from neither top.
+
+    A rule being in the stylesheet says nothing about whether it wins, and on the
+    two broken pages every rule involved was in the stylesheet and read correctly.
+    What was wrong was which one won, on which pages — so that is what is asked,
+    by name, per page.
+    """
+    from openproj.render import render_cycle, render_graph, render_new
+
+    number = sorted(index.cycles)[0]
+    bar = el("div", "commitbar", id="commitbar")
+    pages = {
+        "detail": (render_detail(index, ROUTES, only=sorted(index.entities)[0],
+                                 base_commit=HEAD, may_write=True),
+                   [el("article", "entity editing"), bar]),
+        "create": (render_new("task", HEAD, ROUTES, index, may_write=True),
+                   [el("article", "entity editing"), bar]),
+        "cycle": (render_cycle(index, number, ROUTES, base_commit=HEAD), [bar]),
+        "graph": (render_graph(index, ROUTES, base_commit=HEAD), [bar]),
+    }
+
+    for name, (page, tail) in pages.items():
+        sheet = sheet_of(page)
+        path = [el("body"), el("main", id="main"), *tail]
+        for prop, edge in (("top", "0"), ("bottom", "auto")):
+            won = sheet.winner(path, prop)
+            assert won and won.selector == ".commitbar" and won.value == edge, (
+                f"on the {name} page the bar's {prop} is decided by {won}\n"
+                + says(sheet, path, prop)
+            )
+            # And decided by exactly one rule, which is the half that would have
+            # caught this: the broken pages had two, and the loser was the one
+            # every test asserted the text of.
+            reaching = sheet.selectors_reaching(path, prop)
+            assert len(reaching) == 1, (
+                f"the {name} page's bar has {len(reaching)} answers to {prop}\n"
+                + says(sheet, path, prop)
+            )
+        assert sheet.value(path, "position") == "sticky", (
+            f"the {name} page's bar is not sticky, so which edge it names is a "
+            "coordinate rather than a guarantee\n" + says(sheet, path, "position")
+        )
+
+
 CONTROLS = ("#unfilter", "#toggle", "#tl-zoom", "#state-filter", "#kind", "#template", "#into")
 
 

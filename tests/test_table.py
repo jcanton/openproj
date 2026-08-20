@@ -1650,6 +1650,19 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
         assert shape in detail, shape
     assert "<label>" not in new_page, "the old flat list of labelled controls is gone"
 
+    # And they agree about where the control that commits the form is — jcanton,
+    # 2026-08-20, "consistency!". The two pages had it at opposite ends of the
+    # same markup for a day, which is the layout moving under you between reading
+    # an entity and making one, in the one place it matters most.
+    #
+    # Ordering here, pixels in `test_the_create_button_is_reachable_from_anywhere_
+    # in_the_form`. What this asks is that the two pages put the bar in the SAME
+    # place, which is a comparison rather than a coordinate — and a comparison of
+    # two markup orders is a thing a string can answer.
+    for page, which in ((new_page, "create"), (detail, "detail")):
+        assert page.index('id="commitbar"') < page.index('<dl id="facts">'), which
+        assert page.index('id="commitbar"') < page.index('class="field body-field"'), which
+
 
 def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str):
     """It was three links, and following one was a fresh page — so a title typed
@@ -1751,20 +1764,83 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
     assert "article.entity:not(.editing) .req { display: none; }" in new_page
 
 
-def test_the_create_button_follows_the_form_it_commits(new_page: str):
-    """It sat above the title, so the last thing on screen after filling a form in
-    was the body textarea and the action was a scroll back up. The bar is sticky,
-    so it is reachable from wherever the form has got to."""
-    assert new_page.index('id="commitbar"') > new_page.index('<dl id="facts">')
-    assert new_page.index('id="commitbar"') > new_page.index('class="field body-field"')
-    assert re.search(r"\.commitbar \{[^}]*position: sticky; bottom: 0", new_page, re.S)
+# Fill the title, then look at the Create button from three places in the form.
+# `top >= 0 && bottom <= innerHeight` is *wholly* on screen, not merely
+# intersecting: half a button hanging off an edge is a control somebody scrolls
+# to anyway, which is the thing this is about.
+_WHERE_CREATE_IS = """
+const SAVE = document.getElementById('save');
+const TITLE = document.querySelector('input[name=title]');
+TITLE.value = 'A pitch with a shaping document in it';
+TITLE.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(r => setTimeout(r, 200));
+const ROOT = document.documentElement;
+const out = {screens: ROOT.scrollHeight / innerHeight, at: []};
+const end = ROOT.scrollHeight - innerHeight;
+// A timer and not `requestAnimationFrame`: a headless Chrome under a virtual
+// clock manages two frames in three seconds, so a rAF here is a script that
+// never resumes and a harness that reports nothing at all.
+for (const y of [0, Math.round(end / 2), end]) {
+  scrollTo(0, y);
+  await new Promise(r => setTimeout(r, 80));
+  const box = SAVE.getBoundingClientRect();
+  out.at.push({y: Math.round(scrollY), text: SAVE.textContent.trim(),
+               on: box.height > 0 && box.top >= 0 && box.bottom <= innerHeight});
+}
+return out;
+"""
+
+
+def test_the_create_button_is_reachable_from_anywhere_in_the_form(
+    new_page: str, tmp_path: Path
+):
+    """The control that commits this form is on screen from every part of it — and
+    since 2026-08-20 that part of the screen is the top, so that the create page
+    and the detail page agree about where a Save lives. jcanton: "move the create
+    bar up top too, consistency!"
+
+    The history, because it is what decides how this has to be asked. The bar was
+    once STATIC and above the title: the last thing on screen after filling a form
+    in was the body box and the action was a scroll back up. The commit that fixed
+    that did two things at once — moved the bar to the foot of the form AND made
+    it sticky — and only the second delivered the guarantee. A bar that is on
+    screen wherever you have scrolled to is as reachable from the head of a form
+    as from its foot, so the edge was free and consistency spent it.
+
+    So this asks the guarantee and not the coordinate. It used to assert that the
+    bar came after `<dl id="facts">` and after the body field, which is the same
+    mistake this test had already corrected once for the class name: markup order
+    is how the fix was built, not what it promised.
+
+    And the ordering assertion was actively hiding the defect. `#commitbar { top:
+    0; bottom: auto }` was written for the detail page and put in `_DETAIL_STYLE`
+    — which this page loads too — so the create bar had already lost `bottom: 0`
+    while staying last in the markup, and was stuck to neither edge. Measured in
+    Chrome at 1400x900 with the form filled in: 1178px down the page, on screen
+    from nowhere near the top of it, under a green suite. Which is why the answer
+    now comes from Chrome.
+    """
+    # Short enough that the form really is several screens: a bar that never
+    # leaves a window nothing scrolls in proves nothing at all.
+    got = measured_in(chrome(), new_page, tmp_path / "create.html", 1400,
+                      _WHERE_CREATE_IS, height=600, patience=2500)
+
+    assert got["screens"] > 1.5, (
+        f"the form fits in {got['screens']:.1f} windows, so there is no scroll to "
+        "be caught out by and nothing below is evidence"
+    )
+    assert len({look["y"] for look in got["at"]}) == 3, "the page did not actually scroll"
+    for look, place in zip(got["at"], ("the top", "the middle", "the end"), strict=True):
+        assert look["text"] == "Create", look
+        assert look["on"], f"Create is off screen from {place} of the form: {look}"
+
     # `.editbar` is on this page again, and this assertion is re-argued rather
     # than deleted. It used to read `'<p class="editbar">' not in new_page`,
     # which pinned the fix by the name of the bar that carried the bug; the bar
     # now holds the view switcher, which is page chrome and belongs in the same
     # place on this page as on the detail page. The argument was never about a
-    # class name — it is that the button which commits this form lives with the
-    # form's end and nowhere else — so that is what is asked.
+    # class name — it is that the button which commits this form is its own
+    # control and not one of the page's — so that is what is asked.
     editbar = re.search(r'<p class="editbar">.*?</p>', new_page, re.S).group(0)
     assert 'id="save"' not in editbar and "Create" not in editbar, "the bar it replaced"
 

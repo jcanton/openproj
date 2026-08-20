@@ -243,10 +243,19 @@ def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
     Still sticky, so it is still reachable from the bottom of a long record; stuck
     to the top, which is where it now is. `bottom: auto` matters as much as `top`:
     with both set the browser keeps the first and the bar stays at the foot.
+
+    The rule is the SHELL's `.commitbar` since 2026-08-20 and this asks for it by
+    that name. It was `#commitbar { top: 0; bottom: auto }` in `_DETAIL_STYLE`,
+    which four pages load and only one of them had moved its bar — so the create
+    form and the cycle page silently lost `bottom: 0` while keeping their bar last
+    in the markup, and ended up stuck to neither edge. An id override beating a
+    shell rule on some of the pages that load it is this repository's
+    characteristic failure, and the fix was to make the shell say the true thing
+    once. Which rule actually wins is resolved by name in `tests/test_cascade.py`.
     """
     assert page.index('id="commitbar"') < page.index('<dl id="facts">')
     assert page.index('id="commitbar"') < page.index('class="field body-field"')
-    assert re.search(r"#commitbar \{[^}]*top: 0; bottom: auto", page, re.S), (
+    assert re.search(r"\.commitbar \{[^}]*position: sticky; top: 0; bottom: auto", page, re.S), (
         "the bar is not stuck to the top, or is stuck to both"
     )
 
