@@ -162,53 +162,55 @@ def test_the_arrows_read_the_way_the_layout_was_asked_for(drawn: dict):
     assert drawn["backward"] == 0, f"{drawn['backward']} of {drawn['edges']} drawn backwards"
 
 
-# A card dragged out of its box, which is the half of the complaint that no
-# layout choice touches: a compound's rectangle follows its children, so a card
-# dragged away does not leave its box, it stretches it.
+# A card dragged out of its box, and what happens to the box.
 _DRAGGED = """
 const leaf = cy.nodes().filter(n => n.isChildless() && n.parent().length)[0];
 if (!leaf) return {error: 'no card has a box to be dragged out of'};
 const box = leaf.parent();
 const was = box.boundingBox({includeLabels: false});
-const from = leaf.position();
+// Copied. `position()` hands back a live object, so a "before" taken from it
+// moves with the node and every measurement comes out zero.
+const from = {...leaf.position()};
 
 leaf.emit('grab');
 leaf.position({x: from.x + 600, y: from.y + 400});
 leaf.emit('dragfree');
 
-const now = box.boundingBox({includeLabels: false});
 return {
-  grew: Math.round((now.x2 - now.x1) - (was.x2 - was.x1)),
-  taller: Math.round((now.y2 - now.y1) - (was.y2 - was.y1)),
+  moved: Math.round(leaf.position().x - from.x),
+  grew: Math.round((box.boundingBox({includeLabels: false}).x2 - was.x2)),
   boxes: cy.nodes().filter(n => n.isParent()).length,
   grabbable: cy.nodes().filter(n => n.isParent() && n.grabbable()).length,
 };
 """
 
 
-def test_a_card_dragged_out_of_its_box_goes_back_into_it(index: Index, tmp_path: Path):
-    """Complaint 3, and it survives every layout: "dragging makes this even much
-    worse".
+def test_a_card_stays_where_it_was_dragged(index: Index, tmp_path: Path):
+    """It used to be put back inside the box it came from, and the clamp is gone —
+    jcanton, 2026-08-20, having watched it drop a card straight back onto the line
+    it had been moved off: "let people drag".
 
-    Measured on a clean layout, one card dragged 250x120 took the drawing from 0
-    overlapping pairs to 2 and 0 trespasses to 5 — correct until somebody touched
-    it. The card is put back rather than the layout re-run: ELK ignores current
-    positions and is deterministic, so a re-run would move every card back to
-    where it already was and the drag would simply vanish, which is a stranger
-    thing to watch than a card sliding home.
+    The clamp was there because a compound's rectangle follows its children, so a
+    card dragged out stretches the box rather than leaving it. That is still true
+    and is now the price: the alternative was an automatic layout that never puts
+    a card on a line, and ELK cannot give one — it returns bend points for an edge
+    whose obstacles are at the level it is working on, and none at all for one
+    that spans the hierarchy, in each of its three routing modes.
+
+    The clamp contributed nothing to the drawing you arrive at. It ran on
+    `dragfree` and nowhere else, so the starting view is the layout alone.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "drag.html", 1900, _DRAGGED,
                       height=820, patience=3500)
 
     assert not got.get("error"), got
-    assert got["grew"] <= 1 and got["taller"] <= 1, (
-        f"one drag stretched the box by {got['grew']}x{got['taller']}px"
+    assert got["moved"] > 500, "the card was moved back"
+    # And a box can be picked up too, which is how two boxes drawn over each other
+    # get pulled apart.
+    assert got["grabbable"] == got["boxes"], (
+        f"{got['boxes'] - got['grabbable']} of {got['boxes']} boxes cannot be dragged"
     )
-    # And a box cannot be picked up at all: cytoscape moves a parent rigidly with
-    # its whole subtree, so nothing stretches — but nothing stops it being shoved
-    # across its neighbours either, and nothing re-lays-out afterwards.
-    assert got["grabbable"] == 0, f"{got['grabbable']} of {got['boxes']} boxes can be dragged"
 
 
 @pytest.fixture
