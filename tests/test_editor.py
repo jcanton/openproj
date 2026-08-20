@@ -1447,6 +1447,28 @@ const afterFence = [area.selectionStart, area.selectionEnd];
 const emptyBold = apply('Bold', 'alpha', 5, 5);
 const insideBold = [area.selectionStart, area.selectionEnd];
 
+// One press of Ctrl+Z gives the whole mark back, and this is the only question
+// that can tell `replaceRange` apart from an assignment to `.value`. Both leave
+// exactly the same characters in the box — every assertion above passes either
+// way — and only one of them leaves a stack behind it for the person who
+// pressed the button and then changed their mind.
+//
+// Two words seeded, not one, so "one step back" is distinguishable from
+// "everything gone": a mark that went in as three separate writes would undo to
+// `alpha`, and an empty stack leaves the marked text sitting there untouched.
+// `set()` assigns `.value` on purpose — that is what clears the stack down to a
+// known floor, so the only entry on it is the one `applyMark` just made.
+//
+// Both shapes, because they are different branches taking different paths into
+// the surface: `mark.insert` splices at a collapsed caret after the line, and
+// the wrap tail splices over the selection.
+apply('Table', 'alpha beta', 10, 10);
+document.execCommand('undo');
+const undoneTable = area.value;
+apply('Bold', 'alpha beta', 0, 5);
+document.execCommand('undo');
+const undoneBold = area.value;
+
 // A paste is what the browser hands over, so it is given one.
 const paste = text => {
   const data = new DataTransfer();
@@ -1543,7 +1565,7 @@ const bar = {
     .map(one => Math.round(one.getBoundingClientRect().y)))].length,
 };
 
-return {fenced, afterFence, emptyBold, insideBold,
+return {fenced, afterFence, emptyBold, insideBold, undoneTable, undoneBold,
         struck, numbered, unnumbered, nestedOff, nestedOn, linkedUp, urlChosen, bareLink,
         wordChosen, bracketed, checked, boxed, unboxed, table, picked, rule,
         linked, tabled, plain, bare, picker, wrote, threw, unwritable,
@@ -1558,7 +1580,17 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     """A button that emits syntax the committed renderer does not honour is worse
     than no button, which is why these arrived in the commit that taught `_MD`
     strikethrough and task lists — and why a table and a rule are a fourth shape
-    in `applyMark` rather than a wrap with newlines in it."""
+    in `applyMark` rather than a wrap with newlines in it.
+
+    **And it presses undo, which every assertion here used to be blind to.** The
+    twenty text assertions below say what ends up in the box; a mark written by
+    assigning `.value` puts exactly the same characters there and destroys the
+    browser's undo stack on the way, which is this application's oldest
+    data-loss invariant. The static guard cannot see it either — `applyMark`
+    writes through `surface.splice`, whose only implementation is inside the
+    surface block that guard subtracts on purpose. Measured: a `.value` splice
+    put into that branch left the guard and all twenty assertions passing.
+    """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "marks.html", width, _MARKING
     )
@@ -1592,6 +1624,25 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
         f"the caret did not land between the marks it just wrote: {got['insideBold']}"
     )
     assert got["rule"] == "alpha\n\n---", "`---` under a line of text is a heading, not a rule"
+
+    # And the invariant the whole toolbar rests on, asked of the browser rather
+    # than of the source. `test_no_script_ever_assigns_a_textarea_its_value`
+    # cannot reach this: `applyMark` writes through `surface.splice`, and the
+    # one implementation of `splice` lives inside the surface block — the one
+    # region that guard deliberately subtracts, because the remote-update path
+    # in there is allowed to assign. So the branch a person's press goes down is
+    # visible to nothing static, and a `.value` write put into it leaves the
+    # source guard and all twenty text assertions above green. Only pressing
+    # undo can see it.
+    assert got["undoneTable"] == "alpha beta", (
+        "one undo did not take the table back out: the mark was written by "
+        "assigning `.value`, which wipes the stack Ctrl+Z reaches, so pressing "
+        f"a button costs whatever was typed before it — {got['undoneTable']!r}"
+    )
+    assert got["undoneBold"] == "alpha beta", (
+        "one undo did not take the wrap back off, and a wrap is the shape "
+        f"eleven of the sixteen buttons use — {got['undoneBold']!r}"
+    )
 
     assert got["linked"] == {"text": "read [the notes](https://example.org/a?b=c)", "taken": True}
     assert got["tabled"] == {"text": "| a | b |\n| --- | --- |\n| c | d |", "taken": True}
