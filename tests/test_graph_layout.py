@@ -107,8 +107,18 @@ cy.edges().forEach(edge => {
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
-    const ws = String(edge.style('segment-weights') || '').trim().split(/\s+/).map(Number);
-    const ds = String(edge.style('segment-distances') || '').trim().split(/\s+/).map(Number);
+    // Split on commas as well as spaces: the value goes in as a string and comes
+    // back parsed, so `String(...)` of it is comma-joined — and a whitespace
+    // split then yields one token, every routed edge measures as a straight
+    // line, and the number this whole probe exists to report is wrong in the
+    // reassuring direction.
+    // `parseFloat` and not `Number`: cytoscape hands the distances back with
+    // their units on — "47px 5.8px" — and `Number('47px')` is NaN, which the
+    // guard below then skips. Every routed edge measured as a straight line and
+    // this probe reported the drawing was no better than before it was routed.
+    const split = v => String(v || '').trim().split(/[\s,]+/).filter(Boolean).map(parseFloat);
+    const ws = split(edge.style('segment-weights'));
+    const ds = split(edge.style('segment-distances'));
     const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
     ws.forEach((w, i) => {
       if (!isFinite(w) || !isFinite(ds[i])) return;
@@ -301,14 +311,26 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
 _KEYS = """
 const rows = [...document.querySelectorAll('.keys .legend')];
 const widths = rows.map(r => Math.round(r.getBoundingClientRect().width));
+// The space between one key's word and the next key's swatch, on every row.
+const gaps = [];
+rows.forEach(row => {
+  const items = [...row.querySelectorAll('li:not(.legendname)')];
+  for (let i = 0; i < items.length - 1; i++) {
+    const a = items[i].getBoundingClientRect(), b = items[i + 1].getBoundingClientRect();
+    gaps.push(Math.round(b.left - a.right));
+  }
+});
 const box = document.querySelector('[data-fills]').getBoundingClientRect();
 const keys = document.querySelector('.keys').getBoundingClientRect();
 return {
-  rows: rows.length,
+  rows: rows.length, gaps,
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
   marked: cy.nodes().filter(n => n.isChildless()).slice(0, 5)
     .map(n => (n.style('label') || '').slice(0, 2)),
+  meters: cy.nodes().filter(n => n.isChildless()).slice(0, 3)
+    .map(n => decodeURIComponent(String(n.style('background-image') || ''))
+      .replace(/^url\(["']?|["']?\)$/g, '')),
 };
 """
 
@@ -316,35 +338,48 @@ return {
 def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     index: Index, tmp_path: Path
 ):
-    """jcanton, 2026-08-20: "would be nice if the two legend rows were the same
-    length".
+    """One gap between keys, and both rows anchored on the same edge.
 
-    Each row is five keys and a name, so five keys of one width and a name of one
-    width is two rows of one length whatever the words inside them are. Left to
-    their vocabulary they came out 55px apart — "Very high, High, Medium, Low,
-    Very low" against "Shaping, Ready, In progress, Done, Shelved" — and two
-    ragged rows in a corner read as two unrelated things rather than one key.
+    jcanton asked for the rows to be the same length, and then — having seen what
+    that cost — for them not to be: "there is too much horizontal space between
+    cards in the legend". Making them exactly equal means padding every key to the
+    width of the widest word in either row, which put a hand's width of nothing
+    between Done and Shelved. Two attempts did it by two routes, `min-width` on
+    each key and a grid of equal columns, and both looked the same way.
+
+    So a key is as wide as what is in it, the gap between keys is one number, and
+    the rows line up on their right edge where the eye already is. What is pinned
+    here is the gap, because that is the thing that was wrong.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "keys.html", 1900, _KEYS,
                       height=820, patience=3500)
 
     assert got["rows"] == 2, "priority and status are two rows"
-    assert got["spread"] == 0, f"the rows differ by {got['spread']}px"
+    assert len(set(got["gaps"])) == 1, (
+        f"the keys are spaced {sorted(set(got['gaps']))} apart, which is not one gap"
+    )
+    assert got["gaps"][0] <= 20, f"{got['gaps'][0]}px between keys is a hand's width"
     assert got["inside"], "the keys are not over the drawing"
 
 
-def test_every_node_says_its_priority_as_well_as_its_status(index: Index, tmp_path: Path):
+def test_every_card_carries_its_priority_as_a_picture(index: Index, tmp_path: Path):
     """The channel priority is drawn with here is the border's THICKNESS, which is
     legible only against a neighbour to compare it against — jcanton saw one
-    project drawn thicker and had to ask what it meant.
+    project drawn thicker and had to ask what it meant. So the card carries the
+    same five-bar meter the legend and the table draw.
 
-    So a node's label leads with a rung of the same ladder, in front of the status
-    glyph that has been there since the view was written, for exactly the reason
-    that one is there: a fill on a luminance ladder is separable without being
-    nameable.
+    As an image and NOT as a character in the label, which is what shipped first
+    and what jcanton saw: cytoscape draws a label into a canvas with the font it
+    is given and no fallback chain, and Inter has no Block Elements — so the rung
+    came out as a .notdef box in front of every node's name. A mark that depends
+    on the typeface having a glyph is a mark that fails silently on somebody
+    else's machine, and a canvas is where that failure is invisible to CSS.
+
+    The status glyph stays in the label, where it has always been: those five are
+    characters every typeface has.
     """
-    from openproj.render import PRIORITY_GLYPH, STATUS_GLYPH
+    from openproj.render import STATUS_GLYPH
 
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "marks.html", 1900, _KEYS,
@@ -352,28 +387,31 @@ def test_every_node_says_its_priority_as_well_as_its_status(index: Index, tmp_pa
 
     assert got["marked"], "no node was measured"
     for prefix in got["marked"]:
-        assert prefix[0] in PRIORITY_GLYPH.values(), f"{prefix!r} does not start with a rung"
-        assert prefix[1] in STATUS_GLYPH.values(), f"{prefix!r} has lost its status glyph"
+        assert prefix[0] in STATUS_GLYPH.values(), (
+            f"{prefix!r} does not start with a status glyph"
+        )
+    assert got["meters"], "no card carries a priority meter"
+    for image in got["meters"]:
+        assert image.startswith("data:image/svg+xml"), image[:40]
+        assert "rect" in image, "the meter has no bars in it"
 
 
-def test_how_many_edges_cross_a_card_they_have_nothing_to_do_with(drawn: dict):
-    """The number the routing work in `docs/QUEUE.md` exists to beat.
+def test_no_edge_crosses_a_card_it_has_nothing_to_do_with(drawn: dict):
+    """Zero, and it is reachable — which it was not before the router.
 
-    A bound and deliberately not zero: an automatic layout that never puts a card
-    on a line is not reachable with what is vendored here — ELK returns bend
-    points for none of the edges that span the hierarchy, in any of its three
-    routing modes — so this records where the drawing actually stands rather than
-    asserting a promise the page does not make.
+    ELK returns bend points for none of the edges that span the hierarchy, in any
+    of its three routing modes, because at the level ELK works the route between
+    two boxes genuinely is unobstructed: the cards it appears to cross are inside
+    other boxes. So `routeEdges` routes them here, over the absolute positions ELK
+    produces, which is where the obstacles are. Measured at 1900x820 it went from
+    4 / 13 / 43 at 31 / 208 / 518 records to 0 at all three.
 
-    It is here so that whoever writes the router has an instrument on the day they
-    start, and so that a change which makes the drawing quietly worse has
-    something to fail against. Measured at 1900x820: 4 on the real plan, 13 at 208
-    records, 43 at 518.
+    An edge the router cannot find a way for keeps cytoscape's taxi router and may
+    cross something, which is why this could fail on a plan shaped in a way nobody
+    has seen. If it does, the fallback is working as intended and the router is
+    what needs looking at.
     """
-    assert drawn["under"] <= drawn["edges"], "more crossings than there are edges"
-    # Generous, and it is the ceiling rather than the target. If this ever fails,
-    # something has made the drawing worse — do not raise it, find out what.
-    assert drawn["under"] <= max(4, drawn["edges"] // 2), (
+    assert drawn["under"] == 0, (
         f"{drawn['under']} of {drawn['edges']} edges cross a card they are not "
-        "attached to, which is worse than the layout has ever been"
+        "attached to"
     )
