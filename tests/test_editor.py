@@ -2143,3 +2143,374 @@ def test_a_preview_that_fails_says_so_and_never_writes_the_word_undefined(
         "the failure was remembered as the text that had been shown, so the pane "
         "never asked again"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The preference, the status bar and the draft receipt
+# --------------------------------------------------------------------------- #
+
+
+def _before_the_page_runs(page: str, script: str) -> str:
+    """The same page with `script` running ahead of every one of its own.
+
+    `measured_in` appends its question at `</body>`, which is after everything —
+    and both questions below are about what the page does with a store it reads
+    before the first paint: `remembered` is declared in the head, and the editor
+    preference is read the moment `_COMBOBOX` parses. So this goes in ahead of the
+    shell's first `<script>`, which is the one right after the icon link.
+    """
+    return page.replace('<link rel="icon"', f"<script>{script}</script><link rel=\"icon\"", 1)
+
+
+_SEED = """try { localStorage.setItem('openproj:editor:1', JSON.stringify(%s)); } catch (e) {}"""
+
+# The store this application is written against the refusal of. `localStorage`
+# does not answer null when it is denied — it THROWS, on the property itself,
+# before any method is called — so a stub that returns null is a stub for a
+# failure this browser does not have.
+_NO_STORE = """
+window.__errors = [];
+addEventListener('error', event => window.__errors.push(String(event.message)));
+Object.defineProperty(window, 'localStorage', {
+  get() { throw new DOMException('denied', 'SecurityError'); },
+});
+"""
+
+# Every question below is asked of a page whose preview is stubbed, because
+# entering an editing session may restore a remembered view and a view asks the
+# server to render the document.
+_STUB_RENDER = """
+window.fetch = async () => ({ok: true, json: async () => (
+  {html: '<p data-startline="1">rendered</p>'})});
+"""
+
+_STATUS = _STUB_RENDER + r"""
+const bar = document.getElementById('statusbar');
+const area = document.querySelector('textarea[name=body]');
+const item = at => bar.children[at].textContent;
+const spaces = bar.querySelector('button');
+document.getElementById('toggle').click();
+
+// A document whose third line carries an astral character, so "column" has to
+// mean a character and not a UTF-16 code unit.
+area.value = 'one\ntwo\nthe \u{1F44D} is one character\n';
+area.dispatchEvent(new Event('input'));
+const lines = item(3);
+
+const caretAt = at => {
+  area.setSelectionRange(at, at);
+  area.dispatchEvent(new Event('keyup'));
+  return item(0);
+};
+const start = caretAt(0);
+// Immediately after the thumb, which is two code units in and one character in.
+const afterEmoji = caretAt(area.value.indexOf('\u{1F44D}') + 2);
+area.setSelectionRange(0, 7);
+area.dispatchEvent(new Event('select'));
+const selected = item(0);
+
+// The picker: what it says, what it does to the next Tab, and what it does to
+// the document, which must be nothing at all.
+const wasText = area.value;
+const said = [spaces.textContent];
+spaces.click();
+said.push(spaces.textContent);
+const stored = localStorage.getItem('openproj:editor:1');
+// Measured before the Tab below, which is the gesture that IS allowed to change
+// the document: what the picker itself may change is nothing.
+const untouched = area.value === wasText;
+area.focus();
+area.setSelectionRange(0, 0);
+area.dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', bubbles: true, cancelable: true}));
+return {
+  lines, start, afterEmoji, selected, said, stored, untouched, title: spaces.title,
+  typed: area.value.slice(0, area.value.indexOf('one')),
+  drawn: bar.getClientRects().length > 0,
+  order: [...bar.children].map(child => child.id || child.tagName.toLowerCase()),
+};
+"""
+
+
+def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_types(
+    client: TestClient, tmp_path: Path
+):
+    """Ask 5, in the shape the screenshot settles: a strip along the foot of the
+    box holding two facts and a control, and the control is two words that STATE
+    the current value and are themselves the click target.
+
+    The three things this pins that a substring in the page could not:
+
+    * the caret readout counts CHARACTERS, not UTF-16 code units — the same
+      index-space question that shipped a splice cutting an emoji in half;
+    * the picker changes what the next Tab types and does not touch one
+      character of what is already written, which is the bulk-gesture rule: a
+      global re-indent reaches a live room as one delete-all-insert-all, which
+      `tests/test_coedit.py:756` already measures as larger than a body may be;
+    * and the choice is remembered under the one versioned key.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "status.html", 1400,
+        _STATUS, budget=6000,
+    )
+
+    assert got["drawn"], "the status bar is not drawn in an editing session"
+    assert got["order"] == ["span", "button", "draftevery", "span"], (
+        "the strip is caret, the indent picker, whatever the page put in it, and "
+        f"the length — in that order: {got['order']}"
+    )
+    assert got["lines"] == "Length: 32", got["lines"]
+    assert got["start"] == "Line 1, Column 1 — 4 Lines", got["start"]
+    assert got["afterEmoji"] == "Line 3, Column 6 — 4 Lines", (
+        f"a caret one character past a thumbs-up is in column 6 and this says "
+        f"{got['afterEmoji']!r} — the readout is counting UTF-16 code units"
+    )
+    assert "7 selected" in got["selected"], got["selected"]
+
+    assert got["said"] == ["Spaces: 2", "Spaces: 4"], got["said"]
+    assert "press for 8" in got["title"], (
+        f"a picker that says only what it is leaves somebody to press it to find "
+        f"out what it does: {got['title']!r}"
+    )
+    assert json.loads(got["stored"])["indent"] == 4
+    assert got["untouched"], "pressing the indent picker rewrote the document"
+    assert got["typed"] == "    ", (
+        f"Tab typed {got['typed']!r} after the picker was moved to four"
+    )
+
+
+_LONG = _STUB_RENDER + r"""
+const size = document.getElementById('statusbar').lastElementChild;
+const area = document.querySelector('textarea[name=body]');
+document.getElementById('toggle').click();
+const said = () => document.getElementById('state').textContent;
+const shape = () => ({text: size.textContent, over: size.classList.contains('over')});
+area.value = 'x'.repeat(%d);
+area.dispatchEvent(new Event('input'));
+const under = shape();
+area.value = 'x'.repeat(%d);
+area.dispatchEvent(new Event('input'));
+const over = {...shape(), said: said()};
+return {under, over};
+"""
+
+
+def test_the_length_says_the_ceiling_before_a_save_is_refused(
+    client: TestClient, tmp_path: Path
+):
+    """`MAX_BODY_BYTES` was a number only the server knew, and the only way to
+    find out you were over it was to press Save on writing you had already done.
+
+    Characters and bytes are said separately rather than one being passed off as
+    the other: the count is UTF-16 code units, which is what the editor this
+    copies counts, and the ceiling is UTF-8 bytes.
+    """
+    from openproj.model import MAX_BODY_BYTES
+
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "long.html", 1400,
+        _LONG % (MAX_BODY_BYTES // 2, MAX_BODY_BYTES + 1000), budget=6000,
+    )
+
+    assert got["under"]["text"] == f"Length: {MAX_BODY_BYTES // 2:,}", got["under"]
+    assert not got["under"]["over"], "half the ceiling was drawn as over it"
+    assert got["over"]["over"], "a body over the ceiling is not marked as such"
+    assert f"of {MAX_BODY_BYTES:,} bytes" in got["over"]["text"], got["over"]["text"]
+    assert "too long to save" in got["over"]["text"], (
+        "the word is in the element too: a colour on its own is a channel a "
+        f"dichromat does not have — {got['over']['text']!r}"
+    )
+    assert "cannot be saved" in got["over"]["said"], (
+        f"and it was never announced: {got['over']['said']!r}"
+    )
+
+
+_DRAFTING = _STUB_RENDER + r"""
+const area = document.querySelector('textarea[name=body]');
+const key = 'openproj:draft:2:' + document.getElementById('edit').dataset.id;
+const held = () => {
+  const raw = localStorage.getItem(key);
+  return raw === null ? null : JSON.parse(raw).text;
+};
+const receipt = () => document.getElementById('draftsaved').textContent;
+const type = what => { area.value = what; area.dispatchEvent(new Event('input')); };
+document.getElementById('toggle').click();
+localStorage.removeItem(key);
+
+// The leading edge: the first keystroke of a burst goes in at once, so a tab
+// closed a second after somebody starts typing still holds their sentence.
+type('the first thing typed');
+const first = {held: held(), receipt: receipt()};
+// And the second is throttled — the interval seeded on this page is ten seconds,
+// which is longer than this whole run.
+type('and the second thing');
+const throttled = held();
+// Then the tab goes.
+dispatchEvent(new Event('pagehide'));
+const flushed = held();
+
+// A draft that is committed or cancelled stops existing, and the receipt stops
+// claiming it.
+document.getElementById('cancel').click();
+return {first, throttled, flushed, after: {held: held(), receipt: receipt()},
+        every: document.getElementById('draftevery').textContent};
+"""
+
+
+def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
+    client: TestClient, tmp_path: Path
+):
+    """Ask 7. The draft used to be written on every keystroke — a whole document
+    into `localStorage`, synchronously, per character — and the interval is now
+    settable, which is the thing that was asked for.
+
+    A throttle and not a debounce, and this is what tells them apart: the first
+    keystroke is written immediately and the last one is flushed when the tab
+    goes. A debounce writes nothing at all while somebody types steadily, which
+    is exactly the person the draft exists for.
+    """
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}").text, _SEED % '{"indent": 2, "autosave": 10}'
+        ),
+        tmp_path / "draft.html", 1400, _DRAFTING, budget=6000,
+    )
+
+    assert got["every"] == "Draft: 10", (
+        f"the remembered interval is not the one in the picker: {got['every']!r}"
+    )
+    assert got["first"]["held"] == "the first thing typed", (
+        "the first keystroke of a burst was throttled, so a tab closed a second "
+        "later holds nothing"
+    )
+    assert got["first"]["receipt"] == "draft saved just now", got["first"]["receipt"]
+    assert got["throttled"] == "the first thing typed", (
+        "the second keystroke was written straight through, so there is no "
+        "throttle here at all"
+    )
+    assert got["flushed"] == "and the second thing", (
+        "the throttled write was never flushed, so the last thing typed before "
+        "the tab closed is gone"
+    )
+    assert got["after"]["held"] is None, "cancelling left the draft in storage"
+    assert got["after"]["receipt"] == "", (
+        f"the receipt still claims a draft that no longer exists: "
+        f"{got['after']['receipt']!r}"
+    )
+
+
+_REFUSED = _STUB_RENDER + r"""
+const bar = document.getElementById('statusbar');
+const area = document.querySelector('textarea[name=body]');
+document.getElementById('toggle').click();
+// Every control still works, in memory, against a store that throws.
+bar.querySelector('button').click();
+area.value = 'writing into a browser that keeps nothing';
+area.dispatchEvent(new Event('input'));
+document.getElementById('view-both').click();
+return {
+  errors: window.__errors,
+  labels: [...bar.children].map(child => child.textContent),
+  indent: INDENT.length,
+  view: VIEW,
+  editor: JSON.parse(JSON.stringify(EDITOR)),
+  receipt: document.getElementById('draftsaved').textContent,
+  said: document.getElementById('state').textContent,
+};
+"""
+
+
+def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_storage(
+    client: TestClient, tmp_path: Path
+):
+    """One key, one JSON object, the version in the name — and a store that
+    throws on the property itself, which is what `remembered` exists for and what
+    took the whole table down the last time a call was bare.
+
+    The second half is the one worth the test: a receipt that says "draft saved
+    just now" over a store that refused the write is this application telling
+    somebody their writing is somewhere it is not. That is the branch that
+    decides not to act, and this repository has shipped three of them in silence.
+    """
+    page = client.get(f"/detail/{TASK}").text
+
+    # One key, versioned, and every read and write of it through `remembered`.
+    assert page.count("const EDITOR_KEY = 'openproj:editor:1';") == 1
+    assert "remembered.map(EDITOR_KEY)" in page
+    assert "remembered.set(EDITOR_KEY, JSON.stringify(EDITOR))" in page
+    assert not re.search(r"localStorage\.\w+\('openproj:editor", page), (
+        "a bare localStorage call for the preference"
+    )
+
+    got = measured_in(
+        chrome(), _before_the_page_runs(page, _NO_STORE), tmp_path / "denied.html",
+        1400, _REFUSED, budget=6000,
+    )
+
+    assert got["errors"] == [], f"the page threw against a refusing store: {got['errors']}"
+    assert got["labels"][1] == "Spaces: 4" and got["indent"] == 4, (
+        f"the picker did not move against a store that will not keep it: {got['labels']}"
+    )
+    assert got["view"] == "both" and got["editor"]["mode"] == "both"
+    assert got["receipt"] == "this browser is not keeping drafts", (
+        f"a draft that was never stored was reported as stored: {got['receipt']!r}"
+    )
+    assert "will not keep an unsaved draft" in got["said"], (
+        f"and it was never announced: {got['said']!r}"
+    )
+
+
+_STICKY = _STUB_RENDER + r"""
+const article = document.querySelector('article.entity');
+const mode = () => VIEW;
+// Reading a record is the ordinary case on this page, so a remembered mode does
+// not open one as a screen-filling editor.
+const atLoad = {view: mode(), full: article.classList.contains('full'),
+                editing: article.classList.contains('editing')};
+document.getElementById('toggle').click();
+const afterEdit = {view: mode(), full: article.classList.contains('full')};
+// And leaving the session is not a choice about how to look at documents.
+document.getElementById('cancel').click();
+const afterCancel = {view: mode(), stored: JSON.parse(localStorage.getItem('openproj:editor:1'))};
+// A segment IS a choice.
+document.getElementById('toggle').click();
+document.getElementById('view-edit').click();
+return {atLoad, afterEdit, afterCancel,
+        chosen: JSON.parse(localStorage.getItem('openproj:editor:1')).mode};
+"""
+
+
+def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
+    client: TestClient, tmp_path: Path
+):
+    """The third field of the preference, and two arguments inside it.
+
+    Sticky at LOAD would mean that after once choosing the split, every detail
+    page anybody opened afterwards opened as a full-screen editor over a record
+    they had come to read. So it is restored when an editing session begins.
+
+    And leaving a session is not a choice about how to look at documents: Cancel
+    goes through `showView`, which does not write the preference, or somebody who
+    edits, cancels and edits again would have lost the split by using it.
+    """
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}").text, _SEED % '{"mode": "both"}'
+        ),
+        tmp_path / "sticky.html", 1400, _STICKY, budget=6000,
+    )
+
+    assert got["atLoad"] == {"view": None, "full": False, "editing": False}, (
+        f"a remembered mode opened a record somebody came to read as a "
+        f"full-screen editor: {got['atLoad']}"
+    )
+    assert got["afterEdit"] == {"view": "both", "full": True}, (
+        f"pressing Edit did not restore the remembered view: {got['afterEdit']}"
+    )
+    assert got["afterCancel"]["view"] is None
+    assert got["afterCancel"]["stored"]["mode"] == "both", (
+        "Cancel was read as a preference for no surface, so using the split once "
+        "and cancelling takes it away"
+    )
+    assert got["chosen"] == "edit", "pressing a segment did not remember it"

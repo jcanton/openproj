@@ -71,6 +71,7 @@ from .index import build_index
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
+    MAX_BODY_BYTES,
     NOTE_ID_PATTERN,
     NOTE_STATUS,
     PEOPLE_DIR,
@@ -138,10 +139,10 @@ ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
 DIRECTORY = {"project": "projects", "pitch": "pitches", "task": "tasks"}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 
-# Starlette does not bound a request body and Cloud Run will happily carry 32 MB.
-# A blob committed to git is permanent and branch protection blocks the force-push
-# that would take it back out, so the only place to stop it is before the commit.
-MAX_BODY_BYTES = 256 * 1024
+# `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
+# the editor's status bar gained a second reader for it, and it is re-exported
+# here by that import so every `web.MAX_BODY_BYTES` in this file and in the tests
+# still names the one object.
 # The largest update one socket frame may carry, which is a different kind of
 # bound and has to be derived from that one rather than written out beside it.
 # `MAX_BODY_BYTES` is policy — what this tool will put in git for ever. This is

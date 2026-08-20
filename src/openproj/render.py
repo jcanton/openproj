@@ -37,6 +37,7 @@ from pydantic import BaseModel
 from .index import COMPUTED_PREDICATES, Index, _matches_predicate, _people_on, _project_of
 from .model import (
     ISSUE_STATUS,
+    MAX_BODY_BYTES,
     NOTE_STATES,
     NOTE_STATUS,
     PARENT_KINDS,
@@ -1320,8 +1321,16 @@ const remembered = {
   // Writing throws too, and for a second reason: Safari's private mode reports a
   // quota of zero, so the first setItem raises QuotaExceededError. A width
   // nobody can save is still a width.
+  //
+  // It answers whether the value stuck, and that is not for the callers that
+  // ignore it — a remembered width, measure or theme is a convenience and a
+  // caller that had to check would be a caller that has to have an opinion about
+  // a refusal it does not care about. It is for the one caller that does: the
+  // unsaved draft is the only thing here that git cannot get back, and a receipt
+  // reading "draft saved just now" over a store that threw is this application
+  // claiming somebody's writing is somewhere it is not.
   set(key, value) {
-    try { localStorage.setItem(key, value); } catch (e) { /* not remembered */ }
+    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
   },
   forget(key) {
     try { localStorage.removeItem(key); } catch (e) { /* nothing to forget */ }
@@ -7668,21 +7677,77 @@ function applyMark(area, mark) {
 
 const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
 
+// --- what this browser remembers about the editor ---------------------------
+//
+// One key, one JSON object, and the version in the key: `{mode, indent,
+// autosave}`, on the precedent of `openproj:widths:4`. One object rather than
+// three keys because a preference that grows a fourth field grows a fourth key
+// otherwise, and nothing then forgets the third when the shape changes.
+//
+// **There is no earlier spelling to forget**, and that is worth stating rather
+// than leaving as an absence: this key is new in this commit, so the `forget`
+// that every other bumped key here carries would be forgetting something that
+// was never written. The version is in the name so the NEXT shape is
+// `openproj:editor:2` and forgets this one out loud, the way the draft key's
+// bump already does.
+//
+// Through `remembered` and never a bare `localStorage`, which throws on the
+// property itself in a private window, behind a blocked cookie or under an
+// enterprise policy — `remembered.map` answers `{}` there and the defaults below
+// are the answer. That is the right way round for a preference about controls
+// that have to exist before it can be read.
+//
+// And every value is checked against what the control actually offers rather
+// than trusted. `{"indent": "four"}` is one hand-edit away, and it would reach
+// `' '.repeat("four")` in the one script six pages share.
+const EDITOR_KEY = 'openproj:editor:1';
+// What the indent picker offers. Two first, because that is what the plan is
+// already written at: 48 of the 56 nested bullets in it are indented by two.
+const INDENT_WIDTHS = [2, 4, 8];
+// How often a draft may be written, in seconds — and the coarsest offer is not a
+// taste. The room commits a document everybody has stopped typing in after
+// `QUIET_SECONDS` (20, in `coedit.py`), and that window is what backstops a
+// draft this browser is holding. An interval coarser than it would let somebody
+// set their own floor below the thing that catches them.
+const DRAFT_SECONDS = [1, 2, 5, 10, 20];
+const EDITOR = (() => {
+  const held = remembered.map(EDITOR_KEY);
+  const one = (value, offered, fallback) => offered.includes(value) ? value : fallback;
+  return {
+    mode: one(held.mode, ['edit', 'both', 'view'], null),
+    indent: one(held.indent, INDENT_WIDTHS, 2),
+    autosave: one(held.autosave, DRAFT_SECONDS, 2),
+  };
+})();
+
+function rememberEditor(change) {
+  Object.assign(EDITOR, change);
+  remembered.set(EDITOR_KEY, JSON.stringify(EDITOR));
+}
+
 // Spaces, because a tab character is two columns here, four in git's diff view
 // and eight in a terminal, and the place these documents are read that this tool
-// does not draw is GitHub. Two of them, because that is what the plan is already
-// written at: 48 of the 56 nested bullets in it are indented by two.
+// does not draw is GitHub.
 //
 // It is a TYPING setting and never a "convert this document" command. A global
 // re-indent reaches the room as one delete-everything-insert-everything, which
 // `tests/test_coedit.py` already measures as larger than a body is allowed to
 // be — so the whole document is never re-indented here, and the picker that
-// makes the width settable (a later stage) changes what the next Tab types and
-// nothing that is already written.
-const INDENT = '  ';
-// Derived, not written down a second time: one tab, or up to as many spaces as
-// an indent puts in. Two constants that are the same number are the same defect.
-const OUTDENT = new RegExp('^(?:\\t| {1,' + INDENT.length + '})');
+// makes the width settable changes what the next Tab types and not one character
+// of what is already written.
+//
+// `let`, because the picker moves it. `OUTDENT` is derived from the same number
+// in the same call rather than written down a second time: one tab, or up to as
+// many spaces as an indent puts in, and two constants that are the same number
+// are the same defect.
+let INDENT;
+let OUTDENT;
+
+function setIndentWidth(width) {
+  INDENT = ' '.repeat(width);
+  OUTDENT = new RegExp('^(?:\\t| {1,' + width + '})');
+}
+setIndentWidth(EDITOR.indent);
 
 // Tab indents what the selection touches, and Shift-Tab takes it back.
 //
@@ -8048,6 +8113,144 @@ function attachGutter(area, note) {
   // arrived yet.
   if (document.fonts) document.fonts.ready.then(later);
   drawGutter();
+}
+
+// Ask 5's control, and the two facts either side of it.
+//
+// The shape is read off the note in `docs/hackmd-observed.md` rather than
+// invented: a strip along the FOOT of the box, holding `Line 1, Columns 1 — 100
+// Lines`, `Spaces: 4` and `Length: 1369`. The thing worth copying is what
+// `Spaces: 4` IS — two words that state the current value and are themselves the
+// click target. No dialog, no settings screen, no "preferences" anywhere: the
+// value is legible without opening anything and one press changes it.
+//
+// What is deliberately not built from that strip, so it is not rediscovered as
+// an omission: `Breaks` is a SERVER setting here — `_MD` is `MarkdownIt(
+// "commonmark", ...)` and CommonMark makes a single newline a space — and
+// flipping it would reflow every document already in the plan repository without
+// changing a character of any of them. It is a stated unknown in the plan
+// pending a grep of the migrated corpus, not a switch. Spellcheck and an editor
+// theme are the other two, and both are refused rather than postponed: the
+// browser's own spellcheck already works in this box, and a pane that themes
+// itself independently of the page is a colour with its only definition inside a
+// block half the readers never match.
+//
+// The bar is built rather than written into four templates, for the same reason
+// the toolbar is: this is one block and four mount sites, and four copies of a
+// row of spans is four places for one of them to fall behind. A page that wants
+// something of its own in the middle of the strip — the draft interval, on the
+// one page that has a draft — puts it in the markup and this wraps it, which is
+// why the two ends are `prepend` and `append` rather than `replaceChildren`.
+const MAX_BODY = {{ max_body_bytes|tojson }};
+
+// A status-bar picker. `label: value`, cycling on click, announced when it
+// moves — because the only thing on screen that changed is two characters in an
+// 11px strip, which is not a change a person who pressed a button can see.
+function statusPick(button, label, offered, chosen, chose) {
+  const draw = () => {
+    button.textContent = `${label}: ${chosen}`;
+    // What pressing it will do, in the words of what it will become. A picker
+    // that says only what it IS leaves a person to press it to find out.
+    const next = offered[(offered.indexOf(chosen) + 1) % offered.length];
+    button.title = `${label}: ${chosen} — press for ${next}`;
+  };
+  button.type = 'button';
+  button.classList.add('stat', 'pick');
+  button.onclick = () => {
+    chosen = offered[(offered.indexOf(chosen) + 1) % offered.length];
+    draw();
+    chose(chosen);
+  };
+  draw();
+  return button;
+}
+
+function attachStatus(area, bar) {
+  if (!bar) return null;
+  const where = document.createElement('span');
+  where.className = 'stat';
+  const spaces = statusPick(
+    document.createElement('button'), 'Spaces', INDENT_WIDTHS, EDITOR.indent,
+    width => {
+      setIndentWidth(width);
+      rememberEditor({indent: width});
+      // In the words of what it is and what it is not. A person who has just
+      // pressed something called "Spaces" on a document full of tabs is entitled
+      // to think the document changed, and it did not: re-indenting a whole
+      // document reaches a live room as one delete-everything-insert-everything,
+      // which is measurably larger than a body is allowed to be.
+      announce(`Tab now types ${width} spaces. Nothing already written was changed.`);
+    });
+  const size = document.createElement('span');
+  size.className = 'stat';
+  bar.prepend(where, spaces);
+  bar.append(size);
+
+  const bytes = new TextEncoder();
+  // Said once per crossing rather than once per keystroke, the way the gutter's
+  // ceiling is: a live region that repeats itself on every character is one
+  // people turn off.
+  let wasOver = false;
+
+  function refresh() {
+    const text = area.value;
+    const at = area.selectionStart;
+    // Counted rather than split: `text.slice(0, at).split('\n')` allocates every
+    // line above the caret, and this runs on every keystroke of a document that
+    // may be four hundred lines long.
+    let line = 1;
+    for (let i = text.indexOf('\n'); i !== -1 && i < at; i = text.indexOf('\n', i + 1)) line++;
+    const opens = text.lastIndexOf('\n', at - 1) + 1;
+    // Code points and not code units, and only over the current line so the cost
+    // is the line rather than the document: a caret after an emoji is in column
+    // 2, and reporting 3 is the same class of wrongness as a splice that cuts a
+    // surrogate pair in half.
+    const column = [...text.slice(opens, at)].length + 1;
+    const lines = text.split('\n').length;
+    const chosen = area.selectionEnd - at;
+    where.textContent = `Line ${line}, Column ${column}`
+      + (chosen ? ` — ${chosen.toLocaleString()} selected` : '')
+      + ` — ${lines.toLocaleString()} Lines`;
+
+    // The count is UTF-16 code units, which is what the editor this is modelled
+    // on counts too, and it is NOT what the ceiling is in. The ceiling is UTF-8
+    // bytes, so the two are said separately rather than one being passed off as
+    // the other — and the byte figure appears only when the document is close
+    // enough to the ceiling for it to be news.
+    //
+    // Encoded only when it could possibly be over: UTF-8 is at most three bytes
+    // per UTF-16 code unit, so a shorter document cannot be, and this is a scan
+    // of the whole body on every keystroke.
+    const near = text.length * 3 >= MAX_BODY * 0.9 ? bytes.encode(text).length : 0;
+    const over = near > MAX_BODY;
+    size.textContent = `Length: ${text.length.toLocaleString()}`
+      + (near >= MAX_BODY * 0.9
+         ? ` — ${near.toLocaleString()} of ${MAX_BODY.toLocaleString()} bytes`
+         : '')
+      + (over ? ', too long to save' : '');
+    size.classList.toggle('over', over);
+    // Before Save is pressed and not after it. The server answers a body over
+    // this with a refusal, which is correct and is also the worst moment to find
+    // out: the writing is done, the tab is about to be closed, and the only copy
+    // is in a box.
+    if (over && !wasOver) {
+      announce(`This document is ${near.toLocaleString()} bytes and cannot be saved above `
+               + `${MAX_BODY.toLocaleString()}.`);
+    }
+    wasOver = over;
+  }
+
+  // The same events the seat layer's `sit` uses, for the same reason: a caret
+  // moves on a keystroke, on a click and on a selection, and none of those is an
+  // `input`. `openproj:editing` is the box arriving, changing width, or being
+  // written into by somebody else in the room — all three change what this says
+  // and none of them fires anything else here.
+  for (const kind of ['input', 'keyup', 'click', 'select', 'focus']) {
+    area.addEventListener(kind, refresh);
+  }
+  addEventListener('openproj:editing', refresh);
+  refresh();
+  return {refresh};
 }
 
 function attachEditing(area, bar) {
@@ -8986,12 +9189,22 @@ addEventListener('openproj:editing', () => {
 
 // --- how a view is asked for ------------------------------------------------
 
+// Chosen, as against merely shown. The preference records what a person picked,
+// and only `chooseView` writes it: `showView` is also what Cancel calls to leave
+// the surface at the end of a session, and reading that as "this reader prefers
+// no surface" would take the split away from somebody who edits, cancels, and
+// edits again.
+function chooseView(mode) {
+  showView(mode);
+  rememberEditor({mode});
+}
+
 for (const name of VIEWS) {
   // Pressing the pressed segment is how you come back out with a pointer, which
   // is the same gesture as the chord below and the only one that needs no
   // fourth control on the bar.
   document.getElementById(VIEW_IDS[name]).onclick =
-    () => showView(VIEW === name ? null : name);
+    () => chooseView(VIEW === name ? null : name);
 }
 
 addEventListener('keydown', event => {
@@ -9027,7 +9240,7 @@ addEventListener('keydown', event => {
   const mode = {Digit1: 'edit', Digit2: 'both', Digit3: 'view'}[event.code];
   if (!mode) return;
   event.preventDefault();
-  showView(VIEW === mode ? null : mode);
+  chooseView(VIEW === mode ? null : mode);
 });
 
 // Escape, arbitrated: see the block in `attachEditing` that dispatches this.
@@ -9045,7 +9258,32 @@ BODY.addEventListener('openproj:escaped', event => {
 // and not the hash, which this page's router already owns and uses to say which
 // entity you are looking at.
 const VIEW_ASKED = new URLSearchParams(location.search);
-showView(VIEWS.find(name => VIEW_ASKED.has(name)) || null);
+const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
+
+// And then the remembered one, which is the second half of the preference this
+// stage carries. Two decisions in it, and both are arguments rather than
+// defaults:
+//
+// **A link beats the preference.** Somebody handed `?view` was handed a way of
+// looking at this particular document; a stored mode is only what this browser
+// last chose for itself.
+//
+// **The preference is applied when an editing SESSION starts, not when the page
+// loads.** Sticky-at-load would mean that after once choosing the split, every
+// detail page anybody opened afterwards opened as a full-screen editor over a
+// record they had come to read — and on this page reading is the ordinary case
+// and writing is the exception. So it is restored by pressing Edit, by a
+// restored draft, and by the create form, which is always editing and where
+// "when the session starts" therefore IS the load. That is the branch below.
+if (VIEW_LINKED) showView(VIEW_LINKED);
+else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) showView(EDITOR.mode);
+
+// A session beginning after this script has run — the Edit button. `VIEW ===
+// null` is what stops the loop: `showView` sets `VIEW` before it calls
+// `showEditing`, which is what dispatches this.
+addEventListener('openproj:session', event => {
+  if (event.detail && EDITOR.mode && VIEW === null) showView(EDITOR.mode);
+});
 </script>
 """)
 
@@ -9140,6 +9378,11 @@ _NEW = """
               to disagree about. -#}
           <div id="body-preview" class="field doc" hidden></div>
         </div>
+        {#- The strip along the foot of the box: where the caret is, how long the
+            document is, and the one control that is a typing setting rather than
+            a command. Empty in the markup and filled by `attachStatus`, so the
+            four pages that carry one carry one line each. -#}
+        <p class="field bodybar statusbar" id="statusbar"></p>
       </div>
     </div>
   </form>
@@ -9193,6 +9436,7 @@ const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
 attachEditing(BODY, document.getElementById('marks'));
 attachGutter(BODY, document.getElementById('gutter-note'));
+attachStatus(BODY, document.getElementById('statusbar'));
 
 // The body a new entity starts from. Switching kind switches template, because
 // picking "pitch" and getting a task's headings is the wrong default in the one
@@ -9467,6 +9711,13 @@ _DETAIL = """
         </div>
         <div id="body-preview" class="field doc" hidden></div>
       </div>
+      {#- The strip along the foot of the box. Filled by `attachStatus`, which
+          wraps whatever the page put in it — here the draft's interval, because
+          this is the one page with a draft and because an interval is a setting
+          and this is where the settings are. -#}
+      <p class="field bodybar statusbar" id="statusbar">
+        <button type="button" id="draftevery"></button>
+      </p>
       <div id="conflict" role="status" aria-live="polite" hidden></div>
       {% endif %}
     </div>
@@ -9478,6 +9729,13 @@ _DETAIL = """
       you have to scroll past a shaping document to find is one nobody finds. -#}
   <div class="commitbar" id="commitbar">
     <span id="unsaved">Nothing to save</span>
+    {#- Ask 7's receipt, beside the count of what is unsaved because that is the
+        sentence it qualifies: a draft is what is holding the writing that has
+        not been committed, and "3 unsaved changes" with nothing beside it reads
+        as work that is nowhere. Empty until something has actually been
+        written — an autosave that says "saved" before it has saved anything is
+        the worst thing in this row. -#}
+    <span id="draftsaved" class="hint"></span>
     <button type="button" id="save" hidden>Save</button>
     {#- Cancel stays beside Save and never beside Edit. They are the two ways one
         editing session can end and putting them in two places is how somebody
@@ -9577,6 +9835,7 @@ const TITLED = document.querySelector('.title-field');
 attachUploads(BODY, document.getElementById('upload'));
 attachEditing(BODY, document.getElementById('marks'));
 attachGutter(BODY, document.getElementById('gutter-note'));
+attachStatus(BODY, document.getElementById('statusbar'));
 // The commit this page was rendered at, and what every save is compared against.
 // Read through this one box rather than looked up at each write, because a
 // restored draft moves it back to the commit that draft was written on top of.
@@ -9671,6 +9930,13 @@ function showEditing(editing) {
   // first thing anybody saw on entering edit mode was no bands at all, on a
   // document somebody else was demonstrably in.
   dispatchEvent(new Event('openproj:editing'));
+  // And a second event, which is a different fact and not a louder version of
+  // the first. `openproj:editing` means "the box moved" and is dispatched by the
+  // width grip, the gutter's column and every view change; this means "a session
+  // began or ended", which happens twice a page. The view preference hangs off
+  // this one, and hanging it off the other would restore the remembered mode
+  // every time anybody dragged the width handle.
+  dispatchEvent(new CustomEvent('openproj:session', {detail: editing}));
 }
 
 // Both of the buttons that change the mode, through one handler: Edit at the top
@@ -9690,7 +9956,7 @@ function flipEditing() {
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
-  if (!editing) remembered.forget(DRAFT);
+  if (!editing) forgetDraft();
 }
 document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
@@ -9739,7 +10005,7 @@ async function save() {
     }
     if (!response.ok) { announce(refusal(answer, response.status)); return; }
     committed = answer.commit;
-    remembered.forget(DRAFT);
+    forgetDraft();
     location.reload();
   } finally {
     // Announced even when refused, or one 409 leaves every event after it held
@@ -9767,9 +10033,115 @@ addEventListener('keydown', event => {
 // restore a compare-and-swap against the right commit: a merge where the edits
 // do not overlap, and the same 409 and the same report as every other write
 // path where they do.
+// Ask 7, and the whole of it: a throttle with a ceiling, and a receipt.
+//
+// It used to be written on every keystroke — a whole document serialised and
+// pushed into `localStorage`, synchronously, on the main thread, per character.
+// The interval is settable because that is what was asked for; it has a ceiling
+// because a settable one otherwise lets somebody set their own floor coarser
+// than the thing that backstops it (`DRAFT_SECONDS`, where the offers are, says
+// which thing and why).
+//
+// **Nothing here reaches git on a timer**, and that is the part of ask 7 that
+// was answered with a no. A draft lives in this browser. The only writers to the
+// repository are Save and — while somebody else is in the document — the room's
+// own commit once everybody has been quiet, which is what `#draftevery`'s title
+// says out loud rather than leaving somebody to assume one or the other.
+//
+// Leading edge and trailing edge both, which is what makes it a throttle rather
+// than a debounce. The first keystroke of a burst is written at once, so a tab
+// closed a second after somebody starts typing still holds their sentence; the
+// last one is written when the interval is up. A debounce is the version that
+// writes nothing at all while somebody types steadily for a minute, which is
+// exactly the person this feature exists for.
+const RECEIPT = document.getElementById('draftsaved');
+let draftMs = EDITOR.autosave * 1000;
+let draftWritten = 0;
+let draftTimer = 0;
+let draftTicker = 0;
+let draftRefused = false;
+
+function sayDraft() {
+  if (!draftWritten) { RECEIPT.textContent = ''; return; }
+  const seconds = Math.round((Date.now() - draftWritten) / 1000);
+  // "just now" rather than "0s ago", and minutes past ninety seconds: a counter
+  // ticking 1s 2s 3s in the corner of the bar is a thing that draws the eye
+  // every second and says nothing new.
+  RECEIPT.textContent = seconds < 5 ? 'draft saved just now'
+    : seconds < 90 ? `draft saved ${seconds}s ago`
+    : `draft saved ${Math.round(seconds / 60)}m ago`;
+}
+
+function writeDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = 0;
+  if (remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: BODY.value}))) {
+    draftRefused = false;
+    draftWritten = Date.now();
+    sayDraft();
+    // The receipt is a relative time, so it goes stale on its own even when
+    // nothing happens. One ticker for the page, started when there is something
+    // to count from and stopped when there is not.
+    if (!draftTicker) draftTicker = setInterval(sayDraft, 1000);
+    return;
+  }
+  // And the branch that decides not to act, saying so — which is the whole
+  // reason `remembered.set` now answers. A private window, a blocked cookie, an
+  // enterprise policy or a full store all end here, and every one of them is a
+  // tab whose unsaved writing is in one box and nowhere else. Said once, because
+  // it will keep being true on every keystroke; the label beside Save stays,
+  // because that is the one a person looks at before closing the tab.
+  draftWritten = 0;
+  clearInterval(draftTicker);
+  draftTicker = 0;
+  RECEIPT.textContent = 'this browser is not keeping drafts';
+  if (!draftRefused) {
+    announce('This browser will not keep an unsaved draft — a private window, a blocked '
+             + 'cookie or a full store. Press Save before closing this tab.');
+  }
+  draftRefused = true;
+}
+
+// The draft is gone — committed, or cancelled — so the receipt is gone with it.
+// One function for the three places that forget it, because a receipt left
+// saying "draft saved 4s ago" over a draft that no longer exists is the counter
+// claiming work is safe somewhere it is not.
+function forgetDraft() {
+  clearTimeout(draftTimer);
+  clearInterval(draftTicker);
+  draftTimer = 0;
+  draftTicker = 0;
+  draftWritten = 0;
+  remembered.forget(DRAFT);
+  sayDraft();
+}
+
 BODY.addEventListener('input', () => {
-  remembered.set(DRAFT, JSON.stringify({base: BASE.value, text: BODY.value}));
+  if (draftTimer) return;
+  const wait = draftWritten + draftMs - Date.now();
+  if (wait <= 0) writeDraft();
+  else draftTimer = setTimeout(writeDraft, wait);
 });
+
+// A throttle with nothing to flush it is a throttle that loses the last thing
+// somebody typed, which is the one thing this feature exists to keep. `pagehide`
+// covers a closed tab, a navigation and a back/forward-cache eviction;
+// `visibilitychange` covers the phone and the tab that is frozen and then killed
+// without `pagehide` ever firing. Both, because `writeDraft` writing twice costs
+// one `setItem` and missing once costs a paragraph.
+addEventListener('pagehide', () => { if (draftTimer) writeDraft(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && draftTimer) writeDraft();
+});
+
+statusPick(document.getElementById('draftevery'), 'Draft', DRAFT_SECONDS, EDITOR.autosave,
+           seconds => {
+             draftMs = seconds * 1000;
+             rememberEditor({autosave: seconds});
+             announce(`An unsaved draft is kept in this browser every ${seconds} seconds. `
+                      + 'Nothing is committed on a timer.');
+           });
+
 const draft = remembered.map(DRAFT);
 // A draft from before this — bare text under the old key — records no commit,
 // and there is nothing honest to do with one: pairing it with today's base is
@@ -10221,7 +10593,12 @@ const COEDIT = (() => {
       if (message.update) YJS.applyUpdate(doc, raw(message.update), 'remote');
       BASE.value = message.commit;
       ORIGINAL_BODY = text.toString();
-      remembered.forget(DRAFT);
+      // Through the page's own `forgetDraft` and not a bare `remembered.forget`:
+      // the room committing this document is one of the three ways a draft stops
+      // existing, and a receipt left saying "draft saved 4s ago" over a draft
+      // that no longer exists is the counter claiming work is somewhere it is
+      // not.
+      forgetDraft();
       box.hidden = true;
       settle(message.commit);
       dirty();
@@ -10483,6 +10860,32 @@ textarea.body-field { min-height: 60vh; resize: vertical; }
    tints them with somebody else's colour, which reads as the gutter belonging to
    whoever is in the room. */
 .bodywrap.numbered .seat { left: var(--gutter); }
+/* Asks 5 and 7, and the two facts either side of them: the strip along the FOOT
+   of the box, which is where the note this is modelled on puts them. Under the
+   box and not above it, and that is the whole reason there are two bars rather
+   than one — the toolbar is what you reach for while writing a line and belongs
+   above the line; where the caret is and how long the document is are things you
+   look down at, and a row of numbers between the toolbar and the text is a row
+   between a control and the thing it controls.
+   Smaller than the toolbar and in the muted ink: everything in it is a fact
+   about the document rather than an instruction, except the two pickers, which
+   earn their weight by being the only things in the row that respond to a
+   press. */
+.statusbar { margin: .25rem 0 0; font-size: 11px; color: var(--muted);
+             flex-wrap: wrap; }
+.stat { white-space: nowrap; }
+/* A picker that looks like the words beside it until you point at it. `Spaces:
+   2` is a value that states itself and is its own click target; drawing it as a
+   button with a border would make it the loudest thing in a row of quiet facts,
+   which is backwards — it is a setting somebody changes twice a year. */
+button.stat.pick { font: inherit; color: inherit; background: none; border: 0;
+                   border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
+button.stat.pick:hover { color: var(--accent); }
+/* Over the ceiling. The one thing in this row that is not a fact but a refusal
+   waiting to happen, so it is the one thing drawn in the colour of a refusal —
+   and the word is in the element too, because a colour on its own is a channel a
+   dichromat does not have. */
+.stat.over { color: var(--danger); font-weight: 600; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
@@ -10599,9 +11002,11 @@ article.entity.full.view-both #body-preview {
    the scroll container and a narrow scroll container puts its scrollbar down the
    middle of the window. */
 article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
-/* Preview only: the box goes, and the marks go with it. A toolbar over no box is
-   fourteen buttons that write into nothing. */
+/* Preview only: the box goes, and the two bars go with it. A toolbar over no box
+   is fourteen buttons that write into nothing, and a status bar over no box is a
+   caret position for a caret nobody can see. */
 article.entity.full.view-view .bodywrap,
+article.entity.full.view-view .statusbar,
 article.entity.full.view-view .markbar { display: none; }
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
@@ -14581,7 +14986,7 @@ def _combobox_html(index: Index | None) -> Markup:
         if index
         else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
     )
-    return _fragment(_COMBOBOX, suggest=data)
+    return _fragment(_COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES)
 
 
 # The nav, as the field on `Links` each item points at and the word it wears. One
