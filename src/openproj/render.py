@@ -6442,7 +6442,6 @@ _GRAPH = """
     none of them crossing. It is the one vendored file that is not permissively
     licensed — EPL-2.0, notice beside it in `static/`, see `VENDOR.md`. -#}
 <script>{{ elk }}</script>
-<script>{{ cytoscape_elk }}</script>
 {#- Filing one thing inside another was written here by hand, shipped, and
     removed the same day: a compound's outline follows the child being dragged,
     so the drop looked like nothing happening until the page reloaded. This
@@ -6452,7 +6451,6 @@ _GRAPH = """
     it wants two lodash modules as globals to replace a gesture that works. -#}
 {{ filters }}
 <script>
-cytoscape.use(cytoscapeElk);
 
 // A payload that did not survive the trip is a third kind of empty, and an empty
 // canvas looks the same whichever one it is: a bordered box with nothing in it,
@@ -6566,39 +6564,202 @@ function groupWidth(node) {
 // whose edges mean blocks/blocked-by, an arrow that reads backwards is the view
 // lying. Take the zoom when a plan actually outgrows the row, and know what it
 // costs.
-const LAYOUT = {
-  name: 'elk',
-  fit: true,
-  elk: {
-    algorithm: 'layered',
-    'elk.direction': 'RIGHT',
-    'elk.spacing.nodeNode': 30,
-    'elk.layered.spacing.nodeNodeBetweenLayers': 50,
-    // `elk.separateConnectedComponents` and `elk.aspectRatio` were here and are
-    // not: the adapter injects `aspectRatio: cy.width() / cy.height()` into every
-    // run itself, and ELK's component packer never ran under the flattened
-    // hierarchy anyway. Two settings that read as though they do something are
-    // worse than none.
-    //
-    // `elk.edgeRouting: 'ORTHOGONAL'` was here for the same reason and is gone
-    // for a worse one: ELK really does compute bend points, and this adapter
-    // throws them away — `run()` applies positions to the non-parent nodes and
-    // never reads an edge's `sections`. Every edge on this page is cytoscape's
-    // own `round-taxi` plus `route()` below.
-  },
-  // The one option that reaches a parent: `cytoscape-elk` applies
-  // `nodeLayoutOptions` in `makeNode` BEFORE its `if (!node.isParent())` guard.
-  // The key has to carry its prefix — bare `padding` is dropped in silence.
-  //
-  // 25 and not ELK's default 12, because the box ELK reserves and the box this
-  // page draws are not the same box: `:parent` is styled with `padding: 20` plus
-  // a label band above it. Measured, the drawn box came out 21px larger in each
-  // dimension than the one ELK planned, which is exactly enough for two
-  // neighbours ELK considered separate to touch. THAT PADDING AND THIS NUMBER
-  // HAVE TO MOVE TOGETHER.
-  nodeLayoutOptions: node =>
-    node.isParent() ? {'elk.padding': '[top=25,left=25,bottom=25,right=25]'} : undefined,
+// ELK is asked directly, not through `cytoscape-elk`. The adapter reads node
+// positions out of the answer and never looks at an edge's `sections`, and going
+// round it buys the two things this layout needs and it cannot give:
+//
+//   * an edge on the box that HOLDS it rather than at the root, and
+//   * ghost edges, which are the whole reason the boxes come out in order.
+//
+// GHOST EDGES. ELK's recursive engine lays each box out over its own children and
+// then lays the boxes out. The pass that places the boxes therefore cannot see a
+// dependency between two records INSIDE two different boxes — it sees boxes. So
+// for every dependency, an invisible edge is added between the two children of
+// its lowest common ancestor, which is the edge that pass can act on.
+//
+// At every level and not only at the root, because the problem repeats all the
+// way down: two tasks in two different pitches of one project need those pitches
+// ordered, and only the project's own layout pass can do it. Measured on a
+// generated plan of 518 records — `tests/plans.py` — dependencies drawn backwards
+// went 24 of 189 with no ghosts, to 18 with ghosts only at the root, to 3 with
+// them at every level. On the real plan it is 0 either way, which is luck of
+// shape: its two cross-project dependencies are top-level edges that carry the
+// order themselves.
+//
+// The ghosts never reach cytoscape. They exist in the object handed to ELK and
+// nowhere else, which is what makes them safe: a layout-only edge that got into
+// the graph would be tappable in edit mode, would be walked by the cycle check,
+// would fade an unrelated project in the filter, and would be sent to the server
+// by Save.
+//
+// The three left over at 518 are group-level ambiguity rather than a bug: if
+// something in A blocks something in B and something in B blocks something in A,
+// the ghost graph has a cycle the record graph does not, and one of the two
+// arrows has to come out backwards.
+const LAYOUT_OPTIONS = {
+  'elk.algorithm': 'layered',
+  'elk.direction': 'RIGHT',
+  'elk.spacing.nodeNode': '30',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '50',
+  // Routed, and mostly in vain: ELK computes bend points for an edge it can see
+  // both ends of, and returns none at all for one that spans the hierarchy.
+  // Measured on a 208-record plan, ORTHOGONAL, POLYLINE and SPLINES each gave
+  // bend points to ZERO of 76 edges. What comes back is applied — a routed edge
+  // is better than a straight one — and the rest keep cytoscape's taxi router.
+  // The edges that cross a card are the reason a person can drag them apart.
+  'elk.edgeRouting': 'ORTHOGONAL',
 };
+
+// 25 and not ELK's default 12, because the box ELK reserves and the box this page
+// draws are not the same box: `:parent` is styled with `padding: 20` plus a label
+// band above it. Measured, the drawn box came out 21px larger in each dimension
+// than the one ELK planned, which is exactly enough for two boxes ELK considered
+// separate to touch. THAT PADDING AND THIS NUMBER HAVE TO MOVE TOGETHER.
+const BOX_PADDING = '[top=25,left=25,bottom=25,right=25]';
+
+// The chain from the outermost box down to the node itself.
+const chainOf = node => [...node.ancestors().toArray().reverse(), node].map(n => n.id());
+
+// One node, as ELK wants it. A leaf carries the size cytoscape drew it at; a box
+// carries none, because its size is what ELK is being asked to work out.
+function elkNode(node) {
+  const kids = node.children();
+  if (kids.length) {
+    return {id: node.id(), children: kids.map(elkNode),
+            layoutOptions: {'elk.padding': BOX_PADDING}};
+  }
+  const box = node.boundingBox({includeLabels: false});
+  return {id: node.id(), width: box.w, height: box.h};
+}
+
+// Which container each edge belongs to. A real edge goes on the box that holds
+// BOTH its ends, so ELK routes it among that box's children with them as
+// obstacles; at the root a whole project is one opaque rectangle and the edge is
+// drawn straight through everything inside it.
+function edgesByContainer(edges) {
+  const real = {};
+  const ghosts = {};
+  const seen = new Set();
+  edges.forEach(edge => {
+    const from = chainOf(edge.source());
+    const to = chainOf(edge.target());
+    const together = from.length === to.length
+      && from.slice(0, -1).join() === to.slice(0, -1).join();
+    const holder = together && from.length > 1 ? from[from.length - 2] : 'root';
+    (real[holder] = real[holder] || []).push({
+      id: edge.id(), sources: [edge.source().id()], targets: [edge.target().id()],
+    });
+
+    let deep = 0;
+    while (deep < from.length && deep < to.length && from[deep] === to[deep]) deep++;
+    const a = from[deep], b = to[deep];
+    if (!a || !b || a === b) return;
+    // Already the edge that level will see: nothing to add.
+    if (a === edge.source().id() && b === edge.target().id()) return;
+    const on = deep === 0 ? 'root' : from[deep - 1];
+    const key = on + '|' + a + '>' + b;
+    if (seen.has(key)) return;
+    seen.add(key);
+    (ghosts[on] = ghosts[on] || []).push({id: 'ghost:' + key, sources: [a], targets: [b]});
+  });
+  return {real, ghosts};
+}
+
+const elk = new ELK();
+
+// Lay the visible graph out and draw the answer. Asynchronous, and the callers
+// treat it as such: the filter awaits nothing, it simply asks again.
+async function relayout() {
+  const nodes = cy.nodes(':visible');
+  const edges = cy.edges(':visible');
+  if (!nodes.length) return;
+  const {real, ghosts} = edgesByContainer(edges);
+  const graph = {
+    id: 'root',
+    layoutOptions: {...LAYOUT_OPTIONS,
+                    'elk.aspectRatio': String(cy.width() / cy.height())},
+    children: nodes.filter(node => !node.isChild()).map(elkNode),
+    edges: [...(real.root || []), ...(ghosts.root || [])],
+  };
+  const hang = node => {
+    const mine = [...(real[node.id] || []), ...(ghosts[node.id] || [])];
+    if (mine.length) node.edges = [...(node.edges || []), ...mine];
+    (node.children || []).forEach(hang);
+  };
+  graph.children.forEach(hang);
+
+  let laid;
+  try {
+    laid = await elk.layout(graph);
+  } catch (error) {
+    // A layout that will not run must not take the page with it: the nodes are
+    // already on the canvas and cytoscape will draw them where they are.
+    say('this plan could not be laid out — the drawing is unarranged');
+    return;
+  }
+
+  // A child's x and y are relative to its parent, so the walk carries the offset.
+  const at = {};
+  const walk = (node, dx, dy) => {
+    const x = (node.x || 0) + dx, y = (node.y || 0) + dy;
+    at[node.id] = {x, y, w: node.width, h: node.height};
+    (node.children || []).forEach(kid => walk(kid, x, y));
+  };
+  (laid.children || []).forEach(kid => walk(kid, 0, 0));
+
+  // Only the leaves are placed. A compound's position in cytoscape is derived
+  // from its children, so setting it as well moves its contents twice.
+  cy.batch(() => {
+    nodes.filter(node => node.isChildless()).forEach(node => {
+      const where = at[node.id()];
+      if (where) node.position({x: where.x + where.w / 2, y: where.y + where.h / 2});
+    });
+  });
+
+  // The routes, in the coordinates of whatever container they were declared on.
+  const bends = {};
+  const collect = (node, dx, dy) => {
+    (node.edges || []).forEach(one => {
+      if (one.id.startsWith('ghost:')) return;
+      const section = (one.sections || [])[0];
+      if (!section || !(section.bendPoints || []).length) return;
+      bends[one.id] = section.bendPoints.map(p => ({x: p.x + dx, y: p.y + dy}));
+    });
+    (node.children || []).forEach(kid => {
+      const where = at[kid.id];
+      if (where) collect(kid, where.x, where.y);
+    });
+  };
+  collect(laid, 0, 0);
+  drawRoutes(bends);
+
+  cy.fit(undefined, 24);
+}
+
+// ELK gives a bend point as a position; cytoscape wants it as a distance from the
+// straight line between the two ends and a fraction along that line. So each one
+// is projected onto that line — which also means the two are consistent when a
+// node is dragged afterwards, because both are relative to where the ends are.
+function drawRoutes(bends) {
+  cy.batch(() => {
+    cy.edges().forEach(edge => {
+      const points = bends[edge.id()];
+      if (!points || !points.length) { edge.removeStyle('curve-style'); return; }
+      const from = edge.source().position(), to = edge.target().position();
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const span = Math.hypot(dx, dy) || 1;
+      const weights = [], distances = [];
+      points.forEach(point => {
+        const px = point.x - from.x, py = point.y - from.y;
+        weights.push(((px * dx + py * dy) / (span * span)).toFixed(4));
+        distances.push(((px * dy - py * dx) / span).toFixed(1));
+      });
+      edge.style({'curve-style': 'segments',
+                  'segment-weights': weights.join(' '),
+                  'segment-distances': distances.join(' ')});
+    });
+  });
+}
 
 // `packComponents` was here and is the reason this page looked the way it did.
 //
@@ -6636,7 +6797,6 @@ fitRoom();
 const cy = cytoscape({
   container: document.getElementById('cy'),
   elements: ELEMENTS || [],
-  layout: LAYOUT,
   // Filtering re-fits what is left to the window, and two boxes fitted to a
   // 1400px canvas came out at nearly 3x — the same graph reading as a different
   // app. Zooming in by hand stops at the same place, which at a 10px label is
@@ -6690,7 +6850,19 @@ const cy = cytoscape({
     // On the canvas only because something that did match points at it. Faded
     // rather than removed, so no arrow leaves for a box you cannot see.
     { selector: 'node.aside', style: { 'opacity': .32 } },
+    // Edges are drawn OVER the cards, not behind them. A line that disappears
+    // behind a card and comes out the other side reads as two edges meeting it —
+    // jcanton, 2026-08-20: "to a distracted human not noticing that there are no
+    // arrowheads, [it] may make it seem like it depends on where the edge comes
+    // from". A line you can see crossing is a line you can see is not connected.
+    //
+    // The alternative was an automatic layout that never puts a card on a line,
+    // and that is not reachable with what is vendored: ELK emits bend points for
+    // an edge whose obstacles are at the level it is working on, and none at all
+    // for one that spans the hierarchy — measured, zero of 76 on a 208-record
+    // plan, in each of its three routing modes.
     { selector: 'edge', style: {
+        'z-compound-depth': 'top',
         // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
         // so an edge that leaves horizontally and turns once reads as a route
         // between ranks instead of a curve drawn over whatever is in between.
@@ -6779,53 +6951,30 @@ addEventListener('themechange', paint);
 // positions and is deterministic, so a re-run puts every card back exactly where
 // it already was and the drag simply vanishes — a stranger thing to watch than a
 // card sliding home.
-let heldIn = null;
-cy.on('grab', 'node', evt => {
-  const parent = evt.target.parent();
-  if (!parent.length) { heldIn = null; return; }
-  // Inset by the box's own padding, and asked of cytoscape rather than typed:
-  // a compound's bounding box INCLUDES that padding, so a card put back exactly
-  // on the boundary sits where the padding was and the box grows to keep it —
-  // 600x400 of stretch became 23x23 with the padding alone, which is where the
-  // border came into it.
-  const pad = (parseFloat(parent.style('padding')) || 0)
-            + (parseFloat(parent.style('border-width')) || 0);
-  const box = parent.boundingBox({includeLabels: false});
-  heldIn = {x1: box.x1 + pad, x2: box.x2 - pad, y1: box.y1 + pad, y2: box.y2 - pad};
-});
-cy.on('dragfree', 'node', evt => {
-  const node = evt.target;
-  const box = heldIn;
-  heldIn = null;
-  if (!box) return;
-  const own = node.boundingBox({includeLabels: false});
-  const at = node.position();
-  // Its own half-width and half-height, so what is kept inside is the card's
-  // edges rather than its centre: a card whose middle is just inside the boundary
-  // is a card half of which is outside it.
-  const halfWide = (own.x2 - own.x1) / 2;
-  const halfTall = (own.y2 - own.y1) / 2;
-  node.position({
-    x: Math.min(Math.max(at.x, box.x1 + halfWide), box.x2 - halfWide),
-    y: Math.min(Math.max(at.y, box.y1 + halfTall), box.y2 - halfTall),
-  });
-});
-
-// And a box is not picked up at all. Cytoscape moves a parent rigidly with its
-// whole subtree — nothing stretches, but nothing stops it being shoved across its
-// neighbours either, and nothing re-lays-out afterwards. A grab on a box pans the
-// canvas instead, which is what a grab on the background already does.
-// Double-tap to open, the hover card and the edit-mode tap all still fire on it.
-function loosenBoxes() { cy.nodes(':parent').ungrabify(); }
-loosenBoxes();
-cy.on('layoutstop', loosenBoxes);
+// Nothing is clamped and nothing is ungrabbable. A card dragged out of its box
+// stretches the box, which is why the clamp existed — but an automatic layout
+// that never puts a card on an edge is not reachable here (see `LAYOUT_OPTIONS`:
+// ELK returns bend points for none of the edges that span the hierarchy, in any
+// of its three routing modes), so somebody has to be able to move a card off the
+// line it is sitting on. jcanton, 2026-08-20, having watched the clamp put a card
+// straight back onto the line it had been dragged off: "let people drag".
+//
+// The clamp contributed nothing to the drawing you arrive at. It ran on
+// `dragfree` and nowhere else, so the starting view has always been the layout
+// alone — worth writing down, because the obvious guess is otherwise, and it was
+// the guess made when this was agreed.
+//
+// A box can be picked up again for the same reason. Cytoscape moves a parent
+// rigidly with its whole subtree, so dragging one shoves it across its
+// neighbours and nothing re-lays-out — which was the argument for `ungrabify`,
+// and is now the argument against it: shoving a box out of the way is exactly
+// what somebody needs to do when two of them are drawn on top of each other.
 // The face is inlined but still swaps in asynchronously, and a group label
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
 
 // Packed first and routed after: routing reads where the boxes ended up, and
 // the pack moves them.
-cy.on('layoutstop', route);
 cy.on('position', 'node', route);
 route();
 
@@ -6908,8 +7057,14 @@ function applyFilter() {
   const now = cy.nodes(':visible').map(node => node.id()).sort().join(',');
   if (now === laidOut || !keep.size) return;
   laidOut = now;
-  cy.elements(':visible').layout({...LAYOUT, fit: true}).run();
+  relayout();
 }
+
+// The first drawing. The constructor used to carry `layout:` and did this on the
+// way up; ELK is asked directly now, so it is asked here — and asked here rather
+// than left to `applyFilter`, which lays out only when the visible set has
+// CHANGED, and on the first pass it has not.
+relayout();
 
 addEventListener('openproj:filter', applyFilter);
 CLEAR.onclick = clearFilters;
@@ -14955,7 +15110,6 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         elements=_elements(index),
         cytoscape=_library("cytoscape.min.js"),
         elk=_library("elk.bundled.js"),
-        cytoscape_elk=_library("cytoscape-elk.js"),
     )
     return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
 

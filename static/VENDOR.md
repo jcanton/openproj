@@ -13,7 +13,6 @@ below, and the bytes in git are still upstream's.
 | `yjs-LICENSE.txt` | 13.6.32 | MIT | https://raw.githubusercontent.com/yjs/yjs/v13.6.32/LICENSE |
 | `elk.bundled.js` | 0.9.3 | **EPL-2.0** | https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js |
 | `elk-LICENSE.txt` | 0.9.3 | EPL-2.0 | licence text for the file above |
-| `cytoscape-elk.js` | 2.2.0 | MIT | https://cdn.jsdelivr.net/npm/cytoscape-elk@2.2.0/dist/cytoscape-elk.js |
 | `inter-latin-wght-normal.woff2` | latin subset, variable 100–900 | OFL 1.1 | https://cdn.jsdelivr.net/fontsource/fonts/inter:vf@latest/latin-wght-normal.woff2 |
 | `inter-LICENSE.txt` | — | OFL 1.1 | licence text for the face above |
 
@@ -46,10 +45,15 @@ was: a vendored file nothing inlines is a file nobody checks.
 dagre and cytoscape-dagre were here until ELK replaced them; they are gone rather than
 left in the directory, because a vendored file nothing inlines is a file nobody checks.
 
-Only cytoscape carries its MIT notice inline in the minified file. cytoscape-elk declares
-its in its upstream `package.json`, and ELK's ships beside it as a file because EPL asks
-for that. Yjs's minified bundle carries none, so the MIT text ships beside it the way
-Inter's OFL does.
+`cytoscape-elk` was here and is gone. The graph asks elkjs directly, because the adapter
+reads node positions out of ELK's answer and never looks at an edge's `sections` — and
+going round it is what lets an edge be declared on the box that holds it, and lets the
+layout add the invisible edges that put the boxes in order. Deleted rather than left in
+the directory, for the reason dagre was.
+
+Only cytoscape carries its MIT notice inline in the minified file. ELK's ships beside it
+as a file because EPL asks for that. Yjs's minified bundle carries none, so the MIT text
+ships beside it the way Inter's OFL does.
 
 ## Checksums, and updating a file
 

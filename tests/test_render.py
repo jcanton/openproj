@@ -131,7 +131,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: 
     # ELK replaced dagre, and a list written down in a test is a list that says
     # a page is fine while it inlines a library nobody checked.
     inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
-    assert len(inlined) == 3, inlined
+    assert len(inlined) == 2, inlined
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
@@ -3483,24 +3483,27 @@ def test_the_app_moves_in_exactly_one_place(rendered: Path):
 
 def test_the_graph_does_not_animate_where_css_cannot_stop_it():
     """A canvas is the exception the floor cannot cover: cytoscape draws into one,
-    and no stylesheet slows that down. `LAYOUT` leaves `animate` at the vendored
-    default of `false`, which is the whole reason the block is honest — turn it on
-    and a reader who asked for stillness gets a 500ms slide anyway."""
+    and no stylesheet slows that down.
+
+    Nothing on this page animates, and since the layout became a direct call to
+    ELK there is no cytoscape layout to ask for animation in the first place —
+    ELK returns positions and they are applied inside a `cy.batch`. What is left
+    to guard is that neither cytoscape's own animation API nor a re-introduced
+    `layout({...})` brings a slide back for a reader who asked for stillness.
+    """
     from openproj import render
 
     source = Path(render.__file__).read_text(encoding="utf-8")
-    # The constant and every call that spreads it. Both, because `{...LAYOUT,
-    # fit: true}` is where an option gets added without the constant changing.
-    # Multi-line since ELK: the options are a block rather than one line, and a
-    # regex anchored to `};` reads the whole of it.
-    specs = [re.search(r"^const LAYOUT = (\{.*?^\};)", source, re.M | re.S).group(1)]
-    specs += re.findall(r"\.layout\((\{[^}]*\})\)", source)
-    for spec in specs:
+    for spec in re.findall(r"\.layout\((\{[^}]*\})\)", source):
         assert "animate" not in spec, (
             f"cytoscape was told to animate in {spec}; CSS cannot reach a canvas, so "
             f"the layout has to ask matchMedia('(prefers-reduced-motion: reduce)') itself"
         )
     assert ".animate(" not in source, "cytoscape's own animation API moves the canvas too"
+    assert "const LAYOUT_OPTIONS = {" in source, "the ELK options are not where this expects"
+    assert "animate" not in re.search(
+        r"^const LAYOUT_OPTIONS = (\{.*?^\};)", source, re.M | re.S
+    ).group(1)
 
 
 def test_no_page_uses_one_id_for_more_than_one_element(rendered: Path):

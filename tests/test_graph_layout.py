@@ -86,6 +86,51 @@ for (const box of boxes) {
   if (ratio > worst) { worst = ratio; worstOf = box.id(); }
 }
 
+// How many edges cross a card that is neither of their two ends. The measurement
+// the routing work in `docs/QUEUE.md` has to beat, and the reason it is worth
+// having before that work starts: without a number, "the graph looks better" is
+// the only thing anybody can say about it.
+//
+// Reconstructed from the bend points, which IS the drawn path when the curve
+// style is `segments`, and from the two ends when it is not. Sampled along each
+// leg rather than solved, because the arithmetic for a segment against a
+// rectangle is where a measurement quietly starts measuring something else.
+const crossesBox = (p, q, r) => {
+  for (let i = 0; i <= 20; i++) {
+    const x = p.x + (q.x - p.x) * i / 20, y = p.y + (q.y - p.y) * i / 20;
+    if (x > r.x1 && x < r.x2 && y > r.y1 && y < r.y2) return true;
+  }
+  return false;
+};
+let under = 0;
+cy.edges().forEach(edge => {
+  const from = edge.source().position(), to = edge.target().position();
+  const path = [from];
+  if (edge.style('curve-style') === 'segments') {
+    const ws = String(edge.style('segment-weights') || '').trim().split(/\s+/).map(Number);
+    const ds = String(edge.style('segment-distances') || '').trim().split(/\s+/).map(Number);
+    const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
+    ws.forEach((w, i) => {
+      if (!isFinite(w) || !isFinite(ds[i])) return;
+      path.push({x: from.x + dx * w + (dy / span) * ds[i],
+                 y: from.y + dy * w - (dx / span) * ds[i]});
+    });
+  }
+  path.push(to);
+  for (const leaf of leaves) {
+    // A card inside one of the two records an edge joins is not a card it is
+    // crossing: cytoscape draws from the CENTRE of a box, so an edge attached to
+    // a compound necessarily starts among its children. Only a stranger counts.
+    if (leaf.same(edge.source()) || leaf.same(edge.target())) continue;
+    if (leaf.ancestors().anySame(edge.source())) continue;
+    if (leaf.ancestors().anySame(edge.target())) continue;
+    const r = rect(leaf);
+    let hit = false;
+    for (let i = 0; i < path.length - 1 && !hit; i++) hit = crossesBox(path[i], path[i + 1], r);
+    if (hit) { under++; break; }
+  }
+});
+
 // Which way the arrows read. RIGHT is the direction asked of ELK, so a
 // dependency whose source is right of its target is one drawn backwards.
 let forward = 0, backward = 0;
@@ -94,7 +139,7 @@ cy.edges().forEach(e => {
 });
 
 return {
-  boxes: boxes.length, leaves: leaves.length, edges: cy.edges().length,
+  boxes: boxes.length, leaves: leaves.length, edges: cy.edges().length, under,
   overlapping, trespassing,
   sparseWorst: +worst.toFixed(2), sparseWorstOf: worstOf,
   sparseMean: +(total / (counted || 1)).toFixed(2),
@@ -162,53 +207,55 @@ def test_the_arrows_read_the_way_the_layout_was_asked_for(drawn: dict):
     assert drawn["backward"] == 0, f"{drawn['backward']} of {drawn['edges']} drawn backwards"
 
 
-# A card dragged out of its box, which is the half of the complaint that no
-# layout choice touches: a compound's rectangle follows its children, so a card
-# dragged away does not leave its box, it stretches it.
+# A card dragged out of its box, and what happens to the box.
 _DRAGGED = """
 const leaf = cy.nodes().filter(n => n.isChildless() && n.parent().length)[0];
 if (!leaf) return {error: 'no card has a box to be dragged out of'};
 const box = leaf.parent();
 const was = box.boundingBox({includeLabels: false});
-const from = leaf.position();
+// Copied. `position()` hands back a live object, so a "before" taken from it
+// moves with the node and every measurement comes out zero.
+const from = {...leaf.position()};
 
 leaf.emit('grab');
 leaf.position({x: from.x + 600, y: from.y + 400});
 leaf.emit('dragfree');
 
-const now = box.boundingBox({includeLabels: false});
 return {
-  grew: Math.round((now.x2 - now.x1) - (was.x2 - was.x1)),
-  taller: Math.round((now.y2 - now.y1) - (was.y2 - was.y1)),
+  moved: Math.round(leaf.position().x - from.x),
+  grew: Math.round((box.boundingBox({includeLabels: false}).x2 - was.x2)),
   boxes: cy.nodes().filter(n => n.isParent()).length,
   grabbable: cy.nodes().filter(n => n.isParent() && n.grabbable()).length,
 };
 """
 
 
-def test_a_card_dragged_out_of_its_box_goes_back_into_it(index: Index, tmp_path: Path):
-    """Complaint 3, and it survives every layout: "dragging makes this even much
-    worse".
+def test_a_card_stays_where_it_was_dragged(index: Index, tmp_path: Path):
+    """It used to be put back inside the box it came from, and the clamp is gone —
+    jcanton, 2026-08-20, having watched it drop a card straight back onto the line
+    it had been moved off: "let people drag".
 
-    Measured on a clean layout, one card dragged 250x120 took the drawing from 0
-    overlapping pairs to 2 and 0 trespasses to 5 — correct until somebody touched
-    it. The card is put back rather than the layout re-run: ELK ignores current
-    positions and is deterministic, so a re-run would move every card back to
-    where it already was and the drag would simply vanish, which is a stranger
-    thing to watch than a card sliding home.
+    The clamp was there because a compound's rectangle follows its children, so a
+    card dragged out stretches the box rather than leaving it. That is still true
+    and is now the price: the alternative was an automatic layout that never puts
+    a card on a line, and ELK cannot give one — it returns bend points for an edge
+    whose obstacles are at the level it is working on, and none at all for one
+    that spans the hierarchy, in each of its three routing modes.
+
+    The clamp contributed nothing to the drawing you arrive at. It ran on
+    `dragfree` and nowhere else, so the starting view is the layout alone.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "drag.html", 1900, _DRAGGED,
                       height=820, patience=3500)
 
     assert not got.get("error"), got
-    assert got["grew"] <= 1 and got["taller"] <= 1, (
-        f"one drag stretched the box by {got['grew']}x{got['taller']}px"
+    assert got["moved"] > 500, "the card was moved back"
+    # And a box can be picked up too, which is how two boxes drawn over each other
+    # get pulled apart.
+    assert got["grabbable"] == got["boxes"], (
+        f"{got['boxes'] - got['grabbable']} of {got['boxes']} boxes cannot be dragged"
     )
-    # And a box cannot be picked up at all: cytoscape moves a parent rigidly with
-    # its whole subtree, so nothing stretches — but nothing stops it being shoved
-    # across its neighbours either, and nothing re-lays-out afterwards.
-    assert got["grabbable"] == 0, f"{got['grabbable']} of {got['boxes']} boxes can be dragged"
 
 
 @pytest.fixture
@@ -307,3 +354,26 @@ def test_every_node_says_its_priority_as_well_as_its_status(index: Index, tmp_pa
     for prefix in got["marked"]:
         assert prefix[0] in PRIORITY_GLYPH.values(), f"{prefix!r} does not start with a rung"
         assert prefix[1] in STATUS_GLYPH.values(), f"{prefix!r} has lost its status glyph"
+
+
+def test_how_many_edges_cross_a_card_they_have_nothing_to_do_with(drawn: dict):
+    """The number the routing work in `docs/QUEUE.md` exists to beat.
+
+    A bound and deliberately not zero: an automatic layout that never puts a card
+    on a line is not reachable with what is vendored here — ELK returns bend
+    points for none of the edges that span the hierarchy, in any of its three
+    routing modes — so this records where the drawing actually stands rather than
+    asserting a promise the page does not make.
+
+    It is here so that whoever writes the router has an instrument on the day they
+    start, and so that a change which makes the drawing quietly worse has
+    something to fail against. Measured at 1900x820: 4 on the real plan, 13 at 208
+    records, 43 at 518.
+    """
+    assert drawn["under"] <= drawn["edges"], "more crossings than there are edges"
+    # Generous, and it is the ceiling rather than the target. If this ever fails,
+    # something has made the drawing worse — do not raise it, find out what.
+    assert drawn["under"] <= max(4, drawn["edges"] // 2), (
+        f"{drawn['under']} of {drawn['edges']} edges cross a card they are not "
+        "attached to, which is worse than the layout has ever been"
+    )
