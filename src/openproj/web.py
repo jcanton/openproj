@@ -1342,7 +1342,8 @@ def create_app(
         }
         content = patch_text("---\n---\n", fields, payload.get("body") or "")
         parse_issue_text(content, issue_id)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=_issue_path(issue_id),
             content=content,
             base_commit=payload.get("base_commit") or store.head(),
@@ -1373,7 +1374,8 @@ def create_app(
         # Read back before it is written: a file the loader cannot parse would
         # take the issues page with it, and it would already be in git.
         parse_issue_text(content, path)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -1440,7 +1442,8 @@ def create_app(
         }
         content = patch_text("---\n---\n", fields, _body_in(payload) or "")
         parse_note_text(content, note_id)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=_note_path(note_id),
             content=content,
             base_commit=payload.get("base_commit") or store.head(),
@@ -1475,7 +1478,8 @@ def create_app(
         # Read back before it is written: a file the loader cannot parse would
         # take the notes page with it, and it would already be in git.
         parse_note_text(content, path)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -1618,7 +1622,8 @@ def create_app(
                 422,
                 f"that would not read back as {article}: {why_it_will_not_read(error)}",
             ) from None
-        written = store.write_all(
+        written = await asyncio.to_thread(
+            store.write_all,
             {f"{DIRECTORY[kind]}/{entity_id}.md": content, path: marked},
             base_commit=base,
             author=user.login,
@@ -1922,7 +1927,8 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].entities.values())
         if loop:
             raise HTTPException(409, loop)
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -1999,7 +2005,8 @@ def create_app(
             ]
             files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
 
-        written = store.write_all(
+        written = await asyncio.to_thread(
+            store.write_all,
             files,
             base_commit=base,
             author=user.login,
@@ -2044,7 +2051,8 @@ def create_app(
             raise HTTPException(
                 422, f"that would not read back as a cycle: {why_it_will_not_read(error)}"
             ) from None
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -2183,7 +2191,8 @@ def create_app(
         if candidate is None:
             raise HTTPException(422, f"that would not read back as a person: {why}")
 
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=path,
             content=content,
             base_commit=base,
@@ -2230,7 +2239,7 @@ def create_app(
                 413, f"that image is {len(data) // 1024} KB; the limit is "
                      f"{MAX_ASSET_BYTES // 1024} KB"
             )
-        path, fresh = store.put_asset(data, IMAGE_TYPES[kind], user.login)
+        path, fresh = await asyncio.to_thread(store.put_asset, data, IMAGE_TYPES[kind], user.login)
         # The sha goes back to the uploader as well as out to everybody else. The
         # shell's banner suppresses news of a commit the tab made itself, and it
         # can only do that if the request that made it hands the sha back — an
@@ -2320,7 +2329,8 @@ def create_app(
                 {"problems": [p.model_dump(mode="json") for p in problems]}, status_code=422
             )
 
-        written = store.write(
+        written = await asyncio.to_thread(
+            store.write,
             path=f"{DIRECTORY[kind]}/{entity_id}.md",
             content=content,
             # A base is optional here — a create has nothing to be stale against
@@ -2598,6 +2608,20 @@ def create_app(
             # Inside the try, which is the whole of this change: the write is
             # what actually fails, and it was the one step standing outside the
             # net. Everything after it only reports.
+            # NOT on a thread, alone among the twelve writers, and the test
+            # `test_a_commit_never_deletes_what_was_typed_during_it_by_construction`
+            # is what says so. Between the snapshot this is committing and
+            # `room.settled` below, the room must not suspend: anything typed
+            # during a suspension is in the room and not in the snapshot, and the
+            # absorb then deletes it from every open document. An `await` here is
+            # exactly that suspension.
+            #
+            # So this one still blocks the event loop for the length of a push.
+            # It is the rarest of the writers — a room commits when somebody
+            # presses Save, or after twenty seconds of quiet, not per keystroke —
+            # and buying the thread would mean making the absorb tolerant of text
+            # that arrived mid-commit, which is a change to the co-editing
+            # invariant rather than to where a call runs.
             written = store.write(
                 path=room.path,
                 content=content,
