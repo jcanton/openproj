@@ -3553,3 +3553,55 @@ def test_a_file_that_will_not_parse_is_not_remembered_as_an_answer(
     for _ in range(3):
         page = client.get("/").text
         assert "broken.md" in page, "the unreadable file stopped being reported"
+
+
+def test_two_files_with_the_same_bytes_are_two_records(client: TestClient, repo_path: Path):
+    """The defect a content-keyed cache buys if the key is only the content.
+
+    `parse_text` stamps `entity._source` with the file it came from, and
+    `_identity_problems` reads it to report the two blockers that matter most:
+    another file claims this id too, and this file is named for something else.
+    Keyed on the blob alone, two files with IDENTICAL bytes are one cached object
+    carrying the first path's `_source` — and both blockers stop firing.
+
+    Measured with the bug in place: two entities, ONE object, no blockers at all.
+    The check that stopped firing is the one whose docstring says a save
+    otherwise "lands on the wrong file" and answers 200 with no warning.
+
+    None of `tests/test_identity.py` catches this: those drive `load_repo` off the
+    filesystem and vary the content, so the cache is never asked and two identical
+    files never occur. The regression is invisible on both axes, which is why this
+    is a new test rather than an assertion added to an old one.
+    """
+    from test_store import commit_directly
+
+    # The seed AND the copy in one commit: `commit_directly` writes the tree it is
+    # given rather than adding to what is there, so a second call with one file
+    # replaces the plan with that file.
+    same = SEED[PATH]
+    commit_directly(
+        repo_path, {**SEED, f"tasks/{TASK}--copy.md": same}, "a second claimant"
+    )
+
+    problems = client.get("/api/index.json").json()["problems"]
+    claims = [p for p in problems if p["field"] == "id" and p["severity"] == "blocker"]
+    assert claims, "two files claim one id and nothing said so"
+    assert any("copy" in p["message"] for p in claims), claims
+
+
+def test_the_parse_cache_survives_readers_arriving_at_once(client: TestClient):
+    """The prune mutates a module-global dict, and 25 of this app's routes are
+    sync `def` — which Starlette dispatches through anyio's worker threads. So two
+    readers really do prune at the same time.
+
+    Without `list(...)` around the iteration and `pop(..., None)` instead of
+    `del`, that is `RuntimeError: dictionary changed size during iteration` and
+    `KeyError`, as unhandled 500s on a page route.
+    """
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        answers = [pool.submit(client.get, "/") for _ in range(24)]
+        codes = [one.result().status_code for one in answers]
+
+    assert set(codes) == {200}, f"concurrent readers got {sorted(set(codes))}"

@@ -67,7 +67,7 @@ from .auth import (
     read_session,
     sign_session,
 )
-from .index import build_index, cascade_of
+from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
@@ -408,11 +408,21 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
 # read-and-parse those numbers make reusable was the largest cost in a request,
 # 502 ms of a 941 ms PATCH at 518 records.
 #
-# Keyed on the blob and NOT on the path, which is what makes it correct rather
-# than merely fast: a file renamed keeps its bytes and keeps its answer, and a
-# file rewritten to the same bytes IS the same record. A path-keyed cache would
-# have to be told when a path changed, and being told is where a cache goes
-# stale.
+# Keyed on the blob AND the path, and the path is not decoration. `parse_text`
+# stamps `entity._source` with the file it came from, and `_source` is what
+# `_identity_problems` reads to report the two blockers that matter most here:
+# "another file claims this id too" and "its file is named for something else".
+#
+# Keyed on the blob alone — which is how this shipped, on the argument that a
+# renamed file keeps its bytes and keeps its answer — two files with IDENTICAL
+# bytes are one cached object carrying the first path's `_source`, and both
+# blockers stop firing. Reproduced: two entities, one object, no blockers, on a
+# plan where the same record is committed under two names. The docstring of the
+# check that stopped firing says a save otherwise "lands on the wrong file" and
+# answers 200 with no warning, which is the failure a cache must never buy.
+#
+# What that costs is the reuse on a pure rename, where losing it is correct: the
+# record's `_source` changed, so the answer genuinely is different.
 #
 # Pruned to the tree it just read, so the memory it holds is the size of the plan
 # rather than the size of the plan's history. An instance that lives for a week
@@ -425,12 +435,12 @@ def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadab
     paths, too_deep = record_paths_in(DIRECTORY.values(), sorted(blobs))
 
     def parsed(path: str) -> Entity:
-        blob = blobs[path]
-        held = _PARSED.get(blob)
+        key = (blobs[path], path)
+        held = _PARSED.get(key)
         if held is not None:
             return held
         entity = parse_text(store.read(commit, path), path)
-        _PARSED[blob] = entity
+        _PARSED[key] = entity
         return entity
 
     entities, refused = readable(paths, parsed)
@@ -442,9 +452,16 @@ def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadab
     # has no answer, and the next read has to produce the same refusal for the
     # banner to go on saying so.
     if len(_PARSED) > 3 * max(len(paths), 1):
-        keep = {blobs[path] for path in paths}
-        for gone in [blob for blob in _PARSED if blob not in keep]:
-            del _PARSED[gone]
+        keep = {(blobs[path], path) for path in paths}
+        # `list(...)` before iterating and `pop(..., None)` rather than `del`:
+        # this dict is a module global and 25 of this app's routes are sync `def`,
+        # which Starlette dispatches through anyio's worker threads — so two
+        # readers really do prune at once. Without both, that is
+        # `RuntimeError: dictionary changed size during iteration` from the
+        # comprehension and `KeyError` from the delete, as unhandled 500s on a
+        # page route, and the window widens as the plan grows.
+        for gone in [key for key in list(_PARSED) if key not in keep]:
+            _PARSED.pop(gone, None)
     return entities, [*refused, *too_deep]
 
 
@@ -1083,15 +1100,28 @@ def create_app(
     # around yesterday has yesterday's overruns and yesterday's today-line, and an
     # instance that lives across midnight would otherwise serve them until
     # somebody wrote something.
-    held: dict[str, object] = {}
+    # One tuple under one name, and that shape is the point. Written as three
+    # keys in a dict, a reader can pass the commit test, be preempted while a
+    # writer replaces the entry, and then read `held["index"]` — handing back
+    # THIS commit's sha with THAT commit's index. The page would be drawn from
+    # one commit and hand the browser a different one as its `base_commit`, which
+    # is the value every save is compared against.
+    #
+    # Reading a single name is one atomic load under the GIL, so there is no
+    # window to be preempted in. 25 of this app's routes are sync `def` and
+    # Starlette dispatches those through anyio's worker threads, so concurrent
+    # readers are the normal case rather than the exotic one.
+    held: tuple[str, date, Index] | None = None
 
     def index_now():
+        nonlocal held
         commit = store.head()
         drawn = today or date.today()
-        if held.get("commit") == commit and held.get("day") == drawn:
-            return commit, held["index"]
+        memo = held
+        if memo is not None and memo[0] == commit and memo[1] == drawn:
+            return commit, memo[2]
         commit, index = _build_index_at(commit, drawn)
-        held.update({"commit": commit, "day": drawn, "index": index})
+        held = (commit, drawn, index)
         return commit, index
 
     def _build_index_at(commit: str, drawn: date):
