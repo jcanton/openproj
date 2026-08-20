@@ -77,6 +77,100 @@ from .model import (
     KINDS as KIND_LADDER,
 )
 from .schedule import build_end
+from .themes import FAMILIES, contrast
+
+# Which hue each status wears. The one place taste enters the derivation: the
+# format's eight hues are red, orange, yellow, green, cyan, blue, magenta, brown,
+# and these five choices are the app's own palette read back into them — violet
+# for shaping, blue for ready, orange for in progress, green for done, and the
+# ground's own grey for shelved, which is not a hue because shelved is not a
+# state anything is happening in.
+STATUS_SLOTS = (
+    ("shaping", "base0E"),
+    ("ready", "base0D"),
+    ("in_progress", "base09"),
+    ("done", "base0B"),
+    ("shelved", "base03"),
+)
+
+# How much contrast a page needs from a palette meant for a terminal. The ink is
+# held to AAA against its own background, the secondary ink and the link to AA —
+# and the link only to 3.5, because Solarized's blue on Solarized's cream is 4.3
+# and refusing Solarized over a tenth of a step is refusing the scheme half the
+# people who asked for this feature meant by it.
+_INK_FLOOR = 7.0
+_MUTED_FLOOR = 4.5
+_LINK_FLOOR = 3.5
+
+
+def _chosen(slots: dict[str, str]) -> dict[str, str]:
+    """The three values a palette cannot be trusted to place, chosen by contrast.
+
+    base05 is what the format calls the default foreground, and a scheme written
+    for a terminal is free to make it a colour that has never had a paragraph set
+    in it — Material Lighter's is a teal at 1.8:1 against its own background,
+    which is why that family is not offered at all. So the ink is whichever
+    ground slot is furthest from the background rather than whichever one the
+    spec names, the secondary ink is the closest slot that still clears AA, and
+    the link is the first hue that clears the floor.
+
+    Measured here and asserted in `tests/test_themes.py`, against every palette,
+    so a family added later cannot arrive unreadable.
+    """
+    ground = ("base07", "base06", "base05", "base04")
+    ink = max(ground, key=lambda slot: contrast(slots[slot], slots["base00"]))
+    darkest = contrast(slots[ink], slots["base00"])
+
+    quieter = [
+        slot for slot in ("base04", "base03", "base05", "base06")
+        if _MUTED_FLOOR <= contrast(slots[slot], slots["base00"]) < darkest
+    ]
+    # The quietest of the ones that are still legible: a secondary ink that
+    # matches the primary is a hierarchy with one level in it.
+    muted = min(quieter, key=lambda slot: contrast(slots[slot], slots["base00"]),
+                default="base04")
+
+    link = next(
+        (slot for slot in ("base0D", "base0C", "base0E", "base0B", "base08")
+         if contrast(slots[slot], slots["base00"]) >= _LINK_FLOOR),
+        "base0D",
+    )
+    return {"fg": ink, "muted": muted, "accent": link}
+
+
+def _slot_css(palette) -> str:
+    """One palette as custom properties: the sixteen, and the three picks."""
+    slots = palette.slots
+    lines = [f"  --{slot}: {value};" for slot, value in slots.items()]
+    for token, slot in _chosen(slots).items():
+        lines.append(f"  --{token}: var(--{slot});")
+    return "\n".join(lines)
+
+
+def _scheme_css() -> str:
+    """Every family, in the three states a theme choice can be in.
+
+    The same three the app's own palette is written in and for the same reason:
+    an explicit choice stamps `data-theme`, and the default — no attribute at all
+    — follows the system. A scheme has to answer all three or a reader who has
+    never touched the switch gets a light palette on a dark desktop.
+    """
+    blocks = []
+    for family in FAMILIES:
+        light, dark = _slot_css(family.light), _slot_css(family.dark)
+        blocks.append(
+            f':root[data-scheme="{family.key}"] {{\n  color-scheme: light;\n{light}\n}}'
+        )
+        blocks.append(
+            "@media (prefers-color-scheme: dark) {\n"
+            f'  :root[data-scheme="{family.key}"]:not([data-theme="light"]) {{\n'
+            f"    color-scheme: dark;\n{dark}\n  }}\n}}"
+        )
+        blocks.append(
+            f':root[data-scheme="{family.key}"][data-theme="dark"] {{\n'
+            f"  color-scheme: dark;\n{dark}\n}}"
+        )
+    return "\n".join(blocks)
 
 
 def _static_dir() -> Path:
@@ -1931,6 +2025,13 @@ const remembered = {
 // page is a SyntaxError rather than a shadowing — the whole page, not one line.
 const storedTheme = remembered.get('openproj:theme');
 if (storedTheme) document.documentElement.dataset.theme = storedTheme;
+// The palette, chosen the same way and applied in the same breath. Stored empty
+// means the app's own colours, which is the absence of the attribute rather than
+// a scheme named "default" — the whole stylesheet above is written for a page
+// with no `data-scheme` on it, and every rule that answers a scheme is one
+// specificity step above it.
+const storedScheme = remembered.get('openproj:scheme');
+if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
 </script>
 <style>
 /* Inlined, not linked: a linked face is one more thing a CDN, a proxy or a train
@@ -2122,6 +2223,78 @@ if (storedTheme) document.documentElement.dataset.theme = storedTheme;
   --pri-high: #e08a5a; --pri-very-high: #e0796a;
   --waiting: #34291a;
 }
+{{ schemes }}
+/* WHAT SIXTEEN COLOURS BECOME.
+   ------------------------------------------------------------------------
+   One derivation for every scheme, which is the whole point: a base16 palette
+   is sixteen values and this app draws with fifty-five, so the other thirty-nine
+   are made here, once, out of those sixteen. Twenty palettes and one mapping,
+   not twenty palettes and twenty mappings — and a scheme added later is sixteen
+   numbers in `themes.py` and nothing else.
+
+   `color-mix` is what makes that possible. A chip needs a soft ground under
+   coloured text, a node needs a fill pale enough to read a title on, and none of
+   those exist in a palette meant for a terminal — but all of them are the hue
+   and the background in some proportion. Mixed in oklab and not in sRGB, where
+   a yellow mixed toward a dark background goes through a muddy green.
+
+   Specificity: this is (0,2,0), the same as `:root[data-theme="dark"]` above it,
+   so it wins by coming after. That is deliberate and it is why this block is
+   here rather than beside the other palettes.
+
+   The three values a palette cannot be trusted to place — the ink, the secondary
+   ink and the link colour — are chosen per palette by contrast and written into
+   the block above (see `_chosen`). Everything below is the same arithmetic for
+   all of them. */
+:root[data-scheme] {
+  --bg: var(--base00);
+  --surface: var(--base00);
+  --surface-2: var(--base01);
+  --line: var(--base02);
+  --line-strong: var(--base03);
+  --on-accent: var(--base00);
+  --danger: var(--base08);
+  /* base09, the orange, and not base0A: a warning is read as text on the page,
+     and a yellow on a light ground is the one hue in the format that reliably
+     is not. */
+  --warn: var(--base09);
+  --ok: var(--base0B);
+  --empty: var(--muted);
+  --focus: var(--accent);
+  --sev-blocker: var(--base08);
+  --sev-blocker-soft: color-mix(in oklab, var(--base08) 14%, var(--bg));
+  --sev-warn: var(--base09);
+  --sev-warn-soft: color-mix(in oklab, var(--base09) 14%, var(--bg));
+  --drop: color-mix(in oklab, var(--base0B) 18%, var(--bg));
+  --band: color-mix(in oklab, var(--base0C) 30%, var(--bg));
+  --waiting: color-mix(in oklab, var(--base09) 18%, var(--bg));
+  /* The ladder the meter counts: green, green-yellow, yellow, orange, red. `low`
+     is a mix because the format has no slot between green and yellow, and five
+     rungs drawn in four hues is a rung nobody can name. */
+  --pri-very-low: var(--base0B);
+  --pri-low: color-mix(in oklab, var(--base0B) 55%, var(--base0A));
+  --pri-medium: var(--base0A);
+  --pri-high: var(--base09);
+  --pri-very-high: var(--base08);
+}
+/* A status is a hue, and each one arrives four times: the fill a node or a bar
+   is drawn with, the border round it, the soft ground a chip sits on, and the
+   ink the chip's word is written in.
+
+   The fill is a TINT and not the hue itself. A saturated red bar wants white
+   text and a saturated yellow one wants black, so a single ink token cannot
+   serve both — mixed halfway into the background, every fill keeps the ground's
+   polarity and the page's own foreground reads on all five. */
+{% for status, slot in status_slots %}
+:root[data-scheme] {
+  --st-{{ status }}: color-mix(in oklab, var(--{{ slot }}) 32%, var(--bg));
+  --st-{{ status }}-ink: var(--fg);
+  --st-{{ status }}-line: var(--{{ slot }});
+  --st-{{ status }}-soft: color-mix(in oklab, var(--{{ slot }}) 16%, var(--bg));
+  --st-{{ status }}-text: color-mix(in oklab, var(--{{ slot }}) 38%, var(--fg));
+}
+{%- endfor %}
+
 /* cv05 gives the l a tail, so l/1/I are three shapes in a login; ss03 fixes the
    spacing of the curly quotes and slashes that PR refs and paths are full of. */
 body { font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
@@ -2203,6 +2376,11 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    stylesheet is inlined into every page, so a phrase written here is a phrase in
    the served bytes of all eight of them, and two tests that search a page for the
    copy of a control it must not offer found it in this block instead. */
+/* The scheme picker, sized to the corner it stands in rather than to the control
+   bars: it is the only select on the page that is not a filter, and at the
+   filters' size it read as one more thing to answer. */
+.schemepick select { font-size: 12px; padding: .1rem 1.4rem .1rem .4rem;
+                     background-position: right .3rem center; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
            overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 /* The right end of the nav, as one group rather than two things each pushing
@@ -2865,6 +3043,17 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     end up with nothing here at all. It does: the fetch fails over file:// and
     this stays hidden. -#}
 <span id="who" hidden></span>
+{#- Between the two, because that is the order they are reached for: who you are,
+    then which palette, then how bright. A native select for the same reason the
+    filter bars use one — see `_CONTROL` — and it carries the app's own control
+    styling rather than the platform's. -#}
+<label class="schemepick"><span class="sr-only">Colour scheme</span>
+  <select id="scheme" title="Colour scheme">
+    <option value="">openproj</option>
+    {% for family in families %}
+    <option value="{{ family.key }}">{{ family.label }}</option>
+    {% endfor %}
+  </select></label>
 <button type="button" id="theme"></button></span></nav>
 {#- The home for a message on the pages that have nowhere to put one. Every page
     that announces anything had a `#state` of its own and every one of those was
@@ -3341,6 +3530,21 @@ THEME.onclick = () => {
 // so it follows the system as it changes.
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', labelTheme);
 labelTheme();
+
+// The palette. A scheme is sixteen colours on the root element and nothing else,
+// so switching one is one attribute — and the graph, which read its colours once
+// when it was built, is told the same way the light/dark switch tells it.
+const SCHEME = document.getElementById('scheme');
+if (SCHEME) {
+  SCHEME.value = document.documentElement.dataset.scheme || '';
+  SCHEME.onchange = () => {
+    const chosen = SCHEME.value;
+    if (chosen) document.documentElement.dataset.scheme = chosen;
+    else delete document.documentElement.dataset.scheme;
+    remembered.set('openproj:scheme', chosen);
+    dispatchEvent(new Event('themechange'));
+  };
+}
 
 // Who is signed in, asked rather than rendered.
 //
@@ -7236,8 +7440,32 @@ const LOADED = ELEMENTS !== null;
 
 // Read from the stylesheet rather than repeated here, so one token set decides
 // what a status looks like on the timeline, in the table and on this canvas.
-const token = name => getComputedStyle(document.documentElement)
-  .getPropertyValue(name).trim();
+//
+// Resolved through a probe element rather than read straight off the root. A
+// custom property's computed value is the token stream it was written as, so a
+// colour scheme's `--st-done: color-mix(in oklab, #859900 42%, #002b36)` comes
+// back as that whole string — which CSS understands and cytoscape does not: it
+// failed to parse every fill and drew the entire graph in its default grey, with
+// the borders still correct, which is a drawing that looks deliberate.
+//
+// Resolved through a canvas rather than through `getComputedStyle`, which hands
+// back the mix in the space it was mixed in — `oklab(0.42 -0.05 0.03)` — and
+// that is one more thing cytoscape cannot read. A 1x1 fill is the browser's own
+// conversion to sRGB, whatever the value was written as, and it costs one
+// context that is made once.
+const dye = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
+const inSRGB = value => {
+  dye.clearRect(0, 0, 1, 1);
+  dye.fillStyle = '#000';
+  dye.fillStyle = value;              // ignored if the browser cannot read it
+  dye.fillRect(0, 0, 1, 1);
+  const [r, g, b] = dye.getImageData(0, 0, 1, 1).data;
+  return `rgb(${r}, ${g}, ${b})`;
+};
+const token = name => {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return raw && raw.includes('(') ? inSRGB(raw) : raw;
+};
 const COLOUR = () => ({
   shaping: token('--st-shaping'), ready: token('--st-ready'),
   in_progress: token('--st-in_progress'), done: token('--st-done'),
@@ -19574,6 +19802,13 @@ def _page(
         # status added to the model cannot arrive with three of its four tokens
         # wired up and the fourth still spelled out on a line nobody edited.
         statuses=STATUSES,
+        # The colour schemes: the families the picker offers, the block of slots
+        # they put on the root element, and which hue each status takes. One
+        # source, so a family added to `themes.py` reaches the menu and the
+        # stylesheet on the same commit.
+        families=FAMILIES,
+        schemes=Markup(_scheme_css()),
+        status_slots=STATUS_SLOTS,
         # Only the server has an event stream to listen to. A static page opening a
         # connection to nothing would retry forever in the console.
         live=links.table.startswith("/"),

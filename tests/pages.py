@@ -181,18 +181,24 @@ def lit(page: str) -> list[str]:
     return [label for label, _, marked in nav_of(page) if marked]
 
 class _Selects(HTMLParser):
-    """Every `<select>` on the page, as the list of options inside it."""
+    """Every `<select>` on the page, as the list of options inside it, and the id
+    it carries — because not every dropdown on these pages is a filter. The
+    colour-scheme picker in the corner is a preference, and "all" is not one of
+    the things a palette can be."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.found: list[list[tuple[str, str]]] = []
+        self.ids: list[str] = []
         self._options: list[tuple[str, str]] | None = None
+        self._id = ""
         self._value: str | None = None
         self._text = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "select":
             self._options = []
+            self._id = dict(attrs).get("id") or ""
         elif tag == "option" and self._options is not None:
             self._value = dict(attrs).get("value") or ""
             self._text = ""
@@ -207,6 +213,7 @@ class _Selects(HTMLParser):
             self._value = None
         elif tag == "select" and self._options is not None:
             self.found.append(self._options)
+            self.ids.append(self._id)
             self._options = None
 
 
@@ -222,7 +229,12 @@ def selects(page: str) -> list[list[tuple[str, str]]]:
     """
     parser = _Selects()
     parser.feed(page)
-    return parser.found
+    # The scheme picker is not a filter and has no "all". Dropped here rather
+    # than in each caller, because every caller is asking about filters.
+    return [
+        options for options, which in zip(parser.found, parser.ids)
+        if which != "scheme"
+    ]
 
 
 class Element(NamedTuple):
