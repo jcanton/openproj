@@ -1154,6 +1154,23 @@ def create_app(
         window = (_as_date(from_), _as_date(to))
         return page(render.render_timeline(index_now()[1], render.ROUTES, window, _as_zoom(zoom)))
 
+    def which_editor(request: Request) -> str:
+        """Which editing surface this page is asked to carry.
+
+        A query parameter and not a cookie, and that is the whole design: the
+        second editor is 594 KB and the server has to know before it renders
+        whether to put it in the page, while the preference that remembers the
+        choice is `localStorage` and the server cannot see it. So `?editor=ace`
+        is what puts Ace in a page; the page carries the choice back into the
+        address on the next visit, so it is typed once.
+
+        Read as an allowlist and not as a string, for the reason `_status_class`
+        is written the way it is: whatever arrives goes nowhere near a lookup that
+        could be surprised by it.
+        """
+        asked = request.query_params.get("editor", "")
+        return asked if asked == render.ACE else ""
+
     @app.get("/issues", response_class=HTMLResponse)
     def issues() -> HTMLResponse:
         commit, index = index_now()
@@ -1164,7 +1181,10 @@ def create_app(
         commit, index = index_now()
         who = viewer(request)
         return page(
-            render.render_issue(index, None, render.ROUTES, commit, who.login if who else "")
+            render.render_issue(
+                index, None, render.ROUTES, commit, who.login if who else "",
+                editor=which_editor(request), may_write=may_write(request),
+            )
         )
 
     @app.get("/issue/{issue_id}", response_class=HTMLResponse)
@@ -1174,7 +1194,8 @@ def create_app(
         try:
             return page(
                 render.render_issue(
-                    index, issue_id, render.ROUTES, commit, who.login if who else ""
+                    index, issue_id, render.ROUTES, commit, who.login if who else "",
+                    editor=which_editor(request), may_write=may_write(request),
                 )
             )
         except KeyError:
@@ -1268,7 +1289,10 @@ def create_app(
         commit, index = index_now()
         who = viewer(request)
         return page(
-            render.render_note(index, None, render.ROUTES, commit, who.login if who else "")
+            render.render_note(
+                index, None, render.ROUTES, commit, who.login if who else "",
+                editor=which_editor(request), may_write=may_write(request),
+            )
         )
 
     @app.get("/note/{note_id}", response_class=HTMLResponse)
@@ -1277,7 +1301,10 @@ def create_app(
         who = viewer(request)
         try:
             return page(
-                render.render_note(index, note_id, render.ROUTES, commit, who.login if who else "")
+                render.render_note(
+                    index, note_id, render.ROUTES, commit, who.login if who else "",
+                    editor=which_editor(request), may_write=may_write(request),
+                )
             )
         except KeyError:
             raise HTTPException(404, f"no note {note_id!r}") from None
@@ -1565,11 +1592,16 @@ def create_app(
         )
 
     @app.get("/new", response_class=HTMLResponse)
-    def new(kind: str = "task") -> HTMLResponse:
+    def new(request: Request, kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
         commit, index = index_now()
-        return page(render.render_new(kind, commit, render.ROUTES, index))
+        return page(
+            render.render_new(
+                kind, commit, render.ROUTES, index,
+                editor=which_editor(request), may_write=may_write(request),
+            )
+        )
 
     @app.get("/detail", response_class=HTMLResponse)
     def detail_index() -> HTMLResponse:
@@ -1597,6 +1629,7 @@ def create_app(
                 only=entity_id,
                 base_commit=commit,
                 may_write=may_write(request),
+                editor=which_editor(request),
             )
         )
 

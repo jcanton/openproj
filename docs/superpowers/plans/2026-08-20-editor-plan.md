@@ -688,26 +688,35 @@ condition has not been met by anyone. **If the answer is no, the work ends here 
 
 ---
 
-## S8 — If and only if the answer is yes: vendor Ace, minus the markdown mode
+## S8 — Built. Ace is vendored, behind `?editor=ace`, minus the markdown mode
 
-**Gate first, in Chrome, under the real CSP with the console captured and `window.Worker`
-hooked before load.** A blocked worker is an `error` event with an empty message, not an
-exception, so no Python test can see it.
+**The gate ran first and it passed.** Headless Chrome, `render.CSP` verbatim in a `<meta>`,
+`window.Worker` replaced before either Ace script parsed, `securitypolicyviolation` captured
+on the document and `error` on the window:
 
-- [ ] **S8.0a** Confirm the measured zero-worker result on **this** assembly.
-- [ ] **S8.0b** Confirm `ace.js` + `keybinding-vim.js` work with **no mode set**. Nobody has
-      tested that configuration; `keybinding-vim.js` defines `ace/keyboard/vim` and
-      `ace/ext/hardwrap` and reaches for nothing else, so it should work — but ask Chrome.
-      If either gate fails, stop and escalate.
+| assembly | Workers | CSP violations | script[src] injected | `session.$worker` |
+|---|---|---|---|---|
+| `ace.js` + `keybinding-vim.js`, no mode, vim attached | **0** | **0** | **0** | `null` |
+| the same plus `mode-markdown.js`, `ace/mode/javascript` set | **1**, `blob:null/cb766053` | `worker-src <- blob` | 0 | an object |
+
+The second row is the forced failure, and it is what makes the first row evidence. Note its
+third column: the blocked worker produced **no `error` event at all** and no console line —
+so a gate without a control beside it is a gate that can only pass.
+
+- [x] **S8.0a** Confirmed on this assembly, and reproduced with the forced failure above.
+- [x] **S8.0b** Confirmed with **no mode set**: `session.getMode().$id` is `ace/mode/text`,
+      `getKeyboardHandler().$id` is `ace/keyboard/vim`, nothing threw. `ace/ext/hardwrap` —
+      which `ace/keyboard/vim`'s `define` names as a dependency and which is in neither
+      published file by that name — resolves to an object, so `gq` does not fetch either.
 
 Then, in order:
 
-- [ ] **S8.1** Two files into `static/`: `ace.js` (475,029 B, sha256 `072d13e5…`) and
+- [x] **S8.1** Two files into `static/`: `ace.js` (475,029 B, sha256 `072d13e5…`) and
       `keybinding-vim.js` (119,277 B, `464f901e…`). **Drop `mode-markdown.js`**: 75,276 B for
       syntax highlighting, which is not one of the seven asks; it is the only file that fails
       the font regex (twice, at offsets 9046 and 47867); and it is the one that inlines four
       dormant worker-spawning sub-modes.
-- [ ] **S8.2** `static/SHA256SUMS`, from that directory, exactly:
+- [x] **S8.2** `static/SHA256SUMS`, from that directory, exactly:
       ```
       shasum -a 256 *.js *.mjs *.woff2 > SHA256SUMS && shasum -a 256 -c SHA256SUMS
       ```
@@ -717,47 +726,58 @@ Then, in order:
       after. `ace-LICENSE.txt` is deliberately **not** covered: `test_every_vendored_file_is_
       the_one_that_was_checksummed` exempts `*LICENSE.txt` by design ("a licence is read, not
       executed").
-- [ ] **S8.3** `static/VENDOR.md`: two table rows naming version, **BSD-3-Clause** and the
+- [x] **S8.3** `static/VENDOR.md`: two table rows naming version, **BSD-3-Clause** and the
       `src-min-noconflict` source URL, plus a licence paragraph. All three minified files
       contain zero occurrences of `Copyright`, `BSD` and `Ajax.org` — the notice is stripped —
       so `ace-LICENSE.txt` (1,490 B, sha256 `850f545c…`) ships in `static/` **and** the notice
       goes in the page, on the precedent `test_the_font_licence_travels_with_the_font` already
       enforces for Inter: every rendered page is a copy, and a copy is a redistribution.
-- [ ] **S8.4** `tests/test_render.py:134` — rewrite `test_every_library_is_inlined_exactly_
+- [x] **S8.4** `tests/test_render.py:134` — rewrite `test_every_library_is_inlined_exactly_
       once_and_no_marker_survives` from "four `.js`, all in `graph.html`" to "inlined exactly
       once into the page that uses it". `len(inlined) == 4` becomes 6, and
       `graph.count(signature)` is 0 for the Ace files because the graph page has no editor.
       **Do not dodge it with an `.mjs` suffix**: that is a false label on a classic script and
       it would also carry the file out of `test_no_vendored_library_can_end_the_block_it_is_
       written_into`, which filters on `.js`.
-- [ ] **S8.5** `tests/test_editor.py:130` — `test_the_editor_pulls_in_no_library_at_all`
+- [x] **S8.5** `tests/test_editor.py:130` — `test_the_editor_pulls_in_no_library_at_all`
       asserts `"codemirror" not in page.lower()`. Its docstring says "If this ever fails,
       somebody has added an editor dependency and should have to argue for it." Ace passes it
       **unchanged**, which means it is a name check and not an argument. Rewrite it to say
       what is now true: inlined, checksummed, no `<script src>`, no network, and named.
-- [ ] **S8.6** Extend the S1 editable-page network test with the **runtime** half:
+- [x] **S8.6** Extend the S1 editable-page network test with the **runtime** half:
       `test_no_editor_asks_for_a_script_after_the_page_has_loaded` — Chrome, exercise the
       default keymap (Cmd-F, Ctrl-H, Cmd-comma, Alt-E), assert zero `script[src]` elements and
       zero `securitypolicyviolation` events. Measured today: `metaKey+f` gives
       `defaultPrevented=true`, `scriptsInjected=['ext-searchbox.js']`, a `script-src-elem`
       violation, `searchbox_in_dom=false`, and an empty `window.error`. The source regex
       `<script[^>]+src=` cannot see a runtime injection.
-- [ ] **S8.7** `commands.removeCommand` on the five default commands that reach
+- [x] **S8.7** `commands.removeCommand` on the five default commands that reach
       `net.loadScript`, so Cmd-F falls through to the browser. This is application code, so the
       commit must not claim "verbatim behaviour" — only verbatim bytes.
-- [ ] **S8.8** A new `may_write` gate on the editing script, and a **server-visible cookie**
-      mirroring the preference. `editable = base_commit is not None` (`render.py:13163`) and
-      the served route (`web.py:1577`) passes `base_commit` for everyone; only `yjs` and
-      `coedit` carry the extra gate (`render.py:13185-13186`). A reader's page is 209,872 B and
-      already contains the textarea and two `attachEditing(` calls; the same gate would take it
-      to 879,454 B. If the cookie is refused, **drop the second editor**.
-- [ ] **S8.9** Re-express Ace's injected theme across all three colour-token blocks — `ace.js`
-      carries 27 hex colours and 53 `rgb()`/`rgba()` literals — and redraw the focus ring on
+- [x] **S8.8** **Built as the query parameter jcanton chose instead of a cookie**, and the
+      parameter is strictly better than the cookie this asked for: `?editor=ace` and nothing
+      else puts the library in a page, so a reader who never types it pays nothing, and two
+      tabs on one document with different parameters is the comparison he asked for.
+      `_ace_wanted(editor, base_commit, may_write)` is all THREE halves in one place — the
+      address asked, there is an editing surface to put it on, and the server would take a
+      save from this reader. The third is the one this checklist asked for and the parameter
+      alone does not give: a signed-out reader can type `?editor=ace` too. Measured on
+      `tests/fixtures/corpus`, their page is 310,753 B with the parameter and 310,753 B
+      without it. `openproj:editor:1` gains an `editor` field and
+      `stickyEditor()` puts it back into the address on the next visit; on a `file://` export,
+      where there is no server to ask, the page SAYS the second editor is not in this copy
+      rather than quietly handing back the other one.
+- [x] **S8.9** Re-express Ace's injected theme — `ace.js`
+      carries 27 hex colours and 53 `rgb()`/`rgba()` literals. **Not across all three token
+      blocks, and that is the correction:** every rule written resolves a token that is
+      already defined in all three, so there is no new value that could be right in one block
+      and wrong in another — which is the failure that rule exists to prevent. And redraw the
+      focus ring on
       `.ace_editor` via `:focus-within`, because Ace's real input is a 2.5×1 px opacity-0
       offscreen textarea whose `aria-label` Ace rewrites over the page's "Shaping document".
       The shell's ring is `:where(a, button, input, select, textarea, summary, [tabindex])` at
       specificity (0,1,0) and loses to Ace's runtime-injected `outline: none`.
-- [ ] **S8.10** The binding: consume Ace's own change deltas, convert `{row,column}` through
+- [x] **S8.10** The binding: consume Ace's own change deltas, convert `{row,column}` through
       `positionToIndex`, apply directly to the `Y.Text` inside `doc.transact`, batch once per
       Ace operation, and apply remote `Y.Text` deltas back **as Ace deltas** — never
       `setValue`, never `replace` — behind an explicit `applying` re-entrancy flag. Pin
@@ -765,7 +785,7 @@ Then, in order:
       `ORIGINAL_BODY` before binding, announcing any difference rather than splicing it.
       Attach only **after** `welcomed()` (`render.py:8922`) has made the three-way decision,
       the way the `bound` gate (`render.py:8786`) does.
-- [ ] **S8.11** Re-attach paste, drop and Enter-continues-list through Ace's command table,
+- [x] **S8.11** Re-attach paste, drop and Enter-continues-list through Ace's command table,
       and route the toolbar through the adapter's `splice` rather than `replaceRange`.
 
 **Proved by, and these are blockers:**
@@ -798,14 +818,62 @@ the bytes actually are, and at runtime as well as in the source*; *the bytes are
 
 ---
 
-## S9 — Vim itself, and the collisions it creates
+### What S8 and S9 actually cost, measured
 
-- [ ] **S9.1** `setKeyboardHandler('ace/keyboard/vim')`, toggled live from the S5 preference.
-- [ ] **S9.2** HackMD's "allow override browser keymap" escape hatch, and the Escape
-      arbitration decided back in S2.
-- [ ] **S9.3** The toolbar and the image-paste placeholder-then-replace go through the
+The plan's byte command, on `tests/fixtures/corpus`, raw / gz -9:
+
+| page | before (f296984) | after | delta |
+|---|---|---|---|
+| writer, no parameter | 418,229 / 166,202 | 432,479 / 171,332 | **+14,250 raw (+3.4%), +5,130 gz** |
+| writer, `?editor=ace` | — | 1,044,772 / 339,964 | **2.42x the page beside it** |
+| signed-out reader | 301,262 / 128,611 | 311,497 / 132,219 | +10,235 raw |
+| signed-out reader, `?editor=ace` | — | 311,497 / 132,219 | **+0 — the parameter buys them nothing** |
+
+That last row is the gate working and it is not free by accident: `_ace_wanted` asks three
+questions, not two. The address has to have asked; there has to be an editing surface; and
+**this reader has to be somebody the server would take a write from**. The third is the one
+the audit found missing — `editable` is `base_commit is not None`, the served route passes a
+commit for everyone, and gating on it alone would have taken a reader's page to 879,454 B for
+a keymap whose every save is a 403.
+
+The +14,250 that a writer pays without asking is the surface's new members, `bodySurface`,
+`stickyEditor`, the preference's two new fields, the keymap picker and the room's delta path.
+The Ace adapter is **not** in it: it was written inside `_COMBOBOX`, which six pages inline
+and two of them have no body editor, and moved out to `_ACE_SURFACE` on that measurement —
+12,978 B × 6 for an adapter reachable only where 594 KB of library also is.
+
+## S9 — Built. Vim, in the status bar, and the collisions it creates
+
+- [x] **S9.1** `setKeyboardHandler('ace/keyboard/vim')`, toggled live from the S5 preference.
+      The glyph is in the status bar where the screenshot puts it — `Keymap: default`,
+      cycling on a press, announced when it moves, because a two-word control in an 11px
+      strip that takes the whole keyboard away has to say that it has. **It appears only on
+      a surface that HAS keymaps**, which is an absence and not a silence: a textarea's
+      keymap is the browser's and there is no second one to offer. What that costs is that
+      `?editor=ace` is discoverable from the documentation and from nowhere on the page, and
+      that is written down rather than papered over.
+- [x] **S9.2** **The escape hatch S2.8 promised was written, measured, and taken out
+      again.** The seam was to be `if (event.defaultPrevented) return;` at the top of the
+      page's keydown handler. It encodes nothing: Ace's `stopEvent` does `stopPropagation`
+      as well as `preventDefault`, so a key its command table handled never reaches that
+      listener at all. Measured in Chrome with a listener beside the page's own on the same
+      element: **Tab does not arrive** — one indent, Ace's, at its own tab width, with
+      `indentLines` never running — while **Escape and Cmd+S both do**, unprevented, so
+      leaving the full-page view and saving still work. A guard whose condition is never
+      true is a guard no mutation can catch, and the assertion that replaced it says the
+      true thing instead: `"Tab" not in reached` and `reached == ["Escape", "s"]`.
+      **The collisions, checked in Chrome rather than reasoned about:** vim's `:` ex line is
+      implemented inside `keybinding-vim.js` and fetches nothing — 0 `script[src]` after
+      `:%s/e/E/g`; `ace/ext/hardwrap`, which `ace/keyboard/vim`'s own `define` names as a
+      dependency and which ships under no such filename, resolves to an object, so `gq` does
+      not fetch either; and the fourteen-button toolbar still writes with vim in NORMAL mode,
+      which is the collision that would have killed asks 2 and 6 together on the old path —
+      `document.execCommand('insertText')` returns `true`, throws nothing and changes nothing
+      under vim, and every mark on the Ace path goes through `Document.remove` /
+      `Document.insert` instead.
+- [x] **S9.3** The toolbar and the image-paste placeholder-then-replace go through the
       adapter's `splice` on the Ace path, never through `replaceRange`.
-- [ ] **S9.4** A bulk gesture — `:%s///g`, `gg=G`, multi-cursor — is announced before it is
+- [x] **S9.4** A bulk gesture — `:%s///g`, `gg=G`, multi-cursor — is announced before it is
       sent, and `MAX_UPDATE_BYTES`'s answer is the `reload` frame `web.py:2667` already gives,
       never a bare `continue`. Measured: multi-cursor plus one keystroke deleted 14,789
       characters and reinserted 13,345, producing a 234,892 B frame; and 722 change events
@@ -815,8 +883,12 @@ the bytes actually are, and at runtime as well as in the source*; *the bytes are
 it_is_sent`, and `test_the_toolbar_and_the_keymap_do_not_cancel_each_other`. Plus a real
 `Room` for the credit of a bulk gesture.
 
-Removable by deleting one commit and one `SHA256SUMS` line, which is the point of putting it
-last.
+**Shipped as ONE commit with S8 and not two, and the reason is the plan's own.** S7 priced
+the purchase as "ask 6 costs 594,306 B ... for ask 6 alone". S8 without S9 is that cost with
+none of what it buys: 594 KB of library, a keymap nobody can reach, and a key-handling
+question — Ace's Tab against `indentLines` — answered by a line no test in that commit would
+have exercised. The two are one purchase and they are removable together, which is the
+property this paragraph is actually about.
 
 ---
 
@@ -833,6 +905,9 @@ last.
 | The gate is the case that catches the defect | S8 | same, run in Chrome against a real `Room` |
 | A source-grep guard follows the code it guards | S4, S6 | `test_no_script_ever_assigns_a_textarea_its_value`, `test_the_browser_splices_on_a_whole_character` |
 | A bulk gesture is announced, credited and refused out loud | S5, S9 | `test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent` |
+| Two editors normalise line endings in opposite directions | S8 | `test_two_editors_in_one_room_over_a_body_with_crlf_in_it_settle_on_one_document` |
+| A glyph is deleted whole, or both copies stop agreeing | S8 | `test_backspacing_a_whole_glyph_in_the_second_surface_leaves_both_copies_agreeing` |
+| The second editor never writes the whole document | S8 | `test_the_second_surface_never_sets_or_replaces_the_whole_document` |
 | The network rule is enforced where the bytes are | S1, S8 | `test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one`, `test_no_editor_asks_for_a_script_after_the_page_has_loaded` |
 | Bytes gated on `may_write`, preference visible to the server | S8 | `test_a_reader_who_may_not_write_is_sent_no_editor_library` |
 | The mirror is measured as a fractional content box | S3 | `test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps` |

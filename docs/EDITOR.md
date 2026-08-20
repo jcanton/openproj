@@ -688,6 +688,64 @@ repository today.
    shipped seat bands. Ace still brings its own gutter, so this is no longer a question that
    blocks anything — but it means ask 4 is delivered twice, and the textarea's copy lands
    first.
+## What was built, 2026-08-20
+
+Ace 1.44.0 is vendored, behind `?editor=ace`, with the markdown mode dropped, and vim is in
+the status bar. The audit above stands as the search; three of its findings turned out
+differently once the thing was built, and they are recorded here rather than by editing the
+paragraphs that made them.
+
+**The worker gate passed on the shipped assembly, with the control.** `ace.js` +
+`keybinding-vim.js`, no mode set: 0 Workers, 0 CSP violations, 0 injected scripts,
+`session.$worker === null`, vim attached. The same page plus `mode-markdown.js` with
+`ace/mode/javascript` set: one `blob:` Worker, `worker-src <- blob`, **and no `error` event at
+all** — the recorded "empty `window.error`" was optimistic; on this Chrome the failure is
+completely silent, which strengthens rather than weakens the reason for the control.
+
+**Who pays turned out to have three answers, not two.** The section above says a reader's
+page is 209,872 B and already carries the box and the toolbar, and that gating Ace on
+`editable` would take it to 879,454 B. `?editor=ace` alone does not fix that: a signed-out
+reader can type it. `_ace_wanted` therefore asks `may_write` as well — the same second gate
+`yjs` and `coedit` already carry — so the parameter buys a reader exactly nothing. Measured
+on `tests/fixtures/corpus`: a reader's page is 311,497 B with the parameter and 311,497 B
+without it.
+
+**The `url()` finding cost nothing, because the file that carried it is not here.** `ace.js`
+has 24 `url(` tokens and every one is a `data:` URI; `keybinding-vim.js` has none. The two
+that fail the assertion are both in `mode-markdown.js`. Nothing had to be loosened.
+
+**The binding is the delta path, and `typed()` was not touched.** The room asks
+`SURFACE.onSplice` where a surface has it and falls back to `SURFACE.onInput(typed)` where it
+does not — so the path that has shipped since rooms existed is byte-for-byte unchanged and
+the second surface brings its own better channel rather than borrowing a worse one. Ace's
+deltas are converted at the moment they arrive, because everything before a delta's `start`
+is untouched by it and everything after has moved; the runs are batched per Ace operation and
+applied in one `doc.transact`. Measured: `:%s/cycle/bet/g` over a 48-occurrence document is
+**one** update frame, converges with a real `Room`, and is credited to the tab that pressed
+the key.
+
+**The line-ending hazard was worse than the audit priced it, and the fix is server-side.**
+`setNewLineMode('unix')` is necessary and is not sufficient: `reflect()` splicing a lone `\r`
+into Ace produces a LINE BREAK, so the document grows a row and the two copies never converge.
+The one boundary is `coedit.one_newline`, applied where text enters the room — the seed and
+`absorb` — so the room holds what every surface can hold. The cost, stated: saving a document
+whose file had CRLF writes LF back, which was already true the moment anybody typed in it.
+
+**The Escape arbitration turned out not to need a line of code.** S2.8 promised
+`if (event.defaultPrevented) return;` as the seam a keymap would claim a key through. Ace's
+`stopEvent` already does `stopPropagation` as well as `preventDefault`, so a key its command
+table handled never reaches the page's own listener: measured in Chrome, Tab does not arrive
+and Escape and Cmd+S do. The guard was written, measured, and removed, and the comment where
+it stood says so — a guard whose condition is never true is one no mutation can catch.
+
+**What is not built, and is the first thing to add:** the seat bands do not draw on the Ace
+path. `coordsAt` answers over Ace's screen rows and `drawSeats` says out loud that they are
+not drawn rather than clearing the layer in silence, but the band's origin is the box's border
+box and the mirror's is its padding box, and nothing has measured that pairing in a browser.
+`static/VENDOR.md`'s own "a caret one line off is worse than no caret" is why it is absent
+rather than guessed. The presence line still names who else is in the document, and a tab on a
+textarea still draws the Ace tab's band correctly, because `sit()` sends the same index.
+
 ## The trap that is still written down
 
 `tests/js/drive.js` is a DOM shim, not a browser. `AGENTS.md` records that it has misled

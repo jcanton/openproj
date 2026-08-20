@@ -102,6 +102,40 @@ def byte_offset(text: str, at: int) -> int:
     return len(text[:at].encode("utf-8"))
 
 
+def one_newline(text: str) -> str:
+    """Every line ending the room holds, as the one ending a browser can hold.
+
+    **This is where the rule lives, and it exists because there is now more than
+    one editing surface.** A `<textarea>` turns CRLF into LF unconditionally — in the
+    HTML parser on the way in and in the `value` getter on the way out — so it
+    can never hold a carriage return whatever it is given. Ace's `Document`
+    autodetects one sequence from the first line ending it sees and rejoins every
+    line with it, and inserting a lone `\r` into it produces a LINE BREAK: the
+    document grows a row. So the two surfaces normalise in opposite directions,
+    and a room seeded from a file with CRLF in it sat between them — the box
+    dropped the carriage returns and the room put them back, once per keystroke,
+    for ever, with the two copies a different LENGTH each time.
+
+    `store.py` decodes the blob with no newline translation and there is no
+    `.gitattributes text=auto`, so a room really can be seeded with them: it is
+    one `git commit` made on Windows away. Normalising here rather than in either
+    surface is what makes it one rule instead of two that disagree — and it is
+    here rather than in `store.py` because what a file holds is the file's
+    business, while what a room holds has to be a thing every client can hold.
+
+    It is not the only line about line endings — `aceSurface` pins
+    `setNewLineMode('unix')` as well — and the two answer different doors: this
+    one is what the room holds, that one is what a paste into a one-line document
+    can make Ace re-detect. Each has a test that fails without it.
+
+    The cost, stated: saving a document whose file had CRLF endings writes LF
+    endings back. That was already true the moment anybody typed in it — the box
+    could not hold them and the first keystroke spliced them out — and it is now
+    true on the first save instead of the first keystroke.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def seeded(body: str) -> Doc:
     """A document holding exactly this text, written by `SEED`.
 
@@ -127,6 +161,10 @@ class Room:
         self.seed = commit
         # What the next write is compared against. This one does move.
         self.base = commit
+        # Through `one_newline` before anything else touches it, so `committed`
+        # and the document are the same string and `pending()` does not answer
+        # yes on a room nobody has typed in.
+        body = one_newline(body)
         self.committed = body
         self.doc = seeded(body)
         self.text: Text = self.doc[BODY]
@@ -207,7 +245,10 @@ class Room:
         the splice is made in bytes, where the document is. `byte_offset` is
         that boundary and the only place the two spaces meet.
         """
-        was, now = self.body(), body
+        # The same boundary on the way in from git: a commit made elsewhere can
+        # carry CRLF, and a room that took it would put back exactly what the
+        # seed was normalised out of.
+        was, now = self.body(), one_newline(body)
         if was == now:
             return None
         before = self.doc.get_state()

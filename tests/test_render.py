@@ -151,10 +151,18 @@ def test_the_libraries_are_inlined_rather_than_linked(rendered: Path):
     assert 'src="' not in graph
 
 
-def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: Path):
+def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
+    rendered: Path, seed_index: Index
+):
     """The graph page once rendered blank because `DAGRE_JS` is a substring of
     `CYTOSCAPE_DAGRE_JS`: replacing markers in sequence inlined dagre twice and
-    cytoscape-dagre never. Nothing in the page said so — it just drew nothing."""
+    cytoscape-dagre never. Nothing in the page said so — it just drew nothing.
+
+    Rewritten when Ace arrived, because the old form — "four `.js` files, each
+    once in `graph.html`" — encoded an assumption that stopped being true rather
+    than a rule: every vendored script used to be a graph library. The rule the
+    old test meant is the one below, said properly.
+    """
     static = Path(__file__).resolve().parents[1] / "static"
     graph = read(rendered, "graph.html")
 
@@ -164,14 +172,26 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(rendered: 
     # ELK replaced dagre, and a list written down in a test is a list that says
     # a page is fine while it inlines a library nobody checked.
     inlined = sorted(path.name for path in static.iterdir() if path.suffix == ".js")
-    assert len(inlined) == 4, inlined
+    assert len(inlined) == 6, inlined
+
+    # **"Exactly once, into the page that uses it" — which is not the same claim
+    # as "exactly once, into the graph".** It was, when every vendored script was
+    # a graph library. Ace is the first that is not: it belongs to an editing
+    # surface, the graph page has none, and asserting it appears once there would
+    # have been asserting it is somewhere it must never be. So the pages are
+    # named beside the files, and a file nobody claims fails the last line rather
+    # than passing quietly.
+    editing = editable_page(seed_index, editor="ace")[1]
     for name in inlined:
         # 200 and not 120: two of these are webpack bundles whose first 120
         # characters are the same UMD preamble, so the shorter signature found
         # each of them twice and called one of them a defect. Same length as the
         # sibling check in test_injection.py, which is where that was learnt.
         signature = (static / name).read_text(encoding="utf-8")[:200]
-        assert graph.count(signature) == 1, name
+        wanted = editing if name in ("ace.js", "keybinding-vim.js") else graph
+        other = graph if wanted is editing else editing
+        assert wanted.count(signature) == 1, name
+        assert other.count(signature) == 0, f"{name} is in a page that does not use it"
 
 
 def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, seed_index: Index):
@@ -1590,6 +1610,32 @@ def test_the_vendoring_note_covers_every_file_it_is_about():
     assert "MIT" in doc and "yjs-LICENSE.txt" in doc
 
 
+def test_the_editor_licence_travels_with_the_editor(seed_index: Index):
+    """The same rule the font is held to, for the same reason.
+
+    All three of Ace's minified files contain zero occurrences of `Copyright`,
+    `BSD` and `Ajax.org` — upstream strips the notice when it minifies, and
+    `src-noconflict/ace.js` opens with the whole block. BSD-3 clause 2 asks for
+    the notice in a binary redistribution, and this repository already reads
+    "every rendered page is a copy" that way for Inter: a static export mailed to
+    somebody, or one HTML file on a memory stick, has redistributed the software.
+
+    So the notice is written into the page ahead of the bytes, where it travels
+    with them, and `static/ace-LICENSE.txt` is where it is read from — not typed
+    into `render.py`, so a re-vendoring that changed the licence would change
+    this too.
+    """
+    from openproj.render import _static_dir
+
+    _, page = editable_page(seed_index, editor="ace")
+    licence = (_static_dir() / "ace-LICENSE.txt").read_text(encoding="utf-8")
+    assert licence in page, "the editor ships in the page and its licence does not"
+    assert "Copyright (c) 2010, Ajax.org B.V." in page
+    # Ahead of the bytes rather than anywhere on the page: a notice after 475 KB
+    # of minified script is a notice nobody finds.
+    assert page.index("Ajax.org B.V.") < page.index("ace.define")
+
+
 def test_the_font_licence_travels_with_the_font(rendered: Path):
     """Every page carries the whole face as a base64 `data:` URI, so every page IS
     a copy of the font — a single exported HTML file handed to somebody has
@@ -2228,17 +2274,26 @@ _WRITTEN = """## Progress
 """
 
 
-def editable_page(index: Index, body: str | None = None) -> tuple[str, str]:
+def editable_page(
+    index: Index, body: str | None = None, editor: str = ""
+) -> tuple[str, str]:
     """One entity's detail page as a writer receives it: the id, and the page.
 
     `base_commit` and `may_write`, which is the combination the static export
     never produces — `render_static` passes neither, so the exported file carries
     no editing surface for a test to look at.
+
+    `editor` is the query string's `?editor=`, and it is a parameter here for the
+    same reason it is one on the route: it decides whether 594 KB of second
+    editor is in the page, and the rules about what a page may fetch have to be
+    asked of the page that carries the newest bytes.
     """
     one = next(iter(index.entities))
     if body is not None:
         index.entities[one].body = body
-    return one, render_detail(index, ROUTES, only=one, base_commit="deadbee", may_write=True)
+    return one, render_detail(
+        index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor=editor
+    )
 
 
 def test_a_struck_out_line_and_a_task_list_render_as_what_they_are(seed_index: Index):
@@ -2320,6 +2375,73 @@ def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_
 
     fetches_nothing(page, f"the editable detail page for {one}")
     asks_for_no_font(page, f"the editable detail page for {one}")
+
+    # And the same page with 594 KB of second editor in it, which is where the
+    # newest bytes in this repository actually land. Both rules, unchanged and
+    # not loosened: `ace.js` carries 24 `url(` tokens and every one of them is a
+    # `data:` URI, and `keybinding-vim.js` carries none.
+    #
+    # The two that would have failed are in `mode-markdown.js`, at offsets 9046
+    # and 47867 — a tokeniser regex and a completion template, both of which
+    # fetch nothing at all — and that file is deliberately not vendored. Had it
+    # been, the honest answer would have been to say so in the assertion rather
+    # than to widen the pattern until a real remote URL could slip through it:
+    # this scan reads `<script>` bodies on purpose, because a rule that holds
+    # only over the text it is allowed to read is not a rule.
+    one, with_ace = editable_page(seed_index, editor="ace")
+    assert "ace.define" in with_ace, "?editor=ace did not put the editor in the page"
+    fetches_nothing(with_ace, f"the second editor on the detail page for {one}")
+    asks_for_no_font(with_ace, f"the second editor on the detail page for {one}")
+
+
+def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index):
+    """Who pays for the second editor, which is the question that decided its
+    shape.
+
+    `editable = base_commit is not None` and the served route passes a commit for
+    everyone, so a signed-out reader already receives the `<textarea>`, the
+    toolbar and two `attachEditing(` calls — measured at 209,872 B. An Ace block
+    at that gate would have taken the same page to 879,454 B, 4.19x, for a vim
+    keymap the reader did not ask for and cannot use.
+
+    The gate is therefore not `editable` but the query string: `?editor=ace`, and
+    nothing else, puts the bytes in a page. A reader who never types it pays
+    nothing — including a reader who never types it AND asks for it, which is the
+    case below: the parameter alone is not enough, there has to be a surface.
+    """
+    from openproj.render import ROUTES, render_detail
+
+    one = next(iter(seed_index.entities))
+    # A signed-out reader on the SERVED route, which is the case the audit
+    # measured and the one `editable` cannot see: the route passes a commit for
+    # everyone, so this page already carries the box, the toolbar and two
+    # `attachEditing(` calls. `may_write` is the gate, and it is a different
+    # question from `editable`.
+    reading = render_detail(
+        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=False, editor="ace"
+    )
+    assert "ace.define" not in reading, (
+        "a reader the server would refuse a write from carries 594 KB of editor "
+        "for a keymap whose every save is a 403"
+    )
+    # And the static export, which passes neither.
+    exported = render_detail(seed_index, ROUTES, only=one, base_commit=None, editor="ace")
+    assert "ace.define" not in exported
+    # The control: the same page a writer gets, on the same parameter, does carry
+    # it — or the assertion above passes because the parameter never works.
+    writing = render_detail(
+        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor="ace"
+    )
+    assert "ace.define" in writing
+    # And the default, which is what every page load that did not ask for it is.
+    plain = render_detail(
+        seed_index, ROUTES, only=one, base_commit="deadbee", may_write=True
+    )
+    assert "ace.define" not in plain
+    assert len(writing) > len(plain) + 500_000, (
+        "the second editor is not the 594 KB this gate exists for, so either the "
+        "gate or the measurement has moved"
+    )
 
 
 def test_the_leading_heading_is_matched_on_words_and_not_on_bytes():

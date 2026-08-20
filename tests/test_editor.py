@@ -129,12 +129,80 @@ def test_the_save_script_sends_only_what_changed(page: str):
     assert "new FormData" not in page, "a serialised form sends fields nobody touched"
 
 
-def test_the_editor_pulls_in_no_library_at_all(page: str):
-    """The simple option, chosen deliberately. If this ever fails, somebody has
-    added an editor dependency and should have to argue for it."""
+def test_the_editor_a_reader_is_sent_carries_no_library(page: str):
+    """This used to be `test_the_editor_pulls_in_no_library_at_all`, and its
+    docstring said: "If this ever fails, somebody has added an editor dependency
+    and should have to argue for it."
+
+    Somebody has. Ace 1.44.0 is vendored — `static/VENDOR.md` carries the search,
+    the price and the argument — and the old test passed it **unchanged**, which
+    is what makes rewriting it necessary rather than optional: it was a check on
+    the string `codemirror`, so it would have caught the library that was refused
+    and never the one that was taken. A name check is not an argument.
+
+    What is true now, and what this holds:
+
+    * an ordinary page — which is what `page` is, with no `?editor=` on it —
+      carries no editor library at all, so nobody pays for one by default;
+    * nothing is fetched, here or anywhere: no `<script src>`, no CDN;
+    * and CodeMirror in particular is still not here, which is a finding rather
+      than a taste — `docs/EDITOR.md` refuses CM6 on a fifty-one-import linker
+      and CM5 on an archived upstream.
+
+    The page that DOES carry it is held to its own rules in
+    `test_the_second_editor_is_inlined_checksummed_and_named` beside this.
+    """
     assert "codemirror" not in page.lower()
     assert "CodeMirror" not in page
     assert not re.search(r"<script[^>]+src=", page)
+    assert "ace.define" not in page, (
+        "the second editor is in a page nobody asked for it on. It is 594 KB, and the "
+        "default has to be no: `editable` is `base_commit is not None` and the served "
+        "route passes a commit for everyone, so `editable` is not a gate on anything"
+    )
+
+
+def test_the_second_editor_is_inlined_checksummed_and_named(client: TestClient):
+    """And the page that asked for it, held to the same four rules the refusal
+    was written out of: inlined rather than fetched, checksummed, licensed, and
+    named where a person will find it.
+
+    The last one is the one a grep cannot fake. `static/VENDOR.md`'s "What is
+    deliberately not here" section said "No editor library" for as long as that
+    was true; a commit that vendors one and leaves that sentence standing has
+    made the file lie about the repository it documents.
+    """
+    import hashlib
+
+    from openproj.render import _static_dir
+
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+    assert "ace.define" in page, "?editor=ace did not put the editor in the page"
+    assert not re.search(r"<script[^>]+src=", page), "an editor that fetches is not inlined"
+    assert "cdn." not in page
+
+    static = _static_dir()
+    sums = dict(
+        reversed(line.split(maxsplit=1))
+        for line in (static / "SHA256SUMS").read_text().splitlines()
+        if line.strip()
+    )
+    note = (static / "VENDOR.md").read_text(encoding="utf-8")
+    for name in ("ace.js", "keybinding-vim.js"):
+        assert name in sums, f"{name} ships in a page and is checksummed nowhere"
+        digest = hashlib.sha256((static / name).read_bytes()).hexdigest()
+        assert digest == sums[name].strip(), name
+        assert name in note, f"{name} is inlined and undocumented"
+        assert (static / name).read_text(encoding="utf-8")[:200] in page
+
+    # BSD-3 clause 2 asks for the notice in a binary redistribution, and this
+    # repository already reads "every rendered page is a copy" that way for
+    # Inter. The minified files carry no notice at all — upstream strips it — so
+    # a page that inlines them and says nothing has redistributed without it.
+    assert "Ajax.org" in page and "BSD-3-Clause" in page
+    assert "ace-LICENSE.txt" in note and "BSD-3-Clause" in note
+    # And the file that said there was no editor library says what there is now.
+    assert "No editor library" not in note.split("## What is deliberately not here")[1]
 
 
 def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
@@ -805,6 +873,41 @@ def _surface_source(page: str) -> str:
     return page[opens:closes]
 
 
+def _without_the_library(page: str) -> str:
+    """The page minus the vendored editor's own bytes.
+
+    Ace has a `<textarea>` of its own — 2.5x1 CSS px, opacity 0, parked at the
+    caret — and reads `.value` off it in a dozen places, which is Ace's business
+    and not this application's. Cut by reading the files out of `static/` rather
+    than by matching a marker, so a re-vendoring cannot leave the guard scanning
+    bytes it was never meant to judge, and a guard scanning nothing at all is
+    caught by the length check below.
+    """
+    from openproj.render import _static_dir
+
+    for name in ("ace.js", "keybinding-vim.js"):
+        body = (_static_dir() / name).read_text(encoding="utf-8")
+        assert body in page, f"{name} is not inlined in the page this is cutting it from"
+        page = page.replace(body, "")
+    return page
+
+
+_ACE_OPENS = "// --- Ace, as the same surface ---"
+_ACE_CLOSES = "// --- end of Ace as a surface ---"
+
+
+def _ace_surface_source(page: str) -> str:
+    """The one region of a page that knows the document may be in Ace.
+
+    Delimited by its own banners for the same reason the textarea's is: a guard
+    that names a function moves out of step with the code the day somebody
+    renames it, and a guard that names a banner takes the banner with it.
+    """
+    opens = page.index(_ACE_OPENS)
+    closes = page.index(_ACE_CLOSES, opens)
+    return page[opens:closes]
+
+
 def _coedit_source(page: str) -> str:
     """The room's script, as it ships."""
     found = re.search(r"const COEDIT = \(\(\) => \{.*?\n\}\)\(\);", page, re.S)
@@ -882,6 +985,26 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
     for site in _THROUGH_THE_SURFACE:
         assert site in page, f"this call site no longer goes through the surface: {site}"
 
+    # And the same page with the second editor in it. The boundary is worth
+    # nothing if a second surface is where it leaks — `ace.edit(BODY)` REMOVES
+    # the textarea from the DOM and from the form, and the sibling arrangement
+    # this ships instead leaves a stale box in the page that anything could still
+    # read. The Ace surface is handed the document by the textarea surface rather
+    # than reading it, so this stays literally one place.
+    with_ace = _without_the_library(client.get(f"/detail/{TASK}?editor=ace").text)
+    rest = with_ace.replace(_surface_source(with_ace), "")
+    for reach in ("BODY.value", "BODY.selectionStart", "BODY.setSelectionRange",
+                  "area.value", "area.selectionStart", "area.setSelectionRange"):
+        assert reach not in rest, (
+            f"`{reach}` is in the page that carries the second editor, outside the one "
+            "place allowed to read a textarea — and on that page the textarea is stale"
+        )
+    ace_surface = _ace_surface_source(with_ace)
+    assert "function aceSurface(area, seeded)" in ace_surface
+    assert "aceSurface(area, box.text())" in with_ace, (
+        "the second surface is not seeded through the one place that reads the box"
+    )
+
     # `reflect`, read as source, because the two things that matter about it are
     # invisible to a textarea and therefore to every behavioural test in the
     # suite. Both ends of the splice have to be bounded — `to` is
@@ -897,6 +1020,66 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
     assert "SURFACE.apply(" in reflect.group(0), (
         "reflect writes the box without saying it is the page writing"
     )
+
+
+def test_the_second_surface_never_sets_or_replaces_the_whole_document(client: TestClient):
+    """The rule the Ace binding exists to obey, read off the shipped page.
+
+    `session.setValue()` is remove-all-then-insert-all: two change events with an
+    EMPTY DOCUMENT between them. Measured, `setValue` of a document onto itself
+    reports `deleted=1532, inserted=1532`, and no prefix/suffix walk can recover
+    a splice from `""` against a whole document. `session.replace(Range, text)` —
+    the API the first design recommended as "strictly better, splices in place" —
+    is **also** remove-then-insert, two change events, and a handler reading the
+    document between them sees a state that never existed on either side.
+
+    What that costs is not an abstraction: one remote four-character keystroke
+    reflected that way made a PASSIVE tab push a 97,890-character body up the
+    socket and take the authorship credit for it. `Room.credits`' "authored by
+    whoever typed the most" becomes "authored by whoever reflected last".
+
+    So: `Document.remove` and `Document.insert`, bounded, and nothing else. The
+    one `setValue` is the seeding call, which happens on construction before
+    anything observes the document, and it is asserted to be the only one rather
+    than exempted by a comment.
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+    surface = _ace_surface_source(page)
+
+    assert "session.setValue(" not in surface, (
+        "the second surface sets the whole document, which is remove-all-then-"
+        "insert-all with an empty document between the two change events"
+    )
+    assert "session.replace(" not in surface and ".replace(Range" not in surface
+    assert surface.count("editor.setValue(seeded, -1);") == 1
+    # Over the CODE and not over the prose: the block argues at length about the
+    # two APIs it refuses, and a count that included the argument would go up
+    # every time somebody explained it better.
+    code = "\n".join(
+        line for line in surface.splitlines() if not line.lstrip().startswith("//")
+    )
+    assert code.count("setValue") == 1, (
+        "there is more than one whole-document write in the second surface"
+    )
+    # The write, and both halves of it bounded by a range built from the index.
+    assert "document_.remove(Range.fromPoints(positionOf(from), positionOf(to)))" in surface
+    assert "document_.insert(positionOf(from), put)" in surface
+    # And the re-entrancy flag, which is the whole difference between reflecting
+    # somebody's keystroke and pushing the document back up the socket under your
+    # own name: every other surface fires its change event for its own edits and
+    # a person's alike, indistinguishably.
+    assert "session.on('change', delta => {\n    if (applying) return;" in surface, (
+        "the second surface hears its own writes, so a remote keystroke comes back "
+        "up the socket as this tab's typing"
+    )
+    # The five commands that fetch a module over the network, by name.
+    for command in ("'find'", "'replace'", "'showSettingsMenu'",
+                    "'goToNextError'", "'goToPreviousError'"):
+        assert command in surface, f"{command} still reaches config.loadModule"
+    assert "removeCommand" in surface
+    # And the line-ending boundary, which is the case no length or index check
+    # can see: `"a\nb\rc\nd"` comes back the same length and different bytes.
+    assert "document_.setNewLineMode('unix');" in surface
 
 
 def test_no_script_ever_assigns_a_textarea_its_value(client: TestClient):
@@ -2586,7 +2769,14 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     # One key, versioned, and every read and write of it through `remembered`.
     assert page.count("const EDITOR_KEY = 'openproj:editor:1';") == 1
     assert "remembered.map(EDITOR_KEY)" in page
-    assert "remembered.set(EDITOR_KEY, JSON.stringify(EDITOR))" in page
+    # Named fields and not "whatever is on the object": `EDITOR` also carries
+    # what is true of this LOAD — which editor the address asked for — and a
+    # preference store that quietly grows a field is one nothing ever forgets.
+    assert "remembered.set(EDITOR_KEY," in page
+    assert "EDITOR_KEPT.map(k => [k, EDITOR[k]])" in page
+    assert re.search(r"const EDITOR_KEPT = \[[^\]]*'editor'[^\]]*\];", page), (
+        "which editor a person chose is a preference and has to be one of the kept fields"
+    )
     assert not re.search(r"localStorage\.\w+\('openproj:editor", page), (
         "a bare localStorage call for the preference"
     )
@@ -2706,3 +2896,396 @@ def test_the_box_and_the_column_beside_it_are_one_face(client: TestClient, tmp_p
     assert got["box"] == got["gutter"], f"{got['box']!r} beside {got['gutter']!r}"
     assert got["size"][0] == got["size"][1], got["size"]
     assert got["height"][0] == got["height"][1], got["height"]
+
+
+_WATCH_THE_NETWORK = """
+window.__violations = [];
+window.__injected = [];
+document.addEventListener('securitypolicyviolation', event => {
+  window.__violations.push(event.effectiveDirective + ' <- ' + String(event.blockedURI));
+});
+// The one signal a blocked script leaves: an `error` event with an empty
+// message. No exception, no console warning, nothing a Python test could see.
+window.__errors = [];
+addEventListener('error', event => window.__errors.push(String(event.message)));
+const append = Element.prototype.appendChild;
+Element.prototype.appendChild = function (node) {
+  if (node && node.tagName === 'SCRIPT' && node.src) window.__injected.push(node.src.slice(-24));
+  return append.call(this, node);
+};
+"""
+
+_KEYMAP_FETCHES = r"""
+  document.getElementById('toggle').click();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const table = editor.commands.commands;
+  const gone = ['find', 'replace', 'showSettingsMenu', 'goToNextError', 'goToPreviousError']
+    .filter(name => name in table);
+  // Exercised, not merely absent: `exec` on a command that is not there answers
+  // false and does nothing, which is what pressing the key now does.
+  const ran = ['find', 'replace', 'showSettingsMenu', 'goToNextError', 'goToPreviousError']
+    .filter(name => editor.commands.exec(name, editor));
+  await new Promise(r => setTimeout(r, 200));
+  const quiet = {
+    gone, ran,
+    injected: window.__injected.slice(),
+    violations: window.__violations.slice(),
+    scripts: [...document.querySelectorAll('script[src]')].length,
+    errors: window.__errors.slice(),
+  };
+  // **The forced failure**, so the zeros above are evidence rather than a check
+  // that could only pass. This is the call the five commands used to make.
+  ace.config.loadModule('ace/ext/searchbox', () => {});
+  await new Promise(r => setTimeout(r, 400));
+  return {quiet, control: {
+    injected: window.__injected.slice(),
+    violations: window.__violations.slice(),
+    errors: window.__errors.slice(),
+  }};
+"""
+
+
+def test_no_editor_asks_for_a_script_after_the_page_has_loaded(
+    client: TestClient, tmp_path: Path
+):
+    """The half of the network rule that a source grep structurally cannot see.
+
+    `test_no_page_reaches_the_network` scans the rendered text for
+    `<script[^>]+src=`. Ace's default command table calls `config.loadModule`,
+    which is `createElement('script'); i.src = e; head.appendChild(i)` — an
+    element that exists only at runtime, in a page whose source has no `src=` in
+    it anywhere. Five commands reach it: `find` (Cmd-F), `replace` (Ctrl-H),
+    `showSettingsMenu` (Cmd-,), and the two error markers (Alt-E, Alt-Shift-E).
+
+    Measured before they were removed: Cmd-F gives `defaultPrevented=true`, one
+    injected `ext-searchbox.js`, a `script-src-elem` violation, no searchbox in
+    the DOM, and an EMPTY `window.error`. Ace takes Cmd-F away from the browser
+    and gives back nothing, in silence — which is why this is asked of Chrome and
+    why the control below matters more than the assertion above it: a blocked
+    script throws nothing, logs nothing and returns normally, so a test with no
+    forced failure beside it is a test that cannot fail.
+    """
+    page = _before_the_page_runs(
+        client.get(f"/detail/{TASK}?editor=ace").text, _WATCH_THE_NETWORK
+    )
+    got = measured_in(chrome(), page, tmp_path / "keymap.html", 1400, _KEYMAP_FETCHES,
+                      query="?editor=ace", budget=8000)
+
+    quiet, control = got["quiet"], got["control"]
+    assert quiet["gone"] == [], f"these still reach config.loadModule: {quiet['gone']}"
+    assert quiet["ran"] == [], f"these still ran: {quiet['ran']}"
+    assert quiet["injected"] == [], f"the editor fetched {quiet['injected']}"
+    # Scoped to script directives, and the scoping is not a loosening: this page
+    # is opened from a `file://` URL, where the room's own WebSocket is refused by
+    # `connect-src 'self'` before it can open. That refusal is the policy working
+    # and is the ordinary case a `file://` copy is designed to survive; what this
+    # test is about is a SCRIPT arriving from somewhere.
+    scripty = [one for one in quiet["violations"] if one.startswith("script-")]
+    assert scripty == [], f"the policy refused a script: {scripty}"
+    assert quiet["scripts"] == 0, "a script[src] appeared in a page that inlines everything"
+    assert quiet["errors"] == [], quiet["errors"]
+
+    # And the control. If this does not fire, the four assertions above are
+    # asserting that a detector nobody proved works found nothing.
+    assert [one.endswith("ext-searchbox.js") for one in control["injected"]] == [True], (
+        "the forced failure injected nothing, so the detection above proves nothing"
+    )
+    assert any("script-src" in one for one in control["violations"]), (
+        f"the policy did not refuse the injected script: {control['violations']}"
+    )
+    assert control["errors"] == [""] or control["errors"] == [], (
+        "a blocked script is an `error` event with an empty message, and this is the "
+        f"shape the test's own docstring rests on: {control['errors']}"
+    )
+
+
+_PASTED_CRLF = r"""
+  document.getElementById('toggle').click();
+  await new Promise(r => setTimeout(r, 300));
+  // ONE line, which is the state Ace re-detects the newline sequence in:
+  // `Document.insert` is `this.getLength() <= 1 && this.$detectNewLine(text)`.
+  // A new entity starts here, and so does any document somebody has just
+  // selected all of and deleted.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, 'first line'));
+  const at = SURFACE.text().length;
+  SURFACE.setCaret(at);
+  // A paste out of an editor on Windows, through the same `splice` a paste goes
+  // through. What is under test is not the pasted run — it is the whole document
+  // afterwards.
+  // The run STARTS with the carriage return, because `$detectNewLine` takes the
+  // first ending it finds and a leading `\n` would answer the question for it —
+  // which is a test that passes on the mutation it is written for.
+  SURFACE.splice(at, at, '\r\npasted\r\nfrom\r\nelsewhere\r\n');
+  await new Promise(r => setTimeout(r, 50));
+  const text = SURFACE.text();
+  return {carriage: text.indexOf('\r'), lines: text.split('\n').length, text};
+"""
+
+
+def test_the_second_surface_holds_one_line_ending_whatever_is_pasted_into_it(
+    client: TestClient, tmp_path: Path
+):
+    """The half of hazard 1 that the room's own normalisation does not cover.
+
+    `coedit.one_newline` makes the room hold LF, so a surface opening on it never
+    sees a carriage return — and that is why deleting `setNewLineMode('unix')`
+    leaves the two-editors convergence test green. It is not why the line is
+    there.
+
+    Ace's `Document.insert` is `this.getLength() <= 1 && this.$detectNewLine(t)`:
+    on a document of one line — a new entity, or one somebody has just cleared —
+    inserting text whose first ending is CRLF sets `$autoNewLine`, and
+    `getValue()` then rejoins EVERY line with it. The document that comes back
+    out is a different string from the one that went in, at the same line count,
+    which is the shape no index or length check can see; a `<textarea>` in the
+    same room cannot hold it, and the two never settle.
+
+    Pinned as "whatever is pasted, one ending comes back", because that is the
+    property, and it is asked of Chrome because `$detectNewLine` is Ace's and
+    only Ace can answer for it.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "crlf.html",
+        1400, _PASTED_CRLF, query="?editor=ace", budget=6000,
+    )
+    assert got["carriage"] == -1, (
+        "a carriage return came back out of the second editor at offset "
+        f"{got['carriage']}: {got['text'][:60]!r}"
+    )
+    assert got["lines"] == 5, got["text"]
+
+
+_VIM_ON = r"""
+  document.getElementById('toggle').click();
+  await new Promise(r => setTimeout(r, 300));
+  const editor = SURFACE.editor;
+  const keymap = [...document.querySelectorAll('#statusbar button')]
+    .find(b => b.textContent.startsWith('Keymap'));
+  if (!keymap) return {noPicker: true};
+  keymap.click();
+  await new Promise(r => setTimeout(r, 100));
+  const out = {label: keymap.textContent, handler: String(editor.getKeyboardHandler().$id),
+               said: document.getElementById('state').textContent, marks: []};
+  // NORMAL mode. Every mark in the bar, over the same selection each time, with
+  // the document put back between them so one mark cannot mask another.
+  const started = SURFACE.text();
+  for (const button of document.querySelectorAll('#marks .mark')) {
+    if (button.title === 'Image') continue;   // opens a file picker, writes nothing
+    SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, started));
+    SURFACE.setCaret(0, 5);
+    button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+    await new Promise(r => setTimeout(r, 10));
+    out.marks.push([button.title, SURFACE.text() !== started]);
+  }
+  // The record: this is the call that silently does nothing under vim in a
+  // textarea, which is what made asks 2 and 6 destroy each other on that path.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, started));
+  editor.focus();
+  out.execCommand = document.execCommand('insertText', false, 'X');
+  // Tab, dispatched at Ace's own input where a keystroke really arrives.
+  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, 'abc\ndef\n'));
+  SURFACE.setCaret(0, 0);
+  // A listener beside the page's own, on the same element, so what it records is
+  // what the page's handler saw. `keyCode` in the init dict because that is what
+  // Ace reads — `keyBinding.onCommandKey(e, hashId, e.keyCode)` — and Chrome
+  // gives a synthesised event a `keyCode` of 0 unless it is asked for, which
+  // would leave Ace's own Tab command never running and this measuring nothing.
+  out.reached = [];
+  SURFACE.el.addEventListener('keydown', e => out.reached.push(e.key));
+  const input = SURFACE.el.querySelector('textarea');
+  const press = (key, code, keyCode, extra) => input.dispatchEvent(new KeyboardEvent(
+    'keydown', Object.assign({key, code, keyCode, which: keyCode,
+                              bubbles: true, cancelable: true}, extra || {})));
+  press('Tab', 'Tab', 9);
+  await new Promise(r => setTimeout(r, 30));
+  out.afterTab = SURFACE.text().slice(0, 8);
+  press('Escape', 'Escape', 27);
+  press('s', 'KeyS', 83, {metaKey: true});
+  await new Promise(r => setTimeout(r, 30));
+  out.scripts = document.querySelectorAll('script[src]').length;
+  out.gutters = document.querySelectorAll('.gutter').length;
+  out.aceGutter = document.querySelectorAll('.ace_gutter').length;
+  return out;
+"""
+
+
+def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
+    client: TestClient, tmp_path: Path
+):
+    """Ask 2 and ask 6 destroyed each other on the path this does not take.
+
+    Measured, and it is the reason the toolbar had to move behind the surface
+    before vim could be bought: `document.execCommand('insertText')` **silently
+    no-ops under vim NORMAL mode** — A/B'd in one page, it returns `true`, throws
+    nothing, and leaves the document unchanged. Every toolbar button and the
+    image-paste placeholder-then-replace go through `replaceRange`, which is that
+    call, so with vim on they would all have done nothing at all, in silence, on
+    a bar of fourteen buttons.
+
+    On the second surface the toolbar goes through `splice`, which is
+    `Document.remove` and `Document.insert` — the same two calls Ace makes for a
+    keystroke — so the mode the keyboard is in has nothing to do with it. This
+    asserts the whole bar, one mark at a time, with the document put back between
+    them so one mark cannot pass by masking another.
+
+    And Tab, in the same run, because the arbitration that lets vim have Escape is
+    the same line that lets Ace have Tab: `if (event.defaultPrevented) return;` at
+    the top of the page's own keydown handler. Without it Ace's soft tab and the
+    page's `indentLines` both fire and one press indents twice.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}?editor=ace").text, tmp_path / "vim.html",
+        1400, _VIM_ON, query="?editor=ace", budget=8000,
+    )
+    assert not got.get("noPicker"), "the second editor carries no keymap control"
+    assert got["label"] == "Keymap: vim"
+    assert got["handler"] == "ace/keyboard/vim"
+    assert "Vim keys are on" in got["said"], (
+        f"the keymap changed and the page said {got['said']!r} — a two-word control in an "
+        "11px strip that takes the keyboard away has to say that it has"
+    )
+
+    inert = [title for title, wrote in got["marks"] if not wrote]
+    assert inert == [], f"these toolbar buttons do nothing with vim on: {inert}"
+    assert len(got["marks"]) == 13, got["marks"]
+
+    # The record, asserted rather than described: this is the call that would have
+    # been used, and Chrome answers `true` for it whether or not anything happened.
+    assert got["execCommand"] is True
+
+    assert got["afterTab"].startswith("  abc"), (
+        f"Tab did not indent once: {got['afterTab']!r} — two indents means both the "
+        "editor's own soft tab and the page's `indentLines` fired on one press"
+    )
+    # And WHY it indented once, which is the part a character count cannot say.
+    # Ace's `stopEvent` does `stopPropagation` as well as `preventDefault`, so a
+    # key its command table handled never reaches the page's own keydown listener
+    # — that, and not a `defaultPrevented` check, is what stops `indentLines`
+    # firing on top of Ace's soft tab. The two keys the page still has to get are
+    # here beside it: Escape leaves the full-page view and Cmd+S saves, and both
+    # arrive.
+    assert "Tab" not in got["reached"], (
+        "Tab reached the page's own handler, so `indentLines` ran on top of the "
+        "editor's soft tab — this is one press indenting twice"
+    )
+    assert got["reached"] == ["Escape", "s"], (
+        f"the keys the page still needs did not arrive: {got['reached']}"
+    )
+    assert got["scripts"] == 0, "the keymap fetched something"
+
+    # One gutter and it is the editor's own. `attachGutter` draws line numbers
+    # through a mirror of a `<textarea>`, and on this page the textarea is hidden
+    # and stale — a mirror of a box with no layout wraps the whole document one
+    # character per row and answers with numbers that mean nothing, beside a
+    # column of numbers that mean something.
+    assert got["gutters"] == 0, "the page drew a second gutter over the editor's own"
+    assert got["aceGutter"] == 1, "the editor's own gutter is not there either"
+
+
+_KEYMAP_KEPT = r"""
+  document.getElementById('toggle').click();
+  await new Promise(r => setTimeout(r, 300));
+  return {handler: String(SURFACE.editor.getKeyboardHandler().$id),
+          label: [...document.querySelectorAll('#statusbar button')]
+            .map(b => b.textContent).find(t => t.startsWith('Keymap'))};
+"""
+
+
+def test_the_keymap_a_person_chose_is_the_one_the_next_session_opens_in(
+    client: TestClient, tmp_path: Path
+):
+    """The preference, and the whole of what "keep both editors" asked for.
+
+    One key, one object, the version in the name — `openproj:editor:1` — and
+    `keymap` is a field in it beside `mode`, `indent`, `autosave` and `editor`
+    rather than a key of its own, so the shape that grows a sixth field forgets
+    the fifth by bumping one name.
+
+    Checked against what the control offers, because `{"keymap": "emacs"}` is one
+    hand-edit away and `setKeyboardHandler` with a name that is not already
+    defined goes through `config.loadModule`, which is the network path the five
+    default commands were removed for.
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text
+
+    kept = measured_in(
+        chrome(), _before_the_page_runs(page, _SEED % '{"keymap": "vim"}'),
+        tmp_path / "keymap-kept.html", 1400, _KEYMAP_KEPT, query="?editor=ace", budget=8000,
+    )
+    assert kept["handler"] == "ace/keyboard/vim", "the remembered keymap did not open"
+    assert kept["label"] == "Keymap: vim"
+
+    made_up = measured_in(
+        chrome(), _before_the_page_runs(page, _SEED % '{"keymap": "emacs"}'),
+        tmp_path / "keymap-junk.html", 1400, _KEYMAP_KEPT, query="?editor=ace", budget=8000,
+    )
+    assert made_up["label"] == "Keymap: default", (
+        "a keymap this control does not offer was taken from the store and handed to "
+        "`setKeyboardHandler`, which would fetch it"
+    )
+
+
+_STICKY_EDITOR = r"""
+  return {search: location.search, editor: EDITOR.editor,
+          surface: SURFACE.onSplice ? 'ace' : 'textarea',
+          kept: remembered.map('openproj:editor:1').editor,
+          said: document.getElementById('state').textContent};
+"""
+
+
+def test_the_editor_a_person_chose_is_carried_back_into_the_address(
+    client: TestClient, tmp_path: Path
+):
+    """The preference is `localStorage` and the server cannot read it, so the
+    thing that decides which bytes render is the query string. Sticky therefore
+    means one specific thing: the page puts the remembered choice back into the
+    address and asks the server again.
+
+    Only over http(s). A page saved to a file is the case where the parameter can
+    never work — there is no server to render the other bytes — so it says so
+    instead of reloading a file to add a parameter to it, which is the branch this
+    drives: `measured_in` opens a `file://` URL.
+    """
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "ace"}'),
+        tmp_path / "sticky-editor.html", 1400, _STICKY_EDITOR, budget=6000,
+    )
+    assert got["editor"] == "ace", "the remembered choice was not read"
+    assert got["surface"] == "textarea", "a page with no library in it mounted one"
+    assert "does not carry the second editor" in got["said"], (
+        f"the page quietly handed back the other editor: {got['said']!r}"
+    )
+    # And the choice is kept, because this page was never asked: a `file://` copy
+    # has no server, so forgetting here would clear somebody's preference because
+    # they opened an export. The other case — the address DID ask and the server
+    # sent no library — forgets, so a reader who once typed it does not pay a
+    # redirect on every page for ever.
+    assert got["kept"] == "ace", (
+        "opening a saved copy of a page forgot which editor this browser prefers"
+    )
+    # The other case, driven as itself: the address DID carry the request and the
+    # page came back without the library — which on the server is a reader
+    # `may_write` refuses, and here is the same page opened at `?editor=ace`.
+    refused = measured_in(
+        chrome(),
+        _before_the_page_runs(client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "ace"}'),
+        tmp_path / "sticky-refused.html", 1400, _STICKY_EDITOR, query="?editor=ace",
+        budget=6000,
+    )
+    assert refused["surface"] == "textarea"
+    assert "does not carry the second editor" in refused["said"]
+    assert refused["kept"] == "textarea", (
+        "the address asked, the answer was no, and this browser will go on asking — "
+        "one redirect a page, for ever, for something it cannot have"
+    )
+    # And the source of the half that only a server can show: the navigation is a
+    # `replace` on an http(s) URL, and an opt-in carried forward is not a place
+    # the back button should return to.
+    page = client.get(f"/detail/{TASK}").text
+    sticky = re.search(r"function stickyEditor\(\) \{.*?\n\}", page, re.S)
+    assert sticky, "the page no longer carries the preference back into the address"
+    assert "location.protocol.startsWith('http')" in sticky.group(0)
+    assert "location.replace(url)" in sticky.group(0)
+    assert "url.searchParams.set('editor', EDITOR.editor)" in sticky.group(0)

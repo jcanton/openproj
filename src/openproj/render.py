@@ -182,6 +182,429 @@ def _library(name: str) -> Markup:
     return Markup(_inline(name))
 
 
+# --- the second editor's adapter, and where it is NOT ------------------------
+#
+# Out of `_COMBOBOX` and into its own block, on a measurement: `_COMBOBOX` is
+# emitted on SIX pages — table, new, detail, cycle, issue, note — and two of
+# them have no body editor at all. Leaving this beside `textareaSurface` cost
+# 12,978 B on every one of those pages including the two, for an adapter that
+# can only be reached where 594 KB of library is also in the page. It goes out
+# with the library or it does not go out.
+#
+# Inlined AFTER `ace.js`, so `ace.require` is there when it parses, and BEFORE
+# the page script that calls `bodySurface`.
+_ACE_SURFACE = Markup(r"""
+<style>
+/* Ace's own look, re-expressed in this page's tokens.
+   `ace.js` carries 27 hex colours and 53 `rgb()` literals and injects them at
+   runtime through `importCssString`, so the second editor arrives wearing a 2010
+   TextMate theme on a page with a dark mode. **No new colour value is defined
+   here**, and that is deliberate: every declaration below resolves a token that
+   already exists in all three of the blocks this repository requires — bare
+   `:root`, `:root[data-theme="dark"]` and the guarded `prefers-color-scheme`
+   media query — so there is nothing that could be right in one block and wrong
+   in another, which is the failure that rule exists to prevent.
+   Ace's rules are `.ace-tm .ace_gutter` and the like, (0,2,0); these are the
+   same or heavier, and they are inlined in the page while Ace's are injected
+   into the head at construction — later in the document either way. */
+.acebox { position: relative; width: 100%; min-height: 60vh; box-sizing: border-box;
+          border: 1px solid var(--line-strong); border-radius: 4px; }
+.ace_editor { font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
+              border-radius: 3px; }
+.ace-tm, .ace-tm .ace_scroller { background: var(--surface); color: var(--fg); }
+.ace-tm .ace_gutter { background: var(--surface-2); color: var(--muted);
+                      border-right: 1px solid var(--line); }
+.ace-tm .ace_gutter-active-line { background: var(--surface); }
+.ace-tm .ace_cursor { color: var(--fg); }
+.ace-tm .ace_marker-layer .ace_selection { background: var(--band); }
+.ace-tm .ace_marker-layer .ace_active-line { background: var(--surface-2); }
+.ace-tm .ace_indent-guide { background: none; border-right: 1px solid var(--line); }
+/* The keyboard ring, and the reason it needs a rule of its own. Ace's real input
+   is a 2.5x1 CSS px `<textarea>` with `opacity: 0` parked at the caret, so the
+   shell's floor — `:where(a, button, input, select, textarea, summary,
+   [tabindex]) :focus-visible { outline: 2px solid var(--focus) }` — draws a
+   two-pixel ring around a two-pixel box in the middle of the document. The ring
+   belongs on the thing a person can see, which is the editor. */
+.ace_text-input:focus, .ace_text-input:focus-visible { outline: none; }
+.acebox:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Full page and the split view, matched to the rules the box already has: the
+   pane gives its height and the editor takes all of it, rather than a `60vh`
+   minimum pushing the status bar off the bottom of the screen. */
+article.entity.full .acebox, body.fullpage .acebox { height: 100%; min-height: 0; }
+</style>
+<script>
+// --- Ace, as the same surface ----------------------------------------------
+//
+// The second editor, and the only ask a textarea cannot have: ask 6, a vim
+// keymap. `static/VENDOR.md` records the search and the price — 594,306 B for
+// `ace.js` and `keybinding-vim.js`, the markdown mode deliberately dropped — and
+// records that this is a HUMAN OVERRIDE of a written rule rather than evidence
+// that the rule was wrong. Nobody has been measurably slowed down by the
+// textarea, which was the condition written down for revisiting; somebody asked
+// for vim, which is a different and legitimate reason.
+//
+// Everything between this banner and the one that closes it is the only code on
+// these pages that knows the document may be being written in Ace. It builds the
+// same ten members `textareaSurface` does, so `applyMark`, `indentLines`,
+// `attachStatus`, `attachUploads`, the draft writer, the room and the toolbar
+// reach it without knowing which one they got.
+//
+// **The textarea stays in the page and stays in the form**, hidden. `ace.edit`
+// on the box itself REMOVES it from the DOM and from the form — measured — and
+// every test in `tests/test_seats.py` and every page-mode shim test selects
+// `textarea[name=body]` and would have gone on passing against a surface nothing
+// reads. It is stale here and nothing reads it: the one place that could,
+// `SURFACE.text()`, is this object.
+// `seeded` is handed in rather than read off the box, and that is the one-place
+// rule holding: `textareaSurface` is still the only code that knows a
+// `<textarea>` has a `.value`, and this surface is given the document by it.
+function aceSurface(area, seeded) {
+  const Range = ace.require('ace/range').Range;
+  // Ace lays out an absolutely-positioned renderer inside a box it is given, so
+  // it needs a box of its own rather than the textarea's place in the flow.
+  // Inside `.bodywrap`, so the width, the split view's column and the seat
+  // layer's containing block are all the ones the textarea had.
+  const host = document.createElement('div');
+  host.className = 'acebox field';
+  area.after(host);
+  area.hidden = true;
+  const editor = ace.edit(host);
+  const session = editor.session;
+  const document_ = session.doc;
+
+  // **One line ending, pinned.** Ace's `Document` autodetects a newline
+  // sequence and `getValue()` then rejoins EVERY line with it, while a
+  // `<textarea>` normalises CRLF to LF unconditionally in both directions — so
+  // the two surfaces this application now ships normalise in OPPOSITE
+  // directions, and `"a\nb\rc\nd"` is the case no length or index check can
+  // see: same length, different bytes.
+  //
+  // **This is the second of two places, and the first one is the room.**
+  // `coedit.one_newline` normalises where text ENTERS the room, so a surface
+  // opening on it never sees a carriage return — that is what stops the two
+  // rewriting each other's endings once a keystroke, and deleting this line
+  // alone does not reintroduce it. What this line answers is the OTHER door:
+  // `Document.insert` re-detects when the document is one line
+  // (`getLength() <= 1 && this.$detectNewLine(t)`), so pasting Windows text into
+  // a new entity would set `$autoNewLine` and rejoin the whole document with
+  // CRLF. `test_the_second_surface_holds_one_line_ending_whatever_is_pasted_
+  // into_it` is that case and it fails without this.
+  document_.setNewLineMode('unix');
+
+  // Seeded once, on construction, and this is the ONE `setValue` in the file.
+  // It is not a binding operation: nothing observes this document yet, the room
+  // has not been joined, and `-1` puts the caret at the top and resets Ace's
+  // undo history, which is what "this is where the document starts" means. Every
+  // write after this one goes through `splice`, and
+  // `test_the_second_surface_never_sets_or_replaces_the_whole_document` holds it
+  // to that by reading the shipped page.
+  editor.setValue(seeded, -1);
+  // And having seeded it, SAY if that changed anything, rather than silently
+  // rewriting somebody's file the moment they opened it in the other editor.
+  // Nothing should reach here — the room and `parse_text` both hand over LF —
+  // and a branch that decides not to act in silence has shipped here three
+  // times, so the one that decides it DID act says so.
+  if (session.getValue() !== seeded) {
+    announce('This document contains line endings the editor cannot hold, and they '
+             + 'have been made ordinary newlines. Saving writes the change.');
+  }
+
+  // Ace's own affordances, set from the same preferences the textarea's are.
+  editor.setOptions({
+    // Ask 5, which Ace answers itself: soft tabs at the remembered width. The
+    // page's own `indentLines` does not run here, and the reason is Ace's rather
+    // than this page's — its `stopEvent` does `stopPropagation` as well as
+    // `preventDefault`, so Tab never reaches the keydown listener `attachEditing`
+    // put on this box. Measured, with a listener beside it.
+    useSoftTabs: true,
+    tabSize: INDENT.length,
+    wrap: true,
+    showPrintMargin: false,
+    // The default is a `<textarea>` 2.5x1 CSS px at the caret with opacity 0,
+    // and Ace rewrites its `aria-label` — so the box that used to say "Shaping
+    // document" to a screen reader says whatever Ace last put there.
+    placeholder: '',
+  });
+  editor.renderer.setScrollMargin(0, 0);
+  if (EDITOR.keymap !== 'default') {
+    editor.setKeyboardHandler(EDITOR.keymap === 'vim' ? 'ace/keyboard/vim' : null);
+  }
+  editor.textInput.getElement().setAttribute('aria-label', area.getAttribute('aria-label') || '');
+
+  // **The five default commands that fetch a module over the network, removed.**
+  // Ace's command table calls `config.loadModule`, which is
+  // `createElement('script'); i.src = e; head.appendChild(i)` — measured under
+  // this exact CSP: Cmd-F gives `defaultPrevented=true`, one injected
+  // `ext-searchbox.js`, a `script-src-elem` violation, no searchbox in the DOM
+  // and an EMPTY `window.error`. Ace takes Cmd-F away from the browser and gives
+  // back nothing, in silence. Removing them hands the key back to Chrome, whose
+  // own find works on this document and on the rendered pane beside it.
+  //
+  // This is application code and not upstream behaviour: the bytes are verbatim,
+  // the behaviour deliberately is not, and `docs/EDITOR.md` says why in-editor
+  // find is not being bought.
+  for (const name of ['find', 'replace', 'showSettingsMenu',
+                      'goToNextError', 'goToPreviousError']) {
+    editor.commands.removeCommand(name);
+  }
+
+  let applying = false;
+  const heard = {input: [], caret: [], splice: []};
+  const fire = (kind, ...args) => { for (const listener of heard[kind]) listener(...args); };
+
+  const indexOf = position => document_.positionToIndex(position);
+  const positionOf = index => document_.indexToPosition(index);
+
+  // **Ace's own change deltas, converted at the moment they arrive.** This is
+  // the binding, and the whole reason it is not `typed()`'s prefix/suffix walk
+  // is written in `docs/EDITOR.md`: `session.setValue` and `session.replace` are
+  // both remove-then-insert with an EMPTY DOCUMENT between the two events, which
+  // no prefix/suffix walk can recover a splice from, and the one measured
+  // consequence was a passive tab pushing 97,890 characters up the socket under
+  // its own name.
+  //
+  // A delta arrives AFTER it has been applied, and that is why `start` is
+  // converted here and not at flush time: everything before `start` is untouched
+  // by the delta, so its index is the same on both sides of it, while everything
+  // after it has moved. The length is `lines.join('\n').length` — UTF-16 code
+  // units, the same space `Y.Text`, `selectionStart` and `Room.sits` count in.
+  const pending = [];
+  session.on('change', delta => {
+    if (applying) return;
+    const at = indexOf(delta.start);
+    const run = delta.lines.join('\n');
+    pending.push(delta.action === 'insert'
+      ? {from: at, to: at, put: run} : {from: at, to: at + run.length, put: ''});
+    flush();
+  });
+
+  // Batched once per Ace operation, because one gesture is one edit: `:%s/x/y/g`
+  // and multi-cursor each fire hundreds of deltas, and measured, one keystroke
+  // under multi-cursor deleted 14,789 characters and reinserted 13,345. Sent as
+  // one transaction they are one update on the wire; sent one at a time they are
+  // hundreds, and `MAX_OUTBOX_BYTES` fills in three.
+  //
+  // Two ways out of the queue and they drain the same list, so whichever comes
+  // first wins and the other finds it empty. `beforeEndOperation` is Ace's own
+  // end-of-gesture; the microtask is for a programmatic edit made outside an
+  // operation, and it is a MICROtask rather than a timeout because a frame off
+  // the socket is a macrotask — a queue still holding this tab's keystrokes when
+  // a remote update arrives is a queue `reflect()` would splice away.
+  let queued = false;
+  function flush() {
+    if (queued) return;
+    queued = true;
+    Promise.resolve().then(drain);
+  }
+  editor.on('beforeEndOperation', drain);
+  function drain() {
+    queued = false;
+    if (!pending.length) return;
+    const runs = pending.splice(0, pending.length);
+    fire('splice', runs);
+    // ONE `input` for the gesture and not one per delta, and that is the same
+    // argument as the transaction above rather than a separate optimisation.
+    // `attachStatus`'s refresh splits the whole document to count its lines, the
+    // gutter relays out every line, the draft writer serialises the body: a
+    // substitution firing them seventy-four times does seventy-four documents'
+    // worth of work for one press. The subscribers are all idempotent on the
+    // result, which is what makes coalescing them correct rather than merely
+    // cheaper.
+    fire('input');
+    fire('caret');
+  }
+
+  return {
+    // The Ace container, for the questions that are about a box: class names,
+    // `closest`, and the events the members below do not cover — keydown, paste
+    // and drop, which bubble here from Ace's own hidden input.
+    el: host,
+    editor,
+
+    text: () => session.getValue(),
+
+    caret() {
+      const range = editor.selection.getRange();
+      return {from: indexOf(range.start), to: indexOf(range.end)};
+    },
+
+    setCaret(from, to) {
+      editor.selection.setRange(
+        Range.fromPoints(positionOf(from), positionOf(to === undefined ? from : to)));
+    },
+
+    // The only write, and NEVER `session.setValue` or `session.replace`. Both
+    // are remove-then-insert as far as a change handler can see; `Document`'s
+    // own `remove` and `insert` are the two halves said separately, in a bounded
+    // range, which is what a person's edit is made of too. Ace's anchors — the
+    // caret, every fold, every marker — are moved by `applyDelta` itself, so a
+    // remote keystroke leaves this tab's caret where its owner put it without
+    // anything here arithmetic-ing it.
+    splice(from, to, put) {
+      const run = () => {
+        if (to > from) document_.remove(Range.fromPoints(positionOf(from), positionOf(to)));
+        if (put) document_.insert(positionOf(from), put);
+      };
+      if (applying) { run(); return; }
+      // A person's edit: one undo step, and Ace's history merges by operation
+      // exactly as `execCommand` gives the textarea one. Focused first for the
+      // same reason `replaceRange` focuses the box — a toolbar press is a
+      // continuation of typing, not a departure from it.
+      editor.focus();
+      editor.startOperation({command: {name: 'openproj'}});
+      try { run(); } finally { editor.endOperation(); }
+    },
+
+    onInput(listener) { heard.input.push(listener); },
+    onCaret(listener) { heard.caret.push(listener); },
+
+    // The eighth capability, and the one a textarea does not have: what changed,
+    // as ranges, rather than the whole document to be diffed against. A surface
+    // that can say gets asked; one that cannot is recovered from. `_COEDIT`
+    // branches on the presence of this member and on nothing else.
+    onSplice(listener) { heard.splice.push(listener); },
+
+    coordsAt(indexes) {
+      const height = editor.renderer.lineHeight;
+      return indexes.map(index => {
+        const at = positionOf(index);
+        return session.documentToScreenRow(at.row, at.column) * height;
+      });
+    },
+
+    provides: {gutter: true, seats: false},
+
+    // Ask 6, and the whole reason 594 KB is in this page. `null` and not
+    // `'ace'`: `setKeyboardHandler` with a string that is not `ace` goes through
+    // `config.loadModule(['keybinding', name])`, which is the network path the
+    // five removed commands were removed for — `ace/keyboard/vim` is the one
+    // that is already defined here, by the second file, and every other name
+    // would fetch.
+    keymaps: KEYMAPS,
+    setKeymap(name) {
+      editor.setKeyboardHandler(name === 'vim' ? 'ace/keyboard/vim' : null);
+    },
+
+    scrolled: () => session.getScrollTop(),
+    scrollTo(top) { session.setScrollTop(top); },
+    onScroll(listener) { session.on('changeScrollTop', listener); },
+
+    apply(run) {
+      const before = applying;
+      applying = true;
+      try { return run(); } finally { applying = before; }
+    },
+    applying: () => applying,
+
+    lineCoords() {
+      const height = editor.renderer.lineHeight;
+      const tops = [];
+      for (let row = 0; row < session.getLength(); row++) {
+        tops.push(session.documentToScreenRow(row, 0) * height);
+      }
+      return tops;
+    },
+  };
+}
+
+// --- end of Ace as a surface -----------------------------------------------
+</script>
+""")
+
+
+# The second editor's own name for itself in the query string, and the only
+# spelling that puts it in a page.
+ACE = "ace"
+
+
+def _ace_wanted(editor: str, base_commit: str | None, may_write: bool) -> bool:
+    """All three halves, in one place, because the question is asked on four pages.
+
+    The address has to have asked — `?editor=ace` and no other spelling. There has
+    to be an editing surface to put it on, which is `editable`, which is
+    `base_commit is not None` everywhere in this file. And this reader has to be
+    somebody the server would take a write from.
+
+    **The third is the one the audit found missing, and it is not the same as the
+    second.** `editable` is `base_commit is not None` and the served route passes
+    a commit for EVERYONE, so a signed-out reader's detail page already carries
+    the `<textarea>`, the toolbar and two `attachEditing(` calls — measured at
+    209,872 B. Gating 594 KB on `editable` alone would have taken that page to
+    879,454 B, 4.19x, for a keymap whose every save the server refuses. `yjs` and
+    `coedit` already carry this same second gate, for the same reason.
+
+    `may_write` defaults to False at every caller, so a page rendered by anything
+    that has not thought about it — the static export among them — gets no
+    library rather than getting one by omission.
+    """
+    return editor == ACE and base_commit is not None and may_write
+
+
+@cache
+def _ace() -> Markup:
+    """Ace and its vim keymap, as the two classic scripts they already are.
+
+    594,306 B, inlined only when the address asked for them, and every part of
+    that sentence is load-bearing.
+
+    **Why they are here at all.** Ask 6 of the seven is a vim keymap, and it is
+    the one a `<textarea>` cannot have: modal editing over `selectionStart`, with
+    motions, operators, registers, counts, text objects, macros and an ex line,
+    over an undo stack you do not own. `static/VENDOR.md` records the search that
+    ended here and records that this is a HUMAN OVERRIDE of a written refusal
+    rather than a re-derivation of it: the condition that file set for revisiting
+    was "when somebody is actually slowed down by the textarea", and nobody has
+    produced that measurement. Somebody asked for vim. That is a legitimate
+    reason and it is a different one.
+
+    **Why the markdown mode is not here.** `mode-markdown.js` is another
+    75,276 B for syntax highlighting, which is on nobody's list; it is the only
+    one of the three files that fails `test_no_page_asks_the_network_for_a_font`,
+    twice, on a tokeniser regex and a completion template that fetch nothing; and
+    it inlines four dormant worker-spawning sub-modes, so a later
+    `setMode('ace/mode/javascript')` for a fenced-code sub-editor would build a
+    `blob:` Worker this policy blocks IN SILENCE — an `error` event with an empty
+    message, no exception, and Ace's own "Could not load worker" warning never
+    firing because the constructor does not throw. Measured here, in Chrome,
+    under this exact `CSP`, with `window.Worker` hooked before Ace parsed: the
+    two files below construct 0 Workers, take 0 CSP violations, inject 0 scripts
+    and leave `session.$worker` null, and the same probe with the markdown mode
+    added and `ace/mode/javascript` set constructs a `blob:` Worker and logs
+    `worker-src <- blob` — which is what makes the zero evidence rather than a
+    check that could only pass.
+
+    **Why the two are one block.** `keybinding-vim.js` registers
+    `ace/keyboard/vim` against the `ace.define` registry `ace.js` created, so it
+    is not a library beside Ace, it is the rest of Ace. They are concatenated
+    with a newline between them because a minified file may end in a line comment
+    and the next byte after it would be inside it.
+
+    Verbatim, both of them, byte for byte from the `ace-builds` 1.44.0 npm
+    tarball's `src-min-noconflict/` — not a CDN-generated derivative — and
+    checksummed in `static/SHA256SUMS`. BSD-3-Clause, this repository's own
+    licence; the minified files carry no notice at all, so `ace-LICENSE.txt`
+    ships beside them and the notice goes in the page, on the precedent Inter
+    already set here: every rendered page is a copy, and a copy is a
+    redistribution.
+    """
+    # The notice travels with the bytes, and this is the only way it can: all
+    # three minified files contain zero occurrences of `Copyright`, `BSD` and
+    # `Ajax.org` — upstream strips the block when it minifies — so a page that
+    # inlines them and says nothing has redistributed the software without the
+    # notice BSD-3 clause 2 asks for. Read from the file rather than typed here,
+    # so a re-vendoring that changes the licence changes this too.
+    notice = _inline("ace-LICENSE.txt")
+    # `*/` cannot appear in it and does not, but a licence is exactly the kind of
+    # file somebody edits, and a stray one would end the comment and leave the
+    # rest of the text as code.
+    if "*/" in notice:
+        raise ValueError("static/ace-LICENSE.txt would end the comment it is written into")
+    return Markup(
+        f"/* Ace 1.44.0 (ace.js and keybinding-vim.js), BSD-3-Clause.\n\n{notice}*/\n"
+        + _inline("ace.js") + "\n" + _inline("keybinding-vim.js")
+    )
+
+
 # The two lines of `yjs.bundle.mjs` that are not JavaScript this page can run,
 # spelled out so a re-vendoring that changes either fails here rather than
 # shipping a page whose only script is a SyntaxError.
@@ -7558,6 +7981,32 @@ function textareaSurface(area) {
     // visual row, in the box's own scroll space. See `rowTops`.
     coordsAt(indexes) { return rowTops(area, area.value, indexes); },
 
+    // What this surface does for itself, so the page does not do it twice or
+    // ask for something that is not there. A capability and not a type name:
+    // `if (surface.kind === 'ace')` puts the second surface's name in six
+    // functions that have no other business knowing it, and the third surface
+    // then has to be added to all six. Two entries, because two things differ.
+    //
+    // `gutter` — a textarea has no line numbers, so `attachGutter` draws them
+    // through a mirror. Ace draws its own, and two gutters is one too many.
+    // `seats` — where somebody else's caret is, drawn as a band over the box.
+    // The mirror answers it here. Ace can answer it too, from screen rows, and
+    // that is NOT built in this stage: an untested band is a band one line off,
+    // and `static/VENDOR.md` already holds this feature to "a caret one line
+    // off is worse than no caret". `drawSeats` says so out loud instead.
+    provides: {gutter: false, seats: true},
+
+    // The scroll offset, and the three ways the page asks about it. These used
+    // to be `el.scrollTop` and `el.addEventListener('scroll')` at four call
+    // sites, which the adapter's own report named as the hole left open: `el`
+    // let anything reach the box, and a surface that is not a box has no
+    // `scrollTop` and fires no `scroll`. Ace's scroller is an inner element and
+    // its offset arrives as `changeScrollTop` on the session, so the two sides
+    // agree on the number and on nothing else.
+    scrolled: () => area.scrollTop,
+    scrollTo(top) { area.scrollTop = top; },
+    onScroll(listener) { area.addEventListener('scroll', listener); },
+
     // The page writing rather than a person. The previous value is restored
     // rather than `false` assumed, so nesting is safe; the `finally` is what
     // stops one throw inside a reflect leaving this page deaf to every keystroke
@@ -7581,6 +8030,54 @@ function textareaSurface(area) {
 }
 
 // --- end of the textarea surface -------------------------------------------
+
+
+// Which of the two the page got. The decision is the SERVER's, because the
+// server is what decides whether 594 KB is in the page at all: `?editor=ace`
+// inlines it, and nothing else does. `remembered` is `localStorage` and the
+// server cannot read it, which is why the parameter carries the choice and the
+// preference only carries it back on the next visit.
+//
+// `editable` is gated on `base_commit` alone, so a signed-out reader already
+// receives the textarea and `attachEditing` — an unconditional Ace block at that
+// gate would have shipped 594 KB to every public reader, 4.19x their page.
+// Behind a parameter nobody types, a reader pays nothing.
+//
+// The branch where the parameter was typed and the bytes are not here SAYS SO.
+// A static export has no server to ask, so `detail.html?editor=ace` opened from
+// a memory stick is exactly that case, and a page that silently gives you the
+// other editor is a page you report as broken.
+function bodySurface(area) {
+  // Built either way, because it is the one place that reads the box — the Ace
+  // surface is SEEDED from it rather than reading the textarea itself, so "the
+  // document is read in exactly one place" stays literally true with two
+  // surfaces in the tree. An unsubscribed surface is two listeners on an element
+  // nothing else touches.
+  const box = textareaSurface(area);
+  if (EDITOR.editor !== 'ace') return box;
+  if (typeof ace !== 'undefined') return aceSurface(area, box.text());
+  // Wanted and not here, which is two different situations and two different
+  // sentences. Either this browser remembers the choice and the address does not
+  // carry it — go and ask the server for it, which is what makes the preference
+  // stick at all — or there is no server to ask, and then say so, because a page
+  // that quietly hands back the other editor is a page somebody reports as
+  // broken.
+  if (stickyEditor()) return box;
+  // Said in what is true rather than in a guess at why: there are two ways to be
+  // here — a page saved to a file, which has no server to ask, and a reader the
+  // server would refuse a save from, who gets the box and the toolbar and would
+  // get no use out of a keymap. The sentence covers both.
+  announce('This page does not carry the second editor. It is inlined only when the '
+           + 'address says ?editor=ace and the server would take a save from you. Still '
+           + 'editing in the ordinary box.');
+  // And then stop asking. The address DID carry the request, the server answered
+  // it by sending no library, and a remembered choice that cannot be honoured
+  // costs a redirect on every page for nothing. Only in that case: a page opened
+  // from a file was never asked, and forgetting there would clear somebody's
+  // choice because they read an export.
+  if (new URLSearchParams(location.search).has('editor')) rememberEditor({editor: 'textarea'});
+  return box;
+}
 
 
 // The toolbar in the screenshot, in the order and the groups it is drawn in:
@@ -7851,21 +8348,69 @@ const INDENT_WIDTHS = [2, 4, 8];
 // draft this browser is holding. An interval coarser than it would let somebody
 // set their own floor below the thing that catches them.
 const DRAFT_SECONDS = [1, 2, 5, 10, 20];
+// The two surfaces. `textarea` first, because it is what everybody has had and
+// what a page carries whether or not anything was vendored into it.
+const EDITORS = ['textarea', 'ace'];
+// And the keymaps the second one offers. A textarea has one and it is the
+// browser's, which is why this list is read only where Ace is.
+const KEYMAPS = ['default', 'vim'];
 const EDITOR = (() => {
   const held = remembered.map(EDITOR_KEY);
   const one = (value, offered, fallback) => offered.includes(value) ? value : fallback;
+  // **The URL wins over the preference, and it has to.** This is the one setting
+  // on the page that decides which BYTES the server rendered, and the server
+  // cannot read `localStorage`. So `?editor=ace` is what put Ace in the page and
+  // is therefore what says whether it is there; the remembered value is only how
+  // a person who opted in gets it again tomorrow without typing it. A remembered
+  // `ace` on a page the server rendered without it would be a preference for
+  // something that is not here — which `bodySurface` refuses out loud rather
+  // than quietly ignoring.
+  const asked = new URLSearchParams(location.search).get('editor');
+  const chose = EDITORS.includes(asked) ? asked : null;
   return {
     mode: one(held.mode, ['edit', 'both', 'view'], null),
     indent: one(held.indent, INDENT_WIDTHS, 2),
     autosave: one(held.autosave, DRAFT_SECONDS, 2),
+    editor: chose ?? one(held.editor, EDITORS, 'textarea'),
+    keymap: one(held.keymap, KEYMAPS, 'default'),
   };
 })();
 
+// What is written down, named rather than "whatever is on the object": the
+// object also carries things that are true of this load and not of this browser,
+// and a preference store that quietly grows a field is one nothing forgets.
+const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'editor', 'keymap'];
+
 function rememberEditor(change) {
   Object.assign(EDITOR, change);
-  remembered.set(EDITOR_KEY, JSON.stringify(EDITOR));
+  remembered.set(EDITOR_KEY,
+                 JSON.stringify(Object.fromEntries(EDITOR_KEPT.map(k => [k, EDITOR[k]]))));
 }
 
+// Typing the parameter is opting in, and opting in is what makes it stick.
+// `?editor=textarea` is the way back out and it forgets in the same breath —
+// a way in whose only way out is editing `localStorage` by hand is a trap.
+if (new URLSearchParams(location.search).has('editor')) rememberEditor({});
+
+// And the other half of sticky: the preference put back into the URL, because
+// the URL is the only part of this the server can see. Called from
+// `bodySurface` and nowhere else, so the table and the cycle page — which share
+// this block and have no body editor — never navigate.
+//
+// Only over http(s). A static export IS the case where the parameter can never
+// work: there is no server to render the other bytes, so reloading a file to add
+// a parameter to it costs a reload and buys nothing. Returns whether the page is
+// going away, so the caller can tell "fetching it" from "it is not obtainable".
+function stickyEditor() {
+  if (!location.protocol.startsWith('http')) return false;
+  const url = new URL(location.href);
+  if (url.searchParams.has('editor')) return false;
+  url.searchParams.set('editor', EDITOR.editor);
+  // `replace` and not `assign`: an opt-in carried forward is not a place in the
+  // history somebody wants the back button to take them to.
+  location.replace(url);
+  return true;
+}
 // Spaces, because a tab character is two columns here, four in git's diff view
 // and eight in a terminal, and the place these documents are read that this tool
 // does not draw is GitHub.
@@ -8114,6 +8659,11 @@ function rowTops(area, text, indexes) {
 const GUTTER_MAX = 1000;
 
 function attachGutter(surface, note) {
+  // A surface that draws its own numbers is left to draw them. Not silence: the
+  // numbers are there, drawn by the thing that owns the rows, and a second
+  // column of them measured through a mirror of a box that is not on screen
+  // would be the wrong numbers beside the right ones.
+  if (surface.provides.gutter) return null;
   // The box, for the questions that are about a box: does it have a layout, how
   // far is it scrolled, which wrapper is it in. The DOCUMENT comes off the
   // surface, and so do the two measurements, which is why the mirror is not
@@ -8338,6 +8888,30 @@ function attachStatus(surface, bar) {
   bar.prepend(where, spaces);
   bar.append(size);
 
+  // Ask 6, where the note this is modelled on puts it: a keymap glyph in the
+  // strip along the foot of the box, beside the indent width and the length.
+  //
+  // Only on a surface that HAS keymaps, and that is an absence rather than a
+  // silence: a `<textarea>`'s keymap is the browser's, there is no second one to
+  // offer, and a picker offering a choice it cannot make is worse than no
+  // picker. What it costs is that `?editor=ace` is discoverable only from the
+  // documentation — written down rather than papered over.
+  if (surface.setKeymap) {
+    bar.append(statusPick(
+      document.createElement('button'), 'Keymap', surface.keymaps, EDITOR.keymap,
+      name => {
+        surface.setKeymap(name);
+        rememberEditor({keymap: name});
+        // What it took as well as what it gave. Vim claims Escape, Tab, and
+        // every printable key while it is in NORMAL mode, and somebody who has
+        // just pressed a two-word control in an 11px strip and finds their
+        // typing going nowhere has been given no way to work out why.
+        announce(name === 'vim'
+          ? 'Vim keys are on. Press i to type, Escape to leave insert mode.'
+          : 'Vim keys are off. The keyboard is the browser\u2019s again.');
+      }));
+  }
+
   const bytes = new TextEncoder();
   // Said once per crossing rather than once per keystroke, the way the gutter's
   // ceiling is: a live region that repeats itself on every character is one
@@ -8455,6 +9029,17 @@ function attachEditing(surface, bar) {
   surface.onInput(() => { leaving = false; });
 
   area.addEventListener('keydown', event => {
+    // **A `defaultPrevented` guard was written here and then measured away.**
+    // The plan promised one, in those words, as how a keymap would claim a key
+    // ahead of the three claimants below. It is not needed and it would encode
+    // nothing: Ace's `stopEvent` does `stopPropagation` as well as
+    // `preventDefault`, so a key its command table handled never reaches this
+    // listener at all. Measured in Chrome on the second surface, with a listener
+    // beside this one: Tab arrives at Ace's input and does NOT reach here — one
+    // indent, Ace's, at its own tab width — while Escape and Cmd+S both do,
+    // unprevented, so leaving the full-page view and saving still work. A guard
+    // whose condition is never true is a guard nobody can test, and the last
+    // thing this handler needs is a line that looks like arbitration and is not.
     if (event.key === 'Escape') {
       // Escape has three claimants, and this is where they are arbitrated. In
       // order of who gets it and why:
@@ -9309,18 +9894,22 @@ let viewScrolling = false;
 function syncFromSource() {
   if (VIEW !== 'both' || viewScrolling) return;
   editScrolling = true;
-  VIEW_PANE.scrollTop = pixelOfLine(previewMap(), lineOfPixel(sourceMap(), BODY.scrollTop));
+  VIEW_PANE.scrollTop = pixelOfLine(previewMap(), lineOfPixel(sourceMap(), SURFACE.scrolled()));
   setTimeout(() => { editScrolling = false; }, SYNC_MS);
 }
 
 function syncFromPreview() {
   if (VIEW !== 'both' || editScrolling) return;
   viewScrolling = true;
-  BODY.scrollTop = pixelOfLine(sourceMap(), lineOfPixel(previewMap(), VIEW_PANE.scrollTop));
+  SURFACE.scrollTo(pixelOfLine(sourceMap(), lineOfPixel(previewMap(), VIEW_PANE.scrollTop)));
   setTimeout(() => { viewScrolling = false; }, SYNC_MS);
 }
 
-BODY.addEventListener('scroll', syncFromSource);
+// Through the surface and not through the box: a `<textarea>` scrolls itself and
+// fires `scroll`, Ace scrolls an inner element and reports `changeScrollTop` on
+// its session, and this listener was the last of the four places that reached
+// past the boundary for `el.scrollTop`.
+SURFACE.onScroll(syncFromSource);
 VIEW_PANE.addEventListener('scroll', syncFromPreview);
 SURFACE.onInput(() => { sourcePoints = null; refreshPreview(); });
 TITLED.addEventListener('input', () => refreshPreview());
@@ -9552,6 +10141,15 @@ _NEW = """
     <span id="state" role="status"></span>
   </div>
 </article>
+{#- The second editor, and 594 KB of it, so it is here only when the address
+    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
+    alone, so a signed-out reader already receives the box and the toolbar —
+    putting Ace at that gate would have shipped this to every public reader, at
+    4.19x their page, for a keymap they did not ask for. `remembered` is this
+    browser's own store and the server cannot read it, which is why the
+    parameter and not the preference decides which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {{ combobox }}
 <script>{{ required }}</script>
 <script>
@@ -9596,7 +10194,7 @@ const TITLED = document.querySelector('.title-field');
 // The one place any of this reads or writes the document. Seven operations,
 // every index in UTF-16 code units, one implementation — see the banner in the
 // shared block. Nothing below this line touches `.value` or a selection.
-const SURFACE = textareaSurface(BODY);
+const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'));
 attachGutter(SURFACE, document.getElementById('gutter-note'));
@@ -9985,6 +10583,15 @@ grip.onpointerdown = event => {
   addEventListener('pointerup', stop);
 };
 </script>
+{#- The second editor, and 594 KB of it, so it is here only when the address
+    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
+    alone, so a signed-out reader already receives the box and the toolbar —
+    putting Ace at that gate would have shipped this to every public reader, at
+    4.19x their page, for a keymap they did not ask for. `remembered` is this
+    browser's own store and the server cannot read it, which is why the
+    parameter and not the preference decides which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {% if editable %}{{ combobox }}{% endif %}
 {% if editable %}<script>{{ required }}</script>{% endif %}
 {% if editable %}<script>
@@ -10004,7 +10611,7 @@ const TITLED = document.querySelector('.title-field');
 // The one place any of this reads or writes the document. Seven operations,
 // every index in UTF-16 code units, one implementation — see the banner in the
 // shared block. Nothing below this line touches `.value` or a selection.
-const SURFACE = textareaSurface(BODY);
+const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'));
 attachGutter(SURFACE, document.getElementById('gutter-note'));
@@ -10487,6 +11094,43 @@ const COEDIT = (() => {
     }, 'typed');
   }
 
+  // A bulk gesture is announced before it goes to everybody, and the measure is
+  // HOW MANY PLACES rather than how many characters — which is not the obvious
+  // choice and is the right one.
+  //
+  // A keystroke is one run. A toolbar mark is two, a delete and an insert. A
+  // paste is one, however long: it is a thing somebody did on purpose with
+  // content they can see, and announcing it would be noise on the ordinary case.
+  // `:%s/cycle/bet/g`, `gg=G`, Replace All and a multi-cursor edit are one press
+  // and HUNDREDS of runs, in places nobody is looking at — one of them measured
+  // deleting 14,789 characters and reinserting 13,345 on a 14,810-character
+  // document, as one frame of 234,892 B, three of which fill the room's outbox.
+  // That is the difference worth saying out loud.
+  //
+  // Said rather than refused: it is a legitimate thing to do to your own
+  // document. The ceiling above it is the server's, and `web.py` answers it with
+  // a `reload` frame rather than a bare `continue` — which it does because a
+  // branch that decided not to act in silence has shipped here three times.
+  //
+  // Four, because a mark is two and an unwrap is two: five separate places in one
+  // press is a gesture and not a keystroke.
+  const BULK_PLACES = 4;
+
+  function spliced(runs) {
+    if (runs.length > BULK_PLACES) {
+      const touched = runs.reduce((n, run) => n + (run.to - run.from) + run.put.length, 0);
+      announce(`${touched.toLocaleString()} characters changed at once, in `
+               + `${runs.length.toLocaleString()} places, and everybody in this document `
+               + 'has them.');
+    }
+    doc.transact(() => {
+      for (const run of runs) {
+        if (run.to > run.from) text.delete(run.from, run.to - run.from);
+        if (run.put) text.insert(run.from, run.put);
+      }
+    }, 'typed');
+  }
+
   // The document back into the textarea, with the caret left where the reader
   // put it. Setting `.value` collapses the selection to the end, which on a page
   // where somebody else is typing means the caret walks to the bottom of the
@@ -10594,6 +11238,7 @@ const COEDIT = (() => {
   // fractional content box, so the bands stop landing whole line heights out at
   // widths sitting on a wrap boundary, and it is laid out ONCE for everybody in
   // the room rather than once per person.
+  let saidNoSeats = false;
   function drawSeats() {
     const layer = document.getElementById('seats');
     if (!layer || !BODY) return;
@@ -10605,6 +11250,24 @@ const COEDIT = (() => {
     // whole document one character per row before answering with a number that
     // means nothing. `openproj:editing` is what brings everyone back.
     if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
+    // A surface that does not offer seats does not get them drawn, and it is
+    // said rather than left as an empty layer somebody reports as broken. Ace
+    // can answer "where is index N drawn" — `coordsAt` above does exactly that
+    // over its screen rows — but the band's ORIGIN is the box's border box and
+    // the mirror's is its padding box, and nothing has measured that pairing in
+    // a browser. `static/VENDOR.md` holds this feature to "a caret one line off
+    // is worse than no caret", which is the reason it is not drawn here rather
+    // than drawn on a guess. The presence line still names who else is in the
+    // document, which is the half that survives every reader.
+    if (!SURFACE.provides.seats) {
+      layer.replaceChildren();
+      if (!saidNoSeats) {
+        saidNoSeats = true;
+        announce('Who else is in this document is named beside the title. Which line they '
+                 + 'are on is not drawn in this editor.');
+      }
+      return;
+    }
     const style = getComputedStyle(BODY);
     const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
     const tops = SURFACE.coordsAt(
@@ -10708,7 +11371,22 @@ const COEDIT = (() => {
         reflect();
       }
       bound = true;
-      SURFACE.onInput(typed);
+      // **A surface that can say what changed is asked; one that cannot is
+      // recovered from.** The branch is on the capability and never on a name,
+      // and each side is the right answer for the surface it is on rather than
+      // one being a workaround for the other:
+      //
+      // * A `<textarea>` reports its whole value and nothing else, so `typed()`
+      //   recovers the splice from a common prefix and suffix. That is the path
+      //   that has shipped since rooms existed and it is not touched here.
+      // * Ace reports its own deltas, with a position and the lines, per edit.
+      //   Diffing its value instead would throw that away and buy back the two
+      //   measured failures `docs/EDITOR.md` records: `:%s/x/y/g` and
+      //   multi-cursor arrive as ONE splice of the whole document, credited to
+      //   whoever pressed the key rather than to the characters they typed, and
+      //   `typed()` materialises two full code-point arrays per call — 1.90ms on
+      //   a 250 KB body, ~1.4s of blocked main thread for one Replace All.
+      if (SURFACE.onSplice) SURFACE.onSplice(spliced); else SURFACE.onInput(typed);
       // Where this tab is sitting, and where everybody else's band should be
       // drawn. Four things move a band: the caret moving, the text moving under
       // it, the box scrolling, and the window changing the wrap. Two of those
@@ -10717,7 +11395,7 @@ const COEDIT = (() => {
       // are the surface's, a scroll offset and a window are a box's.
       SURFACE.onInput(drawSeats);
       SURFACE.onCaret(sit);
-      BODY.addEventListener('scroll', drawSeats);
+      SURFACE.onScroll(drawSeats);
       addEventListener('resize', drawSeats);
       sit();
     } else {
@@ -12208,7 +12886,12 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
 
 
 def render_new(
-    kind: str, base_commit: str, links: Links = ROUTES, index: Index | None = None
+    kind: str,
+    base_commit: str,
+    links: Links = ROUTES,
+    index: Index | None = None,
+    editor: str = "",
+    may_write: bool = False,
 ) -> str:
     """The create page, which is the detail page in edit mode with nothing in it.
 
@@ -12229,6 +12912,8 @@ def render_new(
         rows=_new_rows(),
         base_commit=base_commit,
         links=links,
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
         viewbar=_VIEWBAR,
@@ -14535,6 +15220,8 @@ def render_issue(
     links: Links = ROUTES,
     base_commit: str | None = None,
     signed_in: str = "",
+    editor: str = "",
+    may_write: bool = False,
 ) -> str:
     """One issue, or a blank one. The same page either way.
 
@@ -14557,6 +15244,8 @@ def render_issue(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         signed_in=signed_in,
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
         viewbar=_VIEWBAR,
         views=_VIEWS,
@@ -14767,6 +15456,8 @@ def render_note(
     links: Links = ROUTES,
     base_commit: str | None = None,
     signed_in: str = "",
+    editor: str = "",
+    may_write: bool = False,
 ) -> str:
     """One note, or a blank one. The same page either way, for the reason the
     issue page gives: a second, differently-shaped form for writing one down is
@@ -14786,6 +15477,8 @@ def render_note(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         signed_in=signed_in,
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
         viewbar=_VIEWBAR,
         views=_VIEWS,
@@ -15097,6 +15790,7 @@ def render_detail(
     only: str | None = None,
     base_commit: str | None = None,
     may_write: bool = False,
+    editor: str = "",
 ) -> str:
     """Every entity, or exactly one.
 
@@ -15129,6 +15823,10 @@ def render_detail(
         required=_REQUIRED_JS,
         viewbar=_VIEWBAR,
         views=_VIEWS,
+        # The same gate the two lines below carry, and one more: the address had
+        # to ask. See `_ace`.
+        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
+        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         # Only where there is a server to talk to, and only for somebody it would
         # take a frame from. The static export renders the same template with
         # `editable` false, so it carries neither the library nor the script — a
@@ -15572,6 +16270,15 @@ _ISSUE = """
 </form>
 {{ promote }}
 </article>
+{#- The second editor, and 594 KB of it, so it is here only when the address
+    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
+    alone, so a signed-out reader already receives the box and the toolbar —
+    putting Ace at that gate would have shipped this to every public reader, at
+    4.19x their page, for a keymap they did not ask for. `remembered` is this
+    browser's own store and the server cannot read it, which is why the
+    parameter and not the preference decides which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {{ combobox }}
 {% if editable %}
 <script>
@@ -15592,7 +16299,7 @@ const TITLED = document.querySelector('.title-field');
 // The one place any of this reads or writes the document. Seven operations,
 // every index in UTF-16 code units, one implementation — see the banner in the
 // shared block. Nothing below this line touches `.value` or a selection.
-const SURFACE = textareaSurface(BODY);
+const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'));
 attachGutter(SURFACE, document.getElementById('gutter-note'));
@@ -15906,6 +16613,15 @@ _NOTE = """
 </form>
 {{ promote }}
 </article>
+{#- The second editor, and 594 KB of it, so it is here only when the address
+    asked for it by name: `?editor=ace`. `editable` is gated on `base_commit`
+    alone, so a signed-out reader already receives the box and the toolbar —
+    putting Ace at that gate would have shipped this to every public reader, at
+    4.19x their page, for a keymap they did not ask for. `remembered` is this
+    browser's own store and the server cannot read it, which is why the
+    parameter and not the preference decides which bytes render. -#}
+{% if ace %}<script>{{ ace }}</script>
+{{ acesurface }}{% endif %}
 {{ combobox }}
 {% if editable %}
 <script>
@@ -15925,7 +16641,7 @@ const TITLED = document.querySelector('.title-field');
 // The one place any of this reads or writes the document. Seven operations,
 // every index in UTF-16 code units, one implementation — see the banner in the
 // shared block. Nothing below this line touches `.value` or a selection.
-const SURFACE = textareaSurface(BODY);
+const SURFACE = bodySurface(BODY);
 attachUploads(SURFACE, document.getElementById('upload'));
 attachEditing(SURFACE, document.getElementById('marks'));
 attachGutter(SURFACE, document.getElementById('gutter-note'));
