@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import networkx as nx
 from frontmatter.default_handlers import YAMLHandler
@@ -23,7 +23,6 @@ from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
-_ENTITY_DIRS = ("projects", "pitches", "tasks")
 _CYCLE_DIR = "cycles"
 _ISSUE_DIR = "issues"
 _NOTE_DIR = "notes"
@@ -840,8 +839,18 @@ class Entity(BaseModel):
     # one piece of information that must never become part of the record.
     _source: str = PrivateAttr(default="")
 
+    # The frontmatter keys this model does not read. Parsing drops them — pydantic
+    # ignores extras — so without this a `person_weeks: 3` written on a product is
+    # gone before any rule can see it, and "a product carries no appetite" is a
+    # rule that cannot fire. Private for the same reason `_source` is: `serialise`
+    # dumps the model, and a list of keys the record does not have must not be
+    # written back into the record.
+    _unread: tuple[str, ...] = PrivateAttr(default=())
+
     id: str
-    kind: Literal["project", "pitch", "task"]
+    # Not a `Literal` written out: the rungs are `KINDS` below, and a kind
+    # spelled in two places is a kind that gets added to one of them.
+    kind: str
     title: str
     parent: str | None = None
     # A plain string, not a Literal. An unknown status has to survive parsing and
@@ -867,6 +876,23 @@ class Entity(BaseModel):
 
     body: str = ""
     created_schema_version: int = 1
+
+    @field_validator("kind")
+    @classmethod
+    def _a_rung_of_the_ladder(cls, value: str) -> str:
+        """A kind this tool does not have is a file it cannot place.
+
+        Strict, unlike `status` and `priority`, and the difference is what the
+        field decides. An unknown status is a word next to a record that still
+        loads, still sorts and still draws; an unknown KIND has no directory, no
+        id prefix, no parent rule and no model — there is nothing to draw it as.
+        It was a `Literal` and is a check against `KINDS` for the same reason
+        everything else about a kind now is: one ladder, and a rung added to it is
+        a rung everywhere.
+        """
+        if value not in KIND_NAMES:
+            raise ValueError(f"kind must be one of {', '.join(KIND_NAMES)}, not {value!r}")
+        return value
 
     @field_validator("status", "priority", mode="before")
     @classmethod
@@ -909,8 +935,102 @@ class Task(Entity):
     person_weeks: float | None = None
 
 
-_MODELS: dict[str, type[Entity]] = {"project": Project, "pitch": Pitch, "task": Task}
-_ID_PREFIXES = {"proj": "project", "pitch": "pitch", "task": "task"}
+class Product(Entity):
+    """A codebase, and a container for projects — nothing else.
+
+    gt4py is the DSL under icon4py, dace is a backend, pmap is another code, and
+    work in one of them waits on work in another. Kept in ONE plan for exactly
+    that reason — jcanton, 2026-08-20: separate corpora "would prevent
+    cross-dependencies", and a dependency this tool cannot express is a
+    dependency somebody tracks in their head.
+
+    It inherits every field an entity has and is allowed almost none of them.
+    `KINDS` below is what enforces that, so the rule lives in one table rather
+    than in a validator per field: a product has no owner, no dates, no appetite,
+    is never scheduled, and may not depend on anything. Its projects, pitches and
+    tasks carry all of that.
+    """
+
+
+# THE LADDER. Every other map about kinds is derived from this one, in this
+# order, coarsest first — which is what makes "the top of the tree" a fact about
+# the list rather than the word `project` written down in twenty places.
+#
+# jcanton asked for it while asking for `product`: "make the code more flexible so
+# it doesn't hardcode project for top-of-the-list but rather uses an actual list
+# or ordered data structure ... maybe with their properties associated to it".
+# The properties are here because they are what differs BETWEEN kinds, and a
+# property kept somewhere else is one that gets forgotten when a rung is added —
+# which is exactly what adding `product` had to go and find in twelve places.
+class Rung(NamedTuple):
+    """One kind, and everything that is true of it and not of its neighbours."""
+
+    name: str
+    prefix: str            # what its ids start with
+    directory: str         # where its files live
+    model: type[Entity]
+    under: tuple[str, ...]  # the kinds it may be filed under, nearest first
+    schedules: bool        # does the scheduler give it dates
+    depends: bool          # may it wait on anything
+    sized: bool            # may it carry person_weeks
+    carded: bool           # does a hover show its shaping document
+
+
+KINDS: tuple[Rung, ...] = (
+    Rung("product", "prod", "products", Product, under=(),
+         schedules=False, depends=False, sized=False, carded=False),
+    Rung("project", "proj", "projects", Project, under=("product",),
+         schedules=True, depends=True, sized=False, carded=True),
+    Rung("pitch", "pitch", "pitches", Pitch, under=("project",),
+         schedules=True, depends=True, sized=True, carded=True),
+    # A task may skip the pitch — work that nobody shaped still belongs to a
+    # project — which is why `under` is written out per rung rather than derived
+    # as "everything coarser". Derived, a task could be filed straight under a
+    # product, three rungs up, which is not a thing anybody means.
+    Rung("task", "task", "tasks", Task, under=("pitch", "project"),
+         schedules=True, depends=True, sized=True, carded=True),
+)
+
+KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
+
+
+# The fields that describe work being done rather than work being grouped. A rung
+# the scheduler never sees reads none of them: nobody is assigned to a codebase,
+# and a codebase is not in a cycle.
+_WORK_FIELDS = (
+    "owner", "assignees", "reviewers", "review_waived", "assigned_on",
+    "cycle", "priority",
+)
+
+
+def unread_fields(kind: str) -> tuple[str, ...]:
+    """The fields this rung does not read, off the ladder.
+
+    One function and not a list per kind, because two places have to agree about
+    it: `validate_all` reports a field written into a file, and the editors
+    (`_editable_for`, the create form, the table's new row) decline to offer it.
+    A form offering a box the validator then complains about is those two
+    disagreeing in the most annoying possible order.
+    """
+    rung = RUNG[kind]
+    fields: list[str] = []
+    if not rung.depends:
+        fields.append("depends_on")
+    if not rung.sized:
+        fields.append("person_weeks")
+    if not rung.schedules:
+        fields.extend(_WORK_FIELDS)
+    return tuple(fields)
+RUNG: dict[str, Rung] = {rung.name: rung for rung in KINDS}
+_MODELS: dict[str, type[Entity]] = {rung.name: rung.model for rung in KINDS}
+_ID_PREFIXES = {rung.prefix: rung.name for rung in KINDS}
+# Where a reader looks for records. Written out at the top of this file, it was
+# the FIFTH copy of the ladder — with `PREFIX` and `_KIND_MODELS` in `render.py`
+# and `DIRECTORY` in `web.py` — and it is the one that failed silently: a plan
+# holding two products loaded thirty-three records and none of them was a
+# product, with nothing reported, because a directory nobody walks is a
+# directory whose files do not exist.
+_ENTITY_DIRS = tuple(rung.directory for rung in KINDS)
 _SPLITTER = YAMLHandler()
 
 
@@ -981,6 +1101,7 @@ def parse_text(text: str, source: str) -> Entity:
     # both halves of its identity are in the same place. `source` was already here
     # and was only ever used to name the file in an error message.
     entity._source = source
+    entity._unread = tuple(name for name in data if name not in model.model_fields)
     return entity
 
 
@@ -1558,7 +1679,9 @@ def only_sections(body: str, names: Iterable[str]) -> str:
 # rather than adopted.
 # --------------------------------------------------------------------------- #
 
-_ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
+_ID_PATTERN = re.compile(
+    r"^(" + "|".join(rung.prefix for rung in KINDS) + r")-[0-9a-f]{6}$"
+)
 # Its own pattern, not a fourth alternative in the one above: that regex is what
 # keeps `projects|pitches|tasks/<id>.md` the whole writable surface for entities,
 # and widening it to admit a record that is not an entity is how that property
@@ -1579,7 +1702,7 @@ _ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 # `note-a1b2c3\n` — an id that passes the guard and then becomes the path
 # `notes/note-a1b2c3\n.md`.
 NOTE_ID_PATTERN = re.compile(r"\Anote-[0-9a-f]{6}\Z")
-_PREFIX_FOR_KIND = {"project": "proj", "pitch": "pitch", "task": "task"}
+_PREFIX_FOR_KIND = {rung.name: rung.prefix for rung in KINDS}
 _SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
 
 # Statuses in the order work moves through them. `shaping` is an idea nobody has
@@ -1762,6 +1885,13 @@ def _status_problems(
     # record itself", which is what a blank entity with no corpus around it can
     # answer — `required_at` derives the gates that way.
     reviews = entity.reviewers if reviewers is None else reviewers
+    # A rung the scheduler never sees has no work state to gate. On a product,
+    # `status` is a label to filter by — shelved hides a codebase and everything
+    # under it — and not a claim that anybody is doing it, so demanding an owner
+    # at `ready` and a PR at `done` would be demanding the very fields the same
+    # ladder says the record does not read.
+    if entity.kind in RUNG and not RUNG[entity.kind].schedules:
+        return
     if entity.status in ("shaping", "shelved"):
         return
     if entity.status == "ready":
@@ -1816,7 +1946,7 @@ def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
     controls for a kind that can still be switched — so that stays the default.
     """
     gates: dict[str, list[str]] = {}
-    kinds = (("project", Project), ("pitch", Pitch), ("task", Task))
+    kinds = tuple((rung.name, rung.model) for rung in KINDS)
     for name, model in kinds:
         if kind is not None and name != kind:
             continue
@@ -1887,7 +2017,11 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
 # thing would be the copy that goes stale — this map was widened only yesterday,
 # and a page still refusing a task on a project would be the tool arguing with
 # its own validator.
-PARENT_KINDS = {"project": (), "pitch": ("project",), "task": ("pitch", "project")}
+# Off the ladder, where each rung says what it may sit under. Written out by hand
+# here it said `project: ()` — "a project is the top" — which stopped being true
+# the moment a rung was added above it, in a constant three hundred lines from the
+# one being added.
+PARENT_KINDS = {rung.name: rung.under for rung in KINDS}
 
 
 def is_bettable(entity: Entity) -> bool:
@@ -2018,6 +2152,31 @@ def _rollup_problems(
         )
 
 
+def _carries(entity: Entity, field: str) -> bool:
+    """Whether this record was actually given `field` — something to report.
+
+    Two places to look, because a rung that does not read a field usually does
+    not declare it either: on the object when the model has it, and in `_unread`
+    when it does not, where parsing put the key it dropped. A product has no
+    `person_weeks` attribute at all, so reading the object alone made "a product
+    carries no appetite" a rule that could never fire on a file anybody wrote.
+
+    Compared against the model's own default rather than against None: `priority`
+    defaults to a real value, so `is not None` would report every product ever
+    written.
+    """
+    if field in entity._unread:
+        return True
+    if field not in type(entity).model_fields:
+        return False
+    value = getattr(entity, field)
+    if value in (None, [], "", False):
+        return False
+    return value != type(entity).model_fields[field].get_default(
+        call_default_factory=True
+    )
+
+
 def _problems_for(
     entity: Entity,
     config: Config,
@@ -2030,9 +2189,46 @@ def _problems_for(
     if not entity.title.strip():
         yield "blocker", "title", "title must not be empty", 1
     if not _ID_PATTERN.match(entity.id):
-        yield "blocker", "id", "id must match ^(proj|pitch|task)-[0-9a-f]{6}$", 1
+        yield "blocker", "id", f"id must match {_ID_PATTERN.pattern}", 1
     elif not entity.id.startswith(_PREFIX_FOR_KIND[entity.kind] + "-"):
         yield "blocker", "id", f"id prefix must match kind {entity.kind}", 1
+
+    # What this rung is not allowed to carry, off the ladder rather than out of a
+    # validator per field. A product is a container: it groups the codebases a
+    # plan spans so that work in one can wait on work in another, and it holds
+    # none of the things work holds. A file that gives it one is reported beside
+    # the record rather than refused, like everything else here — the plan still
+    # loads and still says what is wrong.
+    #
+    # Rule version 1 and not the current one, alone among the rules added since
+    # version 1. Grandfathering exists so a rule invented today does not turn
+    # somebody's year-old file red — but no file can predate a KIND, and every
+    # product that will ever exist is written after this. Stamped 5, a
+    # hand-written product with `depends_on` reports a warning where it means a
+    # blocker, for ever.
+    if entity.kind in RUNG:
+        name = entity.kind
+        for field in unread_fields(name):
+            if not _carries(entity, field):
+                continue
+            if field == "depends_on":
+                yield (
+                    "blocker", "depends_on",
+                    f"a {name} waits on nothing: its projects, pitches and tasks do",
+                    1,
+                )
+            elif field == "person_weeks":
+                yield "blocker", "person_weeks", f"a {name} carries no appetite", 1
+            else:
+                # A warning and not a blocker: an owner on a container is ignored
+                # rather than wrong, and refusing the file over it would be
+                # refusing to load the plan over a word nobody reads.
+                yield (
+                    "warning", field,
+                    f"a {name} is a grouping and is never scheduled, "
+                    f"so its {field} is not read",
+                    1,
+                )
 
     if entity.id in parent_cycles:
         yield "blocker", "parent", "part of a parent cycle", 1

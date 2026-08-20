@@ -71,6 +71,7 @@ from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
     ISSUE_STATUS,
+    KINDS,
     MAX_BODY_BYTES,
     NOTE_ID_PATTERN,
     NOTE_STATUS,
@@ -137,7 +138,9 @@ SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
 
 ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
-DIRECTORY = {"project": "projects", "pitch": "pitches", "task": "tasks"}
+# Off the ladder in `model.py`, so a rung added there is a directory here without
+# anybody remembering to come and add one.
+DIRECTORY = {rung.name: rung.directory for rung in KINDS}
 PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when

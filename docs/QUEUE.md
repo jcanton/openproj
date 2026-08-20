@@ -242,6 +242,44 @@ server's own answer, on the server, per request.
   where `--timeout 300` closes every socket at five minutes and reconnection
   stops being exceptional.
 
+## 7. Queued after `product`, from jcanton's screenshots on 2026-08-20
+
+Numbered in the order they were asked for; all of them go on one branch,
+`polish3`, except the last, which is its own.
+
+1. **A narrow Priority column adds newlines where Status does not.** Status drops
+   to its glyph and hides the word (built in #49); Priority keeps the word and
+   wraps it a letter at a time. The same treatment, and the same chip: Priority
+   should read as a card like Status does, not as bare bars beside text.
+2. **The priority bars are tofu in the dropdowns.** The menu font has no glyph
+   for the block characters, so the select shows boxes of different heights while
+   the table shows real bars. Decide one of: a vendored icon font (which is a new
+   vendored asset with a licence and a checksum), inline SVG everywhere a
+   priority is drawn, or the same tofu everywhere so at least it is consistent.
+   Inline SVG is the only one of the three with no new dependency.
+3. **The graph edges are wrong again.** The screenshot shows long diagonal
+   zig-zags across the canvas rather than the orthogonal routes the router draws.
+   `test_graph_layout` reports zero overlaps and zero foreign-card crossings, so
+   whatever this is, the probe does not see it — the first job is a probe that
+   fails on the screenshot before anything is changed.
+4. **A node's priority bars do not line up with its status glyph or its title**,
+   and in the legend the bars are drawn under the swatch border, so `very_high`
+   is the one that cannot be read.
+5. **The legend is not vertically aligned, and the priority swatches are wider
+   than the status ones.** Third time this has been reported; whatever is done
+   here should be a measurement in a test, not an eye.
+6. **Saving a body leaves the stale text on screen.** Edit the body of an entity,
+   save, the editor closes and the *old* text is shown until a refresh. The save
+   itself lands. So the view is rendering from something the save did not update.
+
+## 8. Themes
+
+Its own branch and its own PR, and **not merged and not deployed**: jcanton wants
+to see it locally first. A dropdown between the sign-in corner and the light/dark
+switch, offering the base16 schemes — as many as look right, dropping any that
+fight the app. The light/dark switch stays what it is; a scheme picks the colours
+inside whichever of the two is on.
+
 ## What is deliberately not here
 
 A `support` field (reviewers carry it), a `from_note` field on `Entity` (the

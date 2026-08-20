@@ -275,12 +275,27 @@ class Index(BaseModel):
 
 
 def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
-    """The project an entity belongs to, walking up the parent chain.
+    """The project an entity belongs to, walking up the parent chain."""
+    return _holder_of(entity, by_id, "project")
 
-    A task names its pitch, never its project, so grouping by project is empty
+
+def _product_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
+    """The product an entity belongs to. Same walk, one rung further up."""
+    return _holder_of(entity, by_id, "product")
+
+
+def _holder_of(entity: Entity, by_id: dict[str, Entity], kind: str) -> str | None:
+    """The nearest ancestor of this kind, walking up the parent chain.
+
+    A task names its pitch, never its project, so grouping by either is empty
     unless the chain is followed.
+
+    One walk asked for a kind rather than one walk per kind: `product` was added
+    above `project` and this was the function that would otherwise have been
+    copied, with the copy free to disagree about what an unresolvable parent
+    means.
     """
-    if entity.kind == "project":
+    if entity.kind == kind:
         return entity.id
     for ancestor in ancestors(entity.id, by_id):
         # `.get`, not `[]`. `ancestors` returns the chain as it is *named*, so its
@@ -299,7 +314,7 @@ def _project_of(entity: Entity, by_id: dict[str, Entity]) -> str | None:
         # table cannot agree exists, which is the failure the `blocked_by` edge
         # map already refuses next door.
         named = by_id.get(ancestor)
-        if named is not None and named.kind == "project":
+        if named is not None and named.kind == kind:
             return ancestor
     return None
 
@@ -376,15 +391,23 @@ def _ordered(field: str, values: set[str]) -> list[str]:
     return head + known + sorted(v for v in rest if v not in ranked)
 
 
+# The facets that are not a field on the record but an ancestor of it: a task
+# names its pitch and nothing else, so "which project" and "which product" are
+# both answers to a walk up the chain. Written once because three call sites ask
+# the same question — `build_index`, `query_fields` and `matching` — and a list
+# that grew a rung in two of them would offer a menu that filters nothing.
+_HOLDER_FACETS = ("product", "project")
+
+
 def _facet_values(entity: Entity, field: str, by_id: dict[str, Entity]) -> list[str]:
     """Every value of `field` on this entity, as strings. Absent values yield none.
 
     An unset field is not a facet value: emptiness is selected with `NO_VALUE`,
     which is a menu option rather than a fake owner named "unowned".
     """
-    if field == "project":
-        project = _project_of(entity, by_id)
-        return [project] if project else []
+    if field in _HOLDER_FACETS:
+        holder = _holder_of(entity, by_id, field)
+        return [holder] if holder else []
     value = getattr(entity, field, None)
     if isinstance(value, list):
         return [str(item) for item in value]
@@ -416,7 +439,7 @@ def build_index(
     progress: dict[str, Progress] = {}
     for_later: list[str] = []
     for entity in entities:
-        for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
+        for field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS):
             values = _facet_values(entity, field, by_id)
             # `NO_VALUE` is offered only where something is actually missing, so
             # a menu never carries an option that can select nothing. Every
@@ -531,7 +554,7 @@ def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
     entity = index.entities[entity_id]
     fields = {
         field: [value.lower() for value in _facet_values(entity, field, index.entities)]
-        for field in (*_SCALAR_FACETS, *_LIST_FACETS, "project")
+        for field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS)
     }
     fields["id"] = [entity.id.lower()]
     fields["title"] = [entity.title.lower()]
@@ -597,7 +620,7 @@ def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> li
                 continue
             if field == "predicate":
                 found = any(_matches_predicate(index, entity_id, value) for value in wanted)
-            elif field in (*_SCALAR_FACETS, *_LIST_FACETS, "project"):
+            elif field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS):
                 # Empty is selectable, and it is the absence of every value
                 # rather than one more of them — so it is asked of the list
                 # itself, not looked up in it.

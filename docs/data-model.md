@@ -1,9 +1,17 @@
 # The data model
 
-One markdown file per entity: YAML frontmatter, then the shaping document as the body. Three kinds —
-`project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree with the kind.
+One markdown file per entity: YAML frontmatter, then the shaping document as the body. Four kinds —
+`product`, `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree
+with the kind (`prod`, `proj`, `pitch`, `task`).
 
-**A plan directory is flat.** `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/`, `notes/` and
+They are one list, in one place: `KINDS` in `model.py`, coarsest first. Each rung says what its ids
+start with, where its files live, what it may be filed under, and whether it is scheduled, may
+depend on anything, carries an appetite, or has a shaping document to show. Everything else — the
+directories the loader walks, the id pattern, the parent rules, the filter menus, the create form —
+is derived from that table, so a fifth kind is an entry in it rather than a search for the places
+`project` was written down.
+
+**A plan directory is flat.** `products/`, `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/`, `notes/` and
 `people/` hold one file per record and nothing below them, because every reader here takes an identity off the
 filename. A `people/team/ann.md` is therefore not a record filed tidily — it is a second `ann`, and
 one that only half the application can see. A markdown file below one of these directories is
@@ -20,9 +28,26 @@ Each kind is one thing and says so:
   its own.
 - A **project** is a container for grouping pitches. It has no size, holds no capacity, is never
   bet, and its span is the rollup of the pitches inside it.
+- A **product** is a codebase, and a container for projects. gt4py is the DSL under icon4py, dace is
+  a backend, pmap is another code — and work in one of them waits on work in another. One plan holds
+  all of them for exactly that reason: separate plans cannot express a cross-product dependency, and
+  a dependency the tool cannot express is one somebody tracks in their head.
 
-`project ← pitch ← task` is enforced, not just documented: a parent of the wrong kind is a blocker
-for anything written since the rule existed, and a warning for everything older.
+  It is a container and **nothing else**: a title, a sentence or two, and a place for projects to
+  sit. It is never scheduled, so it draws no bar on the timeline and demands none of the fields a
+  status usually demands; it carries no appetite; it waits on nothing, because its projects, pitches
+  and tasks do; and it has no shaping document, so no hover card is offered for one. Written into a
+  file anyway, each of those is reported beside the record rather than refused — a blocker where it
+  changes what the plan means (a dependency nobody will schedule, an appetite nobody will read) and
+  a warning where the field is merely ignored.
+
+  On the graph it is a dashed outline rather than a filled box, which is how a grouping is told from
+  the work inside it at a glance.
+
+`product ← project ← pitch ← task` is enforced, not just documented: a parent of the wrong kind is a
+blocker for anything written since the rule existed, and a warning for everything older. A task may
+still name a project directly — a chore that belongs to a milestone and no pitch — but nothing may
+be filed straight under a product except a project.
 
 An **issue** is stored beside these and is deliberately not one of them. An entity is a bet: it
 carries an appetite, takes a place on the timeline and charges somebody's cycle. An issue is the

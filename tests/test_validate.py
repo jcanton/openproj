@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from openproj.model import (
+    _ID_PATTERN,
     Config,
     Entity,
     Pitch,
@@ -33,7 +34,7 @@ OTHER_PITCH_ID = "pitch-eee555"
 PROJECT_ID = "proj-ccc333"
 
 NEEDS_TITLE = "title must not be empty"
-BAD_ID_PATTERN = "id must match ^(proj|pitch|task)-[0-9a-f]{6}$"
+BAD_ID_PATTERN = "id must match " + _ID_PATTERN.pattern
 NEEDS_OWNER = "a ready entity needs an owner"
 NEEDS_REVIEWER = "a ready entity needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
@@ -337,7 +338,10 @@ def test_a_project_belongs_to_nothing():
                 created_schema_version=4),
     ]
     problem = only(validate_all(entities, Config()), "proj-000002", field="parent")
-    assert problem.message == "a project belongs to nothing, not to a project"
+    # A project belongs to a PRODUCT now, and to nothing else — the message is
+    # built from `PARENT_KINDS`, which is built from the ladder, so it followed
+    # the new rung without being edited.
+    assert problem.message == "a project belongs to a product, not to a project"
 
 
 def test_a_pitch_under_a_project_and_a_task_under_a_pitch_are_the_shape():

@@ -39,6 +39,7 @@ from .index import (
     Index,
     _matches_predicate,
     _people_on,
+    _product_of,
     _project_of,
     cascade_of,
 )
@@ -48,14 +49,12 @@ from .model import (
     NOTE_STATES,
     NOTE_STATUS,
     PARENT_KINDS,
+    RUNG,
     Config,
     Cycle,
     Entity,
     Issue,
     Note,
-    Pitch,
-    Project,
-    Task,
     Unreadable,
     bet_of,
     checklist,
@@ -67,11 +66,15 @@ from .model import (
     required_at,
     sections,
     size_weeks,
+    unread_fields,
     what_json_can_carry,
     without_checklist,
     without_comments,
     without_emptied_headings,
     without_sections,
+)
+from .model import (
+    KINDS as KIND_LADDER,
 )
 from .schedule import build_end
 
@@ -1016,6 +1019,7 @@ def _row(index: Index, entity_id: str) -> dict:
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
+        "product": _product_of(entity, index.entities),
         "predicates": [p for p in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, p)],
         # What the box searches, built once by `searchable` (`index.py`) and
         # carried rather than rebuilt: the browser used to search
@@ -1217,7 +1221,15 @@ def _containment_rows(index: Index, drawn: set[str]) -> list[tuple[str, int]]:
         if entity_id in drawn:
             rows.append((entity_id, depth))
         for kid in ordered(kids[entity_id]):
-            walk(kid, depth + 1)
+            # A rung the scheduler never sees indents nothing. The rule above —
+            # depth through the whole chain — is about a parent whose span fell
+            # outside the *window*, which is a bar that exists and is not drawn
+            # today. A product has no span ever, so counting it would push every
+            # project inside one a level right against every project outside one,
+            # to mark a row that is never on this page.
+            held = index.entities.get(entity_id)
+            deeper = held is None or RUNG[held.kind].schedules
+            walk(kid, depth + (1 if deeper else 0))
 
     for entity_id in ordered(roots):
         walk(entity_id, 0)
@@ -3572,7 +3584,7 @@ _FACETS = """
 # the select it needs is the select every other field gets.
 _PLAN_FACETS = (
     "kind", "priority", "status", "owner", "assignees", "reviewers",
-    "cycle", "project", "tags", "predicate",
+    "cycle", "product", "project", "tags", "predicate",
 )
 
 # The filter model itself, shared by every view that offers the bar above. The
@@ -3586,7 +3598,7 @@ const params = new URLSearchParams(location.search);
 // Every field the control bar offers. A field in one list and not the other is a
 // dropdown that changes the URL and filters nothing.
 const FILTERS = ['kind','status','owner','assignees','reviewers','priority',
-                 'cycle','project','tags'];
+                 'cycle','product','project','tags'];
 
 // The menu option that means "this field is empty". Spelled here as a literal
 // and in `index.NO_VALUE` in Python, because this block is a constant rather
@@ -3616,7 +3628,7 @@ function wanted(field) { return params.getAll(field).filter(Boolean); }
 // list exists in `index.py`, where `test_the_two_field_lists_are_the_same` holds
 // the two together.
 const QUERY_FIELDS = ['kind','status','owner','priority','cycle','assignees',
-                      'reviewers','tags','project','id','title','prs','predicate'];
+                      'reviewers','tags','product','project','id','title','prs','predicate'];
 const ALIASES = {tag: 'tags', assignee: 'assignees', reviewer: 'reviewers',
                  pr: 'prs', person: 'owner'};
 // Free text, matched by substring; everything else is a vocabulary and is
@@ -4192,9 +4204,12 @@ const WHY = {{ why|tojson }};
 // It decides three things on this page: which rows grow a handle, which rows
 // light up as a drop would land, and which refuse before anything is sent.
 const PARENT_KINDS = DATA.parent_kinds || {};
-// Whether this row has anywhere to go. A project belongs to nothing, so it can
-// neither be filed under something nor taken out of it, and every control that
-// would say otherwise is left undrawn rather than drawn and then refused.
+// Whether this row has anywhere to go. The top of the ladder belongs to nothing,
+// so it can neither be filed under something nor taken out of it, and every
+// control that would say otherwise is left undrawn rather than drawn and then
+// refused. Which kind that is comes off `PARENT_KINDS` and is not written here:
+// it was `project` until a `product` was added above it, and a rule that names
+// the top rung is a rule that is wrong the day the ladder grows.
 const movable = row => (PARENT_KINDS[row.kind] || []).length > 0;
 // What a kind may be filed under, in the validator's own words. `a pitch or a
 // project`, `nothing` — the sentence `_containment_problems` builds when it has
@@ -7758,6 +7773,19 @@ const cy = cytoscape({
     // where every edge crossing the box ran straight through it. Inside, top
     // left, on its own ground: a box whose name you cannot read is a box that
     // says only that something is grouped, not what by.
+    // A product is not a project, and the drawing says so before the label is
+    // read — jcanton, 2026-08-20: "can we give it another shape? ellipse instead
+    // of rounded square? or some other line style to differentiate it?"
+    //
+    // Three channels rather than one, because a box holding other boxes is mostly
+    // empty and a single cue in the middle of it is a cue nobody sees: a dashed
+    // boundary, a heavier corner radius, and no fill at all. A product groups
+    // codebases — gt4py under icon4py, dace, pmap — and it holds no work of its
+    // own, so an empty outline is what it actually is.
+    { selector: 'node[kind = "product"]', style: {
+        'shape': 'round-rectangle', 'border-style': 'dashed', 'border-width': 2,
+        'background-opacity': 0, 'border-color': token('--line-strong'),
+    } },
     { selector: ':parent', style: {
         // 20 here and `elk.padding: 25` in LAYOUT, and the two have to move
         // together: ELK reserves the room and this draws the box, and when the
@@ -8110,9 +8138,19 @@ function onLabel(node, at) {
 // crossing, once, and `hideCard` on the way back out.
 let onLabelOf = null;
 
+// Which kinds a hover has anything to say about. Off the ladder in `model.py`,
+// where a product declares `carded: false` — jcanton asked for no card on one,
+// and the reason it is a property rather than a check written here is that the
+// same question is asked on the table and the timeline.
+const CARDED = {{ carded|tojson }};
+
 cy.on('mouseover', 'node', evt => {
   if (connecting) return;
   const node = evt.target;
+  // A product carries a title and a sentence and nothing else — no owner, no
+  // dates, no appetite, no document. A card of it would be a box of dashes,
+  // which teaches a reader that cards are not worth hovering for.
+  if (CARDED[node.data('kind')] === false) return;
   if (node.isParent()) {
     if (!onLabel(node, evt.position)) return;
     onLabelOf = node.id();
@@ -11933,6 +11971,7 @@ _NEW = """
               <option value="pitch">the shaping template</option>
               <option value="task">a task</option>
               <option value="project">a project</option>
+              <option value="product">a product</option>
               <option value="blank">nothing</option>
             </select>
           </label>
@@ -14643,7 +14682,8 @@ HISTORY_MARKS = {
 # the kind that gets shaped. `person_weeks` is on both of the others, so it is
 # not kind-only any more.
 KIND_ONLY = {"shaped_by": "pitch"}
-PREFIX = {"project": "proj", "pitch": "pitch", "task": "task"}
+# Off the ladder. This was the third hand-written copy of it in this file.
+PREFIX = {rung.name: rung.prefix for rung in KIND_LADDER}
 # The validator's own gate, asked rather than copied — and asked through the front
 # door. This module used to import `model._status_problems` at import time and run
 # the derivation itself, which put the shape of a problem tuple in the renderer's
@@ -14665,7 +14705,8 @@ LABELS = {
     "shaped_by": "Shaped by",
     # Not stored fields: a facet and a derived column. They are read by the same
     # people in the same control bar, so they take their words from here too.
-    "kind": "Kind", "project": "Project", "size": "Appetite", "blocked_by": "Blockers",
+    "kind": "Kind", "project": "Project", "product": "Product",
+    "size": "Appetite", "blocked_by": "Blockers",
     "progress": "Progress",
     "start": "Start", "end": "End", "id": "Id", "predicate": "Flags",
     # The people page's own facet. Which hat somebody is wearing is not stored on
@@ -14705,6 +14746,7 @@ HUMAN = {
     "low": "Low",
     "very_low": "Very low",
     # kinds
+    "product": "Product",
     "project": "Project",
     "pitch": "Pitch",
     "task": "Task",
@@ -14801,7 +14843,17 @@ def _editable_for(entity: Entity, prefix: str = "field") -> list[dict]:
             else ("" if getattr(entity, name) is None else getattr(entity, name)),
         }
         for name, kind in EDITABLE.items()
+        # What the kind has, minus what its rung does not read. A product
+        # inherits every field an entity has and is a container: offering a box
+        # for an owner it will then be warned about is the form and the validator
+        # disagreeing in the most annoying possible order.
         if name in type(entity).model_fields
+        and name not in unread_fields(entity.kind)
+        # And nothing to file the top rung under. Not routed through
+        # `unread_fields`: a parent written on a product is already reported, by
+        # the containment rule that knows what it may be filed under, and two
+        # warnings about one field is one of them being noise.
+        and not (name == "parent" and not PARENT_KINDS[entity.kind])
     ]
 
 
@@ -15145,12 +15197,16 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
 # its predecessor's length instead.
 _DEFAULT_CYCLE_DAYS = 28
 
-KINDS = ("project", "pitch", "task")
+# Off the ladder, so the create form and the table offer a rung the moment one is
+# added rather than the day somebody remembers this line. It was written out here,
+# and this file already imports `PARENT_KINDS` from the same place — two spellings
+# of the same list, and the one that got stale was always going to be this one.
+KINDS = tuple(rung.name for rung in KIND_LADDER)
 # The model behind each of them, once. This was a dict literal inside `_new_rows`
 # and is now asked two more questions — which fields a kind has, for the create
 # form and for the row a person types straight into the table — and three copies
 # of "these are the three kinds" is three places to forget a fourth.
-_KIND_MODELS: dict[str, type[Entity]] = {"project": Project, "pitch": Pitch, "task": Task}
+_KIND_MODELS: dict[str, type[Entity]] = {rung.name: rung.model for rung in KIND_LADDER}
 
 # The body a new entity starts from, per kind.
 #
@@ -15216,10 +15272,16 @@ _PROJECT_TEMPLATE = """## Problem
 <!-- What this milestone is not, so its pitches do not grow into it. -->
 """
 
+_PRODUCT_TEMPLATE = """<!-- A sentence or two: what this codebase is, and what
+     the plan is doing with it. A product groups projects and holds no work of
+     its own, so there is nothing here to shape. -->
+"""
+
 TEMPLATES = {
     "pitch": _PITCH_TEMPLATE,
     "task": _TASK_TEMPLATE,
     "project": _PROJECT_TEMPLATE,
+    "product": _PRODUCT_TEMPLATE,
     "blank": "",
 }
 
@@ -15283,7 +15345,11 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
         fields = {}
         for column, _ in _TABLE_COLUMNS:
             field = _SIZE_FIELD_NAME if column == "size" else column
-            if field in EDITABLE and field in model.model_fields:
+            if (
+                field in EDITABLE
+                and field in model.model_fields
+                and field not in unread_fields(kind)
+            ):
                 fields[column] = field
         per_kind[kind] = fields
     return per_kind
@@ -19503,6 +19569,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,
         levels=PRIORITY_LEVEL,
+        carded={rung.name: rung.carded for rung in KIND_LADDER},
         total=len(index.entities),
         links=links,
         elements=_elements(index),
