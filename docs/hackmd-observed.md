@@ -157,7 +157,99 @@ still not being built.
   the outline or table-of-contents toggle. Not confirmed.
 - Line 17 wraps to two visual rows under a single gutter number, again.
 
-## S0, half-answered: the migrated corpus, counted
+## S0, answered. The whole corpus, counted — and it corrects the half-answer below
+
+jcanton exported the team's HackMD workspace on 2026-08-20: **735 notes, 81,794 lines, 5.2 MB**,
+every one of them carrying YAML frontmatter. The section after this one counted the 29 files that
+had already been migrated into the plan repository and drew two conclusions from them. **One of
+those conclusions was wrong**, and it is left standing below with this correction above it,
+because a sample of 29 out of 735 producing a confident zero is the more useful thing to
+remember.
+
+### What people actually write
+
+| construct | lines | notes |
+|---|---|---|
+| bullet | 17,640 | 676 |
+| heading | 7,212 | 719 |
+| inline code span | 6,312 | 588 |
+| **task list `- [ ]`** | **5,297** | **330** |
+| **fenced code block** | **2,960** | **261** |
+| **markdown link** | **1,560** | **388** |
+| **table row** | **1,530** | **69** |
+| bold | 1,455 | 195 |
+| hard break (two spaces) | 252 | 77 |
+| strikethrough | 188 | 67 |
+| image | 173 | 58 |
+| PR reference `#1234` | 101 | 40 |
+| blockquote | 74 | 25 |
+
+**This settles the toolbar override, and settles it the other way round from how it was argued.**
+`d6997e3` cut the link button and the code-block button on a count of **8** markdown links and
+**2** fenced blocks. The real corpus has **1,560 links across 388 notes** and **2,960 fenced
+blocks across 261 notes**. That commit's reasoning was sound and its sample was not — it counted
+the seed corpus and the fraction of HackMD notes that had been migrated by then, which is the 29
+files below. Every one of the fourteen buttons now shipping is backed by four figures in this
+table. The override in `ba2cb72` was right, and it is no longer an override of a measurement; it
+is a correction of one.
+
+### The renderer gap, which the 29-file sample said did not exist
+
+It does exist, and it is bounded: **640 of 735 notes (87%) render with nothing missing today.**
+The other 95 need something this renderer does not have.
+
+| missing | notes |
+|---|---|
+| raw HTML | 43 |
+| math, `$…$` and `$$…$$` | 27 |
+| footnotes `[^x]` | 15 |
+| `[TOC]` | 14 |
+| `:::` containers | 10 |
+| `[name=]` / `[color=]` | 2 |
+| image sizing `=200x` | 1 |
+| `{%youtube%}`-style embeds | **0** |
+| mermaid and other diagram fences | 0 outside code blocks |
+
+Three things to say about that list.
+
+**Raw HTML stays off, and 43 notes is not an argument to turn it on.** `render.py:941` sets
+`{"html": False}` and that is a security decision with a history: one line of markdown in a plan
+anybody can write to became a tracking pixel aimed at everyone who opened it, and it survived into
+the static export where there is no origin to appeal to. Allowlists, not denylists. Those 43 notes
+show their tags as text, which is visible, recoverable and correct.
+
+**Embeds are zero**, which retires a whole class of work nobody now has to think about.
+
+**Math is the one worth a decision later** — 27 notes, and it is the only entry here whose absence
+is silently misleading rather than obviously literal: `$\alpha$` renders as `$\alpha$`, which
+reads as a typo rather than as a missing feature. KaTeX is another vendored library and another
+byte conversation, and it is not this work.
+
+### `Breaks`: both behaviours are in the corpus, and CommonMark is the lesser harm
+
+2,433 places across 369 notes — half the corpus — have one prose line directly under another,
+which is exactly the case `breaks: true` changes. Splitting them by the width of the first line
+says what the author meant:
+
+- **1,632 have a first line of 70 characters or more, median 87.** Hard-wrapped prose. The author
+  wrapped a sentence at their editor's width and expects it to reflow. `breaks: true` renders
+  these as a ragged paragraph broken at column 87 — at the *author's* width, not the reader's,
+  which on a narrow screen is a mess.
+- **801 have a first line under 70 characters**, and reading them they are deliberate:
+  `**File:** …` above `**Status:** VERIFIED`, `Notes:` above `OSM view:`. These want a line break
+  and CommonMark joins them onto one line.
+
+So neither setting is right for the whole corpus, and the question is which harm is smaller. It is
+CommonMark's, by a two-to-one ratio and by kind: 801 label pairs that read as one slightly-run-on
+line are recoverable, while 1,632 paragraphs broken at somebody else's window width look broken.
+**The renderer stays CommonMark.** The 801 are a known migration artifact and are written down
+here as one; they are not repaired by a pass that rewrites people's text, because a save that
+reformats somebody's file is the thing that stops "edit it in git if you prefer" from being true.
+
+Note the corroboration: **77 notes already use the explicit two-space hard break**, 252 times. The
+people who wanted a line break and knew how to ask for one asked for it in the portable way.
+
+## S0's first half, superseded above: the migrated corpus, counted
 
 `~/projects/icon4py-plan` is the plan repository — the notes already migrated out of HackMD into
 records. It is **part** of the corpus, not all of it; the rest is still in HackMD behind a login.
