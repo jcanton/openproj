@@ -1106,7 +1106,6 @@ def _payload(index: Index) -> dict:
         # that agrees until somebody adds one.
         "glyphs": STATUS_GLYPH,
         "levels": PRIORITY_LEVEL,
-        "marks": PRIORITY_GLYPH,
         # Which statuses demand which fields, derived from the gate itself by
         # `required_at` (`model.py`). The detail page has had this since it grew
         # the marks beside its labels; the table had nothing, so moving a row to
@@ -2520,8 +2519,18 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 .bars[data-level="4"] i:nth-child(-n+4) { background: var(--pri-high); opacity: 1; }
 .bars[data-level="5"] i:nth-child(-n+5) { background: var(--pri-very-high); opacity: 1; }
 /* In a table cell the bars lead and the word follows, because the bars are what
-   the eye picks out of a column and the word is what settles which one it is. */
-.pricell { display: inline-flex; align-items: center; gap: .4rem; }
+   the eye picks out of a column and the word is what settles which one it is —
+   inside the same chip status wears, so two columns saying one kind of thing say
+   it the same way. It was a bare pair beside a chip, and the difference read as
+   a difference in the facts rather than in the markup.
+
+   No hue on the ground. Status has five soft grounds and priority has five inks
+   already lit in the meter, so a second coloured chip in the next column would be
+   two ladders competing at the same weight. The hairline is the kind chip's, for
+   the same reason it is a hairline there. */
+.chip.pri { display: inline-flex; align-items: center; gap: .35rem;
+            color: var(--kind-ink); border: 1px solid var(--kind-line);
+            padding: .1rem .35rem; }
 /* The status mark inside the chip it has always had. Slightly dimmed, because
    the word is the thing being read and the mark is what finds it — a glyph at
    full weight beside a short word reads as two words. */
@@ -2532,8 +2541,8 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
 table.tight-status td[data-col="status"] .chipword { display: none; }
 table.tight-status td[data-col="status"] .chipmark { margin-right: 0; }
 table.tight-status td[data-col="status"] .chip { padding: .1rem .3rem; }
-table.tight-priority td[data-col="priority"] .priword { display: none; }
-table.tight-priority td[data-col="priority"] .pricell { gap: 0; }
+table.tight-priority td[data-col="priority"] .chipword { display: none; }
+table.tight-priority td[data-col="priority"] .chip.pri { gap: 0; padding: .1rem .3rem; }
 
 .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
           list-style: none; margin: .75rem 0 0; padding: 0;
@@ -4283,14 +4292,12 @@ const LEVELS = DATA.levels || {};
 // the server, because a meter drawn two ways is a meter that eventually
 // disagrees about what three bars mean.
 // The mark that goes in front of a word inside an `<option>`, which is text and
-// nothing else — the same string `mark()` writes on the server.
-// `RUNGS` and not `MARKS`: this page already has a `MARKS`, holding the
-// validation problems per cell, and two top-level declarations of one name in one
-// page is a SyntaxError that throws the whole later script away.
-const RUNGS = DATA.marks || {};
+// nothing else — the same string `mark()` writes on the server. Status only:
+// priority's mark was five block characters the vendored face does not carry and
+// a native menu draws in the platform's own font, which is five empty boxes. The
+// argument is at `PRIORITY_GLYPH`'s grave in `render.py`.
 function markFor(field, value) {
   if (field === 'status') return GLYPHS[value] ? GLYPHS[value] + ' ' : '';
-  if (field === 'priority') return RUNGS[value] ? RUNGS[value] + ' ' : '';
   return '';
 }
 
@@ -4344,8 +4351,8 @@ function shown(row, key) {
   // no shared notation, and nothing on either page saying so.
   if (key === 'priority')
     return row.priority
-      ? `<span class="pricell">${barsFor(row.priority)}` +
-        `<span class="priword">${esc(human(row.priority))}</span></span>`
+      ? `<span class="chip pri">${barsFor(row.priority)}` +
+        `<span class="chipword">${esc(human(row.priority))}</span></span>`
       : '';
   // Counted out of the body's own checklist. Empty where there is no checklist,
   // rather than "0/0" — a body nobody has written a list in has no progress to
@@ -6362,11 +6369,17 @@ function tighten() {
     let over = false;
     for (const cell of table.querySelectorAll(`td[data-col="${key}"]`)) {
       if (!cell.firstElementChild) continue;
-      // The CELL's own overflow, not the inner element's. `.pricell` is an
+      // The CELL's own overflow, not the inner element's. The chip is an
       // inline-flex box that shrinks to whatever it is given and then reports
       // itself content: asking it whether it fits, it always says yes while its
       // contents hang out of the cell — which is why priority went on
       // overflowing after status had been fixed.
+      //
+      // And it only overflows if the word inside it cannot wrap. `.chip` is
+      // `white-space: nowrap`, which is why status has always tightened on time;
+      // the old priority cell let its word wrap, so a narrow column turned
+      // "Medium" into six lines of one letter and never reported itself over —
+      // jcanton, 2026-08-20, with a screenshot of exactly that.
       if (cell.scrollWidth > cell.clientWidth + 1) { over = true; break; }
     }
     table.classList.toggle(`tight-${key}`, over);
@@ -7930,13 +7943,33 @@ if (document.fonts) document.fonts.ready.then(paint);
 
 // Packed first and routed after: routing reads where the boxes ended up, and
 // the pack moves them.
-cy.on('position', 'node', route);
-// Re-routed when a drag ENDS, not while it is happening. A `segments` edge keeps
-// its bends relative to its two ends, so dragging a card carries the whole route
-// along with it and a bend can end up inside something — but routing every frame
-// of a drag is an A* per edge per frame, and the point of dragging is that it is
-// immediate.
-cy.on('dragfree', 'node', () => routeEdges());
+//
+// Re-routed whenever the drawing SETTLES, and not only when a drag ends. A
+// `segments` edge holds its bends as a distance from the line between its two
+// ends and a fraction along it, so a node that moves carries every route
+// attached to it along — and carries it as a shear, because the line those bends
+// were measured against has turned. Two right angles become two diagonals, which
+// is the zig-zag across the canvas jcanton photographed on 2026-08-20.
+//
+// `dragfree` covered the one way a node moves that anybody had thought of. It is
+// not the only one: a box picked up carries its subtree, a filter puts cards back
+// on the canvas, a re-fit and a restored position both move things, and each of
+// those is one more place somebody has to remember to re-route. Watching
+// `position` costs one debounce and cannot be forgotten.
+//
+// Not during the drag itself: routing is an A* per edge, and the point of
+// dragging is that it is immediate. So the timer restarts on every move and only
+// the pause at the end pays for it — and a hand still holding a card (`:grabbed`)
+// puts it off again rather than routing under the cursor.
+let settling = 0;
+function rerouteWhenSettled() {
+  clearTimeout(settling);
+  settling = setTimeout(() => {
+    if (cy.$(':grabbed').length) return rerouteWhenSettled();
+    routeEdges();
+  }, 80);
+}
+cy.on('position', 'node', () => { route(); rerouteWhenSettled(); });
 route();
 
 // One filter model, three views — the graph's answer to it is which boxes are on
@@ -12564,6 +12597,23 @@ const BASE = FORM.querySelector('[name=base_commit]');
 // Bumped rather than parsed loosely, so a body that happens to be valid JSON
 // cannot be mistaken for the new shape.
 const DRAFT = `openproj:draft:2:${FORM.dataset.id}`;
+// One sentence, handed from the page that saved to the page that comes back.
+// A save in a room reloads, and "saved, and somebody else's change to this file
+// was merged in" is news — it means the file holds a paragraph this person has
+// not read — announced to a page that is already on its way out. Not scoped to
+// the record: it is read and dropped by the first page that loads, which is the
+// one that was reloaded.
+const SAID = 'openproj:said';
+
+// Whatever the page before the reload was told. Read once and forgotten, so a
+// reload of the reload is silent rather than saying "saved" again.
+{
+  const before = remembered.get(SAID);
+  if (before) {
+    remembered.forget(SAID);
+    announce(before);
+  }
+}
 
 function read(control) {
   const type = control.dataset.type;
@@ -13605,21 +13655,31 @@ const COEDIT = (() => {
       box.hidden = true;
       settle(message.commit);
       dirty();
-      announce(message.outcome === 'merged'
+      const said = message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
-        : (message.pushed === false ? 'saved here, not yet pushed' : 'saved'));
+        : (message.pushed === false ? 'saved here, not yet pushed' : 'saved');
+      announce(said);
       // Everybody in the room, not only the tab that pressed the button: this
       // commit holds text that is already in every one of these editors, so the
       // shell's "somebody else changed this" banner is wrong about all of them.
       dispatchEvent(new CustomEvent('openproj:ours', {detail: message.commit}));
       // And the tab that pressed Save leaves edit mode, which is what pressing
-      // it means. The path without a room reloads the page and lands in read
-      // mode by doing so; in a room there is nothing to reload — the document is
-      // already what everybody has — so this is the same ending arrived at
-      // deliberately. Only the tab that asked: everybody else in the room is
-      // still typing, and a commit somebody else made is not a reason to close
-      // the box in front of you.
-      if (mine && typeof showEditing === 'function') showEditing(false);
+      // it means — by reloading, exactly as the path without a room does. Only
+      // the tab that asked: everybody else in the room is still typing, and a
+      // commit somebody else made is not a reason to close the box in front of
+      // you.
+      //
+      // This used to close the editor without reloading, on the grounds that the
+      // document is already what everybody in the room has. That was right about
+      // the document and wrong about the page: the read view underneath is HTML
+      // the server rendered at the commit this page LOADED at, so the editor
+      // closed onto the body as it was and the facts as they were, and it stayed
+      // that way until somebody refreshed. The text being in every editor in the
+      // room says nothing about the one part of the page that is not an editor.
+      if (mine) {
+        remembered.set(SAID, said);
+        location.reload();
+      }
       return;
     }
     if (message.t === 'refused') {
@@ -14330,13 +14390,22 @@ PRIORITY_LEVEL = {"very_low": 1, "low": 2, "medium": 3, "high": 4, "very_high": 
 # it applies here unchanged: a shape survives a screenshot, a projector and
 # deuteranopia, and it arrives in the label's own ink instead of being drawn by
 # the platform's colour font at a different weight on every machine.
-PRIORITY_GLYPH = {
-    "very_low": "▁",
-    "low": "▃",
-    "medium": "▅",
-    "high": "▇",
-    "very_high": "█",
-}
+# No mark for a priority in a menu, and that is a measurement rather than a
+# taste. These five used to be the block elements U+2581..U+2588 — a meter drawn
+# in text — and they came out as five empty boxes of five different heights in
+# jcanton's dropdowns on 2026-08-20.
+#
+# The vendored face carries 230 codepoints (`static/inter-latin-wght-normal.woff2`,
+# a latin subset), and none of the block elements is one of them. Inside the page
+# a missing glyph falls back to whatever the platform has; inside a native
+# `<select>` popup, which the platform draws in its own UI font, it falls back to
+# nothing. So a text meter in a menu is a bet on a font nobody here controls.
+#
+# Nothing is lost by dropping it. The mark exists as a second channel where
+# colour is the only one — on a bar, on a node, in a legend swatch — and a menu
+# is text: the word "Very high" IS the channel, and the options are already in
+# ladder order. Where priority is drawn rather than written it is still the five
+# bars, which are five elements and a `data-level` and cannot go tofu.
 
 # The redundant channel. On the graph and the timeline a fill is the only thing
 # telling two shapes apart, and a luminance ladder makes five fills *separable*
@@ -14792,8 +14861,7 @@ _ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
 # for both ladders, so a template asks for "the mark for this value" rather than
 # knowing which map to reach into.
 _ENV.globals["mark"] = lambda kind, value: (
-    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status"
-    else f"{PRIORITY_GLYPH.get(str(value), '')} "
+    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status" else ""
 )
 _ENV.globals["bars"] = lambda priority: Markup(
     '<span class="bars" data-level="{}" aria-hidden="true">{}</span>'.format(

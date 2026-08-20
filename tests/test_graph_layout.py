@@ -102,8 +102,7 @@ const crossesBox = (p, q, r) => {
   }
   return false;
 };
-let under = 0;
-cy.edges().forEach(edge => {
+function pathOf(edge) {
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
@@ -127,6 +126,12 @@ cy.edges().forEach(edge => {
     });
   }
   path.push(to);
+  return path;
+}
+
+let under = 0;
+cy.edges().forEach(edge => {
+  const path = pathOf(edge);
   for (const leaf of leaves) {
     // A card inside one of the two records an edge joins is not a card it is
     // crossing: cytoscape draws from the CENTRE of a box, so an edge attached to
@@ -138,6 +143,29 @@ cy.edges().forEach(edge => {
     let hit = false;
     for (let i = 0; i < path.length - 1 && !hit; i++) hit = crossesBox(path[i], path[i + 1], r);
     if (hit) { under++; break; }
+  }
+});
+
+// Whether the drawing is orthogonal, which is the thing the router exists to
+// make it. Every leg of a routed edge should run along one axis; a leg that runs
+// along neither is a diagonal, and a long one is the zig-zag across the canvas
+// jcanton photographed on 2026-08-20.
+//
+// The first and last legs are exempt and have to be: cytoscape draws from a
+// node's CENTRE to the first bend, so the stub that leaves the box is diagonal
+// by construction however well the middle is routed.
+let diagonal = 0, legs = 0, longest = 0, longestOf = null;
+cy.edges().forEach(edge => {
+  const path = pathOf(edge);
+  if (path.length < 4) return;          // no middle to be diagonal
+  for (let i = 1; i < path.length - 2; i++) {
+    const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
+    legs++;
+    if (dx > 1.5 && dy > 1.5) {
+      diagonal++;
+      const len = Math.hypot(dx, dy);
+      if (len > longest) { longest = len; longestOf = edge.id(); }
+    }
   }
 });
 
@@ -154,6 +182,7 @@ return {
   sparseWorst: +worst.toFixed(2), sparseWorstOf: worstOf,
   sparseMean: +(total / (counted || 1)).toFixed(2),
   forward, backward, zoom: +cy.zoom().toFixed(2),
+  diagonal, legs, longest: Math.round(longest), longestOf,
 };
 """
 
@@ -479,3 +508,97 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
         "direction should"
     )
     assert got["overlapping"] == [], got["overlapping"][:4]
+
+
+def test_every_routed_edge_runs_along_an_axis(drawn: dict):
+    """The router draws right angles or it is not routing.
+
+    jcanton, 2026-08-20, with a screenshot of the deployed graph: long diagonal
+    zig-zags leaning across the canvas between the groups. A diagonal is not a
+    worse-looking orthogonal route, it is a route that was never followed — the
+    bends are being placed somewhere other than where the path went.
+
+    The two stubs are exempt because cytoscape draws from a node's centre to the
+    first bend, so the leg leaving a box is diagonal however well the middle is
+    routed. Everything between them is the router's own work.
+    """
+    assert drawn["legs"] > 0, "no edge has a middle, so this measures nothing"
+    assert drawn["diagonal"] == 0, (
+        f"{drawn['diagonal']} of {drawn['legs']} legs run along neither axis, the "
+        f"longest {drawn['longest']}px on {drawn['longestOf']}"
+    )
+
+
+_SHEAR = """
+const split = v => String(v || '').trim().split(/[\\s,]+/).filter(Boolean).map(parseFloat);
+function pathOf(edge) {
+  const from = edge.source().position(), to = edge.target().position();
+  const path = [from];
+  if (edge.style('curve-style') === 'segments') {
+    const ws = split(edge.style('segment-weights')), ds = split(edge.style('segment-distances'));
+    const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
+    ws.forEach((w, i) => { if (isFinite(w) && isFinite(ds[i]))
+      path.push({x: from.x + dx * w + (dy / span) * ds[i],
+                 y: from.y + dy * w - (dx / span) * ds[i]}); });
+  }
+  path.push(to);
+  return path;
+}
+function diagonals() {
+  let diagonal = 0, legs = 0, longest = 0;
+  cy.edges().forEach(edge => {
+    const path = pathOf(edge);
+    if (path.length < 4) return;
+    for (let i = 1; i < path.length - 2; i++) {
+      const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
+      legs++;
+      if (dx > 1.5 && dy > 1.5) { diagonal++; longest = Math.max(longest, Math.hypot(dx, dy)); }
+    }
+  });
+  return {diagonal, legs, longest: Math.round(longest)};
+}
+
+const before = diagonals();
+// Moved by hand rather than dragged, and that is the point: `dragfree` was the
+// only thing that re-routed, so every other way a node moves left the routes
+// behind. A box carried by its parent, a filter putting cards back, a restored
+// position and a re-fit are all this line.
+const leaf = cy.nodes().filter(n => n.isChildless() && n.connectedEdges().length)[0];
+leaf.position({x: leaf.position().x + 260, y: leaf.position().y - 190});
+// Answered from a continuation: the second write of `data-report` wins, and a
+// measurement taken in the same tick as the move is a measurement of the shear
+// rather than of what the page settles on.
+setTimeout(() => {
+  document.body.dataset.report = JSON.stringify(
+    {before, after: diagonals(), moved: leaf.id()});
+}, 300);
+return {pending: true};
+"""
+
+
+def test_a_node_that_moves_takes_its_routes_with_it_and_they_are_re_laid(
+    index: Index, tmp_path: Path
+):
+    """The zig-zags jcanton photographed on 2026-08-20, and where they come from.
+
+    A `segments` edge holds its bends as a distance from the line between its two
+    ends and a fraction along it. Move an end and that line turns; the bends turn
+    with it, and two right angles arrive on screen as two diagonals leaning across
+    the canvas. Nothing is wrong with the route — it is a correct route measured
+    against a line that no longer exists.
+
+    The initial view was never the problem: this same probe reports zero diagonal
+    legs at 31, 54 and 518 records. What was missing is that only `dragfree`
+    re-routed, so the drawing was correct until anything moved a node by any other
+    means.
+    """
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "shear.html", 1900, _SHEAR,
+                      height=820, patience=2500)
+
+    assert got.get("before", {}).get("legs"), f"nothing was routed to begin with: {got}"
+    assert got["before"]["diagonal"] == 0, got["before"]
+    assert got["after"]["diagonal"] == 0, (
+        f"moving {got['moved']} left {got['after']['diagonal']} sheared legs, the "
+        f"longest {got['after']['longest']}px"
+    )

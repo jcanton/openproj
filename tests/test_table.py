@@ -369,13 +369,22 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
             offered = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', select)
             assert [value for value, _ in offered] == list(values), name
             for value, word in offered:
-                # The mark leads and the word follows. It is a string and not
-                # markup because an `<option>` is a string — see `_CONTROL`.
-                mark, _, said = word.strip().partition(" ")
+                # A status carries its mark in front of the word — it is a string
+                # and not markup, because an `<option>` is a string. A priority
+                # carries none: its five were block characters the vendored face
+                # does not have and a native menu draws in the platform's own
+                # font, which came out as five empty boxes of five heights. The
+                # word is the whole channel in a menu, and the options are in
+                # ladder order.
+                if name == "status":
+                    mark, _, said = word.strip().partition(" ")
+                    assert mark and mark not in said, (
+                        f"{name}: {value} is offered as {word!r} with no mark in "
+                        "front of it"
+                    )
+                else:
+                    said = word.strip()
                 assert said == LABELS.get(value, HUMAN[value]), (name, value)
-                assert mark and mark not in said, (
-                    f"{name}: {value} is offered as {word!r} with no mark in front of it"
-                )
                 assert value not in word, f"{value} is its own identifier, not a word"
 
 
@@ -4343,6 +4352,14 @@ def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):
 _TIGHT = """
 const table = document.getElementById('rows');
 const scroller = table.parentElement;
+// Before anything is dragged or squeezed: a window with room in it, where both
+// columns are meant to read as a mark AND a word.
+const untouched = {
+  priwords: [...document.querySelectorAll('td[data-col="priority"] .chipword')]
+    .filter(one => one.offsetParent !== null).length,
+  words: [...document.querySelectorAll('td[data-col="status"] .chipword')]
+    .filter(one => one.offsetParent !== null).length,
+};
 const grip = document.querySelector('th .grip') || document.querySelector('th [class*=grip]');
 if (!grip) return {error: 'no grip to drag'};
 grip.dispatchEvent(new PointerEvent('pointerdown', {clientX: 400, bubbles: true}));
@@ -4365,16 +4382,34 @@ const marks = () => [...document.querySelectorAll('td[data-col="status"] .chipma
   .filter(one => one.offsetParent !== null).length;
 const words = () => [...document.querySelectorAll('td[data-col="status"] .chipword')]
   .filter(one => one.offsetParent !== null).length;
+// A wrapped cell does not spill sideways, it grows downwards — so the shape of
+// this defect is a height, not an overhang. Reported as the tallest priority
+// cell against the tallest status cell, which is the same chip at the same font
+// and is therefore the height one line of chip is.
+const stacking = () => {
+  // The MARK's own box, not the cell's: a row is as tall as its tallest cell,
+  // and on this corpus that is a list of tags several lines high — so asking the
+  // cell measured the row and reported the two columns identical however either
+  // of them was drawn.
+  const tall = key => Math.max(...[...document.querySelectorAll(`td[data-col="${key}"] > span`)]
+    .map(one => one.getBoundingClientRect().height), 0);
+  return {priority: Math.round(tall('priority')), status: Math.round(tall('status'))};
+};
+const priwords = () => [...document.querySelectorAll('td[data-col="priority"] .chipword')]
+  .filter(one => one.offsetParent !== null).length;
+const pribars = () => [...document.querySelectorAll('td[data-col="priority"] .bars')]
+  .filter(one => one.offsetParent !== null).length;
 
 scroller.style.width = '620px';
 dispatchEvent(new Event('resize'));
-const tight = {spilling: spilling(), marks: marks(), words: words()};
+const tight = {spilling: spilling(), marks: marks(), words: words(),
+               stacking: stacking(), priwords: priwords(), pribars: pribars()};
 
 scroller.style.width = '1800px';
 dispatchEvent(new Event('resize'));
-const roomy = {spilling: spilling(), marks: marks()};
+const roomy = {spilling: spilling(), marks: marks(), priwords: priwords()};
 
-return {tight, roomy};
+return {untouched, tight, roomy};
 """
 
 
@@ -4407,3 +4442,29 @@ def test_a_column_too_narrow_for_its_word_keeps_its_mark(page: str, tmp_path: Pa
     # opens costs them the words for good.
     assert got["roomy"]["marks"] > 0
     assert got["roomy"]["spilling"] == [], got["roomy"]["spilling"][:4]
+
+    # Priority, which was the same defect wearing the other failure mode: its
+    # word wrapped instead of overflowing, so the cell never reported itself over
+    # and the column tightened only once "Medium" had become six lines of one
+    # letter. jcanton, 2026-08-20, with a screenshot of a `M e d i u m` column
+    # beside a status chip that had already dropped to its glyph.
+    #
+    # Measured as a height and not as an overhang, because a wrapped cell does
+    # not hang out of anything. One line of chip is what the status column is at
+    # the same width, and the two are the same chip at the same font.
+    tall = got["tight"]["stacking"]
+    assert tall["priority"] <= tall["status"] + 2, (
+        f"the priority column is {tall['priority']}px tall against status at "
+        f"{tall['status']}px, so its word is still stacking a letter at a time"
+    )
+    assert got["tight"]["priwords"] == 0 and got["tight"]["pribars"] > 0, (
+        "a narrow priority column should read as the bars alone, the way status "
+        f"reads as its glyph alone: {got['tight']}"
+    )
+    # Both words are there before anything is dragged. Not after: this probe
+    # drags 360px into the id column and the fit honours it, so the two columns
+    # are legitimately still narrow in a window twice the width — which is the
+    # whole point of dropping to the mark rather than clipping.
+    assert got["untouched"]["priwords"] > 0 and got["untouched"]["words"] > 0, (
+        f"a table with room in it is not showing its words: {got['untouched']}"
+    )
