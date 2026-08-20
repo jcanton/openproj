@@ -11275,12 +11275,6 @@ const COEDIT = (() => {
     if (!layer || !BODY) return;
     const others = seats.filter(seat => seat.login !== me);
     if (!others.length) { layer.replaceChildren(); return; }
-    // A box nothing is drawing has no rows to sit on. The roster arrives while
-    // the page is still in read mode, where the textarea is `display: none` and
-    // every measurement is zero — and a mirror given a width of zero wraps the
-    // whole document one character per row before answering with a number that
-    // means nothing. `openproj:editing` is what brings everyone back.
-    if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
     // A surface that does not offer seats does not get them drawn, and it is
     // said rather than left as an empty layer somebody reports as broken. Ace
     // can answer "where is index N drawn" — `coordsAt` above does exactly that
@@ -11290,6 +11284,12 @@ const COEDIT = (() => {
     // is worse than no caret", which is the reason it is not drawn here rather
     // than drawn on a guess. The presence line still names who else is in the
     // document, which is the half that survives every reader.
+    //
+    // FIRST, and above the rects guard, which is a fix rather than a tidy: the
+    // Ace surface hides the `<textarea>` and puts its own box beside it, so
+    // `BODY.getClientRects()` is empty on exactly the surface this branch exists
+    // for and the sentence was never once said. A fact about the surface does
+    // not depend on whether the box it replaced is being drawn.
     if (!SURFACE.provides.seats) {
       layer.replaceChildren();
       if (!saidNoSeats) {
@@ -11299,6 +11299,12 @@ const COEDIT = (() => {
       }
       return;
     }
+    // A box nothing is drawing has no rows to sit on. The roster arrives while
+    // the page is still in read mode, where the textarea is `display: none` and
+    // every measurement is zero — and a mirror given a width of zero wraps the
+    // whole document one character per row before answering with a number that
+    // means nothing. `openproj:editing` is what brings everyone back.
+    if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
     const style = getComputedStyle(BODY);
     const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
     const tops = SURFACE.coordsAt(

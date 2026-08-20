@@ -497,3 +497,62 @@ def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there
         f"somebody else added lines and the gutter still shows "
         f"{got['after']['numbers']} numbers for {got['after']['lines']} lines"
     )
+
+
+# The same room, on the second surface. Nothing is typed: the question is what
+# the page does when somebody else arrives and this editor cannot draw where
+# they are.
+_ACE_SEAT = """
+<script>
+addEventListener('load', () => setTimeout(() => {
+  document.getElementById('toggle').click();
+  const socket = window.__socket;
+  socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
+  socket.hear({t: 'who', people: ['ann', 'bo'], where: [{login: 'bo', at: 3}]});
+}, 300));
+</script>
+"""
+
+_REFUSED = """
+return {
+  surface: document.querySelector('.acebox') ? 'ace' : 'textarea',
+  bands: document.getElementById('seats').children.length,
+  together: document.getElementById('together').textContent,
+  // `announce` puts it in the page's own visible status region where there is
+  // one, and the detail page has one; `#announce` is the shell's fallback.
+  said: document.getElementById('state').textContent
+        + ' ' + document.getElementById('announce').textContent,
+};
+"""
+
+
+def test_the_second_surface_says_it_cannot_draw_where_anybody_is(index: Index, tmp_path: Path):
+    """`provides.seats` is false on Ace, and the refusal has to reach a person.
+
+    It did not. `drawSeats` asked `BODY.getClientRects().length` first — "a box
+    nothing is drawing has no rows to sit on" — and the Ace surface hides the
+    `<textarea>` and draws its own box beside it, so that guard is always true on
+    exactly the surface the sentence below it was written for. The branch that
+    decided not to act said nothing at all, which is the pattern `AGENTS.md`
+    records three shipped instances of; the two guards are in the other order
+    now, because whether a surface has seats is a fact about the surface and not
+    about whether the box it replaced is on screen.
+    """
+    entity_id = a_record_with_a_document(index)
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="ace"
+    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _ACE_SEAT + "</body>")
+
+    got = measured_in(
+        chrome(), page, tmp_path / "ace-seat.html", 1200, _REFUSED, height=900,
+        query="?editor=ace", budget=6000,
+    )
+
+    assert got["surface"] == "ace", "the page did not open on the second surface"
+    assert got["bands"] == 0, "a band was drawn by an editor nothing has measured bands in"
+    assert "bo" in got["together"], "and the half that does survive — the name — is missing"
+    assert "not drawn in this editor" in got["said"], (
+        "somebody else is in the document, no band is drawn, and the page says nothing: "
+        f"the live region reads {got['said']!r}"
+    )
