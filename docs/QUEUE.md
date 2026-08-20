@@ -43,6 +43,42 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **A chip that overflows into the next column.** jcanton, 2026-08-20, with a
+  screenshot of a narrowed window: the status chip runs straight through the
+  Owner column — `» IN PROGRESSjcanton` — instead of wrapping or being cut.
+
+  Half-diagnosed already, so start here rather than from the screenshot. `.chip`
+  is `white-space: nowrap` (render.py, near the status tints), which is right:
+  "IN PROGRESS" broken across two lines is not a chip. What is missing is that
+  the cell has nowhere to put the overflow. `CLAMPED` is `tags, prs, assignees,
+  reviewers` and `SQUEEZABLE` is `title, owner`; `status` is in neither, so the
+  fit hands it a width and nothing clips what does not fit. Priority is in
+  neither either and gets away with it only because it is plain text, which wraps
+  — which is why the same screenshot shows `Medi um` on two lines. Both are the
+  same defect wearing different clothes.
+
+  **DECIDED — jcanton, 2026-08-20: drop to the mark and hide the word.** Below a
+  threshold the chip keeps its glyph and loses its text, and the priority cell
+  keeps its bars and loses "Medium". Not an ellipsis, and not a column that stops
+  shedding.
+
+  It is what the rest of the app already does rather than a fourth idea: the
+  timeline draws a status glyph inside a bar and drops it below `_GLYPH_MIN_PX`
+  when the bar is too narrow to hold it, and the graph's legend already teaches
+  `»` / `✓` / `?` and the five bars. So the narrow column falls back to a notation
+  the reader has already been taught, instead of to a word cut in half.
+
+  The two rejected, with why, so nobody re-opens them:
+
+  * *Clip with an ellipsis* — cheapest, and leaves `IN PROG…`. Legible, but it
+    teaches nothing and looks like a defect rather than a decision.
+  * *Make `status` squeezable* so the fit takes the room from `title` instead —
+    wrong way round. The title is the column somebody is actually reading.
+
+  Both columns at once. Priority is drawn with the bars now, and `Medi um`
+  wrapped under them is the same bug wearing different clothes — it went
+  unreported only because a wrap looks less broken than an overflow.
+
 * **Co-editing under Cloud Run's five-minute timeout.** Proven locally and never
   against the deployment, where `--timeout 300` closes every socket at five
   minutes and reconnection stops being exceptional. The deploy is done; the test

@@ -755,11 +755,19 @@ def test_push_refuses_to_resolve_a_divergence_by_itself(
     assert head(repo_path) == ours
 
 
-def test_one_save_talks_to_the_remote_twice_and_not_three_times(tmp_path):
-    """A save fetched, committed, and then fetched AGAIN on its way out — the
-    push did its own fetch first, milliseconds after `_absorb_remote` had done
-    one, inside the same lock. Three round trips, and a round trip to GitHub is
-    about 600 ms measured from a laptop, which is most of what a save costs.
+def test_one_save_talks_to_the_remote_once(tmp_path):
+    """It was three: fetch, commit, fetch again inside the push, push. A round
+    trip to GitHub is about 600 ms measured from a laptop, so that was most of
+    what a save cost.
+
+    The duplicate went first — the push was re-asking what `_absorb_remote` had
+    asked milliseconds earlier inside the same lock. Then the pre-fetch went too:
+    the write commits against local HEAD and pushes, and the PUSH is the question.
+    GitHub refuses a non-fast-forward, and the store rewinds, fetches, and runs
+    the same compare-and-swap loop again against what actually landed.
+
+    So the fetch happens when somebody else really did write, rather than on
+    every save in the hope that they might have.
 
     Counted rather than timed, because the point is the number of conversations
     and not how slow the network happened to be.
@@ -791,7 +799,7 @@ def test_one_save_talks_to_the_remote_twice_and_not_three_times(tmp_path):
     finally:
         Store.fetch, Store._send = real_fetch, real_send
 
-    assert said == ["fetch", "push"], f"one save talked to the remote {len(said)} times: {said}"
+    assert said == ["push"], f"one save talked to the remote {len(said)} times: {said}"
 
 
 def test_a_push_rejected_by_a_moved_remote_is_retried_once(tmp_path):
@@ -865,3 +873,75 @@ def test_an_upload_reaches_the_remote_like_every_other_commit(tmp_path):
     assert written.commit and written.pushed
     for one in (store, landed):
         one.close()
+
+
+def test_a_write_that_loses_the_race_runs_again_and_lands(tmp_path):
+    """The bargain stage 2 makes. There is no fetch before a save any more, so a
+    save is committed against a base that may already be stale — and the push is
+    what asks. When it is refused, the store rewinds, takes what landed, and runs
+    the SAME compare-and-swap loop against it.
+
+    Conflict semantics are therefore unchanged: the retry is the identical loop,
+    so two people editing two files still merge silently and two people editing
+    one file still get the same refusal. What moves is the tail latency of a
+    collision — the rare case now pays the round trip that every save used to.
+
+    Verified against real GitHub over HTTPS before this was built, because
+    `file://` and GitHub word the refusal differently and only one of them is
+    production: a non-fast-forward push raises `cannot push non-fastforwardable
+    reference`. The store tells a refusal from an unreachable host by fetching and
+    looking, not by reading that message — the first version matched on the text
+    and worked in production and never in these tests.
+    """
+    upstream = tmp_path / "upstream.git"
+    pygit2.init_repository(str(upstream), bare=True, initial_head="main")
+    commit_directly(upstream, {"tasks/task-a00001.md": "---\nid: task-a00001\n---\n"}, "seed")
+
+    ours = tmp_path / "ours.git"
+    theirs = tmp_path / "theirs.git"
+    pygit2.clone_repository(str(upstream), str(ours), bare=True)
+    pygit2.clone_repository(str(upstream), str(theirs), bare=True)
+    mine, yours = Store(ours, remote=str(upstream)), Store(theirs, remote=str(upstream))
+
+    # They land a commit on a different file. We know nothing about it: no fetch.
+    yours.write("tasks/task-b00002.md", "---\nid: task-b00002\n---\n",
+                yours.head(), "bo", "theirs")
+
+    written = mine.write("tasks/task-a00001.md", "---\nid: task-a00001\ntitle: mine\n---\n",
+                         mine.head(), "ann", "ours")
+
+    assert written.commit, "the write did not land"
+    assert written.pushed, "answered as saved without reaching the remote"
+    assert written.outcome in ("committed", "retried"), written.outcome
+
+    # Both records are on the remote, and ours is on top of theirs rather than
+    # instead of it.
+    landed = Store(upstream)
+    paths = landed.paths(landed.head())
+    assert "tasks/task-a00001.md" in paths and "tasks/task-b00002.md" in paths
+    assert "title: mine" in landed.read(landed.head(), "tasks/task-a00001.md")
+    for one in (mine, yours, landed):
+        one.close()
+
+
+def test_a_write_answered_200_is_a_write_that_reached_the_remote(tmp_path):
+    """The invariant the optimistic push must not spend. `pushed` is what the page
+    reports as saved, and a commit that only exists on an ephemeral container is
+    not saved — `deploy/boot.py` re-clones the plan on every cold start, so an
+    unpushed commit is not a cache entry awaiting sync, it is work that does not
+    exist yet."""
+    upstream = tmp_path / "upstream.git"
+    pygit2.init_repository(str(upstream), bare=True, initial_head="main")
+    commit_directly(upstream, {"tasks/task-a00001.md": "---\nid: task-a00001\n---\n"}, "seed")
+    ours = tmp_path / "ours.git"
+    pygit2.clone_repository(str(upstream), str(ours), bare=True)
+    store = Store(ours, remote=str(upstream))
+
+    for n in range(3):
+        written = store.write("tasks/task-a00001.md", f"---\nid: task-a00001\ntitle: {n}\n---\n",
+                              store.head(), "ann", f"edit {n}")
+        assert written.pushed, f"edit {n} answered as saved without reaching the remote"
+        landed = Store(upstream)
+        assert landed.head() == written.commit, f"edit {n} is not what the remote holds"
+        landed.close()
+    store.close()

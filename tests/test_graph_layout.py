@@ -415,3 +415,67 @@ def test_no_edge_crosses_a_card_it_has_nothing_to_do_with(drawn: dict):
         f"{drawn['under']} of {drawn['edges']} edges cross a card they are not "
         "attached to"
     )
+
+
+def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: Path):
+    """A cycle in the ghosts is not a cycle in the plan.
+
+    Two projects can each hold work waiting on the other with nothing circular
+    about any single record — legal, common, and the one shape no arrangement of
+    two boxes on a line can express. ELK cannot rank both directions, so it used
+    to break one arbitrarily: measured on a generated plan of 518 records, two
+    arrows came out backwards between one such pair, which had two dependencies
+    running one way and one the other.
+
+    The weaker direction is now dropped before ELK sees it, so the majority ranks
+    correctly and only the minority reads backwards. That last one is honest:
+    those records really are waiting on each other.
+    """
+    from plans import build
+
+    root = tmp_path / "mutual"
+    build(root, 4, 3, 3)
+
+    entities, config, _ = load_repo(root)
+    index = build_index(entities, config, date(2026, 8, 17))
+    projects = sorted(e for e, one in index.entities.items() if one.kind == "project")
+    under = {
+        project: sorted(
+            e for e, one in index.entities.items()
+            if one.kind == "pitch" and one.parent == project
+        )
+        for project in projects
+    }
+    left = under[projects[0]]
+    right = under[projects[1]]
+    assert len(left) >= 2 and len(right) >= 2, "the corpus is not the shape this needs"
+
+    def waits(entity_id: str, on: str) -> None:
+        """Add one dependency, keeping whatever the generator already wrote."""
+        path = next(root.glob(f"*/{entity_id}.md"))
+        text = path.read_text()
+        if "depends_on:" in text:
+            text = text.replace("depends_on: [", f"depends_on: [{on}, ", 1)
+        else:
+            text = text.replace("---\n\n", f"depends_on: [{on}]\n---\n\n", 1)
+        path.write_text(text)
+
+    # Two dependencies from the second project's work to the first's, and one back
+    # the other way: a mutual pair whose majority direction is unambiguous.
+    waits(right[0], left[0])
+    waits(right[1], left[1])
+    waits(left[0], right[0])
+
+    entities, config, _ = load_repo(root)
+    index = build_index(entities, config, date(2026, 8, 17))
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "mutual.html", 1900, _GEOMETRY,
+                      height=820, patience=3500)
+
+    # One arrow may read backwards — the minority — and no more. Broken
+    # arbitrarily it was two of three; ranked by weight it is one of three.
+    assert got["backward"] <= 1, (
+        f"{got['backward']} arrows read backwards where at most the minority "
+        "direction should"
+    )
+    assert got["overlapping"] == [], got["overlapping"][:4]

@@ -4144,3 +4144,75 @@ def test_only_a_cell_with_something_in_the_way_is_tinted(page: str):
     assert re.search(r"--waiting: (#[0-9a-f]{6})", page).group(1) != re.search(
         r"--sev-blocker-soft: (#[0-9a-f]{6})", page
     ).group(1)
+
+
+# Drag a column, then squeeze the window hard, which is how jcanton hit this: the
+# automatic fit protects these columns, and a dragged layout is scaled to whatever
+# window it is looked at in and can go below what a chip needs.
+_TIGHT = """
+const table = document.getElementById('rows');
+const scroller = table.parentElement;
+const grip = document.querySelector('th .grip') || document.querySelector('th [class*=grip]');
+if (!grip) return {error: 'no grip to drag'};
+grip.dispatchEvent(new PointerEvent('pointerdown', {clientX: 400, bubbles: true}));
+dispatchEvent(new PointerEvent('pointermove', {clientX: 760, bubbles: true}));
+dispatchEvent(new PointerEvent('pointerup', {clientX: 760, bubbles: true}));
+
+const spilling = () => {
+  const out = [];
+  for (const key of ['status', 'priority'])
+    for (const cell of document.querySelectorAll(`td[data-col="${key}"]`)) {
+      const box = cell.getBoundingClientRect();
+      for (const inner of cell.children) {
+        const edge = inner.getBoundingClientRect().right;
+        if (edge > box.right + 1) out.push(`${key} ${Math.round(edge - box.right)}px past`);
+      }
+    }
+  return out;
+};
+const marks = () => [...document.querySelectorAll('td[data-col="status"] .chipmark')]
+  .filter(one => one.offsetParent !== null).length;
+const words = () => [...document.querySelectorAll('td[data-col="status"] .chipword')]
+  .filter(one => one.offsetParent !== null).length;
+
+scroller.style.width = '620px';
+dispatchEvent(new Event('resize'));
+const tight = {spilling: spilling(), marks: marks(), words: words()};
+
+scroller.style.width = '1800px';
+dispatchEvent(new Event('resize'));
+const roomy = {spilling: spilling(), marks: marks()};
+
+return {tight, roomy};
+"""
+
+
+def test_a_column_too_narrow_for_its_word_keeps_its_mark(page: str, tmp_path: Path):
+    """jcanton, 2026-08-20, with a screenshot of a narrowed window: the status chip
+    ran straight through the Owner column — `» IN PROGRESSjcanton`.
+
+    `.chip` is `white-space: nowrap`, which is right: "IN PROGRESS" broken over
+    two lines is not a chip. What was missing is anywhere for the overflow to go —
+    `status` is in neither `CLAMPED` nor `SQUEEZABLE`, so the fit hands it a width
+    and nothing clips what does not fit. Priority was in neither either, and got
+    away with it only because plain text wraps, which is the `Medi um` in the same
+    screenshot.
+
+    The decision was to drop to the mark rather than clip with an ellipsis:
+    `IN PROG…` teaches nothing, while `»` and the five bars are already taught by
+    the graph's legend, and the timeline already drops its own glyph below
+    `_GLYPH_MIN_PX`. A narrow column falls back to a notation the reader has been
+    shown rather than to a word cut in half.
+    """
+    got = measured_in(chrome(), page, tmp_path / "tight.html", 1900, _TIGHT)
+
+    assert not got.get("error"), got
+    assert got["tight"]["spilling"] == [], got["tight"]["spilling"][:4]
+    assert got["tight"]["words"] == 0, "the word stayed and is what was spilling"
+    assert got["tight"]["marks"] > 0, (
+        "the mark went with the word, so a squeezed column now says nothing at all"
+    )
+    # And the words come back. Otherwise the first narrow window a reader ever
+    # opens costs them the words for good.
+    assert got["roomy"]["marks"] > 0
+    assert got["roomy"]["spilling"] == [], got["roomy"]["spilling"][:4]

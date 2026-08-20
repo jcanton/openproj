@@ -3667,3 +3667,91 @@ def test_one_save_does_not_stop_the_rest_of_the_process(tmp_path, monkeypatch):
         f"a reader waited {max(waits):.0f} ms while one save was in flight, so the "
         "write is still running on the event loop"
     )
+
+
+def test_nothing_edits_a_record_after_it_has_been_parsed(client: TestClient):
+    """The precondition the parse cache rests on, asserted rather than assumed.
+
+    A cached record is one object handed to every request and, because 25 of this
+    app's routes are sync `def` dispatched through anyio's worker threads, to more
+    than one at a time. If any reader mutated one — a field reassigned, a list
+    sorted in place — the change would leak into every later request and into
+    other threads mid-read.
+
+    Grepping says nothing does: the only assignment to a parsed entity anywhere is
+    `entity._source` inside `parse_text` itself, before the object is ever cached.
+    This is that grep turned into something that fails when it stops being true,
+    by taking a copy of every record, exercising the pages that read them, and
+    comparing.
+    """
+    from openproj import web
+
+    client.get("/")
+    before = {key: entity.model_dump(mode="json") for key, entity in list(web._PARSED.items())}
+    assert before, "nothing was cached, so nothing was checked"
+
+    for route in ("/", "/graph", "/timeline", "/people", "/cycles", "/api/index.json"):
+        assert client.get(route).status_code == 200, route
+
+    for key, was in before.items():
+        now = web._PARSED[key].model_dump(mode="json")
+        assert now == was, f"{key[1]} was edited after it was parsed: {was} -> {now}"
+
+
+def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
+    """Entities, cycles, issues, notes and people, each parsed once per
+    (blob, path).
+
+    It was written for entities alone and the other four went on doing a full
+    walk plus a read and a parse of every file on EVERY request, warm or cold —
+    which does not decay, and notes and issues are exactly what a betting table
+    accumulates. Measured on a plan with 300 of each: `/` 52 ms to 19 ms,
+    `/notes` 54 to 15, `/issues` 40 to 15.
+
+    What this asserts is that all five actually go through it, which is the thing
+    that silently stops being true when somebody adds a sixth kind or writes a
+    loader by hand. It does NOT assert anything about the prune: with the
+    threshold measured against the whole tree the prune does not fire on any
+    corpus a test can afford to build, so a test claiming to check it would be a
+    test that cannot fail. The two numbers it turns on — the keep-set and the
+    threshold, both against the whole tree rather than the kind being read — are
+    recorded in the comments beside them and were measured, not reasoned.
+    """
+    from test_store import commit_directly
+
+    from openproj import web
+
+    commit_directly(
+        repo_path,
+        {
+            **SEED,
+            "notes/note-000001.md": (
+                "---\nid: note-000001\ntitle: a note\nstatus: thinking\n---\n\nx\n"
+            ),
+            "issues/issue-000001.md": (
+                "---\nid: issue-000001\ntitle: an issue\nstatus: open\n---\n\nx\n"
+            ),
+            "people/ann.md": "---\nlogin: ann\n---\n",
+            # A cycle needs its dates: without them `parse_cycle_text` refuses
+            # the file, it lands in `unreadable` rather than in the cache, and
+            # this test reports a gap that is the fixture's fault.
+            "cycles/0037.md": (
+                "---\ncycle: 37\nstarts_on: 2026-06-22\nreviews_on: 2026-08-03\n---\n"
+            ),
+        },
+        "one of every kind",
+    )
+
+    app = create_app(repo_path, auth="dev", secret=SECRET)
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        for route in ("/", "/notes", "/issues", "/cycles", "/people"):
+            assert client.get(route).status_code == 200, route
+
+        held = {key[1].split("/")[0] for key in web._PARSED}
+
+    for kind in ("tasks", "notes", "issues", "people", "cycles"):
+        assert kind in held, (
+            f"{kind} is read on every request without going through the cache; "
+            f"cached kinds are {sorted(held)}"
+        )
