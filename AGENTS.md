@@ -387,6 +387,42 @@ Versions are cheap here. The plan is on GitHub and this service holds no data, s
 command and buys the ability to say what is running, and to put a release beside it saying what
 changed. 1.0.0 waits for adoption, per jcanton.
 
+**The order is merge, then tag, then deploy**, and it is that way round because a tag names a commit
+on `main`. Tagging a branch and merging afterwards gives the release a sha that no longer exists as
+anything you can check out.
+
+```bash
+gh pr merge <n> --merge          # only when `check` is green; jcanton says when
+git checkout main && git pull
+# bump pyproject.toml and src/openproj/__init__.py, then:
+uv lock                          # CI installs --locked; a bump without it goes red
+git commit -am "vX.Y.Z" && git tag vX.Y.Z && git push && git push --tags
+./gcloud_deploy.sh               # from the repository root
+```
+
+**Where it runs.** Project `icon4py-plan-gcloud`, region `europe-west1`, service `openproj`. Those
+three are filled in at the top of `gcloud_deploy.sh` and are the only place they are written down.
+The script is idempotent — everything it creates it checks for first — so a second run redeploys
+the current commit and leaves the service account, the registry and the three secrets alone. It
+prompts for exactly one thing, the OAuth client secret, and only when
+`openproj-oauth-client-secret` does not already exist; once it does, the deploy is unattended.
+
+Afterwards, ask the service what it is running and check the version string against the tag. That
+is the whole point of tagging, and it is one command:
+
+```bash
+gcloud run services describe openproj --region=europe-west1 \
+  --format="value(status.url,status.latestReadyRevisionName)"
+```
+
+**One region, and delete the ones you stop using.** The first deployment went to `europe-west6`
+(Zurich) and moved to `europe-west1` for the free tier. The Zurich service was not deleted, and on
+2026-08-20 it was still **live and serving** — a public URL answering 200 with three-day-old code,
+on its second revision while west1 was on its fifteenth. Secrets in Secret Manager are project-wide,
+so that forgotten copy held the same GitHub App key that can write to the plan repository. It and
+its Artifact Registry repo (153.6 MB of images) were deleted that day. A region you have stopped
+deploying to is not dormant; it is a second instance of the tool with nobody watching it.
+
 ## Type checking: measured, not adopted
 
 Measured on 2026-08-18, with `ty` 0.0.72 and `mypy` 2.3.1:
