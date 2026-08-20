@@ -2641,9 +2641,12 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    carry the accent and extra weight, a pitch a plain hairline, and a task no
    border at all, which is the first thing anybody noticed about the id column.
    The word inside the chip is what says which kind it is. */
-.chip.kind-project, .chip.kind-pitch, .chip.kind-task {
-  color: var(--kind-ink); border: 1px solid var(--kind-line);
-}
+{#- Written by the loop rather than by hand, like the status rules above it: a
+    kind added to the ladder arrives with its chip already drawn instead of as the
+    one chip on the page with no rule and no border. -#}
+{% for k in kinds %}
+.chip.kind-{{ k }} { color: var(--kind-ink); border: 1px solid var(--kind-line); }
+{%- endfor %}
 /* The checklist meter, on the table and on the detail page. Always beside the
    two numbers it draws: a bar alone says "some", and the question a checklist
    answers is "how many left". */
@@ -14501,10 +14504,12 @@ _DETAIL_STYLE = """
    widths, which ragged the whole column. A fixed inline-block wide enough for
    the longest of the three, with the gap inside it rather than as a margin, so
    a row that wraps wraps its title and not its marker. */
-.toc li .chip.kind-project, .toc li .chip.kind-pitch, .toc li .chip.kind-task {
+{% for k in kinds %}
+.toc li .chip.kind-{{ k }} {
   display: inline-block; min-width: 5.4rem; text-align: center;
   margin-right: .5rem; vertical-align: baseline;
 }
+{%- endfor %}
 /* Centred, and a container so the panes below can ask how wide the column
    actually is. It sat flush left with a full-height rule down its right edge,
    which on a wide screen is not a document — it is the left half of a two-pane
@@ -19932,8 +19937,11 @@ def _page(
         ],
         # The shell writes the chip and legend rules for every status, so a
         # status added to the model cannot arrive with three of its four tokens
-        # wired up and the fourth still spelled out on a line nobody edited.
+        # wired up and the fourth still spelled out on a line nobody edited. The
+        # kinds are here for the same reason and were not: their chip rule named
+        # three of them, so `product` was the one chip on the page with no border.
         statuses=STATUSES,
+        kinds=KINDS,
         # The colour schemes: the families the picker offers, the block of slots
         # they put on the root element, and which hue each status takes. One
         # source, so a family added to `themes.py` reaches the menu and the

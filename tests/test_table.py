@@ -1990,11 +1990,23 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
 
 
 def test_no_kind_is_given_a_rule_of_its_own(page: str):
-    """One rule for all three, so none of them can drift. What the rule resolves
-    to on each of the three chips is
-    `test_cascade.test_every_kind_chip_is_the_same_shape`."""
-    assert ".chip.kind-project, .chip.kind-pitch, .chip.kind-task {" in page
-    assert page.count(".chip.kind-") == 3, "three mentions, all of them in that one selector"
+    """One rule per kind and every one of them the same rule, so none can drift.
+    What it resolves to on each chip is
+    `test_cascade.test_every_kind_chip_is_the_same_shape`.
+
+    It was one selector naming three kinds, which is the same claim while the
+    ladder has three rungs and a chip with no border at all the moment it has
+    four — `product` arrived as exactly that. The rules are written by a loop
+    over the ladder now, so the claim is that they are identical rather than that
+    there is one of them.
+    """
+    from openproj.model import KIND_NAMES
+
+    rules = re.findall(r"\.chip\.kind-(\w+) \{([^}]*)\}", page)
+    assert [kind for kind, _ in rules] == list(KIND_NAMES), rules
+    assert len({body.strip() for _, body in rules}) == 1, (
+        f"the kinds are drawn {len({b.strip() for _, b in rules})} different ways: {rules}"
+    )
 
 
 def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
