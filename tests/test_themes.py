@@ -237,6 +237,40 @@ def test_the_picker_puts_the_scheme_on_the_page_and_takes_it_off_again(tmp_path:
     assert got["cleared"]["bg"] == "#ffffff", got["cleared"]
 
 
+_BOXES = """
+const root = document.documentElement;
+root.dataset.scheme = 'gruvbox';
+root.dataset.theme = 'light';
+const bg = getComputedStyle(document.body).backgroundColor;
+const boxes = [...document.querySelectorAll('input[type="search"], input[type="text"], textarea')];
+return {
+  bg,
+  count: boxes.length,
+  odd: boxes.filter(one => getComputedStyle(one).backgroundColor !== bg)
+    .map(one => one.id || one.name || one.type),
+};
+"""
+
+
+def test_a_scheme_reaches_the_boxes_people_type_into(tmp_path: Path):
+    """A search box is a `<input type=search>` with no background of its own, so
+    it is drawn in the browser's Field colour — white on every light
+    `color-scheme`, whatever the page around it is painted.
+
+    jcanton, 2026-08-20, having switched schemes: "the search boxes backgrounds
+    are still white/black". Buttons and selects had been given the app's colours
+    when the controls were made consistent; the boxes had not, because nothing in
+    the default palette made them look wrong.
+    """
+    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "boxes.html", 1400, _BOXES,
+                      height=900, patience=1500)
+
+    assert got["count"], "no typing boxes on the page at all"
+    assert got["bg"] == "rgb(251, 241, 199)", f"the scheme did not apply: {got['bg']}"
+    assert got["odd"] == [], f"drawn in the browser's colours, not the page's: {got['odd']}"
+
+
 _CANVAS = """
 const fills = {};
 cy.nodes().filter(n => n.isChildless()).forEach(n => { fills[n.data('status')] = n.style('background-color'); });

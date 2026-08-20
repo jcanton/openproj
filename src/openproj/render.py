@@ -2874,6 +2874,22 @@ button, select, .button, .button:visited {
 }
 button:hover, select:hover, .button:hover { border-color: var(--accent);
                                             color: var(--accent); }
+/* Every box somebody types into, in the page's own colours rather than the
+   browser's. `background` and `color` only: the padding, border and radius of a
+   text box are set where each of them is drawn — a search box, a cell editor and
+   a form field are three different shapes — and what they had in common was the
+   one thing nobody had set, so they were drawn in the UA's Field colour. That is
+   white on every light `color-scheme`, which is why a colour scheme left every
+   search box on the page a white rectangle. jcanton, 2026-08-20.
+
+   Checkboxes and radios are excluded because their background IS the control:
+   painting it is how a checkbox loses its tick. `accent-color` is what tints
+   those, and the browser derives it from `color-scheme`, which every scheme
+   sets. */
+input:not([type="checkbox"]):not([type="radio"]), textarea {
+  background: var(--surface); color: var(--fg);
+}
+::placeholder { color: var(--muted); opacity: 1; }
 /* Apply and Reset on the timeline were a button and a bare link, which reads as
    one control and one afterthought. They are the same pair of scissors pointed
    two ways, so they are the same size and shape; only the fill says which one is
