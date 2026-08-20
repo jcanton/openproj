@@ -3047,13 +3047,18 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     then which palette, then how bright. A native select for the same reason the
     filter bars use one — see `_CONTROL` — and it carries the app's own control
     styling rather than the platform's. -#}
-<label class="schemepick"><span class="sr-only">Colour scheme</span>
-  <select id="scheme" title="Colour scheme">
+{#- `aria-label` and not a wrapping label with hidden text: this app's rule is
+    that every control is named where a reader can find the name, and the check
+    that holds it (`test_every_control_on_the_cycle_page_has_a_name`) reads the
+    served markup. A label whose only text is invisible is a name for one of the
+    two readers. -#}
+<span class="schemepick">
+  <select id="scheme" title="Colour scheme" aria-label="Colour scheme">
     <option value="">openproj</option>
     {% for family in families %}
     <option value="{{ family.key }}">{{ family.label }}</option>
     {% endfor %}
-  </select></label>
+  </select></span>
 <button type="button" id="theme"></button></span></nav>
 {#- The home for a message on the pages that have nowhere to put one. Every page
     that announces anything had a `#state` of its own and every one of those was
