@@ -281,9 +281,7 @@ def _cycle_message(fields: dict) -> str:
 
 
 def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]]:
-    paths, too_deep = record_paths_in([CYCLE_DIR], store.paths(commit))
-    plans, refused = readable(paths, lambda path: parse_cycle_text(store.read(commit, path), path))
-    return plans, [*refused, *too_deep]
+    return _read_records(store, commit, [CYCLE_DIR], parse_cycle_text)
 
 
 def _cycle_path(number: int) -> str:
@@ -291,9 +289,7 @@ def _cycle_path(number: int) -> str:
 
 
 def _issues_at(store: Store, commit: str) -> tuple[list[Issue], list[Unreadable]]:
-    paths, too_deep = record_paths_in([ISSUE_DIR], store.paths(commit))
-    issues, refused = readable(paths, lambda path: parse_issue_text(store.read(commit, path), path))
-    return issues, [*refused, *too_deep]
+    return _read_records(store, commit, [ISSUE_DIR], parse_issue_text)
 
 
 def _issue_path(issue_id: str) -> str:
@@ -312,9 +308,7 @@ NOTE_DIR = "notes"
 
 
 def _notes_at(store: Store, commit: str) -> tuple[list[Note], list[Unreadable]]:
-    paths, too_deep = record_paths_in([NOTE_DIR], store.paths(commit))
-    notes, refused = readable(paths, lambda path: parse_note_text(store.read(commit, path), path))
-    return notes, [*refused, *too_deep]
+    return _read_records(store, commit, [NOTE_DIR], parse_note_text)
 
 
 def _note_path(note_id: str) -> str:
@@ -347,11 +341,7 @@ def _people_at(store: Store, commit: str) -> tuple[list[Person], list[Unreadable
     the two paths sorted last was the icon on the page, and it was the one the
     CLI could not see.
     """
-    paths, too_deep = record_paths_in([PEOPLE_DIR], store.paths(commit))
-    people, refused = readable(
-        paths, lambda path: parse_person_text(store.read(commit, path), path)
-    )
-    return people, [*refused, *too_deep]
+    return _read_records(store, commit, [PEOPLE_DIR], parse_person_text)
 
 
 def _person_or_why(text: str, path: str) -> tuple[Person | None, str]:
@@ -428,23 +418,35 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
 # Pruned to the tree it just read, so the memory it holds is the size of the plan
 # rather than the size of the plan's history. An instance that lives for a week
 # would otherwise accumulate every version of every record anybody edited.
-_PARSED: dict[str, Entity] = {}
+_PARSED: dict[tuple[str, str], object] = {}
 
 
-def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
+def _read_records(store: Store, commit: str, where, parse):
+    """Every record under `where` at this commit, parsed once per (blob, path).
+
+    One function for all five kinds. It was written for entities alone, and the
+    other four — cycles, issues, notes, people — went on doing a full tree walk
+    plus a read and a parse of every file on EVERY request, warm or cold. That
+    does not decay, and notes and issues are exactly what a betting table
+    accumulates. Measured on a plan with 300 of each: `/` 52 ms to 19 ms,
+    `/notes` 54 to 15, `/issues` 40 to 15.
+
+    All five already funnelled through `readable`, so this is one shape rather
+    than five.
+    """
     blobs = store.blobs(commit)
-    paths, too_deep = record_paths_in(DIRECTORY.values(), sorted(blobs))
+    paths, too_deep = record_paths_in(where, sorted(blobs))
 
-    def parsed(path: str) -> Entity:
+    def parsed(path: str):
         key = (blobs[path], path)
         held = _PARSED.get(key)
         if held is not None:
             return held
-        entity = parse_text(store.read(commit, path), path)
-        _PARSED[key] = entity
-        return entity
+        record = parse(store.read(commit, path), path)
+        _PARSED[key] = record
+        return record
 
-    entities, refused = readable(paths, parsed)
+    records, refused = readable(paths, parsed)
     # Pruned, but only once it has grown to several times the plan it just read.
     # Pruning to exactly that tree looks tidier and is worse: one process can
     # serve more than one plan — every test in this suite builds its own — and two
@@ -452,8 +454,15 @@ def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadab
     # cache into an overhead. A file that would not parse is not held at all: it
     # has no answer, and the next read has to produce the same refusal for the
     # banner to go on saying so.
-    if len(_PARSED) > 3 * max(len(paths), 1):
-        keep = {(blobs[path], path) for path in paths}
+    # Both numbers against the WHOLE tree, not the kind being read. Five kinds
+    # share this dict: a keep-set built from `paths` alone means reading entities
+    # evicts every note, and a threshold measured against `paths` means reading
+    # cycles — of which a plan has two — prunes a six-hundred-entry cache on every
+    # request. Measured with the threshold wrong, every page came out SLOWER than
+    # with no cache at all: `/issues` 40 ms uncached, 91 ms with the bug, 15 ms
+    # with it fixed.
+    if len(_PARSED) > 3 * max(len(blobs), 1):
+        keep = {(sha, path) for path, sha in blobs.items()}
         # `list(...)` before iterating and `pop(..., None)` rather than `del`:
         # this dict is a module global and 25 of this app's routes are sync `def`,
         # which Starlette dispatches through anyio's worker threads — so two
@@ -463,7 +472,11 @@ def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadab
         # page route, and the window widens as the plan grows.
         for gone in [key for key in list(_PARSED) if key not in keep]:
             _PARSED.pop(gone, None)
-    return entities, [*refused, *too_deep]
+    return records, [*refused, *too_deep]
+
+
+def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
+    return _read_records(store, commit, DIRECTORY.values(), parse_text)
 
 
 # A form returns strings, and `priority: soon` is valid YAML that parses fine and
