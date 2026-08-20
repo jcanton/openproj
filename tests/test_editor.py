@@ -3289,3 +3289,90 @@ def test_the_editor_a_person_chose_is_carried_back_into_the_address(
     assert "location.protocol.startsWith('http')" in sticky.group(0)
     assert "location.replace(url)" in sticky.group(0)
     assert "url.searchParams.set('editor', EDITOR.editor)" in sticky.group(0)
+
+
+# The document is the row with the height in it, and the facts are the row below.
+# Both halves are measured because either alone leaves the surface unusable: with
+# only the floor on the row, the facts drew as a 59px box with fifteen fields
+# scrolling inside it; with only the reorder, the document got the 60px of free
+# space the facts' auto row left over.
+_NARROW_FULL_PAGE = """
+const article = document.querySelector('article.entity');
+const area = document.querySelector('textarea[name=body]');
+const panes = document.querySelector('.panes');
+const facts = document.querySelector('.facts');
+const main = document.querySelector('.main');
+const pane = document.getElementById('body-preview');
+const rows = element => {
+  const box = element.getBoundingClientRect();
+  return Math.round(box.height / parseFloat(getComputedStyle(area).lineHeight));
+};
+const state = () => ({
+  rows: rows(area),
+  documentFirst: main.getBoundingClientRect().top < facts.getBoundingClientRect().top,
+  factsWhole: Math.round(facts.getBoundingClientRect().height) >= facts.scrollHeight - 1,
+  factsReachable: panes.scrollHeight > panes.clientHeight
+                  || facts.getBoundingClientRect().bottom <= panes.getBoundingClientRect().bottom,
+});
+
+// The create form is always editing and has no way in, so it has no `#toggle`.
+const into = document.getElementById('toggle');
+if (into) into.click();
+const out = {};
+document.getElementById('view-edit').click();
+out.write = state();
+document.getElementById('view-both').click();
+out.split = state();
+out.paneRows = Math.round(
+  pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight));
+document.getElementById('preview').click();
+out.read = {
+  paneRows: Math.round(
+    pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight)),
+  documentFirst: main.getBoundingClientRect().top < facts.getBoundingClientRect().top,
+};
+out.width = innerWidth;
+out.fixed = getComputedStyle(article).position;
+return out;
+"""
+
+
+@pytest.mark.parametrize("where", ["detail", "new"])
+def test_the_full_page_surface_is_a_writing_surface_at_a_window_that_is_not_wide(
+    client: TestClient, tmp_path: Path, where: str
+):
+    """A 900px window is a laptop with the window not maximised, and full page is
+    the feature this branch exists for.
+
+    The container query stacks the facts above the document below 56rem of
+    column, and in full page the explicit `minmax(0, 1fr)` row then landed on the
+    facts — because `.facts` comes first in the markup — while the document got
+    the implicit `auto` one. A `height: 100%` box in an auto track is a box the
+    size of its `rows` attribute: measured at every width from 900px down, in all
+    three views and on both surfaces, the writing box was 50px. Two lines, under
+    six hundred pixels of metadata, with no way to make it bigger.
+
+    Asked of Chrome and not of `tests/cascade.py`, and the reason is written into
+    that module: it skips at-rules bodies and all, so it resolves the wide
+    two-column page and cannot see the stacked one at all. This is a question
+    about which track a box ended up in, which is layout.
+    """
+    page = client.get(f"/detail/{TASK}").text if where == "detail" else client.get("/new").text
+    got = measured_in(chrome(), page, tmp_path / f"narrow-{where}.html", 900, _NARROW_FULL_PAGE)
+
+    assert got["width"] == 900 and got["fixed"] == "fixed"
+    for view in ("write", "split"):
+        assert got[view]["rows"] >= 12, (
+            f"the {view} view gives the document {got[view]['rows']} lines at a 900px window"
+        )
+        assert got[view]["documentFirst"], (
+            "the facts are above the document in the surface that exists to be written in"
+        )
+        assert got[view]["factsWhole"], (
+            "the facts pane is scrolling inside itself: the row it is in has no height, "
+            "so fifteen fields are in a box a few lines tall"
+        )
+        assert got[view]["factsReachable"], "and there is no way to scroll down to them"
+    assert got["paneRows"] >= 12, "the rendered half of the split is not readable either"
+    assert got["read"]["paneRows"] >= 12
+    assert got["read"]["documentFirst"]

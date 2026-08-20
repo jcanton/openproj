@@ -11729,10 +11729,41 @@ article.entity.full > .commitbar { flex: none; }
    be stretched to its height; inside it, a pane that is its content's height is
    a pane that overflows the window. The at-rule adds no specificity, so this
    (0,3,1) wins wherever both apply. */
+/* The floor on that row, and the `order` below it, are one fix and it is worth
+   saying what went wrong. Below the container query the panes are ONE column and
+   `.facts` comes first in the markup, so the facts took the explicit
+   `minmax(0, 1fr)` row and the document got the implicit `auto` one — and a
+   `height: 100%` box in an auto row is a box the size of its `rows` attribute.
+   Measured in Chrome at every width from 900px down, in all three views and on
+   both surfaces: the writing box was 50px, two lines, with six hundred pixels of
+   metadata above it. Full page is the feature this branch is for and under
+   ~960px of window it was a dead end.
+   `1fr` alone could not have fixed it: `fr` distributes FREE space, and the
+   facts' auto row leaves 60px of it. So the row gets a floor as well — `min()`
+   rather than a flat `30rem`, because on a window shorter than that the floor
+   would push the commit bar off the bottom, and a pane the height of the window
+   is the honest answer there.
+   And `grid-auto-rows: max-content` for the row the facts then land in. It only
+   exists in the stacked case, so it is inert in the two-column one; without it
+   the facts drew as a 59px box with fifteen fields scrolling inside it, because
+   `overflow-y: auto` on that pane makes its automatic minimum size zero and an
+   `auto` track with no space left gives it exactly that. `.panes` is the
+   scroller here, so the facts get their whole height one flick below the
+   document rather than a scrollbar of their own inside three lines. */
 article.entity.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
-                             align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+                             align-items: stretch;
+                             grid-template-rows: minmax(min(30rem, 100%), 1fr);
+                             grid-auto-rows: max-content; }
 article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
-article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column; }
+/* `order: -1` so the document takes that row and not the facts. It changes
+   nothing in the two-column case — the container query places BOTH panes
+   explicitly, at `grid-row: 1`, and `order` has no say over an item that is
+   definitely placed — and everything in the stacked one, where both are
+   auto-placed in modified document order. Reordering here rather than reversing
+   the markup, because the markup order is the reading order of the page outside
+   full page and the facts lead it there on purpose. */
+article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column;
+                                     order: -1; }
 article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
                                  gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
 article.entity.full .bodywrap { min-height: 0; }
