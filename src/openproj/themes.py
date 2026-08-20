@@ -49,7 +49,7 @@ class Palette(NamedTuple):
         values = self.colours.split()
         if len(values) != len(SLOTS):
             raise ValueError(f"{self.source}: {len(values)} colours, expected 16")
-        return {slot: f"#{value}" for slot, value in zip(SLOTS, values)}
+        return {slot: f"#{value}" for slot, value in zip(SLOTS, values, strict=True)}
 
 
 class Family(NamedTuple):
