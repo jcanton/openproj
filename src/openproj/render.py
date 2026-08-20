@@ -1109,7 +1109,14 @@ def _row(index: Index, entity_id: str) -> dict:
         # key is what the file holds and what the cell editor starts from, and
         # merging the two would make opening the editor an accidental way to
         # write somebody else's name into this record.
-        "reviewers_from": _reviewers_under(index, entity_id) if not entity.reviewers else [],
+        "reviewers_from": (
+            _reviewers_under(index, entity_id)
+            if not entity.reviewers and "reviewers" not in unread
+            # A container reads no reviewers, its own or anybody's: a product row
+            # was drawing "the people who review the work under this" in a column
+            # it has no stake in, which reads as a field it holds.
+            else []
+        ),
         # Three fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
