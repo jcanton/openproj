@@ -486,41 +486,68 @@ Zero vendored bytes. Ships ask 7 and the two-editor preference in its textarea-m
 **This is the stage that reaches all four pages**, and the first commit of it is a
 prerequisite.
 
-- [ ] **S5.1** **First, alone:** unify `article.entity.editing` with `body.editing`.
-      `_DETAIL` uses a class on the article; `_ISSUE` and `_NOTE` use a class on `<body>`,
-      and their `.bodybar` / `.body-field` rules are a second copy in `_RECORD_STYLE`
-      (`render.py:13983`, `:14055`, `:14068`). `tests/test_issues.py:337` exists because
-      `.field` once beat `.bodybar` on specificity and put the textarea on the same line as
-      the buttons. Resolve it with `tests/cascade.py` and say in the comment which way it
-      resolves.
-- [ ] **S5.2** `openproj:editor:1` — one JSON object through `remembered.map` holding
-      `{mode, indent, autosave}`, matching the `openproj:widths:4` precedent. The version
-      goes in the key and the old key is explicitly forgotten with a sentence to the reader,
-      the way `render.py:8589-8595` already does it. `remembered.get`'s fallback makes the
-      plain box the answer when storage throws, which is right for a preference about a
-      control that must exist before the preference can be read.
-- [ ] **S5.3** A status bar under the box: line/column, selection size, and HackMD's
-      click-the-number indent picker with **independent** tab-width and space-width keys.
-- [ ] **S5.4** Ask 7: a settable throttle **with a ceiling** on the existing per-input draft
-      write at `render.py:8581`, plus a visible "draft saved 12s ago" beside `#unsaved`, plus
-      surfacing that the room already commits after `QUIET_SECONDS = 20` (`coedit.py:60`).
-      **Not** a POST on a timer. The ceiling matters: a user-settable interval otherwise
-      lets somebody set their own floor coarser than the window it backstops.
-- [ ] **S5.5** Roll the S2 view modes out to `_ISSUE` (`render.py:13525`) and `_NOTE`
-      (`render.py:13806`). They have no room, no draft, no seat layer, no width grip, and a
-      `#promote` bar that is hidden while editing (`render.py:14071`).
+- [x] **S5.1** **First, alone:** unify `article.entity.editing` with `body.editing`.
+      Done, and shipped WITH S5.5 rather than alone, because neither half is worth anything
+      without the other — the unification's whole purpose is that the record pages can carry
+      the surface. It goes the way the structure decides rather than the way that touches
+      fewest lines: `_DETAIL` is rendered once per entity into one exported document, so
+      editing is a property of an article there and cannot be a class on `<body>`; a record
+      page holds one record, so it moves. The shared rules are `_EDITING_STYLE`, concatenated
+      onto the END of both sheets — `textarea.field { font: inherit }` is the same (0,1,1)
+      and would otherwise take the box's face off it. Resolved with `tests/cascade.py` for
+      everything it can weigh, and **asked of Chrome for the one thing it cannot**: it
+      records a property under the name it is written under, so a shorthand and its longhand
+      are two properties to it and one to a browser.
+- [x] **S5.2** `openproj:editor:1` — one JSON object through `remembered.map` holding
+      `{mode, indent, autosave}`, matching the `openproj:widths:4` precedent. **There is no
+      old key to forget**, and the comment says so rather than leaving the absence of a
+      `forget` to read as an oversight: the key is new, and the version is in the name so the
+      next shape is `:2` and forgets this one. Every value is checked against what the
+      control offers, because `{"indent": "four"}` is one hand-edit away from
+      `' '.repeat("four")` in the one script six pages share.
+- [x] **S5.3** A status bar under the box: `Line N, Column N — N selected — N Lines`,
+      `Spaces: N`, and `Length: N` with `MAX_BODY_BYTES` surfaced before a save is refused
+      rather than after. The column counts CHARACTERS. **One key and not two**: the checklist
+      asked for independent tab-width and space-width keys, and there is no tab width to
+      have — `INDENT` is spaces, by an argument written down in S1 (a tab is two columns
+      here, four in git's diff view and eight in a terminal), so a second key would be a
+      preference for a thing this editor does not do.
+- [x] **S5.4** Ask 7: a throttle with a ceiling on the per-input draft write, plus "draft
+      saved 12s ago" beside `#unsaved`, plus the room's `QUIET_SECONDS` window said out loud
+      in the picker's own announcement. Not a POST on a timer. Leading edge AND trailing
+      edge, flushed on `pagehide` and `visibilitychange`. **And `remembered.set` now answers
+      whether the value stuck**, for exactly one caller: a receipt reading "draft saved just
+      now" over a store that threw is this application telling somebody their writing is
+      somewhere it is not.
+- [x] **S5.5** The S2 view modes, the gutter and the status bar on `_ISSUE` and `_NOTE`.
+      They have no room, no draft, no seat layer and no width grip, and the `#promote` bar is
+      hidden while editing. Three defects found by putting them on the surface: a content-box
+      textarea overflowing its pane by 29px, a missing `.field[hidden]` guard that would have
+      drawn the rendered pane the moment the page had one, and Cancel not leaving the
+      surface — the trap the detail page shipped in S3, arriving here with the switcher.
 
 **Proved by:**
 
-- `tests/test_editor.py` — `test_the_editor_preference_is_one_key_and_survives_a_browser_
-  that_refuses_storage`, driven with `localStorage` throwing on the property itself, which
-  is the failure `remembered` exists for.
-- `tests/test_editor.py:668`'s draft tests still pass: the key, the `{base, text}` shape and
-  the base-rewind are unchanged. A throttle must not change what is written, only when.
-- **Chrome** — `test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed`.
-- `tests/test_render.py:1375` (the bare-`localStorage` grep) stays green: every new read
+- **Chrome** — `test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_
+  storage`, driven with `localStorage` throwing on the property itself, which is the failure
+  `remembered` exists for. Asked of Chrome and not of the shim, because the store has to
+  throw before the shell's first `<script>` runs.
+- `tests/test_editor.py`'s draft tests still pass: the key, the `{base, text}` shape and the
+  base-rewind are unchanged. A throttle changes when a draft is written, not what.
+- **Chrome** — `test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed`,
+  `test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_types`,
+  `test_the_length_says_the_ceiling_before_a_save_is_refused`,
+  `test_the_view_a_person_chose_is_the_one_the_next_session_opens_in`,
+  `test_the_box_and_the_column_beside_it_are_one_face`, and
+  `test_an_issue_is_written_in_the_same_surface_a_pitch_is`.
+- `tests/cascade.py` — `test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to`,
+  `test_the_box_on_a_record_page_is_monospace_and_fits_its_pane`,
+  `test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets`.
+- `tests/test_render.py`'s bare-`localStorage` grep stays green: every new read and write
   goes through `remembered`.
-- `tests/test_issues.py:337` and `tests/test_notes.py:286` still pass after S5.1.
+- `tests/test_issues.py` and `tests/test_notes.py` are re-argued rather than renumbered
+  after S5.1 — the mode class is on the article now, and the three assertions that named
+  `body.editing` say why it moved.
 
 **Hazards answered:** *a bulk gesture is recovered as what it is* — the indent picker
 changes the typing setting only, never the document, and the commit says so.
