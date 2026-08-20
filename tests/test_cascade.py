@@ -827,3 +827,133 @@ def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
     # order alone.
     marks = PAGE + [el("span", "marks", id="marks")]
     assert detail.value(marks, "flex") == "none", says(detail, marks, "flex")
+
+
+# --------------------------------------------------------------------------- #
+# One editing surface, two stylesheets
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def record(index: Index) -> Sheet:
+    """An issue page: `_RECORD_STYLE`, then `_EDITING_STYLE`, then
+    `_SUGGEST_STYLE`, after the shell."""
+    from openproj.render import render_issue
+
+    return sheet_of(render_issue(index, links=ROUTES, base_commit=HEAD))
+
+
+_RECORD_EDITING = [
+    el("body"), el("main", id="main"), el("article", "entity editing"),
+]
+
+
+def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record: Sheet):
+    """The fight `tests/test_issues.py` was written for, re-resolved after the
+    mode class moved off `<body>` and onto the article.
+
+    `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1), so
+    the tie is decided by order and nothing else — which is why the answer has to
+    be asked rather than assumed. The bar wins because `_EDITING_STYLE` is
+    concatenated after `_RECORD_STYLE`; and the markup carries no `.field` on the
+    bar either, so the tie does not arise on the page as it is written. Both
+    halves, because either one alone is a guard somebody can remove.
+    """
+    bar = _RECORD_EDITING + [el("p", "bodybar markbar")]
+    won = record.winner(bar, "display")
+    assert won and won.selector == ".entity.editing .bodybar" and won.value == "flex", (
+        f"the toolbar is displayed by {won}\n" + says(record, bar, "display")
+    )
+
+    # And what it would resolve to if somebody put `.field` back on it, which is
+    # the failure this is guarding: `flex`, still, and by order alone.
+    with_field = _RECORD_EDITING + [el("p", "field bodybar markbar")]
+    reaching = record.selectors_reaching(with_field, "display")
+    assert reaching[-1].selector == ".entity.editing .bodybar", (
+        "the bar loses to `.field` again the moment it carries one\n"
+        + says(record, with_field, "display")
+    )
+    assert reaching[-1].specificity == reaching[-2].specificity, (
+        "it is winning on weight, so the ordering argument above is no longer "
+        f"what is holding it up: {says(record, with_field, 'display')}"
+    )
+
+
+def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(
+    record: Sheet, index: Index
+):
+    """The one declaration for the box and the column of numbers beside it, on
+    the sheet that used to carry a second copy.
+
+    `--gutter` is written in `ch`, and `ch` is resolved in the font of whoever
+    uses the value — so a box in one face and a gutter in another is a column of
+    numbers that does not line up with the lines it names. And `width: 100%`
+    means the box: the record pages had no `box-sizing` rule of their own, so
+    their textarea hung past the container it was in.
+    """
+    box = _RECORD_EDITING + [
+        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("textarea", "field body-field"),
+    ]
+    assert record.value(box, "font-family") == "var(--font-mono)", says(
+        record, box, "font-family"
+    )
+    # **This engine cannot answer the same question on the other sheet, and that
+    # is worth stating rather than leaving as a gap.** `_DETAIL_STYLE` carries
+    # `input.field, select.field, textarea.field { font: inherit }` at the same
+    # (0,1,1) as the declaration above, and a shorthand is what decides the face
+    # there. `_declarations` records a property by the name it is written under,
+    # so `font` and `font-family` are two different properties here and no
+    # conflict is visible — while a browser expands one into the other and the
+    # order the two stylesheets are concatenated in decides which wins. So the
+    # ordering argument is asked of Chrome instead, in
+    # `test_the_box_and_the_column_beside_it_are_one_face`.
+    detail_sheet = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+    detail_box = [
+        el("body"), el("main", id="main"), el("article", "entity editing"),
+        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("textarea", "field body-field"),
+    ]
+    assert detail_sheet.value(detail_box, "font") == "inherit", (
+        "the shorthand this note is about is gone, so either the browser test it "
+        "points at is now the only guard or it is no longer needed\n"
+        + says(detail_sheet, detail_box, "font")
+    )
+
+    assert record.value(box, "box-sizing") == "border-box", says(record, box, "box-sizing")
+    assert record.value(box, "max-width") == "44rem", (
+        "the reading measure this page caps its box at outside the surface\n"
+        + says(record, box, "max-width")
+    )
+
+    # And inside the full-page surface the measure loses, because the pane IS the
+    # window. (0,2,1) against (0,1,0), so this one is weight and not order.
+    inside = [
+        el("body", "fullpage"), el("main", id="main"),
+        el("article", "entity editing full view-both"),
+        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
+        el("textarea", "field body-field"),
+    ]
+    assert record.value(inside, "max-width") == "none", says(record, inside, "max-width")
+
+
+def test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets(
+    record: Sheet, index: Index
+):
+    """`[hidden] { display: none }` is the UA sheet's, and an author rule of any
+    weight beats it. `_DETAIL_STYLE` had the guard that puts it back;
+    `_RECORD_STYLE` did not, so the rendered pane — which is a `.field` and is
+    `hidden` until a view asks for it — would have been drawn on this page from
+    the moment it gained one. The guard is now written once, for both.
+    """
+    detail = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
+    for name, sheet in (("issue", record), ("detail", detail)):
+        pane = [
+            el("body"), el("main", id="main"), el("article", "entity editing"),
+            el("div", "field doc", id="body-preview", hidden="hidden"),
+        ]
+        won = sheet.winner(pane, "display")
+        assert won and won.value == "none", (
+            f"on the {name} page a hidden pane is displayed by {won}\n"
+            + says(sheet, pane, "display")
+        )

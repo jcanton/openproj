@@ -325,22 +325,42 @@ def test_the_seed_corpus_carries_issues_that_load(seed_root: Path):
 def test_a_new_issue_has_fields_to_type_in(client: TestClient):
     """Creating IS editing. Without the class its own controls are gated on, the
     page rendered every one of them and then hid all of them, so opening an issue
-    was a heading, a Save button and nothing to write in."""
+    was a heading, a Save button and nothing to write in.
+
+    The class moved off `<body>` and onto the `<article>` the record is now
+    wrapped in, and that is a re-argument rather than a rename. The detail
+    template cannot put it on `<body>`: it is rendered once per entity and the
+    static export writes every entity into one document, so "is this being
+    edited" is a property of an article there. A record page holds exactly one
+    record and could go either way, so it goes the way that lets one block of CSS
+    serve all four editing surfaces — and the way that gives the full-page view
+    an element it can fix to the window, which `<body>` is not.
+    """
     blank = client.get("/issue/new").text
     creating = re.search(r"const CREATING = true;.*?</script>", blank, re.S).group(0)
 
-    assert "document.body.classList.add('editing');" in creating
-    assert "body.editing .field { display: inline-block; }" in blank
+    assert "ARTICLE.classList.add('editing');" in creating
+    assert "const ARTICLE = document.querySelector('article.entity');" in blank
+    assert ".entity.editing .field { display: inline-block; }" in blank
+    assert "body.editing" not in blank, "a second copy of the mode class"
 
 
 def test_the_formatting_bar_sits_above_the_body_not_beside_it(client: TestClient):
     """`.field` on the bar won on specificity over `.bodybar` and turned it
-    inline-block, which put the textarea on the same line as the buttons."""
+    inline-block, which put the textarea on the same line as the buttons.
+
+    The rule is now written once, in `_EDITING_STYLE`, for all four pages that
+    carry an editing surface — this page's copy of it was the second declaration
+    of the same three lines. The argument it carried survives on the markup,
+    which is what this test reads: the bar must not carry `.field`, because
+    `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1) and
+    the later one wins.
+    """
     page = client.get("/issue/new").text
     bar = re.search(r'<p class="([^"]*)bodybar[^"]*">', page).group(1)
 
     assert "field" not in bar
-    assert "body.editing .bodybar { display: flex; }" in page
+    assert ".entity.editing .bodybar { display: flex; }" in page
 
 
 def test_the_issue_columns_can_be_dragged(client: TestClient):
@@ -382,3 +402,169 @@ def test_the_grip_is_a_thing_a_hand_can_reach(client: TestClient):
         assert rule in style, rule
     # Positioned against the header cell, or `right: 0` is the page's right edge.
     assert ".records th { position: relative; }" in style
+
+
+_SURFACE = r"""
+window.fetch = async () => ({ok: true, json: async () => (
+  {html: '<h2 data-startline="1">Rendered</h2>'})});
+const article = document.querySelector('article.entity');
+const area = document.querySelector('textarea[name=body]');
+const bar = document.getElementById('statusbar');
+const drawn = element => element.getClientRects().length > 0;
+const seg = name => document.getElementById(
+  {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
+// An issue that exists rather than `/issue/new`, because Cancel at the bottom of
+// this script has to be the button that ends a session and not the one that
+// navigates away from a record nobody has opened yet.
+document.getElementById('toggle').click();
+await new Promise(go => setTimeout(go, 80));
+// Before a single character is typed. The box is `display: none` until the
+// session starts and everything drawn beside it measures zero against a box
+// nothing is drawing, so pressing Edit has to SAY the box arrived — otherwise
+// the first thing anybody sees on entering edit mode is a column with no
+// numbers in it, until they type or resize the window.
+const onOpening = {numbers: document.querySelectorAll('.lineno').length,
+                   caret: bar.firstElementChild.textContent};
+
+// Six wrapping lines, so the gutter has something to count that a row count
+// would get wrong.
+area.value = ['a heading', ...Array.from({length: 5},
+  (unused, at) => `line ${at + 2} ` + 'wrap '.repeat(60))].join('\n');
+area.dispatchEvent(new Event('input'));
+await new Promise(go => setTimeout(go, 60));
+
+const numbers = [...document.querySelectorAll('.lineno')].map(one => one.textContent);
+const before = {
+  toolbar: document.querySelectorAll('#marks button.mark').length,
+  status: drawn(bar) && bar.children.length,
+  caret: bar.firstElementChild.textContent,
+  switcher: drawn(document.getElementById('views')),
+  gutter: numbers,
+  preview: drawn(document.getElementById('body-preview')),
+};
+
+seg('both').click();
+await new Promise(go => setTimeout(go, 60));
+const split = {
+  classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  fullpage: document.body.classList.contains('fullpage'),
+  pane: document.getElementById('body-preview').textContent,
+  box: drawn(area),
+  // The box against the pane it is in, which is the question: a reading measure
+  // is right for a record page and wrong for a pane that IS half the window.
+  boxWidth: area.getBoundingClientRect().width,
+  paneWidth: document.querySelector('.bodywrap').getBoundingClientRect().width,
+};
+
+seg('view').click();
+const only = {box: drawn(area), marks: drawn(document.getElementById('marks')),
+              status: drawn(bar)};
+
+// Escape leaves the surface, which is the arbitration decided in S2 and the one
+// this page inherits by having a surface at all.
+area.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+const left = {classes: [...article.classList].sort(),
+              editing: article.classList.contains('editing')};
+
+// And Cancel from inside a view, which is the trap the detail page shipped and
+// this page would have grown with the surface: the switcher is drawn only while
+// the article is editing, so ending the session inside a full-page view without
+// leaving it takes away the documented way back at the same instant.
+seg('both').click();
+document.getElementById('toggle').click();
+const nav = document.querySelector('body > nav a');
+const box = nav.getBoundingClientRect();
+const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+const cancelled = {classes: [...article.classList].sort(),
+                   fullpage: document.body.classList.contains('fullpage'),
+                   over: hit ? hit.tagName : null};
+return {onOpening, before, split, only, left, cancelled};
+"""
+
+
+def test_an_issue_is_written_in_the_same_surface_a_pitch_is(
+    client: TestClient, repo_path: Path, tmp_path: Path
+):
+    """The rollout, and the reason the two templates were unified first.
+
+    An issue and a note were the two pages left with the plain box: no line
+    numbers, no status bar, no three views, no full page. They are the same
+    editing surface as a pitch's — one shared block of script, one shared block
+    of CSS — and the only thing that kept them out of it was that their mode
+    class was on `<body>` and the surface's rules were written against an
+    article.
+
+    What they still do not have is written down rather than left to be
+    discovered: no room, so no seat bands and no draft; no width grip, because
+    `--measure` is the detail page's; and a promote bar that is hidden while the
+    record is being edited.
+    """
+    from browser import chrome, measured_in
+
+    issue_id = opened(client, "The list view drops a row", git_head(repo_path))
+    got = measured_in(
+        # Wide enough that a pane of the split is wider than the 44rem reading
+        # measure this page caps its box at outside the surface — at 1400 it is
+        # not, and the assertion below would pass without asking anything.
+        chrome(), client.get(f"/issue/{issue_id}").text, tmp_path / "issue.html", 2000,
+        _SURFACE, budget=6000,
+    )
+
+    assert got["onOpening"]["numbers"] == 1, (
+        "the column of numbers is empty on a box that has just been shown — "
+        "pressing Edit did not say the box had arrived, so nothing drawn beside "
+        f"it redrew: {got['onOpening']}"
+    )
+    assert got["onOpening"]["caret"] == "Line 1, Column 1 — 1 Lines", got["onOpening"]
+
+    assert got["before"]["toolbar"] == 14, got["before"]["toolbar"]
+    assert got["before"]["status"] == 3, (
+        "the caret readout, the indent picker and the length — this page has no "
+        f"draft, so it has no interval in the middle: {got['before']['status']}"
+    )
+    assert got["before"]["caret"].endswith("6 Lines"), got["before"]["caret"]
+    assert got["before"]["gutter"] == ["1", "2", "3", "4", "5", "6"], (
+        "one number per LOGICAL line, on a document whose lines wrap: "
+        f"{got['before']['gutter']}"
+    )
+    assert got["before"]["switcher"], "no view switcher on the issue page"
+    assert not got["before"]["preview"], "the rendered pane is shown before it is asked for"
+
+    assert got["split"]["classes"] == ["full", "view-both"], got["split"]
+    assert got["split"]["fullpage"], "the page behind the surface still scrolls"
+    assert got["split"]["pane"] == "Rendered", (
+        f"the server's markdown never reached the pane: {got['split']['pane']!r}"
+    )
+    assert got["split"]["box"], "the box went away in the split view"
+    assert got["split"]["paneWidth"] > 44 * 16, (
+        "the window is too narrow for the 44rem cap to bite, so this asks nothing: "
+        f"{got['split']['paneWidth']}px"
+    )
+    assert abs(got["split"]["boxWidth"] - got["split"]["paneWidth"]) < 1, (
+        f"the box is still capped at the record page's reading measure inside a "
+        f"pane half the window wide: {got['split']['boxWidth']}px of "
+        f"{got['split']['paneWidth']}px"
+    )
+
+    assert not got["only"]["box"], "preview only still draws the box"
+    assert not got["only"]["marks"] and not got["only"]["status"], (
+        "a toolbar over no box writes into nothing, and a caret readout over no "
+        "box is a caret nobody can see"
+    )
+
+    assert "full" not in got["left"]["classes"], (
+        f"Escape did not leave the full-page surface: {got['left']['classes']}"
+    )
+    assert got["left"]["editing"], (
+        "Escape ended the editing session, which is Cancel's job — a key that "
+        "discards writing is one somebody presses by mistake once"
+    )
+
+    assert "full" not in got["cancelled"]["classes"], (
+        f"Cancel left a reader inside a window-filling surface with the switcher "
+        f"— the way back — drawn only while editing: {got['cancelled']['classes']}"
+    )
+    assert not got["cancelled"]["fullpage"]
+    assert got["cancelled"]["over"] == "A", (
+        f"the nav is still painted over after Cancel: {got['cancelled']['over']!r}"
+    )

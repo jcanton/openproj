@@ -289,7 +289,10 @@ def test_writing_one_down_is_the_same_view_as_editing_one(client: TestClient, re
         assert shape in existing, shape
     assert "const CREATING = true;" in blank
     assert "const CREATING = false;" in existing
-    assert "document.body.classList.add('editing');" in blank, "creating IS editing"
+    # On the article and no longer on `<body>`: see
+    # `test_a_new_issue_has_fields_to_type_in` for why the unification goes this
+    # way round rather than the other.
+    assert "ARTICLE.classList.add('editing');" in blank, "creating IS editing"
     assert re.search(r'id="save"[^>]*>\s*Write it down\s*</button>', blank)
     assert client.get("/note/nope").status_code == 404
 

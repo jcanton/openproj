@@ -2514,3 +2514,46 @@ def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
         "and cancelling takes it away"
     )
     assert got["chosen"] == "edit", "pressing a segment did not remember it"
+
+
+_ONE_FACE = """
+const area = document.querySelector('textarea[name=body]');
+const gutter = document.querySelector('.gutter');
+document.getElementById('toggle').click();
+return {
+  box: getComputedStyle(area).fontFamily,
+  gutter: getComputedStyle(gutter).fontFamily,
+  size: [getComputedStyle(area).fontSize, getComputedStyle(gutter).fontSize],
+  height: [getComputedStyle(area).lineHeight, getComputedStyle(gutter).lineHeight],
+};
+"""
+
+
+def test_the_box_and_the_column_beside_it_are_one_face(client: TestClient, tmp_path: Path):
+    """Asked of Chrome because a shorthand is what decides it.
+
+    The box and the gutter are one declaration, and they have to be: `--gutter`
+    is written in `ch`, and `ch` is resolved in the font of whoever uses the
+    value — the column resolves it, and so does the box's own `padding-left`. The
+    declaration is in `_EDITING_STYLE` now, which is concatenated after each of
+    the two stylesheets that carry it, and on the detail page that ORDER is the
+    whole of the answer: `input.field, select.field, textarea.field { font:
+    inherit }` is the same weight and sets the same two properties through a
+    shorthand.
+
+    `tests/cascade.py` cannot see that conflict — it records a property under the
+    name it is written under, so `font` and `font-family` are two properties to
+    it and one to a browser. That is why this is here and not there.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "face.html", 1400,
+        _ONE_FACE, budget=4000,
+    )
+
+    assert "mono" in got["box"].lower(), (
+        f"the box resolved to {got['box']!r} — the sans face won, so `--gutter` is "
+        "one width in the column and another in the box's own padding"
+    )
+    assert got["box"] == got["gutter"], f"{got['box']!r} beside {got['gutter']!r}"
+    assert got["size"][0] == got["size"][1], got["size"]
+    assert got["height"][0] == got["height"][1], got["height"]

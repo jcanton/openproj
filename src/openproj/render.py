@@ -10677,6 +10677,209 @@ const COEDIT = (() => {
 """)
 
 
+# The editing surface, in one place, because two pages draw it and it was drawn
+# twice. `_DETAIL` (with `_NEW`) put the mode class on `article.entity`; `_ISSUE`
+# and `_NOTE` put it on `<body>` and kept their own copies of `.bodybar` and
+# `.body-field` in `_RECORD_STYLE` — so the toolbar, the box and the two bars
+# either side of it were two declarations of one thing, and only one of them ever
+# got a fix. `tests/test_issues.py` exists because one of those copies once lost
+# a specificity fight `.field` against `.bodybar` and put the textarea on the same
+# line as the buttons.
+#
+# **Which way the unification goes is decided by a structural fact, not a
+# preference.** The detail template is rendered once per entity and the static
+# export puts every entity in ONE document, so "is this being edited" is a
+# property of an article and cannot be a class on `<body>`; a record page holds
+# exactly one record, so it can be either. So the record pages move to the
+# article and this block is written against `.entity.editing` once.
+#
+# Concatenated at the END of both stylesheets, and that is load-bearing rather
+# than tidy. `textarea.body-field` and `textarea.field` are both (0,1,1), and
+# `input.field, select.field, textarea.field { font: inherit }` in `_DETAIL_STYLE`
+# sets the same two properties the declaration below does — so at the front of
+# the sheet the box would resolve to the page's sans face while the column of
+# line numbers beside it stayed monospace, which is ask 4 broken by a stylesheet
+# reordering. Resolved with `tests/cascade.py` rather than guessed at.
+_EDITING_STYLE = """
+.bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
+/* The second row sits under the first rather than a paragraph's worth away: they
+   are two halves of one bar, and the box they belong to is below both. */
+.bodybar.markbar { margin-top: .25rem; }
+.entity.editing .bodybar { display: flex; }
+.entity.editing .field[hidden] { display: none; }
+/* One declaration for the box and for the numbers beside it. Written twice, the
+   gutter walks out of step with the lines it names by a pixel a line, which is
+   invisible at the top of a document and half a row down at the bottom of one —
+   and an invariant written twice is an invariant guarded once. */
+/* The seat layer is in the list because `--gutter` is written in `ch`, and `ch`
+   is resolved by whoever USES the value: the column and the box's padding both
+   resolve it in this face, and `.bodywrap.numbered .seat { left: var(--gutter) }`
+   was resolving the same token in the page's sans face and starting the bands a
+   pixel to the right of the text they sit behind. */
+textarea.body-field, .gutter, .seats { font-family: var(--font-mono);
+                                       font-size: 13px; line-height: 1.55; }
+/* And `width: 100%` means the box, not the box plus its padding and its border.
+   The detail page got this by accident, off `input.field, select.field,
+   textarea.field`; the record pages had no such rule, so their `width: 100%`
+   textarea was content-box and hung 29px past the container it was in — visible
+   the moment that container became a pane of a split rather than a column with
+   room to spare. */
+textarea.body-field { box-sizing: border-box; }
+/* Ask 4. The column is the box's own left padding, so the numbers sit in space
+   the text has already been kept out of rather than over the top of it — which
+   also means the mirror that measures the lines is measuring the same content
+   box the reader is looking at, because it copies the padding.
+   `--gutter` is set from the page, in `ch` of this face, so the column is as
+   wide as the widest number and no wider. */
+.gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--gutter, 0);
+          overflow: hidden; pointer-events: none; color: var(--muted);
+          text-align: right; }
+.gutterrows { position: absolute; left: 0; right: 0; top: 0; }
+.lineno { position: absolute; right: .45rem; }
+.bodywrap.numbered textarea.body-field { padding-left: var(--gutter); }
+/* And the bands start where the text does. A band that runs under the numbers
+   tints them with somebody else's colour, which reads as the gutter belonging to
+   whoever is in the room. */
+.bodywrap.numbered .seat { left: var(--gutter); }
+/* Asks 5 and 7, and the two facts either side of them: the strip along the FOOT
+   of the box, which is where the note this is modelled on puts them. Under the
+   box and not above it, and that is the whole reason there are two bars rather
+   than one — the toolbar is what you reach for while writing a line and belongs
+   above the line; where the caret is and how long the document is are things you
+   look down at, and a row of numbers between the toolbar and the text is a row
+   between a control and the thing it controls.
+   Smaller than the toolbar and in the muted ink: everything in it is a fact
+   about the document rather than an instruction, except the two pickers, which
+   earn their weight by being the only things in the row that respond to a
+   press. */
+.statusbar { margin: .25rem 0 0; font-size: 11px; color: var(--muted);
+             flex-wrap: wrap; }
+.stat { white-space: nowrap; }
+/* A picker that looks like the words beside it until you point at it. `Spaces:
+   2` is a value that states itself and is its own click target; drawing it as a
+   button with a border would make it the loudest thing in a row of quiet facts,
+   which is backwards — it is a setting somebody changes twice a year. */
+button.stat.pick { font: inherit; color: inherit; background: none; border: 0;
+                   border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
+button.stat.pick:hover { color: var(--accent); }
+/* Over the ceiling. The one thing in this row that is not a fact but a refusal
+   waiting to happen, so it is the one thing drawn in the colour of a refusal —
+   and the word is in the element too, because a colour on its own is a channel a
+   dichromat does not have. */
+.stat.over { color: var(--danger); font-weight: 600; }
+.bodywrap { position: relative; }
+/* Three states of one thing, drawn as one control: adjacent segments inside a
+   single bordered box, the pressed one filled. Three separate buttons in a row
+   would say "three unrelated actions", which is exactly what these are not.
+   Hidden until the article is editing, for the same reason as every other
+   `.field` here: a view of an editing surface is nothing at all when there is no
+   editing surface, and the create form is always editing so it always has it. */
+.views { display: none; }
+/* No `overflow: hidden`, and that is a correction rather than a simplification.
+   The shell's focus ring is `outline: 2px solid var(--focus)` at `outline-offset:
+   2px`, drawn entirely OUTSIDE the segment's border box, and the segments fill
+   this container's padding box exactly — so clipping the container clipped the
+   ring away on every side. Pixel-diffed against the unfocused shot: 6 differing
+   pixels on the first segment, against 404 for Save on the same page. The
+   corners the clip existed for are given to the end segments instead. */
+.entity.editing .views {
+  display: inline-flex; vertical-align: middle;
+  border: 1px solid var(--line-strong); border-radius: 3px;
+}
+.views .seg { font: inherit; line-height: 0; padding: .3rem .55rem; border: 0;
+              cursor: pointer; background: var(--surface); color: var(--muted); }
+.views .seg:first-child { border-radius: 2px 0 0 2px; }
+.views .seg:last-child { border-radius: 0 2px 2px 0; }
+/* And above its neighbours while it has the ring: the segments are adjacent, and
+   a later sibling's background paints over the two pixels of ring that reach it. */
+.views .seg:focus-visible { position: relative; z-index: 1; }
+.views .seg + .seg { border-left: 1px solid var(--line); }
+.views .seg:hover { color: var(--accent); }
+.views .seg[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+/* An SVG that nothing sizes lays out at 0x0, and this application has already
+   shipped two empty boxes where a check and a cross should have been. Sized
+   here, drawn in `currentColor`, so a pressed segment's icon is the ink the
+   segment sets and not a colour of its own. */
+.views .seg svg { display: block; width: 15px; height: 15px; fill: none;
+                  stroke: currentColor; stroke-width: 1.6;
+                  stroke-linecap: round; stroke-linejoin: round; }
+/* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
+   panes scroll on their own.
+   `position: fixed` rather than a taller box, because the page behind it — the
+   nav, the banner, the reading measure — is not part of writing, and because a
+   surface that is exactly the window cannot be scrolled past. z-index 15 is
+   argued rather than picked: it clears the page (nothing else on it is
+   positioned above 10) and stays under the suggestion list and the hover card at
+   20, both of which are parked on `<body>` and would otherwise be painted behind
+   the surface that opened them. The width handle is 30 and is hidden here; see
+   `place`. */
+body.fullpage { overflow: hidden; }
+article.entity.full {
+  position: fixed; inset: 0; z-index: 15; overflow: hidden;
+  width: auto; max-width: none; margin: 0; padding: .6rem 1.25rem 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+}
+/* `min-height: 0` at every level between the surface and the panes, and it is
+   the whole of what makes them scroll instead of the page. A flex item's default
+   `min-height: auto` is its content, and a four-hundred-line textarea's content
+   is taller than any window — so without these the box grows past the bottom of
+   the screen and takes the commit bar with it. */
+article.entity.full > form { flex: 1 1 auto; min-height: 0;
+                             display: flex; flex-direction: column; }
+article.entity.full > .commitbar { flex: none; }
+/* `align-items: stretch`, against the container query that sets `start`: outside
+   full page the facts are a short column beside a long document and should not
+   be stretched to its height; inside it, a pane that is its content's height is
+   a pane that overflows the window. The at-rule adds no specificity, so this
+   (0,3,1) wins wherever both apply. */
+article.entity.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
+                             align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
+article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column; }
+article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
+                                 gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
+article.entity.full .bodywrap { min-height: 0; }
+/* `max-width: none` because one of the two sheets this block is concatenated to
+   caps the box at a reading measure — 44rem, right for a record page and wrong
+   for a pane that IS the window. */
+article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: none;
+                                          max-width: none; }
+/* The rendered pane is a document, not a field: it loses the rule and the space
+   above it that separate a shaping document from the facts, because in this view
+   there is nothing above it to be separated from. */
+article.entity.full #body-preview { min-height: 0; overflow-y: auto;
+                                    border-top: 0; padding-top: 0; }
+/* Two columns only in the middle view. `minmax(0, 1fr)` twice and not `1fr`
+   twice: a grid track's default minimum is its content, and a line of prose with
+   no break in it is wider than half a window — which would have pushed the other
+   pane off the side rather than wrapping. */
+article.entity.full.view-both .bodysplit {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* And a line down the middle of it. The source has a border of its own and the
+   rendered pane has none, so without this the split is a box on the left and
+   loose text on the right, which reads as one pane with an overflow rather than
+   as two. The gap is halved on each side of the rule so the line sits in the
+   middle of the space rather than against the prose. */
+article.entity.full.view-both #body-preview {
+  border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
+}
+/* Preview only is reading, and reading has a measure — the one the reader set
+   with the grip on the page they came from, which is still in `--measure` and
+   still theirs. Capped per block rather than on the pane, because the pane is
+   the scroll container and a narrow scroll container puts its scrollbar down the
+   middle of the window. */
+article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
+/* Preview only: the box goes, and the two bars go with it. A toolbar over no box
+   is fourteen buttons that write into nothing, and a status bar over no box is a
+   caret position for a caret nobody can see. */
+article.entity.full.view-view .bodywrap,
+article.entity.full.view-view .statusbar,
+article.entity.full.view-view .markbar { display: none; }
+"""
+
+
 _DETAIL_STYLE = """
 .tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
@@ -10783,25 +10986,18 @@ article.entity:not(.editing) .req { display: none; }
    editing, and the values they replace are hidden once it is. */
 .field { display: none; }
 .entity.editing .field { display: block; }
-.entity.editing .field[hidden] { display: none; }
 /* Where the other people in the room are. One band per person on the line their
    caret is in, translucent so the text keeps its own contrast, with the login on
    the right — a colour on its own is a colour a reader has to be told the
    meaning of, and the two channels together need no legend.
    `pointer-events: none` throughout: the thing under this is the box being typed
    in, and a layer that takes a click is a click that does not reach it. */
-.bodywrap { position: relative; }
 .seats { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
          border-radius: 3px; }
 .seat { position: absolute; left: 0; right: 0; }
 .seatname { position: absolute; right: .25rem; top: 0;
             font-size: 10px; line-height: 1.4; padding: 0 .3rem; border-radius: 3px;
             color: var(--bg); font-family: var(--font-sans); }
-.bodybar { display: none; gap: .6rem; align-items: baseline; margin: 1rem 0 .3rem; }
-/* The second row sits under the first rather than a paragraph's worth away: they
-   are two halves of one bar, and the box they belong to is below both. */
-.bodybar.markbar { margin-top: .25rem; }
-.entity.editing .bodybar { display: flex; }
 /* Who else is typing in this document, first in the bar because it is the one
    thing here that changes what you are about to do. `:empty` and not a `hidden`
    attribute somebody has to remember to set: the list is written with
@@ -10832,60 +11028,7 @@ input.field, select.field, textarea.field {
   background: var(--surface); color: inherit;
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
-/* One declaration for the box and for the numbers beside it. Written twice, the
-   gutter walks out of step with the lines it names by a pixel a line, which is
-   invisible at the top of a document and half a row down at the bottom of one —
-   and an invariant written twice is an invariant guarded once. */
-/* The seat layer is in the list because `--gutter` is written in `ch`, and `ch`
-   is resolved by whoever USES the value: the column and the box's padding both
-   resolve it in this face, and `.bodywrap.numbered .seat { left: var(--gutter) }`
-   was resolving the same token in the page's sans face and starting the bands a
-   pixel to the right of the text they sit behind. */
-textarea.body-field, .gutter, .seats { font-family: var(--font-mono);
-                                       font-size: 13px; line-height: 1.55; }
 textarea.body-field { min-height: 60vh; resize: vertical; }
-/* Ask 4. The column is the box's own left padding, so the numbers sit in space
-   the text has already been kept out of rather than over the top of it — which
-   also means the mirror that measures the lines is measuring the same content
-   box the reader is looking at, because it copies the padding.
-   `--gutter` is set from the page, in `ch` of this face, so the column is as
-   wide as the widest number and no wider. */
-.gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--gutter, 0);
-          overflow: hidden; pointer-events: none; color: var(--muted);
-          text-align: right; }
-.gutterrows { position: absolute; left: 0; right: 0; top: 0; }
-.lineno { position: absolute; right: .45rem; }
-.bodywrap.numbered textarea.body-field { padding-left: var(--gutter); }
-/* And the bands start where the text does. A band that runs under the numbers
-   tints them with somebody else's colour, which reads as the gutter belonging to
-   whoever is in the room. */
-.bodywrap.numbered .seat { left: var(--gutter); }
-/* Asks 5 and 7, and the two facts either side of them: the strip along the FOOT
-   of the box, which is where the note this is modelled on puts them. Under the
-   box and not above it, and that is the whole reason there are two bars rather
-   than one — the toolbar is what you reach for while writing a line and belongs
-   above the line; where the caret is and how long the document is are things you
-   look down at, and a row of numbers between the toolbar and the text is a row
-   between a control and the thing it controls.
-   Smaller than the toolbar and in the muted ink: everything in it is a fact
-   about the document rather than an instruction, except the two pickers, which
-   earn their weight by being the only things in the row that respond to a
-   press. */
-.statusbar { margin: .25rem 0 0; font-size: 11px; color: var(--muted);
-             flex-wrap: wrap; }
-.stat { white-space: nowrap; }
-/* A picker that looks like the words beside it until you point at it. `Spaces:
-   2` is a value that states itself and is its own click target; drawing it as a
-   button with a border would make it the loudest thing in a row of quiet facts,
-   which is backwards — it is a setting somebody changes twice a year. */
-button.stat.pick { font: inherit; color: inherit; background: none; border: 0;
-                   border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
-button.stat.pick:hover { color: var(--accent); }
-/* Over the ceiling. The one thing in this row that is not a fact but a refusal
-   waiting to happen, so it is the one thing drawn in the colour of a refusal —
-   and the word is in the element too, because a colour on its own is a channel a
-   dichromat does not have. */
-.stat.over { color: var(--danger); font-weight: 600; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
@@ -10898,120 +11041,15 @@ button.stat.pick:hover { color: var(--accent); }
    loads both. */
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
-/* Three states of one thing, drawn as one control: adjacent segments inside a
-   single bordered box, the pressed one filled. Three separate buttons in a row
-   would say "three unrelated actions", which is exactly what these are not.
-   Hidden until the article is editing, for the same reason as every other
-   `.field` here: a view of an editing surface is nothing at all when there is no
-   editing surface, and the create form is always editing so it always has it. */
-.views { display: none; }
-/* No `overflow: hidden`, and that is a correction rather than a simplification.
-   The shell's focus ring is `outline: 2px solid var(--focus)` at `outline-offset:
-   2px`, drawn entirely OUTSIDE the segment's border box, and the segments fill
-   this container's padding box exactly — so clipping the container clipped the
-   ring away on every side. Pixel-diffed against the unfocused shot: 6 differing
-   pixels on the first segment, against 404 for Save on the same page. The
-   corners the clip existed for are given to the end segments instead. */
-.entity.editing .views {
-  display: inline-flex; vertical-align: middle;
-  border: 1px solid var(--line-strong); border-radius: 3px;
-}
-.views .seg { font: inherit; line-height: 0; padding: .3rem .55rem; border: 0;
-              cursor: pointer; background: var(--surface); color: var(--muted); }
-.views .seg:first-child { border-radius: 2px 0 0 2px; }
-.views .seg:last-child { border-radius: 0 2px 2px 0; }
-/* And above its neighbours while it has the ring: the segments are adjacent, and
-   a later sibling's background paints over the two pixels of ring that reach it. */
-.views .seg:focus-visible { position: relative; z-index: 1; }
-.views .seg + .seg { border-left: 1px solid var(--line); }
-.views .seg:hover { color: var(--accent); }
-.views .seg[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
-/* An SVG that nothing sizes lays out at 0x0, and this application has already
-   shipped two empty boxes where a check and a cross should have been. Sized
-   here, drawn in `currentColor`, so a pressed segment's icon is the ink the
-   segment sets and not a colour of its own. */
-.views .seg svg { display: block; width: 15px; height: 15px; fill: none;
-                  stroke: currentColor; stroke-width: 1.6;
-                  stroke-linecap: round; stroke-linejoin: round; }
 /* No margin of its own: this row holds one live region that is empty whenever
    nobody else is in the document, which is most of the time, and a margin around
    nothing is a gap above the toolbar that nothing explains. */
 #seatbar { margin: 0; }
 
-/* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
-   panes scroll on their own.
-   `position: fixed` rather than a taller box, because the page behind it — the
-   nav, the banner, the reading measure — is not part of writing, and because a
-   surface that is exactly the window cannot be scrolled past. z-index 15 is
-   argued rather than picked: it clears the page (nothing else on it is
-   positioned above 10) and stays under the suggestion list and the hover card at
-   20, both of which are parked on `<body>` and would otherwise be painted behind
-   the surface that opened them. The width handle is 30 and is hidden here; see
-   `place`. */
-body.fullpage { overflow: hidden; }
-article.entity.full {
-  position: fixed; inset: 0; z-index: 15; overflow: hidden;
-  width: auto; max-width: none; margin: 0; padding: .6rem 1.25rem 0;
-  background: var(--bg);
-  display: flex; flex-direction: column;
-}
-/* `min-height: 0` at every level between the surface and the panes, and it is
-   the whole of what makes them scroll instead of the page. A flex item's default
-   `min-height: auto` is its content, and a four-hundred-line textarea's content
-   is taller than any window — so without these the box grows past the bottom of
-   the screen and takes the commit bar with it. */
-article.entity.full > form { flex: 1 1 auto; min-height: 0;
-                             display: flex; flex-direction: column; }
-article.entity.full > .commitbar { flex: none; }
-/* `align-items: stretch`, against the container query that sets `start`: outside
-   full page the facts are a short column beside a long document and should not
-   be stretched to its height; inside it, a pane that is its content's height is
-   a pane that overflows the window. The at-rule adds no specificity, so this
-   (0,3,1) wins wherever both apply. */
-article.entity.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
-                             align-items: stretch; grid-template-rows: minmax(0, 1fr); }
-article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
-article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column; }
-article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
-                                 gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
-article.entity.full .bodywrap { min-height: 0; }
-article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: none; }
-/* The rendered pane is a document, not a field: it loses the rule and the space
-   above it that separate a shaping document from the facts, because in this view
-   there is nothing above it to be separated from. */
-article.entity.full #body-preview { min-height: 0; overflow-y: auto;
-                                    border-top: 0; padding-top: 0; }
-/* Two columns only in the middle view. `minmax(0, 1fr)` twice and not `1fr`
-   twice: a grid track's default minimum is its content, and a line of prose with
-   no break in it is wider than half a window — which would have pushed the other
-   pane off the side rather than wrapping. */
-article.entity.full.view-both .bodysplit {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-/* And a line down the middle of it. The source has a border of its own and the
-   rendered pane has none, so without this the split is a box on the left and
-   loose text on the right, which reads as one pane with an overflow rather than
-   as two. The gap is halved on each side of the rule so the line sits in the
-   middle of the space rather than against the prose. */
-article.entity.full.view-both #body-preview {
-  border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
-}
-/* Preview only is reading, and reading has a measure — the one the reader set
-   with the grip on the page they came from, which is still in `--measure` and
-   still theirs. Capped per block rather than on the pane, because the pane is
-   the scroll container and a narrow scroll container puts its scrollbar down the
-   middle of the window. */
-article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
-/* Preview only: the box goes, and the two bars go with it. A toolbar over no box
-   is fourteen buttons that write into nothing, and a status bar over no box is a
-   caret position for a caret nobody can see. */
-article.entity.full.view-view .bodywrap,
-article.entity.full.view-view .statusbar,
-article.entity.full.view-view .markbar { display: none; }
 /* `#conflict` is the shell's. It was written here, and the table draws the same
    box — `#row-conflict` — without loading this stylesheet, so the same report
    was a bordered block on one page and unstyled text on the other. */
-"""
+""" + _EDITING_STYLE
 
 
 # What a person owns, in the order they think about it. Everything not named here
@@ -14339,6 +14377,8 @@ def render_issue(
         base_commit=base_commit or "",
         signed_in=signed_in,
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        viewbar=_VIEWBAR,
+        views=_VIEWS,
         # The same machinery the notes page uses, and now the same shape as well:
         # two kinds and a picker to choose between them. A pitch when the fix is
         # worth a bet somebody argues for, a task when it is only worth doing —
@@ -14566,6 +14606,8 @@ def render_note(
         base_commit=base_commit or "",
         signed_in=signed_in,
         combobox=_combobox_html(index) if base_commit is not None else Markup(""),
+        viewbar=_VIEWBAR,
+        views=_VIEWS,
         promote=(
             _promote_html(
                 view["id"],
@@ -15266,11 +15308,21 @@ attachRecordTable({
 
 _ISSUE = """
 <p class="back"><a href="{{ links.issues }}">← all issues</a></p>
+{#- One record, wrapped in the element the mode class lives on. It used to live
+    on `<body>`, and it could: this page holds exactly one issue. The detail
+    template cannot — it is rendered once per entity and the static export puts
+    every entity in one document — so "is this being edited" is a property of an
+    article there, and unifying the two means moving this one rather than that
+    one. It is also what gives this page a box the full-page surface can be:
+    `article.entity.full` is `position: fixed; inset: 0`, and `<body>` is not
+    something you can fix to the window. -#}
+<article class="entity">
 {% if editable %}
 <p class="editbar">
   <button type="button" id="toggle">{{ 'Cancel' if creating else 'Edit' }}</button>
   <button type="button" id="save" {{ '' if creating else 'hidden' }}>
     {{ 'Open it' if creating else 'Save' }}</button>
+  {{ viewbar }}
   <span id="state" role="status" aria-live="polite"></span>
 </p>
 {% endif %}
@@ -15314,16 +15366,31 @@ _ISSUE = """
     {% for problem in issue.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc read">{{ issue.rendered }}</div>
   {% if editable %}
-  <p class="bodybar">
+  {#- No `.field` on this bar, and the test that says so is older than this
+      change: with that class on it, `.entity.editing .field` and
+      `.entity.editing .bodybar` are both (0,2,1) and the later one wins — which
+      put the textarea on the same line as the buttons. The sentence that used to
+      sit here, "paste or drop an image to put it in the plan", is gone for the
+      reason it went from the other two pages: the Image button IS that gesture,
+      and a sentence describing one is what a toolbar puts in a control. -#}
+  <p class="bodybar markbar">
     <span id="marks" class="marks"></span>
-    <span class="hint">paste or drop an image to put it in the plan</span>
     <span class="hint" id="upload" role="status" aria-live="polite"></span>
+    <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
   </p>
-  <textarea name="body" class="field body-field" rows="12"
-            placeholder="What happened, and how to see it again.">{{ issue.body }}</textarea>
+  <div class="bodysplit">
+    <div class="bodywrap">
+      <textarea name="body" class="field body-field" rows="12"
+                placeholder="What happened, and how to see it again."
+                >{{ issue.body }}</textarea>
+    </div>
+    <div id="body-preview" class="field doc" hidden></div>
+  </div>
+  <p class="bodybar statusbar" id="statusbar"></p>
   {% endif %}
 </form>
 {{ promote }}
+</article>
 {{ combobox }}
 {% if editable %}
 <script>
@@ -15334,9 +15401,17 @@ const BASE = FORM.querySelector('[name=base_commit]');
 const BODY = FORM.querySelector('[name=body]');
 const CREATING = {{ 'true' if creating else 'false' }};
 const ORIGINAL = {{ original|tojson }};
+const ARTICLE = document.querySelector('article.entity');
+// The box holding the title, for the preview: the page suppresses the document's
+// own leading heading when it repeats the title, and a preview that does not know
+// the title cannot suppress it. The name `_VIEWS` reads it under, on all four
+// pages that carry an editing surface.
+const TITLED = document.querySelector('.title-field');
 
 attachUploads(BODY, document.getElementById('upload'));
 attachEditing(BODY, document.getElementById('marks'));
+attachGutter(BODY, document.getElementById('gutter-note'));
+attachStatus(BODY, document.getElementById('statusbar'));
 for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
 
 function say(message) { SAY.textContent = message; }
@@ -15370,13 +15445,25 @@ function dirty() {
 }
 
 function editing() {
-  return CREATING || document.body.classList.contains('editing');
+  return CREATING || ARTICLE.classList.contains('editing');
 }
 
-function show(on) {
-  document.body.classList.toggle('editing', on);
+// `showEditing` and not `show`, and that is the name the other two pages already
+// use: `_VIEWS` calls it when a segment is pressed on a page that is not editing
+// yet, because a view of an editing surface is nothing at all when there is no
+// editing surface. It was `show` here, which is also the name this page's
+// promote bar and the detail page's hash router reach for.
+function showEditing(on) {
+  ARTICLE.classList.toggle('editing', on);
   document.getElementById('toggle').textContent = on ? 'Cancel' : 'Edit';
   dirty();
+  // The box arrives or goes: it is `display: none` outside an editing session,
+  // and everything drawn beside it — the line numbers, the caret readout —
+  // measures zero against a box nothing is drawing.
+  dispatchEvent(new Event('openproj:editing'));
+  // And a session began or ended, which is the different fact the remembered
+  // view mode hangs off. See the comment on the same pair in `_DETAIL`.
+  dispatchEvent(new CustomEvent('openproj:session', {detail: on}));
 }
 
 FORM.addEventListener('input', dirty);
@@ -15384,7 +15471,7 @@ FORM.addEventListener('change', dirty);
 
 if (!CREATING) {
   document.getElementById('toggle').onclick = () => {
-    const on = !document.body.classList.contains('editing');
+    const on = !ARTICLE.classList.contains('editing');
     if (!on) {
       // Cancel puts back what was rendered rather than reloading: a reload would
       // also throw away a body somebody is part way through.
@@ -15396,14 +15483,21 @@ if (!CREATING) {
       }
       BODY.value = ORIGINAL.body;
     }
-    show(on);
+    // Ending the session leaves the surface the session was in. Without this,
+    // Cancel from a full-page view left a reader inside a fixed, opaque,
+    // window-filling article with the switcher — the documented way back — drawn
+    // only while the article is editing, so it vanished at the same instant.
+    // That defect was found and fixed on the detail page in S3; this page grew
+    // the same surface in this commit and would have grown the same trap.
+    if (!on && typeof showView === 'function') showView(null);
+    showEditing(on);
   };
-  show(false);
+  showEditing(false);
 } else {
   // Creating IS editing. Without this the page rendered every control and then
-  // hid all of them behind `body.editing`, so a new issue was a heading, a Save
+  // hid all of them behind the mode class, so a new issue was a heading, a Save
   // button and nothing to type in.
-  document.body.classList.add('editing');
+  ARTICLE.classList.add('editing');
   document.getElementById('toggle').onclick = () => { location.href = '{{ links.issues }}'; };
   dirty();
 }
@@ -15432,6 +15526,9 @@ SAVE.onclick = async () => {
   location.href = CREATING ? `{{ links.issue }}${answer.id}` : location.pathname;
 };
 </script>
+{#- After this page's own script and not before it: `_VIEWS` reads `BODY` at the
+    line it parses, and calls `showEditing` and `TITLED` on the way. -#}
+{{ views }}
 {% endif %}
 """
 
@@ -15547,11 +15644,17 @@ attachRecordTable({
 
 _NOTE = """
 <p class="back"><a href="{{ links.notes }}">← all notes</a></p>
+{#- The same wrapper the issue page grew, for the same two reasons: the mode
+    class moves off `<body>` so one block of CSS can serve all four editing
+    surfaces, and the full-page view needs an element it can fix to the window.
+    See the note on `_ISSUE`. -#}
+<article class="entity">
 {% if editable %}
 <p class="editbar">
   <button type="button" id="toggle">{{ 'Cancel' if creating else 'Edit' }}</button>
   <button type="button" id="save" {{ '' if creating else 'hidden' }}>
     {{ 'Write it down' if creating else 'Save' }}</button>
+  {{ viewbar }}
   <span id="state" role="status" aria-live="polite"></span>
 </p>
 {% endif %}
@@ -15595,16 +15698,26 @@ _NOTE = """
     {% for problem in note.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
   <div class="doc read">{{ note.rendered }}</div>
   {% if editable %}
-  <p class="bodybar">
+  {#- No `.field` on this bar; see the note on `_ISSUE`, and the test that has
+      guarded it since before either page had a view switcher. -#}
+  <p class="bodybar markbar">
     <span id="marks" class="marks"></span>
-    <span class="hint">paste or drop an image to put it in the plan</span>
     <span class="hint" id="upload" role="status" aria-live="polite"></span>
+    <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
   </p>
-  <textarea name="body" class="field body-field" rows="12"
-    placeholder="What is the idea, and what is confusing about it.">{{ note.body }}</textarea>
+  <div class="bodysplit">
+    <div class="bodywrap">
+      <textarea name="body" class="field body-field" rows="12"
+        placeholder="What is the idea, and what is confusing about it."
+        >{{ note.body }}</textarea>
+    </div>
+    <div id="body-preview" class="field doc" hidden></div>
+  </div>
+  <p class="bodybar statusbar" id="statusbar"></p>
   {% endif %}
 </form>
 {{ promote }}
+</article>
 {{ combobox }}
 {% if editable %}
 <script>
@@ -15616,9 +15729,15 @@ const BODY = FORM.querySelector('[name=body]');
 const CREATING = {{ 'true' if creating else 'false' }};
 const ORIGINAL = {{ original|tojson }};
 const FIELDS = ['title', 'status', 'written_by', 'became', 'tags'];
+const ARTICLE = document.querySelector('article.entity');
+// See the note on `_ISSUE`: the preview has to know the title, because the page
+// drops a leading heading that only restates it.
+const TITLED = document.querySelector('.title-field');
 
 attachUploads(BODY, document.getElementById('upload'));
 attachEditing(BODY, document.getElementById('marks'));
+attachGutter(BODY, document.getElementById('gutter-note'));
+attachStatus(BODY, document.getElementById('statusbar'));
 for (const control of FORM.querySelectorAll('[data-suggest]')) attachSuggest(control);
 
 function say(message) { SAY.textContent = message; }
@@ -15652,13 +15771,25 @@ function dirty() {
 }
 
 function editing() {
-  return CREATING || document.body.classList.contains('editing');
+  return CREATING || ARTICLE.classList.contains('editing');
 }
 
-function show(on) {
-  document.body.classList.toggle('editing', on);
+// `showEditing` and not `show`, and that is the name the other two pages already
+// use: `_VIEWS` calls it when a segment is pressed on a page that is not editing
+// yet, because a view of an editing surface is nothing at all when there is no
+// editing surface. It was `show` here, which is also the name this page's
+// promote bar and the detail page's hash router reach for.
+function showEditing(on) {
+  ARTICLE.classList.toggle('editing', on);
   document.getElementById('toggle').textContent = on ? 'Cancel' : 'Edit';
   dirty();
+  // The box arrives or goes: it is `display: none` outside an editing session,
+  // and everything drawn beside it — the line numbers, the caret readout —
+  // measures zero against a box nothing is drawing.
+  dispatchEvent(new Event('openproj:editing'));
+  // And a session began or ended, which is the different fact the remembered
+  // view mode hangs off. See the comment on the same pair in `_DETAIL`.
+  dispatchEvent(new CustomEvent('openproj:session', {detail: on}));
 }
 
 FORM.addEventListener('input', dirty);
@@ -15666,7 +15797,7 @@ FORM.addEventListener('change', dirty);
 
 if (!CREATING) {
   document.getElementById('toggle').onclick = () => {
-    const on = !document.body.classList.contains('editing');
+    const on = !ARTICLE.classList.contains('editing');
     if (!on) {
       // Cancel puts back what was rendered rather than reloading: a reload would
       // also throw away a body somebody is part way through.
@@ -15678,14 +15809,21 @@ if (!CREATING) {
       }
       BODY.value = ORIGINAL.body;
     }
-    show(on);
+    // Ending the session leaves the surface the session was in. Without this,
+    // Cancel from a full-page view left a reader inside a fixed, opaque,
+    // window-filling article with the switcher — the documented way back — drawn
+    // only while the article is editing, so it vanished at the same instant.
+    // That defect was found and fixed on the detail page in S3; this page grew
+    // the same surface in this commit and would have grown the same trap.
+    if (!on && typeof showView === 'function') showView(null);
+    showEditing(on);
   };
-  show(false);
+  showEditing(false);
 } else {
   // Creating IS editing. Without this the page rendered every control and then
-  // hid all of them behind `body.editing`, so a new note was a heading, a Save
+  // hid all of them behind the mode class, so a new note was a heading, a Save
   // button and nothing to type in.
-  document.body.classList.add('editing');
+  ARTICLE.classList.add('editing');
   document.getElementById('toggle').onclick = () => { location.href = '{{ links.notes }}'; };
   dirty();
 }
@@ -15714,6 +15852,9 @@ SAVE.onclick = async () => {
   location.href = CREATING ? `{{ links.note }}${answer.id}` : location.pathname;
 };
 </script>
+{#- See `_ISSUE`: after this page's own script, which is where `BODY`, `TITLED`
+    and `showEditing` come from. -#}
+{{ views }}
 {% endif %}
 """
 
@@ -15791,34 +15932,43 @@ _RECORD_STYLE = """
 .doc code { background: var(--surface-2); padding: 0 .25em; }
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
-/* `display: flex` and not `inline-block`, and NOT carrying `.field`: with that
-   class on it, `body.editing .field` won on specificity and the bar went
-   inline — putting the textarea on the same line as the buttons. */
-.bodybar { display: none; gap: .6rem; align-items: baseline; margin: .8rem 0 .3rem; }
-/* The second row sits under the first rather than a paragraph's worth away: they
-   are two halves of one bar, and the box they belong to is below both. */
-.bodybar.markbar { margin-top: .25rem; }
-body.editing .bodybar { display: flex; }
+/* `.bodybar` is no longer written here. It was a second copy of the same three
+   rules, differing only in a top margin, and it is now in `_EDITING_STYLE` with
+   the box it belongs to. The argument the copy carried is kept where it can
+   still be acted on — it is on the bar's markup, in both templates: the bar must
+   NOT carry `.field`, because with that class on it `.entity.editing .field` and
+   `.entity.editing .bodybar` are both (0,2,1), the later one wins, and the
+   textarea ends up on the same line as the buttons. */
 #facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
          margin: 1rem 0; align-items: baseline; }
 #facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
             letter-spacing: .04em; }
 .field { display: none; }
-body.editing .field { display: inline-block; }
-body.editing .read { display: none; }
+/* `inline-block` and not the `block` the detail page uses, which is why this
+   line is here and not in the shared block: a fact on this page is a `<dd>`
+   holding a control and a hint beside it, and `block` puts the hint on its own
+   row. The `[hidden]` guard that goes with it IS shared, because it is the same
+   rule on both pages and this sheet did not have one — an author rule of any
+   specificity beats the UA's `[hidden] { display: none }`, so a hidden control
+   in an editing session was a visible one. */
+.entity.editing .field { display: inline-block; }
+.entity.editing .read { display: none; }
 .title-field { font-size: 1.4rem; font-weight: 700; width: 100%; max-width: 44rem; }
-.body-field { width: 100%; max-width: 44rem; font-family: ui-monospace, monospace;
-              font-size: 13px; }
+/* The measure this page reads at. The face and the line height are not written
+   here any more: they are one declaration shared with the column of line numbers
+   beside the box, because `--gutter` is written in `ch` and `ch` is resolved in
+   the font of whoever uses it. */
+.body-field { width: 100%; max-width: 44rem; }
 #facts .field { width: 100%; max-width: 28rem; font: inherit; font-size: 13px; }
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway
    through is offering to promote a document they cannot see. */
 #promote { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
-body.editing #promote { display: none; }
+.entity.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }
 #promote .hint { margin: 0; }
-"""
+""" + _EDITING_STYLE
 
 
 _NAV = (
