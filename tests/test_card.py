@@ -441,30 +441,58 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
 # page at the end of its virtual time, so the last write of `data-report` is the
 # one the harness brings back.
 #
-# 480ms twice, and the arithmetic matters: the harness injects at 1200ms into a
-# 2500ms budget, so two waits of 700 ran out of time and reported nothing at all.
-# `CARD_DELAY` is 400.
+# The arithmetic matters and it is the harness's `patience` that pays for it: the
+# script is injected at 1200ms and the virtual clock stops `patience` later, so a
+# continuation that runs past it leaves the placeholder in the DOM and the test
+# reports nothing at all — which reads exactly like a card that never came up.
+# `CARD_DELAY` is 400, and this waits 460 once per box plus once at the start.
 _OVER_A_BOX = """
-const parent = cy.nodes().filter(one => one.isParent())[0];
-if (!parent) return {error: 'the corpus has no box'};
-const box = parent.boundingBox({includeLabels: false});
 const card = document.getElementById('card');
-const hover = at =>
-  parent.emit({type: 'mouseover', position: at, originalEvent: {clientX: 10, clientY: 10}});
+// One box of each kind that draws one. A project holding pitches and a pitch
+// holding tasks are the same thing to cytoscape — both are `isParent()` — but
+// asking only the first parent asked only about a project, and "it is the same
+// code path" is the sort of claim that stops being true quietly.
+const boxes = {};
+for (const node of cy.nodes().filter(one => one.isParent())) {
+  const kind = node.data('kind');
+  if (!boxes[kind]) boxes[kind] = node;
+}
+const picked = Object.values(boxes);
+if (!picked.length) return {error: 'the corpus has no box'};
 
-// The middle of the box first, which is where its children are drawn.
-hover({x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2});
+const hover = (node, at) =>
+  node.emit({type: 'mouseover', position: at, originalEvent: {clientX: 10, clientY: 10}});
+const middleOf = node => {
+  const box = node.boundingBox({includeLabels: false});
+  return {x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2};
+};
+const titleOf = node => {
+  const box = node.boundingBox({includeLabels: false});
+  return {x: box.x1 + 20, y: box.y1 + 10};
+};
+
+// Every middle first, so nothing is showing before the titles are tried.
+picked.forEach(node => hover(node, middleOf(node)));
 setTimeout(() => {
-  const middle = card.hidden;
-  // Then its title, twenty pixels in from the top-left corner.
-  hover({x: box.x1 + 20, y: box.y1 + 10});
-  setTimeout(() => {
-    document.body.dataset.report = JSON.stringify({
-      middle, title: card.hidden, id: parent.id(), said: card.textContent.slice(0, 80),
-    });
-  }, 480);
-}, 480);
-return {middle: null};
+  const middles = card.hidden;
+  const said = {};
+  // One title at a time, each answered before the next is asked — two hovers in
+  // one frame would leave only the last one's card up.
+  const askEach = i => {
+    if (i === picked.length) {
+      document.body.dataset.report = JSON.stringify({middles, said});
+      return;
+    }
+    hover(picked[i], titleOf(picked[i]));
+    setTimeout(() => {
+      said[picked[i].data('kind')] = card.hidden ? 'nothing' : 'a card';
+      cy.emit('pan');   // put it away before the next one is asked
+      askEach(i + 1);
+    }, 460);
+  };
+  askEach(0);
+}, 460);
+return {middles: null};
 """
 
 
@@ -478,13 +506,17 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     read, on the view whose whole job is showing what is inside what.
     """
     page = render_graph(index, ROUTES, base_commit=HEAD)
+    # Longer than the default: this answers from a continuation, and the waits it
+    # needs are one `CARD_DELAY` per box plus the first one.
     got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX,
-                      height=1000)
+                      height=1000, patience=3000)
 
     assert not got.get("error"), got
-    assert got["middle"] is not None, "the continuation never ran, so nothing was measured"
-    assert got["middle"] is True, (
-        f"the card came up over the middle of {got['id']}, where its children are"
+    assert got["middles"] is not None, "the continuation never ran, so nothing was measured"
+    assert got["middles"] is True, "a card came up over the middle of a box"
+    # A project holding pitches and a pitch holding tasks, both of them.
+    assert set(got["said"]) >= {"project", "pitch"}, (
+        f"only {sorted(got['said'])} was asked, so the other kind of box is untested"
     )
-    assert got["title"] is False, f"and it did not come up over {got['id']}'s own title"
-    assert got["id"] in got["said"] or got["said"], "the card that came up said nothing"
+    for kind, answer in got["said"].items():
+        assert answer == "a card", f"a {kind}'s own title brought up {answer}"
