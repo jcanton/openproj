@@ -433,3 +433,58 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
 
     assert got["bodies"] == 1, f"{got['bodies']} documents in one card"
     assert got["text"] == 1
+
+
+# The card is queued behind a delay, so this cannot read `hidden` in the same
+# breath as the hover — it would report "no card" about a card that was on its
+# way. The answer is written from a continuation instead: `--dump-dom` reads the
+# page at the end of its virtual time, so the last write of `data-report` is the
+# one the harness brings back.
+#
+# 480ms twice, and the arithmetic matters: the harness injects at 1200ms into a
+# 2500ms budget, so two waits of 700 ran out of time and reported nothing at all.
+# `CARD_DELAY` is 400.
+_OVER_A_BOX = """
+const parent = cy.nodes().filter(one => one.isParent())[0];
+if (!parent) return {error: 'the corpus has no box'};
+const box = parent.boundingBox({includeLabels: false});
+const card = document.getElementById('card');
+const hover = at =>
+  parent.emit({type: 'mouseover', position: at, originalEvent: {clientX: 10, clientY: 10}});
+
+// The middle of the box first, which is where its children are drawn.
+hover({x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2});
+setTimeout(() => {
+  const middle = card.hidden;
+  // Then its title, twenty pixels in from the top-left corner.
+  hover({x: box.x1 + 20, y: box.y1 + 10});
+  setTimeout(() => {
+    document.body.dataset.report = JSON.stringify({
+      middle, title: card.hidden, id: parent.id(), said: card.textContent.slice(0, 80),
+    });
+  }, 480);
+}, 480);
+return {middle: null};
+"""
+
+
+def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_path: Path):
+    """jcanton, 2026-08-20: the card should come up over a box's title, not over
+    the whole box.
+
+    A compound node is hit over its entire area, and almost all of that area is
+    where its children are drawn. So reading a project's tasks meant dragging the
+    pointer through a card about their parent — in the way of the very thing being
+    read, on the view whose whole job is showing what is inside what.
+    """
+    page = render_graph(index, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX,
+                      height=1000)
+
+    assert not got.get("error"), got
+    assert got["middle"] is not None, "the continuation never ran, so nothing was measured"
+    assert got["middle"] is True, (
+        f"the card came up over the middle of {got['id']}, where its children are"
+    )
+    assert got["title"] is False, f"and it did not come up over {got['id']}'s own title"
+    assert got["id"] in got["said"] or got["said"], "the card that came up said nothing"

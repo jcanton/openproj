@@ -16,7 +16,6 @@ rule wins and what does it say. See `tests/cascade.py`.
 from __future__ import annotations
 
 import re
-
 from datetime import date
 from pathlib import Path
 

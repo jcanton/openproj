@@ -6650,19 +6650,72 @@ cy.on('dbltap', 'node', evt => {
 //
 // Not while drawing an edge. In that mode the pointer is doing something else
 // entirely, and a box following it covers the node it is being dragged towards.
+// A box is hit over its whole area, and most of that area belongs to the records
+// inside it. So a compound answers for its label and not for its acres — jcanton,
+// 2026-08-20 — or reading a project's tasks means dragging the pointer through a
+// card about their parent, which is in the way of the thing being read.
+//
+// The label's rectangle, worked out from the style that draws it rather than
+// guessed: `text-halign: left` with `text-margin-x: groupWidth + 12` puts its
+// left edge twelve pixels inside the box, and `text-valign: top` with
+// `text-margin-y: 17` puts it just under the top edge. The band is generous on
+// purpose — it is the title bar somebody is aiming at, not the glyphs.
+function labelBand(node) {
+  const box = node.boundingBox({includeLabels: false});
+  return {
+    x1: box.x1, x2: box.x1 + groupWidth(node) + 24,
+    y1: box.y1, y2: box.y1 + GROUP_SIZE + 16,
+  };
+}
+function onLabel(node, at) {
+  const band = labelBand(node);
+  return at.x >= band.x1 && at.x <= band.x2 && at.y >= band.y1 && at.y <= band.y2;
+}
+
+// Which box the pointer is currently over the label of. `queueCard` restarts its
+// own delay on every call, so asking it on every `mousemove` would mean a card
+// that never appears while the pointer is still moving: it is asked on the
+// crossing, once, and `hideCard` on the way back out.
+let onLabelOf = null;
+
 cy.on('mouseover', 'node', evt => {
   if (connecting) return;
+  const node = evt.target;
+  if (node.isParent()) {
+    if (!onLabel(node, evt.position)) return;
+    onLabelOf = node.id();
+  }
   // `data()` and not a lookup: a node's data IS the row — `_elements` builds it
   // from the same `_row` the table is drawn from — and this page has no `DATA` of
   // its own to look anything up in. The first version of this read `DATA.rows`
   // and drew nothing at all, on the one view the card was added for.
-  queueCard(evt.target.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
 });
-cy.on('mouseout', 'node', hideCard);
+
+// Entering a box below its title is not entering its label, and the pointer can
+// reach the label afterwards without ever crossing the box's edge again.
+cy.on('mousemove', 'node', evt => {
+  if (connecting) return;
+  const node = evt.target;
+  if (!node.isParent()) return;
+  if (onLabel(node, evt.position)) {
+    if (onLabelOf === node.id()) return;
+    onLabelOf = node.id();
+    queueCard(node.data(), evt.originalEvent.clientX, evt.originalEvent.clientY);
+  } else if (onLabelOf === node.id()) {
+    onLabelOf = null;
+    hideCard();
+  }
+});
+
+cy.on('mouseout', 'node', evt => {
+  if (evt.target.isParent() && onLabelOf === evt.target.id()) onLabelOf = null;
+  hideCard();
+});
 // A node dragged out from under a card, and a canvas panned or zoomed under one:
 // the pointer never leaves the node, so `mouseout` does not fire and the card
 // stays describing a node that is no longer there.
-cy.on('drag pan zoom', hideCardNow);
+cy.on('drag pan zoom', () => { onLabelOf = null; hideCardNow(); });
 
 if (CONNECT) {
   CONNECT.onclick = () => {
