@@ -6261,16 +6261,18 @@ function groupWidth(node) {
 
 // Named once: filtering re-runs it, and a second copy of the options is how the
 // graph comes to lay itself out one way at load and another way afterwards.
-// Measured on the real plan — 31 records, six dependencies — in a 1900x820
-// canvas, against the dagre layouts this replaces:
 //
-//     dagre LR (what shipped)   7% of the canvas   3 of 6 edges across a box
-//     dagre TB + packed        57%                 3 of 6
-//     elk layered RIGHT        69%                 0 of 6
+// EACH BOX IS LAID OUT OVER ITS OWN CHILDREN AND FROZEN AS A RECTANGLE, and then
+// the rectangles are laid out. That is ELK's recursive engine — what it does when
+// `hierarchyHandling` is left alone — and it is what makes grouping the layout's
+// primary objective rather than something a later pass has to repair.
 //
-// `hierarchyHandling: INCLUDE_CHILDREN` is the whole reason: dagre lays a nested
-// plan out as though it were flat, and a pitch holding four tasks is exactly
-// what this plan is made of. ELK lays out the boxes and their contents together.
+// `INCLUDE_CHILDREN` was here and is gone. It flattens the hierarchy into one
+// layered pass, which ranks children of different boxes against each other and
+// leaves a box to be whatever rectangle its children ended up needing. Measured
+// on the real plan against the recursive engine, both with `packComponents` gone:
+// 0 overlapping boxes either way, but sibling sparseness 1.4 against 4.7-13.1
+// once the pack was in play. The pack is the story; see the note where it was.
 //
 // `RIGHT` and not `DOWN` for the reason `TB` beat `LR` under dagre — the shape of
 // this plan, not a preference. Most records depend on nothing, and the direction
@@ -6278,65 +6280,86 @@ function groupWidth(node) {
 // at 23% of the canvas against 69%.
 //
 // An edge here is a dependency and only ever a dependency. What holds what is
-// drawn as a box around its contents, which is what `INCLUDE_CHILDREN` lays out
-// — the table draws the same relationship as a tree, and neither view turns it
-// into an arrow.
+// drawn as a box around its contents — the table draws the same relationship as a
+// tree, and neither view turns it into an arrow.
+//
+// MEASURED AT SIZE, 2026-08-20, on plans built by `tests/plans.py` at 1900x820.
+// Containment holds all the way up — 0 overlapping boxes and 0 foreign cards at
+// 31, 52, 208 and 518 records — and what degrades is the zoom, because root
+// `layered` puts every top-level box in ONE ROW:
+//
+//     records   zoom, root layered   zoom, root rectpacking
+//         31           0.80                 0.80
+//        208           0.24                 0.36
+//        518           0.16                 0.27
+//
+// `algorithm: 'rectpacking'` here, keeping `layered` per parent below, is
+// therefore the switch for a plan too wide for one row. It is NOT the default,
+// and the reason is worth the four lines: reverse every dependency in the corpus
+// and root `layered` still draws 6 of 6 arrows left to right — it genuinely
+// re-ranks — while `rectpacking` drops to 2 of 6, because a packer reads no edges
+// at all and was only ever following the order the records came in. On a view
+// whose edges mean blocks/blocked-by, an arrow that reads backwards is the view
+// lying. Take the zoom when a plan actually outgrows the row, and know what it
+// costs.
 const LAYOUT = {
   name: 'elk',
-  // ELK's own fitting is off: `packComponents` below moves the pieces afterwards
-  // and fits once, and two fits fight over the same viewport.
-  fit: false,
+  fit: true,
   elk: {
     algorithm: 'layered',
     'elk.direction': 'RIGHT',
-    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-    'elk.edgeRouting': 'ORTHOGONAL',
     'elk.spacing.nodeNode': 30,
     'elk.layered.spacing.nodeNodeBetweenLayers': 50,
     // `elk.separateConnectedComponents` and `elk.aspectRatio` were here and are
-    // not any more: measured, they changed nothing at all, because
-    // `packComponents` runs afterwards and arranges the pieces itself. Two
-    // settings that read as though they do something are worse than none.
+    // not: the adapter injects `aspectRatio: cy.width() / cy.height()` into every
+    // run itself, and ELK's component packer never ran under the flattened
+    // hierarchy anyway. Two settings that read as though they do something are
+    // worse than none.
+    //
+    // `elk.edgeRouting: 'ORTHOGONAL'` was here for the same reason and is gone
+    // for a worse one: ELK really does compute bend points, and this adapter
+    // throws them away — `run()` applies positions to the non-parent nodes and
+    // never reads an edge's `sections`. Every edge on this page is cytoscape's
+    // own `round-taxi` plus `route()` below.
   },
+  // The one option that reaches a parent: `cytoscape-elk` applies
+  // `nodeLayoutOptions` in `makeNode` BEFORE its `if (!node.isParent())` guard.
+  // The key has to carry its prefix — bare `padding` is dropped in silence.
+  //
+  // 25 and not ELK's default 12, because the box ELK reserves and the box this
+  // page draws are not the same box: `:parent` is styled with `padding: 20` plus
+  // a label band above it. Measured, the drawn box came out 21px larger in each
+  // dimension than the one ELK planned, which is exactly enough for two
+  // neighbours ELK considered separate to touch. THAT PADDING AND THIS NUMBER
+  // HAVE TO MOVE TOGETHER.
+  nodeLayoutOptions: node =>
+    node.isParent() ? {'elk.padding': '[top=25,left=25,bottom=25,right=25]'} : undefined,
 };
 
-// dagre lays the whole graph out as one drawing, so the pieces that are not
-// connected to each other are strung along a single line — which is why even
-// `TB` came out 11 times wider than it was tall, and still used a third of the
-// canvas. Nothing in the plan says those pieces belong in a row: they are
-// separate projects.
+// `packComponents` was here and is the reason this page looked the way it did.
 //
-// So they are arranged afterwards, into rows whose width is chosen to make the
-// whole drawing the shape of the canvas it has to fit into. Same layout, same
-// edges, and 80% of the canvas instead of 7%, at nearly twice the zoom.
+// It ran after ELK, split the drawing with `cy.elements(':visible').components()`
+// and arranged the pieces into rows. `components()` is connectivity over EDGES —
+// and an edge here is a dependency, never containment, which is the whole design
+// of this view. So a box was not one piece: the real plan's 31 records came out
+// as 25 of them, six of the eight boxes had their children spread across more
+// than one, and the loop then moved only the childless nodes. Siblings were dealt
+// into different rows and each parent's rectangle — which in cytoscape is nothing
+// but the bounding box of wherever its children landed — stretched across
+// everything in between. One project's box went from 400x713 to 1753x1207.
 //
-// Only the leaves are moved. A compound node's position is derived from its
-// children in cytoscape, so shifting a parent as well would move its contents
-// twice.
-// ELK is asynchronous, which is what makes the handler above enough: it emits
-// `layoutstop` after this file has finished being read. dagre was synchronous and
-// had already emitted it by then — the pack was written, never called, and the
-// graph came out in one long line exactly as before it was written.
-function packComponents() {
-  const pieces = cy.elements(':visible').components()
-    .map(piece => ({piece, box: piece.boundingBox()}))
-    .sort((a, b) => b.box.h - a.box.h);
-  if (pieces.length < 2) return;
-  const gap = 40;
-  const area = pieces.reduce((sum, one) => sum + (one.box.w + gap) * (one.box.h + gap), 0);
-  // The row width that would make the arrangement as wide-to-tall as the canvas.
-  const budget = Math.sqrt(area * (cy.width() / cy.height()));
-  let x = 0, y = 0, tallest = 0;
-  for (const {piece, box} of pieces) {
-    if (x > 0 && x + box.w > budget) { x = 0; y += tallest + gap; tallest = 0; }
-    const dx = x - box.x1, dy = y - box.y1;
-    piece.nodes().filter(node => node.isChildless())
-      .positions(node => ({x: node.position('x') + dx, y: node.position('y') + dy}));
-    x += box.w + gap;
-    tallest = Math.max(tallest, box.h);
-  }
-  cy.fit(undefined, 24);
-}
+// Measured on the real plan, immediately before and immediately after that one
+// function: 0 overlapping box pairs became 17-21, 0 cards drawn inside a box they
+// do not belong to became 29-70, and sibling sparseness went from 1.30 to between
+// 4.7 and 13.1. Every screenshot of this page that looked wrong was a picture of
+// those eight lines.
+//
+// It was written for a real problem, which is now solved a level up: the
+// flattened hierarchy left the pieces of a disconnected plan in one long line at
+// 7% of the canvas. ELK's recursive engine — what it does when `hierarchyHandling`
+// is left alone — arranges the boxes itself, so there is nothing left to repair.
+// Do not reintroduce a post-layout pass here without measuring what it does to
+// containment: a unit of work that cannot see the boxes will take them apart.
 
 // Before the canvas is built, not after. Cytoscape measures its container once,
 // here, and the first layout fits the plan into whatever it measured — so a
@@ -6387,6 +6410,10 @@ const cy = cytoscape({
     // left, on its own ground: a box whose name you cannot read is a box that
     // says only that something is grouped, not what by.
     { selector: ':parent', style: {
+        // 20 here and `elk.padding: 25` in LAYOUT, and the two have to move
+        // together: ELK reserves the room and this draws the box, and when the
+        // drawn one is bigger than the reserved one two boxes ELK considered
+        // separate touch.
         'background-opacity': .08, 'padding': 20,
         'font-size': GROUP_SIZE, 'font-weight': 600, 'color': token('--fg'),
         // Ellipsis rather than wrap: the offset below is measured on one line,
@@ -6475,13 +6502,66 @@ function paint() {
   route();
 }
 addEventListener('themechange', paint);
+
+// Dragging, which is the half of the complaint no layout choice can fix. A
+// compound's rectangle in cytoscape is the bounding box of its children and
+// nothing else, so a card dragged out of its box does not leave the box — it
+// STRETCHES it, across whatever the box now has to reach. Measured on a clean
+// layout, one card dragged 250x120: 0 overlapping box pairs became 2, and 0 cards
+// inside a foreign box became 5. The drawing was correct until somebody touched it.
+//
+// So a card goes back inside the box it was picked up from. Not by re-running the
+// layout, which is the obvious answer and a worse one: ELK ignores current
+// positions and is deterministic, so a re-run puts every card back exactly where
+// it already was and the drag simply vanishes — a stranger thing to watch than a
+// card sliding home.
+let heldIn = null;
+cy.on('grab', 'node', evt => {
+  const parent = evt.target.parent();
+  if (!parent.length) { heldIn = null; return; }
+  // Inset by the box's own padding, and asked of cytoscape rather than typed:
+  // a compound's bounding box INCLUDES that padding, so a card put back exactly
+  // on the boundary sits where the padding was and the box grows to keep it —
+  // 600x400 of stretch became 23x23 with the padding alone, which is where the
+  // border came into it.
+  const pad = (parseFloat(parent.style('padding')) || 0)
+            + (parseFloat(parent.style('border-width')) || 0);
+  const box = parent.boundingBox({includeLabels: false});
+  heldIn = {x1: box.x1 + pad, x2: box.x2 - pad, y1: box.y1 + pad, y2: box.y2 - pad};
+});
+cy.on('dragfree', 'node', evt => {
+  const node = evt.target;
+  const box = heldIn;
+  heldIn = null;
+  if (!box) return;
+  const own = node.boundingBox({includeLabels: false});
+  const at = node.position();
+  // Its own half-width and half-height, so what is kept inside is the card's
+  // edges rather than its centre: a card whose middle is just inside the boundary
+  // is a card half of which is outside it.
+  const halfWide = (own.x2 - own.x1) / 2;
+  const halfTall = (own.y2 - own.y1) / 2;
+  node.position({
+    x: Math.min(Math.max(at.x, box.x1 + halfWide), box.x2 - halfWide),
+    y: Math.min(Math.max(at.y, box.y1 + halfTall), box.y2 - halfTall),
+  });
+});
+
+// And a box is not picked up at all. Cytoscape moves a parent rigidly with its
+// whole subtree — nothing stretches, but nothing stops it being shoved across its
+// neighbours either, and nothing re-lays-out afterwards. A grab on a box pans the
+// canvas instead, which is what a grab on the background already does.
+// Double-tap to open, the hover card and the edit-mode tap all still fire on it.
+function loosenBoxes() { cy.nodes(':parent').ungrabify(); }
+loosenBoxes();
+cy.on('layoutstop', loosenBoxes);
 // The face is inlined but still swaps in asynchronously, and a group label
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
 
 // Packed first and routed after: routing reads where the boxes ended up, and
 // the pack moves them.
-cy.on('layoutstop', () => { packComponents(); route(); });
+cy.on('layoutstop', route);
 cy.on('position', 'node', route);
 route();
 
