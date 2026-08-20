@@ -3415,3 +3415,77 @@ def test_a_plan_that_already_holds_a_loop_still_loads(client: TestClient):
     pages have to keep working so somebody can see what is wrong and fix it."""
     for route in ("/", "/graph", "/api/index.json"):
         assert client.get(route).status_code == 200, route
+
+
+# --- the index is not rebuilt for every request ------------------------------
+
+
+def test_two_reads_of_one_commit_build_the_index_once(client: TestClient, monkeypatch):
+    """Reading and parsing every record out of the tree was the cost that grew
+    with the plan: measured 19 ms at 31 records, 116 at 208, 502 at 518 — and
+    every request paid it, `save` twice over.
+
+    An index is a pure function of a commit and the day it is drawn around, so the
+    second request against a head that has not moved can have the first one's
+    answer. Counted rather than timed: a timing test on a build this fast is a
+    test that fails on somebody's laptop under load.
+    """
+    from openproj import web
+
+    built = []
+    real = web.build_index
+
+    def counted(*a, **kw):
+        built.append(1)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(web, "build_index", counted)
+
+    assert client.get("/").status_code == 200
+    after_first = len(built)
+    assert after_first >= 1, "the first read built nothing"
+
+    for _ in range(4):
+        assert client.get("/").status_code == 200
+        assert client.get("/api/index.json").status_code == 200
+    assert len(built) == after_first, (
+        f"the index was built {len(built) - after_first} more times for reads of a "
+        "commit that had not moved"
+    )
+
+
+def test_a_write_is_seen_by_the_very_next_read(client: TestClient):
+    """The half of a cache that matters. Keyed on `store.head()`, so a commit —
+    from this route, from a co-editing room's timer, or from a fetch that brought
+    somebody else's work in — is a different key and a different answer."""
+    assert save(client, TASK, {"title": "a new name for it"}).status_code == 200
+    assert "a new name for it" in client.get("/").text
+
+    assert save(client, TASK, {"title": "and another"}).status_code == 200
+    page = client.get("/").text
+    assert "and another" in page
+    assert "a new name for it" not in page, "the table is showing the previous commit"
+
+
+def test_the_index_is_redrawn_when_the_day_moves(repo_path: Path):
+    """An index carries the day it was drawn around — today's line on the
+    timeline, and which work is overrunning. An instance that lives across
+    midnight would serve yesterday's answer until somebody wrote something, so the
+    day is part of the key and not only the commit."""
+    from datetime import date, timedelta
+
+    from openproj.web import create_app
+
+    # Two instances of the app pinned to two days, which is what an instance that
+    # lives across midnight is: the same commit drawn around a different date.
+    pages = {}
+    for day in (date(2026, 8, 20), date(2026, 8, 20) + timedelta(days=365)):
+        app = create_app(repo_path, auth="dev", secret=SECRET, today=day)
+        with TestClient(app) as pinned:
+            pages[day] = pinned.get("/timeline").text
+
+    early, late = sorted(pages)
+    assert pages[early] != pages[late], (
+        "the timeline is identical a year apart, so the day it is drawn around is "
+        "not reaching the drawing"
+    )

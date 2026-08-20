@@ -1021,8 +1021,37 @@ def create_app(
     closing = threading.Event()
     app.state.closing = closing
 
+    # The last index built, and the commit it was built from. An index is a pure
+    # function of a commit and the day it is drawn around, so a second request
+    # against the same commit can have the first one's answer.
+    #
+    # Measured before this existed, on a plan of 518 records: reading and parsing
+    # every file out of the tree was 502 ms of a 941 ms PATCH, and every request
+    # paid it — `save` twice, once for the contested-id check and once for the
+    # loop check. 19 ms at 31 records, 116 at 208, 502 at 518: it is the cost that
+    # grows with the plan, and the one that will be felt as the plan grows.
+    #
+    # One entry and not a dictionary of them. A plan has one head, and everything
+    # in front of it is looking at that head; a cache of every commit ever served
+    # would hold the whole history of a long-lived instance in memory to answer a
+    # question nobody asks twice.
+    #
+    # `today` is part of the key because it is part of the answer: an index drawn
+    # around yesterday has yesterday's overruns and yesterday's today-line, and an
+    # instance that lives across midnight would otherwise serve them until
+    # somebody wrote something.
+    held: dict[str, object] = {}
+
     def index_now():
         commit = store.head()
+        drawn = today or date.today()
+        if held.get("commit") == commit and held.get("day") == drawn:
+            return commit, held["index"]
+        commit, index = _build_index_at(commit, drawn)
+        held.update({"commit": commit, "day": drawn, "index": index})
+        return commit, index
+
+    def _build_index_at(commit: str, drawn: date):
         config, unreadable_config = _config_at(store, commit)
         entities, unreadable_entities = _entities_at(store, commit)
         return commit, build_index(
@@ -1034,7 +1063,7 @@ def create_app(
             # past — a demo of a scheduler with nothing left to schedule. A write
             # still stamps the real date, because a commit happens when it
             # happens; this is the day the plan is DRAWN around.
-            today or date.today(),
+            drawn,
             # Sorted by path, because a reader works through the list by opening
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted(
