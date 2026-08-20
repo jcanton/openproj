@@ -2155,7 +2155,23 @@ def test_the_narrow_layout_drops_the_columns_that_are_lookups(page: str):
     # that cannot tell a rule from an explanation of one.
     styles = re.sub(r"/\*.*?\*/", "", "".join(re.findall(r"<style>(.*?)</style>", page, re.S)),
                     flags=re.S)
-    assert "@media (max-width" not in styles, "the breakpoint that drifted is gone"
+    # **Not "no `@media (max-width` anywhere on this page", which is what this
+    # asked before.** That was a proxy that happened to hold, and it broke the
+    # day a rule about something else needed one: the sheet carrying the suggest
+    # list also carries the editor toolbar, and the toolbar has a narrow-window
+    # rule for a bar this page never draws. The claim is about the TABLE — that
+    # nothing decides its layout from a width written in CSS — so it is asked
+    # about the table's own selectors, inside every at-rule on the page.
+    # Brace-matched through `cascade._blocks`, because a non-greedy regex for a
+    # media block stops at the first rule inside it and would miss the second.
+    from cascade import _blocks
+
+    for prelude, body in _blocks(styles):
+        if not prelude.startswith("@media"):
+            continue
+        assert not re.search(r"\.shed-|data-col|--sticky|\btable\b|\bt[hd]\b", body), (
+            f"the breakpoint that drifted is back, inside `{prelude}`: {body.strip()[:160]}"
+        )
     rule = re.search(r"\n(\.shed-.*?) \{ display: none; \}", styles, re.S).group(1)
     for column in _shed(page):
         assert f'.shed-{column} [data-col="{column}"]' in rule, column
