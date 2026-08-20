@@ -1161,11 +1161,6 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
             f"the {name} page's bar is not sticky, so which edge it names is a "
             "coordinate rather than a guarantee\n" + says(sheet, path, "position")
         )
-
-
-CONTROLS = ("#unfilter", "#toggle", "#tl-zoom", "#state-filter", "#kind", "#template", "#into")
-
-
 # Every button and every select on the page, and what it is actually drawn with.
 # Measured, not read: the version of this test that read the stylesheet passed
 # while `#preview`, `#connect`, `#clear-filters` and a dozen others were being
