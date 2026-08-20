@@ -9739,6 +9739,41 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
    than the toolbar itself, where wrapping beats a scrollbar. */
 .marks { display: inline-flex; gap: .15rem; align-items: stretch; flex-wrap: wrap;
          flex: none; }
+/* And the window the toolbar does not fit in, where `flex: none` is the wrong
+   answer and `flex-wrap` above cannot engage without this.
+
+   `0 0 auto` pins the bar at its max-content width whatever the window, so the
+   wrap never happens: measured in Chrome at 500px on /detail while editing, on
+   /new, /note/new and /issue/new, the Link, Image, Table and Horizontal-rule
+   buttons sat 101px past the right edge of `article.entity` — off the surface,
+   reachable only by scrolling the whole document sideways, which is also what
+   took that page's `scrollWidth` to 581.
+
+   **`min-width: 0` is not needed here, and the fix this was written from said it
+   was the load-bearing half.** Measured both ways: `flex: 0 1 auto` alone gives
+   the same four widths the same answer. A flex item's automatic minimum size is
+   its MIN-CONTENT size, and the min-content size of a container that wraps is
+   its widest single item — one button, about 40px — not the whole bar. The
+   declaration would be inert, and an inert declaration under a comment calling
+   it load-bearing is the next reader's wasted hour.
+
+   `@media` and not `@container`, and that is not a style preference: the only
+   `container-type: inline-size` in this file is on `article.entity` inside
+   `_DETAIL_STYLE`, and the note and issue pages ship `_RECORD_STYLE +
+   _SUGGEST_STYLE` and never load it. A container query here was patched in and
+   measured byte-identical to no fix at all on /note/new, because
+   `getComputedStyle(article).containerType` is "normal" there.
+
+   40rem and not the 34rem this was first written for: that number was measured
+   against fourteen buttons needing 482.8px, and the history group made it
+   sixteen needing 561px. Swept in Chrome at eight widths on both surfaces:
+   unpatched, the overhang is 101px at 500, 41px at 560 and gone by 620; patched,
+   the bar is on two rows to 616 and back on one at 624. The query has to reach
+   past both numbers, and between 624 and 640 it applies and does nothing —
+   `flex-shrink` only shrinks an item there is not room for. */
+@media (max-width: 40rem) {
+  .marks { flex: 0 1 auto; }
+}
 /* The line between one group of marks and the next. `align-self: stretch` so it
    is the height of the buttons rather than of the text inside them. */
 .marks .sep { width: 1px; background: var(--line); margin: 0 .3rem; align-self: stretch; }

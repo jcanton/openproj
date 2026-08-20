@@ -3984,3 +3984,88 @@ def test_preview_only_takes_away_the_controls_and_keeps_the_one_live_fact(
         f"carries no margin of its own: {got['emptyHeight']}"
     )
     assert got["occupiedHeight"] > 0, "and somebody arriving is not drawn at all"
+
+
+_TOOLBAR_AT_A_WIDTH = _STUB_RENDER + r"""
+// The detail page opens read-only and the create forms open editing, so this
+// asks for the surface rather than assuming which page it is on.
+if (typeof flipEditing === 'function') {
+  flipEditing();
+  await new Promise(go => setTimeout(go, 150));
+}
+const marks = document.getElementById('marks');
+const article = document.querySelector('article.entity');
+const buttons = [...marks.querySelectorAll('button.mark')];
+const edge = article.getBoundingClientRect().right;
+return {
+  width: innerWidth,
+  buttons: buttons.length,
+  rows: new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top))).size,
+  // How far the rightmost button reaches past the surface it is drawn on.
+  // Negative is inside.
+  past: Math.round(Math.max(...buttons.map(b => b.getBoundingClientRect().right)) - edge),
+  // And whether the toolbar is what pushes the page sideways. Compared against
+  // the same page's own width rather than against a fixed number: at 390px this
+  // application already overflows from the nav shell alone, on every page,
+  // including ones with no editor at all.
+  scrollW: document.documentElement.scrollWidth,
+  flex: getComputedStyle(marks).flex + ' | ' + getComputedStyle(marks).minWidth,
+};
+"""
+
+
+@pytest.mark.parametrize("where", ["detail", "note"])
+@pytest.mark.parametrize("width", [500, 1000])
+def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide(
+    client: TestClient, tmp_path: Path, where: str, width: int
+):
+    """`.marks { flex: none }` is `0 0 auto` with the default `min-width: auto`,
+    which pins the bar at its max-content width whatever the window — so the
+    `flex-wrap: wrap` on the same rule, credited in the comment above it as "the
+    answer to a window narrower than the toolbar itself", could never engage.
+
+    Measured in Chrome at 500px, on this page and on the create forms: the Link,
+    Image, Table and Horizontal-rule buttons sat 101px past the right edge of
+    `article.entity`, and the document scrolled sideways to 581px to hold them.
+    Four of sixteen controls off the surface, on every page that has an editor.
+
+    Two things this asks that a stylesheet cannot answer, and one it must not.
+    Where a button ENDS UP is layout, and `tests/cascade.py` skips at-rule
+    bodies, so it resolves the wide page and cannot see this one at all. And the
+    comparison is button-right against article-right and never
+    `scrollWidth <= innerWidth`: at 390px every page in this application already
+    overflows from the nav shell, with no editor on it, so a test written that
+    way would be measuring something else and failing for a reason it did not
+    name.
+
+    A media query and not a container query. The file's only
+    `container-type: inline-size` is on `article.entity` inside `_DETAIL_STYLE`,
+    and the note and issue pages ship `_RECORD_STYLE + _SUGGEST_STYLE` and never
+    load it — which is why this is parametrised over both surfaces. A container
+    query was patched in and measured byte-identical to no fix at all here.
+    """
+    page = (
+        client.get(f"/detail/{TASK}").text if where == "detail" else client.get("/note/new").text
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / f"bar-{where}-{width}.html", width, _TOOLBAR_AT_A_WIDTH,
+        budget=6000,
+    )
+
+    assert got["width"] == width and got["buttons"] == 16, got
+    assert got["past"] < 0, (
+        f"at {width}px the toolbar reaches {got['past']}px past the edge of the surface "
+        f"it is drawn on, so the buttons on the end cannot be pressed: {got['flex']}"
+    )
+    assert got["scrollW"] == width, (
+        f"the toolbar is pushing the whole page sideways at {width}px: "
+        f"{got['scrollW']} against a {width}px window"
+    )
+    if width >= 1000:
+        # And the row it has been on since the marks shipped. `flex: none` is
+        # what keeps it there when there IS room: the bar shares a flex line with
+        # a status message up to 97 characters long, and without it the marks
+        # shrink and wrap with the break falling inside a group.
+        assert got["rows"] == 1, (
+            f"the toolbar wrapped at {width}px, where it fits: {got['rows']} rows"
+        )
