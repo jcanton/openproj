@@ -2543,6 +2543,110 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
         )
 
 
+# The same question as `_LEAVING`, asked at the door Cancel is not.
+#
+# A Save made in a room does NOT reload — the document is already what everybody
+# in the room has — so `_COEDIT`'s `saved` branch ends the session with a bare
+# `showEditing(false)` and nothing else. That is the line driven here, and the
+# test above it checks it really is the line, so that this is the room's door and
+# not one invented for a test.
+_SAVED_IN_A_ROOM = _STUB_PREVIEW + """
+const article = document.querySelector('article.entity');
+const nav = document.querySelector('body > nav');
+const link = nav.querySelector('a');
+const corner = document.querySelector('.corner');
+const overLink = () => {
+  const box = link.getBoundingClientRect();
+  return document.elementFromPoint(
+    box.left + box.width / 2, box.top + box.height / 2) === link;
+};
+const shape = () => ({
+  classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  fullpage: document.body.classList.contains('fullpage'),
+  navInert: !!nav.inert,
+  over: overLink(),
+  switcher: document.getElementById('views').getClientRects().length > 0,
+  editing: article.classList.contains('editing'),
+  // The corner went into the bar with the session; ending the session has to
+  // hand it back, or the theme toggle and the way in are lodged inside a record.
+  cornerInNav: corner.parentElement === nav,
+});
+
+const answers = {};
+for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view', 'preview']]) {
+  document.getElementById('toggle').click();
+  document.getElementById(id).click();
+  const inside = shape();
+  // Exactly what the room does when its commit lands, and nothing else.
+  showEditing(false);
+  answers[name] = {inside, after: shape()};
+  // Back to read mode for the next pass: this door leaves Edit on the bar.
+  if (article.classList.contains('editing')) document.getElementById('cancel').click();
+}
+return answers;
+"""
+
+
+def test_the_room_s_own_save_leaves_the_surface_it_was_pressed_in():
+    """First: that `showEditing(false)` really is how a room ends the session.
+
+    The test below drives that call in Chrome, and a test that drives a line the
+    product does not call is a test that proves nothing. So the shape of the
+    `saved` branch is read out of `_COEDIT` here — it ends the session through
+    that one function, and it carries no `showView` of its own, which is the
+    whole reason the door was missed.
+    """
+    from openproj.render import _COEDIT
+
+    saved = re.search(r"if \(message\.t === 'saved'\) \{.*?\n    \}", str(_COEDIT), re.S)
+    assert saved, "the room's `saved` branch is not where this test thinks it is"
+    assert "showEditing(false)" in saved.group(0), (
+        "a room's save no longer ends the session through `showEditing`, so the "
+        "browser test below is driving a line nothing calls"
+    )
+    assert "showView" not in saved.group(0), (
+        "the `saved` branch has grown its own copy of leaving the surface — that "
+        "is the fourth copy this was consolidated to remove"
+    )
+
+
+def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, tmp_path: Path):
+    """Cancel was fixed and the room's Save was not, because the rule was written
+    at the call sites rather than at the event.
+
+    Three copies of `showView(null)` existed — `flipEditing`, the issue page's
+    toggle, the note page's — and a fourth door had none: a Save in a room does
+    not reload, so it ended the session with a bare `showEditing(false)`.
+    Measured in Chrome from the split view before the fix: the article kept
+    `full view-both`, `<body>` kept `fullpage`, the nav stayed `inert`, and the
+    switcher — drawn only under `.entity.editing`, and named by the commit that
+    fixed Cancel as the documented way back — went at the same instant. The
+    reader was left inside a fixed, opaque, window-filling article showing a
+    record nobody was editing.
+
+    It is one listener on `openproj:session` now, so this asks the question the
+    call sites cannot: end a session, any way, and the surface comes down.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "roomsave.html",
+        1400, _SAVED_IN_A_ROOM, patience=1800,
+    )
+
+    for name, answer in got.items():
+        assert answer["inside"]["classes"] == ["full", f"view-{name}"], name
+        assert answer["inside"]["navInert"], f"{name}: the page behind the surface is not inert"
+        assert not answer["inside"]["over"], (
+            f"{name}: the surface does not actually cover the nav, so nothing here is proved"
+        )
+        assert answer["after"] == {
+            "classes": [], "fullpage": False, "navInert": False, "over": True,
+            "switcher": False, "editing": False, "cornerInNav": True,
+        }, (
+            f"a room's save from the {name} view left the reader in the surface: "
+            f"{answer['after']}"
+        )
+
+
 # The two page-chrome controls, followed into the surface and out of it again.
 #
 # `#who` is filled by the shell's own `/api/me` fetch, which cannot answer over

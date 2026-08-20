@@ -11272,8 +11272,33 @@ else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) showView(EDI
 // A session beginning after this script has run — the Edit button. `VIEW ===
 // null` is what stops the loop: `showView` sets `VIEW` before it calls
 // `showEditing`, which is what dispatches this.
+//
+// **And a session ENDING leaves the surface it was in, here and nowhere else.**
+// That rule was written three times — in `flipEditing`, and again in each of the
+// issue and note pages' toggles — and the fourth door had no copy: a Save made
+// in a room does not reload, so `_COEDIT`'s `saved` branch ends the session with
+// a bare `showEditing(false)`. Measured in Chrome from the split view: the
+// article kept `full view-both`, `<body>` kept `fullpage`, the nav stayed
+// `inert` and the switcher — drawn only under `.entity.editing`, and named in
+// the commit that fixed Cancel as the documented way back — went at the same
+// instant. That is the trap `test_cancel_leaves_the_surface_it_was_pressed_in`
+// exists for, arrived at through the door nobody had written the line on.
+//
+// So it is one line on the one event that means "a session began or ended",
+// rather than a fourth copy at a fourth call site — an invariant written four
+// times is an invariant guarded three.
+//
+// `VIEW !== null` asks whether there is a surface to leave, and it is there for
+// an ordering rather than for a case that happens today: the issue and note
+// pages call `showEditing(false)` at load to draw themselves in read mode, and
+// they only get away with it because this script is inlined AFTER theirs, so
+// there is no listener yet. Nothing on the page says that has to stay true, and
+// the failure if it stopped being true is a `refreshPreview` and a class sweep
+// on every load of those two pages — quiet, and nothing would report it. Asking
+// whether a surface is up costs one comparison and does not care about order.
 addEventListener('openproj:session', event => {
   if (event.detail && EDITOR.mode && VIEW === null) showView(EDITOR.mode);
+  if (!event.detail && VIEW !== null) showView(null);
 });
 </script>
 """)
@@ -12052,14 +12077,13 @@ function showEditing(editing) {
 function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   showEditing(editing);
-  // Ending the session leaves the surface the session was in. Without this,
-  // Cancel from any of the three views left a reader inside a fixed, opaque,
-  // window-filling article with nothing in it: the switcher is drawn only while
-  // the article is editing, so the pressed segment — the documented way back —
-  // disappeared at the same instant, the box went with it so Escape could not be
-  // reached either, and the nav was painted over. The only exits left were the
-  // undiscoverable chord, Back, and a reload.
-  if (!editing && typeof showView === 'function') showView(null);
+  // Ending the session leaves the surface the session was in — and the line that
+  // does it is not here any more. It was here, and in the issue page's toggle,
+  // and in the note page's, and the fourth door out of a session had no copy:
+  // a Save made in a room ends it with a bare `showEditing(false)`. It is one
+  // listener on `openproj:session` in `_VIEWS` now, which `showEditing` above
+  // dispatches, so every door is the same door. See the comment there.
+  //
   // The stored draft goes; the base it brought with it stays. The text is still
   // in the box, so the page is still holding work written against that commit —
   // moving the base forward here is the silent overwrite by another route.
@@ -18132,13 +18156,12 @@ if (!CREATING) {
       // keystroke.
       SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL.body));
     }
-    // Ending the session leaves the surface the session was in. Without this,
-    // Cancel from a full-page view left a reader inside a fixed, opaque,
-    // window-filling article with the switcher — the documented way back — drawn
-    // only while the article is editing, so it vanished at the same instant.
-    // That defect was found and fixed on the detail page in S3; this page grew
-    // the same surface in this commit and would have grown the same trap.
-    if (!on && typeof showView === 'function') showView(null);
+    // Ending the session leaves the surface the session was in, and the line
+    // that does it is one listener on `openproj:session` in `_VIEWS` rather
+    // than a copy here. It was a copy here, and on the note page, and in the
+    // detail page's `flipEditing` — and the fourth door out of a session had
+    // none: a Save made in a room ends it with a bare `showEditing(false)`.
+    // See the comment on that listener for what that left on the screen.
     showEditing(on);
   };
   showEditing(false);
@@ -18477,13 +18500,12 @@ if (!CREATING) {
       // keystroke.
       SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL.body));
     }
-    // Ending the session leaves the surface the session was in. Without this,
-    // Cancel from a full-page view left a reader inside a fixed, opaque,
-    // window-filling article with the switcher — the documented way back — drawn
-    // only while the article is editing, so it vanished at the same instant.
-    // That defect was found and fixed on the detail page in S3; this page grew
-    // the same surface in this commit and would have grown the same trap.
-    if (!on && typeof showView === 'function') showView(null);
+    // Ending the session leaves the surface the session was in, and the line
+    // that does it is one listener on `openproj:session` in `_VIEWS` rather
+    // than a copy here. It was a copy here, and on the note page, and in the
+    // detail page's `flipEditing` — and the fourth door out of a session had
+    // none: a Save made in a room ends it with a bare `showEditing(false)`.
+    // See the comment on that listener for what that left on the screen.
     showEditing(on);
   };
   showEditing(false);
