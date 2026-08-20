@@ -151,14 +151,17 @@ cy.edges().forEach(edge => {
 // along neither is a diagonal, and a long one is the zig-zag across the canvas
 // jcanton photographed on 2026-08-20.
 //
-// The first and last legs are exempt and have to be: cytoscape draws from a
-// node's CENTRE to the first bend, so the stub that leaves the box is diagonal
-// by construction however well the middle is routed.
+// EVERY leg, the two ends included. They were exempt, on the grounds that
+// cytoscape draws from a node's CENTRE — which was true, and was the reason the
+// ends leaned: a card's centre is 22px from its border and the stub is a
+// rounding error, while a project's box is hundreds of pixels wide and the stub
+// is a long diagonal across it and out the side. The endpoints are the route's
+// own anchors now (`drawRoutes`), so a leaning end is a defect like any other.
 let diagonal = 0, legs = 0, longest = 0, longestOf = null;
 cy.edges().forEach(edge => {
   const path = pathOf(edge);
-  if (path.length < 4) return;          // no middle to be diagonal
-  for (let i = 1; i < path.length - 2; i++) {
+  if (path.length < 3) return;          // nothing was routed
+  for (let i = 0; i < path.length - 1; i++) {
     const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
     legs++;
     if (dx > 1.5 && dy > 1.5) {
@@ -332,6 +335,13 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
                       height=820, patience=6000)
 
     assert got["boxes"] >= 12, f"the corpus is not the shape this test needs: {got}"
+    # Including the ends, which is where the leaning was: this corpus has
+    # dependencies between the boxes themselves, and a compound's centre is
+    # nowhere near the side a route leaves from.
+    assert got["legs"] > 0 and got["diagonal"] == 0, (
+        f"{got['diagonal']} of {got['legs']} legs run along neither axis, the "
+        f"longest {got['longest']}px on {got['longestOf']}"
+    )
     assert got["overlapping"] == [], got["overlapping"][:6]
     assert got["trespassing"] == [], got["trespassing"][:6]
     assert got["sparseMean"] < 2.5, got
@@ -498,7 +508,10 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     from plans import build
 
     root = tmp_path / "mutual"
-    build(root, 4, 3, 3)
+    # Without the generator's own edges between boxes: this test writes the pair
+    # it is about, and a project waiting on a project elsewhere is one more
+    # constraint on the same ranking than it asked for.
+    build(root, 4, 3, 3, box_deps=False)
 
     entities, config, _ = load_repo(root)
     index = build_index(entities, config, date(2026, 8, 17))

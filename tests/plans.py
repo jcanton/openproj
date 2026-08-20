@@ -36,7 +36,7 @@ def _share(total: int, groups: int, which: int) -> int:
 
 
 def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int = 7,
-          products: int = 2) -> int:
+          products: int = 2, box_deps: bool = True) -> int:
     """Write a plan and return how many records it holds.
 
     Seeded, so the same arguments give the same plan: a layout test whose corpus
@@ -86,10 +86,17 @@ def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int
         for _ in range(_share(projects, products, group)):
             n += 1
             p = write("project", n, top)
-            for _ in range(pitches):
+            # Not the same size every time. Uniform projects come out as boxes
+            # of one height in a row, every centre level with every anchor, and
+            # an edge between two of them is horizontal whether or not anybody
+            # told cytoscape where it leaves from — so the defect that leaned
+            # every box-attached line on the real plan could not occur here.
+            # `made` is how many records exist, which is a number that varies
+            # already; the point is only that the boxes differ.
+            for which in range(max(1, pitches - len(made) % 2)):
                 n += 1
                 q = write("pitch", n, p)
-                for _ in range(tasks):
+                for _ in range(max(1, tasks - which % 2)):
                     n += 1
                     write("task", n, q)
 
@@ -116,8 +123,26 @@ def build(root: pathlib.Path, projects: int, pitches: int, tasks: int, seed: int
         first, second = sorted(rng.sample(range(len(pool)), 2))
         deps.setdefault(pool[second], []).append(pool[first])
 
+    # And dependencies between the BOXES themselves, which is the shape jcanton's
+    # plan has and no generated one did. An edge whose end is a compound leaves
+    # from a centre that is nowhere near the side the route uses, and every
+    # leaning line in the graph was one of those — measured on the real plan and
+    # on nothing here, because a project waiting on a project could not occur.
+    # Later on earlier, so this stays acyclic like everything above it.
+    #
+    # `box_deps=False` is for the one test that measures ARROW DIRECTION between
+    # a mutual pair it writes itself: extra edges between boxes are extra
+    # constraints on the same ranking, and it did not ask for them.
+    boxes = ids["project"] if box_deps else []
+    for i in range(0, len(boxes) - 1, 2):
+        deps.setdefault(boxes[i + 1], []).append(boxes[i])
+    # One with an end of each kind: a box waiting on a card.
+    if boxes and pool:
+        deps.setdefault(boxes[0], []).append(pool[-1])
+
     for eid, on in deps.items():
-        kind = "pitch" if eid.startswith("pitch") else "task"
+        kind = ("project" if eid.startswith("proj")
+                else "pitch" if eid.startswith("pitch") else "task")
         path = root / DIRS[kind] / f"{eid}.md"
         text = path.read_text().replace("---\n\nSynthetic",
             f"depends_on: [{', '.join(sorted(set(on)))}]\n---\n\nSynthetic", 1)

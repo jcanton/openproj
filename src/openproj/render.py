@@ -7940,7 +7940,11 @@ function routeEdges() {
       && !card.ancestors().anySame(edge.source())
       && !card.ancestors().anySame(edge.target())).map(boxOf);
     const path = routeAround(blockers, from, to);
-    if (path && path.length > 1) paths[edge.id()] = path;
+    // The anchors travel with the path. They are where the route LEAVES the
+    // source and MEETS the target, and cytoscape has to be told both — see
+    // `drawRoutes`, which without them draws the first and last legs from the
+    // middle of a node.
+    if (path && path.length > 1) paths[edge.id()] = {points: path, from, to};
   });
   drawRoutes(paths);
 }
@@ -7952,9 +7956,37 @@ function routeEdges() {
 function drawRoutes(paths) {
   cy.batch(() => {
     cy.edges().forEach(edge => {
-      const points = paths[edge.id()];
-      if (!points || !points.length) { edge.removeStyle('curve-style'); return; }
+      const routed = paths[edge.id()];
+      if (!routed || !routed.points.length) {
+        edge.removeStyle('curve-style');
+        edge.removeStyle('source-endpoint');
+        edge.removeStyle('target-endpoint');
+        return;
+      }
+      const points = routed.points;
       const from = edge.source().position(), to = edge.target().position();
+      // WHERE THE LINE LEAVES THE NODE, and the reason the graph leaned.
+      //
+      // A `segments` edge runs from one node's CENTRE, through the bends, to the
+      // other's, and cytoscape then clips whatever is inside the two shapes. For
+      // a card that is invisible: a 150x44 box has its centre 22px from its
+      // border and the stub is a rounding error. For a compound it is the defect
+      // — a project's box is hundreds of pixels wide, its centre is nowhere near
+      // the side the route leaves from, and the visible first leg is a long
+      // diagonal across the box and out of it. Measured on jcanton's plan, six
+      // legs of six box-attached edges, up to 76px each, and every one of them a
+      // diagonal on a drawing whose middle was perfectly orthogonal.
+      //
+      // So the endpoints are moved to the anchors the route was actually planned
+      // between, as an offset from the node's centre. The first leg then starts
+      // where the second one begins, which is what makes the whole line one
+      // orthogonal path rather than an orthogonal path with two leaning ends.
+      edge.style({
+        'source-endpoint': `${(routed.from.x - from.x).toFixed(1)}px `
+          + `${(routed.from.y - from.y).toFixed(1)}px`,
+        'target-endpoint': `${(routed.to.x - to.x).toFixed(1)}px `
+          + `${(routed.to.y - to.y).toFixed(1)}px`,
+      });
       const dx = to.x - from.x, dy = to.y - from.y;
       const span = Math.hypot(dx, dy) || 1;
       const weights = [], distances = [];
