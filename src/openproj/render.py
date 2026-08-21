@@ -7218,6 +7218,13 @@ td .sev-mark { margin-left: .25rem; }
    size of the ids a little further". Monospace holds it legible at that size in
    a way the sans face would not. */
 .eid { font-family: var(--font-mono); font-size: 11px; }
+/* And the column keeps a floor the smaller face took away. It is as wide as its
+   widest id and nothing more — that is the fit — so a font a step smaller made
+   it 114px, and the draft row lives in this column: three mark buttons and a
+   kind picker whose width comes from the longest word it can show. At 114 the
+   picker came out 51px for a word needing 59 and read `Projec`. 122px is what
+   the draft needs, and it is 8px nobody looking at a table of ids will notice. */
+#rows th[data-col="id"], #rows td[data-col="id"] { min-width: 122px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
 /* A cell with something still in the way. Only when there is: a column tinted on
@@ -7307,6 +7314,14 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
    that cost no height at all. Closed they are one item and a badge, which is the
    same saving by a different route. */
 #rows tbody td.clamp.open { white-space: normal; overflow-wrap: anywhere; }
+/* And the two rows that hold CONTROLS rather than values are exempt whole: the
+   draft row's kind picker is a `<select>` in a flex wrapper whose width comes
+   from the longest word it can show, and a cell that clips shrank it to 51px for
+   a word needing 59 — `Projec`. The adder row is the same kind of thing with a
+   button in it. Neither has text to ellipsise. */
+#rows tbody tr.draft > td, #rows tbody tr.adder > td {
+  white-space: normal; overflow: visible; text-overflow: clip;
+}
 /* The bar fills the column it is alone in now, rather than trailing a number. */
 #rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
 /* And the century goes when the column is squeezed, which is the one part of a

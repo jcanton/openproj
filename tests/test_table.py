@@ -1837,6 +1837,15 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
 # intersecting: half a button hanging off an edge is a control somebody scrolls
 # to anyway, which is the thing this is about.
 _WHERE_CREATE_IS = """
+// Out of the full-page surface first. The create form is always editing, so
+// "when the session starts" is the load — and a session now starts in the `edit`
+// view, where the surface IS the window and the page behind it does not scroll.
+// What this asks about is the ordinary page: a form several screens tall, and a
+// commit bar that stays reachable while you scroll it.
+const LIT = ['view-edit', 'view-both', 'preview']
+  .map(id => document.getElementById(id))
+  .find(seg => seg && seg.getAttribute('aria-pressed') === 'true');
+if (LIT) LIT.click();
 const SAVE = document.getElementById('save');
 const TITLE = document.querySelector('input[name=title]');
 TITLE.value = 'A pitch with a shaping document in it';
@@ -3504,10 +3513,11 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
     # were what made every row on a laptop two lines tall. The row still carries
     # the ISO string, which is what the sort reads and what this compares against.
     year, month, day = after["rows"][PITCH]["start"].split("-")
-    # `endswith`, because the two-digit year is its own element — the column drops
-    # it when it tightens — and the driver's DOM does not gather a nested span's
-    # text into its parent's `textContent` the way a browser does.
-    assert got["start"].endswith(f"{month}.{day}"), got["start"]
+    # Day first — `14.07` — with the two-digit year trailing in its own element,
+    # which the column drops when it tightens. `startswith`, because the driver's
+    # DOM does not gather a nested span's text into its parent's `textContent`
+    # the way a browser does, so the year may or may not be in what comes back.
+    assert got["start"].startswith(f"{day}.{month}"), got["start"]
     assert year[:2] not in got["start"], "the century is still being drawn"
 
 
