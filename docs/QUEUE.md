@@ -242,10 +242,11 @@ server's own answer, on the server, per request.
   where `--timeout 300` closes every socket at five minutes and reconnection
   stops being exceptional.
 
-## 7. Queued after `product`, from jcanton's screenshots on 2026-08-20
+## 7. Done: from jcanton's screenshots on 2026-08-20
 
-Numbered in the order they were asked for; all of them go on one branch,
-`polish3`, except the last, which is its own.
+Numbered in the order they were asked for. 1–6 landed in `polish3` and the second
+round — the legend, the priority mark, the leaning edges on the real plan, a
+product's status and PRs, and the progress column's units — in `polish4`.
 
 1. **A narrow Priority column adds newlines where Status does not.** Status drops
    to its glyph and hides the word (built in #49); Priority keeps the word and
@@ -271,6 +272,20 @@ Numbered in the order they were asked for; all of them go on one branch,
 6. **Saving a body leaves the stale text on screen.** Edit the body of an entity,
    save, the editor closes and the *old* text is shown until a refresh. The save
    itself lands. So the view is rendering from something the save did not update.
+
+### What the second round settled
+
+3 above was reported again against jcanton's own plan, and the seed corpus never
+showed it: a `segments` edge is drawn from a node's CENTRE, and a compound's
+centre is nowhere near the side its route leaves from. The probe could not see it
+either — it read the path centre to centre and exempted the two ends, and no
+generated plan had a dependency between two boxes to exempt. Both are fixed, and
+`tests/plans.py` now writes box-to-box edges over boxes of unequal height.
+
+2 was settled the third way round: not five elements, not nothing in menus, but
+one character whose height is the rung, in the rung's colour. The vendored face
+has none of the block elements, so the platform's fallback draws them — the cost
+was weighed against three alignment problems that had each been fixed twice.
 
 ## 8. Themes — built, awaiting a look
 

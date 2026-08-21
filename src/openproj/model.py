@@ -994,12 +994,15 @@ KINDS: tuple[Rung, ...] = (
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
 
 
-# The fields that describe work being done rather than work being grouped. A rung
-# the scheduler never sees reads none of them: nobody is assigned to a codebase,
-# and a codebase is not in a cycle.
+# The fields that describe work being done, or evidence that it was: a rung the
+# scheduler never sees reads none of them. Nobody is assigned to a codebase, a
+# codebase is not in a cycle, and — jcanton, 2026-08-20 — a codebase is not
+# `in_progress` and does not have a pull request either. `status` and `prs` are
+# here for the same reason as the rest: a product is a container, and the state
+# of the work is the state of the work inside it.
 _WORK_FIELDS = (
     "owner", "assignees", "reviewers", "review_waived", "assigned_on",
-    "cycle", "priority",
+    "cycle", "priority", "status", "prs",
 )
 
 

@@ -103,6 +103,40 @@ const crossesBox = (p, q, r) => {
   return false;
 };
 function pathOf(edge) {
+  // WHAT CYTOSCAPE SAYS IT DREW. `segmentPoints()` is the drawn path;
+  // reconstructing one out of `segment-weights` is reconstructing it from the
+  // same arithmetic that writes it — which is exactly how this probe came to
+  // report a perfectly orthogonal drawing while jcanton was looking at a
+  // zig-zag: the projection in `drawRoutes` had the sign of its perpendicular
+  // flipped, every route was drawn mirrored across its own reference line, and a
+  // probe that mirrored it back agreed with itself.
+  //
+  // The two ends come from the page's own `clippedLine` and not from
+  // `edge.sourceEndpoint()`, which answers with the node's centre: cytoscape
+  // starts the line where it crosses the shape, and a probe that starts it at a
+  // centre measures a diagonal on every edge attached to a box.
+  if (typeof edge.segmentPoints === 'function' && edge.style('curve-style') === 'segments') {
+    const drawn = edge.segmentPoints() || [];
+    if (drawn.length) {
+      // Where the drawn line meets each shape: along the ray from that node's
+      // centre TOWARDS THE NEAREST BEND, which is what cytoscape clips against —
+      // not the ray towards the other node, which is what the reference line for
+      // the weights is measured on. Two different lines, and using the second
+      // here reported a diagonal on every edge that leaves a box anywhere other
+      // than where the centre line crosses it.
+      const meet = (node, towards) => {
+        const box = node.boundingBox({includeLabels: false});
+        const c = node.position();
+        const dx = towards.x - c.x, dy = towards.y - c.y;
+        const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - c.x) / dx;
+        const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - c.y) / dy;
+        const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
+        return {x: c.x + dx * t, y: c.y + dy * t};
+      };
+      return [meet(edge.source(), drawn[0]), ...drawn,
+              meet(edge.target(), drawn[drawn.length - 1])];
+    }
+  }
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
@@ -151,17 +185,25 @@ cy.edges().forEach(edge => {
 // along neither is a diagonal, and a long one is the zig-zag across the canvas
 // jcanton photographed on 2026-08-20.
 //
-// The first and last legs are exempt and have to be: cytoscape draws from a
-// node's CENTRE to the first bend, so the stub that leaves the box is diagonal
-// by construction however well the middle is routed.
+// EVERY leg, the two ends included. They were exempt, on the grounds that
+// cytoscape draws from a node's CENTRE — which was true, and was the reason the
+// ends leaned: a card's centre is 22px from its border and the stub is a
+// rounding error, while a project's box is hundreds of pixels wide and the stub
+// is a long diagonal across it and out the side. The endpoints are the route's
+// own anchors now (`drawRoutes`), so a leaning end is a defect like any other.
 let diagonal = 0, legs = 0, longest = 0, longestOf = null;
 cy.edges().forEach(edge => {
   const path = pathOf(edge);
-  if (path.length < 4) return;          // no middle to be diagonal
-  for (let i = 1; i < path.length - 2; i++) {
+  if (path.length < 3) return;          // nothing was routed
+  for (let i = 0; i < path.length - 1; i++) {
     const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
     legs++;
-    if (dx > 1.5 && dy > 1.5) {
+    // 4px of slack, which is the gap between two arithmetics rather than a
+    // licence: the anchors a route is planned from are computed against a node's
+    // BOX, and cytoscape intersects its rounded shape and its border. The
+    // difference is a pixel or two. A staircase's legs are the router's own
+    // clearance, 12px, so nothing this is meant to catch hides under it.
+    if (dx > 4 && dy > 4) {
       diagonal++;
       const len = Math.hypot(dx, dy);
       if (len > longest) { longest = len; longestOf = edge.id(); }
@@ -332,6 +374,13 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
                       height=820, patience=6000)
 
     assert got["boxes"] >= 12, f"the corpus is not the shape this test needs: {got}"
+    # Including the ends, which is where the leaning was: this corpus has
+    # dependencies between the boxes themselves, and a compound's centre is
+    # nowhere near the side a route leaves from.
+    assert got["legs"] > 0 and got["diagonal"] == 0, (
+        f"{got['diagonal']} of {got['legs']} legs run along neither axis, the "
+        f"longest {got['longest']}px on {got['longestOf']}"
+    )
     assert got["overlapping"] == [], got["overlapping"][:6]
     assert got["trespassing"] == [], got["trespassing"][:6]
     assert got["sparseMean"] < 2.5, got
@@ -357,17 +406,23 @@ const swatches = [...document.querySelectorAll('.keys .legend .swatch')].map(one
   return {w: +r.width.toFixed(1), h: +r.height.toFixed(1), cls: one.className,
           pri: one.classList.contains('pri')};
 });
-// The meter drawn over the thickest border. Inside a 6px border on an 11px box
-// there is nothing left to draw in, so this is the rung that tells the two
-// arrangements apart.
-const thickest = document.querySelector('.keys .swatch.pri-very_high .bars');
+// The mark inside the thickest border. A 6px border on a 12px swatch leaves
+// nothing in the middle, so this is the rung that tells a mark drawn ON the
+// border from one drawn inside it.
+const thickest = document.querySelector('.keys .swatch.pri-very_high .primark');
 const meter = thickest ? thickest.getBoundingClientRect() : null;
 const rowtops = rows.map(row => Math.round(
   row.querySelector('li:not(.legendname)').getBoundingClientRect().height));
+// Where each key STARTS, per row. Two rows of keys that line up are two rows
+// whose nth key has the same left edge; the gap between one key's word and the
+// next key's mark is then whatever each column's wider word makes it, which is
+// the point rather than a fault.
+const columns = rows.map(row => [...row.querySelectorAll('li')]
+  .map(one => Math.round(one.getBoundingClientRect().left)));
 const box = document.querySelector('[data-fills]').getBoundingClientRect();
 const keys = document.querySelector('.keys').getBoundingClientRect();
 return {
-  rows: rows.length, gaps, swatches, rowtops,
+  rows: rows.length, gaps, swatches, rowtops, columns,
   meter: meter && {w: Math.round(meter.width), h: Math.round(meter.height)},
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
@@ -401,10 +456,16 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
                       height=820, patience=3500)
 
     assert got["rows"] == 2, "priority and status are two rows"
-    assert len(set(got["gaps"])) == 1, (
-        f"the keys are spaced {sorted(set(got['gaps']))} apart, which is not one gap"
-    )
-    assert got["gaps"][0] <= 20, f"{got['gaps'][0]}px between keys is a hand's width"
+    # The two rows line up key for key. jcanton, three times about this legend,
+    # most recently: "still wonky: not aligned (make it a table with two rows
+    # maybe?)". It is one grid now, so this is the claim — the nth key of one row
+    # starts where the nth key of the other does.
+    assert len(got["columns"]) == 2 and len(got["columns"][0]) == len(got["columns"][1])
+    off = [abs(a - b) for a, b in zip(*got["columns"], strict=True)]
+    assert max(off) <= 1, f"the two rows are staggered by {max(off)}px: {got['columns']}"
+    # And the space between keys stays the width of a word, not of a hand — which
+    # is the fault the equal-width version of this had.
+    assert max(got["gaps"]) <= 40, f"{max(got['gaps'])}px between keys is too much air"
     assert got["inside"], "the keys are not over the drawing"
 
     # One swatch, whichever row it is on. jcanton, 2026-08-20: "the legend is
@@ -422,8 +483,8 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     # And the whole meter is drawn on the rung whose border would otherwise eat
     # it: 6px of border on an 11px swatch leaves nothing in the middle, so the
     # bars go over the border rather than inside it.
-    assert got["meter"] and got["meter"]["h"] >= 8 and got["meter"]["w"] >= 15, (
-        f"the very-high key has no room for its meter: {got['meter']}"
+    assert got["meter"] and got["meter"]["h"] >= 8 and got["meter"]["w"] >= 5, (
+        f"the very-high key has no room for its mark: {got['meter']}"
     )
 
 
@@ -498,7 +559,10 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     from plans import build
 
     root = tmp_path / "mutual"
-    build(root, 4, 3, 3)
+    # Without the generator's own edges between boxes: this test writes the pair
+    # it is about, and a project waiting on a project elsewhere is one more
+    # constraint on the same ranking than it asked for.
+    build(root, 4, 3, 3, box_deps=False)
 
     entities, config, _ = load_repo(root)
     index = build_index(entities, config, date(2026, 8, 17))
@@ -567,6 +631,40 @@ def test_every_routed_edge_runs_along_an_axis(drawn: dict):
 _SHEAR = """
 const split = v => String(v || '').trim().split(/[\\s,]+/).filter(Boolean).map(parseFloat);
 function pathOf(edge) {
+  // WHAT CYTOSCAPE SAYS IT DREW. `segmentPoints()` is the drawn path;
+  // reconstructing one out of `segment-weights` is reconstructing it from the
+  // same arithmetic that writes it — which is exactly how this probe came to
+  // report a perfectly orthogonal drawing while jcanton was looking at a
+  // zig-zag: the projection in `drawRoutes` had the sign of its perpendicular
+  // flipped, every route was drawn mirrored across its own reference line, and a
+  // probe that mirrored it back agreed with itself.
+  //
+  // The two ends come from the page's own `clippedLine` and not from
+  // `edge.sourceEndpoint()`, which answers with the node's centre: cytoscape
+  // starts the line where it crosses the shape, and a probe that starts it at a
+  // centre measures a diagonal on every edge attached to a box.
+  if (typeof edge.segmentPoints === 'function' && edge.style('curve-style') === 'segments') {
+    const drawn = edge.segmentPoints() || [];
+    if (drawn.length) {
+      // Where the drawn line meets each shape: along the ray from that node's
+      // centre TOWARDS THE NEAREST BEND, which is what cytoscape clips against —
+      // not the ray towards the other node, which is what the reference line for
+      // the weights is measured on. Two different lines, and using the second
+      // here reported a diagonal on every edge that leaves a box anywhere other
+      // than where the centre line crosses it.
+      const meet = (node, towards) => {
+        const box = node.boundingBox({includeLabels: false});
+        const c = node.position();
+        const dx = towards.x - c.x, dy = towards.y - c.y;
+        const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - c.x) / dx;
+        const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - c.y) / dy;
+        const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
+        return {x: c.x + dx * t, y: c.y + dy * t};
+      };
+      return [meet(edge.source(), drawn[0]), ...drawn,
+              meet(edge.target(), drawn[drawn.length - 1])];
+    }
+  }
   const from = edge.source().position(), to = edge.target().position();
   const path = [from];
   if (edge.style('curve-style') === 'segments') {
@@ -587,7 +685,7 @@ function diagonals() {
     for (let i = 1; i < path.length - 2; i++) {
       const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
       legs++;
-      if (dx > 1.5 && dy > 1.5) { diagonal++; longest = Math.max(longest, Math.hypot(dx, dy)); }
+      if (dx > 4 && dy > 4) { diagonal++; longest = Math.max(longest, Math.hypot(dx, dy)); }
     }
   });
   return {diagonal, legs, longest: Math.round(longest)};

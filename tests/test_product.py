@@ -56,6 +56,16 @@ def test_the_ladder_is_the_only_place_the_kinds_are_written_down():
     assert render.PREFIX == {rung.name: rung.prefix for rung in KINDS}
     assert render.KINDS == KIND_NAMES
     assert render._KIND_MODELS == {rung.name: rung.model for rung in KINDS}
+    # The write path's two, which this test did not name when it was written —
+    # and which were therefore still spelled out by hand. `POST /api/entity` with
+    # `kind: product` raised KeyError twice over and answered 500 on the only
+    # route that can create one, on a branch whose whole subject was the ladder.
+    assert web.MODELS == {rung.name: rung.model for rung in KINDS}
+    assert web.PREFIX == {rung.name: rung.prefix for rung in KINDS}
+    # Every field of every kind, so a rung that declares one is writable through
+    # the API on the commit that adds it.
+    for rung in KINDS:
+        assert set(rung.model.model_fields) <= set(web.ENTITY_FIELDS), rung.name
 
 
 def test_a_product_is_the_top_and_a_project_sits_under_one():
@@ -216,14 +226,14 @@ def test_a_product_is_drawn_differently_and_shows_no_card(plan: Path):
 
 
 def test_a_container_has_no_work_state_to_gate():
-    """`ready` on a pitch demands an owner, a reviewer and an appetite; on a
-    product it demands nothing, because a product's status is a label to filter
-    by — shelved hides a codebase and everything under it — and not a claim that
-    somebody is doing it.
+    """`ready` on a pitch demands an owner, a reviewer and an appetite. A product
+    has no status at all — jcanton, 2026-08-20: "the product should also not have
+    a status nor PRs" — so there is nothing to gate, and a file that writes one
+    is told the field is not read.
 
-    Found by the plan generator: `status: ready` on a product reported a blocker
-    for the missing owner, which is the ladder demanding the exact field it also
-    says the record does not read.
+    Both halves matter. The gate not firing is what stopped `status: ready` on a
+    container demanding an owner it is also told it must not have; the warning is
+    what stops the field being written in silence.
     """
     from openproj.model import required_at
 
@@ -234,7 +244,9 @@ def test_a_container_has_no_work_state_to_gate():
         "---\nid: prod-000001\nkind: product\ntitle: gt4py\nstatus: ready\n---\n\nx\n",
         "products/prod-000001.md",
     )
-    assert not validate_all([ready], Config())
+    said = validate_all([ready], Config())
+    assert [(p.severity, p.field) for p in said] == [("warning", "status")], said
+    assert "not read" in said[0].message
 
 
 def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
@@ -248,8 +260,12 @@ def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
         "products/prod-000001.md",
     )
     offered = {field["name"] for field in _editable_for(one)}
-    assert "title" in offered and "status" in offered
-    assert not offered & set(RUNG and ("owner", "cycle", "priority", "depends_on"))
+    assert offered == {"title", "tags"}, (
+        "a product is a title, a sentence and somewhere to file projects; every "
+        f"other box on the form belongs to the work inside it: {sorted(offered)}"
+    )
+    assert not offered & set(RUNG and ("owner", "cycle", "priority", "depends_on",
+                                       "status", "prs"))
     # And no parent picker on the top rung: there is nothing to file it under.
     assert "parent" not in offered
     assert "parent" in {f["name"] for f in _editable_for(parse_text(
@@ -259,3 +275,55 @@ def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
     columns = _new_row_fields()
     assert "owner" not in columns["product"] and "owner" in columns["project"]
     assert "size" not in columns["product"]
+
+
+def test_a_product_can_be_made_through_the_api(tmp_path: Path):
+    """The route that creates one, driven — because every map this needed was
+    derived except the two on the write path.
+
+    `MODELS` and `PREFIX` in `web.py` were written out as three kinds, three
+    lines apart from a `DIRECTORY` that was derived, so creating a product raised
+    KeyError and answered 500 while every read path in the app drew products
+    perfectly. A test that asserts the derivation is only as good as the list of
+    maps it names, which is why this one drives the route instead.
+    """
+    import re
+
+    import pygit2
+    from fastapi.testclient import TestClient
+    from test_store import commit_directly
+    from test_web import ANN, SECRET, SEED, SESSION_COOKIE, sign_session
+
+    from openproj.web import create_app
+
+    plan = tmp_path / "plan.git"
+    pygit2.init_repository(str(plan), bare=True, initial_head="main")
+    commit_directly(plan, SEED, "seed")
+
+    with TestClient(create_app(plan, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        page = client.get("/new?kind=product").text
+        base = re.search(r'name="base_commit" value="([0-9a-f]{40})"', page).group(1)
+
+        made = client.post(
+            "/api/entity",
+            json={"base_commit": base,
+                  "fields": {"kind": "product", "title": "gt4py"},
+                  "body": "The DSL under icon4py.\n"},
+        )
+        assert made.status_code == 201, made.json()
+        product = made.json()["id"]
+        assert product.startswith("prod-")
+        assert client.get(f"/detail/{product}").status_code == 200
+
+        # And a project files under it, which is the whole point of the rung.
+        index = client.get("/api/index.json").json()
+        assert index["entities"][product]["kind"] == "product"
+        project = next(i for i, e in index["entities"].items() if e["kind"] == "project")
+        filed = client.patch(
+            f"/api/entity/{project}",
+            json={"base_commit": index["head"], "fields": {"parent": product}, "body": None},
+        )
+        assert filed.status_code == 200, filed.json()
+        after = client.get("/api/index.json").json()["entities"]
+        assert after[project]["parent"] == product

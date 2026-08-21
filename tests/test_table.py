@@ -81,7 +81,16 @@ from test_web import (
 
 from openproj.auth import sign_session
 from openproj.index import build_index
-from openproj.model import KIND_NAMES, PARENT_KINDS, Config, Pitch, Project, Task, load_repo
+from openproj.model import (
+    KIND_NAMES,
+    PARENT_KINDS,
+    Config,
+    Pitch,
+    Project,
+    Task,
+    load_repo,
+    unread_fields,
+)
 from openproj.render import (
     _TABLE_COLUMNS,
     EDITABLE,
@@ -369,21 +378,15 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
             offered = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', select)
             assert [value for value, _ in offered] == list(values), name
             for value, word in offered:
-                # A status carries its mark in front of the word — it is a string
-                # and not markup, because an `<option>` is a string. A priority
-                # carries none: its five were block characters the vendored face
-                # does not have and a native menu draws in the platform's own
-                # font, which came out as five empty boxes of five heights. The
-                # word is the whole channel in a menu, and the options are in
-                # ladder order.
-                if name == "status":
-                    mark, _, said = word.strip().partition(" ")
-                    assert mark and mark not in said, (
-                        f"{name}: {value} is offered as {word!r} with no mark in "
-                        "front of it"
-                    )
-                else:
-                    said = word.strip()
+                # The mark leads and the word follows, on both ladders. It is a
+                # string and not markup because an `<option>` is a string, which
+                # is also why the priority mark is a character rather than the
+                # five-element meter it used to be.
+                mark, _, said = word.strip().partition(" ")
+                assert mark and mark not in said, (
+                    f"{name}: {value} is offered as {word!r} with no mark in "
+                    "front of it"
+                )
                 assert said == LABELS.get(value, HUMAN[value]), (name, value)
                 assert value not in word, f"{value} is its own identifier, not a word"
 
@@ -464,13 +467,19 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
 
     assert owners["person_weeks"] == ["pitch", "task"]
     assert owners["shaped_by"] == ["pitch"]
-    # Every kind, in ladder order, off the ladder — this row is the control that
-    # is drawn whatever is chosen, so listing the kinds here would be a fifth copy
-    # of `KIND_NAMES` that goes stale the day a sixth rung is added.
-    assert owners["status"] == list(KIND_NAMES)
+    # Every kind that does work, in ladder order and off the ladder: `status` is
+    # a work state, so the container rung does not carry it and the other three
+    # do. Derived rather than listed, or this is one more copy of the ladder that
+    # goes stale the day a rung is added.
+    assert owners["status"] == [
+        kind for kind in KIND_NAMES if "status" not in unread_fields(kind)
+    ]
+    assert len(owners["status"]) == len(KIND_NAMES) - 1
     # And a field the top rung does not read is not offered on it: a product has
-    # no owner, so the row that draws one says the other three kinds.
-    assert "product" not in owners["owner"]
+    # no owner and — since jcanton asked, 2026-08-20 — no status and no PRs
+    # either, so each of those rows names the other three kinds.
+    for field in ("owner", "status", "prs"):
+        assert "product" not in owners[field], field
 
 
 def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
@@ -1981,11 +1990,23 @@ def test_a_status_is_a_chip_and_the_id_cell_holds_only_the_id(page: str):
 
 
 def test_no_kind_is_given_a_rule_of_its_own(page: str):
-    """One rule for all three, so none of them can drift. What the rule resolves
-    to on each of the three chips is
-    `test_cascade.test_every_kind_chip_is_the_same_shape`."""
-    assert ".chip.kind-project, .chip.kind-pitch, .chip.kind-task {" in page
-    assert page.count(".chip.kind-") == 3, "three mentions, all of them in that one selector"
+    """One rule per kind and every one of them the same rule, so none can drift.
+    What it resolves to on each chip is
+    `test_cascade.test_every_kind_chip_is_the_same_shape`.
+
+    It was one selector naming three kinds, which is the same claim while the
+    ladder has three rungs and a chip with no border at all the moment it has
+    four — `product` arrived as exactly that. The rules are written by a loop
+    over the ladder now, so the claim is that they are identical rather than that
+    there is one of them.
+    """
+    from openproj.model import KIND_NAMES
+
+    rules = re.findall(r"\.chip\.kind-(\w+) \{([^}]*)\}", page)
+    assert [kind for kind, _ in rules] == list(KIND_NAMES), rules
+    assert len({body.strip() for _, body in rules}) == 1, (
+        f"the kinds are drawn {len({b.strip() for _, b in rules})} different ways: {rules}"
+    )
 
 
 def test_every_identifier_a_filter_offers_is_shown_as_a_word(page: str):
@@ -4397,7 +4418,7 @@ const stacking = () => {
 };
 const priwords = () => [...document.querySelectorAll('td[data-col="priority"] .chipword')]
   .filter(one => one.offsetParent !== null).length;
-const pribars = () => [...document.querySelectorAll('td[data-col="priority"] .bars')]
+const pribars = () => [...document.querySelectorAll('td[data-col="priority"] .chipmark')]
   .filter(one => one.offsetParent !== null).length;
 
 scroller.style.width = '620px';
@@ -4458,7 +4479,7 @@ def test_a_column_too_narrow_for_its_word_keeps_its_mark(page: str, tmp_path: Pa
         f"{tall['status']}px, so its word is still stacking a letter at a time"
     )
     assert got["tight"]["priwords"] == 0 and got["tight"]["pribars"] > 0, (
-        "a narrow priority column should read as the bars alone, the way status "
+        "a narrow priority column should read as its mark alone, the way status "
         f"reads as its glyph alone: {got['tight']}"
     )
     # Both words are there before anything is dragged. Not after: this probe

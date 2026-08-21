@@ -36,6 +36,7 @@ from .model import (
     sections,
     size_weeks,
     under,
+    unread_fields,
     validate_all,
 )
 from .query import QueryError, evaluate, parse
@@ -110,8 +111,19 @@ class Progress(BaseModel):
 
     @property
     def text(self) -> str:
-        suffix = " wk" if self.unit == "weeks" else ""
-        return f"{self.done:g}/{self.total:g}{suffix}"
+        """`3/4 items` or `0/0.5 wk` — the unit always, whichever it is.
+
+        The weeks carried theirs and the items did not, so one column held `1/1`
+        beside `0/1 wk` and the two looked like different measurements of the
+        same thing rather than measurements of different things. jcanton,
+        2026-08-20: "please make it consistent".
+
+        Which unit it is stays visible rather than being unified away: half a bet
+        is half its weeks and not half its rows — the whole argument in this
+        class's docstring — so a rollup cannot be counted in items, and a
+        checklist cannot honestly be converted into weeks.
+        """
+        return f"{self.done:g}/{self.total:g} {'wk' if self.unit == 'weeks' else 'items'}"
 
 
 def _progress_of(
@@ -408,6 +420,13 @@ def _facet_values(entity: Entity, field: str, by_id: dict[str, Entity]) -> list[
     if field in _HOLDER_FACETS:
         holder = _holder_of(entity, by_id, field)
         return [holder] if holder else []
+    # A field this rung does not read has no value to offer, whatever the model
+    # defaults it to. `status` defaults to `shaping` on every entity, so without
+    # this a product — which has no status at all — answered the Status menu as
+    # if somebody had shaped it, and filtering to `shaping` brought back a
+    # codebase.
+    if field in unread_fields(entity.kind):
+        return []
     value = getattr(entity, field, None)
     if isinstance(value, list):
         return [str(item) for item in value]

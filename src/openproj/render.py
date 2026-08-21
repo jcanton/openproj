@@ -1046,6 +1046,14 @@ def _row(index: Index, entity_id: str) -> dict:
     span = index.spans.get(entity_id)
     size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
     counted = index.progress.get(entity_id)
+    # What this rung does not read is not on its row. The model defaults `status`
+    # to `shaping` and `priority` to `medium` for every entity, so a product —
+    # which has neither — arrived at the table as a shaping, medium-priority
+    # record and was drawn with both chips. `unread_fields` is the same list the
+    # validator reports from and the editors decline to offer.
+    unread = unread_fields(entity.kind)
+    def read(name, value):
+        return None if name in unread else value
     return {
         "id": entity.id,
         "title": entity.title,
@@ -1056,13 +1064,13 @@ def _row(index: Index, entity_id: str) -> dict:
         # gesture that changes nothing, and cannot offer to take a row out of
         # something it is not in.
         "parent": entity.parent,
-        "status": entity.status,
-        "owner": entity.owner,
-        "assignees": entity.assignees,
-        "reviewers": entity.reviewers,
-        "review_waived": entity.review_waived,
-        "priority": entity.priority,
-        "cycle": entity.cycle,
+        "status": read("status", entity.status),
+        "owner": read("owner", entity.owner),
+        "assignees": read("assignees", entity.assignees),
+        "reviewers": read("reviewers", entity.reviewers),
+        "review_waived": read("review_waived", entity.review_waived),
+        "priority": read("priority", entity.priority),
+        "cycle": read("cycle", entity.cycle),
         "size": None if defaulted else size,
         "start": span.start.isoformat() if span else None,
         "end": span.end.isoformat() if span else None,
@@ -1092,7 +1100,7 @@ def _row(index: Index, entity_id: str) -> dict:
         # what it prints. Sorting on "7/12" as a string puts 10/12 before 7/12.
         "progress": round(counted.fraction, 4) if counted else None,
         "progress_text": counted.text if counted else "",
-        "prs": entity.prs,
+        "prs": read("prs", entity.prs),
         "tags": entity.tags,
         # Who reviews the work filed under this record, when it names nobody
         # itself. A pitch with reviewed tasks under it IS reviewed — the rule in
@@ -1101,7 +1109,14 @@ def _row(index: Index, entity_id: str) -> dict:
         # key is what the file holds and what the cell editor starts from, and
         # merging the two would make opening the editor an accidental way to
         # write somebody else's name into this record.
-        "reviewers_from": _reviewers_under(index, entity_id) if not entity.reviewers else [],
+        "reviewers_from": (
+            _reviewers_under(index, entity_id)
+            if not entity.reviewers and "reviewers" not in unread
+            # A container reads no reviewers, its own or anybody's: a product row
+            # was drawing "the people who review the work under this" in a column
+            # it has no stake in, which reads as a field it holds.
+            else []
+        ),
         # Three fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
@@ -1199,6 +1214,7 @@ def _payload(index: Index) -> dict:
         # the legend are drawn here, and a second copy of either map is a rung
         # that agrees until somebody adds one.
         "glyphs": STATUS_GLYPH,
+        "marks": PRIORITY_GLYPH,
         "levels": PRIORITY_LEVEL,
         # Which statuses demand which fields, derived from the gate itself by
         # `required_at` (`model.py`). The detail page has had this since it grew
@@ -2632,9 +2648,12 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    carry the accent and extra weight, a pitch a plain hairline, and a task no
    border at all, which is the first thing anybody noticed about the id column.
    The word inside the chip is what says which kind it is. */
-.chip.kind-project, .chip.kind-pitch, .chip.kind-task {
-  color: var(--kind-ink); border: 1px solid var(--kind-line);
-}
+{#- Written by the loop rather than by hand, like the status rules above it: a
+    kind added to the ladder arrives with its chip already drawn instead of as the
+    one chip on the page with no rule and no border. -#}
+{% for k in kinds %}
+.chip.kind-{{ k }} { color: var(--kind-ink); border: 1px solid var(--kind-line); }
+{%- endfor %}
 /* The checklist meter, on the table and on the detail page. Always beside the
    two numbers it draws: a bar alone says "some", and the question a checklist
    answers is "how many left". */
@@ -2678,48 +2697,35 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
    is believed. The swatch carries the glyph too: colour is no longer the only
    channel on a bar or a node, so a key to the colour alone keys half the
    drawing. */
-/* PRIORITY, AS SIGNAL BARS. One bar for very low up to five for very high, the
-   way a load meter reads, plus colour up the same ladder. It is the second
-   representation of a fact the graph already draws as line thickness — jcanton,
-   2026-08-20, having seen one project drawn thicker and had to ask why. Status
-   makes the same bargain with a fill and a glyph; priority had a number nobody
-   could read and a word in a table cell.
+/* PRIORITY, AS ONE BLOCK. A character whose height is the rung — `\u2581` up to
+   `\u2588` — in the rung's own colour, on the text baseline of whatever word it
+   sits beside. It is the second channel for a fact the graph also draws as line
+   thickness, and jcanton had seen two earlier answers to the same question: five
+   `<i>` elements in an `inline-flex` meter, which had to be aligned against a
+   word inside a chip inside a cell inside a column that tightens, and then no
+   mark at all in menus, where an element cannot go.
 
-   Built from five empty elements and a `data-level`, not from an SVG, so the
-   server and the browser cannot draw it differently: the table writes its rows
-   in JavaScript and the legend and the detail page are Jinja, and the only thing
-   both have to agree on here is one integer.
+   `PRIORITY_GLYPH` in `render.py` carries the argument for the characters, the
+   fallback they rely on, and what it costs.
 
-   The unlit bars stay visible at low contrast. A meter showing two bars out of
-   nothing is a meter you cannot read the scale of — five slots always drawn is
-   what makes "two" mean two-of-five rather than just "two". */
-.bars { display: inline-flex; align-items: flex-end; gap: 1px; height: 11px;
-        vertical-align: -1px; flex: none; }
-.bars i { width: 3px; border-radius: 1px; background: var(--line-strong);
-          opacity: .22; }
-.bars i:nth-child(1) { height: 3px; }
-.bars i:nth-child(2) { height: 5px; }
-.bars i:nth-child(3) { height: 7px; }
-.bars i:nth-child(4) { height: 9px; }
-.bars i:nth-child(5) { height: 11px; }
-.bars[data-level="1"] i:nth-child(-n+1) { background: var(--pri-very-low); opacity: 1; }
-.bars[data-level="2"] i:nth-child(-n+2) { background: var(--pri-low); opacity: 1; }
-.bars[data-level="3"] i:nth-child(-n+3) { background: var(--pri-medium); opacity: 1; }
-.bars[data-level="4"] i:nth-child(-n+4) { background: var(--pri-high); opacity: 1; }
-.bars[data-level="5"] i:nth-child(-n+5) { background: var(--pri-very-high); opacity: 1; }
-/* In a table cell the bars lead and the word follows, because the bars are what
-   the eye picks out of a column and the word is what settles which one it is —
-   inside the same chip status wears, so two columns saying one kind of thing say
-   it the same way. It was a bare pair beside a chip, and the difference read as
-   a difference in the facts rather than in the markup.
+   The colour is on the mark and not on the chip: a chip with a coloured ground
+   in the column next to Status would be two ladders competing at one weight, and
+   the ground is what Status uses. */
+/* In a table cell the mark leads and the word follows: the mark is what the eye
+   picks out of a column of fifteen rows and the word is what settles which rung
+   it is — inside the same chip status wears, so two columns saying one kind of
+   thing say it the same way.
 
-   No hue on the ground. Status has five soft grounds and priority has five inks
-   already lit in the meter, so a second coloured chip in the next column would be
-   two ladders competing at the same weight. The hairline is the kind chip's, for
-   the same reason it is a hairline there. */
-.chip.pri { display: inline-flex; align-items: center; gap: .35rem;
-            color: var(--kind-ink); border: 1px solid var(--kind-line);
-            padding: .1rem .35rem; }
+   No hue on the ground, for the reason above: the mark carries the colour. */
+.chip.pri { color: var(--kind-ink); border: 1px solid var(--kind-line);
+            padding: .1rem .4rem; }
+.chip.pri .chipmark { opacity: 1; font-size: 15px; line-height: 0;
+                      vertical-align: -1px; }
+.chip.pri-very_low .chipmark  { color: var(--pri-very-low); }
+.chip.pri-low .chipmark       { color: var(--pri-low); }
+.chip.pri-medium .chipmark    { color: var(--pri-medium); }
+.chip.pri-high .chipmark      { color: var(--pri-high); }
+.chip.pri-very_high .chipmark { color: var(--pri-very-high); }
 /* The status mark inside the chip it has always had. Slightly dimmed, because
    the word is the thing being read and the mark is what finds it — a glyph at
    full weight beside a short word reads as two words. */
@@ -2731,12 +2737,27 @@ table.tight-status td[data-col="status"] .chipword { display: none; }
 table.tight-status td[data-col="status"] .chipmark { margin-right: 0; }
 table.tight-status td[data-col="status"] .chip { padding: .1rem .3rem; }
 table.tight-priority td[data-col="priority"] .chipword { display: none; }
-table.tight-priority td[data-col="priority"] .chip.pri { gap: 0; padding: .1rem .3rem; }
+table.tight-priority td[data-col="priority"] .chipmark { margin-right: 0; }
+table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
 
+/* One grid for both rows: the row's name, then one column per rung. Each list is
+   `display: contents`, so its keys are the grid's own items and a key in one row
+   sits over the key under it in the other. Each column is as wide as the wider of
+   its two words and no wider — an earlier attempt padded every key to the widest
+   word in EITHER row, which put a hand's width of nothing between Done and
+   Shelved. */
+.legends { display: inline-grid; grid-template-columns: auto repeat(5, max-content);
+           gap: .2rem .9rem; align-items: center; justify-items: start;
+           margin: .75rem 0 0 auto; }
+/* On its own — the timeline's markings key — a legend is still one flex row.
+   Only inside the grid does a list hand its keys over, and only the graph's two
+   rows are in one. */
 .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: center;
           list-style: none; margin: .75rem 0 0; padding: 0;
           font-size: 12px; color: var(--muted); }
-.legend li { display: flex; align-items: center; gap: .35rem; }
+.legends .legend { display: contents; }
+.legend li { display: flex; align-items: center; gap: .35rem; font-size: 12px;
+             color: var(--muted); }
 /* border-box so a key that carries a border is the same 20x12 as one that does
    not: every status swatch grew a border with the shapes it keys, and on
    content-box the row of keys came out at three different heights.
@@ -2772,14 +2793,17 @@ table.tight-priority td[data-col="priority"] .chip.pri { gap: 0; padding: .1rem 
    Absolutely positioned over the border, both rows are the same 20x11 and every
    rung shows its whole meter, thickest border included. */
 .legend .swatch.pri { background: var(--surface); border-style: solid;
-                      border-color: var(--fg); position: relative; }
-.legend .swatch.pri .bars { position: absolute; inset: 0; margin: auto;
-                            height: 9px; width: max-content; }
-.legend .swatch.pri .bars i:nth-child(1) { height: 2px; }
-.legend .swatch.pri .bars i:nth-child(2) { height: 4px; }
-.legend .swatch.pri .bars i:nth-child(3) { height: 6px; }
-.legend .swatch.pri .bars i:nth-child(4) { height: 8px; }
-.legend .swatch.pri .bars i:nth-child(5) { height: 9px; }
+                      border-color: var(--fg); }
+/* The mark inside the key is the mark on the drawing, at the size the key is.
+   It sits ON the border rather than inside it, because a 6px border on a 12px
+   swatch leaves nothing in the middle — the thickest rung was a box with its own
+   meter squeezed out of it. */
+.legend .swatch.pri .primark { font-size: 12px; line-height: 1; }
+.legend .swatch.pri-very_low .primark  { color: var(--pri-very-low); }
+.legend .swatch.pri-low .primark       { color: var(--pri-low); }
+.legend .swatch.pri-medium .primark    { color: var(--pri-medium); }
+.legend .swatch.pri-high .primark      { color: var(--pri-high); }
+.legend .swatch.pri-very_high .primark { color: var(--pri-very-high); }
 .legend .swatch.pri-very_high { border-width: 6px; }
 .legend .swatch.pri-high      { border-width: 4px; }
 .legend .swatch.pri-medium    { border-width: 2px; }
@@ -4532,23 +4556,13 @@ function clamped(pieces, one, many) {
 // the timeline already draw.
 const GLYPHS = DATA.glyphs || {};
 const LEVELS = DATA.levels || {};
-// Five slots, of which `level` are lit — the identical markup `bars()` writes on
-// the server, because a meter drawn two ways is a meter that eventually
-// disagrees about what three bars mean.
 // The mark that goes in front of a word inside an `<option>`, which is text and
-// nothing else — the same string `mark()` writes on the server. Status only:
-// priority's mark was five block characters the vendored face does not carry and
-// a native menu draws in the platform's own font, which is five empty boxes. The
-// argument is at `PRIORITY_GLYPH`'s grave in `render.py`.
+// nothing else — the same string `mark()` writes on the server, for both ladders.
+const RUNGS = DATA.marks || {};
 function markFor(field, value) {
   if (field === 'status') return GLYPHS[value] ? GLYPHS[value] + ' ' : '';
+  if (field === 'priority') return RUNGS[value] ? RUNGS[value] + ' ' : '';
   return '';
-}
-
-function barsFor(priority) {
-  const level = LEVELS[priority] || 0;
-  return `<span class="bars" data-level="${level}" aria-hidden="true">` +
-    '<i></i><i></i><i></i><i></i><i></i></span>';
 }
 
 function shown(row, key) {
@@ -4595,7 +4609,8 @@ function shown(row, key) {
   // no shared notation, and nothing on either page saying so.
   if (key === 'priority')
     return row.priority
-      ? `<span class="chip pri">${barsFor(row.priority)}` +
+      ? `<span class="chip pri pri-${esc(row.priority)}">` +
+        `<span class="chipmark" aria-hidden="true">${esc(RUNGS[row.priority] || '')}</span>` +
         `<span class="chipword">${esc(human(row.priority))}</span></span>`
       : '';
   // Counted out of the body's own checklist. Empty where there is no checklist,
@@ -7405,6 +7420,14 @@ _GRAPH = """
     arrow or a set of bars would be a second thing to learn on top of the thing
     it explains, and it would appear nowhere on the drawing — this way the key
     and the node are the same picture at two sizes. -#}
+{#- The two rows in ONE grid, so a key in the priority row and the key under it
+    in the status row start at the same x. Two lists side by side sized each key
+    to its own word and the rows came out staggered — jcanton, three times, most
+    recently "the legend is still wonky: not aligned (make it a table with two
+    rows maybe?)". This is that table: `display: contents` on each list hands its
+    keys to the grid, so the markup stays two labelled lists and the layout is
+    one set of columns. -#}
+<div class="legends">
 <ul class="legend" aria-label="What a node's line thickness means">
   <li class="legendname">priority</li>
   {#- Reversed: the meter fills to the RIGHT, so the key reads low to high the way
@@ -7412,8 +7435,8 @@ _GRAPH = """
       because that is the order a dropdown offers them in and the order the table
       sorts by, and neither wants the quietest thing at the top of the list. -#}
   {% for priority in priorities|reverse %}
-  <li><span class="swatch pri pri-{{ priority }}" aria-hidden="true">{{
-      bars(priority) }}</span>{{ priority|human }}</li>
+  <li><span class="swatch pri pri-{{ priority }}" aria-hidden="true"><span
+      class="primark">{{ pri(priority) }}</span></span>{{ priority|human }}</li>
   {% endfor %}
 </ul>
 <ul class="legend" aria-label="What a node's colour and mark mean">
@@ -7423,6 +7446,7 @@ _GRAPH = """
     >{{ status|human }}</li>
   {% endfor %}
 </ul>
+</div>
 </div>
 
   {#- `data-fills`: this is the box the shell measures the window into. A canvas
@@ -7545,17 +7569,19 @@ const labelOf = node => (GLYPH[node.data('status')] || '') + ' ' + (node.data('l
 // tokens and the image has already resolved them.
 const LEVELS = {{ levels|tojson }};
 function barsImage(priority) {
+  // The same picture the character draws everywhere else: a block filling as much
+  // of its box as the rung is worth, in the rung's colour, with the rest of the
+  // box left faint so the height can be read against something. Five bars stood
+  // here and were 19px wide on a 150px card; this is 8.
   const level = LEVELS[priority] || 0;
   const lit = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
   const dim = token('--line-strong');
-  const bars = [];
-  for (let i = 0; i < 5; i++) {
-    const height = 3 + i * 2;
-    bars.push(`<rect x="${i * 4}" y="${11 - height}" width="3" height="${height}" rx="1" ` +
-              `fill="${i < level ? lit : dim}" opacity="${i < level ? 1 : 0.25}"/>`);
-  }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="19" height="11" ` +
-    `viewBox="0 0 19 11">${bars.join('')}</svg>`;
+  const height = Math.max(2, Math.round(11 * level / 5));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="11" `
+    + `viewBox="0 0 8 11">`
+    + `<rect x="0" y="0" width="8" height="11" rx="1" fill="${dim}" opacity="0.18"/>`
+    + `<rect x="0" y="${11 - height}" width="8" height="${height}" rx="1" fill="${lit}"/>`
+    + `</svg>`;
   return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
@@ -7911,17 +7937,26 @@ function routeAround(blockers, anchorFrom, anchorTo) {
 // Where an edge leaves a card and where it arrives: the middle of the side that
 // faces the other end. Orthogonal by construction, which is what the grid wants,
 // and it means an edge meets a card square on rather than at a corner.
+// Where a route starts and ends: the middle of whichever side of each box faces
+// the other node, pushed one pixel clear of the border.
+//
+// The clip points — where the centre-to-centre line crosses the two boxes — were
+// tried here, because that is where cytoscape starts drawing. It refuses to draw
+// at all: with the first segment point ON the shape, the intersection it uses for
+// the endpoint is degenerate and the console says so ("invalid endpoints and so
+// it is impossible to draw"), leaving six dependencies on the real plan with no
+// line between them.
 function anchorsFor(edge) {
   const from = edge.source().boundingBox({includeLabels: false});
   const to = edge.target().boundingBox({includeLabels: false});
   const a = edge.source().position(), b = edge.target().position();
   const dx = b.x - a.x, dy = b.y - a.y;
   if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0 ? [{x: from.x2, y: a.y}, {x: to.x1, y: b.y}]
-                   : [{x: from.x1, y: a.y}, {x: to.x2, y: b.y}];
+    return dx >= 0 ? [{x: from.x2 + 1, y: a.y}, {x: to.x1 - 1, y: b.y}]
+                   : [{x: from.x1 - 1, y: a.y}, {x: to.x2 + 1, y: b.y}];
   }
-  return dy >= 0 ? [{x: a.x, y: from.y2}, {x: b.x, y: to.y1}]
-                 : [{x: a.x, y: from.y1}, {x: b.x, y: to.y2}];
+  return dy >= 0 ? [{x: a.x, y: from.y2 + 1}, {x: b.x, y: to.y1 - 1}]
+                 : [{x: a.x, y: from.y1 - 1}, {x: b.x, y: to.y2 + 1}];
 }
 
 // Route every visible edge round the cards, and draw what comes back. An edge the
@@ -7940,7 +7975,11 @@ function routeEdges() {
       && !card.ancestors().anySame(edge.source())
       && !card.ancestors().anySame(edge.target())).map(boxOf);
     const path = routeAround(blockers, from, to);
-    if (path && path.length > 1) paths[edge.id()] = path;
+    // The anchors travel with the path. They are where the route LEAVES the
+    // source and MEETS the target, and cytoscape has to be told both — see
+    // `drawRoutes`, which without them draws the first and last legs from the
+    // middle of a node.
+    if (path && path.length > 1) paths[edge.id()] = {points: path, from, to};
   });
   drawRoutes(paths);
 }
@@ -7949,19 +7988,71 @@ function routeEdges() {
 // straight line between the two ends and a fraction along that line. So each one
 // is projected onto that line — which also means the two are consistent when a
 // node is dragged afterwards, because both are relative to where the ends are.
+// Where a straight line between two nodes actually starts and ends: the ray from
+// one centre to the other, cut at each node's box. This is the line cytoscape
+// measures a `segments` edge's bends against, and asking it is how that was
+// settled — see `drawRoutes`.
+//
+// The box and not the rounded outline: the corner radius is 4px on a card and
+// the ray only meets a corner when it is nearly diagonal, so the difference is a
+// pixel or two on the few edges that hit one, against hundreds of pixels of skew
+// this removes.
+function clippedLine(edge) {
+  const at = edge.source().position(), it = edge.target().position();
+  const cut = (node, from, towards) => {
+    const box = node.boundingBox({includeLabels: false});
+    const dx = towards.x - from.x, dy = towards.y - from.y;
+    const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - from.x) / dx;
+    const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - from.y) / dy;
+    const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
+    return {x: from.x + dx * t, y: from.y + dy * t};
+  };
+  return [cut(edge.source(), at, it), cut(edge.target(), it, at)];
+}
+
 function drawRoutes(paths) {
   cy.batch(() => {
     cy.edges().forEach(edge => {
-      const points = paths[edge.id()];
-      if (!points || !points.length) { edge.removeStyle('curve-style'); return; }
-      const from = edge.source().position(), to = edge.target().position();
+      const routed = paths[edge.id()];
+      if (!routed || !routed.points.length) {
+        edge.removeStyle('curve-style');
+        edge.removeStyle('source-endpoint');
+        edge.removeStyle('target-endpoint');
+        return;
+      }
+      const points = routed.points;
+      // THE LINE THE BENDS ARE MEASURED AGAINST is not the one between the two
+      // centres. It is the CLIPPED line: from where the centre-to-centre ray
+      // leaves the source's shape to where it enters the target's. Asked of
+      // cytoscape rather than read in its source — an edge given
+      // `segment-weights: '0 0.5 1'` and no distances reports its three points
+      // on the two boxes' borders, not on their centres.
+      //
+      // Projected against the centres, every bend is placed further along the
+      // line than it belongs, by however much the clip took off. On a card that
+      // is 22px and the drawing looks fine; on a project's box it is hundreds,
+      // and the route arrives on screen as a zig-zag leaning across the canvas
+      // with none of its right angles left. That is what jcanton photographed,
+      // twice, on the real plan and never on the seed corpus — whose boxes are
+      // small enough for the error to be invisible.
+      // (`source-endpoint` was tried here and is not settable this way: set to an
+      // offset in px it reads back as `0px 0px`, which is another reason the
+      // clipped line is what has to be projected against.)
+      const [from, to] = clippedLine(edge);
       const dx = to.x - from.x, dy = to.y - from.y;
       const span = Math.hypot(dx, dy) || 1;
       const weights = [], distances = [];
       points.forEach(point => {
         const px = point.x - from.x, py = point.y - from.y;
         weights.push(((px * dx + py * dy) / (span * span)).toFixed(4));
-        distances.push(((px * dy - py * dx) / span).toFixed(1));
+        // `py*dx - px*dy`, not the other way round. A positive distance moves a
+        // bend along `(-dy, dx)` — calibrated by giving one edge
+        // `segment-weights: '0.5'` and `segment-distances: '50'` and reading the
+        // point back — so the sign that was here reflected every route across
+        // its own reference line. A reflected staircase is still made of
+        // segments and no longer runs along either axis, which is what a
+        // zig-zag leaning across the canvas is.
+        distances.push(((py * dx - px * dy) / span).toFixed(1));
       });
       edge.style({'curve-style': 'segments',
                   'segment-weights': weights.join(' '),
@@ -8026,7 +8117,7 @@ const cy = cytoscape({
         // the glyph and the first line of the title are one row.
         'background-image': node => node.isParent() ? 'none' : barsImage(node.data('priority')),
         'background-image-opacity': 1,
-        'background-width': 19, 'background-height': 11,
+        'background-width': 8, 'background-height': 11,
         'background-position-x': 8, 'background-position-y': '50%',
         'background-fit': 'none', 'background-clip': 'node',
         'background-image-containment': 'inside',
@@ -14420,10 +14511,12 @@ _DETAIL_STYLE = """
    widths, which ragged the whole column. A fixed inline-block wide enough for
    the longest of the three, with the gap inside it rather than as a margin, so
    a row that wraps wraps its title and not its marker. */
-.toc li .chip.kind-project, .toc li .chip.kind-pitch, .toc li .chip.kind-task {
+{% for k in kinds %}
+.toc li .chip.kind-{{ k }} {
   display: inline-block; min-width: 5.4rem; text-align: center;
   margin-right: .5rem; vertical-align: baseline;
 }
+{%- endfor %}
 /* Centred, and a container so the panes below can ask how wide the column
    actually is. It sat flush left with a full-height rule down its right edge,
    which on a wide screen is not a document — it is the left half of a two-pane
@@ -14666,22 +14759,33 @@ PRIORITY_LEVEL = {"very_low": 1, "low": 2, "medium": 3, "high": 4, "very_high": 
 # it applies here unchanged: a shape survives a screenshot, a projector and
 # deuteranopia, and it arrives in the label's own ink instead of being drawn by
 # the platform's colour font at a different weight on every machine.
-# No mark for a priority in a menu, and that is a measurement rather than a
-# taste. These five used to be the block elements U+2581..U+2588 — a meter drawn
-# in text — and they came out as five empty boxes of five different heights in
-# jcanton's dropdowns on 2026-08-20.
+# PRIORITY, AS ONE CHARACTER. A block of the height the rung is worth: the meter
+# it replaces was five elements, an `inline-flex` and a `data-level`, and this is
+# a glyph on a text baseline.
 #
-# The vendored face carries 230 codepoints (`static/inter-latin-wght-normal.woff2`,
-# a latin subset), and none of the block elements is one of them. Inside the page
-# a missing glyph falls back to whatever the platform has; inside a native
-# `<select>` popup, which the platform draws in its own UI font, it falls back to
-# nothing. So a text meter in a menu is a bet on a font nobody here controls.
+# It was five bars, then no mark at all in menus, and it is now this — jcanton,
+# 2026-08-20, having seen all three: "it's a font glyph, no alignment problems,
+# occupies less horizontal space. it can go back in the dropdowns so it's
+# consistent with the status dropdown, better on all fronts".
 #
-# Nothing is lost by dropping it. The mark exists as a second channel where
-# colour is the only one — on a bar, on a node, in a legend swatch — and a menu
-# is text: the word "Very high" IS the channel, and the options are already in
-# ladder order. Where priority is drawn rather than written it is still the five
-# bars, which are five elements and a `data-level` and cannot go tofu.
+# The vendored face carries 230 codepoints and none of these is one of them, so
+# every one of them is drawn by whatever the platform falls back to. That is the
+# honest cost and it was weighed: a block element is in every desktop UI font
+# there is, the fallback draws a rectangle of the right height where it lands,
+# and the alternative — an element that has to be aligned against a word, inside
+# a chip, inside a cell, inside a column that tightens — is three alignment
+# problems that this repository has now fixed four times.
+#
+# Colour goes with it wherever colour is possible: the chip in the table, the key
+# in the legend, the meter on a node. In a native `<select>` it cannot — an
+# option is a string — which is the same bargain the status glyphs already make.
+PRIORITY_GLYPH = {
+    "very_low": "\u2582",    # ▂ one quarter — an eighth is a hairline at 12px
+    "low": "\u2583",         # ▃ three eighths
+    "medium": "\u2585",      # ▅ five eighths
+    "high": "\u2587",        # ▇ seven eighths
+    "very_high": "\u2588",   # █ full
+}
 
 # The redundant channel. On the graph and the timeline a fill is the only thing
 # telling two shapes apart, and a luminance ladder makes five fills *separable*
@@ -15137,13 +15241,10 @@ _ENV.globals["glyph"] = lambda status: STATUS_GLYPH.get(str(status), "")
 # for both ladders, so a template asks for "the mark for this value" rather than
 # knowing which map to reach into.
 _ENV.globals["mark"] = lambda kind, value: (
-    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status" else ""
+    f"{STATUS_GLYPH.get(str(value), '')} " if kind == "status"
+    else f"{PRIORITY_GLYPH.get(str(value), '')} "
 )
-_ENV.globals["bars"] = lambda priority: Markup(
-    '<span class="bars" data-level="{}" aria-hidden="true">{}</span>'.format(
-        PRIORITY_LEVEL.get(str(priority), 0), "<i></i>" * 5
-    )
-)
+_ENV.globals["pri"] = lambda value: PRIORITY_GLYPH.get(str(value), "")
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Every chip on every page names its rung through this, so the four templates
 # that draw one cannot disagree with the two that build one in Python. They did:
@@ -15268,7 +15369,18 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 _status_class(entity.status), _human(entity.status)
             )
         elif name == "priority":
-            display = escape(_human(entity.priority))
+            # The same chip the table wears, mark and all: this row and that cell
+            # are the same fact, and the menu below this row already leads with
+            # the mark.
+            display = Markup(
+                '<span class="chip pri pri-{}">'
+                '<span class="chipmark" aria-hidden="true">{}</span>'
+                '<span class="chipword">{}</span></span>'
+            ).format(
+                entity.priority,
+                PRIORITY_GLYPH.get(str(entity.priority), ""),
+                _human(entity.priority),
+            )
         elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, entity) is not None:
             # The bet, and what its tasks propose to put inside it. Two numbers on
             # one line because they are one question: an appetite read on its own
@@ -19832,8 +19944,11 @@ def _page(
         ],
         # The shell writes the chip and legend rules for every status, so a
         # status added to the model cannot arrive with three of its four tokens
-        # wired up and the fourth still spelled out on a line nobody edited.
+        # wired up and the fourth still spelled out on a line nobody edited. The
+        # kinds are here for the same reason and were not: their chip rule named
+        # three of them, so `product` was the one chip on the page with no border.
         statuses=STATUSES,
+        kinds=KINDS,
         # The colour schemes: the families the picker offers, the block of slots
         # they put on the root element, and which hue each status takes. One
         # source, so a family added to `themes.py` reaches the menu and the

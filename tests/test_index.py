@@ -861,7 +861,9 @@ def test_a_checklist_in_the_body_is_counted_once_into_the_index():
     index = build_index(entities, CONFIG, TODAY)
     counted = index.progress["task-c00001"]
     assert (counted.done, counted.total, counted.unit) == (1, 2, "items")
-    assert counted.text == "1/2"
+    # With its unit, like the weeks a rollup counts: one column holding `1/2`
+    # beside `0/1 wk` reads as two measurements of one thing.
+    assert counted.text == "1/2 items"
 
 
 def test_live_work_with_no_checklist_is_findable_and_shaping_work_is_not():
