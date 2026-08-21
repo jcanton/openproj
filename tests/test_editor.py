@@ -466,15 +466,18 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     meta = detail.index('<p class="meta">')
     assert meta > detail.index("<h1>")
     assert 'class="chip kind-' not in detail[meta:], "and the kind is not said twice"
-    # Nor is the status. It was a chip in this line AND a chip forty pixels below
-    # it in the facts column, where in edit mode it is also the select that
-    # changes it — the same word in the same colour, twice, one of them inert.
-    # A field that can be changed is stated where it can be changed.
-    assert detail.count('<span class="chip st-') == 1, (
-        "the status is said once, in the facts column, where the control for it is"
+    # Nor is the status, and it is not a chip here at all any more: the facts
+    # column draws it as a ball on a hill, which is also the control that sets it.
+    # It was a chip in this line AND a chip forty pixels below it, the same word in
+    # the same colour twice, one of them inert. A field that can be changed is
+    # stated where it can be changed, and drawn in the one way a word cannot be —
+    # `shaping` and `in_progress` are one rung apart in a list and opposite sides
+    # of a hill.
+    assert '<span class="chip st-' not in detail, (
+        "the status is a hill on this page, and a chip is the thing it replaced"
     )
     facts = detail.index('<dl id="facts">')
-    assert facts < detail.index('<span class="chip st-') < detail.index("</dl>", facts)
+    assert facts < detail.index('data-hill="entity"') < detail.index("</dl>", facts)
 
     # The create form is the same document in another mode, so the picker that
     # decides the kind sits where the kind chip sits.
@@ -687,8 +690,15 @@ def test_every_control_on_the_form_has_a_name(page: str):
     for control_id, word in named.items():
         assert control_id.startswith(f"{TASK}-"), control_id
         assert re.search(rf'<(?:input|select|textarea)[^>]*\bid="{control_id}"', page), word
-    for field in ("status", "owner", "assignees", "reviewers", "priority", "cycle"):
+    for field in ("owner", "assignees", "reviewers", "priority", "cycle"):
         assert named[f"{TASK}-{field}"] == LABELS[field], field
+
+    # Status is the exception and has to be: its control is a group of radios, and
+    # a `<label for>` can name exactly one element — pointing it at one stop of
+    # five would tell a screen reader that "Status" is the word for `shaping`. The
+    # group carries the name instead, which is the same fix by the other route.
+    assert f"{TASK}-status" not in named
+    assert 'role="radiogroup" aria-label="Status"' in page
 
     # The two boxes with no fact row to hang a label on: the title is the page's
     # heading and the body is the document.

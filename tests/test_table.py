@@ -320,7 +320,17 @@ def test_the_create_form_writes_only_fields_a_person_owns(new_page: str):
     """`kind` picks the directory and `body` is the shaping document; everything
     else on this form has to be a field `EDITABLE` names. A create that can set a
     field the detail page refuses to show is a back door into the schema."""
+    # `hill-*` is a widget's grouping name and not a field: five radios need one
+    # shared `name` to be one radio group to the browser, and none of them carries
+    # `data-type`, which is what the form actually collects and sends. That is
+    # asserted below rather than assumed, because the guard this test exists to be
+    # is "nothing reaches the server that is not a field a person owns".
     named = controls(new_page) - {"base_commit"}
+    grouping = {name for name in named if name.startswith("hill-")}
+    for name in grouping:
+        for tag in re.findall(rf'<input[^>]*\bname="{re.escape(name)}"[^>]*>', new_page):
+            assert "data-type" not in tag, f"{name} is collected and sent, and is not a field"
+    named -= grouping
 
     assert named - {"body"} <= set(EDITABLE)
     for field in ("title", "status", "owner", "reviewers", "review_waived", "parent"):
@@ -373,7 +383,18 @@ def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
     detail = client.get(f"/detail/{TASK}").text
 
     for page in (new_page, detail):
-        for name, values in (("status", STATUSES), ("priority", PRIORITIES)):
+        # Status is not a dropdown any more: it is the hill, and its stops carry
+        # the same pairing — `value` is what git holds and the screen-reader text
+        # beside it is what a person reads. Asked here rather than dropped,
+        # because the pairing is the point of the test and not the `<select>`.
+        stops = re.findall(
+            r'<input type="radio"[^>]*value="([^"]+)"[^>]*data-word="([^"]+)"', page
+        )
+        assert [value for value, _ in stops] == list(STATUSES), "status"
+        for value, word in stops:
+            assert word != value, f"status: {value} is offered as its own identifier"
+
+        for name, values in (("priority", PRIORITIES),):
             select = re.search(rf'<select name="{name}".*?</select>', page, re.S).group(0)
             offered = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', select)
             assert [value for value, _ in offered] == list(values), name
@@ -2829,9 +2850,15 @@ def test_every_control_on_the_create_form_has_a_name(new_page: str):
         # A label points at a control that is on the page, or it is a name the
         # reader is told about and cannot reach.
         assert re.search(rf'<(?:input|select|textarea)[^>]*\bid="{control_id}"', new_page), word
-    for field in ("status", "owner", "assignees", "reviewers", "cycle", "priority"):
+    for field in ("owner", "assignees", "reviewers", "cycle", "priority"):
         assert f"new-{field}" in named, field
         assert named[f"new-{field}"] == LABELS[field]
+
+    # Status has no `<label for>`, and must not: its control is a group of radios
+    # and a label names one element. The group names itself. See the same note in
+    # `test_every_control_on_the_form_has_a_name`.
+    assert "new-status" not in named
+    assert 'role="radiogroup" aria-label="Status"' in new_page
 
     # The two boxes that are not facts: the title is the page's own heading and
     # the body is the document, so neither has a `<dt>` to hang a label on.

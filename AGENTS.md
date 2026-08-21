@@ -245,11 +245,15 @@ apologising and without vagueness. An empty screen is an invitation to act.
 focus (`:focus-visible` with `outline: 2px solid var(--focus)`, asserted on every page), reduced
 motion respected. That last one is true of the code rather than aspirational. The shell carries one
 `@media (prefers-reduced-motion: reduce)` block, blanket and `!important` — each page's own
-stylesheet is inlined immediately after it and would otherwise take the tie on order. The app's one
-animated rule is `#grip::before`, the detail page's width handle, and it is not the only page that
+stylesheet is inlined immediately after it and would otherwise take the tie on order. The app has
+two animated rules and `test_the_app_moves_in_two_places` is their inventory — a tripwire rather
+than a ban, and what a third has to pass is that it is inside the shell's reach and not on a canvas.
+The first is `#grip::before`, the detail page's width handle, and it is not the only page that
 carries it: `_DETAIL_STYLE` is inlined by the detail page, the cycles index, the cycle page and the
 create form, so three pages ship a fade with no `#grip` to move. Inert here, and exactly why the
-floor belongs in the shell rather than beside the rule it switches off. CSS cannot reach a canvas:
+floor belongs in the shell rather than beside the rule it switches off. The second is `.hill-ball`,
+which rolls between its stops when a status changes; its duration is a `--roll` token so that a drag
+can switch the roll off without writing a second `transition:` into the stylesheet. CSS cannot reach a canvas:
 cytoscape's layout runs at `animate: false` and has to stay there, or the graph moves for a reader
 who asked it not to.
 

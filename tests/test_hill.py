@@ -207,8 +207,12 @@ def test_the_read_only_hill_has_no_stops_on_it(index: Index) -> None:
     entity_id = sorted(index.entities)[0]
     reading = render_detail(index, ROUTES, only=entity_id)
     assert 'data-hill="entity"' in reading
-    assert 'type="radio"' not in reading
     assert 'role="radiogroup"' not in reading
+    # Asked of the facts list and not of the file: the shell's stylesheet writes
+    # `input:not([type="checkbox"]):not([type="radio"])`, and a substring search
+    # over the whole page finds a selector and calls it a control.
+    facts = re.search(r'<dl id="facts">(.*?)</dl>', reading, re.S).group(1)
+    assert "<input" not in facts, "a page nobody may write is drawing controls"
 
 
 def test_the_card_draws_the_hill_and_keeps_the_word(index: Index) -> None:
@@ -250,56 +254,63 @@ def test_a_word_the_card_does_not_know_gets_no_ball_either(index: Index) -> None
 # --- and now the pixels ------------------------------------------------------
 
 
-def test_no_two_stops_share_a_place() -> None:
-    """Every word the ball can stand on is somewhere of its own.
+def test_no_two_stops_on_one_hill_share_a_place() -> None:
+    """Every word a given record can stand on is somewhere of its own.
 
-    `ready` and `shelved` share an x — one is the summit and the other is the
-    ground directly under it — so this asks about points and not about columns.
-    Two stops at one point is two statuses a reader cannot tell apart, which is
-    the whole picture failing quietly.
+    Per ladder and not across both, because `shelved` and `dropped` ARE one place:
+    they are the same sentence in two vocabularies, and no hill ever offers them
+    both. `ready` and `shelved` share an x — the summit and the ground directly
+    under it — so this asks about points rather than columns. Two stops at one
+    point is two statuses a reader cannot tell apart, which is the picture failing
+    silently.
     """
-    assert len(set(_HILL_STOPS.values())) == len(_HILL_STOPS)
+    for kind, words in HILL_LADDERS.items():
+        places = [_HILL_STOPS[word] for word in words]
+        assert len(set(places)) == len(places), f"two stops share a place on a {kind}'s hill"
 
 
 def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Path) -> None:
     """Painted at all, and painted in the right place.
 
-    The static export puts every entity in one file, which is exactly the page
-    this question wants: one window, one stylesheet, every status in the corpus
-    drawn at once. A resolved `left` is not the claim — Chrome painted nothing at
-    all for the frozen column's edge on a value every test agreed with — so this
-    measures the box the browser actually laid out and checks it against the
-    centre `_hill_at` computed, in the hill's own pixels.
+    One page per status the corpus holds, and each one is a record's own page as
+    the server sends it. Not the static export, which was tried first and is the
+    wrong instrument: it puts every entity in one file and shows one at a time, so
+    every article but the current one is `display: none` and every ball in it
+    measures zero — a page that would have reported "the hill is painted at no
+    size" for a hill that is perfectly fine.
+
+    A resolved `left` is not the claim either. Chrome painted nothing at all for
+    the frozen column's edge on a value every test agreed with. So this measures
+    the box the browser actually laid out and checks its centre against what
+    `_hill_at` computed, in the hill's own pixels.
     """
     browser = chrome()
-    page = render_detail(index, ROUTES)
-    found = measured_in(
-        browser, page, tmp_path / "detail.html", 1100,
-        """
-        const seen = [];
-        for (const article of document.querySelectorAll('article.entity')) {
-          const hill = article.querySelector('.hill');
-          const ball = hill && hill.querySelector('.hill-ball');
-          if (!ball) continue;
-          const box = hill.getBoundingClientRect();
-          const at = ball.getBoundingClientRect();
-          const word = [...ball.classList]
-            .find(c => c.startsWith('hill-') && c !== 'hill-ball').slice(5);
-          seen.push([word, at.width, at.height,
-                     (at.x + at.width / 2 - box.x) / box.width,
-                     (at.y + at.height / 2 - box.y) / box.height]);
-        }
-        return seen;
-        """,
-        height=1400,
-    )
-    assert found, "no ball was painted on any record in the corpus"
-    for word, width, height, across, down in found:
-        assert width > 0 and height > 0, f"{word}'s ball was laid out at no size"
-        x, y = _HILL_STOPS[word]
-        assert across == pytest.approx(x / _HILL_BOX[0], abs=0.01), f"{word} is across wrong"
-        assert down == pytest.approx(y / _HILL_BOX[1], abs=0.01), f"{word} is up wrong"
-    assert len({word for word, *_ in found}) > 1, "the corpus holds only one status"
+    first = {}
+    for entity_id, entity in sorted(index.entities.items()):
+        first.setdefault(entity.status, entity_id)
+    assert len(first) > 1, "the corpus holds one status, so this proves nothing"
+
+    for status, entity_id in first.items():
+        page = render_detail(index, ROUTES, only=entity_id)
+        found = measured_in(
+            browser, page, tmp_path / f"{status}.html", 1100,
+            """
+            const hill = document.querySelector('.hill');
+            const ball = hill.querySelector('.hill-ball');
+            const box = hill.getBoundingClientRect();
+            const at = ball.getBoundingClientRect();
+            return {width: at.width, height: at.height,
+                    across: (at.x + at.width / 2 - box.x) / box.width,
+                    down: (at.y + at.height / 2 - box.y) / box.height,
+                    word: [...ball.classList].find(c => c !== 'hill-ball').slice(5)};
+            """,
+            height=1000,
+        )
+        assert found["word"] == status
+        assert found["width"] > 0 and found["height"] > 0, f"{status}'s ball is laid out at no size"
+        x, y = _HILL_STOPS[status]
+        assert found["across"] == pytest.approx(x / _HILL_BOX[0], abs=0.01), f"{status} across"
+        assert found["down"] == pytest.approx(y / _HILL_BOX[1], abs=0.01), f"{status} up"
 
 
 def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Path) -> None:
@@ -317,7 +328,11 @@ def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Pat
         browser, page, tmp_path / "detail.html", 1100,
         """
         document.getElementById('toggle').click();
-        await new Promise(paint => requestAnimationFrame(() => requestAnimationFrame(paint)));
+        // A timer and not `requestAnimationFrame`: this runs under Chrome's
+        // virtual clock, which drives timers and does not necessarily drive
+        // frames — an `await` on a frame never resolves there, the report is
+        // never written, and the harness says the page reported nothing.
+        await new Promise(settled => setTimeout(settled, 50));
         const hill = document.querySelector('.hill[role=radiogroup]');
         const value = document.querySelector('input[name=status]');
         const ball = hill.querySelector('.hill-ball');
@@ -333,7 +348,7 @@ def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Pat
           checked: hill.querySelector('input:checked').value,
         };
         """,
-        height=1400,
+        height=1400, patience=2500,
     )
     assert found["value"] == "ready"
     assert found["checked"] == "ready"
@@ -360,7 +375,11 @@ def test_dragging_the_ball_lands_on_a_stop(index: Index, tmp_path: Path) -> None
         browser, page, tmp_path / "detail.html", 1100,
         """
         document.getElementById('toggle').click();
-        await new Promise(paint => requestAnimationFrame(() => requestAnimationFrame(paint)));
+        // A timer and not `requestAnimationFrame`: this runs under Chrome's
+        // virtual clock, which drives timers and does not necessarily drive
+        // frames — an `await` on a frame never resolves there, the report is
+        // never written, and the harness says the page reported nothing.
+        await new Promise(settled => setTimeout(settled, 50));
         const hill = document.querySelector('.hill[role=radiogroup]');
         const value = document.querySelector('input[name=status]');
         const ball = hill.querySelector('.hill-ball');
@@ -380,7 +399,7 @@ def test_dragging_the_ball_lands_on_a_stop(index: Index, tmp_path: Path) -> None
           unsaved: document.getElementById('unsaved').textContent,
         };
         """,
-        height=1400,
+        height=1400, patience=2500,
     )
     assert found["value"] == "done"
     assert found["unsaved"] == "1 unsaved change"
@@ -403,7 +422,11 @@ def test_a_cancelled_drag_puts_the_ball_back(index: Index, tmp_path: Path) -> No
         browser, page, tmp_path / "detail.html", 1100,
         """
         document.getElementById('toggle').click();
-        await new Promise(paint => requestAnimationFrame(() => requestAnimationFrame(paint)));
+        // A timer and not `requestAnimationFrame`: this runs under Chrome's
+        // virtual clock, which drives timers and does not necessarily drive
+        // frames — an `await` on a frame never resolves there, the report is
+        // never written, and the harness says the page reported nothing.
+        await new Promise(settled => setTimeout(settled, 50));
         const hill = document.querySelector('.hill[role=radiogroup]');
         const value = document.querySelector('input[name=status]');
         const ball = hill.querySelector('.hill-ball');
@@ -419,7 +442,7 @@ def test_a_cancelled_drag_puts_the_ball_back(index: Index, tmp_path: Path) -> No
         return {before, after: ball.style.left, value: value.value,
                 unsaved: document.getElementById('unsaved').textContent};
         """,
-        height=1400,
+        height=1400, patience=2500,
     )
     assert found["after"] == found["before"], "the ball stayed where the drag died"
     assert found["unsaved"] == "Nothing changed yet"
@@ -440,7 +463,11 @@ def test_the_hill_takes_a_keyboard(index: Index, tmp_path: Path) -> None:
         browser, page, tmp_path / "detail.html", 1100,
         """
         document.getElementById('toggle').click();
-        await new Promise(paint => requestAnimationFrame(() => requestAnimationFrame(paint)));
+        // A timer and not `requestAnimationFrame`: this runs under Chrome's
+        // virtual clock, which drives timers and does not necessarily drive
+        // frames — an `await` on a frame never resolves there, the report is
+        // never written, and the harness says the page reported nothing.
+        await new Promise(settled => setTimeout(settled, 50));
         const hill = document.querySelector('.hill[role=radiogroup]');
         const value = document.querySelector('input[name=status]');
         const stops = [...hill.querySelectorAll('input')];
@@ -454,7 +481,7 @@ def test_the_hill_takes_a_keyboard(index: Index, tmp_path: Path) -> None:
         return {focused, names: new Set(stops.map(s => s.name)).size,
                 value: value.value, count: stops.length};
         """,
-        height=1400,
+        height=1400, patience=2500,
     )
     assert found["focused"], "a stop cannot be focused, so the hill has no keyboard"
     assert found["names"] == 1, "the stops are not one group, so arrows will not move between them"

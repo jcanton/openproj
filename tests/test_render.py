@@ -3837,18 +3837,30 @@ def _outside_the_floor(page: str) -> str:
 _CARRIES_MOTION = ("detail.html", "cycles.html")
 
 
-def test_the_app_moves_in_exactly_one_place(rendered: Path):
+def test_the_app_moves_in_two_places(rendered: Path):
     """The inventory the floor's comment claims, kept true by something other than
     the person who wrote it.
 
     The blanket rule covers whatever is written next, so this is not a ban on new
-    motion — it is what lets the comment say "the only one" without going stale, and
-    the trigger to check the two things a second `transition` would need: that it is
-    inside the shell's reach, and that it is not on a canvas.
+    motion — it is what lets the comment say "these and no others" without going
+    stale, and the trigger to check the two things a new `transition` needs: that
+    it is inside the shell's reach, and that it is not on a canvas.
+
+    Two, since the hill. The ball rolls between its stops when the status changes,
+    which is in the shell and therefore on every page — a ball that teleports says
+    a different thing from a ball that moves, and what this picture is about is
+    *which way the work is going*. It passed both checks: the shell's own
+    reduced-motion block is inlined before every page's stylesheet and marked
+    `!important`, and the hill is SVG and HTML rather than a canvas.
+
+    The `--roll` token is why there is one declaration and not two. A ball under
+    the pointer has to be under the pointer, so a drag switches the roll off — and
+    written as `transition: none` that read here as a second moving thing, which is
+    the absence of motion spelled in the grammar of motion.
     """
     for name in PAGES:
         found = _MOVES.findall(_outside_the_floor(read(rendered, name)))
-        expected = 1 if name in _CARRIES_MOTION else 0
+        expected = 2 if name in _CARRIES_MOTION else 1
         assert len(found) == expected, f"{name} moves in {len(found)} places, not {expected}"
         assert (name in _CARRIES_MOTION) == (
             "transition: opacity .15s, background .15s" in read(rendered, name)

@@ -2594,13 +2594,16 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    is read properly. Scrollable and not clipped, because a card that ends
    mid-sentence with no way to see the rest reads as a broken card.
    The cap is in `em` so it is a number of LINES rather than a number of pixels. */
-/* 11em and not the 12 it was: the card gained a Progress row when the table's
-   column gave up its count, and the whole box has to stay under half the window
-   — a card that covers the table it was opened from has to be dismissed before
-   the plan can be read again, which is what
-   `test_a_nine_hundred_word_document_does_not_cover_the_table` measures. One
-   line of facts is paid for with one line of document. */
-#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 11em;
+/* 8em, and it has been 12 and then 11: the card gained a Progress row when the
+   table's column gave up its count, and then a hill on its chip line. The whole
+   box has to stay under half the window — a card that covers the table it was
+   opened from has to be dismissed before the plan can be read again, which is
+   what `test_a_nine_hundred_word_document_does_not_cover_the_table` measures.
+   One line of facts is paid for with one line of document, and the hill is drawn
+   beside the status chip rather than under it so that it costs two rather than
+   the five a row of its own would have. 9em cleared the cap by six pixels, which
+   is not a margin — it is the same number twice with a rounding between them. */
+#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 8em;
                    overflow-y: auto; border-top: 1px solid var(--line); }
 #card .card-body > :first-child { margin-top: 0; }
 #card .card-body > :last-child { margin-bottom: 0; }
@@ -2672,9 +2675,15 @@ dt:has(+ dd .hill) { align-self: start; }
 /* `left`/`top` and not `transform`, so one ball rolls between stops when the
    status changes instead of a second ball lighting up somewhere else. The shell's
    blanket reduced-motion block is inlined before every page's own stylesheet and
-   marked `!important`, so this needs no rule of its own to be switched off. */
+   marked `!important`, so this needs no rule of its own to be switched off.
+   The roll is a token so that a ball being dragged can stop rolling — under the
+   pointer it should be under the pointer — without a second `transition:` in the
+   stylesheet. `transition: none` is the absence of motion written in the grammar
+   of motion, and `test_the_app_moves_in_exactly_one_place` counts declarations. */
+.hill { --roll: .22s; }
+.hill.dragging { --roll: 0s; }
 .hill-ball { width: var(--ball); height: var(--ball); border: 2px solid;
-             transition: left .22s ease, top .22s ease; }
+             transition: left var(--roll) ease, top var(--roll) ease; }
 .hill-shaping { background: var(--st-shaping); border-color: var(--st-shaping-line); }
 .hill-ready { background: var(--st-ready); border-color: var(--st-ready-line); }
 .hill-in_progress { background: var(--st-in_progress);
@@ -2708,9 +2717,15 @@ dt:has(+ dd .hill) { align-self: start; }
                      border: 2px dashed transparent; }
 .hill-stop:hover::before, .hill-stop:has(input:focus-visible)::before {
   border-color: var(--line-strong); }
-.hill.dragging .hill-ball { transition: none; }
-#card .hill { --ball: 11px; --ghost: 7px; max-width: 9rem; }
-#card .card-hill { margin: 0 0 .4rem; }
+/* On the chip line and not under it. A card is a glance and it is drawn over the
+   table it was opened from, so every row it grows is a row of the plan it hides —
+   `test_a_nine_hundred_word_document_does_not_cover_the_table` holds it under half
+   the window. Beside the word, the hill costs the difference between a line of
+   chips and a small drawing rather than a whole row of its own. */
+#card .hill { --ball: 9px; --ghost: 6px; max-width: 6.5rem; }
+#card .card-hill { display: inline-block; vertical-align: middle;
+                   margin-left: .35rem; }
+#card .card-chips { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
 /* The two lines every view writes about itself: the count under the controls of
    what is on screen, and the place a refusal or a receipt is written into. Four
    pages drew `#summary` and three drew `#state`, and the copies had already come
@@ -3155,11 +3170,13 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    It is a system setting and not a preference this app keeps, so there is no
    toggle for it and nothing in `remembered` — the browser answers, every page.
 
-   One blanket block rather than a `transition: none` beside the single animated
-   rule the app owns, because the next person to write a transition will not come
-   back here to add it. That rule is `#grip::before` on the detail page, the width
-   handle's fade, and it is the only one: `transition`, `animation` and
-   `@keyframes` across `src/` return it and nothing else.
+   One blanket block rather than a `transition: none` beside each animated rule the
+   app owns, because the next person to write a transition will not come back here
+   to add it. There are two: `#grip::before` on the detail page, the width handle's
+   fade, and `.hill-ball`, which rolls between its stops when a status changes and
+   is in this shell and therefore on every page. `test_the_app_moves_in_two_places`
+   is the inventory, and it is a tripwire rather than a ban — what a new one has to
+   pass is that it is inside this block's reach and not on a canvas.
 
    `!important` is load-bearing rather than shouting. Each page's own stylesheet is
    inlined immediately below this block, so a page rule is *later* in the sheet and
@@ -3397,13 +3414,13 @@ function hillHtml(status) {
     : '';
   const said = `${cardWord(status)} — ${known ? HILL.where[status] : 'not on the hill'}`;
   const dim = !known || HILL.off.includes(status);
-  return `<div class="card-hill"><span class="hill${dim ? ' hill-off' : ''}"`
+  return `<span class="card-hill"><span class="hill${dim ? ' hill-off' : ''}"`
     + ` role="img" aria-label="${esc(said)}">`
     + `<svg viewBox="0 0 ${HILL.box[0]} ${HILL.box[1]}" aria-hidden="true" focusable="false">`
     + `<path class="hill-ground" d="M${HILL.apron[0]} ${HILL.ground}`
     + `L${HILL.apron[1]} ${HILL.ground}"/>`
     + `<path class="hill-line" d="${HILL.path}"/></svg>`
-    + ghosts + ball + '</span></div>';
+    + ghosts + ball + '</span></span>';
 }
 
 function cardHtml(row, extra) {
@@ -3465,8 +3482,8 @@ function cardHtml(row, extra) {
       : []),
   ];
   return `<p class="card-title">${esc(row.title)}</p>` +
-    `<p class="card-chips">${marks.join(' ')}</p>` +
-    (row.status ? hillHtml(row.status) : '') +
+    `<p class="card-chips">${marks.join(' ')}` +
+    (row.status ? hillHtml(row.status) : '') + '</p>' +
     '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
     '</dl>' + (row.tip ? `<p class="card-why">${esc(row.tip)}</p>` : '');
 }
@@ -11847,7 +11864,7 @@ function attachHill(form) {
   // Drag is an enhancement over the radios and lands only on stops, because there
   // is nothing between them for a ball to mean. `pointerdown` does not
   // `preventDefault`: a press that begins and ends on one stop is a click on that
-  // stop's own `<label>`, and letting the browser handle it is what puts focus
+  // stop's own label element, and letting the browser handle it is what puts focus
   // where the ball is. A press that ends somewhere else fires no label click at
   // all — the two events share only the hill as an ancestor — which is why the
   // drag has to commit for itself.
