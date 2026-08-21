@@ -2593,7 +2593,13 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    is read properly. Scrollable and not clipped, because a card that ends
    mid-sentence with no way to see the rest reads as a broken card.
    The cap is in `em` so it is a number of LINES rather than a number of pixels. */
-#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 12em;
+/* 11em and not the 12 it was: the card gained a Progress row when the table's
+   column gave up its count, and the whole box has to stay under half the window
+   — a card that covers the table it was opened from has to be dismissed before
+   the plan can be read again, which is what
+   `test_a_nine_hundred_word_document_does_not_cover_the_table` measures. One
+   line of facts is paid for with one line of document. */
+#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 11em;
                    overflow-y: auto; border-top: 1px solid var(--line); }
 #card .card-body > :first-child { margin-top: 0; }
 #card .card-body > :last-child { margin-bottom: 0; }
@@ -6419,13 +6425,14 @@ const SQUEEZABLE = new Set(['title', 'owner', 'progress']);
 // up. All four are lookups rather than answers — each is on the detail page and
 // each stays filterable in the facets above — so they are what it can lose and
 // still answer the question it is open for.
-// `progress` goes first: it is counted from a body that may not keep a list at
-// all, the entity page draws it in full beside the tasks it is counted from, and
-// `?predicate=untracked` finds the rows that have none. `tags` is last because it
-// is the column that absorbs whatever is left over: while it is drawn the table
-// fills its container exactly, and once it is gone the fit can only leave a gap
-// at the right.
-const SHED = ['reviewers', 'prs', 'progress', 'tags'];
+// `prs` goes first: every reference in it is a link the row's own detail page
+// carries, and the badge that hides the rest is the same badge there. `progress`
+// used to go first and no longer does — it is a bar now rather than a bar and a
+// count, so it narrows to a floor instead of leaving, which is a column kept for
+// 78px. `tags` is last because it is the column that absorbs whatever is left
+// over: while it is drawn the table fills its container exactly, and once it is
+// gone the fit can only leave a gap at the right.
+const SHED = ['prs', 'reviewers', 'progress', 'tags'];
 // One class per column and not one for the set, because they go one at a time.
 const shedClass = key => 'shed-' + key;
 
@@ -6453,10 +6460,6 @@ const TITLE_FLOOR = 250;
 // to read a fraction off. It used to be the first thing shed, which was right
 // when it was the widest column on the row and is not now.
 const PROGRESS_FLOOR = 78;
-const floorFor = key => key === 'title' ? TITLE_FLOOR
-  : key === 'progress' ? PROGRESS_FLOOR
-  : CLAMPED.has(key) ? CLAMP_FLOOR
-  : SQUEEZABLE.has(key) ? FLOOR : Infinity;
 // A clamped column shows one item and a badge, and its header above them. Set to
 // 76 — the badge and a short tag — the fit drove all four to that and `REVIEWERS`
 // wrapped over two lines above a truncated login, which is a narrower column and
@@ -6473,6 +6476,13 @@ const floorFor = key => key === 'title' ? TITLE_FLOOR
 // that sorts the table when somebody meant to expand it is what those four
 // pixels of column buy.
 const CLAMP_FLOOR = 116;
+// Which floor a column has, in one place: `minimumWidth` decides what the table
+// can be squeezed to and `fitted` does the squeezing, and two copies of this
+// question is how those two come to disagree about a single column.
+const floorFor = key => key === 'title' ? TITLE_FLOOR
+  : key === 'progress' ? PROGRESS_FLOOR
+  : CLAMPED.has(key) ? CLAMP_FLOOR
+  : SQUEEZABLE.has(key) ? FLOOR : Infinity;
 
 // What each column would need with every cell on one line, so a column ends up
 // as wide as its widest value needs and not one character more. Measured from a
@@ -7256,12 +7266,17 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
    let `iomaganaris` hang over the column beside it. A name cut short says it is
    cut short; the cell's tooltip and the card have the whole of it. */
 #rows td[data-col="id"], #rows td[data-col="owner"],
-#rows td[data-col="assignees"], #rows td[data-col="reviewers"],
 #rows td[data-col="cycle"], #rows td[data-col="size"],
 #rows td[data-col="start"], #rows td[data-col="end"],
 #rows td[data-col="blocked_by"], #rows td[data-col="progress"] {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal;
 }
+/* The four clamped columns are NOT in that list, and the reason is the control
+   in their header: it opens every cell in the column to show what the `+N` is
+   hiding, and a cell that cannot wrap opens to exactly the height it had.
+   `test_the_column_control_opens_the_column_and_closes_it` measures that as a
+   column that cost no height at all, which cannot be true. They already show one
+   item and a badge, which is the same saving by a different route. */
 /* The bar fills the column it is alone in now, rather than trailing a number. */
 #rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
 /* And the century goes when the column is squeezed, which is the one part of a
