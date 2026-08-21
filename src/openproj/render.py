@@ -2648,9 +2648,16 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
         padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
 {#- Written by the loop rather than by hand: five statuses times four tokens is
     twenty values to keep in step, and the pair that drifts is the pair nobody
-    reads until a chip turns white on white. -#}
+    reads until a chip turns white on white.
+
+    A border of its own status colour, like the kind chip's hairline and the
+    priority chip's: jcanton, 2026-08-21, having seen all three side by side in a
+    hover card — "why type and priority chips look different from the status
+    ones, the border!". Three chips on one line that are three shapes read as
+    three kinds of thing. -#}
 {% for s in statuses %}
-.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text); }
+.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
+                   border: 1px solid var(--st-{{ s }}-line); }
 {%- endfor %}
 /* Kind never competes with status for attention: no hue, only a hairline. One
    rule for all three, because three kinds drawn three ways read as two of them
@@ -7625,14 +7632,21 @@ const LEVELS = {{ levels|tojson }};
 // as the characters they replace on a one-line title, and on a two-line one the
 // pair sits level with the middle of the block rather than with its first line —
 // which is the cost of colour, and it is the only place cytoscape leaves.
-// A box keeps its glyph in the label and a card does not: the image below is
-// drawn inside a node's shape, and a compound's shape is a rectangle around its
-// children with nothing but their gaps to draw in. A group's name is its own
-// line at the top of that rectangle, so the glyph rides with it as it always
-// has, in the group's own ink.
+// A card's title alone — its marks are the image below, which is how they get a
+// colour each. A box's title with both marks written into it, which is how they
+// get onto its line at all: a compound's name is drawn on the box's own top edge
+// with an opaque background behind it, and an image placed in a compound's
+// rectangle is positioned against the rectangle rather than against that line —
+// it lands in the corner, under the name's background and clipped by the box's
+// own radius. Tried, looked at, and not worth the pixel-chasing.
+//
+// So a box's marks are the same two characters in the box's own ink. jcanton
+// asked for the boxes to have them too, and this is the half of that a canvas
+// will give: the shape is there, the colour is not.
 const labelOf = node => node.isChildless()
   ? (node.data('label') || '')
-  : [GLYPH[node.data('status')] || '', node.data('label') || ''].filter(Boolean).join(' ');
+  : [PRIGLYPH[node.data('priority')] || '', GLYPH[node.data('status')] || '',
+     node.data('label') || ''].filter(Boolean).join(' ');
 
 // TELLING ONE EDGE FROM ANOTHER. Where several dependencies run through the same
 // corridor, they are one grey line of one width with one arrowhead and the eye
@@ -7646,9 +7660,19 @@ const labelOf = node => node.isChildless()
 // muted grey, never towards the background; the widths are within half a pixel
 // of each other; and the line stays SOLID, because dashed is what an uncommitted
 // connection looks like on this canvas and that meaning is not for sale.
-const EDGE_HEADS = ['triangle', 'vee', 'triangle-tee', 'chevron', 'triangle-backcurve'];
-const EDGE_WIDTHS = [1.4, 1.7, 1.2, 1.6, 1.3];
-const EDGE_MIXES = [0, 18, 36, 10, 27];
+// Six inks, from the page's own tokens rather than from six greys. Greys within
+// one family are not separable at 1.5px on a busy canvas — jcanton, 2026-08-21,
+// "shades are too similar to distinguish to a human eye... otherwise we should
+// use theme colours (also shades) which gives us more options" — and every token
+// here is one this app already holds legible against the page in both themes and
+// under every colour scheme, mixed halfway to the line colour so a canvas of
+// them reads as a drawing rather than as a chart.
+//
+// One arrowhead for all of them, restored: "it's only one arrowhead per edge, it
+// doesn't help figuring out where the edge starts by looking at the end only".
+const EDGE_INKS = [
+  '--line-strong', '--accent', '--ok', '--pri-medium', '--danger', '--st-shaping-line',
+];
 
 function edgeSeed(edge) {
   // FNV-ish over the two ids: stable across loads, and different for two edges
@@ -7663,37 +7687,47 @@ function edgeSeed(edge) {
 }
 
 function edgeInk(edge) {
-  const mix = EDGE_MIXES[(edgeSeed(edge) >> 3) % EDGE_MIXES.length];
-  // Through the page's own token pair rather than through hard-coded greys: on a
-  // colour scheme both of these move, and a line mixed between them stays a line
-  // that reads on that scheme's ground.
-  return inSRGB(`color-mix(in oklab, ${token('--fg')} ${mix}%, ${token('--line-strong')})`);
+  const name = EDGE_INKS[edgeSeed(edge) % EDGE_INKS.length];
+  const hue = token(name);
+  if (!hue) return token('--line-strong');
+  // Halfway to the line colour: the tokens are chip and status inks and are
+  // meant to carry a word, which is louder than a 1.5px line needs to be. Mixed,
+  // they stay this drawing's greys while being six of them rather than one.
+  return inSRGB(`color-mix(in oklab, ${hue} 62%, ${token('--line-strong')})`);
 }
 
+// The two marks, as the two CHARACTERS they are everywhere else on the site, each
+// with its own fill — which is what jcanton pictured and what a label cannot do:
+// cytoscape draws a label into a canvas with one `color` for the whole string,
+// and there is no rich text on a node. An SVG can hold two `<text>` elements and
+// two fills, so that is where they go, and it comes out looking like the thing
+// that could not be written.
+//
+// The block and the glyph are the same characters `PRIORITY_GLYPH` and
+// `STATUS_GLYPH` write into a chip, a menu and a legend key: one notation for one
+// fact, drawn five ways and read as one.
 function marksImage(node) {
   const priority = node.data('priority'), status = node.data('status');
-  const lit = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
-  const dim = token('--line-strong');
+  const block = PRIGLYPH[priority] || '';
   const glyph = GLYPH[status] || '';
-  // The BORDER's colour and not the chip ink the table uses: on a card the
-  // ground behind this glyph is the status fill itself, and the border is the
-  // one token already held legible against it — it is drawn round this very box.
+  const hue = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
+  // The BORDER's colour and not the chip ink the table uses: the ground behind
+  // this glyph is the status fill itself, and the border is the one token already
+  // held legible against it — it is drawn round this very shape.
   const ink = LINE()[status] || token('--fg');
-  const level = LEVELS[priority] || 0;
-  const height = Math.max(2, Math.round(11 * level / 5));
-  const bar = priority
-    ? `<rect x="0" y="0" width="7" height="11" rx="1" fill="${dim}" opacity="0.18"/>`
-      + `<rect x="0" y="${11 - height}" width="7" height="${height}" rx="1" fill="${lit}"/>`
-    : '';
-  // `xml:space` and an explicit font stack, because this is drawn by the browser
-  // as an image and inherits nothing from the page it sits on.
-  const mark = glyph
-    ? `<text x="10" y="10" font-family="${token('--font-sans').replace(/"/g, "'")}" `
-      + `font-size="11" font-weight="700" fill="${ink}">${glyph
-          .replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`
-    : '';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12" `
-    + `viewBox="0 0 24 12">${bar}${mark}</svg>`;
+  const stack = token('--font-sans').replace(/"/g, "'");
+  const safe = one => one.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  // Both sit on one baseline. The block character draws from the baseline
+  // downwards in most faces, so the two are placed at the same y and the block's
+  // own metrics put it where a chip puts it.
+  const marks = [
+    block ? `<text x="0" y="11" font-family="${stack}" font-size="12" `
+            + `fill="${hue}">${safe(block)}</text>` : '',
+    glyph ? `<text x="13" y="11" font-family="${stack}" font-size="11" `
+            + `font-weight="700" fill="${ink}">${safe(glyph)}</text>` : '',
+  ].join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="14" `
+    + `viewBox="0 0 24 14">${marks}</svg>`;
   return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
@@ -8023,7 +8057,7 @@ const cy = cytoscape({
         // scales the image to the node and a wide card gets a stretched one.
         'background-image': node => node.isChildless() ? marksImage(node) : 'none',
         'background-image-opacity': 1,
-        'background-width': 24, 'background-height': 12,
+        'background-width': 24, 'background-height': 14,
         'background-position-x': 8, 'background-position-y': '50%',
         'background-fit': 'none', 'background-clip': 'node',
         'background-image-containment': 'inside',
@@ -8075,6 +8109,8 @@ const cy = cytoscape({
         // and a label that wrapped would be positioned as if it had not.
         'text-wrap': 'ellipsis', 'text-max-width': GROUP_MAX,
         'text-valign': 'top', 'text-halign': 'left',
+        // `groupWidth` measures the label including its marks — it is given the
+        // same string `labelOf` builds — so nothing is added here for them.
         'text-margin-x': e => groupWidth(e) + 12, 'text-margin-y': 17,
         'text-background-color': token('--surface'), 'text-background-opacity': 1,
         'text-background-padding': 3, 'text-background-shape': 'roundrectangle' } },
@@ -8127,8 +8163,8 @@ const cy = cytoscape({
         // token that is held at 3:1 against the page in both themes.
         'line-color': edge => edgeInk(edge),
         'target-arrow-color': edge => edgeInk(edge),
-        'target-arrow-shape': edge => EDGE_HEADS[edgeSeed(edge) % EDGE_HEADS.length],
-        'width': edge => EDGE_WIDTHS[edgeSeed(edge) % EDGE_WIDTHS.length] } },
+        'target-arrow-shape': 'triangle',
+        'width': 1.5 } },
     // The two uncommitted states, told apart by colour rather than by dash
     // pattern: both are dashed, because dashed is what "not in the plan yet"
     // looks like here, and one is being added while the other is being taken
