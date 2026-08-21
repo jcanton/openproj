@@ -1347,12 +1347,38 @@ def test_a_batch_of_edges_is_saved_against_the_commit_before_it(rendered: Path):
     assert "already saved" in save, "a partial failure must say what was written"
 
 
-def test_edges_are_routed_rather_than_drawn_over_whatever_is_between(rendered: Path):
+def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Path):
+    """The drawing's whole design, and the smallest statement of it.
+
+    The shape is the same one a router of ours used to compute — right angles
+    with rounded corners — and cytoscape computes it now, from
+    `taxi-direction: auto`. The old code overrode that per edge with a guess at
+    which way each should turn, on top of bends it placed itself; every fix for
+    those bends was found by screenshot rather than by test, and the fourth one
+    was the last. jcanton, 2026-08-21, having compared a gallery of every curve
+    style on the real plan: "the same but rounded".
+
+    `bottom` is the other half and the one that makes it work: under the boxes,
+    a line that crosses a card passes beneath it. What the drawing does with that
+    is `test_graph_layout.test_an_edge_that_crosses_a_card_is_drawn_under_it`,
+    which reads pixels. This is the stylesheet's half.
+    """
     body = read(rendered, "graph.html")
 
     assert "'curve-style': 'round-taxi'" in body
-    assert "'taxi-radius'" in body
+    assert "'taxi-direction': 'auto'" in body
+    assert "'z-compound-depth': 'bottom'" in body
     assert "'curve-style': 'bezier'" not in body
+    # Asked of the page's own style block and not of the file: the vendored
+    # cytoscape bundle is inlined here and names every curve style it supports,
+    # so a search over the bytes finds the library's vocabulary rather than this
+    # page's settings.
+    ours = re.search(r"const cy = cytoscape\(\{.*?\n\}\);", body, re.S)
+    assert ours, "the cytoscape call is not where this test thinks it is"
+    assert "taxi-direction" in ours.group(0)
+    assert "segment-weights" not in ours.group(0), (
+        "a bend of our own is being placed again"
+    )
 
 
 def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):

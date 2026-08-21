@@ -2520,8 +2520,18 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    below it down the page — on the graph and the timeline that is a relayout of
    the whole view — and capped in height because `tags` on a real plan is forty
    values and a menu the length of the page is a menu you scroll the document
-   for. z-index 6 clears the table's own furniture: its header is 3, the frozen
-   pair 4, and the drop label 5. */
+   for.
+
+   z-index 12 clears everything a menu can open over. Its own page's furniture is
+   the small half — the table's header is 3, the frozen pair 4, the drop label 5,
+   the graph's key 5 — and the one that actually covered it is the COMMIT BAR,
+   which is sticky at 10 on every page that can be edited. On the graph that is
+   the row holding "Edit dependencies", and a filter menu opened over it lost its
+   middle rows to a button: the labels above and below were the menu's, the ones
+   behind the bar were the bar's. jcanton, 2026-08-21.
+
+   Below the hover card at 20 and the drag ghost at 40, both of which follow the
+   pointer and should pass over an open menu rather than under it. */
 /* `:not([hidden])` on the display, and it is not decoration: the browser's own
    `[hidden] { display: none }` is (0,1,0) in the UA sheet, and ANY author rule
    setting `display` beats it. Without this every menu on the bar is open the
@@ -2529,7 +2539,7 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    it is meant to filter. `#unparent` two hundred lines down settles the same
    question the same way and says so; this is the second time. */
 .facetmenu:not([hidden]) {
-  position: absolute; z-index: 6; top: 100%; left: 0; margin-top: .2rem;
+  position: absolute; z-index: 12; top: 100%; left: 0; margin-top: .2rem;
   max-height: 15rem; overflow-y: auto; min-width: 100%;
   display: flex; flex-direction: column; gap: .1rem;
   padding: .3rem; background: var(--surface); border: 1px solid var(--line-strong);
@@ -2638,9 +2648,16 @@ span.bar > span { display: block; height: 100%; background: var(--accent); }
         padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; }
 {#- Written by the loop rather than by hand: five statuses times four tokens is
     twenty values to keep in step, and the pair that drifts is the pair nobody
-    reads until a chip turns white on white. -#}
+    reads until a chip turns white on white.
+
+    A border of its own status colour, like the kind chip's hairline and the
+    priority chip's: jcanton, 2026-08-21, having seen all three side by side in a
+    hover card — "why type and priority chips look different from the status
+    ones, the border!". Three chips on one line that are three shapes read as
+    three kinds of thing. -#}
 {% for s in statuses %}
-.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text); }
+.chip.st-{{ s }} { background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
+                   border: 1px solid var(--st-{{ s }}-line); }
 {%- endfor %}
 /* Kind never competes with status for attention: no hue, only a hairline. One
    rule for all three, because three kinds drawn three ways read as two of them
@@ -3141,6 +3158,17 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     payload on this site travels and it is the one shape `test_no_page_is_assembled_by_substitution`
     already understands. -#}
 <script id="words" type="application/json">{{ words|tojson }}</script>
+{#- The two ladders' marks, beside the words and for the same reason: the card is
+    drawn on three pages and the graph has no `DATA` of its own — its payload is
+    cytoscape elements — so a mark read from a page's payload is a mark the card
+    carries on two pages out of three.
+
+    `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on four
+    pages — it is the span the mark buttons are drawn into — and a second element
+    of that id in the shell made `getElementById('marks')` answer with this block
+    instead: the toolbar drew its buttons into a script tag, and the editor's own
+    tests caught it as an SVG laid out at 0x0. -#}
+<script id="chipmarks" type="application/json">{{ cardmarks|tojson }}</script>
 <script>
 // Declared before the content, because the pages' own scripts are inside it and
 // some of them announce while loading — the cycle page's receipt, the detail
@@ -3214,6 +3242,16 @@ const CARD_WORDS = (() => {
 })();
 function cardWord(value) { return CARD_WORDS[value] || value; }
 
+// `{status: {...}, priority: {...}}` — the same two maps the table's chips and
+// the graph's nodes draw from, off the shell rather than off a page's payload.
+const CARD_MARKS = (() => {
+  try { return JSON.parse(document.getElementById('chipmarks').textContent); }
+  catch (error) { return {status: {}, priority: {}}; }
+})();
+function cardMark(ladder, value) {
+  return (CARD_MARKS[ladder] || {})[value] || '';
+}
+
 // Bodies already fetched, by id. A pointer crossing a column of rows asks for the
 // same document several times a second otherwise — and the answer cannot change
 // under a page that has not been reloaded, because a save reloads the rows.
@@ -3242,10 +3280,28 @@ function cardHtml(row, extra) {
   // They were not: a status reading `ready" onmouseover=alert(1) x="` came back
   // out of this line as a real event handler that fired on hover, on the one
   // element of the box a pointer is guaranteed to cross.
+  // Kind, then priority, then status — the order jcanton asked for on
+  // 2026-08-21, and the two ladders drawn exactly as the table draws them: mark
+  // and word inside the same chip, so a card and a row say one fact one way. The
+  // maps are the control bar's (`_FILTER_JS`), read through `typeof` because a
+  // page can carry a card without carrying a filter bar.
+  const chip = (klass, glyph, word) =>
+    `<span class="chip ${klass}">` +
+    (glyph ? `<span class="chipmark" aria-hidden="true">${esc(glyph)}</span>` : '') +
+    `<span class="chipword">${esc(word)}</span></span>`;
+  const marks = [
+    chip(`kind-${esc(row.kind)}`, '', cardWord(row.kind)),
+    ...(row.priority
+      ? [chip(`pri pri-${esc(row.priority)}`, cardMark('priority', row.priority),
+              cardWord(row.priority))]
+      : []),
+    ...(row.status
+      ? [chip(stClass(row.status), cardMark('status', row.status),
+              cardWord(row.status))]
+      : []),
+  ];
   return `<p class="card-title">${esc(row.title)}</p>` +
-    `<p class="card-chips"><span class="chip ${stClass(row.status)}">` +
-    `${esc(cardWord(row.status))}</span> ` +
-    `<span class="chip kind-${esc(row.kind)}">${esc(cardWord(row.kind))}</span></p>` +
+    `<p class="card-chips">${marks.join(' ')}</p>` +
     '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
     '</dl>' + (row.tip ? `<p class="card-why">${esc(row.tip)}</p>` : '');
 }
@@ -4551,11 +4607,11 @@ function clamped(pieces, one, many) {
     ` data-collapse="Show ${rest.length} fewer ${word}">${rest.length}</button>`;
 }
 
-// The two marks a row wears, off the payload rather than restated here. `LEVELS`
-// is the same map the legend reads through Jinja; `GLYPHS` is what the graph and
-// the timeline already draw.
+// The two marks a row wears, off the payload rather than restated here.
+// `GLYPHS` is what the graph and the timeline already draw; `RUNGS` below is the
+// priority character, which the graph now draws too — a card's title carries the
+// same two marks a row does, in the same order.
 const GLYPHS = DATA.glyphs || {};
-const LEVELS = DATA.levels || {};
 // The mark that goes in front of a word inside an `<option>`, which is text and
 // nothing else — the same string `mark()` writes on the server, for both ladders.
 const RUNGS = DATA.marks || {};
@@ -7552,36 +7608,132 @@ const LINE = () => ({
 // timeline draws at a bar's left edge and the legend below shows in its swatch.
 // Not a token: a shape, so it survives a screenshot, a projector and deuteranopia.
 const GLYPH = {{ glyphs|tojson }};
-const labelOf = node => (GLYPH[node.data('status')] || '') + ' ' + (node.data('label') || '');
-
-// Priority, as the same five bars the legend and the table draw, painted into the
-// corner of the card.
+// A card's name, and the two marks in front of it: the priority block, then the
+// status glyph, then the title — the same order and the same characters the
+// table's two chips carry, on one line.
 //
-// NOT as a character in the label, which is what shipped first and what jcanton
-// saw: cytoscape draws a label into a canvas with the font it is given and no
-// fallback chain, and Inter has no Block Elements — so `▅` came out as a .notdef
-// box in front of every node's name. A rendering that depends on the typeface
-// having a glyph is a rendering that fails silently on somebody else's machine.
+// The priority mark was an image in the corner of the card, on the grounds that
+// cytoscape draws a label with the font it is given and no fallback chain, so a
+// block element came out as a .notdef box. That is not what happens: asked on a
+// canvas with this page's own stack, `\u2585` measures 10px against 6.56px for a
+// private-use codepoint, which is the browser falling back per glyph exactly as
+// it does in HTML. jcanton, 2026-08-21: "the priority tofu should be just a
+// glyph in line with the status glyph, currently it's separate and vertically
+// aligned".
 //
-// A `data:` SVG, which the policy allows (`img-src 'self' data:`) and which is
-// the same picture as the meter in the legend rather than a second notation for
-// one fact. Rebuilt on a theme change with `paint()`, because the colours are
-// tokens and the image has already resolved them.
+// What it costs: a label is one colour, so the rung's colour is not on the card.
+// The border's thickness still carries it — that is the channel the legend keys —
+// and the colour is on the same mark everywhere it can be, which is the table,
+// the detail page and the key itself.
+const PRIGLYPH = {{ priglyphs|tojson }};
 const LEVELS = {{ levels|tojson }};
-function barsImage(priority) {
-  // The same picture the character draws everywhere else: a block filling as much
-  // of its box as the rung is worth, in the rung's colour, with the rest of the
-  // box left faint so the height can be read against something. Five bars stood
-  // here and were 19px wide on a 150px card; this is 8.
-  const level = LEVELS[priority] || 0;
-  const lit = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
-  const dim = token('--line-strong');
-  const height = Math.max(2, Math.round(11 * level / 5));
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="11" `
-    + `viewBox="0 0 8 11">`
-    + `<rect x="0" y="0" width="8" height="11" rx="1" fill="${dim}" opacity="0.18"/>`
-    + `<rect x="0" y="${11 - height}" width="8" height="${height}" rx="1" fill="${lit}"/>`
-    + `</svg>`;
+
+// A card's name, and its two marks — as a picture rather than as two characters
+// in front of the title, because a cytoscape label is ONE ink and jcanton wants
+// the marks coloured the way the table colours them: the priority block in its
+// rung's colour, the status glyph in the status's own line colour.
+//
+// So the label is the title alone and the marks are a `data:` SVG at the card's
+// left edge, vertically centred against the text. That is the same arrangement
+// as the characters they replace on a one-line title, and on a two-line one the
+// pair sits level with the middle of the block rather than with its first line —
+// which is the cost of colour, and it is the only place cytoscape leaves.
+// A card's title alone — its marks are the image below, which is how they get a
+// colour each. A box's title with both marks written into it, which is how they
+// get onto its line at all: a compound's name is drawn on the box's own top edge
+// with an opaque background behind it, and an image placed in a compound's
+// rectangle is positioned against the rectangle rather than against that line —
+// it lands in the corner, under the name's background and clipped by the box's
+// own radius. Tried, looked at, and not worth the pixel-chasing.
+//
+// So a box's marks are the same two characters in the box's own ink. jcanton
+// asked for the boxes to have them too, and this is the half of that a canvas
+// will give: the shape is there, the colour is not.
+const labelOf = node => node.isChildless()
+  ? (node.data('label') || '')
+  : [PRIGLYPH[node.data('priority')] || '', GLYPH[node.data('status')] || '',
+     node.data('label') || ''].filter(Boolean).join(' ');
+
+// TELLING ONE EDGE FROM ANOTHER. Where several dependencies run through the same
+// corridor, they are one grey line of one width with one arrowhead and the eye
+// cannot follow any of them to its end. So each edge gets its own shade, its own
+// head and its own weight — from a hash of the two ids, so the same dependency
+// looks the same on every load and on everybody's screen.
+//
+// Deliberately a small range. jcanton, 2026-08-21: "without going over the top,
+// just slightly different shades of grey (not too light otherwise invisible)".
+// The shades are `--line-strong` mixed towards the page's ink and towards its
+// muted grey, never towards the background; the widths are within half a pixel
+// of each other; and the line stays SOLID, because dashed is what an uncommitted
+// connection looks like on this canvas and that meaning is not for sale.
+// Six inks, from the page's own tokens rather than from six greys. Greys within
+// one family are not separable at 1.5px on a busy canvas — jcanton, 2026-08-21,
+// "shades are too similar to distinguish to a human eye... otherwise we should
+// use theme colours (also shades) which gives us more options" — and every token
+// here is one this app already holds legible against the page in both themes and
+// under every colour scheme, mixed halfway to the line colour so a canvas of
+// them reads as a drawing rather than as a chart.
+//
+// One arrowhead for all of them, restored: "it's only one arrowhead per edge, it
+// doesn't help figuring out where the edge starts by looking at the end only".
+const EDGE_INKS = [
+  '--line-strong', '--accent', '--ok', '--pri-medium', '--danger', '--st-shaping-line',
+];
+
+function edgeSeed(edge) {
+  // FNV-ish over the two ids: stable across loads, and different for two edges
+  // that share an end.
+  const key = edge.data('source') + '>' + edge.data('target');
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash);
+}
+
+function edgeInk(edge) {
+  const name = EDGE_INKS[edgeSeed(edge) % EDGE_INKS.length];
+  const hue = token(name);
+  if (!hue) return token('--line-strong');
+  // Halfway to the line colour: the tokens are chip and status inks and are
+  // meant to carry a word, which is louder than a 1.5px line needs to be. Mixed,
+  // they stay this drawing's greys while being six of them rather than one.
+  return inSRGB(`color-mix(in oklab, ${hue} 62%, ${token('--line-strong')})`);
+}
+
+// The two marks, as the two CHARACTERS they are everywhere else on the site, each
+// with its own fill — which is what jcanton pictured and what a label cannot do:
+// cytoscape draws a label into a canvas with one `color` for the whole string,
+// and there is no rich text on a node. An SVG can hold two `<text>` elements and
+// two fills, so that is where they go, and it comes out looking like the thing
+// that could not be written.
+//
+// The block and the glyph are the same characters `PRIORITY_GLYPH` and
+// `STATUS_GLYPH` write into a chip, a menu and a legend key: one notation for one
+// fact, drawn five ways and read as one.
+function marksImage(node) {
+  const priority = node.data('priority'), status = node.data('status');
+  const block = PRIGLYPH[priority] || '';
+  const glyph = GLYPH[status] || '';
+  const hue = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
+  // The BORDER's colour and not the chip ink the table uses: the ground behind
+  // this glyph is the status fill itself, and the border is the one token already
+  // held legible against it — it is drawn round this very shape.
+  const ink = LINE()[status] || token('--fg');
+  const stack = token('--font-sans').replace(/"/g, "'");
+  const safe = one => one.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  // Both sit on one baseline. The block character draws from the baseline
+  // downwards in most faces, so the two are placed at the same y and the block's
+  // own metrics put it where a chip puts it.
+  const marks = [
+    block ? `<text x="0" y="11" font-family="${stack}" font-size="12" `
+            + `fill="${hue}">${safe(block)}</text>` : '',
+    glyph ? `<text x="13" y="11" font-family="${stack}" font-size="11" `
+            + `font-weight="700" fill="${ink}">${safe(glyph)}</text>` : '',
+  ].join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="14" `
+    + `viewBox="0 0 24 14">${marks}</svg>`;
   return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
@@ -7682,9 +7834,9 @@ const LAYOUT_OPTIONS = {
   // No `elk.edgeRouting`. ELK computes bend points for an edge it can see both
   // ends of and returns none at all for one that spans the hierarchy — measured
   // on a 208-record plan, ORTHOGONAL, POLYLINE and SPLINES each gave bend points
-  // to ZERO of 76 edges. The routing is done here instead, by `routeEdges`, over
-  // the positions ELK produces. Asking for a routing we then throw away is a
-  // setting that reads as though it does something.
+  // to ZERO of 76 edges. Nothing here draws bends anyway: an edge is a straight
+  // line under the boxes. Asking for a routing that would arrive empty and be
+  // thrown away is a setting that reads as though it does something.
 };
 
 // 25 and not ELK's default 12, because the box ELK reserves and the box this page
@@ -7826,240 +7978,35 @@ async function relayout() {
     });
   });
 
-  // Which way each taxi edge turns, from where the boxes ACTUALLY are. It used to
-  // ride on `layoutstop`, which cytoscape emits and ELK does not — so after the
-  // layout became a direct call it was computed once at load, from the positions
-  // the nodes had before anything had been laid out. Every edge that needed a
-  // vertical turn got a horizontal one, which is a diagonal stub. It is the
-  // fallback now: an edge the router cannot find a way for still gets a shape.
-  route();
-  routeEdges();
-
   cy.fit(undefined, 24);
 }
 
-// An orthogonal route from one card to another that goes ROUND the cards in
-// between rather than under them.
+// THE ROUTER THAT WAS HERE, and why the drawing is straight lines now.
 //
-// ELK cannot do this: at the level it works, the route between two boxes is
-// genuinely unobstructed, because the cards it appears to cross are inside other
-// boxes which at that level are opaque. So the routing is done here, over the
-// absolute positions ELK has already produced, which is where the obstacles are.
+// It was a Hanan grid and an A* per edge, run over ELK's absolute positions, to
+// send each dependency ROUND the cards between its ends rather than under them —
+// because at the level ELK works, the route between two boxes is genuinely
+// unobstructed, the cards it appears to cross being inside other boxes that are
+// opaque at that level.
 //
-// A Hanan grid and A*. The candidate lines are the edges of every obstacle,
-// inflated by a clearance, plus the two anchors — a shortest orthogonal path
-// avoiding rectangles always exists on that lattice, which is what makes a grid
-// this coarse enough. Turns are charged for, or the path staircases.
-// `CLEARANCE` and not `CLEAR`: this page already has a `CLEAR`, which is the
-// clear-filters button, and two top-level declarations of one name in one page is
-// a SyntaxError that throws the whole later script away — including the layout.
-const CLEARANCE = 12;
-
-function routeAround(blockers, anchorFrom, anchorTo) {
-  const xs = new Set([anchorFrom.x, anchorTo.x]);
-  const ys = new Set([anchorFrom.y, anchorTo.y]);
-  blockers.forEach(b => {
-    xs.add(b.x1 - CLEARANCE); xs.add(b.x2 + CLEARANCE);
-    ys.add(b.y1 - CLEARANCE); ys.add(b.y2 + CLEARANCE);
-  });
-  const X = [...xs].sort((a, b) => a - b);
-  const Y = [...ys].sort((a, b) => a - b);
-  const ix = new Map(X.map((v, i) => [v, i]));
-  const iy = new Map(Y.map((v, i) => [v, i]));
-
-  const inside = (x, y) => blockers.some(b =>
-    x > b.x1 - CLEARANCE && x < b.x2 + CLEARANCE && y > b.y1 - CLEARANCE && y < b.y2 + CLEARANCE);
-  // A leg is clear if neither end nor any lattice point between them is inside a
-  // blocker. Checking the lattice points is enough: a rectangle wide enough to
-  // block a leg has an edge line, and therefore a lattice point, inside it.
-  const clearBetween = (ax, ay, bx, by) => {
-    if (ax === bx) {
-      const lo = Math.min(ay, by), hi = Math.max(ay, by);
-      return !blockers.some(b => ax > b.x1 - CLEARANCE && ax < b.x2 + CLEARANCE
-                               && lo < b.y2 + CLEARANCE && hi > b.y1 - CLEARANCE);
-    }
-    const lo = Math.min(ax, bx), hi = Math.max(ax, bx);
-    return !blockers.some(b => ay > b.y1 - CLEARANCE && ay < b.y2 + CLEARANCE
-                             && lo < b.x2 + CLEARANCE && hi > b.x1 - CLEARANCE);
-  };
-
-  const start = {x: anchorFrom.x, y: anchorFrom.y};
-  const goal = {x: anchorTo.x, y: anchorTo.y};
-  const key = (i, j) => i * Y.length + j;
-  const open = [{i: ix.get(start.x), j: iy.get(start.y), dir: null, cost: 0}];
-  const best = new Map();
-  const came = new Map();
-  const goalKey = key(ix.get(goal.x), iy.get(goal.y));
-  const guess = (i, j) => Math.abs(X[i] - goal.x) + Math.abs(Y[j] - goal.y);
-  let found = null;
-  let guard = 0;
-
-  while (open.length && guard++ < 40000) {
-    open.sort((a, b) => (a.cost + guess(a.i, a.j)) - (b.cost + guess(b.i, b.j)));
-    const here = open.shift();
-    const at = key(here.i, here.j);
-    if (at === goalKey) { found = here; break; }
-    if (best.has(at) && best.get(at) <= here.cost) continue;
-    best.set(at, here.cost);
-    const steps = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-    for (const [dx, dy] of steps) {
-      const i = here.i + dx, j = here.j + dy;
-      if (i < 0 || j < 0 || i >= X.length || j >= Y.length) continue;
-      if (!clearBetween(X[here.i], Y[here.j], X[i], Y[j])) continue;
-      const dir = dx ? 'h' : 'v';
-      // Distance, plus a turn charge so the path is a few long legs rather than
-      // a staircase of short ones.
-      const cost = here.cost + Math.abs(X[i] - X[here.i]) + Math.abs(Y[j] - Y[here.j])
-                 + (here.dir && here.dir !== dir ? 60 : 0);
-      const there = key(i, j);
-      if (best.has(there) && best.get(there) <= cost) continue;
-      const step = {i, j, dir, cost};
-      came.set(there, {from: at, point: {x: X[i], y: Y[j]}});
-      open.push(step);
-    }
-  }
-  if (!found) return null;
-
-  const path = [];
-  let at = goalKey;
-  while (came.has(at)) { const step = came.get(at); path.unshift(step.point); at = step.from; }
-  path.unshift({x: start.x, y: start.y});
-  // Drop the points that are not corners: three points on one line is one leg.
-  const corners = [path[0]];
-  for (let i = 1; i < path.length - 1; i++) {
-    const a = corners[corners.length - 1], b = path[i], c = path[i + 1];
-    if (!((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y))) corners.push(b);
-  }
-  corners.push(path[path.length - 1]);
-  return corners;
-}
-
-// Where an edge leaves a card and where it arrives: the middle of the side that
-// faces the other end. Orthogonal by construction, which is what the grid wants,
-// and it means an edge meets a card square on rather than at a corner.
-// Where a route starts and ends: the middle of whichever side of each box faces
-// the other node, pushed one pixel clear of the border.
+// It worked, in the sense that the paths it produced were correct. Getting them
+// on screen was the part that never held: cytoscape takes bends as a distance
+// from a reference line and a fraction along it, so drawing one meant knowing
+// which line — and the answers were, in order, the line between the centres
+// (wrong: it is the line clipped at the two shapes), a perpendicular of one sign
+// (wrong: it is the other, so every route was drawn as its own reflection), and
+// anchors on the border (wrong: cytoscape calls those endpoints degenerate and
+// draws nothing at all). Each was found by a screenshot, each fix was measured,
+// and the drawing came back wrong in a new way. jcanton, 2026-08-21: "the graph
+// is in worse shape than it was before... I'm thinking we should go back to a
+// simpler option with straight edges drawn underneath the nodes."
 //
-// The clip points — where the centre-to-centre line crosses the two boxes — were
-// tried here, because that is where cytoscape starts drawing. It refuses to draw
-// at all: with the first segment point ON the shape, the intersection it uses for
-// the endpoint is degenerate and the console says so ("invalid endpoints and so
-// it is impossible to draw"), leaving six dependencies on the real plan with no
-// line between them.
-function anchorsFor(edge) {
-  const from = edge.source().boundingBox({includeLabels: false});
-  const to = edge.target().boundingBox({includeLabels: false});
-  const a = edge.source().position(), b = edge.target().position();
-  const dx = b.x - a.x, dy = b.y - a.y;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0 ? [{x: from.x2 + 1, y: a.y}, {x: to.x1 - 1, y: b.y}]
-                   : [{x: from.x1 - 1, y: a.y}, {x: to.x2 + 1, y: b.y}];
-  }
-  return dy >= 0 ? [{x: a.x, y: from.y2 + 1}, {x: b.x, y: to.y1 - 1}]
-                 : [{x: a.x, y: from.y1 - 1}, {x: b.x, y: to.y2 + 1}];
-}
-
-// Route every visible edge round the cards, and draw what comes back. An edge the
-// router cannot find a way for keeps cytoscape's taxi router, which is a line
-// that may cross something rather than no line at all.
-function routeEdges() {
-  const cards = cy.nodes(':visible').filter(node => node.isChildless()).toArray();
-  const boxOf = node => node.boundingBox({includeLabels: false});
-  const paths = {};
-  cy.edges(':visible').forEach(edge => {
-    const [from, to] = anchorsFor(edge);
-    // Everything except the two ends and whatever is inside them: an edge
-    // attached to a box has to be allowed among that box's own children.
-    const blockers = cards.filter(card =>
-      !card.same(edge.source()) && !card.same(edge.target())
-      && !card.ancestors().anySame(edge.source())
-      && !card.ancestors().anySame(edge.target())).map(boxOf);
-    const path = routeAround(blockers, from, to);
-    // The anchors travel with the path. They are where the route LEAVES the
-    // source and MEETS the target, and cytoscape has to be told both — see
-    // `drawRoutes`, which without them draws the first and last legs from the
-    // middle of a node.
-    if (path && path.length > 1) paths[edge.id()] = {points: path, from, to};
-  });
-  drawRoutes(paths);
-}
-
-// ELK gives a bend point as a position; cytoscape wants it as a distance from the
-// straight line between the two ends and a fraction along that line. So each one
-// is projected onto that line — which also means the two are consistent when a
-// node is dragged afterwards, because both are relative to where the ends are.
-// Where a straight line between two nodes actually starts and ends: the ray from
-// one centre to the other, cut at each node's box. This is the line cytoscape
-// measures a `segments` edge's bends against, and asking it is how that was
-// settled — see `drawRoutes`.
-//
-// The box and not the rounded outline: the corner radius is 4px on a card and
-// the ray only meets a corner when it is nearly diagonal, so the difference is a
-// pixel or two on the few edges that hit one, against hundreds of pixels of skew
-// this removes.
-function clippedLine(edge) {
-  const at = edge.source().position(), it = edge.target().position();
-  const cut = (node, from, towards) => {
-    const box = node.boundingBox({includeLabels: false});
-    const dx = towards.x - from.x, dy = towards.y - from.y;
-    const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - from.x) / dx;
-    const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - from.y) / dy;
-    const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
-    return {x: from.x + dx * t, y: from.y + dy * t};
-  };
-  return [cut(edge.source(), at, it), cut(edge.target(), it, at)];
-}
-
-function drawRoutes(paths) {
-  cy.batch(() => {
-    cy.edges().forEach(edge => {
-      const routed = paths[edge.id()];
-      if (!routed || !routed.points.length) {
-        edge.removeStyle('curve-style');
-        edge.removeStyle('source-endpoint');
-        edge.removeStyle('target-endpoint');
-        return;
-      }
-      const points = routed.points;
-      // THE LINE THE BENDS ARE MEASURED AGAINST is not the one between the two
-      // centres. It is the CLIPPED line: from where the centre-to-centre ray
-      // leaves the source's shape to where it enters the target's. Asked of
-      // cytoscape rather than read in its source — an edge given
-      // `segment-weights: '0 0.5 1'` and no distances reports its three points
-      // on the two boxes' borders, not on their centres.
-      //
-      // Projected against the centres, every bend is placed further along the
-      // line than it belongs, by however much the clip took off. On a card that
-      // is 22px and the drawing looks fine; on a project's box it is hundreds,
-      // and the route arrives on screen as a zig-zag leaning across the canvas
-      // with none of its right angles left. That is what jcanton photographed,
-      // twice, on the real plan and never on the seed corpus — whose boxes are
-      // small enough for the error to be invisible.
-      // (`source-endpoint` was tried here and is not settable this way: set to an
-      // offset in px it reads back as `0px 0px`, which is another reason the
-      // clipped line is what has to be projected against.)
-      const [from, to] = clippedLine(edge);
-      const dx = to.x - from.x, dy = to.y - from.y;
-      const span = Math.hypot(dx, dy) || 1;
-      const weights = [], distances = [];
-      points.forEach(point => {
-        const px = point.x - from.x, py = point.y - from.y;
-        weights.push(((px * dx + py * dy) / (span * span)).toFixed(4));
-        // `py*dx - px*dy`, not the other way round. A positive distance moves a
-        // bend along `(-dy, dx)` — calibrated by giving one edge
-        // `segment-weights: '0.5'` and `segment-distances: '50'` and reading the
-        // point back — so the sign that was here reflected every route across
-        // its own reference line. A reflected staircase is still made of
-        // segments and no longer runs along either axis, which is what a
-        // zig-zag leaning across the canvas is.
-        distances.push(((py * dx - px * dy) / span).toFixed(1));
-      });
-      edge.style({'curve-style': 'segments',
-                  'segment-weights': weights.join(' '),
-                  'segment-distances': distances.join(' ')});
-    });
-  });
-}
+// So: cytoscape's own `round-taxi`, drawn beneath every box. A line under a card
+// cannot be a line through it, which is the whole thing the router was for — and
+// the turn is the library's, so there are no bends of ours to place and nothing
+// to re-place when a node moves. What is gone with it: `routeAround`,
+// `anchorsFor`, `routeEdges`, `drawRoutes`, `clippedLine`, `route` — which
+// overrode `taxi-direction` per edge — and the settle timer.
 
 // `packComponents` was here and is the reason this page looked the way it did.
 //
@@ -8105,33 +8052,24 @@ const cy = cytoscape({
   style: [
     { selector: 'node', style: {
         'label': labelOf, 'font-size': 10, 'shape': 'round-rectangle',
-        // The priority meter, at the card's left edge and level with its title.
-        // `background-fit: none` and an explicit size, or cytoscape scales the
-        // image to the node and a wide card gets a stretched meter.
-        //
-        // It was in the top-left CORNER, with the title pushed down five pixels
-        // to clear it — so a card read as a mark on one line and a title on
-        // another, and neither was level with the status glyph in front of the
-        // title. jcanton, 2026-08-20: "the priority bars are not in line with the
-        // status icon and titles in the nodes". Centred vertically, the meter,
-        // the glyph and the first line of the title are one row.
-        'background-image': node => node.isParent() ? 'none' : barsImage(node.data('priority')),
-        'background-image-opacity': 1,
-        'background-width': 8, 'background-height': 11,
-        'background-position-x': 8, 'background-position-y': '50%',
-        'background-fit': 'none', 'background-clip': 'node',
-        'background-image-containment': 'inside',
         // One typeface for the whole app, this canvas included — and the ruler
         // above measures group labels in it, so a second stack here would put
         // every group label a few pixels off the box it belongs to.
         'font-family': token('--font-sans'),
         // text-wrap alone does nothing: without a max width the label just
         // overflows the box it is supposed to sit inside.
-        // Narrower than the card and pushed right by the meter's own width, so
-        // the two share a row without sharing any pixels: the meter has
-        // 8..27 of a 150-wide card, and a 110-wide label centred and shifted 12
-        // right starts at 32.
-        'text-wrap': 'wrap', 'text-max-width': 110, 'text-margin-x': 12,
+        // The two marks, drawn at the card's left edge and level with the middle
+        // of its title. `background-fit: none` and an explicit size, or cytoscape
+        // scales the image to the node and a wide card gets a stretched one.
+        'background-image': node => node.isChildless() ? marksImage(node) : 'none',
+        'background-image-opacity': 1,
+        'background-width': 24, 'background-height': 14,
+        'background-position-x': 8, 'background-position-y': '50%',
+        'background-fit': 'none', 'background-clip': 'node',
+        'background-image-containment': 'inside',
+        // Narrower than the card and pushed right by the marks' own width, so the
+        // two share the line without sharing any pixels.
+        'text-wrap': 'wrap', 'text-max-width': 106, 'text-margin-x': 15,
         'background-color': e => COLOUR()[e.data('status')],
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
@@ -8177,6 +8115,8 @@ const cy = cytoscape({
         // and a label that wrapped would be positioned as if it had not.
         'text-wrap': 'ellipsis', 'text-max-width': GROUP_MAX,
         'text-valign': 'top', 'text-halign': 'left',
+        // `groupWidth` measures the label including its marks — it is given the
+        // same string `labelOf` builds — so nothing is added here for them.
         'text-margin-x': e => groupWidth(e) + 12, 'text-margin-y': 17,
         'text-background-color': token('--surface'), 'text-background-opacity': 1,
         'text-background-padding': 3, 'text-background-shape': 'roundrectangle' } },
@@ -8195,28 +8135,42 @@ const cy = cytoscape({
     // for one that spans the hierarchy — measured, zero of 76 on a 208-record
     // plan, in each of its three routing modes.
     { selector: 'edge', style: {
-        'z-compound-depth': 'top',
-        // Orthogonal with rounded corners, not bezier: dagre ranks left to right,
-        // so an edge that leaves horizontally and turns once reads as a route
-        // between ranks instead of a curve drawn over whatever is in between.
-        // taxi-direction is set per edge by route(); this is only the fallback
-        // for an edge added before the first routing pass.
-        'width': 1.5, 'curve-style': 'round-taxi', 'taxi-direction': 'horizontal',
+        // BENEATH the boxes, which is the whole design of the drawing now: a
+        // straight line from one card to another passes under whatever is in
+        // between, and a line under a card cannot be read as a line through it.
+        // `bottom` and not a z-index: with compound nodes the draw order is by
+        // compound depth first, so an edge between two cards inside two
+        // different boxes is otherwise painted over both boxes whatever its
+        // z-index says.
+        'z-compound-depth': 'bottom',
+        // Right angles with rounded corners, and CYTOSCAPE's, not ours. The
+        // whole difference from what was here before is `taxi-direction: auto`:
+        // the old code overrode it per edge with a hand-rolled guess at which way
+        // each one should turn, on top of a router that placed the bends itself.
+        // Left to decide for itself, against edges drawn underneath the boxes, it
+        // draws the shape the router was written to produce — with none of the
+        // code, and none of the four separate ways of getting bends onto the
+        // screen wrong.
+        //
+        // Chosen off a gallery of every curve style cytoscape has, rendered on
+        // the real plan and looked at: jcanton, 2026-08-21, "can you serve
+        // 11-round-taxi-under? it's the same but rounded".
+        'curve-style': 'round-taxi', 'taxi-direction': 'auto',
         'taxi-turn': '50%', 'taxi-turn-min-distance': 12, 'taxi-radius': 8,
-        // The default is outside-to-LINE, which trims the ends along the straight
-        // line between the two centres — so however cleanly the middle is routed,
-        // both stubs come out at an angle. outside-to-node trims towards the next
-        // control point instead, which is the whole difference between an
-        // orthogonal edge and one that only looks orthogonal in the middle.
+        // Trimmed towards the other end's shape rather than to the line between
+        // the centres — on a compound the two differ by the width of the box, and
+        // an arrow that stops short of the border reads as an arrow pointing at
+        // nothing.
         'source-endpoint': 'outside-to-node', 'target-endpoint': 'outside-to-node',
-        'target-arrow-shape': 'triangle',
         // --line-strong, not --st-ready. An arrow was drawn in the ready fill
         // back when that fill was a dark blue; the light theme's fills are tints
         // now and #83b8e9 on a white page is 2.10:1 — a dependency you cannot
         // see. An arrow is not a status, it is a drawn boundary, and this is the
         // token that is held at 3:1 against the page in both themes.
-        'line-color': token('--line-strong'),
-        'target-arrow-color': token('--line-strong') } },
+        'line-color': edge => edgeInk(edge),
+        'target-arrow-color': edge => edgeInk(edge),
+        'target-arrow-shape': 'triangle',
+        'width': 1.5 } },
     // The two uncommitted states, told apart by colour rather than by dash
     // pattern: both are dashed, because dashed is what "not in the plan yet"
     // looks like here, and one is being added while the other is being taken
@@ -8233,20 +8187,6 @@ const cy = cytoscape({
   ],
 });
 
-// Which way an edge is allowed to turn, decided from where the boxes actually
-// are rather than fixed in the stylesheet. Cytoscape computes a taxi turn from
-// node CENTRES, so when two boxes overlap in x — which compound containers
-// routinely do, being hundreds of pixels wide — the horizontal turn lands inside
-// the source box and the trimmed stub comes out at an angle. Up or down is then
-// the only right-angled way between them. Recomputed after every layout and
-// every drag, so an edge that is orthogonal stays orthogonal when nodes move.
-function route() {
-  cy.edges().forEach(edge => {
-    const from = edge.source().boundingBox(), to = edge.target().boundingBox();
-    const overlapsInX = from.x1 < to.x2 && to.x1 < from.x2;
-    edge.style('taxi-direction', overlapsInX ? 'vertical' : 'horizontal');
-  });
-}
 // The style above was resolved from tokens once, at build time. Flipping the
 // theme changes the tokens, not the resolved values, so every one of them is
 // re-read — the ink and the border with the fill, because all three differ per
@@ -8257,20 +8197,21 @@ function paint() {
     .selector('node').style({'background-color': e => COLOUR()[e.data('status')],
                              'border-color': e => LINE()[e.data('status')],
                              'color': e => INK()[e.data('status')]})
+    // The marks are drawn with tokens too, so they are rebuilt with everything
+    // else the theme moves.
+    .selector('node').style({'background-image': e =>
+        e.isChildless() ? marksImage(e) : 'none'})
     .selector('.picked').style({'border-color': token('--danger')})
     .selector(':parent').style({'color': token('--fg'),
                                 'text-background-color': token('--surface'),
                                 'text-margin-x': e => groupWidth(e) + 12})
-    .selector('node').style({'background-image': e =>
-        e.isParent() ? 'none' : barsImage(e.data('priority'))})
-    .selector('edge').style({'line-color': token('--line-strong'),
-                             'target-arrow-color': token('--line-strong')})
+    .selector('edge').style({'line-color': edge => edgeInk(edge),
+                             'target-arrow-color': edge => edgeInk(edge)})
     .selector('edge.pending').style({'line-color': token('--ok'),
                                      'target-arrow-color': token('--ok')})
     .selector('edge.dropping').style({'line-color': token('--sev-blocker'),
                                       'target-arrow-color': token('--sev-blocker')})
     .update();
-  route();
 }
 addEventListener('themechange', paint);
 
@@ -8307,37 +8248,6 @@ addEventListener('themechange', paint);
 // The face is inlined but still swaps in asynchronously, and a group label
 // measured against the fallback stays where the fallback put it.
 if (document.fonts) document.fonts.ready.then(paint);
-
-// Packed first and routed after: routing reads where the boxes ended up, and
-// the pack moves them.
-//
-// Re-routed whenever the drawing SETTLES, and not only when a drag ends. A
-// `segments` edge holds its bends as a distance from the line between its two
-// ends and a fraction along it, so a node that moves carries every route
-// attached to it along — and carries it as a shear, because the line those bends
-// were measured against has turned. Two right angles become two diagonals, which
-// is the zig-zag across the canvas jcanton photographed on 2026-08-20.
-//
-// `dragfree` covered the one way a node moves that anybody had thought of. It is
-// not the only one: a box picked up carries its subtree, a filter puts cards back
-// on the canvas, a re-fit and a restored position both move things, and each of
-// those is one more place somebody has to remember to re-route. Watching
-// `position` costs one debounce and cannot be forgotten.
-//
-// Not during the drag itself: routing is an A* per edge, and the point of
-// dragging is that it is immediate. So the timer restarts on every move and only
-// the pause at the end pays for it — and a hand still holding a card (`:grabbed`)
-// puts it off again rather than routing under the cursor.
-let settling = 0;
-function rerouteWhenSettled() {
-  clearTimeout(settling);
-  settling = setTimeout(() => {
-    if (cy.$(':grabbed').length) return rerouteWhenSettled();
-    routeEdges();
-  }, 80);
-}
-cy.on('position', 'node', () => { route(); rerouteWhenSettled(); });
-route();
 
 // One filter model, three views — the graph's answer to it is which boxes are on
 // the canvas. Hiding a node takes its edges with it, and an arrow leaving for
@@ -8744,7 +8654,6 @@ cy.on('tap', 'node', evt => {
 
   cy.add({group: 'edges', classes: 'pending',
           data: {source: from.id(), target: node.id(), kind: 'depends'}});
-  route();
   tally();
 });
 </script>
@@ -19928,6 +19837,9 @@ def _page(
         # because five pages inventing their own capitalisation is how one status
         # came to be spelled three ways on one screen; a card is the fourth page.
         words=HUMAN,
+        # The marks that go with those words, for the hover card: one map per
+        # ladder, so a card says the rung the same way on all three views.
+        cardmarks={"status": STATUS_GLYPH, "priority": PRIORITY_GLYPH},
         unreadable=list(unreadable),
         # The sentence is built here rather than in the template, because English
         # is not something Jinja should be doing arithmetic about and "1 files
@@ -20034,6 +19946,10 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         statuses=STATUSES,
         priorities=PRIORITIES,
         glyphs=STATUS_GLYPH,
+        # The priority character, for the mark in front of a card's title. The
+        # same map the table's menus write, so a card and a cell say the rung with
+        # the same glyph.
+        priglyphs=PRIORITY_GLYPH,
         levels=PRIORITY_LEVEL,
         carded={rung.name: rung.carded for rung in KIND_LADDER},
         total=len(index.entities),
