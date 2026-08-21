@@ -3479,9 +3479,16 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
         "  drop.target = tbody.querySelector('tr[data-id=\"%s\"] td');"
         "  tbody.dispatchEvent(drop);"
         f" {SETTLE}"
+        # The progress column is a bar now and carries its count in the bar's own
+        # tooltip; the date columns are drawn short. Both are read where they are
+        # drawn rather than where they used to be.
         "  const cell = column => tbody.querySelector("
-        "    `tr[data-id=\"%s\"] td[data-col=\"${column}\"]`).textContent;"
-        "  return {progress: cell('progress'), start: cell('start')};"
+        "    `tr[data-id=\"%s\"] td[data-col=\"${column}\"]`);"
+        "  const meter = cell('progress').querySelector('.meter');"
+        # `getAttribute` and not `.title`: the driver's DOM reflects attributes,
+        # not every property a browser mirrors them onto.
+        "  return {progress: meter ? (meter.getAttribute('title') || '') : '',"
+        "          start: cell('start').textContent.trim()};"
         "})()" % (PROJECT, PITCH),
         replies=[
             {"status": 200, "json": moved.json()},
@@ -3493,7 +3500,15 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
     assert after["rows"][PITCH]["progress_text"] in got["progress"], (
         "the pitch's progress is what the plan says now, not what it said before the drop"
     )
-    assert got["start"] == after["rows"][PITCH]["start"]
+    # `2026-07-14` is drawn `26.07.14`: two date columns of ten characters each
+    # were what made every row on a laptop two lines tall. The row still carries
+    # the ISO string, which is what the sort reads and what this compares against.
+    year, month, day = after["rows"][PITCH]["start"].split("-")
+    # `endswith`, because the two-digit year is its own element — the column drops
+    # it when it tightens — and the driver's DOM does not gather a nested span's
+    # text into its parent's `textContent` the way a browser does.
+    assert got["start"].endswith(f"{month}.{day}"), got["start"]
+    assert year[:2] not in got["start"], "the century is still being drawn"
 
 
 def test_a_column_is_dragged_in_the_header_and_a_row_in_the_body(page: str):
