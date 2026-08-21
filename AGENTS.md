@@ -284,41 +284,56 @@ claim is about pixels, look at the pixels.
   tests skip with a stated reason when the binary is missing, and a suite missing them is green for
   the wrong reason. A machine that gates a merge should have both.
 
-**Run the tests for what you touched, and let CI run the rest.** The block below is the local
-loop; it is deliberately a path or a `-k`, never the whole thing. See *The full suite runs in CI,
-not on the laptop* below for why, and do not talk yourself back into a full local run because you
-are nearly finished — that is exactly when it costs the most and tells you the least.
+**Do not run pytest on this machine. Commit, push, and read CI.** Not the whole suite, not one
+file of it — jcanton, 2026-08-21: *"no running suite locally, commit and run on CI"*. The local
+loop is one command:
 
 ```bash
 uv sync
-uv run pytest tests/test_the_thing_you_touched.py -q -p no:warnings
 uv run ruff check .
 ```
 
 Then push and open the PR. `uv run pytest -q` over everything is CI's line, in
-`.github/workflows/ci.yml`, and it is the one that gates the merge.
+`.github/workflows/ci.yml`, and it is the one that gates the merge. See *The tests run in CI, not
+on the laptop* below for why, and do not talk yourself back into a local run because you
+are nearly finished, or because the suite you have in mind is a small one — that is exactly when it
+costs the most and tells you the least.
+
+The one thing this does not forbid: running **a single test function** (`-k one_exact_name`) to
+reproduce a failure CI has already reported. That is debugging, and it is a few seconds. Two of
+them is a suite, and a suite is CI's.
 
 ruff: line length 100, target py312, `E,F,I,UP,B`.
 
-## The full suite runs in CI, not on the laptop
+## The tests run in CI, not on the laptop
 
-Run the tests for what you touched, and `ruff check .`, and then open the PR. The whole suite is
-CI's job — `.github/workflows/ci.yml` already runs `uv run pytest -q` on every pull request, with
-real Chrome and real node, on hardware that is not somebody's working machine.
+`ruff check .`, then open the PR. Every test is CI's job — `.github/workflows/ci.yml` runs
+`uv run pytest -q` on every pull request, with real Chrome and real node, on hardware that is not
+somebody's working machine.
 
 This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
 several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been
 taken down once by a runaway walk in this repository's own test corpus, and that regularly has two
 agent sessions on it at once. A full local run competes with the thing you are trying to help with.
 
-So: targeted suites locally, because a test of the file you just edited answers in seconds and is
-what actually catches your mistake. The full sweep goes to the runner, and a red CI is a normal
-thing to fix on a branch rather than a failure of process.
+"Targeted suites locally" is what this section used to say, and it did not hold: a targeted suite
+here is `tests/test_render.py` or `tests/test_graph_layout.py`, each of which is three to five
+minutes of a real browser. The rule was followed to the letter and cost exactly what it was written
+to prevent, several times in one night. So the line is drawn where it cannot be argued with —
+nothing, not even the one file you just edited.
+
+A red CI is a normal thing to fix on a branch rather than a failure of process. It costs about
+thirteen minutes of somebody else's hardware and none of jcanton's.
 
 Two habits that follow from it. Push before you are certain rather than after, since the answer
-costs you nothing and arrives in about thirteen minutes. And when you do stop a local run, look at
-what you are stopping first: `pkill -f pytest` on this machine kills the OTHER session's suite too,
-and leaves its headless Chrome orphaned.
+costs you nothing and arrives in about thirteen minutes — and while it runs, keep working on the
+next thing rather than watching it. And if you ever do have a process to stop, look at what you are
+stopping first: `pkill -f pytest` on this machine kills the OTHER session's suite too, and leaves
+its headless Chrome orphaned.
+
+**Screenshots and probes are not the suite.** Rendering a page and looking at it, or driving one in
+Chrome to answer a specific question, is how a visual change gets checked at all; that is a single
+short-lived browser, not a test run, and it stays welcome.
 
 ## Commits
 
