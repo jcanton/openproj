@@ -3151,6 +3151,11 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     payload on this site travels and it is the one shape `test_no_page_is_assembled_by_substitution`
     already understands. -#}
 <script id="words" type="application/json">{{ words|tojson }}</script>
+{#- The two ladders' marks, beside the words and for the same reason: the card is
+    drawn on three pages and the graph has no `DATA` of its own — its payload is
+    cytoscape elements — so a mark read from a page's payload is a mark the card
+    carries on two pages out of three. -#}
+<script id="marks" type="application/json">{{ cardmarks|tojson }}</script>
 <script>
 // Declared before the content, because the pages' own scripts are inside it and
 // some of them announce while loading — the cycle page's receipt, the detail
@@ -3224,6 +3229,16 @@ const CARD_WORDS = (() => {
 })();
 function cardWord(value) { return CARD_WORDS[value] || value; }
 
+// `{status: {...}, priority: {...}}` — the same two maps the table's chips and
+// the graph's nodes draw from, off the shell rather than off a page's payload.
+const CARD_MARKS = (() => {
+  try { return JSON.parse(document.getElementById('marks').textContent); }
+  catch (error) { return {status: {}, priority: {}}; }
+})();
+function cardMark(ladder, value) {
+  return (CARD_MARKS[ladder] || {})[value] || '';
+}
+
 // Bodies already fetched, by id. A pointer crossing a column of rows asks for the
 // same document several times a second otherwise — and the answer cannot change
 // under a page that has not been reloaded, because a save reloads the rows.
@@ -3252,10 +3267,28 @@ function cardHtml(row, extra) {
   // They were not: a status reading `ready" onmouseover=alert(1) x="` came back
   // out of this line as a real event handler that fired on hover, on the one
   // element of the box a pointer is guaranteed to cross.
+  // Kind, then priority, then status — the order jcanton asked for on
+  // 2026-08-21, and the two ladders drawn exactly as the table draws them: mark
+  // and word inside the same chip, so a card and a row say one fact one way. The
+  // maps are the control bar's (`_FILTER_JS`), read through `typeof` because a
+  // page can carry a card without carrying a filter bar.
+  const chip = (klass, glyph, word) =>
+    `<span class="chip ${klass}">` +
+    (glyph ? `<span class="chipmark" aria-hidden="true">${esc(glyph)}</span>` : '') +
+    `<span class="chipword">${esc(word)}</span></span>`;
+  const marks = [
+    chip(`kind-${esc(row.kind)}`, '', cardWord(row.kind)),
+    ...(row.priority
+      ? [chip(`pri pri-${esc(row.priority)}`, cardMark('priority', row.priority),
+              cardWord(row.priority))]
+      : []),
+    ...(row.status
+      ? [chip(stClass(row.status), cardMark('status', row.status),
+              cardWord(row.status))]
+      : []),
+  ];
   return `<p class="card-title">${esc(row.title)}</p>` +
-    `<p class="card-chips"><span class="chip ${stClass(row.status)}">` +
-    `${esc(cardWord(row.status))}</span> ` +
-    `<span class="chip kind-${esc(row.kind)}">${esc(cardWord(row.kind))}</span></p>` +
+    `<p class="card-chips">${marks.join(' ')}</p>` +
     '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
     '</dl>' + (row.tip ? `<p class="card-why">${esc(row.tip)}</p>` : '');
 }
@@ -7580,11 +7613,89 @@ const GLYPH = {{ glyphs|tojson }};
 // and the colour is on the same mark everywhere it can be, which is the table,
 // the detail page and the key itself.
 const PRIGLYPH = {{ priglyphs|tojson }};
-const labelOf = node => [
-  PRIGLYPH[node.data('priority')] || '',
-  GLYPH[node.data('status')] || '',
-  node.data('label') || '',
-].filter(Boolean).join(' ');
+const LEVELS = {{ levels|tojson }};
+
+// A card's name, and its two marks — as a picture rather than as two characters
+// in front of the title, because a cytoscape label is ONE ink and jcanton wants
+// the marks coloured the way the table colours them: the priority block in its
+// rung's colour, the status glyph in the status's own line colour.
+//
+// So the label is the title alone and the marks are a `data:` SVG at the card's
+// left edge, vertically centred against the text. That is the same arrangement
+// as the characters they replace on a one-line title, and on a two-line one the
+// pair sits level with the middle of the block rather than with its first line —
+// which is the cost of colour, and it is the only place cytoscape leaves.
+// A box keeps its glyph in the label and a card does not: the image below is
+// drawn inside a node's shape, and a compound's shape is a rectangle around its
+// children with nothing but their gaps to draw in. A group's name is its own
+// line at the top of that rectangle, so the glyph rides with it as it always
+// has, in the group's own ink.
+const labelOf = node => node.isChildless()
+  ? (node.data('label') || '')
+  : [GLYPH[node.data('status')] || '', node.data('label') || ''].filter(Boolean).join(' ');
+
+// TELLING ONE EDGE FROM ANOTHER. Where several dependencies run through the same
+// corridor, they are one grey line of one width with one arrowhead and the eye
+// cannot follow any of them to its end. So each edge gets its own shade, its own
+// head and its own weight — from a hash of the two ids, so the same dependency
+// looks the same on every load and on everybody's screen.
+//
+// Deliberately a small range. jcanton, 2026-08-21: "without going over the top,
+// just slightly different shades of grey (not too light otherwise invisible)".
+// The shades are `--line-strong` mixed towards the page's ink and towards its
+// muted grey, never towards the background; the widths are within half a pixel
+// of each other; and the line stays SOLID, because dashed is what an uncommitted
+// connection looks like on this canvas and that meaning is not for sale.
+const EDGE_HEADS = ['triangle', 'vee', 'triangle-tee', 'chevron', 'triangle-backcurve'];
+const EDGE_WIDTHS = [1.4, 1.7, 1.2, 1.6, 1.3];
+const EDGE_MIXES = [0, 18, 36, 10, 27];
+
+function edgeSeed(edge) {
+  // FNV-ish over the two ids: stable across loads, and different for two edges
+  // that share an end.
+  const key = edge.data('source') + '>' + edge.data('target');
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash);
+}
+
+function edgeInk(edge) {
+  const mix = EDGE_MIXES[(edgeSeed(edge) >> 3) % EDGE_MIXES.length];
+  // Through the page's own token pair rather than through hard-coded greys: on a
+  // colour scheme both of these move, and a line mixed between them stays a line
+  // that reads on that scheme's ground.
+  return inSRGB(`color-mix(in oklab, ${token('--fg')} ${mix}%, ${token('--line-strong')})`);
+}
+
+function marksImage(node) {
+  const priority = node.data('priority'), status = node.data('status');
+  const lit = token('--pri-' + String(priority).replace(/_/g, '-')) || token('--fg');
+  const dim = token('--line-strong');
+  const glyph = GLYPH[status] || '';
+  // The BORDER's colour and not the chip ink the table uses: on a card the
+  // ground behind this glyph is the status fill itself, and the border is the
+  // one token already held legible against it — it is drawn round this very box.
+  const ink = LINE()[status] || token('--fg');
+  const level = LEVELS[priority] || 0;
+  const height = Math.max(2, Math.round(11 * level / 5));
+  const bar = priority
+    ? `<rect x="0" y="0" width="7" height="11" rx="1" fill="${dim}" opacity="0.18"/>`
+      + `<rect x="0" y="${11 - height}" width="7" height="${height}" rx="1" fill="${lit}"/>`
+    : '';
+  // `xml:space` and an explicit font stack, because this is drawn by the browser
+  // as an image and inherits nothing from the page it sits on.
+  const mark = glyph
+    ? `<text x="10" y="10" font-family="${token('--font-sans').replace(/"/g, "'")}" `
+      + `font-size="11" font-weight="700" fill="${ink}">${glyph
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`
+    : '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12" `
+    + `viewBox="0 0 24 12">${bar}${mark}</svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
 
 // Cytoscape aligns a left-aligned label by its RIGHT edge against the box's left
 // edge, so putting a group's name inside its own box means knowing how wide the
@@ -7907,9 +8018,18 @@ const cy = cytoscape({
         'font-family': token('--font-sans'),
         // text-wrap alone does nothing: without a max width the label just
         // overflows the box it is supposed to sit inside.
-        // The full width of the card again: the priority mark is a character in
-        // the label now, so there is nothing beside the text to make room for.
-        'text-wrap': 'wrap', 'text-max-width': 136,
+        // The two marks, drawn at the card's left edge and level with the middle
+        // of its title. `background-fit: none` and an explicit size, or cytoscape
+        // scales the image to the node and a wide card gets a stretched one.
+        'background-image': node => node.isChildless() ? marksImage(node) : 'none',
+        'background-image-opacity': 1,
+        'background-width': 24, 'background-height': 12,
+        'background-position-x': 8, 'background-position-y': '50%',
+        'background-fit': 'none', 'background-clip': 'node',
+        'background-image-containment': 'inside',
+        // Narrower than the card and pushed right by the marks' own width, so the
+        // two share the line without sharing any pixels.
+        'text-wrap': 'wrap', 'text-max-width': 106, 'text-margin-x': 15,
         'background-color': e => COLOUR()[e.data('status')],
         // A rank, not arithmetic on the value: priority became a word, and
         // `4 - 'high'` is NaN, which cytoscape draws as no border at all.
@@ -7993,21 +8113,22 @@ const cy = cytoscape({
         // Chosen off a gallery of every curve style cytoscape has, rendered on
         // the real plan and looked at: jcanton, 2026-08-21, "can you serve
         // 11-round-taxi-under? it's the same but rounded".
-        'width': 1.5, 'curve-style': 'round-taxi', 'taxi-direction': 'auto',
+        'curve-style': 'round-taxi', 'taxi-direction': 'auto',
         'taxi-turn': '50%', 'taxi-turn-min-distance': 12, 'taxi-radius': 8,
         // Trimmed towards the other end's shape rather than to the line between
         // the centres — on a compound the two differ by the width of the box, and
         // an arrow that stops short of the border reads as an arrow pointing at
         // nothing.
         'source-endpoint': 'outside-to-node', 'target-endpoint': 'outside-to-node',
-        'target-arrow-shape': 'triangle',
         // --line-strong, not --st-ready. An arrow was drawn in the ready fill
         // back when that fill was a dark blue; the light theme's fills are tints
         // now and #83b8e9 on a white page is 2.10:1 — a dependency you cannot
         // see. An arrow is not a status, it is a drawn boundary, and this is the
         // token that is held at 3:1 against the page in both themes.
-        'line-color': token('--line-strong'),
-        'target-arrow-color': token('--line-strong') } },
+        'line-color': edge => edgeInk(edge),
+        'target-arrow-color': edge => edgeInk(edge),
+        'target-arrow-shape': edge => EDGE_HEADS[edgeSeed(edge) % EDGE_HEADS.length],
+        'width': edge => EDGE_WIDTHS[edgeSeed(edge) % EDGE_WIDTHS.length] } },
     // The two uncommitted states, told apart by colour rather than by dash
     // pattern: both are dashed, because dashed is what "not in the plan yet"
     // looks like here, and one is being added while the other is being taken
@@ -8034,12 +8155,16 @@ function paint() {
     .selector('node').style({'background-color': e => COLOUR()[e.data('status')],
                              'border-color': e => LINE()[e.data('status')],
                              'color': e => INK()[e.data('status')]})
+    // The marks are drawn with tokens too, so they are rebuilt with everything
+    // else the theme moves.
+    .selector('node').style({'background-image': e =>
+        e.isChildless() ? marksImage(e) : 'none'})
     .selector('.picked').style({'border-color': token('--danger')})
     .selector(':parent').style({'color': token('--fg'),
                                 'text-background-color': token('--surface'),
                                 'text-margin-x': e => groupWidth(e) + 12})
-    .selector('edge').style({'line-color': token('--line-strong'),
-                             'target-arrow-color': token('--line-strong')})
+    .selector('edge').style({'line-color': edge => edgeInk(edge),
+                             'target-arrow-color': edge => edgeInk(edge)})
     .selector('edge.pending').style({'line-color': token('--ok'),
                                      'target-arrow-color': token('--ok')})
     .selector('edge.dropping').style({'line-color': token('--sev-blocker'),
@@ -19670,6 +19795,9 @@ def _page(
         # because five pages inventing their own capitalisation is how one status
         # came to be spelled three ways on one screen; a card is the fourth page.
         words=HUMAN,
+        # The marks that go with those words, for the hover card: one map per
+        # ladder, so a card says the rung the same way on all three views.
+        cardmarks={"status": STATUS_GLYPH, "priority": PRIORITY_GLYPH},
         unreadable=list(unreadable),
         # The sentence is built here rather than in the template, because English
         # is not something Jinja should be doing arithmetic about and "1 files
@@ -19780,6 +19908,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         # same map the table's menus write, so a card and a cell say the rung with
         # the same glyph.
         priglyphs=PRIORITY_GLYPH,
+        levels=PRIORITY_LEVEL,
         carded={rung.name: rung.carded for rung in KIND_LADDER},
         total=len(index.entities),
         links=links,
