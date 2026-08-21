@@ -2634,12 +2634,24 @@ li.task-list-item input { margin-right: .35em; }
    content a parser is entitled to do anything with. */
 .hill { --ball: 15px; --ghost: 9px; display: block;
         position: relative; width: 100%; max-width: 15rem; aspect-ratio: 120 / 48; }
-/* The live hill follows `.field`'s rule without wearing `.field`: that class also
-   carries `#facts .field { max-width: 28rem }` on the record pages, which is
-   twice the width this drawing wants. Specificity (0,2,1), so it does not depend
-   on which stylesheet lands last. */
-.hill[role=radiogroup] { display: none; }
-.entity.editing .hill[role=radiogroup] { display: block; }
+/* The control hill follows `.field`'s rule without wearing `.field`: that class
+   also carries `#facts .field { max-width: 28rem }` on the record pages, which is
+   twice the width this drawing wants.
+   `.hill-control` and not `[role=radiogroup]`, which is what this was: a promoted
+   note's hill is still the control in its row, and it has no stops to press
+   because `promoted` is derived — so it was the one hill in the app that never
+   hid, and that note drew two hills at once, one under the other. What an element
+   is FOR is not the same question as whether anything on it can be pressed. */
+.hill-control { display: none; }
+.entity.editing .hill-control { display: block; }
+/* A drawing has no text in it and so no baseline of its own, and the record
+   pages' facts list aligns its rows on one (`#facts { align-items: baseline }`).
+   The label for a hill was therefore hung off the BOTTOM of the picture, a
+   hundred pixels below the row it names. The row that holds a hill aligns at the
+   top instead — `:has` rather than a class on the `<dt>`, because the two facts
+   lists that draw one are built by two different templates and a class would
+   have to be remembered in both. */
+dt:has(+ dd .hill) { align-self: start; }
 /* `overflow: visible`, so a round cap at the foot of the hill is drawn rather
    than sliced off flat by the viewBox it sits exactly on. */
 .hill svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -15237,7 +15249,8 @@ _HILL_HANDED_ON = {"promoted": "shaping"}
 # the status ladder to borrow a colour from, which is the other half of the
 # reason: `_status_class` would have called it `st-ready` and put it on a summit.
 _HILL = """
-<span class="hill{% if dim %} hill-off{% endif %}" data-hill="{{ ladder }}"
+<span data-hill="{{ ladder }}"
+      class="hill{% if control %} hill-control{% endif %}{% if dim %} hill-off{% endif %}"
      {% if live %}role="radiogroup" aria-label="{{ label }}"
      {% else %}role="img" aria-label="{{ said }}"{% endif %}>
   {#- The drawing is scenery: every name a reader needs is on the stops, and a
@@ -15283,6 +15296,7 @@ def _hill_html(
     ladder: str = "entity",
     *,
     live: bool = False,
+    control: bool = False,
     label: str = "Status",
     group: str = "hill",
 ) -> Markup:
@@ -15319,6 +15333,8 @@ def _hill_html(
         _HILL,
         ladder=ladder,
         live=live,
+        # A hill that is the row's control, whether or not it has stops on it.
+        control=control or live,
         label=label,
         # The word as written when it is one nobody defined, so the page says what
         # the file holds rather than pretending the record has no status at all.
@@ -19049,7 +19065,7 @@ def render_note(
         # same split `NOTE_STATES` and `NOTE_STATUS` already are.
         hill_read=_hill_html(view["state"], "note", label="State"),
         hill_edit=_hill_html(
-            view["status"], "note", live=not view["derived"], label="State",
+            view["status"], "note", live=not view["derived"], control=True, label="State",
             group=f"hill-note-{view['id'] or 'new'}",
         ),
         human=_human,
