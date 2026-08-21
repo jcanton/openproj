@@ -86,15 +86,17 @@ for (const box of boxes) {
   if (ratio > worst) { worst = ratio; worstOf = box.id(); }
 }
 
-// How many edges cross a card that is neither of their two ends. The measurement
-// the routing work in `docs/QUEUE.md` has to beat, and the reason it is worth
-// having before that work starts: without a number, "the graph looks better" is
-// the only thing anybody can say about it.
+// How many edges pass over a card that is neither of their two ends — and it is
+// a COUNT and not a fault now. An edge is a straight line drawn beneath every
+// box, so a line that crosses a card passes under it; the claim that used to be
+// here ("no edge crosses a card") belonged to the router, and the claim that
+// replaces it is `test_an_edge_that_crosses_a_card_is_drawn_under_it`, which
+// reads pixels rather than geometry.
 //
-// Reconstructed from the bend points, which IS the drawn path when the curve
-// style is `segments`, and from the two ends when it is not. Sampled along each
-// leg rather than solved, because the arithmetic for a segment against a
-// rectangle is where a measurement quietly starts measuring something else.
+// Sampled along the straight line between the two ends rather than along the
+// drawn path: a taxi edge turns once inside the same corridor, so the count is
+// the same question asked more cheaply, and the arithmetic for a segment against
+// a rectangle is where a measurement quietly starts measuring something else.
 const crossesBox = (p, q, r) => {
   for (let i = 0; i <= 20; i++) {
     const x = p.x + (q.x - p.x) * i / 20, y = p.y + (q.y - p.y) * i / 20;
@@ -102,70 +104,9 @@ const crossesBox = (p, q, r) => {
   }
   return false;
 };
-function pathOf(edge) {
-  // WHAT CYTOSCAPE SAYS IT DREW. `segmentPoints()` is the drawn path;
-  // reconstructing one out of `segment-weights` is reconstructing it from the
-  // same arithmetic that writes it — which is exactly how this probe came to
-  // report a perfectly orthogonal drawing while jcanton was looking at a
-  // zig-zag: the projection in `drawRoutes` had the sign of its perpendicular
-  // flipped, every route was drawn mirrored across its own reference line, and a
-  // probe that mirrored it back agreed with itself.
-  //
-  // The two ends come from the page's own `clippedLine` and not from
-  // `edge.sourceEndpoint()`, which answers with the node's centre: cytoscape
-  // starts the line where it crosses the shape, and a probe that starts it at a
-  // centre measures a diagonal on every edge attached to a box.
-  if (typeof edge.segmentPoints === 'function' && edge.style('curve-style') === 'segments') {
-    const drawn = edge.segmentPoints() || [];
-    if (drawn.length) {
-      // Where the drawn line meets each shape: along the ray from that node's
-      // centre TOWARDS THE NEAREST BEND, which is what cytoscape clips against —
-      // not the ray towards the other node, which is what the reference line for
-      // the weights is measured on. Two different lines, and using the second
-      // here reported a diagonal on every edge that leaves a box anywhere other
-      // than where the centre line crosses it.
-      const meet = (node, towards) => {
-        const box = node.boundingBox({includeLabels: false});
-        const c = node.position();
-        const dx = towards.x - c.x, dy = towards.y - c.y;
-        const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - c.x) / dx;
-        const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - c.y) / dy;
-        const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
-        return {x: c.x + dx * t, y: c.y + dy * t};
-      };
-      return [meet(edge.source(), drawn[0]), ...drawn,
-              meet(edge.target(), drawn[drawn.length - 1])];
-    }
-  }
-  const from = edge.source().position(), to = edge.target().position();
-  const path = [from];
-  if (edge.style('curve-style') === 'segments') {
-    // Split on commas as well as spaces: the value goes in as a string and comes
-    // back parsed, so `String(...)` of it is comma-joined — and a whitespace
-    // split then yields one token, every routed edge measures as a straight
-    // line, and the number this whole probe exists to report is wrong in the
-    // reassuring direction.
-    // `parseFloat` and not `Number`: cytoscape hands the distances back with
-    // their units on — "47px 5.8px" — and `Number('47px')` is NaN, which the
-    // guard below then skips. Every routed edge measured as a straight line and
-    // this probe reported the drawing was no better than before it was routed.
-    const split = v => String(v || '').trim().split(/[\s,]+/).filter(Boolean).map(parseFloat);
-    const ws = split(edge.style('segment-weights'));
-    const ds = split(edge.style('segment-distances'));
-    const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
-    ws.forEach((w, i) => {
-      if (!isFinite(w) || !isFinite(ds[i])) return;
-      path.push({x: from.x + dx * w + (dy / span) * ds[i],
-                 y: from.y + dy * w - (dx / span) * ds[i]});
-    });
-  }
-  path.push(to);
-  return path;
-}
-
 let under = 0;
 cy.edges().forEach(edge => {
-  const path = pathOf(edge);
+  const from = edge.source().position(), to = edge.target().position();
   for (const leaf of leaves) {
     // A card inside one of the two records an edge joins is not a card it is
     // crossing: cytoscape draws from the CENTRE of a box, so an edge attached to
@@ -173,41 +114,7 @@ cy.edges().forEach(edge => {
     if (leaf.same(edge.source()) || leaf.same(edge.target())) continue;
     if (leaf.ancestors().anySame(edge.source())) continue;
     if (leaf.ancestors().anySame(edge.target())) continue;
-    const r = rect(leaf);
-    let hit = false;
-    for (let i = 0; i < path.length - 1 && !hit; i++) hit = crossesBox(path[i], path[i + 1], r);
-    if (hit) { under++; break; }
-  }
-});
-
-// Whether the drawing is orthogonal, which is the thing the router exists to
-// make it. Every leg of a routed edge should run along one axis; a leg that runs
-// along neither is a diagonal, and a long one is the zig-zag across the canvas
-// jcanton photographed on 2026-08-20.
-//
-// EVERY leg, the two ends included. They were exempt, on the grounds that
-// cytoscape draws from a node's CENTRE — which was true, and was the reason the
-// ends leaned: a card's centre is 22px from its border and the stub is a
-// rounding error, while a project's box is hundreds of pixels wide and the stub
-// is a long diagonal across it and out the side. The endpoints are the route's
-// own anchors now (`drawRoutes`), so a leaning end is a defect like any other.
-let diagonal = 0, legs = 0, longest = 0, longestOf = null;
-cy.edges().forEach(edge => {
-  const path = pathOf(edge);
-  if (path.length < 3) return;          // nothing was routed
-  for (let i = 0; i < path.length - 1; i++) {
-    const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
-    legs++;
-    // 4px of slack, which is the gap between two arithmetics rather than a
-    // licence: the anchors a route is planned from are computed against a node's
-    // BOX, and cytoscape intersects its rounded shape and its border. The
-    // difference is a pixel or two. A staircase's legs are the router's own
-    // clearance, 12px, so nothing this is meant to catch hides under it.
-    if (dx > 4 && dy > 4) {
-      diagonal++;
-      const len = Math.hypot(dx, dy);
-      if (len > longest) { longest = len; longestOf = edge.id(); }
-    }
+    if (crossesBox(from, to, rect(leaf))) { under++; break; }
   }
 });
 
@@ -224,7 +131,6 @@ return {
   sparseWorst: +worst.toFixed(2), sparseWorstOf: worstOf,
   sparseMean: +(total / (counted || 1)).toFixed(2),
   forward, backward, zoom: +cy.zoom().toFixed(2),
-  diagonal, legs, longest: Math.round(longest), longestOf,
 };
 """
 
@@ -374,13 +280,6 @@ def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_p
                       height=820, patience=6000)
 
     assert got["boxes"] >= 12, f"the corpus is not the shape this test needs: {got}"
-    # Including the ends, which is where the leaning was: this corpus has
-    # dependencies between the boxes themselves, and a compound's centre is
-    # nowhere near the side a route leaves from.
-    assert got["legs"] > 0 and got["diagonal"] == 0, (
-        f"{got['diagonal']} of {got['legs']} legs run along neither axis, the "
-        f"longest {got['longest']}px on {got['longestOf']}"
-    )
     assert got["overlapping"] == [], got["overlapping"][:6]
     assert got["trespassing"] == [], got["trespassing"][:6]
     assert got["sparseMean"] < 2.5, got
@@ -426,11 +325,15 @@ return {
   meter: meter && {w: Math.round(meter.width), h: Math.round(meter.height)},
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
+  // The first two characters of a card's label: its priority mark and its status
+  // glyph, before the space and the title.
   marked: cy.nodes().filter(n => n.isChildless()).slice(0, 5)
-    .map(n => (n.style('label') || '').slice(0, 2)),
+    .map(n => (n.style('label') || '').replace(/\s+/g, '').slice(0, 2)),
+  // And what is painted into the card itself, which should now be nothing: the
+  // mark that used to live here as an image is a character in the line above.
   meters: cy.nodes().filter(n => n.isChildless()).slice(0, 3)
-    .map(n => decodeURIComponent(String(n.style('background-image') || ''))
-      .replace(/^url\(["']?|["']?\)$/g, '')),
+    .map(n => String(n.style('background-image') || ''))
+    .filter(one => one && one !== 'none'),
 };
 """
 
@@ -488,23 +391,25 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     )
 
 
-def test_every_card_carries_its_priority_as_a_picture(index: Index, tmp_path: Path):
-    """The channel priority is drawn with here is the border's THICKNESS, which is
-    legible only against a neighbour to compare it against — jcanton saw one
-    project drawn thicker and had to ask what it meant. So the card carries the
-    same five-bar meter the legend and the table draw.
+def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path: Path):
+    """Priority, then status, then the title — the two marks a table row wears, in
+    the same order, on one line.
 
-    As an image and NOT as a character in the label, which is what shipped first
-    and what jcanton saw: cytoscape draws a label into a canvas with the font it
-    is given and no fallback chain, and Inter has no Block Elements — so the rung
-    came out as a .notdef box in front of every node's name. A mark that depends
-    on the typeface having a glyph is a mark that fails silently on somebody
-    else's machine, and a canvas is where that failure is invisible to CSS.
+    The priority mark was an image in the corner of the card, because "cytoscape
+    draws a label with the font it is given and no fallback chain" and a block
+    element would come out as a .notdef box. That is not what happens: measured
+    on a canvas with this page's own stack, `\u2585` is 10px wide against 6.56px
+    for a private-use codepoint, which is the browser falling back per glyph
+    exactly as it does in HTML. jcanton, 2026-08-21: "the priority tofu should be
+    just a glyph in line with the status glyph, currently it's separate and
+    vertically aligned".
 
-    The status glyph stays in the label, where it has always been: those five are
-    characters every typeface has.
+    What it costs is the colour: a label is one ink, so the rung's hue is not on
+    the card. The border's thickness still carries it, which is the channel the
+    legend keys, and the colour is on the mark everywhere it can be — the table,
+    the detail page, the key.
     """
-    from openproj.render import STATUS_GLYPH
+    from openproj.render import PRIORITY_GLYPH, STATUS_GLYPH
 
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "marks.html", 1900, _KEYS,
@@ -512,33 +417,116 @@ def test_every_card_carries_its_priority_as_a_picture(index: Index, tmp_path: Pa
 
     assert got["marked"], "no node was measured"
     for prefix in got["marked"]:
-        assert prefix[0] in STATUS_GLYPH.values(), (
-            f"{prefix!r} does not start with a status glyph"
+        assert prefix[0] in PRIORITY_GLYPH.values(), (
+            f"{prefix!r} does not start with a priority mark"
         )
-    assert got["meters"], "no card carries a priority meter"
-    for image in got["meters"]:
-        assert image.startswith("data:image/svg+xml"), image[:40]
-        assert "rect" in image, "the meter has no bars in it"
+        assert prefix[1] in STATUS_GLYPH.values(), (
+            f"{prefix!r} does not carry the status glyph after the priority one"
+        )
+    assert got["meters"] == [], (
+        f"a card is still carrying the corner image the label replaced: {got['meters']}"
+    )
 
 
-def test_no_edge_crosses_a_card_it_has_nothing_to_do_with(drawn: dict):
-    """Zero, and it is reachable — which it was not before the router.
+_UNDERNEATH = """
+// Where an edge crosses a card it has nothing to do with, what is on top?
+//
+// Read off the drawing itself rather than from a style value: `cy.png()`
+// composites the three canvases cytoscape paints on, and the pixel at a crossing
+// is the answer to the only question worth asking — a reader looking at that
+// point sees either the card or a line through it.
+const cards = cy.nodes().filter(n => n.isChildless());
+const rect = n => n.boundingBox({includeLabels: false});
+const spots = [];
+cy.edges().forEach(edge => {
+  const a = edge.source().position(), b = edge.target().position();
+  cards.forEach(card => {
+    if (card.same(edge.source()) || card.same(edge.target())) return;
+    if (card.ancestors().anySame(edge.source())) return;
+    if (card.ancestors().anySame(edge.target())) return;
+    const r = rect(card);
+    // Walk the line and keep the points that fall well inside the card, away
+    // from its border and from its own text: a pixel on the border is the
+    // border's, and one under the title is the label's.
+    const inset = 10;
+    for (let i = 1; i < 40; i++) {
+      const x = a.x + (b.x - a.x) * i / 40, y = a.y + (b.y - a.y) * i / 40;
+      if (x > r.x1 + inset && x < r.x2 - inset && y > r.y1 + inset && y < r.y2 - inset) {
+        // Model coordinates to rendered ones, which is what a pixel is in.
+        const p = {x: x * cy.zoom() + cy.pan().x, y: y * cy.zoom() + cy.pan().y};
+        spots.push({card: card.id(), edge: edge.source().id() + '->' + edge.target().id(),
+                    x: p.x, y: p.y, fill: card.style('background-color')});
+      }
+    }
+  });
+});
 
-    ELK returns bend points for none of the edges that span the hierarchy, in any
-    of its three routing modes, because at the level ELK works the route between
-    two boxes genuinely is unobstructed: the cards it appears to cross are inside
-    other boxes. So `routeEdges` routes them here, over the absolute positions ELK
-    produces, which is where the obstacles are. Measured at 1900x820 it went from
-    4 / 13 / 43 at 31 / 208 / 518 records to 0 at all three.
+const line = cy.edges()[0] ? cy.edges()[0].style('line-color') : 'rgb(0,0,0)';
+const rgb = value => {
+  const m = String(value).match(/(\d+(?:\.\d+)?)/g) || [];
+  return [Math.round(+m[0] || 0), Math.round(+m[1] || 0), Math.round(+m[2] || 0)];
+};
+const near = (one, two, slack) =>
+  Math.abs(one[0] - two[0]) <= slack && Math.abs(one[1] - two[1]) <= slack
+  && Math.abs(one[2] - two[2]) <= slack;
 
-    An edge the router cannot find a way for keeps cytoscape's taxi router and may
-    cross something, which is why this could fail on a plan shaped in a way nobody
-    has seen. If it does, the fallback is working as intended and the router is
-    what needs looking at.
+// The composite, read back through an image because that is the only way to get
+// every layer's pixel at once. Answered from the continuation: the harness lets
+// the second write of `data-report` win.
+const url = cy.png({output: 'base64uri', full: false, scale: 1});
+const img = new Image();
+img.onload = () => {
+  const sheet = document.createElement('canvas');
+  sheet.width = img.width; sheet.height = img.height;
+  const ink = sheet.getContext('2d', {willReadFrequently: true});
+  ink.drawImage(img, 0, 0);
+  // `cy.png()` is the canvas at device pixels; the spots are in CSS pixels.
+  const scale = img.width / cy.container().clientWidth;
+  const inked = [];
+  for (const spot of spots.slice(0, 400)) {
+    const x = Math.round(spot.x * scale), y = Math.round(spot.y * scale);
+    if (x < 1 || y < 1 || x >= img.width - 1 || y >= img.height - 1) continue;
+    const px = [...ink.getImageData(x, y, 1, 1).data].slice(0, 3);
+    if (near(px, rgb(line), 24)) inked.push(`${spot.edge} shows through ${spot.card}`);
+  }
+  document.body.dataset.report = JSON.stringify(
+    {spots: spots.length, sampled: Math.min(spots.length, 400), inked: inked.slice(0, 5),
+     line: rgb(line), size: [img.width, img.height]});
+};
+img.src = url;
+return {pending: true};
+"""
+
+
+def test_an_edge_that_crosses_a_card_is_drawn_under_it(big: Index, tmp_path: Path):
+    """The whole design of the drawing, in one measurement.
+
+    The edges turn at right angles — cytoscape's `round-taxi`, not a route of
+    ours — and they are painted beneath every box, so an edge that passes over a
+    card passes UNDER it. That is what replaced the router; jcanton, 2026-08-21,
+    asked first for "straight edges drawn underneath the nodes. simplifies
+    everything, removes our own edge drawing", then picked the rounded right
+    angle off a gallery of every curve style on the real plan. Both halves of
+    that are the same simplification: the shape is the library's either way.
+
+    Read off the composited canvas rather than off a style value, because
+    `z-compound-depth: bottom` in the stylesheet is a claim about what cytoscape
+    will do and this is what it did: at every point where a line passes well
+    inside a card that is not one of its ends, the pixel is the card's, not the
+    line's.
     """
-    assert drawn["under"] == 0, (
-        f"{drawn['under']} of {drawn['edges']} edges cross a card they are not "
-        "attached to"
+    # The generated plan and not the seed corpus: the demo is small enough that no
+    # line passes inside a card it is unrelated to, so it cannot answer this.
+    page = render_graph(big, ROUTES, base_commit=HEAD)
+    got = measured_in(chrome(), page, tmp_path / "under.html", 1900, _UNDERNEATH,
+                      height=820, patience=4000)
+
+    assert got.get("spots", 0) > 0, (
+        "no edge on this corpus passes inside a card it is unrelated to, so this "
+        f"measures nothing: {got}"
+    )
+    assert got["inked"] == [], (
+        f"an edge is painted over a card instead of under it: {got['inked']}"
     )
 
 
@@ -607,131 +595,3 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
         "direction should"
     )
     assert got["overlapping"] == [], got["overlapping"][:4]
-
-
-def test_every_routed_edge_runs_along_an_axis(drawn: dict):
-    """The router draws right angles or it is not routing.
-
-    jcanton, 2026-08-20, with a screenshot of the deployed graph: long diagonal
-    zig-zags leaning across the canvas between the groups. A diagonal is not a
-    worse-looking orthogonal route, it is a route that was never followed — the
-    bends are being placed somewhere other than where the path went.
-
-    The two stubs are exempt because cytoscape draws from a node's centre to the
-    first bend, so the leg leaving a box is diagonal however well the middle is
-    routed. Everything between them is the router's own work.
-    """
-    assert drawn["legs"] > 0, "no edge has a middle, so this measures nothing"
-    assert drawn["diagonal"] == 0, (
-        f"{drawn['diagonal']} of {drawn['legs']} legs run along neither axis, the "
-        f"longest {drawn['longest']}px on {drawn['longestOf']}"
-    )
-
-
-_SHEAR = """
-const split = v => String(v || '').trim().split(/[\\s,]+/).filter(Boolean).map(parseFloat);
-function pathOf(edge) {
-  // WHAT CYTOSCAPE SAYS IT DREW. `segmentPoints()` is the drawn path;
-  // reconstructing one out of `segment-weights` is reconstructing it from the
-  // same arithmetic that writes it — which is exactly how this probe came to
-  // report a perfectly orthogonal drawing while jcanton was looking at a
-  // zig-zag: the projection in `drawRoutes` had the sign of its perpendicular
-  // flipped, every route was drawn mirrored across its own reference line, and a
-  // probe that mirrored it back agreed with itself.
-  //
-  // The two ends come from the page's own `clippedLine` and not from
-  // `edge.sourceEndpoint()`, which answers with the node's centre: cytoscape
-  // starts the line where it crosses the shape, and a probe that starts it at a
-  // centre measures a diagonal on every edge attached to a box.
-  if (typeof edge.segmentPoints === 'function' && edge.style('curve-style') === 'segments') {
-    const drawn = edge.segmentPoints() || [];
-    if (drawn.length) {
-      // Where the drawn line meets each shape: along the ray from that node's
-      // centre TOWARDS THE NEAREST BEND, which is what cytoscape clips against —
-      // not the ray towards the other node, which is what the reference line for
-      // the weights is measured on. Two different lines, and using the second
-      // here reported a diagonal on every edge that leaves a box anywhere other
-      // than where the centre line crosses it.
-      const meet = (node, towards) => {
-        const box = node.boundingBox({includeLabels: false});
-        const c = node.position();
-        const dx = towards.x - c.x, dy = towards.y - c.y;
-        const tx = dx === 0 ? Infinity : ((dx > 0 ? box.x2 : box.x1) - c.x) / dx;
-        const ty = dy === 0 ? Infinity : ((dy > 0 ? box.y2 : box.y1) - c.y) / dy;
-        const t = Math.max(0, Math.min(1, Math.min(tx, ty)));
-        return {x: c.x + dx * t, y: c.y + dy * t};
-      };
-      return [meet(edge.source(), drawn[0]), ...drawn,
-              meet(edge.target(), drawn[drawn.length - 1])];
-    }
-  }
-  const from = edge.source().position(), to = edge.target().position();
-  const path = [from];
-  if (edge.style('curve-style') === 'segments') {
-    const ws = split(edge.style('segment-weights')), ds = split(edge.style('segment-distances'));
-    const dx = to.x - from.x, dy = to.y - from.y, span = Math.hypot(dx, dy) || 1;
-    ws.forEach((w, i) => { if (isFinite(w) && isFinite(ds[i]))
-      path.push({x: from.x + dx * w + (dy / span) * ds[i],
-                 y: from.y + dy * w - (dx / span) * ds[i]}); });
-  }
-  path.push(to);
-  return path;
-}
-function diagonals() {
-  let diagonal = 0, legs = 0, longest = 0;
-  cy.edges().forEach(edge => {
-    const path = pathOf(edge);
-    if (path.length < 4) return;
-    for (let i = 1; i < path.length - 2; i++) {
-      const dx = Math.abs(path[i + 1].x - path[i].x), dy = Math.abs(path[i + 1].y - path[i].y);
-      legs++;
-      if (dx > 4 && dy > 4) { diagonal++; longest = Math.max(longest, Math.hypot(dx, dy)); }
-    }
-  });
-  return {diagonal, legs, longest: Math.round(longest)};
-}
-
-const before = diagonals();
-// Moved by hand rather than dragged, and that is the point: `dragfree` was the
-// only thing that re-routed, so every other way a node moves left the routes
-// behind. A box carried by its parent, a filter putting cards back, a restored
-// position and a re-fit are all this line.
-const leaf = cy.nodes().filter(n => n.isChildless() && n.connectedEdges().length)[0];
-leaf.position({x: leaf.position().x + 260, y: leaf.position().y - 190});
-// Answered from a continuation: the second write of `data-report` wins, and a
-// measurement taken in the same tick as the move is a measurement of the shear
-// rather than of what the page settles on.
-setTimeout(() => {
-  document.body.dataset.report = JSON.stringify(
-    {before, after: diagonals(), moved: leaf.id()});
-}, 300);
-return {pending: true};
-"""
-
-
-def test_a_node_that_moves_takes_its_routes_with_it_and_they_are_re_laid(
-    index: Index, tmp_path: Path
-):
-    """The zig-zags jcanton photographed on 2026-08-20, and where they come from.
-
-    A `segments` edge holds its bends as a distance from the line between its two
-    ends and a fraction along it. Move an end and that line turns; the bends turn
-    with it, and two right angles arrive on screen as two diagonals leaning across
-    the canvas. Nothing is wrong with the route — it is a correct route measured
-    against a line that no longer exists.
-
-    The initial view was never the problem: this same probe reports zero diagonal
-    legs at 31, 54 and 518 records. What was missing is that only `dragfree`
-    re-routed, so the drawing was correct until anything moved a node by any other
-    means.
-    """
-    page = render_graph(index, ROUTES, base_commit=HEAD)
-    got = measured_in(chrome(), page, tmp_path / "shear.html", 1900, _SHEAR,
-                      height=820, patience=2500)
-
-    assert got.get("before", {}).get("legs"), f"nothing was routed to begin with: {got}"
-    assert got["before"]["diagonal"] == 0, got["before"]
-    assert got["after"]["diagonal"] == 0, (
-        f"moving {got['moved']} left {got['after']['diagonal']} sheared legs, the "
-        f"longest {got['after']['longest']}px"
-    )

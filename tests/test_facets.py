@@ -424,3 +424,55 @@ def test_a_facet_reads_as_a_menu_and_not_as_a_box_to_type_in(page: str, tmp_path
     assert got["ground"] not in ("rgba(0, 0, 0, 0)", "transparent"), (
         "the control has no ground of its own, so it reads as part of the page"
     )
+
+
+_NOTHING_OVER_THE_MENU = """
+// Every field's menu, opened one at a time, asked what is painted at three
+// points down its own middle. `elementFromPoint` and not a z-index comparison:
+// the question is what a press would hit, and the answer is the browser's.
+const covered = [];
+for (const opener of document.querySelectorAll('.facetopen')) {
+  const facet = opener.closest('.facet');
+  const menu = facet.querySelector('.facetmenu');
+  opener.click();
+  const box = menu.getBoundingClientRect();
+  if (box.height < 2) { opener.click(); continue; }
+  for (const fy of [0.1, 0.5, 0.9]) {
+    const x = box.left + box.width / 2, y = box.top + box.height * fy;
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || !menu.contains(hit)) {
+      const named = hit ? hit.tagName + (hit.id ? '#' + hit.id : '.' +
+        String(hit.className || '').split(' ')[0]) : 'nothing';
+      covered.push(`${facet.dataset.field} at ${Math.round(fy * 100)}%: ${named}`);
+    }
+  }
+  opener.click();
+}
+return {fields: document.querySelectorAll('.facetopen').length, covered};
+"""
+
+
+@pytest.mark.parametrize("name", ("graph", "table", "timeline"))
+def test_an_open_menu_is_not_painted_over(index: Index, name: str, tmp_path: Path):
+    """A menu that opens under the page's own furniture is a menu whose middle
+    rows cannot be pressed.
+
+    jcanton, 2026-08-21, on the graph: the filter menus were drawn under the
+    "Edit dependencies" button and the row it sits in. That row is `.commitbar`,
+    sticky at z-index 10 on every page that can be edited, and the menu was at 6 —
+    so a menu long enough to reach it lost the labels behind it while the ones
+    above and below stayed pressable, which is the confusing half of the defect.
+
+    Asked with `elementFromPoint` rather than by comparing z-indexes, because
+    what matters is what a press lands on: stacking depends on the contexts
+    between the two elements as much as on the numbers written on them.
+    """
+    got = measured_in(
+        chrome(), every_page(index)[name], tmp_path / f"over-{name}.html", 1460,
+        _NOTHING_OVER_THE_MENU, height=900, patience=2500,
+    )
+
+    assert got["fields"] > 3, f"{name}: there is no filter bar to measure"
+    assert got["covered"] == [], (
+        f"{name}: something is painted over an open menu: {got['covered']}"
+    )
