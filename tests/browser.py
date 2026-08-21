@@ -53,11 +53,19 @@ def screenshot(
     The size is a parameter for the same reason `measured_in`'s is: the editing
     surface is `position: fixed; inset: 0`, so what it draws is a function of the
     window and 700x600 is a window nothing in it is designed for.
+
+    5000ms of virtual time and not the 2500 it was. The table settles in three
+    measured passes now — fit the columns, then tighten status, priority and the
+    two date columns against what the fit gave them — and at 2500 the byte
+    comparison in `test_the_frozen_edge_is_a_pixel_a_browser_draws` caught one
+    page mid-settle on CI while passing here. A pixel test that races is a pixel
+    test that fails for a reason nobody can reproduce; virtual time costs
+    wall-clock only while there is something left to run.
     """
     subprocess.run(
         [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
          "--force-device-scale-factor=1", f"--window-size={width},{height}",
-         f"--screenshot={png}", "--virtual-time-budget=2500", str(html)],
+         f"--screenshot={png}", "--virtual-time-budget=5000", str(html)],
         capture_output=True, check=True,
     )
     return png.read_bytes()

@@ -961,8 +961,13 @@ def _arithmetic(page: str, expression: str, args: list) -> object:
         re.search(r"^const SQUEEZABLE = new Set\(\[[^\]]*\]\);$", page, re.M),
         re.search(r"^const SHED = \[[^\]]*\];$", page, re.M),
         re.search(r"^const FLOOR = \d+;", page, re.M),
+        re.search(r"^const TITLE_FLOOR = \d+;$", page, re.M),
+        re.search(r"^const PROGRESS_FLOOR = \d+;$", page, re.M),
         re.search(r"^const CLAMP_FLOOR = \d+;", page, re.M),
         re.search(r"^const CLAMPED = new Set\(\[[^\]]*\]\);$", page, re.M),
+        # The floors are per column now — a sentence and a login cannot share one
+        # — so the lookup that decides which comes with them.
+        re.search(r"^const floorFor = key =>.*?Infinity;$", page, re.S | re.M),
         re.search(r"^function minimumWidth\(natural, keys\) \{.*?^\}$", page, re.S | re.M),
         re.search(r"^function drawnColumns\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
         re.search(r"^function fitted\(natural, keys, room\) \{.*?^\}$", page, re.S | re.M),
@@ -999,6 +1004,11 @@ def _drawn(page: str, keys: list[str], room: int) -> list[str]:
     return [key for key, _ in pairs]
 
 
+def _floor(page: str, key: str) -> int:
+    """The narrowest this column may be drawn, by the page's own reckoning."""
+    return _arithmetic(page, "floorFor(ARGS[0])", [key])
+
+
 def _shed(page: str) -> list[str]:
     """What the table gives up when it runs out of room, in that order."""
     return (re.search(r"const SHED = \[([^\]]*)\]", page).group(1)
@@ -1020,7 +1030,6 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     natural = [MEASURED[key] for key in keys]
     squeezable = set(re.search(r"const SQUEEZABLE = new Set\(\[([^\]]*)\]\)", page).group(1)
                      .replace("'", "").replace(" ", "").split(","))
-    floor = int(re.search(r"const FLOOR = (\d+);", page).group(1))
     clamp_floor = int(re.search(r"const CLAMP_FLOOR = (\d+);", page).group(1))
     clamped = set(re.search(r"const CLAMPED = new Set\(\[([^\]]*)\]\)", page).group(1)
                   .replace("'", "").replace(" ", "").split(","))
@@ -1028,12 +1037,17 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # No cushion. This is the whole of the reported defect.
     assert _fit(page, natural, keys, sum(natural)) == natural
 
-    # At the reported window the table can no longer hold every column: the
-    # fifteenth put the all-columns minimum three pixels past it. So the page
-    # sheds the first of the lookups and fits what is left, which is the promise
-    # itself — no sideways scroll, whichever columns survive the window.
+    # At the reported window the table can no longer hold every column, so the
+    # page sheds the first of the lookups and fits what is left — which is the
+    # promise itself: no sideways scroll, whichever columns survive the window.
+    #
+    # Which one goes first is `SHED`'s business and not this test's. It was
+    # `progress`, back when that column was a bar AND the count beside it and was
+    # the widest thing on the row; the count is on the hover card now and the bar
+    # narrows to a floor instead, so the first lookup to go is `reviewers`.
     drawn = _drawn(page, keys, WINDOW)
-    assert "progress" not in drawn, "the newest lookup is the first thing to go"
+    assert _shed(page)[0] not in drawn, "the first lookup in SHED is the first thing to go"
+    assert len(drawn) < len(keys), "nothing was shed at a window that cannot hold every column"
     width = dict(
         zip(drawn, _fit(page, [MEASURED[key] for key in drawn], drawn, WINDOW), strict=True)
     )
@@ -1050,7 +1064,9 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
         elif key in squeezable:
             # Squeezed, but never past the width at which a column stops being
             # readable — below the floor it scrolls instead, which is honest.
-            assert width[key] == MEASURED[key] or width[key] >= floor, key
+            # Each squeezable column has its own floor: a sentence and a login
+            # cannot share one, and the bar is narrower than either.
+            assert width[key] == MEASURED[key] or width[key] >= _floor(page, key), key
         else:
             # A date, a count and a cycle number have exactly one right width and
             # no graceful way to be narrower.
@@ -1070,13 +1086,23 @@ def test_the_default_fit_never_needs_a_horizontal_scrollbar(page: str):
     # anything up, every clamped column must already be as narrow as it is allowed
     # to be. On a window this tight it does pay; on a real one it keeps its width.
     if width["title"] < MEASURED["title"]:
-        for key in clamped:
+        # Only the ones still drawn: a column the fit shed has no width to be on
+        # its floor. `reviewers` is the first thing `SHED` gives up now.
+        for key in clamped & set(drawn):
             assert width[key] == min(MEASURED[key], clamp_floor), key
-    assert width["title"] >= floor, "and never past the width at which it stops being readable"
+    assert width["title"] >= _floor(page, "title"), (
+        "and never past the width at which it stops being readable"
+    )
 
     # Worst-first inside the clamped group: the widest list pays before the
     # narrowest one does, rather than every column losing the same proportion.
-    assert MEASURED["assignees"] - width["assignees"] >= MEASURED["prs"] - width["prs"]
+    # Asked of two columns that are both still drawn — at this window the fit
+    # sheds `reviewers` and `prs`, and a column that is gone has paid everything.
+    paying = [key for key in ("assignees", "reviewers", "prs", "tags") if key in width]
+    assert len(paying) >= 2, f"too few clamped columns left to compare: {paying}"
+    widest = max(paying, key=lambda k: MEASURED[k])
+    narrowest = min(paying, key=lambda k: MEASURED[k])
+    assert (MEASURED[widest] - width[widest]) >= (MEASURED[narrowest] - width[narrowest])
 
 
 def test_a_window_wider_than_the_plan_gives_the_slack_to_tags(page: str):
@@ -1266,7 +1292,13 @@ def test_a_revealed_cell_can_be_put_back(demo_page: str, tmp_path: Path):
     script and the reveal is a class a click puts on a cell, so what is assertable
     in the rendered file is the code and not the behaviour.
     """
-    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1460, _TOGGLES)
+    # 1700 and not 1460: the title column has a floor of its own now — a sentence
+    # and a login cannot share one — and at 1460 the fit pays for it by shedding
+    # two lookup columns, `reviewers` among them. A test of a control on a column
+    # that is not drawn is a test of nothing, and which columns a given window
+    # holds is `test_the_default_fit_never_needs_a_horizontal_scrollbar`'s
+    # business rather than this one's.
+    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1700, _TOGGLES)
     at = dict(got["at"])
     assert at["loaded"]["of"] >= 2, "no cell in this column had anything hidden to reveal"
 
@@ -1304,7 +1336,13 @@ def test_the_column_control_opens_the_column_and_closes_it(demo_page: str, tmp_p
     against a header that demonstrably does sort when it is the thing clicked,
     or the assertion is about a table with no sorting in it.
     """
-    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1460, _TOGGLES)
+    # 1700 and not 1460: the title column has a floor of its own now — a sentence
+    # and a login cannot share one — and at 1460 the fit pays for it by shedding
+    # two lookup columns, `reviewers` among them. A test of a control on a column
+    # that is not drawn is a test of nothing, and which columns a given window
+    # holds is `test_the_default_fit_never_needs_a_horizontal_scrollbar`'s
+    # business rather than this one's.
+    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1700, _TOGGLES)
     at = dict(got["at"])
     every = at["loaded"]["of"]
     assert every >= 2, "no cell in this column had anything hidden to reveal"
@@ -1353,7 +1391,13 @@ def test_an_expanded_column_is_a_way_of_reading_and_not_a_setting(
     with it, and `localStorage` is untouched by any of it. The remembered width is
     the only thing this table keeps, and it is kept because somebody dragged it.
     """
-    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1460, _TOGGLES)
+    # 1700 and not 1460: the title column has a floor of its own now — a sentence
+    # and a login cannot share one — and at 1460 the fit pays for it by shedding
+    # two lookup columns, `reviewers` among them. A test of a control on a column
+    # that is not drawn is a test of nothing, and which columns a given window
+    # holds is `test_the_default_fit_never_needs_a_horizontal_scrollbar`'s
+    # business rather than this one's.
+    got = measured_in(chrome(), demo_page, tmp_path / "toggles.html", 1700, _TOGGLES)
     at = dict(got["at"])
 
     assert at["a redraw"]["open"] == 0, "a sort or a save reopens nothing"
@@ -1793,6 +1837,15 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
 # intersecting: half a button hanging off an edge is a control somebody scrolls
 # to anyway, which is the thing this is about.
 _WHERE_CREATE_IS = """
+// Out of the full-page surface first. The create form is always editing, so
+// "when the session starts" is the load — and a session now starts in the `edit`
+// view, where the surface IS the window and the page behind it does not scroll.
+// What this asks about is the ordinary page: a form several screens tall, and a
+// commit bar that stays reachable while you scroll it.
+const LIT = ['view-edit', 'view-both', 'preview']
+  .map(id => document.getElementById(id))
+  .find(seg => seg && seg.getAttribute('aria-pressed') === 'true');
+if (LIT) LIT.click();
 const SAVE = document.getElementById('save');
 const TITLE = document.querySelector('input[name=title]');
 TITLE.value = 'A pitch with a shaping document in it';
@@ -3435,9 +3488,16 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
         "  drop.target = tbody.querySelector('tr[data-id=\"%s\"] td');"
         "  tbody.dispatchEvent(drop);"
         f" {SETTLE}"
+        # The progress column is a bar now and carries its count in the bar's own
+        # tooltip; the date columns are drawn short. Both are read where they are
+        # drawn rather than where they used to be.
         "  const cell = column => tbody.querySelector("
-        "    `tr[data-id=\"%s\"] td[data-col=\"${column}\"]`).textContent;"
-        "  return {progress: cell('progress'), start: cell('start')};"
+        "    `tr[data-id=\"%s\"] td[data-col=\"${column}\"]`);"
+        "  const meter = cell('progress').querySelector('.meter');"
+        # `getAttribute` and not `.title`: the driver's DOM reflects attributes,
+        # not every property a browser mirrors them onto.
+        "  return {progress: meter ? (meter.getAttribute('title') || '') : '',"
+        "          start: cell('start').textContent.trim()};"
         "})()" % (PROJECT, PITCH),
         replies=[
             {"status": 200, "json": moved.json()},
@@ -3449,7 +3509,16 @@ def test_a_reparent_leaves_no_derived_column_stale(client: TestClient, page: str
     assert after["rows"][PITCH]["progress_text"] in got["progress"], (
         "the pitch's progress is what the plan says now, not what it said before the drop"
     )
-    assert got["start"] == after["rows"][PITCH]["start"]
+    # `2026-07-14` is drawn `26.07.14`: two date columns of ten characters each
+    # were what made every row on a laptop two lines tall. The row still carries
+    # the ISO string, which is what the sort reads and what this compares against.
+    year, month, day = after["rows"][PITCH]["start"].split("-")
+    # Day first — `14.07` — with the two-digit year trailing in its own element,
+    # which the column drops when it tightens. `startswith`, because the driver's
+    # DOM does not gather a nested span's text into its parent's `textContent`
+    # the way a browser does, so the year may or may not be in what comes back.
+    assert got["start"].startswith(f"{day}.{month}"), got["start"]
+    assert year[:2] not in got["start"], "the century is still being drawn"
 
 
 def test_a_column_is_dragged_in_the_header_and_a_row_in_the_body(page: str):

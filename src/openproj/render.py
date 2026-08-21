@@ -2593,7 +2593,13 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    is read properly. Scrollable and not clipped, because a card that ends
    mid-sentence with no way to see the rest reads as a broken card.
    The cap is in `em` so it is a number of LINES rather than a number of pixels. */
-#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 12em;
+/* 11em and not the 12 it was: the card gained a Progress row when the table's
+   column gave up its count, and the whole box has to stay under half the window
+   — a card that covers the table it was opened from has to be dismissed before
+   the plan can be read again, which is what
+   `test_a_nine_hundred_word_document_does_not_cover_the_table` measures. One
+   line of facts is paid for with one line of document. */
+#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 11em;
                    overflow-y: auto; border-top: 1px solid var(--line); }
 #card .card-body > :first-child { margin-top: 0; }
 #card .card-body > :last-child { margin-bottom: 0; }
@@ -3242,6 +3248,14 @@ const CARD_WORDS = (() => {
 })();
 function cardWord(value) { return CARD_WORDS[value] || value; }
 
+// `2026-07-14` as `14.07.2026`. The card's dates keep the century — it is the one
+// place a date is read rather than scanned, and there is room for four digits —
+// and they are day-first like every other date the app draws.
+function longDate(iso) {
+  const [year, month, day] = String(iso).split('-');
+  return day ? `${esc(day)}.${esc(month)}.${esc(year)}` : esc(iso);
+}
+
 // `{status: {...}, priority: {...}}` — the same two maps the table's chips and
 // the graph's nodes draw from, off the shell rather than off a page's payload.
 const CARD_MARKS = (() => {
@@ -3270,8 +3284,18 @@ function cardHtml(row, extra) {
     ...(size == null ? [] : [['Appetite', esc(String(size))
       + (Number(size) === 1 ? ' week' : ' weeks')
       + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')]]),
+    // The count the table's column gave up, with the bar it draws there — the
+    // card is where a number that is read rather than scanned belongs, and it is
+    // beside what the number was counted from.
+    ...(row.progress == null ? [] : [['Progress',
+      `<span class="num">${esc(row.progress_text)}</span>`
+      + `<span class="meter"><span style="width: `
+      + `${Math.round(row.progress * 100)}%"></span></span>`]]),
     ['Scheduled', row.start && row.end
-      ? `<span class="num">${esc(row.start)}</span> to <span class="num">${esc(row.end)}</span>`
+      // The card has room for the century, and it is the one place a date is read
+      // rather than scanned: `14.07.2026`, day first like every other date here.
+      ? `<span class="num">${longDate(row.start)}</span> to `
+        + `<span class="num">${longDate(row.end)}</span>`
       : CARD_DASH],
     ...((row.tags || []).length ? [['Tags', esc(row.tags.join(', '))]] : []),
     ...extra,
@@ -4672,9 +4696,15 @@ function shown(row, key) {
   // Counted out of the body's own checklist. Empty where there is no checklist,
   // rather than "0/0" — a body nobody has written a list in has no progress to
   // report, which is not the same as no progress.
+  //
+  // The bar alone. `6/16 items` beside it was the widest thing in the column and
+  // is the one number nobody reads at a glance — the bar is what a column of
+  // fifteen rows is scanned for. The count is on the card, in full, beside what
+  // it was counted from, and in this cell's own tooltip for a reader who wants it
+  // without leaving the row.
   if (key === 'progress')
     return row.progress === null ? '' :
-      `${esc(row.progress_text)}<span class="meter"><span style="width: ` +
+      `<span class="meter" title="${esc(row.progress_text)}"><span style="width: ` +
       `${Math.round(row.progress * 100)}%"></span></span>`;
   if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
   // Nobody named here, and somebody named underneath: a pitch whose tasks each
@@ -4691,9 +4721,34 @@ function shown(row, key) {
   // are one click away, where they always were.
   if (key === 'assignees' || key === 'reviewers')
     return clamped((value || []).map(esc), 'person', 'people');
+  // A date, short. `2026-07-14` is ten characters and two of them are the century;
+  // on a laptop the two date columns were 22 characters of a fourteen-column
+  // table and every one of them wrapped onto a second line. `26.07.14` says the
+  // same thing in eight, and the column tightens to `07.14` when even that will
+  // not fit — the year is the one part a reader can almost always supply.
+  //
+  // The stored value is untouched: this is the cell's text, the row still carries
+  // the ISO string, and the sort still reads that.
+  if (key === 'start' || key === 'end') return value ? shortDate(value) : '';
   // Unreachable for `reviewers`, which is handled above — kept as one line so
   // the two list columns stay one branch.
   return esc(stored(row, key));
+}
+
+// `2026-07-14` as `26.07.14`, or as `07.14` once the column is told to tighten.
+// Dots and not dashes: a dash is what the ISO string uses and this is not it, and
+// at 13px the dot is the narrower separator.
+function shortDate(iso) {
+  const [year, month, day] = String(iso).split('-');
+  if (!day) return esc(iso);
+  // Day first. jcanton, 2026-08-21: "I'd like to reverse the order of the dates
+  // in the entire app... to dd.mm and dd.mm.YY dd.mm.YYYY" — which is how these
+  // are read aloud here, and the order every date on the page now uses.
+  //
+  // The year is its own element and trails, so the column drops it when it
+  // tightens: `14.07` is still a date read the same way round, where `07.14`
+  // with the year gone reads as a different day.
+  return `${esc(day)}.${esc(month)}<span class="dateshort">.${esc(year.slice(2))}</span>`;
 }
 
 // What a clamped cell is not showing, in words, for the cell's own tooltip.
@@ -6383,18 +6438,19 @@ const SPARE_COLUMN = 'tags';
 // the fit narrows first. One set, because it is one fact: a column may be made
 // narrower exactly when its overflow already has somewhere to go.
 const CLAMPED = new Set(['tags', 'prs', 'assignees', 'reviewers']);
-const SQUEEZABLE = new Set(['title', 'owner']);
+const SQUEEZABLE = new Set(['title', 'owner', 'progress']);
 // What the table gives up when it runs out of room, in the order it gives them
 // up. All four are lookups rather than answers — each is on the detail page and
 // each stays filterable in the facets above — so they are what it can lose and
 // still answer the question it is open for.
-// `progress` goes first: it is counted from a body that may not keep a list at
-// all, the entity page draws it in full beside the tasks it is counted from, and
-// `?predicate=untracked` finds the rows that have none. `tags` is last because it
-// is the column that absorbs whatever is left over: while it is drawn the table
-// fills its container exactly, and once it is gone the fit can only leave a gap
-// at the right.
-const SHED = ['progress', 'reviewers', 'prs', 'tags'];
+// `prs` goes first: every reference in it is a link the row's own detail page
+// carries, and the badge that hides the rest is the same badge there. `progress`
+// used to go first and no longer does — it is a bar now rather than a bar and a
+// count, so it narrows to a floor instead of leaving, which is a column kept for
+// 78px. `tags` is last because it is the column that absorbs whatever is left
+// over: while it is drawn the table fills its container exactly, and once it is
+// gone the fit can only leave a gap at the right.
+const SHED = ['prs', 'reviewers', 'progress', 'tags'];
 // One class per column and not one for the set, because they go one at a time.
 const shedClass = key => 'shed-' + key;
 
@@ -6405,6 +6461,23 @@ const shedClass = key => 'shed-' + key;
 // printed above it rather than to the column.
 const keyOf = th => th.dataset.col;
 const FLOOR = 110;      // narrower than this and a squeezed column is unreadable
+// The title is a SENTENCE and the other squeezable column is a login, so one
+// floor cannot serve both: at 110 a title wraps over three lines and the row it
+// is in stands three rows tall, which on a laptop is what a screenful of this
+// table looked like. 250 is where the seed corpus's and jcanton's own titles
+// mostly stop wrapping; below it the fit sheds a lookup column instead, and
+// below THAT the table scrolls sideways with the id and the title frozen — which
+// is the arrangement jcanton got by double-clicking a column separator and
+// asked whether it could be the starting point.
+//
+// So: the same fit, with the one column that holds prose allowed to keep enough
+// room to hold it. Nothing else about the layout moves.
+const TITLE_FLOOR = 250;
+// And the progress column is a BAR now, not a bar and a count, so it narrows
+// rather than leaving: 78px holds its header on one line and a meter wide enough
+// to read a fraction off. It used to be the first thing shed, which was right
+// when it was the widest column on the row and is not now.
+const PROGRESS_FLOOR = 78;
 // A clamped column shows one item and a badge, and its header above them. Set to
 // 76 — the badge and a short tag — the fit drove all four to that and `REVIEWERS`
 // wrapped over two lines above a truncated login, which is a narrower column and
@@ -6421,6 +6494,13 @@ const FLOOR = 110;      // narrower than this and a squeezed column is unreadabl
 // that sorts the table when somebody meant to expand it is what those four
 // pixels of column buy.
 const CLAMP_FLOOR = 116;
+// Which floor a column has, in one place: `minimumWidth` decides what the table
+// can be squeezed to and `fitted` does the squeezing, and two copies of this
+// question is how those two come to disagree about a single column.
+const floorFor = key => key === 'title' ? TITLE_FLOOR
+  : key === 'progress' ? PROGRESS_FLOOR
+  : CLAMPED.has(key) ? CLAMP_FLOOR
+  : SQUEEZABLE.has(key) ? FLOOR : Infinity;
 
 // What each column would need with every cell on one line, so a column ends up
 // as wide as its widest value needs and not one character more. Measured from a
@@ -6457,10 +6537,8 @@ function naturalWidths() {
 // keep — 293px of overflow at the low end. Two numbers that have to agree,
 // written in two languages, drifting; now there is one and it is measured.
 function minimumWidth(natural, keys) {
-  return keys.reduce((total, key, i) => {
-    const floor = CLAMPED.has(key) ? CLAMP_FLOOR : SQUEEZABLE.has(key) ? FLOOR : Infinity;
-    return total + Math.min(Math.ceil(natural[i]), floor);
-  }, 0);
+  return keys.reduce(
+    (total, key, i) => total + Math.min(Math.ceil(natural[i]), floorFor(key)), 0);
 }
 
 // Which columns this much room can hold, as `[key, width]` pairs in the order
@@ -6502,13 +6580,14 @@ function fitted(natural, keys, room) {
   // overflow is paid for or the group is on its floor. A proportional cut instead
   // takes the same 18% off a 300px sentence and a 110px login, so the column that
   // was already the narrowest pays as much as the one that caused the overflow.
-  const level = (group, floor) => {
+  const level = group => {
     while (over > 0) {
       const flex = keys.map((_, i) => i)
-                       .filter(i => group.has(keys[i]) && width[i] > floor);
+                       .filter(i => group.has(keys[i]) && width[i] > floorFor(keys[i]));
       if (!flex.length) return;
       const worst = Math.max(...flex.map(i => width[i]));
       const paying = flex.filter(i => width[i] === worst);
+      const floor = Math.max(...paying.map(i => floorFor(keys[i])));
       const next = Math.max(floor, ...flex.filter(i => width[i] < worst).map(i => width[i]));
       const step = Math.min(worst - next, Math.ceil(over / paying.length));
       paying.forEach(i => { width[i] -= step; });
@@ -6516,8 +6595,8 @@ function fitted(natural, keys, room) {
     }
   };
 
-  level(CLAMPED, CLAMP_FLOOR);
-  level(SQUEEZABLE, FLOOR);
+  level(CLAMPED);
+  level(SQUEEZABLE);
 
   // Whatever is left over — a window wider than the plan needs, or the pixel or
   // two the levelling overshot by — goes to the one column that can hold it
@@ -6674,7 +6753,12 @@ function applyWidths(widths) {
 //
 // So: show the word, ask whether it fits, then decide. One forced reflow per
 // column per fit, which happens on a resize and not on a frame.
-const TIGHTENS = ['status', 'priority'];
+const TIGHTENS = ['status', 'priority', 'dates'];
+
+// The two date columns tighten together — `07.14` under START beside `26.08.05`
+// under END would read as two different things — so they are one name here and
+// the class covers both.
+const TIGHT_COLUMNS = {status: ['status'], priority: ['priority'], dates: ['start', 'end']};
 
 function tighten() {
   for (const key of TIGHTENS) {
@@ -6682,7 +6766,9 @@ function tighten() {
   }
   for (const key of TIGHTENS) {
     let over = false;
-    for (const cell of table.querySelectorAll(`td[data-col="${key}"]`)) {
+    const columns = TIGHT_COLUMNS[key] || [key];
+    for (const cell of table.querySelectorAll(
+        columns.map(one => `td[data-col="${one}"]`).join(', '))) {
       if (!cell.firstElementChild) continue;
       // The CELL's own overflow, not the inner element's. The chip is an
       // inline-flex box that shrinks to whatever it is given and then reports
@@ -7126,7 +7212,19 @@ td .sev-mark { margin-left: .25rem; }
    as one. 12px and not `.9em`: this column is what the frozen title column's
    `left` is measured from, and a relative size compounds if anything above it
    ever changes. */
-.eid { font-family: var(--font-mono); font-size: 12px; }
+/* 11px, a step below the 12 it was and two below the row's own 13. An id is a
+   token to be copied and cited rather than read, and the column it is in is the
+   frozen one every row starts with — jcanton, 2026-08-21: "I'd reduce the font
+   size of the ids a little further". Monospace holds it legible at that size in
+   a way the sans face would not. */
+.eid { font-family: var(--font-mono); font-size: 11px; }
+/* And the column keeps a floor the smaller face took away. It is as wide as its
+   widest id and nothing more — that is the fit — so a font a step smaller made
+   it 114px, and the draft row lives in this column: three mark buttons and a
+   kind picker whose width comes from the longest word it can show. At 114 the
+   picker came out 51px for a word needing 59 and read `Projec`. 122px is what
+   the draft needs, and it is 8px nobody looking at a table of ids will notice. */
+#rows th[data-col="id"], #rows td[data-col="id"] { min-width: 122px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
 /* A cell with something still in the way. Only when there is: a column tinted on
@@ -7187,6 +7285,50 @@ th .grip::before {
 }
 th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
 .measuring th, .measuring td { white-space: nowrap; }
+/* THE COLUMNS THAT DO NOT WRAP. A title is a sentence and wraps; everything in
+   this list is a token — an id, a login, a date, a number, a bar — and a token
+   broken over two lines is a row twice as tall for no reading gained. jcanton,
+   2026-08-21, on a laptop: "(id, owner, dates, progress) can we have the first
+   columns without newlines".
+
+   With the ellipsis that has to come with it: `overflow-wrap: anywhere` above is
+   what let a login wrap inside its cell, and taking it away without this would
+   let `iomaganaris` hang over the column beside it. A name cut short says it is
+   cut short; the cell's tooltip and the card have the whole of it. */
+#rows tbody td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                 overflow-wrap: normal; }
+/* And the link inside the title cell, which is the one cell whose content is an
+   element rather than text: an `<a>` is inline and an inline box does not
+   ellipsise, so without this the title runs under the column beside it. */
+#rows tbody td[data-col="title"] > a { display: block; overflow: hidden;
+                                       text-overflow: ellipsis; }
+/* EVERY cell, title included — jcanton, 2026-08-21: "I'd replace the newlines
+   with ... and disappearing words (on all cells), titles included". A title is a
+   sentence and used to wrap for that reason; the row it wraps in is three rows
+   tall, and what a reader loses to the ellipsis is one hover away on the card
+   and one click away on the record.
+
+   The four clamped columns are exempt WHILE OPEN. Their header control opens
+   every cell to show what the `+N` hides, and a cell that cannot wrap opens to
+   exactly the height it had — which the control's own test measures as a column
+   that cost no height at all. Closed they are one item and a badge, which is the
+   same saving by a different route. */
+#rows tbody td.clamp.open { white-space: normal; overflow-wrap: anywhere; }
+/* And the two rows that hold CONTROLS rather than values are exempt whole: the
+   draft row's kind picker is a `<select>` in a flex wrapper whose width comes
+   from the longest word it can show, and a cell that clips shrank it to 51px for
+   a word needing 59 — `Projec`. The adder row is the same kind of thing with a
+   button in it. Neither has text to ellipsise. */
+#rows tbody tr.draft > td, #rows tbody tr.adder > td {
+  white-space: normal; overflow: visible; text-overflow: clip;
+}
+/* The bar fills the column it is alone in now, rather than trailing a number. */
+#rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
+/* And the century goes when the column is squeezed, which is the one part of a
+   date a reader can supply. `fitWidths` sets the class from its own arithmetic,
+   like the other two tight rules. */
+table.tight-dates td[data-col="start"] .dateshort,
+table.tight-dates td[data-col="end"] .dateshort { display: none; }
 /* One screen is not one width. Below the width the columns need with every
    squeezable one already on its floor, the ones that are lookups rather than
    answers go, one at a time — they are all reachable on the detail page, and the
@@ -7269,6 +7411,16 @@ tr.adder > td {
   background: var(--surface); border-top: 1px solid var(--line);
   box-shadow: inset 0 1px 0 var(--line);
 }
+/* And stuck to the LEFT as well as to the bottom, because the row it belongs to
+   spans every column: scrolled sideways, its one cell slid away with the rest of
+   the table while the id and title columns stayed — so the way to add a row went
+   off the side of a page whose first two columns had not moved. jcanton,
+   2026-08-21: "the new row button should be fixed underneath the id column".
+
+   The cell keeps its full width, so the row's ground still reaches across; only
+   what is inside it is pinned. `left: .5rem` is the cell's own padding, which is
+   what puts the button under the id column rather than under the table's edge. */
+tr.adder > td > * { position: sticky; left: .5rem; }
 /* Only what is this button's own. The rectangle, the border and the ink come
    from the default every control gets — a third copy of them here is how the
    page came to have three slightly different buttons on one screen. */
@@ -9924,7 +10076,16 @@ const EDITOR = (() => {
   const chose = named(new URLSearchParams(location.search).get('editor'));
   const kept = named(held.editor);
   return {
-    mode: one(held.mode, ['edit', 'both', 'view'], null),
+    // `edit` and not null. null means "editing, but not in one of the three
+    // views", which is the state a page opened for the first time was left in:
+    // the surface came up in a shape none of the three segments was pressed for,
+    // and clicking one of them made it jump. jcanton, 2026-08-21: "entering edit
+    // mode the first time opened the editor without having selected one of the
+    // three... can you select edit as default mode?"
+    //
+    // It is still a remembered preference — the segments write it — so this is
+    // only what somebody who has never pressed one of them gets.
+    mode: one(held.mode, ['edit', 'both', 'view'], 'edit'),
     indent: one(held.indent, INDENT_WIDTHS, 2),
     autosave: one(held.autosave, DRAFT_SECONDS, 2),
     // Added to this key rather than bumping it to `openproj:editor:2`. A bump
@@ -10487,16 +10648,14 @@ function attachStatus(surface, bar) {
   if (surface.setKeymap) {
     bar.append(statusPick(
       document.createElement('button'), 'Keymap', surface.keymaps, EDITOR.keymap,
+      // Nothing announced. The sentence that was here explained what vim mode
+      // takes — Escape, Tab, every printable key in NORMAL mode — to somebody who
+      // had just switched to vim mode on purpose. jcanton, 2026-08-21: "we don't
+      // need [it], can be completely removed". The control itself says which
+      // keymap is on.
       name => {
         surface.setKeymap(name);
         rememberEditor({keymap: name});
-        // What it took as well as what it gave. Vim claims Escape, Tab, and
-        // every printable key while it is in NORMAL mode, and somebody who has
-        // just pressed a two-word control in an 11px strip and finds their
-        // typing going nowhere has been given no way to work out why.
-        announce(name === 'vim'
-          ? 'Vim keys are on. Press i to type, Escape to leave insert mode.'
-          : 'Vim keys are off. The keyboard is the browser\u2019s again.');
       }));
   }
 
@@ -12079,6 +12238,16 @@ if (EDITOR_SWITCH) {
     announce(`Fetching this page with ${EDITOR_NAMES[other]}.`);
     const url = new URL(location.href);
     url.searchParams.set('editor', other);
+    // And the session comes with it. The page being fetched is a different
+    // rendering of the same record, so arriving in read mode over a document
+    // somebody was in the middle of writing is the switch losing their place —
+    // the draft survives, but the surface does not. The view flag is the one the
+    // page already reads at load (`VIEW_ASKED`), which is why it is a flag here
+    // rather than a second mechanism.
+    for (const name of VIEWS) url.searchParams.delete(name);
+    if (VIEW_ARTICLE.classList.contains('editing')) {
+      url.searchParams.set(VIEW || EDITOR.mode || 'edit', '');
+    }
     // `replace`, for the reason `stickyEditor` uses it: the page being left will
     // send anybody who comes back to it straight round again, because the
     // preference it is about to write is why they went. A history entry that
@@ -12159,8 +12328,21 @@ const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 // and writing is the exception. So it is restored by pressing Edit, by a
 // restored draft, and by the create form, which is always editing and where
 // "when the session starts" therefore IS the load. That is the branch below.
-if (VIEW_LINKED) showView(VIEW_LINKED);
-else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) showView(EDITOR.mode);
+// A linked view opens the session it is a view OF. `?edit` on a page in read
+// mode used to draw the editor's shell over a record nobody was editing — and it
+// is what the editor switch adds when it reloads, which is the case that made it
+// matter: toggling between the two editors is a navigation, because which editor
+// is on the page is decided by the server, and the page that came back arrived
+// in read mode with the session gone. jcanton, 2026-08-21, asking whether that
+// was intentional. The reload is; losing the session is not.
+if (VIEW_LINKED) {
+  if (typeof showEditing === 'function' && !VIEW_ARTICLE.classList.contains('editing')) {
+    showEditing(true);
+  }
+  showView(VIEW_LINKED);
+} else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) {
+  showView(EDITOR.mode);
+}
 
 // A session beginning after this script has run — the Edit button. `VIEW ===
 // null` is what stops the loop: `showView` sets `VIEW` before it calls
@@ -15154,6 +15336,19 @@ _ENV.globals["mark"] = lambda kind, value: (
     else f"{PRIORITY_GLYPH.get(str(value), '')} "
 )
 _ENV.globals["pri"] = lambda value: PRIORITY_GLYPH.get(str(value), "")
+# A date, the way this app reads one out loud: `14.07.2026`, day first, dots.
+# jcanton, 2026-08-21: "I'd like to reverse the order of the dates in the entire
+# app". Only what is DRAWN — what is stored, sorted, put in a `<input type=date>`
+# and sent over the API stays `2026-07-14`, which is the one format that sorts as
+# text, parses without a locale and cannot be read as a different day in another
+# country.
+def _read_date(value: object) -> str:
+    text = str(value or "")
+    parts = text.split("-")
+    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
+
+
+_ENV.globals["on"] = _read_date
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Every chip on every page names its rung through this, so the four templates
 # that draw one cannot disagree with the two that build one in Python. They did:
@@ -15306,6 +15501,11 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             display = Markup('{} · <span class="{}">{} in tasks</span>').format(
                 stated or "—", "overrun" if over else "quiet", f"{total:g}"
             )
+        elif field["type"] == "date":
+            # Drawn day-first like every other date on the page; the control
+            # under it is an `<input type="date">` and keeps the ISO string,
+            # which is what the browser's own picker and the API both read.
+            display = escape(_read_date(field["text"])) if field["text"] else empty
         elif field["type"] == "list":
             display = escape(field["text"]) if field["text"] else empty
         else:
@@ -15855,7 +16055,7 @@ _CYCLE = """
 {% if links.deck %}<p class="back"><a href="{{ links.deck }}{{ c.number }}"
   >Review deck →</a></p>{% endif %}
 {% if c.recorded %}
-<p class="meta">{{ c.starts_on }} → builds until <b>{{ c.builds_until }}</b>
+<p class="meta">{{ on(c.starts_on) }} → builds until <b>{{ on(c.builds_until) }}</b>
    → cool-down ends {{ c.ends_on }}</p>
 {% else %}
 <p class="meta">No record yet{% if c.dated %} — config/cycles.yaml puts this cycle at
@@ -15890,18 +16090,18 @@ _CYCLE = """
 <form id="setup" onsubmit="return false">
   <dl id="facts">
     <dt><label for="starts_on">Starts on</label></dt>
-    <dd><span class="read">{{ c.starts_on }}</span>
+    <dd><span class="read">{{ on(c.starts_on) }}</span>
         <input type="date" id="starts_on" name="starts_on" data-type="date"
                value="{{ c.starts_on }}" class="field"></dd>
     <dt><label for="reviews_on">Review meeting</label></dt>
-    <dd><span class="read">{{ c.reviews_on }}</span>
+    <dd><span class="read">{{ on(c.reviews_on) }}</span>
         <input type="date" id="reviews_on" name="reviews_on" data-type="date"
                value="{{ c.reviews_on }}" class="field"></dd>
     {#- Both of the above are meetings somebody put in a calendar. Everything
         below is worked out from them and from the holidays, so it is written in
         the derived style and has no box. -#}
     <dt class="derived">Builds until</dt>
-    <dd class="derived">{{ c.builds_until }} · {{ c.build_weeks }} working weeks
+    <dd class="derived">{{ on(c.builds_until) }} · {{ c.build_weeks }} working weeks
       {% if c.assumed_review %}<span class="warnish">— assumed: this cycle names
         no review meeting</span>{% endif %}</dd>
     <dt class="derived">Cool-down ends</dt>

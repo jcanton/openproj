@@ -1407,7 +1407,14 @@ const undone = area.value;
 
 // And Escape arms exactly one Tab, out loud, so the field can still be left by
 // keyboard.
+//
+// Two presses, and the order is the one the handler documents: a session now
+// starts in a full-page view, so the first Escape leaves that — "what a person
+// pressing Escape in a screen-filling editor means" — and the second opens the
+// Tab hatch. On a page with no view up the first press opens it, which is what
+// the third assertion below still shows.
 set('alpha', 0, 0);
+press('Escape');
 press('Escape');
 const said = document.getElementById('state').textContent;
 const passed = press('Tab');
@@ -1870,15 +1877,22 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     surface is somewhere you go and come back from. So `full page off` is a real
     state with nothing pressed, and the way back out is the pressed segment, the
     same chord, or Escape.
+
+    A session no longer STARTS in that state, which is the one thing here that
+    changed: pressing Edit lands in `edit` unless a remembered mode says
+    otherwise. jcanton, 2026-08-21 — "entering edit mode the first time opened the
+    editor without having selected one of the three... it looked different and
+    then jumped to fit width when I clicked one of them". The state is still real
+    and still reachable, three ways, and the three of them are asserted below.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "views.html", 1400, _VIEWING
     )
 
     assert got["editing"] == {
-        "classes": [], "pressed": [], "box": True, "pane": False, "marks": True,
-        "position": "relative",
-    }, "editing on its own is not full page and presses nothing"
+        "classes": ["full", "view-edit"], "pressed": ["edit"],
+        "box": True, "pane": False, "marks": True, "position": "fixed",
+    }, "pressing Edit does not land in one of the three views"
 
     assert got["both"]["classes"] == ["full", "view-both"]
     assert got["both"]["pressed"] == ["both"], "two segments pressed is not a choice of three"
@@ -1969,6 +1983,10 @@ const where = () => ({
 
 const reading = where();
 document.getElementById('toggle').click();
+// Pressing Edit lands in the `edit` VIEW now, which is full page — and the
+// handle is deliberately not drawn there. The state this asks about is the
+// ordinary page with a session open, which is one press of the lit segment away.
+seg('edit').click();
 const editing = where();
 const full = {};
 for (const name of ['edit', 'both', 'view']) { seg(name).click(); full[name] = where(); }
@@ -2995,6 +3013,10 @@ function truth() {
 }
 
 document.getElementById('toggle').click();
+// Out of full page: a session now starts in the `edit` VIEW, where the
+// surface is the window and `--measure` — the thing this sweeps — decides
+// nothing. The gutter's claim is about the ordinary page's column.
+document.getElementById('view-edit').click();
 area.value = GUTTER_BODY;
 area.dispatchEvent(new Event('input', {bubbles: true}));
 // The gutter coalesces onto a frame with a 32ms backstop, and under the headless
@@ -3134,7 +3156,11 @@ const shape = () => ({
 const answers = {};
 for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view', 'preview']]) {
   document.getElementById('toggle').click();
-  document.getElementById(id).click();
+  // Only if it is not already the view being asked about: a session starts in
+  // `edit` now, and pressing the lit segment is how you LEAVE full page — so
+  // clicking it here took the surface down instead of putting it up.
+  const seg = document.getElementById(id);
+  if (seg.getAttribute('aria-pressed') !== 'true') seg.click();
   const inside = shape();
   document.getElementById('cancel').click();
   answers[name] = {inside, after: shape()};
@@ -3209,7 +3235,10 @@ const shape = () => ({
 const answers = {};
 for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view', 'preview']]) {
   document.getElementById('toggle').click();
-  document.getElementById(id).click();
+  // Only if it is not already lit: a session starts in `edit`, and pressing the
+  // lit segment is how full page is left.
+  const seg = document.getElementById(id);
+  if (seg.getAttribute('aria-pressed') !== 'true') seg.click();
   const inside = shape();
   // Ending the session and nothing else — the call every door makes.
   showEditing(false);
@@ -4407,9 +4436,13 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
     assert not got.get("noPicker"), "the second editor carries no keymap control"
     assert got["label"] == "Keymap: vim"
     assert got["handler"] == "ace/keyboard/vim"
-    assert "Vim keys are on" in got["said"], (
-        f"the keymap changed and the page said {got['said']!r} — a two-word control in an "
-        "11px strip that takes the keyboard away has to say that it has"
+    # Nothing is announced. The sentence that was here explained what vim mode
+    # takes from the keyboard to somebody who had just turned vim mode on, and
+    # jcanton asked for it to go — 2026-08-21, "we don't need [it], can be
+    # completely removed". The control's own label says which keymap is on, which
+    # is asserted two lines up.
+    assert "Vim keys are on" not in got["said"], (
+        f"the removed announcement is back: {got['said']!r}"
     )
 
     inert = [title for title, wrote in got["marks"] if not wrote]
@@ -4642,13 +4675,19 @@ const state = () => ({
 const into = document.getElementById('toggle');
 if (into) into.click();
 const out = {};
-document.getElementById('view-edit').click();
+// The session already starts in `edit`, and pressing the lit segment leaves full
+// page — so this presses it only when something else is lit.
+const press = id => {
+  const seg = document.getElementById(id);
+  if (seg.getAttribute('aria-pressed') !== 'true') seg.click();
+};
+press('view-edit');
 out.write = state();
-document.getElementById('view-both').click();
+press('view-both');
 out.split = state();
 out.paneRows = Math.round(
   pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight));
-document.getElementById('preview').click();
+press('preview');
 out.read = {
   paneRows: Math.round(
     pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight)),
