@@ -1,6 +1,7 @@
 # The hill chart — design
 
-**Status:** proposed, 2026-08-21. Nothing implemented.
+**Status:** built, 2026-08-21. The passages marked **as built** are where the design changed once
+the pixels were on screen.
 
 Shape Up draws a piece of work as a ball on a hill: uphill is figuring out what to do, the top is
 knowing, downhill is doing it. This puts that picture on a record, and makes it the control that
@@ -90,17 +91,24 @@ Three sites:
 2. `_CONTROL` (`render.py:11544`): the `status` branch stops emitting a `<select>` and emits the
    hill. Shared by the detail page and the create form, so both change at once — which is the
    comment on `_REQUIRED_JS`'s own reason for existing.
-3. `cardHtml` (`render.py:3274`): the status chip in `.card-chips` becomes a small read-only hill.
-   Kind and priority chips stay. The card is drawn by the table, the graph and the timeline, so this
-   is one edit for three pages.
+3. `cardHtml` (`render.py:3274`): a small read-only hill under `.card-chips`. The card is drawn by
+   the table, the graph and the timeline, so this is one edit for three pages.
+
+   **As built: the card keeps its status chip.** The detail page drops the chip because the `<dt>`
+   beside the hill says STATUS. A card has no labels on its chip line, so the hill alone is a shape
+   with no name — and there the word and the picture are not one fact twice: the word says which
+   status, and the shape says which side of the hill that is.
 
 The note page (`_NOTE`, `render.py:19644`) has a status `<select>` of its own and gets the same
 treatment, with the note stop set. Its select is already `disabled` when the state is derived; the
 hill inherits that and is inert on a promoted note.
 
-`promoted` gets no ball. It is derived from `became`, a person cannot set it, and the link that
-causes it is already on the page — a stop nobody can drag to is a stop that only has to be
-explained.
+**As built: `promoted` gets a ball after all — hollow, at `shaping`.** Giving it none drew a hill
+with nothing on it for every promoted note, which is empty looking exactly like broken: finding F1
+arriving through a new mechanism. It stands at `shaping` because that is literally where it went —
+`promote` creates the pitch or the task in `shaping`, so the ball was not put back at the bottom, it
+was handed to a record that is now a quarter of the way up a hill of its own. Hollow, because the
+note is not the thing standing there. Still no stop, and still nothing to drag to.
 
 The table's status column is untouched: it keeps its chip, and its inline editor keeps `askFor`.
 
@@ -130,6 +138,12 @@ asking `[name=status]`.
 **Read view does not drag.** Dragging commits nothing on its own; the ball moves only in edit mode
 and the move is saved with the rest of the edit. A status change should cost the sentence in the
 body that explains it.
+
+**As built: the stops are in the read view's DOM and hidden by CSS**, exactly like every other
+control on this page — `.field { display: none }` is how it has always worked, and a `display: none`
+element is unfocusable and out of the accessibility tree. The read-only hill drawn beside it carries
+no radios at all, so of the two hills a page holds, one is a picture and one is a control and never
+both at once.
 
 Pointer drag is an enhancement over the radios: `pointerdown` on the ball captures, `pointermove`
 previews at the nearest stop by distance in element coordinates, `pointerup` checks that radio and
@@ -182,12 +196,14 @@ detail page's from the same Python function that produced it. Two renderers, one
 - the stop sets are derived from `STATUS_ORDER` and `NOTE_STATES`, not restated: a status added
   tomorrow fails this test rather than silently having nowhere to stand
 - an unknown status renders a hill, no ball, and does not raise
-- pixel: the ball is painted, and its centroid is at a different x for each of the five statuses.
-  Asserting the CSS resolves is not enough — the frozen column resolved to exactly the value every
-  test asserted and Chrome painted nothing
+- pixel: the ball is laid out at a real size and its centre lands where `_hill_at` computed, in the
+  hill's own pixels. Asserting the CSS resolves is not enough — the frozen column resolved to
+  exactly the value every test asserted and Chrome painted nothing. Not "a different x per status":
+  `ready` and `shelved` share one, being the summit and the ground directly beneath it, so
+  distinctness is asked of the points in `_HILL_STOPS` instead
 - keyboard: Tab reaches a stop, an arrow key moves the ball, `[name=status]` follows, and the commit
   bar reads one unsaved change
-- read view carries no radios, and a drag on it changes nothing
+- the read-only hill carries no radios, and the live one is `display: none` until Edit
 - an entity's hill has no `thinking` stop and a drag toward the start cannot reach one; a note's has
   no `ready`
 - `PATCH` from a hill-driven change carries `status` and nothing else
