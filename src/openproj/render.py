@@ -3161,8 +3161,14 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 {#- The two ladders' marks, beside the words and for the same reason: the card is
     drawn on three pages and the graph has no `DATA` of its own — its payload is
     cytoscape elements — so a mark read from a page's payload is a mark the card
-    carries on two pages out of three. -#}
-<script id="marks" type="application/json">{{ cardmarks|tojson }}</script>
+    carries on two pages out of three.
+
+    `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on four
+    pages — it is the span the mark buttons are drawn into — and a second element
+    of that id in the shell made `getElementById('marks')` answer with this block
+    instead: the toolbar drew its buttons into a script tag, and the editor's own
+    tests caught it as an SVG laid out at 0x0. -#}
+<script id="chipmarks" type="application/json">{{ cardmarks|tojson }}</script>
 <script>
 // Declared before the content, because the pages' own scripts are inside it and
 // some of them announce while loading — the cycle page's receipt, the detail
@@ -3239,7 +3245,7 @@ function cardWord(value) { return CARD_WORDS[value] || value; }
 // `{status: {...}, priority: {...}}` — the same two maps the table's chips and
 // the graph's nodes draw from, off the shell rather than off a page's payload.
 const CARD_MARKS = (() => {
-  try { return JSON.parse(document.getElementById('marks').textContent); }
+  try { return JSON.parse(document.getElementById('chipmarks').textContent); }
   catch (error) { return {status: {}, priority: {}}; }
 })();
 function cardMark(ladder, value) {

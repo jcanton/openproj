@@ -25,8 +25,10 @@ nothing.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from browser import chrome, measured_in
@@ -325,15 +327,18 @@ return {
   meter: meter && {w: Math.round(meter.width), h: Math.round(meter.height)},
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
-  // The first two characters of a card's label: its priority mark and its status
-  // glyph, before the space and the title.
+  // A card's label, which should be its title and nothing else — its two marks
+  // are the drawing below.
   marked: cy.nodes().filter(n => n.isChildless()).slice(0, 5)
-    .map(n => (n.style('label') || '').replace(/\s+/g, '').slice(0, 2)),
-  // And what is painted into the card itself, which should now be nothing: the
-  // mark that used to live here as an image is a character in the line above.
+    .map(n => (n.style('label') || '').replace(/\s+/g, '')),
+  // The drawing itself: the two coloured characters at the card's left edge.
   meters: cy.nodes().filter(n => n.isChildless()).slice(0, 3)
     .map(n => String(n.style('background-image') || ''))
     .filter(one => one && one !== 'none'),
+  // And a box's label, which carries the same two marks as characters because a
+  // drawing cannot be put on a compound's own line.
+  boxed: cy.nodes().filter(n => n.isParent()).slice(0, 3)
+    .map(n => (n.style('label') || '').replace(/\s+/g, '').slice(0, 2)),
 };
 """
 
@@ -392,22 +397,19 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
 
 
 def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path: Path):
-    """Priority, then status, then the title — the two marks a table row wears, in
-    the same order, on one line.
+    """Priority, then status, then the title — and each mark in its own colour.
 
-    The priority mark was an image in the corner of the card, because "cytoscape
-    draws a label with the font it is given and no fallback chain" and a block
-    element would come out as a .notdef box. That is not what happens: measured
-    on a canvas with this page's own stack, `\u2585` is 10px wide against 6.56px
-    for a private-use codepoint, which is the browser falling back per glyph
-    exactly as it does in HTML. jcanton, 2026-08-21: "the priority tofu should be
-    just a glyph in line with the status glyph, currently it's separate and
-    vertically aligned".
+    That last word is why they are a drawing rather than two characters in the
+    label: cytoscape draws a label into a canvas with ONE `color` for the whole
+    string, so two differently-coloured marks cannot be written into it. An SVG
+    holds two `<text>` elements and two fills, which is the same two characters
+    `PRIORITY_GLYPH` and `STATUS_GLYPH` put in a chip, a menu and a legend key,
+    with the colour the table gives them.
 
-    What it costs is the colour: a label is one ink, so the rung's hue is not on
-    the card. The border's thickness still carries it, which is the channel the
-    legend keys, and the colour is on the mark everywhere it can be — the table,
-    the detail page, the key.
+    A box gets them as characters in its own name instead, uncoloured: a
+    compound's label sits on the box's top edge with an opaque background, and an
+    image placed in a compound's rectangle is positioned against the rectangle —
+    it lands in the corner, under the name and clipped by the box's radius.
     """
     from openproj.render import PRIORITY_GLYPH, STATUS_GLYPH
 
@@ -416,16 +418,32 @@ def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path
                       height=820, patience=3500)
 
     assert got["marked"], "no node was measured"
-    for prefix in got["marked"]:
-        assert prefix[0] in PRIORITY_GLYPH.values(), (
-            f"{prefix!r} does not start with a priority mark"
+    for label in got["marked"]:
+        assert label[0] not in PRIORITY_GLYPH.values(), (
+            f"a card is writing its marks into the label again: {label!r}"
         )
-        assert prefix[1] in STATUS_GLYPH.values(), (
-            f"{prefix!r} does not carry the status glyph after the priority one"
+    assert got["meters"], "no card carries a mark at all"
+    for image in got["meters"]:
+        assert image.startswith("data:image/svg+xml"), image[:40]
+        drawn = unquote(image)
+        assert drawn.count("<text") == 2, f"a card's marks are not two characters: {drawn}"
+        assert any(one in drawn for one in PRIORITY_GLYPH.values()), drawn
+        assert any(one in drawn for one in STATUS_GLYPH.values()), drawn
+        # Two fills, and neither of them the label's ink: the point of the
+        # drawing is that the two marks are coloured apart from each other.
+        fills = set(re.findall(r'fill="([^"]+)"', drawn))
+        assert len(fills) == 2, f"the two marks share one colour: {sorted(fills)}"
+
+    # And a box says the same two things in its own name, where a drawing cannot
+    # go. Read off the label, which for a compound is what carries them.
+    assert got["boxed"], "no box was measured"
+    for label in got["boxed"]:
+        assert label[0] in PRIORITY_GLYPH.values(), (
+            f"a box does not lead with its priority mark: {label!r}"
         )
-    assert got["meters"] == [], (
-        f"a card is still carrying the corner image the label replaced: {got['meters']}"
-    )
+        assert label[1] in STATUS_GLYPH.values(), (
+            f"a box does not carry its status glyph after it: {label!r}"
+        )
 
 
 _UNDERNEATH = """
