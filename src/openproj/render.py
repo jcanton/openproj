@@ -3270,6 +3270,13 @@ function cardHtml(row, extra) {
     ...(size == null ? [] : [['Appetite', esc(String(size))
       + (Number(size) === 1 ? ' week' : ' weeks')
       + (row.estimated ? ' <span class="guess">(assumed)</span>' : '')]]),
+    // The count the table's column gave up, with the bar it draws there — the
+    // card is where a number that is read rather than scanned belongs, and it is
+    // beside what the number was counted from.
+    ...(row.progress == null ? [] : [['Progress',
+      `<span class="num">${esc(row.progress_text)}</span>`
+      + `<span class="meter"><span style="width: `
+      + `${Math.round(row.progress * 100)}%"></span></span>`]]),
     ['Scheduled', row.start && row.end
       ? `<span class="num">${esc(row.start)}</span> to <span class="num">${esc(row.end)}</span>`
       : CARD_DASH],
@@ -4672,9 +4679,15 @@ function shown(row, key) {
   // Counted out of the body's own checklist. Empty where there is no checklist,
   // rather than "0/0" — a body nobody has written a list in has no progress to
   // report, which is not the same as no progress.
+  //
+  // The bar alone. `6/16 items` beside it was the widest thing in the column and
+  // is the one number nobody reads at a glance — the bar is what a column of
+  // fifteen rows is scanned for. The count is on the card, in full, beside what
+  // it was counted from, and in this cell's own tooltip for a reader who wants it
+  // without leaving the row.
   if (key === 'progress')
     return row.progress === null ? '' :
-      `${esc(row.progress_text)}<span class="meter"><span style="width: ` +
+      `<span class="meter" title="${esc(row.progress_text)}"><span style="width: ` +
       `${Math.round(row.progress * 100)}%"></span></span>`;
   if (key === 'tags') return clamped((value || []).map(esc), 'tag', 'tags');
   // Nobody named here, and somebody named underneath: a pitch whose tasks each
@@ -4691,9 +4704,27 @@ function shown(row, key) {
   // are one click away, where they always were.
   if (key === 'assignees' || key === 'reviewers')
     return clamped((value || []).map(esc), 'person', 'people');
+  // A date, short. `2026-07-14` is ten characters and two of them are the century;
+  // on a laptop the two date columns were 22 characters of a fourteen-column
+  // table and every one of them wrapped onto a second line. `26.07.14` says the
+  // same thing in eight, and the column tightens to `07.14` when even that will
+  // not fit — the year is the one part a reader can almost always supply.
+  //
+  // The stored value is untouched: this is the cell's text, the row still carries
+  // the ISO string, and the sort still reads that.
+  if (key === 'start' || key === 'end') return value ? shortDate(value) : '';
   // Unreachable for `reviewers`, which is handled above — kept as one line so
   // the two list columns stay one branch.
   return esc(stored(row, key));
+}
+
+// `2026-07-14` as `26.07.14`, or as `07.14` once the column is told to tighten.
+// Dots and not dashes: a dash is what the ISO string uses and this is not it, and
+// at 13px the dot is the narrower separator.
+function shortDate(iso) {
+  const [year, month, day] = String(iso).split('-');
+  if (!day) return esc(iso);
+  return `<span class="dateshort">${esc(year.slice(2))}.</span>${esc(month)}.${esc(day)}`;
 }
 
 // What a clamped cell is not showing, in words, for the cell's own tooltip.
@@ -6383,7 +6414,7 @@ const SPARE_COLUMN = 'tags';
 // the fit narrows first. One set, because it is one fact: a column may be made
 // narrower exactly when its overflow already has somewhere to go.
 const CLAMPED = new Set(['tags', 'prs', 'assignees', 'reviewers']);
-const SQUEEZABLE = new Set(['title', 'owner']);
+const SQUEEZABLE = new Set(['title', 'owner', 'progress']);
 // What the table gives up when it runs out of room, in the order it gives them
 // up. All four are lookups rather than answers — each is on the detail page and
 // each stays filterable in the facets above — so they are what it can lose and
@@ -6394,7 +6425,7 @@ const SQUEEZABLE = new Set(['title', 'owner']);
 // is the column that absorbs whatever is left over: while it is drawn the table
 // fills its container exactly, and once it is gone the fit can only leave a gap
 // at the right.
-const SHED = ['progress', 'reviewers', 'prs', 'tags'];
+const SHED = ['reviewers', 'prs', 'progress', 'tags'];
 // One class per column and not one for the set, because they go one at a time.
 const shedClass = key => 'shed-' + key;
 
@@ -6405,6 +6436,27 @@ const shedClass = key => 'shed-' + key;
 // printed above it rather than to the column.
 const keyOf = th => th.dataset.col;
 const FLOOR = 110;      // narrower than this and a squeezed column is unreadable
+// The title is a SENTENCE and the other squeezable column is a login, so one
+// floor cannot serve both: at 110 a title wraps over three lines and the row it
+// is in stands three rows tall, which on a laptop is what a screenful of this
+// table looked like. 250 is where the seed corpus's and jcanton's own titles
+// mostly stop wrapping; below it the fit sheds a lookup column instead, and
+// below THAT the table scrolls sideways with the id and the title frozen — which
+// is the arrangement jcanton got by double-clicking a column separator and
+// asked whether it could be the starting point.
+//
+// So: the same fit, with the one column that holds prose allowed to keep enough
+// room to hold it. Nothing else about the layout moves.
+const TITLE_FLOOR = 250;
+// And the progress column is a BAR now, not a bar and a count, so it narrows
+// rather than leaving: 78px holds its header on one line and a meter wide enough
+// to read a fraction off. It used to be the first thing shed, which was right
+// when it was the widest column on the row and is not now.
+const PROGRESS_FLOOR = 78;
+const floorFor = key => key === 'title' ? TITLE_FLOOR
+  : key === 'progress' ? PROGRESS_FLOOR
+  : CLAMPED.has(key) ? CLAMP_FLOOR
+  : SQUEEZABLE.has(key) ? FLOOR : Infinity;
 // A clamped column shows one item and a badge, and its header above them. Set to
 // 76 — the badge and a short tag — the fit drove all four to that and `REVIEWERS`
 // wrapped over two lines above a truncated login, which is a narrower column and
@@ -6457,10 +6509,8 @@ function naturalWidths() {
 // keep — 293px of overflow at the low end. Two numbers that have to agree,
 // written in two languages, drifting; now there is one and it is measured.
 function minimumWidth(natural, keys) {
-  return keys.reduce((total, key, i) => {
-    const floor = CLAMPED.has(key) ? CLAMP_FLOOR : SQUEEZABLE.has(key) ? FLOOR : Infinity;
-    return total + Math.min(Math.ceil(natural[i]), floor);
-  }, 0);
+  return keys.reduce(
+    (total, key, i) => total + Math.min(Math.ceil(natural[i]), floorFor(key)), 0);
 }
 
 // Which columns this much room can hold, as `[key, width]` pairs in the order
@@ -6502,13 +6552,14 @@ function fitted(natural, keys, room) {
   // overflow is paid for or the group is on its floor. A proportional cut instead
   // takes the same 18% off a 300px sentence and a 110px login, so the column that
   // was already the narrowest pays as much as the one that caused the overflow.
-  const level = (group, floor) => {
+  const level = group => {
     while (over > 0) {
       const flex = keys.map((_, i) => i)
-                       .filter(i => group.has(keys[i]) && width[i] > floor);
+                       .filter(i => group.has(keys[i]) && width[i] > floorFor(keys[i]));
       if (!flex.length) return;
       const worst = Math.max(...flex.map(i => width[i]));
       const paying = flex.filter(i => width[i] === worst);
+      const floor = Math.max(...paying.map(i => floorFor(keys[i])));
       const next = Math.max(floor, ...flex.filter(i => width[i] < worst).map(i => width[i]));
       const step = Math.min(worst - next, Math.ceil(over / paying.length));
       paying.forEach(i => { width[i] -= step; });
@@ -6516,8 +6567,8 @@ function fitted(natural, keys, room) {
     }
   };
 
-  level(CLAMPED, CLAMP_FLOOR);
-  level(SQUEEZABLE, FLOOR);
+  level(CLAMPED);
+  level(SQUEEZABLE);
 
   // Whatever is left over — a window wider than the plan needs, or the pixel or
   // two the levelling overshot by — goes to the one column that can hold it
@@ -6674,7 +6725,12 @@ function applyWidths(widths) {
 //
 // So: show the word, ask whether it fits, then decide. One forced reflow per
 // column per fit, which happens on a resize and not on a frame.
-const TIGHTENS = ['status', 'priority'];
+const TIGHTENS = ['status', 'priority', 'dates'];
+
+// The two date columns tighten together — `07.14` under START beside `26.08.05`
+// under END would read as two different things — so they are one name here and
+// the class covers both.
+const TIGHT_COLUMNS = {status: ['status'], priority: ['priority'], dates: ['start', 'end']};
 
 function tighten() {
   for (const key of TIGHTENS) {
@@ -6682,7 +6738,9 @@ function tighten() {
   }
   for (const key of TIGHTENS) {
     let over = false;
-    for (const cell of table.querySelectorAll(`td[data-col="${key}"]`)) {
+    const columns = TIGHT_COLUMNS[key] || [key];
+    for (const cell of table.querySelectorAll(
+        columns.map(one => `td[data-col="${one}"]`).join(', '))) {
       if (!cell.firstElementChild) continue;
       // The CELL's own overflow, not the inner element's. The chip is an
       // inline-flex box that shrinks to whatever it is given and then reports
@@ -7187,6 +7245,30 @@ th .grip::before {
 }
 th .grip:hover::before, th .grip.dragging::before { background: var(--accent); width: 2px; }
 .measuring th, .measuring td { white-space: nowrap; }
+/* THE COLUMNS THAT DO NOT WRAP. A title is a sentence and wraps; everything in
+   this list is a token — an id, a login, a date, a number, a bar — and a token
+   broken over two lines is a row twice as tall for no reading gained. jcanton,
+   2026-08-21, on a laptop: "(id, owner, dates, progress) can we have the first
+   columns without newlines".
+
+   With the ellipsis that has to come with it: `overflow-wrap: anywhere` above is
+   what let a login wrap inside its cell, and taking it away without this would
+   let `iomaganaris` hang over the column beside it. A name cut short says it is
+   cut short; the cell's tooltip and the card have the whole of it. */
+#rows td[data-col="id"], #rows td[data-col="owner"],
+#rows td[data-col="assignees"], #rows td[data-col="reviewers"],
+#rows td[data-col="cycle"], #rows td[data-col="size"],
+#rows td[data-col="start"], #rows td[data-col="end"],
+#rows td[data-col="blocked_by"], #rows td[data-col="progress"] {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal;
+}
+/* The bar fills the column it is alone in now, rather than trailing a number. */
+#rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
+/* And the century goes when the column is squeezed, which is the one part of a
+   date a reader can supply. `fitWidths` sets the class from its own arithmetic,
+   like the other two tight rules. */
+table.tight-dates td[data-col="start"] .dateshort,
+table.tight-dates td[data-col="end"] .dateshort { display: none; }
 /* One screen is not one width. Below the width the columns need with every
    squeezable one already on its floor, the ones that are lookups rather than
    answers go, one at a time — they are all reachable on the detail page, and the
@@ -7269,6 +7351,16 @@ tr.adder > td {
   background: var(--surface); border-top: 1px solid var(--line);
   box-shadow: inset 0 1px 0 var(--line);
 }
+/* And stuck to the LEFT as well as to the bottom, because the row it belongs to
+   spans every column: scrolled sideways, its one cell slid away with the rest of
+   the table while the id and title columns stayed — so the way to add a row went
+   off the side of a page whose first two columns had not moved. jcanton,
+   2026-08-21: "the new row button should be fixed underneath the id column".
+
+   The cell keeps its full width, so the row's ground still reaches across; only
+   what is inside it is pinned. `left: .5rem` is the cell's own padding, which is
+   what puts the button under the id column rather than under the table's edge. */
+tr.adder > td > * { position: sticky; left: .5rem; }
 /* Only what is this button's own. The rectangle, the border and the ink come
    from the default every control gets — a third copy of them here is how the
    page came to have three slightly different buttons on one screen. */
