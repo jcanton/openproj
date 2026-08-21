@@ -3248,6 +3248,14 @@ const CARD_WORDS = (() => {
 })();
 function cardWord(value) { return CARD_WORDS[value] || value; }
 
+// `2026-07-14` as `14.07.2026`. The card's dates keep the century — it is the one
+// place a date is read rather than scanned, and there is room for four digits —
+// and they are day-first like every other date the app draws.
+function longDate(iso) {
+  const [year, month, day] = String(iso).split('-');
+  return day ? `${esc(day)}.${esc(month)}.${esc(year)}` : esc(iso);
+}
+
 // `{status: {...}, priority: {...}}` — the same two maps the table's chips and
 // the graph's nodes draw from, off the shell rather than off a page's payload.
 const CARD_MARKS = (() => {
@@ -3284,7 +3292,10 @@ function cardHtml(row, extra) {
       + `<span class="meter"><span style="width: `
       + `${Math.round(row.progress * 100)}%"></span></span>`]]),
     ['Scheduled', row.start && row.end
-      ? `<span class="num">${esc(row.start)}</span> to <span class="num">${esc(row.end)}</span>`
+      // The card has room for the century, and it is the one place a date is read
+      // rather than scanned: `14.07.2026`, day first like every other date here.
+      ? `<span class="num">${longDate(row.start)}</span> to `
+        + `<span class="num">${longDate(row.end)}</span>`
       : CARD_DASH],
     ...((row.tags || []).length ? [['Tags', esc(row.tags.join(', '))]] : []),
     ...extra,
@@ -4730,7 +4741,14 @@ function shown(row, key) {
 function shortDate(iso) {
   const [year, month, day] = String(iso).split('-');
   if (!day) return esc(iso);
-  return `<span class="dateshort">${esc(year.slice(2))}.</span>${esc(month)}.${esc(day)}`;
+  // Day first. jcanton, 2026-08-21: "I'd like to reverse the order of the dates
+  // in the entire app... to dd.mm and dd.mm.YY dd.mm.YYYY" — which is how these
+  // are read aloud here, and the order every date on the page now uses.
+  //
+  // The year is its own element and trails, so the column drops it when it
+  // tightens: `14.07` is still a date read the same way round, where `07.14`
+  // with the year gone reads as a different day.
+  return `${esc(day)}.${esc(month)}<span class="dateshort">.${esc(year.slice(2))}</span>`;
 }
 
 // What a clamped cell is not showing, in words, for the cell's own tooltip.
@@ -7194,7 +7212,12 @@ td .sev-mark { margin-left: .25rem; }
    as one. 12px and not `.9em`: this column is what the frozen title column's
    `left` is measured from, and a relative size compounds if anything above it
    ever changes. */
-.eid { font-family: var(--font-mono); font-size: 12px; }
+/* 11px, a step below the 12 it was and two below the row's own 13. An id is a
+   token to be copied and cited rather than read, and the column it is in is the
+   frozen one every row starts with — jcanton, 2026-08-21: "I'd reduce the font
+   size of the ids a little further". Monospace holds it legible at that size in
+   a way the sans face would not. */
+.eid { font-family: var(--font-mono); font-size: 11px; }
 td[data-col="cycle"], td[data-col="size"], td[data-col="start"], td[data-col="end"],
 td[data-col="blocked_by"] { font-variant-numeric: tabular-nums; }
 /* A cell with something still in the way. Only when there is: a column tinted on
@@ -7265,18 +7288,25 @@ th .grip:hover::before, th .grip.dragging::before { background: var(--accent); w
    what let a login wrap inside its cell, and taking it away without this would
    let `iomaganaris` hang over the column beside it. A name cut short says it is
    cut short; the cell's tooltip and the card have the whole of it. */
-#rows td[data-col="id"], #rows td[data-col="owner"],
-#rows td[data-col="cycle"], #rows td[data-col="size"],
-#rows td[data-col="start"], #rows td[data-col="end"],
-#rows td[data-col="blocked_by"], #rows td[data-col="progress"] {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal;
-}
-/* The four clamped columns are NOT in that list, and the reason is the control
-   in their header: it opens every cell in the column to show what the `+N` is
-   hiding, and a cell that cannot wrap opens to exactly the height it had.
-   `test_the_column_control_opens_the_column_and_closes_it` measures that as a
-   column that cost no height at all, which cannot be true. They already show one
-   item and a badge, which is the same saving by a different route. */
+#rows tbody td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                 overflow-wrap: normal; }
+/* And the link inside the title cell, which is the one cell whose content is an
+   element rather than text: an `<a>` is inline and an inline box does not
+   ellipsise, so without this the title runs under the column beside it. */
+#rows tbody td[data-col="title"] > a { display: block; overflow: hidden;
+                                       text-overflow: ellipsis; }
+/* EVERY cell, title included — jcanton, 2026-08-21: "I'd replace the newlines
+   with ... and disappearing words (on all cells), titles included". A title is a
+   sentence and used to wrap for that reason; the row it wraps in is three rows
+   tall, and what a reader loses to the ellipsis is one hover away on the card
+   and one click away on the record.
+
+   The four clamped columns are exempt WHILE OPEN. Their header control opens
+   every cell to show what the `+N` hides, and a cell that cannot wrap opens to
+   exactly the height it had — which the control's own test measures as a column
+   that cost no height at all. Closed they are one item and a badge, which is the
+   same saving by a different route. */
+#rows tbody td.clamp.open { white-space: normal; overflow-wrap: anywhere; }
 /* The bar fills the column it is alone in now, rather than trailing a number. */
 #rows td[data-col="progress"] .meter { display: block; width: 100%; min-width: 2.5rem; }
 /* And the century goes when the column is squeezed, which is the one part of a
@@ -10031,7 +10061,16 @@ const EDITOR = (() => {
   const chose = named(new URLSearchParams(location.search).get('editor'));
   const kept = named(held.editor);
   return {
-    mode: one(held.mode, ['edit', 'both', 'view'], null),
+    // `edit` and not null. null means "editing, but not in one of the three
+    // views", which is the state a page opened for the first time was left in:
+    // the surface came up in a shape none of the three segments was pressed for,
+    // and clicking one of them made it jump. jcanton, 2026-08-21: "entering edit
+    // mode the first time opened the editor without having selected one of the
+    // three... can you select edit as default mode?"
+    //
+    // It is still a remembered preference — the segments write it — so this is
+    // only what somebody who has never pressed one of them gets.
+    mode: one(held.mode, ['edit', 'both', 'view'], 'edit'),
     indent: one(held.indent, INDENT_WIDTHS, 2),
     autosave: one(held.autosave, DRAFT_SECONDS, 2),
     // Added to this key rather than bumping it to `openproj:editor:2`. A bump
@@ -10594,16 +10633,14 @@ function attachStatus(surface, bar) {
   if (surface.setKeymap) {
     bar.append(statusPick(
       document.createElement('button'), 'Keymap', surface.keymaps, EDITOR.keymap,
+      // Nothing announced. The sentence that was here explained what vim mode
+      // takes — Escape, Tab, every printable key in NORMAL mode — to somebody who
+      // had just switched to vim mode on purpose. jcanton, 2026-08-21: "we don't
+      // need [it], can be completely removed". The control itself says which
+      // keymap is on.
       name => {
         surface.setKeymap(name);
         rememberEditor({keymap: name});
-        // What it took as well as what it gave. Vim claims Escape, Tab, and
-        // every printable key while it is in NORMAL mode, and somebody who has
-        // just pressed a two-word control in an 11px strip and finds their
-        // typing going nowhere has been given no way to work out why.
-        announce(name === 'vim'
-          ? 'Vim keys are on. Press i to type, Escape to leave insert mode.'
-          : 'Vim keys are off. The keyboard is the browser\u2019s again.');
       }));
   }
 
@@ -12186,6 +12223,16 @@ if (EDITOR_SWITCH) {
     announce(`Fetching this page with ${EDITOR_NAMES[other]}.`);
     const url = new URL(location.href);
     url.searchParams.set('editor', other);
+    // And the session comes with it. The page being fetched is a different
+    // rendering of the same record, so arriving in read mode over a document
+    // somebody was in the middle of writing is the switch losing their place —
+    // the draft survives, but the surface does not. The view flag is the one the
+    // page already reads at load (`VIEW_ASKED`), which is why it is a flag here
+    // rather than a second mechanism.
+    for (const name of VIEWS) url.searchParams.delete(name);
+    if (VIEW_ARTICLE.classList.contains('editing')) {
+      url.searchParams.set(VIEW || EDITOR.mode || 'edit', '');
+    }
     // `replace`, for the reason `stickyEditor` uses it: the page being left will
     // send anybody who comes back to it straight round again, because the
     // preference it is about to write is why they went. A history entry that
@@ -12266,8 +12313,21 @@ const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 // and writing is the exception. So it is restored by pressing Edit, by a
 // restored draft, and by the create form, which is always editing and where
 // "when the session starts" therefore IS the load. That is the branch below.
-if (VIEW_LINKED) showView(VIEW_LINKED);
-else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) showView(EDITOR.mode);
+// A linked view opens the session it is a view OF. `?edit` on a page in read
+// mode used to draw the editor's shell over a record nobody was editing — and it
+// is what the editor switch adds when it reloads, which is the case that made it
+// matter: toggling between the two editors is a navigation, because which editor
+// is on the page is decided by the server, and the page that came back arrived
+// in read mode with the session gone. jcanton, 2026-08-21, asking whether that
+// was intentional. The reload is; losing the session is not.
+if (VIEW_LINKED) {
+  if (typeof showEditing === 'function' && !VIEW_ARTICLE.classList.contains('editing')) {
+    showEditing(true);
+  }
+  showView(VIEW_LINKED);
+} else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) {
+  showView(EDITOR.mode);
+}
 
 // A session beginning after this script has run — the Edit button. `VIEW ===
 // null` is what stops the loop: `showView` sets `VIEW` before it calls
@@ -15261,6 +15321,19 @@ _ENV.globals["mark"] = lambda kind, value: (
     else f"{PRIORITY_GLYPH.get(str(value), '')} "
 )
 _ENV.globals["pri"] = lambda value: PRIORITY_GLYPH.get(str(value), "")
+# A date, the way this app reads one out loud: `14.07.2026`, day first, dots.
+# jcanton, 2026-08-21: "I'd like to reverse the order of the dates in the entire
+# app". Only what is DRAWN — what is stored, sorted, put in a `<input type=date>`
+# and sent over the API stays `2026-07-14`, which is the one format that sorts as
+# text, parses without a locale and cannot be read as a different day in another
+# country.
+def _read_date(value: object) -> str:
+    text = str(value or "")
+    parts = text.split("-")
+    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else text
+
+
+_ENV.globals["on"] = _read_date
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Every chip on every page names its rung through this, so the four templates
 # that draw one cannot disagree with the two that build one in Python. They did:
@@ -15413,6 +15486,11 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             display = Markup('{} · <span class="{}">{} in tasks</span>').format(
                 stated or "—", "overrun" if over else "quiet", f"{total:g}"
             )
+        elif field["type"] == "date":
+            # Drawn day-first like every other date on the page; the control
+            # under it is an `<input type="date">` and keeps the ISO string,
+            # which is what the browser's own picker and the API both read.
+            display = escape(_read_date(field["text"])) if field["text"] else empty
         elif field["type"] == "list":
             display = escape(field["text"]) if field["text"] else empty
         else:
@@ -15962,7 +16040,7 @@ _CYCLE = """
 {% if links.deck %}<p class="back"><a href="{{ links.deck }}{{ c.number }}"
   >Review deck →</a></p>{% endif %}
 {% if c.recorded %}
-<p class="meta">{{ c.starts_on }} → builds until <b>{{ c.builds_until }}</b>
+<p class="meta">{{ on(c.starts_on) }} → builds until <b>{{ on(c.builds_until) }}</b>
    → cool-down ends {{ c.ends_on }}</p>
 {% else %}
 <p class="meta">No record yet{% if c.dated %} — config/cycles.yaml puts this cycle at
@@ -15997,18 +16075,18 @@ _CYCLE = """
 <form id="setup" onsubmit="return false">
   <dl id="facts">
     <dt><label for="starts_on">Starts on</label></dt>
-    <dd><span class="read">{{ c.starts_on }}</span>
+    <dd><span class="read">{{ on(c.starts_on) }}</span>
         <input type="date" id="starts_on" name="starts_on" data-type="date"
                value="{{ c.starts_on }}" class="field"></dd>
     <dt><label for="reviews_on">Review meeting</label></dt>
-    <dd><span class="read">{{ c.reviews_on }}</span>
+    <dd><span class="read">{{ on(c.reviews_on) }}</span>
         <input type="date" id="reviews_on" name="reviews_on" data-type="date"
                value="{{ c.reviews_on }}" class="field"></dd>
     {#- Both of the above are meetings somebody put in a calendar. Everything
         below is worked out from them and from the holidays, so it is written in
         the derived style and has no box. -#}
     <dt class="derived">Builds until</dt>
-    <dd class="derived">{{ c.builds_until }} · {{ c.build_weeks }} working weeks
+    <dd class="derived">{{ on(c.builds_until) }} · {{ c.build_weeks }} working weeks
       {% if c.assumed_review %}<span class="warnish">— assumed: this cycle names
         no review meeting</span>{% endif %}</dd>
     <dt class="derived">Cool-down ends</dt>

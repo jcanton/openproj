@@ -4407,9 +4407,13 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
     assert not got.get("noPicker"), "the second editor carries no keymap control"
     assert got["label"] == "Keymap: vim"
     assert got["handler"] == "ace/keyboard/vim"
-    assert "Vim keys are on" in got["said"], (
-        f"the keymap changed and the page said {got['said']!r} — a two-word control in an "
-        "11px strip that takes the keyboard away has to say that it has"
+    # Nothing is announced. The sentence that was here explained what vim mode
+    # takes from the keyboard to somebody who had just turned vim mode on, and
+    # jcanton asked for it to go — 2026-08-21, "we don't need [it], can be
+    # completely removed". The control's own label says which keymap is on, which
+    # is asserted two lines up.
+    assert "Vim keys are on" not in got["said"], (
+        f"the removed announcement is back: {got['said']!r}"
     )
 
     inert = [title for title, wrote in got["marks"] if not wrote]
