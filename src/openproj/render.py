@@ -2635,7 +2635,7 @@ li.task-list-item input { margin-right: .35em; }
 /* A `<span>` rather than a `<div>`: the read view puts this inside the
    `<span class="read">` every fact row wears, and a block element in there is
    content a parser is entitled to do anything with. */
-.hill { --ball: 15px; --ghost: 9px; display: block;
+.hill { --ball: 17px; --ghost: 9px; display: block;
         position: relative; width: 100%; max-width: 15rem; aspect-ratio: 120 / 48; }
 /* The control hill follows `.field`'s rule without wearing `.field`: that class
    also carries `#facts .field { max-width: 28rem }` on the record pages, which is
@@ -2658,15 +2658,41 @@ dt:has(+ dd .hill) { align-self: start; }
 /* `overflow: visible`, so a round cap at the foot of the hill is drawn rather
    than sliced off flat by the viewBox it sits exactly on. */
 .hill svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.hill-line, .hill-ground { fill: none; stroke-linecap: round; }
-/* Thick and round is the whole of the cartoon: no filter, no gradient, nothing
-   that needs a second definition per theme. */
-.hill-line { stroke: var(--line-strong); stroke-width: 2.5; }
-.hill-ground { stroke: var(--line); stroke-width: 1.5; }
-.hill-ghost, .hill-ball, .hill-stop { position: absolute; border-radius: 50%;
-                                      transform: translate(-50%, -50%); }
+/* `non-scaling-stroke` so the line is the same weight in a facts column and in a
+   card, and — the reason it is load-bearing rather than taste — so that the lift
+   below can be exact. The ball is lifted by its own radius plus half the line's
+   width; a stroke that scales with the viewBox has a different painted half-width
+   at every size, so the ball would rest on the line at one width and be buried in
+   it at another. Non-scaling makes `stroke-width: 2` mean two painted pixels
+   everywhere, and half of it a constant this stylesheet can add. */
+.hill-line, .hill-ground { fill: none; stroke-linecap: round;
+                           vector-effect: non-scaling-stroke; }
+/* Round and unhurried is the whole of the cartoon: no filter, no gradient,
+   nothing that needs a second definition per theme. 2 and not the 2.5 it was —
+   jcanton, 2026-08-22, and the thinner line also leaves the ball as the heaviest
+   thing in the drawing, which is what a reader should be looking at. */
+.hill-line { stroke: var(--line-strong); stroke-width: 2; }
+.hill-ground { stroke: var(--line); stroke-width: 1.25; }
+/* Lifted along the outward normal, so the ball RESTS on the line instead of
+   being run through by it — a stop is a point ON the curve, and a ball centred
+   on that point is half buried in the hill.
+   The lift is in painted pixels and the direction is a unit vector, which is the
+   only combination that is right at every size: the ball is an HTML element sized
+   in px so that it can carry a real radio, and the drawing is a viewBox that
+   scales with the column it is in. A lift written in viewBox units would be
+   correct at exactly one width. `--ny` defaults to straight up, which is the
+   answer on level ground and the right answer for anything that forgets to say. */
+.hill-ghost, .hill-ball, .hill-stop {
+  position: absolute; border-radius: 50%;
+  transform: translate(-50%, -50%)
+             translate(calc(var(--nx, 0) * var(--lift)), calc(var(--ny, -1) * var(--lift)));
+}
 .hill-ghost { width: var(--ghost); height: var(--ghost);
               background: var(--line-strong); opacity: .35; }
+/* Half the line, and not a pixel guessed at: `.hill-line` is 2px painted, so the
+   surface a ball rests on is 1px above the path's own coordinates. */
+.hill-ghost { --lift: calc(var(--ghost) / 2 + 1px); }
+.hill-ball, .hill-stop { --lift: calc(var(--ball) / 2 + 1px); }
 /* Firmer while the hill is a control. Reading a record, the other stops are
    context and should stay quiet; editing one, they are the places the ball may
    go, and a target nobody can see until they hover over it is a target nobody
@@ -2683,22 +2709,25 @@ dt:has(+ dd .hill) { align-self: start; }
 .hill { --roll: .22s; }
 .hill.dragging { --roll: 0s; }
 .hill-ball { width: var(--ball); height: var(--ball); border: 2px solid;
-             transition: left var(--roll) ease, top var(--roll) ease; }
-.hill-shaping { background: var(--st-shaping); border-color: var(--st-shaping-line); }
-.hill-ready { background: var(--st-ready); border-color: var(--st-ready-line); }
-.hill-in_progress { background: var(--st-in_progress);
-                    border-color: var(--st-in_progress-line); }
-.hill-done { background: var(--st-done); border-color: var(--st-done-line); }
-.hill-shelved, .hill-dropped { background: var(--st-shelved);
-                               border-color: var(--st-shelved-line); }
-/* A note has no rung on the status ladder to borrow from — `thinking` is not a
-   status any entity can hold — so it wears the accent, which is what the notes
-   page already colours that word with. */
-.hill-thinking { background: var(--accent); border-color: var(--accent); }
+             box-sizing: border-box;
+             transition: left var(--roll) ease, top var(--roll) ease,
+                         transform var(--roll) ease; }
+{#- Scoped to the ball, and that is not tidiness: a stop wears `hill-<word>` too,
+    so that the chip it shows on hover is that status's own chip — and an unscoped
+    fill would paint every hit target on the hill as a solid disc. -#}
+{% for s in statuses %}
+.hill-ball.hill-{{ s }} { background: var(--st-{{ s }}); border-color: var(--st-{{ s }}-line); }
+{%- endfor %}
+/* A note has neither of its two words on the status ladder, so neither has tokens
+   of its own. `dropped` borrows shelved's — it is the same sentence in the other
+   vocabulary — and `thinking` wears the accent, which is what the notes page
+   already colours that word with. */
+.hill-ball.hill-dropped { background: var(--st-shelved); border-color: var(--st-shelved-line); }
+.hill-ball.hill-thinking { background: var(--accent); border-color: var(--accent); }
 /* Hollow, and the one ball that is: a promoted note is not standing there, the
    record it became is. Filled, it would claim the note is a quarter of the way up
    a hill it never climbed. */
-.hill-promoted { background: none; border-color: var(--accent); }
+.hill-ball.hill-promoted { background: none; border-color: var(--accent); }
 /* Off the path: the hill goes quiet and the ball keeps its colour, because the
    one thing still worth finding on a shelved record is where the ball is. */
 .hill-off :is(.hill-line, .hill-ground) { opacity: .4; }
@@ -2717,12 +2746,55 @@ dt:has(+ dd .hill) { align-self: start; }
                      border: 2px dashed transparent; }
 .hill-stop:hover::before, .hill-stop:has(input:focus-visible)::before {
   border-color: var(--line-strong); }
+/* And the word, because a position is only obvious to somebody who already knows
+   what the positions mean — jcanton, 2026-08-22: "people are forced to know". It
+   is not printed permanently: the whole argument for replacing the chip was that
+   the drawing says something the word cannot, and a word standing beside it all
+   the time is the chip back with extra steps. So it is asked for — hover or
+   focus a stop and that stop says its name, drag the ball and the ball says the
+   name it is about to take.
+   No transition on it: the appearing is the answer to a question somebody just
+   asked, and `test_the_app_moves_in_two_places` is an inventory worth keeping
+   short. */
+.hill-stop::after, .hill-ball::after {
+  content: attr(data-word); position: absolute; bottom: calc(100% + 4px); left: 50%;
+  transform: translateX(-50%); z-index: 2;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: .1rem .4rem; border-radius: 2px; white-space: nowrap;
+  background: var(--surface); border: 1px solid var(--line-strong); color: var(--fg);
+  visibility: hidden; pointer-events: none;
+}
+{#- The same chip the table wears, and not a tooltip that merely says the same
+    word: `.chip.st-X` above is generated from these tokens too, so the thing that
+    appears over a stop is recognisably the thing the rest of the app calls a
+    status. Written by the same loop for the same reason — five statuses times
+    three tokens is a set that drifts by hand. -#}
+{% for s in statuses %}
+.hill-stop.hill-{{ s }}::after, .hill-ball.hill-{{ s }}::after {
+  background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
+  border-color: var(--st-{{ s }}-line); }
+{%- endfor %}
+/* A note's two words are not on the status ladder and have no tokens of their
+   own. `dropped` borrows shelved's, which is the same sentence; `thinking`
+   borrows the accent, which is what the notes page already colours it with. */
+.hill-stop.hill-dropped::after, .hill-ball.hill-dropped::after {
+  background: var(--st-shelved-soft); color: var(--st-shelved-text);
+  border-color: var(--st-shelved-line); }
+.hill-stop.hill-thinking::after, .hill-ball.hill-thinking::after {
+  color: var(--accent); border-color: var(--accent); }
+.hill-stop:hover::after, .hill-stop:has(input:focus-visible)::after,
+.hill-ball:hover::after, .hill.dragging .hill-ball::after { visibility: visible; }
+/* The ball is under the stops in the stacking order, so on a live hill a hover
+   reaches the stop and not the ball. Reading a record there are no stops, and the
+   ball is the only thing to point at. */
+.hill-ball { pointer-events: auto; }
 /* On the chip line and not under it. A card is a glance and it is drawn over the
    table it was opened from, so every row it grows is a row of the plan it hides —
    `test_a_nine_hundred_word_document_does_not_cover_the_table` holds it under half
    the window. Beside the word, the hill costs the difference between a line of
    chips and a small drawing rather than a whole row of its own. */
-#card .hill { --ball: 9px; --ghost: 6px; max-width: 6.5rem; }
+#card .hill { --ball: 11px; --ghost: 6px; max-width: 6.5rem; }
 #card .card-hill { display: inline-block; vertical-align: middle;
                    margin-left: .35rem; }
 #card .card-chips { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
@@ -3399,10 +3471,11 @@ const HILL = JSON.parse(document.getElementById('hill')?.textContent || 'null');
 function hillHtml(status) {
   if (!HILL) return '';
   const ladder = HILL.ladders.entity;
-  const place = where => `left: ${100 * where[0] / HILL.box[0]}%; `
-    + `top: ${100 * where[1] / HILL.box[1]}%`;
+  const place = word => `left: ${100 * HILL.stops[word][0] / HILL.box[0]}%; `
+    + `top: ${100 * HILL.stops[word][1] / HILL.box[1]}%; `
+    + `--nx: ${HILL.normals[word][0]}; --ny: ${HILL.normals[word][1]}`;
   const ghosts = ladder
-    .map(word => `<span class="hill-ghost" style="${place(HILL.stops[word])}"></span>`)
+    .map(word => `<span class="hill-ghost" style="${place(word)}"></span>`)
     .join('');
   // A word this ladder does not have gets no ball, exactly as the server does it:
   // `status` holds whatever a hand-edited file holds, and the alternative — the
@@ -3410,7 +3483,8 @@ function hillHtml(status) {
   // It is also what makes `hill-${status}` safe to write into a class at all.
   const known = ladder.includes(status);
   const ball = known
-    ? `<span class="hill-ball hill-${status}" style="${place(HILL.stops[status])}"></span>`
+    ? `<span class="hill-ball hill-${status}" data-word="${esc(cardWord(status))}"`
+      + ` style="${place(status)}"></span>`
     : '';
   const said = `${cardWord(status)} — ${known ? HILL.where[status] : 'not on the hill'}`;
   const dim = !known || HILL.off.includes(status);
@@ -11822,6 +11896,15 @@ function attachHill(form) {
     if (!stop) return;
     ball.style.left = stop.style.left;
     ball.style.top = stop.style.top;
+    // Which way is up where it lands, so it rests on the line there rather than
+    // keeping the angle of the place it came from. Copied off the stop rather
+    // than recomputed: the curve is one function in `render.py`.
+    ball.style.setProperty('--nx', stop.style.getPropertyValue('--nx'));
+    ball.style.setProperty('--ny', stop.style.getPropertyValue('--ny'));
+    // The word it is about to take, said while a drag is in flight. `data-word`
+    // on the stop and not `_human` again here: the words on this page come from
+    // one map, and the second copy is the one that goes stale.
+    ball.dataset.word = stop.dataset.word;
     // Only ever one of this ladder's own words, which is why it may be written
     // into a class at all — nothing out of a file reaches this line.
     ball.className = 'hill-ball hill-' + word;
@@ -15160,10 +15243,30 @@ _HILL_SAMPLES = 48
 
 
 def _hill_at(t: float) -> tuple[float, float]:
-    """Where the ball stands at `t` along the hill: 0 at the foot, 1 at the finish."""
+    """Where the line is at `t` along the hill: 0 at the foot, 1 at the finish."""
     x = _HILL_FOOT + t * (_HILL_CREST - _HILL_FOOT)
     y = _HILL_GROUND - _HILL_AMPLITUDE * (1 - math.cos(2 * math.pi * t)) / 2
     return round(x, 2), round(y, 2)
+
+
+def _hill_normal(t: float) -> tuple[float, float]:
+    """Which way is up, out of the hill, at `t`. A unit vector in SVG's axes.
+
+    A stop is a point ON the line, and a ball centred on a point is a ball the
+    line runs through — which is not how a ball rests on a hill. It is lifted
+    along this, by its own radius, in CSS: the lift has to be in painted pixels
+    because the ball is an HTML element sized in px while the drawing is a
+    viewBox that scales, and a lift written in viewBox units would be right at
+    exactly one width. A unit vector times a pixel length is right at all of them.
+
+    `y` grows downward here, so the outward normal is the one with the negative
+    `y`: `(m, -1)` normalised, where `m` is the slope. On the flat — the two ends
+    and the two that came off the path — that is straight up, which is also the
+    answer for a ball resting on level ground.
+    """
+    slope = -_HILL_AMPLITUDE * math.pi * math.sin(2 * math.pi * t) / (_HILL_CREST - _HILL_FOOT)
+    length = math.hypot(slope, 1)
+    return round(slope / length, 4), round(-1 / length, 4)
 
 
 # On the curve for the five words work moves through; on the ground under the
@@ -15173,6 +15276,11 @@ _HILL_ALONG = {"thinking": 0.0, "shaping": 0.25, "ready": 0.5, "in_progress": 0.
 _HILL_OFF_THE_PATH = ("shelved", "dropped")
 _HILL_STOPS = {word: _hill_at(t) for word, t in _HILL_ALONG.items()} | {
     word: (_hill_at(0.5)[0], _HILL_GROUND) for word in _HILL_OFF_THE_PATH
+}
+# And which way each of them is up. Off the path is level ground, so it is the
+# same answer the two ends of the hill give.
+_HILL_NORMALS = {word: _hill_normal(t) for word, t in _HILL_ALONG.items()} | {
+    word: (0.0, -1.0) for word in _HILL_OFF_THE_PATH
 }
 # Which stops a record of each kind may stand on, in ladder order. Derived from
 # the two vocabularies rather than written out beside them: a status added to
@@ -15210,6 +15318,9 @@ def hill_geometry() -> dict:
         "apron": [_HILL_FOOT - _HILL_APRON, _HILL_CREST + _HILL_APRON],
         "path": _hill_path(),
         "stops": {word: list(where) for word, where in _HILL_STOPS.items()},
+        # Which way is up at each of them, so the card rests its ball on the line
+        # the same way the server does rather than working the curve out again.
+        "normals": {word: list(up) for word, up in _HILL_NORMALS.items()},
         "ladders": {kind: list(words) for kind, words in HILL_LADDERS.items()},
         # Position is the channel this control is made of and the one channel a
         # screen reader never gets, so the sentence each coordinate draws travels
@@ -15280,7 +15391,8 @@ _HILL = """
       not decoration: one ball on a curve says where the work is, and a row of
       ghosts says that the curve has places to be and which ones. -#}
   {% for stop in stops %}
-  <span class="hill-ghost" style="left: {{ stop.left }}; top: {{ stop.top }}"></span>
+  <span class="hill-ghost" style="left: {{ stop.left }}; top: {{ stop.top }};
+        --nx: {{ stop.nx }}; --ny: {{ stop.ny }}"></span>
   {% endfor %}
   {#- No ball at all when the status is a word nobody defined. `status` is
       permissive on purpose, so a hand-edited file reaches here holding anything;
@@ -15288,8 +15400,9 @@ _HILL = """
       whose word says what it really is and wrong here, where it would park an
       unrecognised status on the summit and say something false. -#}
   {% if ball %}
-  <span class="hill-ball hill-{{ ball.word }}"
-        style="left: {{ ball.left }}; top: {{ ball.top }}"></span>
+  <span class="hill-ball hill-{{ ball.word }}" data-word="{{ ball.label }}"
+        style="left: {{ ball.left }}; top: {{ ball.top }};
+        --nx: {{ ball.nx }}; --ny: {{ ball.ny }}"></span>
   {% endif %}
   {#- One real radio per stop, so arrow keys, the focus ring, the group and
       "3 of 5" all come from the browser. The input is the hit target and paints
@@ -15298,7 +15411,9 @@ _HILL = """
       and `changed()` with four wrong answers. The value the form serialises is
       the hidden input beside this. -#}
   {% if live %}{% for stop in stops %}
-  <label class="hill-stop" style="left: {{ stop.left }}; top: {{ stop.top }}">
+  <label class="hill-stop hill-{{ stop.word }}" data-word="{{ stop.label }}"
+         style="left: {{ stop.left }}; top: {{ stop.top }};
+         --nx: {{ stop.nx }}; --ny: {{ stop.ny }}">
     <input type="radio" name="{{ group }}" value="{{ stop.word }}"
            data-word="{{ stop.label }}"{% if stop.checked %} checked{% endif %}>
     <span class="sr-only">{{ stop.said }}</span>
@@ -15327,6 +15442,7 @@ def _hill_html(
     stops = []
     for word in words:
         left, top = _hill_percent(_HILL_STOPS[word])
+        up, down = _HILL_NORMALS[word]
         stops.append(
             {
                 "word": word,
@@ -15334,6 +15450,8 @@ def _hill_html(
                 "said": f"{_human(word)} — {_HILL_WHERE[word]}",
                 "left": left,
                 "top": top,
+                "nx": f"{up:g}",
+                "ny": f"{down:g}",
                 "checked": word == status,
             }
         )
@@ -15345,7 +15463,15 @@ def _hill_html(
     ball = None
     if stands_at:
         left, top = _hill_percent(_HILL_STOPS[stands_at])
-        ball = {"word": status, "left": left, "top": top}
+        up, down = _HILL_NORMALS[stands_at]
+        ball = {
+            "word": status,
+            "label": _human(status),
+            "left": left,
+            "top": top,
+            "nx": f"{up:g}",
+            "ny": f"{down:g}",
+        }
     return _fragment(
         _HILL,
         ladder=ladder,

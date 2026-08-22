@@ -16,8 +16,10 @@ fail to keep.
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import date
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,7 @@ from openproj.render import (
     _HILL_ALONG,
     _HILL_BOX,
     _HILL_GROUND,
+    _HILL_NORMALS,
     _HILL_OFF_THE_PATH,
     _HILL_STOPS,
     HILL_LADDERS,
@@ -38,6 +41,7 @@ from openproj.render import (
     _hill_at,
     _hill_html,
     _hill_path,
+    _human,
     hill_geometry,
     render_detail,
     render_table,
@@ -160,7 +164,7 @@ def test_a_promoted_note_stands_where_the_record_it_became_does() -> None:
     drawn = str(_hill_html("promoted", "note"))
     assert "hill-ball hill-promoted" in drawn
     assert "hill-off" not in drawn
-    stood = re.search(r'hill-ball hill-promoted"\s*style="left: ([\d.]+)%', drawn)
+    stood = re.search(r'hill-ball hill-promoted".*?style="left: ([\d.]+)%', drawn, re.S)
     assert stood, "the promoted ball carries no position"
     assert float(stood.group(1)) == pytest.approx(100 * _HILL_STOPS["shaping"][0] / _HILL_BOX[0])
 
@@ -311,6 +315,73 @@ def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Pat
         x, y = _HILL_STOPS[status]
         assert found["across"] == pytest.approx(x / _HILL_BOX[0], abs=0.01), f"{status} across"
         assert found["down"] == pytest.approx(y / _HILL_BOX[1], abs=0.01), f"{status} up"
+
+
+def test_the_ball_rests_on_the_line_at_every_stop_and_every_size(
+    index: Index, tmp_path: Path
+) -> None:
+    """Tangent to the drawn line, not run through by it.
+
+    A ball centred on a point of the curve is a ball half buried in the hill,
+    which is not how a ball sits on a hill. The lift that fixes it is a length in
+    painted pixels along a unit normal, and the reason it can be exact is
+    `vector-effect: non-scaling-stroke`: the line is 2 painted pixels at every
+    size, so the surface is always 1px above the path's own coordinates.
+
+    Measured against the path Chrome actually laid out — `getPointAtLength` walks
+    the real geometry — rather than against the numbers that produced it, because
+    the failure this is written for is a lift that is right in the facts column
+    and wrong in a card. Both sizes, therefore: 15rem is the detail page's and
+    6.5rem is the card's.
+    """
+    browser = chrome()
+    entity_id = sorted(index.entities)[0]
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    found = measured_in(
+        browser, page, tmp_path / "tangent.html", 1100,
+        """
+        document.getElementById('toggle').click();
+        await new Promise(settled => setTimeout(settled, 50));
+        const hill = document.querySelector('.hill[role=radiogroup]');
+        const svg = hill.querySelector('svg');
+        const lines = [hill.querySelector('.hill-line'), hill.querySelector('.hill-ground')];
+        const out = {};
+        for (const width of ['15rem', '6.5rem']) {
+          hill.style.maxWidth = width;
+          await new Promise(settled => setTimeout(settled, 20));
+          const frame = svg.getBoundingClientRect();
+          const scale = frame.width / 120;
+          const gaps = {};
+          for (const stop of hill.querySelectorAll('.hill-stop')) {
+            stop.querySelector('input').click();
+            const at = hill.querySelector('.hill-ball').getBoundingClientRect();
+            const cx = at.x + at.width / 2, cy = at.y + at.height / 2;
+            let nearest = Infinity;
+            for (const line of lines) {
+              const len = line.getTotalLength();
+              for (let step = 0; step <= 600; step++) {
+                const point = line.getPointAtLength(len * step / 600);
+                nearest = Math.min(nearest, Math.hypot(
+                  frame.x + point.x * scale - cx, frame.y + point.y * scale - cy));
+              }
+            }
+            gaps[stop.querySelector('input').value] = nearest - at.width / 2;
+          }
+          out[width] = gaps;
+        }
+        return out;
+        """,
+        height=1400, patience=3500,
+    )
+    for width, gaps in found.items():
+        assert set(gaps) == set(HILL_LADDERS["entity"]), width
+        for word, gap in gaps.items():
+            # One pixel from the path's centre is flush with the painted edge of a
+            # 2px line. Half a pixel of tolerance for the rounding a browser does
+            # when it lays a percentage out on a device pixel.
+            assert gap == pytest.approx(1, abs=0.6), (
+                f"at {width} the {word} ball is {gap:.2f}px from the line, not resting on it"
+            )
 
 
 def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Path) -> None:
@@ -487,3 +558,52 @@ def test_the_hill_takes_a_keyboard(index: Index, tmp_path: Path) -> None:
     assert found["names"] == 1, "the stops are not one group, so arrows will not move between them"
     assert found["count"] == len(HILL_LADDERS["entity"])
     assert found["value"] == HILL_LADDERS["entity"][1]
+
+
+def test_every_stop_knows_which_way_is_up() -> None:
+    """The ball rests ON the line, and this is the direction it is lifted along.
+
+    A unit vector, because the lift is a length in painted pixels: the ball is an
+    HTML element sized in px — so that it can carry a real radio — and the drawing
+    is a viewBox that scales with the column it sits in. Anything but a unit
+    vector and the lift is a different distance at every angle.
+
+    Pointing up, which in SVG's axes is a negative `y`. A stop whose normal points
+    into the hill is a ball buried in it.
+    """
+    for word, (nx, ny) in _HILL_NORMALS.items():
+        assert math.hypot(nx, ny) == pytest.approx(1, abs=0.001), f"{word}'s normal is not a unit"
+        assert ny < 0, f"{word} is lifted into the hill rather than out of it"
+    # The two ends and the two that came off the path are on level ground, and
+    # level ground's normal is straight up.
+    for word in ("thinking", "done", *_HILL_OFF_THE_PATH):
+        assert _HILL_NORMALS[word] == (0.0, -1.0) or _HILL_NORMALS[word] == (-0.0, -1.0)
+    # And the two slopes lean opposite ways, which is the whole shape of the thing.
+    assert _HILL_NORMALS["shaping"][0] < 0 < _HILL_NORMALS["in_progress"][0]
+
+
+def test_the_hill_can_say_the_word_without_printing_it() -> None:
+    """A position means nothing to somebody who has not been told what it means.
+
+    jcanton, 2026-08-22: "people are forced to know what the positions mean". So
+    every stop and the ball carry the word, and the stylesheet shows it on hover,
+    on focus and while a drag is in flight. Not printed permanently: the argument
+    for replacing the chip was that the drawing says something the word cannot,
+    and a word standing beside it always is the chip back with extra steps.
+    """
+    live = str(_hill_html("shaping", live=True))
+    for word in HILL_LADDERS["entity"]:
+        assert f'data-word="{_human(word)}"' in live, word
+    assert 'class="hill-ball hill-shaping" data-word="Shaping"' in live
+    # And it is the app's own status chip rather than a tooltip that happens to
+    # say the same word: the colours come from the same tokens `.chip.st-X` uses.
+    assert ".hill-ball.hill-shaping::after" in _rendered_shell()
+    assert "--st-shaping-soft" in _rendered_shell()
+
+
+@cache
+def _rendered_shell() -> str:
+    """Any page, for a question about the one stylesheet every page carries."""
+    entities, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
+    index = build_index(entities, config, date(2026, 8, 17))
+    return render_detail(index, ROUTES, only=sorted(index.entities)[0])
