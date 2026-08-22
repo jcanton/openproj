@@ -17,7 +17,7 @@ decisions:
   as the guarantee that the author string was not client-supplied. Hence a header
   and a query parameter that both try to be somebody else.
 * **The writable surface is a closed set by construction.** The path is derived
-  from an id that has to match `^(proj|pitch|task)-[0-9a-f]{6}$` first, and the
+  from an id that has to match the one KINDS-derived pattern first, and the
   kind comes from the id prefix — not from the body, and never from string
   concatenation. Branch protection (spec §13) means a bad write cannot be
   force-pushed away, so the bound has to be at the door.
@@ -664,8 +664,9 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     is not decoration: `git shortlog --group=trailer:co-authored-by` counts the
     name, and GitHub puts their avatar on the commit. Measured on this route and
     on the cycle route beside it, both of which shipped it; the issue and note
-    routes happened to be closed already, by gates that refuse a field name no
-    model declares.
+    routes happened to be closed already, by gates that refused a field name no
+    model declares. The issue and note routes went through this same gate when
+    they were folded into /api/entity.
 
     That matters more here than it would anywhere else, because live co-editing
     is what makes `Co-authored-by:` the record of who wrote a shaping document. A
@@ -694,25 +695,6 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     )
     assert cycle.status_code == 200, cycle.text
     assert trailers_of(repo_path, cycle.json()["commit"]) == {}
-
-    # The two that were already closed, held closed. Refused at the gate rather
-    # than committed with a sanitised message, which is the stronger answer and
-    # the one this pins.
-    opened = client.post("/api/issue", json={"title": "a thing somebody noticed"})
-    assert opened.status_code == 200, opened.text
-    refused = client.patch(
-        f"/api/issue/{opened.json()['id']}",
-        json={"base_commit": head(client), "fields": {FORGED: "hi"}},
-    )
-    assert refused.status_code == 422, refused.text
-
-    written = client.post("/api/note", json={"title": "an idea nobody has shaped"})
-    assert written.status_code == 200, written.text
-    refused = client.patch(
-        f"/api/note/{written.json()['id']}",
-        json={"base_commit": head(client), "fields": {FORGED: "hi"}},
-    )
-    assert refused.status_code == 422, refused.text
 
 
 def test_a_commit_message_still_names_the_fields_a_save_moved(
@@ -1439,8 +1421,8 @@ def test_an_id_that_is_not_an_id_never_becomes_a_path(
 
 
 def test_a_create_cannot_choose_its_own_kind_of_directory(client: TestClient, repo_path: Path):
-    """`kind` is a closed set of three, and it is the only thing that picks the
-    directory. Anything else is a 422 before a path is built."""
+    """`kind` is a closed set read off the ladder, and it is the only thing that
+    picks the directory. Anything else is a 422 before a path is built."""
     base = git_head(repo_path)
     response = create(client, {**VALID_TASK, "kind": "../config"})
 
@@ -3784,14 +3766,16 @@ def test_nothing_edits_a_record_after_it_has_been_parsed(client: TestClient):
 
 
 def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
-    """Entities, cycles, issues, notes and people, each parsed once per
-    (blob, path).
+    """Entities (issues and notes now among them), cycles and people, each
+    parsed once per (blob, path).
 
-    It was written for entities alone and the other four went on doing a full
+    It was written for entities alone and the others went on doing a full
     walk plus a read and a parse of every file on EVERY request, warm or cold —
     which does not decay, and notes and issues are exactly what a betting table
-    accumulates. Measured on a plan with 300 of each: `/` 52 ms to 19 ms,
-    `/notes` 54 to 15, `/issues` 40 to 15.
+    accumulates. Measured on a plan with 300 of each, back when the inboxes had
+    routes of their own: `/` 52 ms to 19 ms, `/notes` 54 to 15, `/issues` 40 to
+    15. The landing now reads every kind, so `/` alone proves issues and notes
+    come through the shared blob cache.
 
     What this asserts is that all five actually go through it, which is the thing
     that silently stops being true when somebody adds a sixth kind or writes a
@@ -3830,7 +3814,7 @@ def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
     app = create_app(repo_path, auth="dev", secret=SECRET)
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
-        for route in ("/", "/notes", "/issues", "/cycles", "/people"):
+        for route in ("/", "/cycles", "/people"):
             assert client.get(route).status_code == 200, route
 
         held = {key[1].split("/")[0] for key in web._PARSED}

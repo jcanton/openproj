@@ -100,7 +100,7 @@ def test_an_unknown_subcommand_fails_rather_than_doing_something(capsys):
     assert main(["frobnicate"]) == 2
 
 
-def test_the_shipped_demo_corpus_validates_clean(demo_root: Path):
+def test_the_shipped_demo_corpus_validates_clean(demo_root: Path, capsys):
     """The demo is the first thing anyone runs. A demo that fails its own check
     teaches people the check is noise.
 
@@ -108,6 +108,13 @@ def test_the_shipped_demo_corpus_validates_clean(demo_root: Path):
     nine blockers because migrated data is messy and the validator has to say so.
     """
     assert main(["check", str(demo_root)]) == 0
+    # Added by the commit that made a note a rung: issues and notes acquired
+    # `openproj check` coverage they never had, and this warning is the
+    # coverage arriving — the web banner said it all along.
+    assert (
+        "warning: note-55cc66: written_by: dastrm is not in config/people.yaml"
+        in capsys.readouterr().out
+    )
 
 
 def test_serve_is_reachable_from_the_command_line():

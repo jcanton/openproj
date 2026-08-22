@@ -49,8 +49,6 @@ def served_pages(index: Index) -> dict[str, str]:
     the controls this is about."""
     from openproj.render import (
         render_graph,
-        render_issues,
-        render_notes,
         render_timeline,
     )
 
@@ -60,8 +58,6 @@ def served_pages(index: Index) -> dict[str, str]:
         "timeline": render_timeline(index, ROUTES),
         "detail": render_detail(index, ROUTES, only=sorted(index.entities)[0],
                                 base_commit=HEAD, may_write=True),
-        "issues": render_issues(index, ROUTES, base_commit=HEAD),
-        "notes": render_notes(index, ROUTES, base_commit=HEAD),
         # The editing surface, which a served detail page does not show: the
         # toolbar, the view switcher and the status bar are all `.field`s inside
         # `article.entity.editing`, so on a record somebody is only READING they
@@ -930,11 +926,14 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
 
 @pytest.fixture
 def record(index: Index) -> Sheet:
-    """An issue page: `_RECORD_STYLE`, then `_EDITING_STYLE`, then
-    `_SUGGEST_STYLE`, after the shell."""
-    from openproj.render import render_issue
-
-    return sheet_of(render_issue(index, links=ROUTES, base_commit=HEAD))
+    """The one record page there is now. This fixture used to be the issue
+    page, kept as a second sample of the same editing surface so the two
+    stylesheets could not drift; the second stylesheet is gone with the page,
+    and what these tests still pin is true of the survivor."""
+    return sheet_of(
+        render_detail(index, ROUTES, only=sorted(index.records)[0], base_commit=HEAD,
+                      may_write=True)
+    )
 
 
 _RECORD_EDITING = [
@@ -943,8 +942,9 @@ _RECORD_EDITING = [
 
 
 def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record: Sheet):
-    """The fight `tests/test_issues.py` was written for, re-resolved after the
-    mode class moved off `<body>` and onto the article.
+    """The fight the old issue-page suite was written for, re-resolved after
+    the mode class moved off `<body>` and onto the article — and now held on
+    the one surviving surface.
 
     `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1), so
     the tie is decided by order and nothing else — which is why the answer has to
@@ -973,17 +973,18 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
     )
 
 
-def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(
-    record: Sheet, index: Index
-):
-    """The one declaration for the box and the column of numbers beside it, on
-    the sheet that used to carry a second copy.
+def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
+    """The one declaration for the box and the column of numbers beside it.
 
     `--gutter` is written in `ch`, and `ch` is resolved in the font of whoever
     uses the value — so a box in one face and a gutter in another is a column of
     numbers that does not line up with the lines it names. And `width: 100%`
-    means the box: the record pages had no `box-sizing` rule of their own, so
-    their textarea hung past the container it was in.
+    means the box: the record pages once had no `box-sizing` rule of their own,
+    so their textarea hung past the container it was in.
+
+    The 44rem reading-measure cap this asserted is gone with `_RECORD_STYLE`:
+    on the surviving sheet the measure lives on `article.entity` as
+    `--measure`, dragged by `#grip`, and the box fills the article.
     """
     box = _RECORD_EDITING + [
         el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
@@ -992,36 +993,26 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(
     assert record.value(box, "font-family") == "var(--font-mono)", says(
         record, box, "font-family"
     )
-    # **This engine cannot answer the same question on the other sheet, and that
-    # is worth stating rather than leaving as a gap.** `_DETAIL_STYLE` carries
+    # **This engine cannot see a shorthand fight, and that is worth stating
+    # rather than leaving as a gap.** `_DETAIL_STYLE` carries
     # `input.field, select.field, textarea.field { font: inherit }` at the same
-    # (0,1,1) as the declaration above, and a shorthand is what decides the face
-    # there. `_declarations` records a property by the name it is written under,
-    # so `font` and `font-family` are two different properties here and no
-    # conflict is visible — while a browser expands one into the other and the
-    # order the two stylesheets are concatenated in decides which wins. So the
-    # ordering argument is asked of Chrome instead, in
+    # (0,1,1) as the `font-family` declaration above, and a shorthand is what
+    # decides the face. `_declarations` records a property by the name it is
+    # written under, so `font` and `font-family` are two different properties
+    # here and no conflict is visible — while a browser expands one into the
+    # other and concatenation order decides which wins. So the ordering
+    # argument is asked of Chrome instead, in
     # `test_the_box_and_the_column_beside_it_are_one_face`.
-    detail_sheet = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
-    detail_box = [
-        el("body"), el("main", id="main"), el("article", "entity editing"),
-        el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
-        el("textarea", "field body-field"),
-    ]
-    assert detail_sheet.value(detail_box, "font") == "inherit", (
+    assert record.value(box, "font") == "inherit", (
         "the shorthand this note is about is gone, so either the browser test it "
         "points at is now the only guard or it is no longer needed\n"
-        + says(detail_sheet, detail_box, "font")
+        + says(record, box, "font")
     )
 
     assert record.value(box, "box-sizing") == "border-box", says(record, box, "box-sizing")
-    assert record.value(box, "max-width") == "44rem", (
-        "the reading measure this page caps its box at outside the surface\n"
-        + says(record, box, "max-width")
-    )
 
-    # And inside the full-page surface the measure loses, because the pane IS the
-    # window. (0,2,1) against (0,1,0), so this one is weight and not order.
+    # And inside the full-page surface any measure loses, because the pane IS
+    # the window.
     inside = [
         el("body", "fullpage"), el("main", id="main"),
         el("article", "entity editing full view-both"),
@@ -1031,73 +1022,61 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(
     assert record.value(inside, "max-width") == "none", says(record, inside, "max-width")
 
 
-def test_a_hidden_control_stays_hidden_on_both_of_the_two_stylesheets(
-    record: Sheet, index: Index
-):
+def test_a_hidden_control_stays_hidden_on_the_one_stylesheet(record: Sheet):
     """`[hidden] { display: none }` is the UA sheet's, and an author rule of any
-    weight beats it. `_DETAIL_STYLE` had the guard that puts it back;
-    `_RECORD_STYLE` did not, so the rendered pane — which is a `.field` and is
-    `hidden` until a view asks for it — would have been drawn on this page from
-    the moment it gained one. The guard is now written once, for both.
+    weight beats it. This ran over two stylesheets while there were two; the
+    guard survives on the one editing surface there is, and the rendered pane —
+    a `.field`, `hidden` until a view asks for it — must stay dark.
     """
-    detail = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
-    for name, sheet in (("issue", record), ("detail", detail)):
-        pane = [
-            el("body"), el("main", id="main"), el("article", "entity editing"),
-            el("div", "field doc", id="body-preview", hidden="hidden"),
-        ]
-        won = sheet.winner(pane, "display")
-        assert won and won.value == "none", (
-            f"on the {name} page a hidden pane is displayed by {won}\n"
-            + says(sheet, pane, "display")
-        )
+    pane = [
+        el("body"), el("main", id="main"), el("article", "entity editing"),
+        el("div", "field doc", id="body-preview", hidden="hidden"),
+    ]
+    won = record.winner(pane, "display")
+    assert won and won.value == "none", (
+        f"a hidden pane is displayed by {won}\n" + says(record, pane, "display")
+    )
 
 
-def test_the_handle_between_the_panes_is_the_same_control_on_both_stylesheets(
-    record: Sheet, index: Index
+def test_the_handle_between_the_panes_is_one_control_on_the_one_stylesheet(
+    record: Sheet,
 ):
-    """The splitter resolved against `_RECORD_STYLE` as well as `_DETAIL_STYLE`.
+    """The splitter, resolved against the surviving sheet.
 
-    The two are the failure mode this file exists for: a second copy of the
-    editing rules under a different mode class, where a rule that wins on one page
-    can lose on the other and nothing between them says so. The issue and note
-    pages draw this handle — `render_issue` and `render_note` emit `_SPLIT_HANDLE`
-    into the same `.bodysplit` the detail page does — so both halves have to be
-    asked, and the fight worth asking about is the DEFAULT: `#splitter` is (1,0,0)
-    and the rules that give it a box are class selectors, so if a sheet ever loses
-    the id rule the separator appears on every page that inlines it with no
-    document to divide.
+    While there were two stylesheets this looped over both, because a second
+    copy of the editing rules under a different mode class is the failure mode
+    this file exists for. The fight worth asking about is unchanged: `#splitter`
+    is (1,0,0) and the rules that give it a box are class selectors, so if the
+    sheet ever loses the id rule the separator appears with no document to
+    divide.
 
     `touch-action` is here for the same reason it is asserted in the browser: a
     handle a finger can start a pan on is one the browser may take the pointer
     back from mid-drag.
     """
-    detail = sheet_of(render_detail(index, ROUTES, base_commit=HEAD))
-    for name, sheet in (("issue", record), ("detail", detail)):
-        inside = [
-            el("body", "fullpage"), el("main", id="main"),
-            el("article", "entity editing full view-both"), el("form", id="edit"),
-            el("div", "bodysplit"), el("div", id="splitter"),
-        ]
-        won = sheet.winner(inside, "display")
-        assert won and won.value == "block", (
-            f"on the {name} page the handle in the split view is displayed by {won}\n"
-            + says(sheet, inside, "display")
-        )
-        assert sheet.value(inside, "touch-action") == "none", (
-            f"on the {name} page a finger on the handle can start a pan\n"
-            + says(sheet, inside, "touch-action")
-        )
+    inside = [
+        el("body", "fullpage"), el("main", id="main"),
+        el("article", "entity editing full view-both"), el("form", id="edit"),
+        el("div", "bodysplit"), el("div", id="splitter"),
+    ]
+    won = record.winner(inside, "display")
+    assert won and won.value == "block", (
+        f"the handle in the split view is displayed by {won}\n"
+        + says(record, inside, "display")
+    )
+    assert record.value(inside, "touch-action") == "none", (
+        "a finger on the handle can start a pan\n" + says(record, inside, "touch-action")
+    )
 
-        outside = [
-            el("body"), el("main", id="main"), el("article", "entity editing"),
-            el("div", "bodysplit"), el("div", id="splitter"),
-        ]
-        off = sheet.winner(outside, "display")
-        assert off and off.value == "none" and off.selector == "#splitter", (
-            f"on the {name} page a splitter outside the split view is displayed by {off}\n"
-            + says(sheet, outside, "display")
-        )
+    outside = [
+        el("body"), el("main", id="main"), el("article", "entity editing"),
+        el("div", "bodysplit"), el("div", id="splitter"),
+    ]
+    off = record.winner(outside, "display")
+    assert off and off.value == "none" and off.selector == "#splitter", (
+        f"a splitter outside the split view is displayed by {off}\n"
+        + says(record, outside, "display")
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1221,7 +1200,7 @@ def bare(one: dict) -> bool:
 
 
 @pytest.mark.parametrize(
-    "view", ["table", "graph", "timeline", "detail", "issues", "notes", "create"]
+    "view", ["table", "graph", "timeline", "detail", "create"]
 )
 def test_every_control_on_every_page_is_drawn_the_same(view, served_pages, tmp_path):
     """jcanton, 2026-08-20, on finding "Preview the body" still native: "I thought

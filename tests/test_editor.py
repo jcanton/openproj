@@ -2479,7 +2479,7 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
     assert got["grip"], "the width grip is on screen beside the pane splitter"
 
 
-@pytest.mark.parametrize("where", ["/detail/{task}", "/new", "/issue/new", "/note/new"])
+@pytest.mark.parametrize("where", ["/detail/{task}", "/new?kind=issue", "/new?kind=note", "/new"])
 def test_every_surface_that_splits_carries_the_same_handle(client: TestClient, where: str):
     """One control, four templates — the argument `_VIEW_SEGMENTS` is one constant
     for, applied to the thing between the panes.
@@ -5451,14 +5451,17 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
     way would be measuring something else and failing for a reason it did not
     name.
 
-    A media query and not a container query. The file's only
-    `container-type: inline-size` is on `article.entity` inside `_DETAIL_STYLE`,
-    and the note and issue pages ship `_RECORD_STYLE + _SUGGEST_STYLE` and never
-    load it — which is why this is parametrised over both surfaces. A container
-    query was patched in and measured byte-identical to no fix at all here.
+    A media query and not a container query — a choice made when the note and
+    issue pages shipped `_RECORD_STYLE + _SUGGEST_STYLE` and never loaded
+    `_DETAIL_STYLE`'s `container-type: inline-size`; a container query patched
+    in there was byte-identical to no fix at all. Those pages are the shared
+    surface now; the parametrisation over both a stored record and a create
+    form stays, because the two open in different modes.
     """
     page = (
-        client.get(f"/detail/{TASK}").text if where == "detail" else client.get("/note/new").text
+        client.get(f"/detail/{TASK}").text
+        if where == "detail"
+        else client.get("/new?kind=note").text
     )
     got = measured_in(
         chrome(), page, tmp_path / f"bar-{where}-{width}.html", width, _TOOLBAR_AT_A_WIDTH,

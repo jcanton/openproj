@@ -246,8 +246,7 @@ def test_the_server_answers_the_same_two_values(index: Index, page: str, tmp_pat
 # --------------------------------------------------------------------------- #
 
 
-PAGES = ("records", "table", "graph", "timeline", "people", "cycle", "detail", "issues",
-         "notes")
+PAGES = ("records", "table", "graph", "timeline", "people", "cycle", "detail")
 
 
 def every_page(index: Index) -> dict[str, str]:
@@ -255,8 +254,6 @@ def every_page(index: Index) -> dict[str, str]:
         render_cycle,
         render_detail,
         render_graph,
-        render_issues,
-        render_notes,
         render_people,
         render_records,
         render_timeline,
@@ -275,8 +272,6 @@ def every_page(index: Index) -> dict[str, str]:
         "people": render_people(index, editable=True),
         "cycle": render_cycle(index, number, base_commit=HEAD),
         "detail": render_detail(index, base_commit=HEAD),
-        "issues": render_issues(index, base_commit=HEAD),
-        "notes": render_notes(index, base_commit=HEAD),
     }
 
 

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from openproj.cli import main
 from openproj.model import (
-    _ID_PATTERN,
+    ID_PATTERN,
     KINDS,
     Config,
     Entity,
@@ -36,7 +36,7 @@ OTHER_PITCH_ID = "pitch-eee555"
 PROJECT_ID = "proj-ccc333"
 
 NEEDS_TITLE = "title must not be empty"
-BAD_ID_PATTERN = "id must match " + _ID_PATTERN.pattern
+BAD_ID_PATTERN = "id must match " + ID_PATTERN.pattern
 NEEDS_OWNER = "a ready entity needs an owner"
 NEEDS_REVIEWER = "a ready entity needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"

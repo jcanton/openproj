@@ -14,15 +14,15 @@ guarantee that nobody can name themselves in a request body.
 
 **The writable surface is closed by construction.** An id is admitted against a
 regex before anything is concatenated, and the directory comes from its prefix.
-`projects|pitches|tasks/<id>.md` is the shape of it, and every path added since
-is admitted the same way and by nothing else: `cycles/<n>.md` by a number,
-`issues/<id>.md` and `notes/<id>.md` by their own patterns, `assets/<sha>` by the
-hash of the bytes, and `people/<login>.md` by `model.LOGIN_PATTERN` (see
-`PUT /api/icon`). No route takes a path, a directory or a file name from a
-request — `POST /api/promote` writes two files and takes neither of their names,
-because a record id and a kind decide both. This matters more than
-usual because branch protection means a bad write cannot be force-pushed away
-afterwards.
+`<directory>/<id>.md` for every rung of the ladder — issues and notes included,
+through the one pattern `KINDS` derives — is the shape of it, and every path
+added since is admitted the same way and by nothing else: `cycles/<n>.md` by a
+number, `assets/<sha>` by the hash of the bytes, and `people/<login>.md` by
+`model.LOGIN_PATTERN` (see `PUT /api/icon`). No route takes a path, a directory
+or a file name from a request — `POST /api/promote` writes two files and takes
+neither of their names, because a record id and a kind decide both. This matters
+more than usual because branch protection means a bad write cannot be
+force-pushed away afterwards.
 
 **A save preserves the file.** Only touched fields travel, and `patch_text` applies
 them through a round-trip loader so comments, key order and list style survive.
@@ -48,7 +48,8 @@ import time
 from collections import deque
 from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
+from urllib.parse import quote
 
 import httpx
 import pygit2
@@ -70,25 +71,20 @@ from .auth import (
 from .index import Index, build_index, cascade_of
 from .model import (
     CONFIG_FILES,
-    ISSUE_STATUS,
+    ID_PATTERN,
     KINDS,
     MAX_BODY_BYTES,
-    NOTE_ID_PATTERN,
-    NOTE_STATUS,
     PEOPLE_DIR,
     RUNG,
     Config,
     Cycle,
     Entity,
-    Issue,
-    Note,
     Person,
     Unreadable,
+    _an,
     edited_by_id,
     loop_made,
     parse_cycle_text,
-    parse_issue_text,
-    parse_note_text,
     parse_person_text,
     parse_text,
     patch_text,
@@ -136,15 +132,14 @@ SESSION_COOKIE = "__Host-openproj_session"
 SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
 
-# Derived from the ladder, like `DIRECTORY` and `PREFIX` below it. Hand-written,
-# it was three kinds, and the drift was user-visible: `prod` was missing, so
-# `POST /api/entity` minted product ids (that route reads `PREFIX`, which was
-# already derived) that `_directory_for` then answered 400 to — a product could
-# be created and never patched or deleted. `\A`/`\Z` and not `^`/`$` because in
-# Python `$` also matches before a trailing newline, and this pattern is what
-# keeps an id out of paths — `task-a1b2c3\n` must not become
-# `tasks/task-a1b2c3\n.md`.
-ID_PATTERN = re.compile(r"\A(" + "|".join(rung.prefix for rung in KINDS) + r")-[0-9a-f]{6}\Z")
+# `ID_PATTERN` is imported from `model.py`, where its comment carries the whole
+# argument: one KINDS-derived pattern for every rung, `\A`/`\Z` anchored so a
+# trailing newline cannot ride an id into a path, judged identically by the
+# validator and by this file's write doors. A second derivation here — which is
+# what stood on this line — was two spellings of one rule, and they had already
+# disagreed once about the anchors: `validate_all` blessed a trailing-newline id
+# every API write refused.
+#
 # Off the ladder in `model.py`, so a rung added there is a directory here without
 # anybody remembering to come and add one.
 DIRECTORY = {rung.name: rung.directory for rung in KINDS}
@@ -158,6 +153,25 @@ PREFIX = {rung.name: rung.prefix for rung in KINDS}
 # which directory its file lives in, and which status vocabulary judges a write
 # to it.
 KIND_OF_PREFIX = {rung.prefix: rung.name for rung in KINDS}
+
+
+class Inbox(NamedTuple):
+    """What the server owns when an inbox record is created, and the link a
+    promotion writes on it. One row per unplanned rung, because these were the
+    defaults of `POST /api/issue` and `POST /api/note` — the routes this table
+    replaced — and losing them would make the shortest write paths in the tool
+    ask for four fields instead of a title."""
+
+    author: str  # defaults to the signed-in login; the form may say otherwise
+    dated: str   # always the server's: when a record was made is not an opinion
+    opens: str   # the status a fresh record starts in
+    link: str    # what /api/promote appends the new record's id to
+
+
+INBOXES = {
+    "issue": Inbox("reported_by", "opened_on", "ready", "pitched_into"),
+    "note": Inbox("written_by", "written_on", "thinking", "became"),
+}
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
 # the editor's status bar gained a second reader for it, and it is re-exported
@@ -273,8 +287,6 @@ CYCLE_DIR = "cycles"
 # writable surface closed by construction, and widening it to admit a fourth
 # shape is how that property gets lost by degrees.
 CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
-ISSUE_DIR = "issues"
-ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
 # The longest a cycle may be, betting table to review meeting. It was a length in
 # weeks with no bound at all, so `build_weeks: 500000` — three keystrokes and a
 # confirmation — committed a cycle whose end date is past the end of the
@@ -305,44 +317,6 @@ def _cycles_at(store: Store, commit: str) -> tuple[list[Cycle], list[Unreadable]
 
 def _cycle_path(number: int) -> str:
     return f"{CYCLE_DIR}/{number:04d}.md"
-
-
-def _issues_at(store: Store, commit: str) -> tuple[list[Issue], list[Unreadable]]:
-    return _read_records(store, commit, [ISSUE_DIR], parse_issue_text)
-
-
-def _issue_path(issue_id: str) -> str:
-    """The one place an issue id becomes part of a path.
-
-    Checked against its own pattern rather than against the entity one: entity
-    ids decide `projects|pitches|tasks/<id>.md`, and admitting a fourth shape
-    there would widen the surface that regex exists to keep closed.
-    """
-    if not ISSUE_ID_PATTERN.match(issue_id):
-        raise HTTPException(400, f"{issue_id!r} is not an issue id")
-    return f"{ISSUE_DIR}/{issue_id}.md"
-
-
-NOTE_DIR = "notes"
-
-
-def _notes_at(store: Store, commit: str) -> tuple[list[Note], list[Unreadable]]:
-    return _read_records(store, commit, [NOTE_DIR], parse_note_text)
-
-
-def _note_path(note_id: str) -> str:
-    """The one place a note id becomes part of a path.
-
-    `NOTE_ID_PATTERN` is imported from `model` rather than written out again here
-    the way the issue pattern above is. The same regex decides what the validator
-    calls a legal id and what this concatenates into `notes/<id>.md`, and two
-    copies of that rule is how the surface it keeps closed gets opened by degrees
-    — the check being in two files is exactly what let `people/team/ann.md` be a
-    record to one half of this application and not to the other.
-    """
-    if not NOTE_ID_PATTERN.match(note_id):
-        raise HTTPException(400, f"{note_id!r} is not a note id")
-    return f"{NOTE_DIR}/{note_id}.md"
 
 
 def _people_at(store: Store, commit: str) -> tuple[list[Person], list[Unreadable]]:
@@ -400,12 +374,10 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
     # The cycle records last, so a record supersedes the dates in cycles.yaml the
     # same way it does under the CLI.
     plans, refused_plans = _cycles_at(store, commit)
-    issues, refused_issues = _issues_at(store, commit)
-    notes, refused_notes = _notes_at(store, commit)
     people, refused_people = _people_at(store, commit)
     return (
-        config.with_plans(plans).with_issues(issues).with_notes(notes).with_people(people),
-        [*refused, *refused_plans, *refused_issues, *refused_notes, *refused_people],
+        config.with_plans(plans).with_people(people),
+        [*refused, *refused_plans, *refused_people],
     )
 
 
@@ -443,15 +415,16 @@ _PARSED: dict[tuple[str, str], object] = {}
 def _read_records(store: Store, commit: str, where, parse):
     """Every record under `where` at this commit, parsed once per (blob, path).
 
-    One function for all five kinds. It was written for entities alone, and the
-    other four — cycles, issues, notes, people — went on doing a full tree walk
-    plus a read and a parse of every file on EVERY request, warm or cold. That
-    does not decay, and notes and issues are exactly what a betting table
-    accumulates. Measured on a plan with 300 of each: `/` 52 ms to 19 ms,
-    `/notes` 54 to 15, `/issues` 40 to 15.
+    One function for every walk. It was written for entities alone, and the
+    others — cycles, people, and the then-separate issue and note readers —
+    went on doing a full tree walk plus a read and a parse of every file on
+    EVERY request, warm or cold. That does not decay, and notes and issues are
+    exactly what a betting table accumulates (measured on a plan with 300 of
+    each, back when they had pages of their own: `/` 52 ms to 19 ms, `/notes`
+    54 to 15, `/issues` 40 to 15 — they ride the entity walk now).
 
-    All five already funnelled through `readable`, so this is one shape rather
-    than five.
+    Every walk already funnelled through `readable`, so this is one shape
+    rather than one per kind.
     """
     blobs = store.blobs(commit)
     paths, too_deep = record_paths_in(where, sorted(blobs))
@@ -473,9 +446,9 @@ def _read_records(store: Store, commit: str, where, parse):
     # cache into an overhead. A file that would not parse is not held at all: it
     # has no answer, and the next read has to produce the same refusal for the
     # banner to go on saying so.
-    # Both numbers against the WHOLE tree, not the kind being read. Five kinds
-    # share this dict: a keep-set built from `paths` alone means reading entities
-    # evicts every note, and a threshold measured against `paths` means reading
+    # Both numbers against the WHOLE tree, not the kind being read. Several
+    # walks share this dict: a keep-set built from `paths` alone means reading
+    # entities evicts every person, and a threshold measured against `paths` means reading
     # cycles — of which a plan has two — prunes a six-hundred-entry cache on every
     # request. Measured with the threshold wrong, every page came out SLOWER than
     # with no cache at all: `/issues` 40 ms uncached, 91 ms with the bug, 15 ms
@@ -593,45 +566,8 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "person_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by")
-
-
-def _reject_bad_issue(fields: dict) -> None:
-    """A form returns strings, and an issue's fields are few enough to name."""
-    unknown = sorted(set(fields) - set(Issue.model_fields))
-    if unknown:
-        raise HTTPException(422, f"an issue has no {', '.join(unknown)}")
-    for name in ("tags", "pitched_into"):
-        if name in fields and not isinstance(fields[name], list):
-            raise HTTPException(422, f"{name} must be a list")
-    status = fields.get("status")
-    if status is not None and status not in ISSUE_STATUS:
-        raise HTTPException(422, f"{status!r} is not a status for an issue")
-
-
-def _reject_bad_note(fields: dict) -> None:
-    """A form returns strings, and a note has fewer fields than anything else here.
-
-    Its own function rather than `_reject_bad_issue` with a model argument: the
-    two records share a shape today and are meant to diverge — the whole point of
-    having both is that they are different questions — and one gate serving two
-    vocabularies is a gate that gets a parameter and then an `if` and then admits
-    a status to the wrong record.
-    """
-    unknown = sorted(set(fields) - set(Note.model_fields))
-    if unknown:
-        raise HTTPException(422, f"a note has no {', '.join(unknown)}")
-    for name in ("tags", "became"):
-        if name in fields and not isinstance(fields[name], list):
-            raise HTTPException(422, f"{name} must be a list")
-    status = fields.get("status")
-    if status is not None and status not in NOTE_STATUS:
-        raise HTTPException(
-            422,
-            f"{status!r} is not a status for a note: expected one of "
-            f"{', '.join(NOTE_STATUS)}. A note that became something is promoted, "
-            "which is read off what it became rather than typed.",
-        )
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by",
+          "pitched_into", "became")
 
 
 def _deletion_message(entity_id: str, doomed: list[str], edited: list[str]) -> str:
@@ -682,15 +618,15 @@ def _reject_bad_types(fields: dict) -> None:
 def _reject_bad_status(kind: str, fields: dict) -> None:
     """A status outside this kind's vocabulary, refused before anything commits.
 
-    Off the ladder, which is what makes one gate safe where `_reject_bad_note`
-    above argues a shared gate is not: its fear was a parameter, then an `if`,
-    then a word admitted to the wrong record — and a vocabulary that travels on
-    the rung has no `if` to get wrong. (Those two gates keep standing in front
-    of their own routes until the routes go.) A kind with `statuses=()` does
-    not read the field at all, so a word there is unread rather than undefined:
-    the validator already warns about it beside the record, and refusing it
-    here would make the API door stricter than the hand-written file it must
-    stay equal to.
+    Off the ladder, which is what makes one gate safe where the deleted
+    bespoke note gate argued a shared gate is not: its fear was a parameter,
+    then an `if`, then a word admitted to the wrong record — and a vocabulary
+    that travels on the rung has no `if` to get wrong. This is the gate that
+    stands in front of issues and notes now those routes are gone. A kind with
+    `statuses=()` does not read the field at all, so a word there is unread
+    rather than undefined: the validator already warns about it beside the
+    record, and refusing it here would make the API door stricter than the
+    hand-written file it must stay equal to.
     """
     status = fields.get("status")
     if status is None or not RUNG[kind].statuses:
@@ -698,7 +634,7 @@ def _reject_bad_status(kind: str, fields: dict) -> None:
     if status not in RUNG[kind].statuses:
         raise HTTPException(
             422,
-            f"status: {status!r} is not a status for a {kind}: expected one of "
+            f"status: {status!r} is not a status for {_an(kind)}: expected one of "
             f"{', '.join(RUNG[kind].statuses)}",
         )
 
@@ -788,8 +724,6 @@ def _schema_names(*models: type[BaseModel]) -> tuple[str, ...]:
 # it. (A `Product` has no field of its own today, so this list is unchanged by
 # it — which is exactly why writing the kinds out here would have gone unnoticed.)
 ENTITY_FIELDS = _schema_names(*(rung.model for rung in KINDS))
-ISSUE_FIELDS = _schema_names(Issue)
-NOTE_FIELDS = _schema_names(Note)
 CYCLE_FIELDS = _schema_names(Cycle)
 
 
@@ -1425,225 +1359,37 @@ def create_app(
         asked = request.query_params.get("editor", "")
         return asked if asked in (render.ACE, render.PLAIN) else ""
 
-    @app.get("/issues", response_class=HTMLResponse)
-    def issues() -> HTMLResponse:
-        commit, index = index_now()
-        return page(render.render_issues(index, render.ROUTES, commit))
+    # The inbox routes, kept as addresses and nothing else. Bookmarks, commit
+    # messages and chat scrollback are full of these URLs; a URL that answered
+    # 200 last week and 404 this week reads as a deleted record, not a moved
+    # page. 301 because the move is permanent, and the ids are percent-encoded
+    # on the way through: a path segment out of the wire is not a thing to
+    # write into a Location header verbatim. The `new` routes are declared
+    # before the `{id}` routes because the router matches in order and `new`
+    # would otherwise be a record id.
+    @app.get("/issues")
+    def issues_moved() -> RedirectResponse:
+        return RedirectResponse("/", status_code=301)
 
-    @app.get("/issue/new", response_class=HTMLResponse)
-    def new_issue(request: Request) -> HTMLResponse:
-        commit, index = index_now()
-        who = viewer(request)
-        return page(
-            render.render_issue(
-                index, None, render.ROUTES, commit, who.login if who else "",
-                editor=which_editor(request), may_write=may_write(request),
-            )
-        )
+    @app.get("/notes")
+    def notes_moved() -> RedirectResponse:
+        return RedirectResponse("/", status_code=301)
 
-    @app.get("/issue/{issue_id}", response_class=HTMLResponse)
-    def one_issue(issue_id: str, request: Request) -> HTMLResponse:
-        commit, index = index_now()
-        who = viewer(request)
-        try:
-            return page(
-                render.render_issue(
-                    index, issue_id, render.ROUTES, commit, who.login if who else "",
-                    editor=which_editor(request), may_write=may_write(request),
-                )
-            )
-        except KeyError:
-            raise HTTPException(404, f"no issue {issue_id!r}") from None
+    @app.get("/issue/new")
+    def new_issue_moved() -> RedirectResponse:
+        return RedirectResponse("/new?kind=issue", status_code=301)
 
-    @app.post("/api/issue")
-    async def open_issue(request: Request) -> JSONResponse:
-        """Deliberately the shortest write path in the tool.
+    @app.get("/note/new")
+    def new_note_moved() -> RedirectResponse:
+        return RedirectResponse("/new?kind=note", status_code=301)
 
-        Somebody has just noticed something while doing something else. Anything
-        this asks for beyond a title is a reason not to write it down at all, so
-        the id and the date are the server's and everything else can be filled in
-        later or never.
-        """
-        user = writer(request)
-        payload = await request.json()
-        title = str(payload.get("title") or "").strip()
-        if not title:
-            raise HTTPException(422, "an issue needs a title")
+    @app.get("/issue/{issue_id}")
+    def issue_moved(issue_id: str) -> RedirectResponse:
+        return RedirectResponse(f"/detail/{quote(issue_id, safe='')}", status_code=301)
 
-        given = {k: v for k, v in (payload.get("fields") or {}).items()
-                 if k not in ("id", "title", "opened_on")}
-        _reject_bad_issue(given)
-        issue_id = f"issue-{secrets.token_hex(3)}"
-        fields = {
-            "id": issue_id,
-            "title": title,
-            "status": "ready",
-            # Whoever is signed in, as a default rather than as a fact. The
-            # session knows who is writing — it is the same name that becomes the
-            # commit's author — and that is right almost every time. It is not
-            # right when somebody files what a colleague mentioned in a corridor,
-            # so the form can say otherwise.
-            "reported_by": user.login,
-            **given,
-            # `opened_on` stays the server's: it is when this record was made,
-            # which is not an opinion.
-            "opened_on": date.today().isoformat(),
-        }
-        content = patch_text("---\n---\n", fields, payload.get("body") or "")
-        parse_issue_text(content, issue_id)
-        written = await asyncio.to_thread(
-            store.write,
-            path=_issue_path(issue_id),
-            content=content,
-            base_commit=payload.get("base_commit") or store.head(),
-            author=user.login,
-            message=f"{issue_id}: open",
-        )
-        if written.commit:
-            await announce(written.commit, [issue_id])
-        return JSONResponse({"id": issue_id, "commit": written.commit})
-
-    @app.patch("/api/issue/{issue_id}")
-    async def save_issue(issue_id: str, request: Request) -> JSONResponse:
-        user = writer(request)
-        payload = await request.json()
-        body = payload.get("body")
-        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
-            raise HTTPException(413, "that body is too large to commit")
-
-        base = payload["base_commit"]
-        path = _issue_path(issue_id)
-        original = store.read(base, path)
-        if original is None:
-            raise HTTPException(404, f"no issue {issue_id!r}")
-
-        fields = {k: v for k, v in (payload.get("fields") or {}).items() if k != "id"}
-        _reject_bad_issue(fields)
-        content = patch_text(original, fields, body)
-        # Read back before it is written: a file the loader cannot parse would
-        # take the issues page with it, and it would already be in git.
-        parse_issue_text(content, path)
-        written = await asyncio.to_thread(
-            store.write,
-            path=path,
-            content=content,
-            base_commit=base,
-            author=user.login,
-            message=f"{issue_id}: {_named(fields, ISSUE_FIELDS) or 'body'}",
-        )
-        if written.commit:
-            await announce(written.commit, [issue_id])
-        return _result(written, base)
-
-    @app.get("/notes", response_class=HTMLResponse)
-    def notes() -> HTMLResponse:
-        commit, index = index_now()
-        return page(render.render_notes(index, render.ROUTES, commit))
-
-    @app.get("/note/new", response_class=HTMLResponse)
-    def new_note(request: Request) -> HTMLResponse:
-        commit, index = index_now()
-        who = viewer(request)
-        return page(
-            render.render_note(
-                index, None, render.ROUTES, commit, who.login if who else "",
-                editor=which_editor(request), may_write=may_write(request),
-            )
-        )
-
-    @app.get("/note/{note_id}", response_class=HTMLResponse)
-    def one_note(note_id: str, request: Request) -> HTMLResponse:
-        commit, index = index_now()
-        who = viewer(request)
-        try:
-            return page(
-                render.render_note(
-                    index, note_id, render.ROUTES, commit, who.login if who else "",
-                    editor=which_editor(request), may_write=may_write(request),
-                )
-            )
-        except KeyError:
-            raise HTTPException(404, f"no note {note_id!r}") from None
-
-    @app.post("/api/note")
-    async def write_note(request: Request) -> JSONResponse:
-        """The shortest write path in the tool, and shorter than the issue's.
-
-        Somebody is in the middle of thinking. Every field this asks for is a
-        reason to close the tab instead, so it asks for a title and the server
-        supplies the rest.
-        """
-        user = writer(request)
-        payload = await _sent(request)
-        title = str(payload.get("title") or "").strip()
-        if not title:
-            raise HTTPException(422, "a note needs a title, even a bad one")
-
-        given = {k: v for k, v in _fields_in(payload).items()
-                 if k not in ("id", "title", "written_on")}
-        _reject_bad_note(given)
-        note_id = f"note-{secrets.token_hex(3)}"
-        fields = {
-            "id": note_id,
-            "title": title,
-            "status": "thinking",
-            # Whoever is signed in, as a default rather than as a fact — the same
-            # bargain the issue makes. It is who to ask, and the form can say
-            # somebody else wrote the thing down at the whiteboard.
-            "written_by": user.login,
-            **given,
-            # The server's, because when this was written down is not an opinion.
-            "written_on": date.today().isoformat(),
-        }
-        content = patch_text("---\n---\n", fields, _body_in(payload) or "")
-        parse_note_text(content, note_id)
-        written = await asyncio.to_thread(
-            store.write,
-            path=_note_path(note_id),
-            content=content,
-            base_commit=payload.get("base_commit") or store.head(),
-            author=user.login,
-            message=f"{note_id}: write down",
-        )
-        if written.commit:
-            await announce(written.commit, [note_id])
-        return JSONResponse({"id": note_id, "commit": written.commit})
-
-    @app.patch("/api/note/{note_id}")
-    async def save_note(note_id: str, request: Request) -> JSONResponse:
-        user = writer(request)
-        payload = await _sent(request)
-        body = _body_in(payload)
-        if body is not None and len(body.encode("utf-8")) > MAX_BODY_BYTES:
-            raise HTTPException(413, "that body is too large to commit")
-
-        base = _base_in(store, payload)
-        path = _note_path(note_id)
-        original = store.read(base, path)
-        if original is None:
-            raise HTTPException(404, f"no note {note_id!r}")
-
-        fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
-        _reject_bad_note(fields)
-        # Through `_patched` and not a bare `patch_text`: the file being edited
-        # came out of git and can be anything, and a frontmatter whose YAML never
-        # closes is a ruamel error under the router — a 500 with a plain-text
-        # body, which is the one answer this page cannot read back.
-        content = _patched(original, fields, body, path)
-        # Read back before it is written: a file the loader cannot parse would
-        # take the notes page with it, and it would already be in git.
-        parse_note_text(content, path)
-        written = await asyncio.to_thread(
-            store.write,
-            path=path,
-            content=content,
-            base_commit=base,
-            author=user.login,
-            message=f"{note_id}: {_named(fields, NOTE_FIELDS) or 'body'}",
-        )
-        if written.commit:
-            await announce(written.commit, [note_id])
-        return _result(written, base)
+    @app.get("/note/{note_id}")
+    def note_moved(note_id: str) -> RedirectResponse:
+        return RedirectResponse(f"/detail/{quote(note_id, safe='')}", status_code=301)
 
     @app.post("/api/promote")
     async def promote(request: Request) -> JSONResponse:
@@ -1667,11 +1413,12 @@ def create_app(
         end, on the record where the decision was made — one direction only, the
         same rule `depends_on` follows. The new record says where it came from in
         its own shaping document, in prose. That is deliberately not a field: a
-        `from_note` on `Entity` would put a note id into the type every view of
-        the plan is built from, and the table, the graph and the detail page would
-        each have to decide what to do with it — which is exactly the coupling
-        that keeping notes out of `Entity` exists to prevent. Prose cannot drift
-        out of step with anything, because nothing reads it but a person.
+        `from_note` on `Entity` would put a note id into every PLANNED record's
+        frontmatter, and the table, the graph and the detail page would each
+        have to decide what to do with it — the coupling that used to be
+        prevented by notes not being entities, and is prevented now by the
+        field living on the unplanned side of the edge only. Prose cannot
+        drift out of step with anything, because nothing reads it but a person.
 
         **One commit.** Two files, one decision. See `Store.write_all`: written as
         two commits, the second can fail after the first has landed, leaving a
@@ -1688,20 +1435,27 @@ def create_app(
         is the same claim the note was already making, carried across.
 
         The request carries two values and both are closed vocabularies: a source
-        id matched against its own pattern, and a kind out of `DIRECTORY`. No
-        path, no directory, no file name, no field, no body.
+        id matched against the one entity pattern and required to name an inbox
+        rung, and a kind out of `DIRECTORY`. No path, no directory, no file
+        name, no field, no body.
         """
         user = writer(request)
         payload = await _sent(request)
         source_id = str(payload.get("source") or "")
         kind = payload.get("kind")
 
-        if NOTE_ID_PATTERN.match(source_id):
-            inbox, path, link = "note", _note_path(source_id), "became"
-        elif ISSUE_ID_PATTERN.match(source_id):
-            inbox, path, link = "issue", _issue_path(source_id), "pitched_into"
-        else:
+        # The id decides which inbox this is, off the ladder, through the same
+        # pattern every entity write uses — the bespoke patterns went with the
+        # bespoke routes. A kind that is not an inbox is a 400 like a garbage
+        # id, because "promote a task" is not a request this route has ever
+        # taken and the tell is the same either way: the source is not a note
+        # or an issue.
+        prefix = source_id.split("-")[0]
+        kind_of_source = next((r.name for r in KINDS if r.prefix == prefix), None)
+        if not ID_PATTERN.match(source_id) or kind_of_source not in INBOXES:
             raise HTTPException(400, f"{source_id!r} is not a note or an issue")
+        inbox = kind_of_source
+        stamp = INBOXES[inbox]
         # One phrase, used by the refusal and by the citation the promoted
         # document carries. Written twice they drift, and one of the two is prose
         # that ends up committed to the plan.
@@ -1713,18 +1467,22 @@ def create_app(
             )
 
         base = _base_in(store, payload) if payload.get("base_commit") else store.head()
-        original = store.read(base, path)
+        # The finder every entity write uses: inbox files may carry `--slug`
+        # names like any other record, so the path cannot be reconstructed
+        # from the id — it has to be found.
+        path = _path_for(store, base, source_id)
+        original = store.read(base, path) if path is not None else None
         if original is None:
             raise HTTPException(404, f"no {inbox} {source_id!r}")
         # Parsed rather than read out of the index, because the index is at HEAD
         # and this is at the commit the page was rendered at — and a promotion
         # carries the body somebody was looking at, not one that moved under them.
-        source = (
-            parse_note_text(original, path) if inbox == "note"
-            else parse_issue_text(original, path)
-        )
-        who = source.written_by if inbox == "note" else source.reported_by
-        when = source.written_on if inbox == "note" else source.opened_on
+        source = parse_text(original, path)
+        # With defaults, because the file was found by its stem and its
+        # frontmatter is a hand edit away from declaring some other kind: a
+        # mis-kinded record loses its citation line, not the whole route.
+        who = getattr(source, stamp.author, None)
+        when = getattr(source, stamp.dated, None)
 
         entity_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
         commit = store.head()
@@ -1765,13 +1523,15 @@ def create_app(
 
         # Appended, not replaced: a note that split into two pitches is the normal
         # case, and it is the reason both fields are lists.
-        marked = _patched(original, {link: [*getattr(source, link), entity_id]}, None, path)
+        marked = _patched(
+            original, {stamp.link: [*getattr(source, stamp.link, []), entity_id]}, None, path
+        )
         # Read back before it is written, the refusal every write path here makes.
         # This one has the least to go wrong — the file parsed four lines up and
         # gains one list of ids — and it is the write that must not half-happen,
         # so it is checked rather than assumed.
         try:
-            (parse_note_text if inbox == "note" else parse_issue_text)(marked, path)
+            parse_text(marked, path)
         except ValueError as error:
             raise HTTPException(
                 422,
@@ -1855,6 +1615,7 @@ def create_app(
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
         commit, index = index_now()
+        who = viewer(request)
         return page(
             render.render_detail(
                 index,
@@ -1863,6 +1624,7 @@ def create_app(
                 may_write=may_write(request),
                 editor=which_editor(request),
                 creating=kind,
+                signed_in=who.login if who else "",
             )
         )
 
@@ -1874,7 +1636,7 @@ def create_app(
     def detail(entity_id: str, request: Request) -> HTMLResponse:
         commit, index = index_now()
         if entity_id not in index.records:
-            raise HTTPException(404, f"no entity {entity_id!r}")
+            raise HTTPException(404, f"no record {entity_id!r}")
         # The page carries the commit it was rendered at, so a save is compared
         # against what the person actually saw rather than against whatever HEAD
         # has become while the tab sat open.
@@ -1885,6 +1647,7 @@ def create_app(
         # used to open a socket, be refused, and try four more times, which is
         # five red lines in the console of a page that is working exactly as
         # designed. That is how a real error comes to be ignored.
+        who = viewer(request)
         return page(
             render.render_detail(
                 index,
@@ -1893,6 +1656,7 @@ def create_app(
                 base_commit=commit,
                 may_write=may_write(request),
                 editor=which_editor(request),
+                signed_in=who.login if who else "",
             )
         )
 
@@ -1942,7 +1706,7 @@ def create_app(
         document is a card that cannot say which it is. An empty document is a
         200 with an empty string, and the card says so in words.
         """
-        entity = index_now()[1].entities.get(entity_id)
+        entity = index_now()[1].records.get(entity_id)
         if entity is None:
             raise HTTPException(status_code=404, detail="no such entity")
         return JSONResponse({"html": str(render._body_html(entity, render.ROUTES))})
@@ -2101,7 +1865,11 @@ def create_app(
         # after the commit, on a protected branch, about a shape nobody can see
         # the cause of. Asked of the same function the validator asks, so the
         # refusal and the report cannot disagree.
-        loop = loop_made(candidate, index_now()[1].entities.values())
+        # `records`, not `entities`: an issue or a note handed to `loop_made`
+        # must be checked against the population it actually lives in — a
+        # candidate absent from the checked set is a question asked of the
+        # wrong world.
+        loop = loop_made(candidate, index_now()[1].records.values())
         if loop:
             raise HTTPException(409, loop)
         written = await asyncio.to_thread(
@@ -2175,9 +1943,13 @@ def create_app(
             where = _path_for(store, base, other)
             if where is None:
                 raise HTTPException(409, f"{other} depends on this and could not be found")
+            # `records`, not `entities`: `cascade_of` iterates the total map,
+            # so `edited` can name an unplanned record carrying a hand-written
+            # `depends_on` — the plan-only lookup KeyErrored and the DELETE
+            # 500ed, which is exactly the failure totality exists to prevent.
             kept = [
                 target
-                for target in index.entities[other].depends_on
+                for target in index.records[other].depends_on
                 if target != entity_id and target not in doomed
             ]
             files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
@@ -2471,7 +2243,7 @@ def create_app(
         allowed = set(MODELS[kind].model_fields)
         unknown = sorted(set(fields) - allowed)
         if unknown:
-            raise HTTPException(422, f"a {kind} has no {', '.join(unknown)}")
+            raise HTTPException(422, f"{_an(kind)} has no {', '.join(unknown)}")
 
         # Minted here, never accepted from the client: an id supplied by a browser
         # is a path supplied by a browser once it becomes `tasks/<id>.md`.
@@ -2479,6 +2251,17 @@ def create_app(
         commit = store.head()
         config, _ = _config_at(store, commit)
         fields["id"] = entity_id
+        # The defaults the deleted inbox routes used to supply. `author` is a
+        # default and not a fact — somebody files what a colleague mentioned in
+        # a corridor, so the form can say otherwise — but the date is written
+        # last, over anything the client sent, exactly as the old routes
+        # stripped it: `opened_on` and `written_on` are derived rows on the
+        # page, and a client that sends one is overruled, not obeyed.
+        inbox = INBOXES.get(kind)
+        if inbox is not None:
+            fields.setdefault(inbox.author, user.login)
+            fields.setdefault("status", inbox.opens)
+            fields[inbox.dated] = date.today().isoformat()
         # Grandfathering protects the corpus that already exists, not the entity
         # being written right now: something created today is held to today's rules.
         fields.setdefault("created_schema_version", config.schema_version)

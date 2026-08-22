@@ -27,7 +27,7 @@ from openproj.render import (
 )
 
 PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-         "issues.html", "notes.html", "graph.html", "timeline.html")
+         "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -1382,18 +1382,20 @@ def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Pa
 
 
 def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):
-    """shaping first, done last. Alphabetical put `done` at the top, which is the
-    one group nobody opens the index looking for."""
-    from openproj.render import STATUSES, _human
+    """shaping first, dropped last. Alphabetical put `done` at the top, which is
+    the one group nobody opens the index looking for — and, once notes arrived,
+    put a note's terminal state above its live one."""
+    from openproj.render import _TOC_LADDER, _human
 
     body = read(rendered, "detail.html")
     headings = re.findall(r'<h2 class="tocgroup">\s*([^<]+?)\s*<span', body)
-    present = [s for s in STATUSES if any(e.status == s for e in seed_index.entities.values())]
+    shown = {r.status for r in seed_index.records.values()}
+    present = [s for s in _TOC_LADDER if s in shown]
 
     assert headings == [_human(s) for s in present]
-    assert set(headings) == {_human(e.status) for e in seed_index.entities.values()}
-    # The heading was the last place a status was still spelled the way the file spells it,
-    # two lines above a kind that already read as a word.
+    assert set(headings) == {_human(r.status) for r in seed_index.records.values()}
+    # The heading was the last place a status was still spelled the way the file
+    # spells it, two lines above a kind that already read as a word.
     assert not [h for h in headings if "_" in h]
 
 
@@ -2418,7 +2420,7 @@ def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index
 def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_index: Index):
     """The hole under both network assertions, and it is older than any editor.
 
-    `PAGES` is the eight static-export files; `render_static` calls
+    `PAGES` is the static-export files; `render_static` calls
     `render_detail` with no `base_commit`, so `editable` is False and the
     exported `detail.html` carries no textarea, no toolbar, no Yjs bundle and no
     room script. Neither rule had ever inspected an editing surface — the one
@@ -2684,7 +2686,7 @@ def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[
     the index left out, because it iterated the records."""
     out, index = demo_rendered
     body = read(out, "cycles.html")
-    # Named, not linked: a rendered plan is six files and none of them is a
+    # Named, not linked: a rendered plan is a handful of files and none of them is a
     # cycle, so the card says which cycle it is and stops there. The server's
     # copy of this page does link — `test_a_rendered_plan_offers_no_dead_control`
     # is what pins the difference.
@@ -2825,7 +2827,7 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
     and only ever one of them is displayed."""
     body = read(rendered, "detail.html")
 
-    assert "<h1>Every entity in this plan except for issues</h1>" in body
+    assert "<h1>Every record in this plan</h1>" in body
     for entity in seed_index.entities.values():
         article = re.search(rf'<article id="{entity.id}".*?</article>', body, re.S).group(0)
         named = escape(entity.title)
@@ -2861,7 +2863,7 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
         assert "sr-only" in classes, f"{page}: the nav says this already, twice over"
 
     seen = {text: classes for classes, text in headings(read(rendered, "detail.html"))}
-    listing = "Every entity in this plan except for issues"
+    listing = "Every record in this plan"
     assert "sr-only" not in seen[listing], "the listing is what is on the screen, not a route"
     for entity in seed_index.entities.values():
         assert entity.title in seen, entity.id

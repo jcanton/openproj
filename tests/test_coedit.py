@@ -2216,7 +2216,7 @@ def test_the_served_detail_page_carries_the_room_and_no_other_page_does(client: 
     assert "const YJS = (() => {" in detail
     assert "const COEDIT = (() => {" in detail
     assert "/api/coedit/" in detail
-    for route in ("/", "/graph", "/timeline", "/cycles", "/people", "/issues", "/detail"):
+    for route in ("/", "/graph", "/timeline", "/cycles", "/people", "/detail"):
         page = client.get(route).text
         assert "const YJS" not in page, route
         assert "/api/coedit/" not in page, route

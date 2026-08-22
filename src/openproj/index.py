@@ -25,15 +25,11 @@ from .model import (
     Config,
     Cycle,
     Entity,
-    Issue,
-    Note,
     Problem,
     Unreadable,
     ancestors,
     checklist,
     cycle_of,
-    issue_problems,
-    note_problems,
     sections,
     size_weeks,
     under,
@@ -154,6 +150,19 @@ class Index(BaseModel):
     # deliberate act — the word looks wrong in a function about the timeline,
     # which is the point. The landing list, the detail lookup and the delete
     # cascade are its readers.
+    #
+    # Where the two inboxes went. `issues` and `notes` were separate maps here,
+    # with a comment forbidding the rest of the index from reaching for them —
+    # "a note that appears in a second view is a note that has become a bet
+    # nobody made". That rule is now structural rather than admonitory: an
+    # issue is an Entity on an unplanned rung, so it lives in `records`, is
+    # filtered out of `entities` by the one comprehension in `build_index`,
+    # and the model_validator below refuses any Index built otherwise. A PM
+    # view that is forgotten reads `entities` and fails CLOSED — fewer
+    # records, never more — where the old type boundary failed open the day
+    # somebody passed the wrong dict. What survives of the admonition is one
+    # word: reaching for `records` in a function about the plan is a
+    # deliberate, greppable act, and the word looks wrong there on purpose.
     records: dict[str, Entity]
     children: dict[str, list[str]]
     blocked_by: dict[str, list[str]]
@@ -174,15 +183,6 @@ class Index(BaseModel):
     today: date
     default_task_effort: float
     nominal_availability: float = 1.0
-    # Issues, and the problems they have. Carried here so the one page that shows
-    # them needs nothing but the index, the same way every other page does.
-    issues: dict[str, Issue] = {}
-    issue_problems: list[Problem] = []
-    # And the notes, carried here for the same reason and drawn on one page for
-    # the same reason. Nothing else on the index may reach for them: a note that
-    # appears in a second view is a note that has become a bet nobody made.
-    notes: dict[str, Note] = {}
-    note_problems: list[Problem] = []
     # Carried for the same reason the windows are: the timeline has to draw where
     # a cycle stops building, and it is handed no Config to ask.
     cooldown_weeks: float = 2.0
@@ -543,10 +543,6 @@ def build_index(
         icons={
             login: person.icon for login, person in config.people.items() if person.icon
         },
-        issues=config.issues,
-        issue_problems=issue_problems(config, entities),
-        notes=config.notes,
-        note_problems=note_problems(config, entities),
         today=today,
         default_task_effort=config.default_task_effort,
         holidays=config.holidays,

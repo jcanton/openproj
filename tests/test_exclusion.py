@@ -19,6 +19,18 @@ Two layers, on purpose:
   rung out of the ladder itself — `RUNG["task"]._replace(planned=False)` under
   `monkeypatch.setitem` — derived from a real rung rather than invented, so the
   fake cannot drift from the shape of one.
+
+Vacuous until the commit that put issue and note on the ladder; from that
+commit it seeds one issue and one note and asserts each is absent from /table,
+/graph, /timeline, /people, the schedule payload, /api/index.json, every facet
+and the suggestions blob's entity completions, present on / and its own
+/detail page, and refused by the Index validator. (The suggestions blob's
+people and tag lists deliberately DO carry unplanned records — the entity
+completions are the plan-only part.) The served corpus also carries one
+planned task whose hand-written `depends_on` names the seeded issue: that is
+the edge `blocked_by` keeps because it is total over records, and the one that
+500ed /table and leaked into /graph before the plan pages learned to read the
+total map and to draw only plan edges.
 """
 
 from __future__ import annotations
@@ -189,16 +201,41 @@ def test_the_schedule_payload_never_names_an_unplanned_kind(tmp_path: Path, caps
         assert eid not in payload["spans"] and eid not in payload["explanations"]
 
 
+def test_no_plan_control_offers_an_unplanned_kind():
+    """The table's draft row offers `Object.keys` of this map as the kinds a
+    new row can be, and the table is a plan view: an issue typed into it would
+    be created and then never appear on it — a control whose result is a
+    vanishing row. Derived from the ladder, so a seventh unplanned rung is held
+    out by this same line."""
+    from openproj.render import _new_row_fields
+
+    assert set(_new_row_fields()) == {rung.name for rung in KINDS if rung.planned}
+
+
 @pytest.fixture
 def sweep_client(tmp_path: Path):
-    """The SEED corpus plus one record of every unplanned kind, served."""
-    _armed()
+    """The SEED corpus plus one record of every unplanned kind, served — and
+    one planned task whose hand-written `depends_on` names an unplanned seed.
+
+    That task is the armed hazard: `blocked_by` is total over records, so the
+    edge survives into the plan pages' derivations, where a plan-only lookup
+    was a KeyError (a 500 on /table) and an unfiltered edge list put the
+    issue's id into /graph. Without it, the sweep goes green with both one
+    hand-written edge away from a 500.
+    """
+    unplanned = _armed()
     path = tmp_path / "plan.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
     seeded = dict(SEED)
     for rung in UNPLANNED:
         _, file_path, text = _seed_for(rung)
         seeded[file_path] = text
+    blocker_id, _, _ = _seed_for(unplanned[0])
+    seeded["tasks/task-0b10c0.md"] = (
+        "---\nid: task-0b10c0\nkind: task\ntitle: waits on an unplanned record\n"
+        "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
+        f"person_weeks: 1\ndepends_on: [{blocker_id}]\n---\n\nHand-written edge.\n"
+    )
     commit_directly(path, seeded, "seed the exclusion sweep corpus")
     with TestClient(create_app(path, auth="dev", secret="a-sweep-signing-secret")) as client:
         yield client

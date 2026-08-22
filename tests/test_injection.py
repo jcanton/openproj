@@ -82,7 +82,7 @@ OURS = ("form", "onsubmit", "return false")
 ONE_ENTITY = "one entity"
 
 STATIC_PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-                "issues.html", "notes.html", "graph.html", "timeline.html")
+                "graph.html", "timeline.html")
 
 
 def ids(text: str) -> tuple[str, str, str]:
@@ -90,6 +90,15 @@ def ids(text: str) -> tuple[str, str, str]:
     return (f"pitch-b2000{id_text(text)}",
             f"task-c0000{id_text(text)}",
             f"task-c0001{id_text(text)}")
+
+
+def inbox_ids(text: str) -> tuple[str, str]:
+    """The issue and the note, each carrying the payload in its id — the same
+    shape the three entity ids take. They were deliberately NOT armed while the
+    inbox routes refused their paths and the census read only the list pages;
+    an issue now renders on /detail/<id> like everything else, so its id is
+    free text to exactly the same renderer."""
+    return (f"issue-d0000{id_text(text)}", f"note-e0000{id_text(text)}")
 
 
 def corpus(text: str) -> dict[str, str]:
@@ -117,6 +126,7 @@ def corpus(text: str) -> dict[str, str]:
     free text as far as the renderer is concerned.
     """
     pitch_id, first_id, second_id = ids(text)
+    issue_id, note_id = inbox_ids(text)
     quoted = text_yaml(text)
     common = (
         f"title: '{quoted}'\n"
@@ -146,16 +156,16 @@ def corpus(text: str) -> dict[str, str]:
             f"parent: '{text_yaml(pitch_id)}'\n"
             f"depends_on: ['{text_yaml(first_id)}']\nperson_weeks: 1\n---\n{body}"
         ),
-        # Neither inbox record carries a well-formed id, for the reason the
-        # entities do not: a malformed one is a reported blocker rather than a
-        # refusal, so the record loads and the page still draws it.
+        # Both inbox records armed like the entities above them: a malformed id
+        # is a reported blocker rather than a refusal, so the record loads, and
+        # /detail/<id> draws it now that an issue is a rung.
         "issues/i.md": (
-            f"---\nid: 'issue-{text_yaml(id_text(text))}'\ntitle: '{quoted}'\n"
+            f"---\nid: '{text_yaml(issue_id)}'\ntitle: '{quoted}'\n"
             f"status: '{quoted}'\nreported_by: '{quoted}'\nopened_on: 2026-08-11\n"
             f"tags: ['{quoted}']\npitched_into: ['{text_yaml(pitch_id)}']\n---\n{body}"
         ),
         "notes/n.md": (
-            f"---\nid: 'note-{text_yaml(id_text(text))}'\ntitle: '{quoted}'\n"
+            f"---\nid: '{text_yaml(note_id)}'\ntitle: '{quoted}'\n"
             f"status: '{quoted}'\nwritten_by: '{quoted}'\nwritten_on: 2026-08-11\n"
             f"tags: ['{quoted}']\nbecame: ['{text_yaml(pitch_id)}']\n---\n{body}"
         ),
@@ -269,13 +279,11 @@ def benign_static(tmp_path: Path) -> dict[str, str]:
     return static_pages(tmp_path / "benign", tmp_path / "benign-out", corpus(BENIGN))
 
 
-# The two page routes the census cannot open: an individual issue or note is
-# addressed by an id this corpus deliberately malforms (see `corpus`), so the
-# route refuses the path and the page under test never renders. Held both ways
-# by the completeness test below — a route that leaves the app makes this list
-# stale and FAILS, so an exemption cannot outlive its excuse. The flip commit
-# turns both routes into redirects and retires this set.
-CENSUS_BLIND = {"/issue/{issue_id}", "/note/{note_id}"}
+# Emptied on the flip commit: /issue/{id} and /note/{id} became 301 redirects,
+# so they are no longer HTML GET routes and the census reaches every page again.
+# The set stays so the completeness test keeps failing closed if a route ever
+# needs an exemption with a reason.
+CENSUS_BLIND: set[str] = set()
 
 
 def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
@@ -291,10 +299,12 @@ def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
         # building on: a deck is printed and handed to somebody who was not in
         # the room. Same cycle as the one above, so both read the same plan.
         "deck 41": "/deck/41",
-        # The two inboxes and their create forms. Individual issue and note
-        # pages are the two CENSUS_BLIND routes above.
+        # The retired inbox addresses, censused where they land — the redirect
+        # is followed, so this renders the Records landing under the hostile
+        # plan a second time, which costs nothing and keeps the
+        # census-completeness test honest about the routes existing.
         "issues": "/issues", "notes": "/notes",
-        "issue new": "/issue/new", "note new": "/note/new",
+        "new issue": "/new?kind=issue", "new note": "/new?kind=note",
         "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
         # `/detail` is the whole plan and read-only; an entity's own page is the
         # editable one, and the only one that carries the combobox.
@@ -334,12 +344,14 @@ def served(
 
 @pytest.fixture
 def hostile_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, corpus(PAYLOAD), "hostile", ids(PAYLOAD))
+    return served(tmp_path, corpus(PAYLOAD), "hostile",
+                  (*ids(PAYLOAD), *inbox_ids(PAYLOAD)))
 
 
 @pytest.fixture
 def benign_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, corpus(BENIGN), "benign", ids(BENIGN))
+    return served(tmp_path, corpus(BENIGN), "benign",
+                  (*ids(BENIGN), *inbox_ids(BENIGN)))
 
 
 # --------------------------------------------------------------------------- #
@@ -390,12 +402,24 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
         }
         assert pages, "no HTML GET routes at all, so nothing was checked"
 
+        # Each census URL is resolved the way Starlette dispatches it: walk
+        # `app.routes` in registration order and stop at the FIRST GET route
+        # whose regex matches — that route is the one the request reaches.
+        # Matching every page against every URL was subtly generous: Starlette's
+        # compiled `/issue/new` also matched `/issue/{issue_id}`, so a `{id}`
+        # route registered after a literal sibling counted as covered by a URL
+        # that could never reach it, and an exemption set fed by that arithmetic
+        # was dead code.
         covered: set[str] = set()
-        for url in census_routes(ids(BENIGN)).values():
+        for url in census_routes((*ids(BENIGN), *inbox_ids(BENIGN))).values():
             where = url.partition("?")[0]
-            for route in pages:
+            for route in app.routes:
+                if not (isinstance(route, APIRoute) and "GET" in route.methods):
+                    continue
                 if route.path_regex.match(where):
-                    covered.add(route.path)
+                    if route in pages:
+                        covered.add(route.path)
+                    break
 
         templates = {route.path for route in pages}
         missing = templates - covered - CENSUS_BLIND

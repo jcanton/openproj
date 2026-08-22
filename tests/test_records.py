@@ -52,12 +52,10 @@ PLAN = {
         "owner: bo\nprs: ['C2SM/icon4py#1223']\nparent: pitch-b20000\n"
         "person_weeks: 1\n---\n\nA task.\n"
     ),
-    # An issue and a note ride in the corpus from the first commit, in today's
-    # file format (no `kind:` key — the flip's parser resolves the kind from the
-    # id prefix, so the format never changes). At THIS commit neither is a
-    # record: needles aimed at them must match NOTHING on both sides, which is
-    # itself parity. The flip commit widens the ladder, `records` picks both up
-    # on both sides at once, and the same needles start matching — no edit here.
+    # An issue and a note, in the file format that never changed: no `kind:`
+    # key, because the parser resolves the kind from the id prefix. They rode
+    # in this corpus one commit ahead of the flip, matching nothing; now they
+    # are records like everything else, and the needles below land on them.
     "issues/issue-ab12cd.md": (
         "---\nid: issue-ab12cd\ntitle: \"Renormalisation à l'équateur\"\n"
         "status: ready\nreported_by: ann\ntags: [数值]\n---\n\nSeen near the pole.\n"
@@ -113,11 +111,13 @@ def test_the_landing_lists_every_record_newest_edit_first(tmp_path: Path):
     entities, config, _ = load_repo_from_git(path)
     index = build_index(entities, config, date(2026, 8, 17))
     rows = re.findall(r'<li data-id="([\w-]+)"', page)
-    # Derived from `index.records`, not written out: at this commit that is the
-    # three plan records — the corpus's issue and note are not records until the
-    # flip widens the ladder — and on the flip commit the page and the
-    # expectation widen together, with no edit here.
+    # Derived from `index.records`, not written out — which is how this page and
+    # this expectation widened together on the flip commit, with no edit here.
+    # The membership pin below is what keeps the derivation honest.
     assert set(rows) == set(index.records)
+    assert "issue-ab12cd" in rows and "note-ef34ab" in rows, (
+        "the corpus's inbox records are records now, and the landing lists them"
+    )
     assert "task-c00001" in rows, "an empty records map would make this pass vacuously"
     assert rows[0] == "task-c00001", "the record edited last is the record listed first"
     assert 'href="/detail/task-c00001"' in page
@@ -302,11 +302,9 @@ def test_the_time_is_relative_when_recent_and_absolute_past_two_weeks():
 def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     """The landing's `matches()` runs over its own payload, which is a second
     place the search blob travels — so both halves are asked the same
-    questions, non-ASCII included. At this commit `records` equals the plan,
-    so the issue and note needles below must match NOTHING on either side —
-    which is still parity, asked and answered; the flip commit widens
-    `records` on both sides at once and the same needles start matching,
-    with no edit to this test."""
+    questions, non-ASCII included. The corpus carries an issue and a note, so
+    parity is asked about the very records where `records` is more than
+    `entities`."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
@@ -317,8 +315,11 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
 
     needles = ["traçage", "équateur", "Équateur", "平流", "gpu", "ann",
                "task-c00001", "1223", "downgrade", "tag:gpu", "kind:pitch",
-               # The issue's and the note's words, non-ASCII where it counts.
-               "renormalisation", "数值", "idée", "issue-ab12cd", "note-ef34ab"]
+               # The issue's and the note's words, non-ASCII where it counts —
+               # and their kinds by name, which only exist as facet values on
+               # the records side.
+               "renormalisation", "数值", "idée", "issue-ab12cd", "note-ef34ab",
+               "kind:issue", "kind:note"]
     disagreed = {}
     for needle in needles:
         # Membership is the claim; the two sides answer in different orders
