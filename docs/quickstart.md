@@ -45,7 +45,8 @@ on **Records** and its own page, on no view of the plan — which is the point, 
 showing bets nobody has made is a plan you cannot read. When it turns out to be work, **Promote**
 turns it into a project, a pitch or a task in one commit: the new record starts in Shaping carrying
 the note's title, tags and text, and says in its own shaping document where it came from. The note
-stays, and points at what it became. The same button on an issue writes the pitch for it.
+stays, and points at what it became. The same button on an issue writes the pitch — or the task —
+for it.
 
 ## Appetite is person-weeks
 

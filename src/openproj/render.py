@@ -1,4 +1,4 @@
-"""The three static pages: a filterable table, a dependency graph, a timeline.
+"""The pages: everything the static export writes and everything the server draws.
 
 Each page is one self-contained file. Libraries are inlined from `static/` rather
 than linked, so a page works on a train and cannot be broken by a CDN. There is no
@@ -719,7 +719,8 @@ PLAIN = "plain"
 
 
 def _ace_wanted(editor: str, base_commit: str | None, may_write: bool) -> bool:
-    """All three halves, in one place, because the question is asked on four pages.
+    """All three halves, in one place, because the question is asked three times
+    on the one template that ships an editor.
 
     **The parameter is an opt-OUT now, and that is jcanton's decision rather than
     a measurement's.** It was `?editor=ace` opting in; it is `?editor=plain`
@@ -3384,7 +3385,7 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     cytoscape elements — so a mark read from a page's payload is a mark the card
     carries on two pages out of three.
 
-    `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on four
+    `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on two
     pages — it is the span the mark buttons are drawn into — and a second element
     of that id in the shell made `getElementById('marks')` answer with this block
     instead: the toolbar drew its buttons into a script tag, and the editor's own
@@ -9696,7 +9697,7 @@ _COMBOBOX = r"""
 // --- the textarea, as a surface --------------------------------------------
 //
 // Everything between this banner and the one that closes it is the only code on
-// any of these six pages that knows the document is being written in a
+// any of these four pages that knows the document is being written in a
 // `<textarea>`. Nothing outside it reads `.value`, `selectionStart`,
 // `selectionEnd` or calls `setSelectionRange`, and
 // `test_the_body_is_read_through_one_place_and_nothing_else` holds it there.
@@ -10305,7 +10306,7 @@ const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
 //
 // And every value is checked against what the control actually offers rather
 // than trusted. `{"indent": "four"}` is one hand-edit away, and it would reach
-// `' '.repeat("four")` in the one script six pages share.
+// `' '.repeat("four")` in the one script four pages share.
 const EDITOR_KEY = 'openproj:editor:1';
 // What the indent picker offers. Two first, because that is what the plan is
 // already written at: 48 of the 56 nested bullets in it are indented by two.
@@ -10739,7 +10740,7 @@ function attachGutter(surface, note) {
       'translateY(' + (textTop(area, wrap) - area.scrollTop) + 'px)';
   };
 
-  // Named for what it draws, and not `draw`. This block ships on six pages, two
+  // Named for what it draws, and not `draw`. This block ships on four pages, two
   // of which have no body editor at all, and the table page declares a top-level
   // `draw` of its own — so a generic name here is a name that reads as the
   // table's to anything looking at the page as text. It is nested and therefore
@@ -11168,7 +11169,7 @@ function attachEditing(surface, bar) {
       //    is a key somebody presses by mistake once.
       //
       // The seam is an event on the element, the way the image button's is: this
-      // block is shared by six pages and only two of them have a view to leave.
+      // block is shared by four pages and only two of them have a view to leave.
       // Where nothing listens, nothing is cancelled and the hatch opens straight
       // away. Vim, if it is ever bought, claims Escape ahead of all three while
       // it is in insert mode, and the same `cancelable` answer is how it says so.
@@ -11601,9 +11602,9 @@ for (const input of document.querySelectorAll('[data-suggest]')) attachSuggest(i
 # the control is nameable by everybody — an icon that is only an icon is a
 # control a screen reader announces as "button".
 #
-# One constant and two templates, because the create form and the detail page are
-# the same page in two modes and a second copy of this is a second thing to keep
-# in step.
+# One constant, emitted once: the create form and the detail page are the same
+# template in two modes, and a second copy of this is a second thing to keep in
+# step.
 _VIEW_SEGMENTS = (
     '<span id="views" class="views" role="group"'
     ' aria-label="How the document is shown">'
@@ -11641,9 +11642,9 @@ _VIEW_SEGMENTS = (
 # actually resolve to is not knowable from here. `aria-valuetext` because "62"
 # read out on its own says nothing about what it is 62 of.
 #
-# One constant and four templates, for the same reason `_VIEW_SEGMENTS` is one:
-# the four pages that draw this surface are one surface, and four copies of a
-# control is four places for it to drift.
+# One constant, emitted once, for the same reason `_VIEW_SEGMENTS` is one: every
+# page that draws this surface draws the one template's copy, and a second copy
+# of a control is a second place for it to drift.
 _SPLIT_HANDLE = Markup(
     '<div id="splitter" role="separator" tabindex="0" aria-orientation="vertical"'
     ' aria-label="Split between the writing box and the preview"'
@@ -12140,7 +12141,7 @@ def _control_html(
 #
 # Emitted by the detail page and the create form and by nothing else, because it
 # reaches for `BODY` and `TITLED` — the two boxes those two pages declare — and
-# because the other four pages that inline `_COMBOBOX` have no document to have a
+# because the other two pages that inline `_COMBOBOX` have no document to have a
 # view of. The blocks share one lexical scope, so this runs after theirs and the
 # names are simply there.
 #
@@ -12284,8 +12285,8 @@ function showView(mode) {
 // the answer to that is that there is only ever one of them there.
 //
 // No null check on the handle, which is the contract this block already keeps
-// with `BODY`, `VIEW_PANE` and `VIEW_BAR`: the four templates that emit `_VIEWS`
-// emit `_SPLIT_HANDLE` inside the same `{% if editable %}` as the box this whole
+// with `BODY`, `VIEW_PANE` and `VIEW_BAR`: the one template that emits `_VIEWS`
+// emits `_SPLIT_HANDLE` inside the same `{% if editable %}` as the box this whole
 // script is built around.
 const SPLITTER = VIEW_ARTICLE.querySelector('#splitter');
 const SPLIT = VIEW_ARTICLE.querySelector('.bodysplit');
@@ -15043,7 +15044,7 @@ article.entity.full.view-both .bodysplit {
   grid-template-columns: minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr);
   column-gap: 0;
 }
-/* Not a control in either of the other two views, on the six pages that inline
+/* Not a control in either of the other two views, on the two pages that inline
    this sheet with no document to split, or outside the surface. Absent rather
    than disabled: a separator in the tab order that divides nothing is a control
    that lies about what the page can do. */
@@ -16285,8 +16286,8 @@ def _read_date(value: object) -> str:
 
 _ENV.globals["on"] = _read_date
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
-# Every chip on every page names its rung through this, so the four templates
-# that draw one cannot disagree with the two that build one in Python. They did:
+# Every chip on every page names its rung through this, so the two templates
+# that draw one cannot disagree with the three that build one in Python. They did:
 # the detail page's meta line escaped the status into its class and the facts
 # list two elements away did not, which is one page holding both answers.
 _ENV.globals["status_class"] = _status_class

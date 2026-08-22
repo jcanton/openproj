@@ -1,4 +1,4 @@
-"""The three static pages.
+"""The static pages.
 
 These assert structure and payload, not pixels. A page is correct here if it is
 self-contained, carries the data its JavaScript needs, and encodes the things a
@@ -3801,7 +3801,7 @@ def test_the_motion_floor_is_the_shell_s_and_not_one_page_s(rendered: Path):
     """Where the block lives, which is the half the browser test cannot see.
 
     It measures `detail.html`, the only page with a transition on it. Written into
-    `_DETAIL_STYLE` that test would pass unchanged and the other five pages would
+    `_DETAIL_STYLE` that test would pass unchanged and the other six pages would
     have no floor at all the day one of them grew an animation — which is the same
     shape as the capacity meter's `.bar` rule reaching the timeline: a rule's page
     is a fact about the rule, and nobody notices it from inside one page.

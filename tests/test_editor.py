@@ -2481,12 +2481,12 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
 
 @pytest.mark.parametrize("where", ["/detail/{task}", "/new?kind=issue", "/new?kind=note", "/new"])
 def test_every_surface_that_splits_carries_the_same_handle(client: TestClient, where: str):
-    """One control, four templates — the argument `_VIEW_SEGMENTS` is one constant
+    """One control, one template — the argument `_VIEW_SEGMENTS` is one constant
     for, applied to the thing between the panes.
 
-    The four pages that inline a body editor are one surface in four places, and a
-    fifth copy of a separator is a fifth place for its role, its name and its
-    position in the markup to drift. Position is what this reads: the handle has
+    The four parametrised URLs all draw that template's one emission, and a
+    second copy of a separator would be a second place for its role, its name and
+    its position in the markup to drift. Position is what this reads: the handle has
     to be a grid item of `.bodysplit`, between the box and the rendered pane and
     not before or after both, because the stylesheet places it by track order and
     nothing else.

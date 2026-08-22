@@ -869,7 +869,7 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
       on. `#splitter` is (1,0,0) and every rule that could give it back a box is a
       class selector, so the *default* has to be the id — an `article.entity.full
       .bodysplit > div` written to lay the panes out would otherwise draw a
-      separator on six pages that have no document to split;
+      separator on two pages that have no document to split;
     * the two prose tracks keep `minmax(0, …)`. A bare fraction there is a track
       whose minimum is its content, and one unbroken line of prose is wider than
       half a window;
@@ -946,7 +946,7 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
     the mode class moved off `<body>` and onto the article — and now held on
     the one surviving surface.
 
-    `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1), so
+    `.entity.editing .field` and `.entity.editing .bodybar` are both (0,3,0), so
     the tie is decided by order and nothing else — which is why the answer has to
     be asked rather than assumed. And the tie is real: every bar on the merged
     page wears `.field`, because that class is how a bar hides in read mode, so
