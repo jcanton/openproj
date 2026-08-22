@@ -76,6 +76,7 @@ from .model import (
     NOTE_ID_PATTERN,
     NOTE_STATUS,
     PEOPLE_DIR,
+    RUNG,
     Config,
     Cycle,
     Entity,
@@ -134,7 +135,15 @@ SESSION_COOKIE = "__Host-openproj_session"
 SESSION_COOKIE_INSECURE = "openproj_session"
 STATE_COOKIE = "op_state"
 
-ID_PATTERN = re.compile(r"^(proj|pitch|task)-[0-9a-f]{6}$")
+# Derived from the ladder, like `DIRECTORY` and `PREFIX` below it. Hand-written,
+# it was three kinds, and the drift was user-visible: `prod` was missing, so
+# `POST /api/entity` minted product ids (that route reads `PREFIX`, which was
+# already derived) that `_directory_for` then answered 400 to — a product could
+# be created and never patched or deleted. `\A`/`\Z` and not `^`/`$` because in
+# Python `$` also matches before a trailing newline, and this pattern is what
+# keeps an id out of paths — `task-a1b2c3\n` must not become
+# `tasks/task-a1b2c3\n.md`.
+ID_PATTERN = re.compile(r"\A(" + "|".join(rung.prefix for rung in KINDS) + r")-[0-9a-f]{6}\Z")
 # Off the ladder in `model.py`, so a rung added there is a directory here without
 # anybody remembering to come and add one.
 DIRECTORY = {rung.name: rung.directory for rung in KINDS}
@@ -143,6 +152,11 @@ DIRECTORY = {rung.name: rung.directory for rung in KINDS}
 # derived: `POST /api/entity` with `kind: product` got past the models and fell
 # over here instead.
 PREFIX = {rung.name: rung.prefix for rung in KINDS}
+# And back again: the rung an id names, read off its prefix. The inverse of
+# `PREFIX`, derived beside it, for the two questions a bare id has to answer —
+# which directory its file lives in, and which status vocabulary judges a write
+# to it.
+KIND_OF_PREFIX = {rung.prefix: rung.name for rung in KINDS}
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
 # the editor's status bar gained a second reader for it, and it is re-exported
@@ -664,6 +678,30 @@ def _reject_bad_types(fields: dict) -> None:
         raise HTTPException(422, "review_waived must be true or false")
 
 
+def _reject_bad_status(kind: str, fields: dict) -> None:
+    """A status outside this kind's vocabulary, refused before anything commits.
+
+    Off the ladder, which is what makes one gate safe where `_reject_bad_note`
+    above argues a shared gate is not: its fear was a parameter, then an `if`,
+    then a word admitted to the wrong record — and a vocabulary that travels on
+    the rung has no `if` to get wrong. (Those two gates keep standing in front
+    of their own routes until the routes go.) A kind with `statuses=()` does
+    not read the field at all, so a word there is unread rather than undefined:
+    the validator already warns about it beside the record, and refusing it
+    here would make the API door stricter than the hand-written file it must
+    stay equal to.
+    """
+    status = fields.get("status")
+    if status is None or not RUNG[kind].statuses:
+        return
+    if status not in RUNG[kind].statuses:
+        raise HTTPException(
+            422,
+            f"status: {status!r} is not a status for a {kind}: expected one of "
+            f"{', '.join(RUNG[kind].statuses)}",
+        )
+
+
 async def _sent(request: Request) -> dict:
     """The JSON object a request carried, or a refusal that says so.
 
@@ -812,14 +850,18 @@ def _patched(original: str, fields: dict, body: str | None, path: str) -> str:
         ) from None
 
 
+def _kind_for(entity_id: str) -> str:
+    """The rung an id names, or a refusal. With `_directory_for` under it, the
+    one place a bare id is trusted to mean anything."""
+    if not ID_PATTERN.match(entity_id):
+        raise HTTPException(400, f"{entity_id!r} is not an entity id")
+    return KIND_OF_PREFIX[entity_id.split("-")[0]]
+
+
 def _directory_for(entity_id: str) -> str:
     """The directory an id belongs in, or a refusal. The one place an id becomes
     part of a path — everything else must come through here."""
-    if not ID_PATTERN.match(entity_id):
-        raise HTTPException(400, f"{entity_id!r} is not an entity id")
-    prefix = entity_id.split("-")[0]
-    kind = next(k for k, p in PREFIX.items() if p == prefix)
-    return DIRECTORY[kind]
+    return DIRECTORY[_kind_for(entity_id)]
 
 
 def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
@@ -1975,6 +2017,12 @@ def create_app(
 
         fields = {k: v for k, v in _fields_in(payload).items() if k != "id"}
         _reject_bad_types(fields)
+        # `parse_text` below deliberately takes any word — a file that arrived
+        # in git with one must still load — so without this the PATCH door
+        # committed a status nobody defined, and the plan woke up with a
+        # blocker about it on a branch where the commit cannot be force-pushed
+        # away.
+        _reject_bad_status(_kind_for(entity_id), fields)
         content = _patched(original, fields, body, path)
         # Parse before writing, the same refusal the cycle route beside this one
         # makes, and for a worse reason: a record that fails to load takes `/`,
@@ -2356,6 +2404,10 @@ def create_app(
         # so every value the save route refuses could be created instead — the
         # closed writable surface is only closed if both ways in are.
         _reject_bad_types(fields)
+        # Before `validate_all` gets a say: the vocabulary refusal arrives as
+        # one sentence naming the field — the same sentence PATCH and the room
+        # give — rather than as a problems list that happens to mention it.
+        _reject_bad_status(kind, fields)
 
         # A pitch has an appetite and a task has an effort. The create page carries
         # every kind's fields and hides the ones that do not apply, so what belongs
@@ -3043,6 +3095,10 @@ def create_app(
                     fields.pop("id", None)
                     try:
                         _reject_bad_types(fields)
+                        # The room writes through the same gate as PATCH — the
+                        # comment on `writer` above says exactly that — so the
+                        # vocabulary stands here too.
+                        _reject_bad_status(_kind_for(entity_id), fields)
                     except HTTPException as refused:
                         _to(connection, {"t": "refused", "why": refused.detail})
                         continue

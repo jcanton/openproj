@@ -1069,6 +1069,33 @@ def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path
     assert git_head(repo_path) == base
 
 
+def test_a_status_nobody_defined_is_refused_at_both_doors(
+    client: TestClient, repo_path: Path
+):
+    """POST refused it sideways, as a `problems` list out of `validate_all`;
+    PATCH did not refuse it at all. `parse_text` deliberately takes any word so
+    that a file which arrived in git with one still loads, and the PATCH route
+    never asked the vocabulary — so `status: banana` committed, and the plan
+    woke up with a blocker about it on a branch where the commit cannot be
+    force-pushed away. One gate now, read off the rung, on every door, and its
+    answer is one sentence naming the field.
+    """
+    base = git_head(repo_path)
+
+    made = create(client, {**VALID_TASK, "status": "banana"})
+    assert made.status_code == 422
+    assert "status" in made.json()["detail"]
+    assert "'banana'" in made.json()["detail"]
+    assert "expected one of" in made.json()["detail"]
+
+    saved = save(client, TASK, {"status": "banana"})
+    assert saved.status_code == 422
+    assert "status" in saved.json()["detail"]
+    assert "'banana'" in saved.json()["detail"]
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
 def test_a_create_records_its_author_like_any_other_write(client: TestClient, repo_path: Path):
     response = create(client, VALID_TASK)
 

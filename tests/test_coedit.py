@@ -517,6 +517,30 @@ def test_a_save_the_model_could_not_read_back_is_refused_and_writes_nothing(
         assert len(log_of(plan)) == before, "a refusal writes nothing"
 
 
+def test_a_status_the_kind_does_not_speak_is_refused_at_the_socket_too(
+    client: TestClient, plan: Path
+):
+    """The vocabulary gate, at the third door. The room's save frame ran only
+    `_reject_bad_types`, which does not look at `status`, so the one word the
+    PATCH route now refuses could still be committed by whoever had the
+    co-editing page open."""
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        # Non-ASCII on purpose: the byte-offset splice path is exercised even
+        # here, where the claim is about the field gate — ASCII-only corpora are
+        # how the last three data-loss defects shipped.
+        ann.type(0, "ẞ—")
+        ann.save({"status": "banana"})
+        refused = ann.take("refused")
+        assert "status" in refused["why"]
+        assert "'banana'" in refused["why"]
+        # Inside the room, because leaving it commits the body — which is the
+        # right thing to do with text that is only refused as a *field*.
+        assert len(log_of(plan)) == before, "a refusal writes nothing"
+
+
 def test_a_commit_made_in_git_arrives_in_the_room_as_text(client: TestClient, plan: Path):
     """The existing conflict machinery is not regressed, it is fed.
 

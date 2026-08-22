@@ -327,3 +327,88 @@ def test_a_product_can_be_made_through_the_api(tmp_path: Path):
         assert filed.status_code == 200, filed.json()
         after = client.get("/api/index.json").json()["entities"]
         assert after[project]["parent"] == product
+
+
+def test_a_status_on_a_product_still_warns_rather_than_refuses(tmp_path: Path):
+    """The `statuses=()` half of the write gate: a kind that does not read the
+    field gets no vocabulary check at the door. `status: ready` written into a
+    product's file by hand is a warning beside the record, not a refusal
+    (`test_a_container_has_no_work_state_to_gate` above), and the API door has
+    to answer the same — 201 with the warning — or the two ways of writing a
+    record stop being equal, which the README calls first-class on purpose.
+    """
+    import pygit2
+    from fastapi.testclient import TestClient
+    from test_store import commit_directly
+    from test_web import ANN, SECRET, SEED, SESSION_COOKIE, sign_session
+
+    from openproj.web import create_app
+
+    plan = tmp_path / "plan.git"
+    pygit2.init_repository(str(plan), bare=True, initial_head="main")
+    commit_directly(plan, SEED, "seed")
+
+    with TestClient(create_app(plan, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        head = client.get("/healthz").json()["head"]
+        made = client.post(
+            "/api/entity",
+            json={"base_commit": head,
+                  "fields": {"kind": "product", "title": "gt4py", "status": "ready"},
+                  "body": "The DSL under icon4py.\n"},
+        )
+        assert made.status_code == 201, made.json()
+        product = made.json()["id"]
+        said = [
+            (p["severity"], p["field"])
+            for p in client.get("/api/index.json").json()["problems"]
+            if p["entity_id"] == product
+        ]
+        assert said == [("warning", "status")], said
+
+
+def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
+    """`ID_PATTERN` was hand-written as three kinds while `PREFIX` three lines
+    under it was derived, so `POST /api/entity` minted `prod-` ids that
+    `_directory_for` then answered 400 to: a product could be created and never
+    edited or removed again. The pattern is derived from `KINDS` now; this
+    drives both doors that opens.
+    """
+    import pygit2
+    from fastapi.testclient import TestClient
+    from test_store import commit_directly
+    from test_web import ANN, SECRET, SEED, SESSION_COOKIE, sign_session
+
+    from openproj.web import create_app
+
+    plan = tmp_path / "plan.git"
+    pygit2.init_repository(str(plan), bare=True, initial_head="main")
+    commit_directly(plan, SEED, "seed")
+
+    with TestClient(create_app(plan, auth="dev", secret=SECRET)) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        head = client.get("/healthz").json()["head"]
+        made = client.post(
+            "/api/entity",
+            json={"base_commit": head,
+                  "fields": {"kind": "product", "title": "gt4py"},
+                  "body": "The DSL under icon4py.\n"},
+        )
+        assert made.status_code == 201, made.json()
+        product = made.json()["id"]
+
+        renamed = client.patch(
+            f"/api/entity/{product}",
+            json={"base_commit": made.json()["commit"],
+                  "fields": {"title": "gt4py-next"}, "body": None},
+        )
+        assert renamed.status_code == 200, renamed.json()
+        entities = client.get("/api/index.json").json()["entities"]
+        assert entities[product]["title"] == "gt4py-next"
+
+        gone = client.request(
+            "DELETE", f"/api/entity/{product}",
+            json={"base_commit": renamed.json()["commit"]},
+        )
+        assert gone.status_code == 200, gone.json()
+        assert client.get(f"/detail/{product}").status_code == 404
