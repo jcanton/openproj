@@ -67,7 +67,7 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
                              "availability": {"ann": 0.5, "bo": 1.0}},
                   "body": "## Goal\n\nShip it.\n"},
         )
-        routes = {"cycle": "/cycle/41", "table": "/", "detail": f"/detail/{TASK}",
+        routes = {"cycle": "/cycle/41", "table": "/table", "detail": f"/detail/{TASK}",
                   "graph": "/graph", "cycles": "/cycles", "new": "/new?kind=task",
                   # ann owns a task in this corpus, so she has a row on the People
                   # page and the row has her picker on it. A person who holds

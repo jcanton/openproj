@@ -395,11 +395,13 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
             drawn = getattr(drawn, "value", drawn)
             return isinstance(drawn, type) and issubclass(drawn, HTMLResponse)
 
-        pages = {
+        # A list, not a set: `APIRoute` defines `__eq__` and no `__hash__`, so
+        # a set of routes is a TypeError before anything is checked at all.
+        pages = [
             route
             for route in app.routes
             if isinstance(route, APIRoute) and "GET" in route.methods and is_page(route)
-        }
+        ]
         assert pages, "no HTML GET routes at all, so nothing was checked"
 
         # Each census URL is resolved the way Starlette dispatches it: walk
@@ -417,7 +419,9 @@ def test_every_html_get_route_is_in_the_census(tmp_path: Path):
                 if not (isinstance(route, APIRoute) and "GET" in route.methods):
                     continue
                 if route.path_regex.match(where):
-                    if route in pages:
+                    # `is_page` again rather than membership in `pages` — the
+                    # same filter, asked without route equality or hashing.
+                    if is_page(route):
                         covered.add(route.path)
                     break
 

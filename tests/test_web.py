@@ -444,7 +444,10 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
 
 
 @pytest.mark.parametrize(
-    "route", ["/", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"]
+    # The write-making pages. Not the landing: it offers no writes at all, and
+    # `assert fetches` below exists precisely to keep a page with nothing to
+    # announce from satisfying the count vacuously.
+    "route", ["/table", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"]
 )
 def test_every_write_a_page_makes_is_announced_before_and_after_it(
     client: TestClient, route: str
