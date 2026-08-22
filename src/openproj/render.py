@@ -13099,7 +13099,7 @@ _DETAIL = """
             <option value="blank">nothing</option>
           </select>
         </label>
-        <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
+        <span class="hint" id="tplnote" role="status" aria-live="polite"></span>
       </p>
       {% endif %}
       {#- The hint that was here — "paste or drop an image to put it in the
@@ -13398,13 +13398,16 @@ if (CREATING) {
   // picker says so rather than appearing to do nothing.
   const TEMPLATES = {{ templates|tojson }};
   const TPL = document.getElementById('template');
-  const TPLSTATE = document.getElementById('tplstate');
+  // Named for the element it addresses — the template picker's own message
+  // line — and never anything ending in STATE: the page has a real `#state`
+  // region beside it, every write to which must go through `announce()`.
+  const TPLNOTE = document.getElementById('tplnote');
   function untouched() {
     return Object.values(TEMPLATES).some(text => text.trim() === SURFACE.text().trim());
   }
   function applyTemplate(name) {
     if (!untouched()) {
-      TPLSTATE.textContent = 'the body has been edited — clear it to start from a template';
+      TPLNOTE.textContent = 'the body has been edited — clear it to start from a template';
       return false;
     }
     // A whole-document replacement, said in those words and made once. `apply`
@@ -13414,7 +13417,7 @@ if (CREATING) {
     // numbers down the side of an empty box.
     SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
     dispatchEvent(new Event('openproj:editing'));
-    TPLSTATE.textContent = '';
+    TPLNOTE.textContent = '';
     return true;
   }
   TPL.onchange = () => { applyTemplate(TPL.value); };
