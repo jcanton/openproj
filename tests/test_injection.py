@@ -480,17 +480,21 @@ def test_the_fixture_really_is_hostile(hostile_static):
 
     Every assertion above passes trivially against a plan whose values were
     dropped on the floor, so this one insists the text is there — escaped, as
-    text — on the page that shows the most of it.
-
-    The two inbox pages are named as well, and not because they show the most:
-    they were added to this corpus in the round that added notes, and a page
-    added to a census that never sees the payload is a page nobody is checking
-    while the count in the fixture's docstring says otherwise.
+    text — on the page that shows the most of it, and on the landing, which is
+    where every record surfaces now that the two inbox list pages are folded
+    into the shared surfaces.
     """
-    for name in ("detail.html", "issues.html", "notes.html"):
+    for name in ("index.html", "detail.html"):
         page = hostile_static[name]
         assert "&lt;img src=x onerror=alert(1)&gt;" in page, name
         assert census(page).tags["img"] == 0, name
+    # The issues.html and notes.html this loop used to name are gone; what
+    # carried their meaning — a census that actually SEES the payload-bearing
+    # inbox records — is the count: five hostile records, five articles on the
+    # shared page, the issue and the note among them. A fold that quietly
+    # dropped the two would pass every substring above off the three entities
+    # alone.
+    assert hostile_static["detail.html"].count("<article") == 5
 
 
 # --------------------------------------------------------------------------- #

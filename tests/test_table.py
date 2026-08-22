@@ -84,6 +84,7 @@ from openproj.index import build_index
 from openproj.model import (
     KIND_NAMES,
     PARENT_KINDS,
+    RUNG,
     Config,
     Pitch,
     Project,
@@ -536,7 +537,7 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     and a task blocked on a missing `shaped_by` would be nonsense — while a size
     belongs to a pitch and a task alike and a project has none, being a container.
 
-    The page carries all three kinds and hides what does not apply, so that
+    The page carries every kind and hides what does not apply, so that
     switching kind does not throw away a title somebody just typed. Each row says
     which kinds own it, and the server refuses the rest — the guarantee is on the
     side that writes the file, not in whichever controls a script left visible."""
@@ -546,14 +547,21 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
 
     assert owners["person_weeks"] == ["pitch", "task"]
     assert owners["shaped_by"] == ["pitch"]
-    # Every kind that does work, in ladder order and off the ladder: `status` is
-    # a work state, so the container rung does not carry it and the other three
-    # do. Derived rather than listed, or this is one more copy of the ladder that
-    # goes stale the day a rung is added.
+    # Every kind that reads a status AND is offered one here, in ladder order
+    # and off the ladder. The container rung reads no status at all; the two
+    # inbox kinds read one and are deliberately NOT offered it on this form —
+    # the single status control is the plan ladder, `shaping` on an issue is a
+    # word the server refuses, and a fresh inbox record opens at the server's
+    # stamp (`web.INBOXES`) instead. That absence is pinned from the other side
+    # by `test_the_create_form_offers_an_issue_no_plan_status`. Derived rather
+    # than listed, or this is one more copy of the ladder that goes stale the
+    # day a rung is added — and spelled out once beneath, so the derivation
+    # cannot drift along with the code it derives from.
     assert owners["status"] == [
-        kind for kind in KIND_NAMES if "status" not in unread_fields(kind)
+        kind for kind in KIND_NAMES
+        if "status" not in unread_fields(kind) and RUNG[kind].planned
     ]
-    assert len(owners["status"]) == len(KIND_NAMES) - 1
+    assert owners["status"] == ["project", "pitch", "task"]
     # And a field the top rung does not read is not offered on it: a product has
     # no owner and — since jcanton asked, 2026-08-20 — no status and no PRs
     # either, so each of those rows names the other three kinds.
@@ -3444,10 +3452,16 @@ def test_a_row_that_belongs_to_nothing_is_never_offered_a_move(page: str):
     carries one for the reader who asks, because an absence explains nothing on
     its own.
 
-    Which kind is the top is asked of the page's own `PARENT_KINDS` rather than
-    named here. It was `project` until a `product` was added above it, and this
-    test passed for the wrong reason the whole way: a project now has somewhere
-    to go, and the row with nowhere to go is a kind this corpus does not contain.
+    Which kinds belong to nothing is asked of the page's own `PARENT_KINDS`
+    rather than named here. It was `project` until a `product` was added above
+    it, and this test passed for the wrong reason the whole way: a project now
+    has somewhere to go, and the row with nowhere to go is a kind this corpus
+    does not contain. Since the flip the set holds three — the product because
+    it is the top of the tree, the two inbox kinds because an issue belongs to
+    nothing (`under=()` on their rungs) — and the page's `movable` must refuse
+    all of them, the inbox pair even though, being unplanned, they never have
+    a row on this table to grow a grip in the first place: the payload ships
+    every kind, and a gesture must refuse even a row that should not exist.
     """
     answer = drive_table(
         page,
@@ -3462,8 +3476,12 @@ def test_a_row_that_belongs_to_nothing_is_never_offered_a_move(page: str):
     )
     got = answer["value"]
 
-    assert got["top"] == ["product"], got["top"]
-    assert got["movable"] == [False]
+    tops = [kind for kind in KIND_NAMES if not PARENT_KINDS[kind]]
+    assert got["top"] == tops, got["top"]
+    assert set(tops) == {"product", "issue", "note"}, (
+        "spelled out once so the derivation above cannot drift with the code"
+    )
+    assert got["movable"] == [False] * len(tops)
     assert got["said"] == "A product belongs to nothing, so there is nothing to file it under"
     # And the two kinds this corpus does hold both have somewhere to go now.
     assert got["project"] is True and got["task"] is True
