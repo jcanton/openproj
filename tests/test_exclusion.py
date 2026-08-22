@@ -1,0 +1,232 @@
+"""The exclusion: a kind whose rung says `planned=False` is off every PM surface.
+
+Spec §2 ("one record, one page"): `Index.entities` is the plan and only the
+plan; `Index.records` is every record that parsed. The inversion makes every
+existing consumer safe — a forgotten one sees fewer records, never more — and
+the validator on `Index` is the by-construction guarantee the type system gave
+up when every kind became an Entity.
+
+Two layers, on purpose:
+
+* The KINDS-derived sweep. It iterates the ladder and covers every rung with
+  `planned=False`, so a seventh unplanned rung is covered the day it is added
+  and the sweep cannot go stale. Until the flip commit lands there is no such
+  rung, and the sweep SKIPS WITH A STATED REASON rather than passing vacuously
+  — `addopts = -ra` puts that skip in every CI summary, so it is a visible
+  countdown, not silence. The flip commit un-skips it by existing: nothing in
+  this file needs an edit on that day.
+* The machinery tests. They cannot wait for the flip, so they make an unplanned
+  rung out of the ladder itself — `RUNG["task"]._replace(planned=False)` under
+  `monkeypatch.setitem` — derived from a real rung rather than invented, so the
+  fake cannot drift from the shape of one.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pygit2
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from test_index import CONFIG, TODAY, a_family, a_task
+from test_store import commit_directly
+from test_web import SEED
+
+from openproj.cli import main
+from openproj.index import Index, apply_filters, build_index
+from openproj.model import KINDS, RUNG, Rung, parse_text
+from openproj.web import create_app
+
+# A word no fixture, template or chrome string contains, so "absent from the
+# rendered page" is a claim about this record and nothing else.
+NEEDLE = "xsweepneedle"
+
+UNPLANNED = tuple(rung for rung in KINDS if not rung.planned)
+
+
+def _armed() -> tuple[Rung, ...]:
+    """The rungs the sweep covers, or a REPORTED skip while there are none.
+
+    A skip and not a pass: with zero unplanned rungs every loop below is
+    vacuous, and a vacuous green is indistinguishable from a real one. The
+    skip shows in CI's `-ra` summary on every run until the flip commit adds
+    the issue and note rungs, at which point this returns them and the sweep
+    runs for real — no edit here, ever.
+    """
+    if not UNPLANNED:
+        pytest.skip(
+            "no rung with planned=False in KINDS yet - the sweep arms itself on "
+            "the flip commit that adds the issue and note rungs"
+        )
+    return UNPLANNED
+
+
+def _seed_for(rung: Rung) -> tuple[str, str, str]:
+    """(id, path, file text) for one minimal record of `rung`'s kind.
+
+    Derived from the ladder — prefix, directory, status vocabulary — and
+    carrying only what every kind has: id, kind, title, and the first word of
+    the rung's own ladder. If a future unplanned kind grows a required field,
+    `parse_text` refuses this text and the sweep fails LOUDLY, which is the
+    correct failure: extend this helper, never skip the kind.
+    """
+    eid = f"{rung.prefix}-0faded"
+    front = [f"id: {eid}", f"kind: {rung.name}", f"title: {NEEDLE} {rung.name}"]
+    if rung.statuses:
+        front.append(f"status: {rung.statuses[0]}")
+    text = "---\n" + "\n".join(front) + "\n---\n\nSeeded by the exclusion sweep.\n"
+    return eid, f"{rung.directory}/{eid}.md", text
+
+
+def test_with_only_planned_kinds_the_records_are_exactly_the_plan():
+    """The load-bearing fact of this commit: the inversion lands before any
+    unplanned kind exists, so the two populations are equal and every existing
+    consumer is untouched by construction."""
+    index = build_index(a_family(), CONFIG, TODAY)
+    assert index.records == index.entities
+
+
+def test_build_index_keeps_an_unplanned_kind_out_of_the_plan(monkeypatch):
+    """Index purity, testable before the flip: the fake unplanned rung is the
+    real task rung with one field changed, so it cannot drift from the shape
+    of a rung. Only `planned` flips — the rest of the rung stays as it is, so
+    everything else `build_index` does is undisturbed."""
+    monkeypatch.setitem(RUNG, "task", RUNG["task"]._replace(planned=False))
+    index = build_index(a_family(), CONFIG, TODAY)
+
+    dropped = sorted(eid for eid in index.records if eid.startswith("task-"))
+    assert dropped == ["task-c00001", "task-c00002"], "the family's tasks are the fixture"
+    for eid in dropped:
+        assert eid not in index.entities, f"{eid} leaked into the plan"
+        assert eid in index.records
+
+    # The maps a record page and the landing search read are TOTAL: a fact row
+    # cannot KeyError and a record cannot be missing from its own search.
+    everyone = set(index.records)
+    assert set(index.children) == everyone
+    assert set(index.blocked_by) == everyone
+    assert set(index.blocks) == everyone
+    assert set(index.search_blob) == everyone
+
+    # Facets are plan facts: no dropped id anywhere, and the kind menu does
+    # not offer the word — a facet that can only ever match nothing.
+    for field, values in index.facets.items():
+        for eid in dropped:
+            assert eid not in values, f"{eid} appears in the {field} facet"
+    assert "task" not in index.facets["kind"]
+
+    # One search, two populations: the default is the plan and fails closed;
+    # the landing asks for everything by name.
+    assert "task-c00001" not in apply_filters(index, {}, "first")
+    assert "task-c00001" in apply_filters(index, {}, "first", over=index.records)
+
+
+def test_a_hand_built_index_smuggling_an_unplanned_kind_is_refused(monkeypatch):
+    """`build_index` filtering is one half; the validator is the guarantee that
+    no OTHER construction path — a future cache, a test fixture, a refactor —
+    can put an unplanned kind in the plan either."""
+    monkeypatch.setitem(RUNG, "task", RUNG["task"]._replace(planned=False))
+    good = build_index(a_family(), CONFIG, TODAY)
+    sneaked = a_task("task-0faded", "Smuggled into the plan")
+    with pytest.raises(ValidationError) as refusal:
+        Index(**{**dict(good), "entities": {**good.entities, sneaked.id: sneaked}})
+    said = str(refusal.value)
+    assert "task-0faded is a task" in said, "the refusal names the id and the kind"
+    assert ".records" in said, "and says where the record belongs instead"
+
+
+def test_every_unplanned_kind_is_out_of_the_plan_and_in_the_records():
+    unplanned = _armed()
+    entities = a_family()
+    seeded: list[tuple[Rung, str]] = []
+    for rung in unplanned:
+        eid, path, text = _seed_for(rung)
+        entities.append(parse_text(text, path))
+        seeded.append((rung, eid))
+
+    index = build_index(entities, CONFIG, TODAY)
+    for rung, eid in seeded:
+        assert eid not in index.entities, f"a {rung.name} leaked into the plan"
+        assert eid in index.records, f"the {rung.name} fell out of the record population"
+        # The scheduler never dates it, so no payload built from spans can name it.
+        assert eid not in index.spans and eid not in index.explanations
+        for field, values in index.facets.items():
+            assert eid not in values, f"{eid} appears in the {field} facet"
+        assert rung.name not in index.facets["kind"], "a facet that can only match nothing"
+        # Total maps: the fact rows and the landing search cannot KeyError.
+        assert eid in index.blocked_by and eid in index.blocks
+        assert eid in index.search_blob
+        # Found by the landing search, invisible to the table's.
+        assert eid in apply_filters(index, {}, NEEDLE, over=index.records)
+        assert eid not in apply_filters(index, {}, NEEDLE)
+
+
+def test_the_schedule_payload_never_names_an_unplanned_kind(tmp_path: Path, capsys):
+    unplanned = _armed()
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "defaults.yaml").write_text(
+        "schema_version: 2\nnominal_availability: 1.0\ndefault_task_effort: 0.5\n"
+    )
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "task-c00001.md").write_text(
+        "---\nid: task-c00001\nkind: task\ntitle: Planned work\nstatus: ready\n"
+        "owner: ann\nreviewers: [bo]\nperson_weeks: 1\n---\n\nA task.\n"
+    )
+    seeded = []
+    for rung in unplanned:
+        eid, path, text = _seed_for(rung)
+        (tmp_path / rung.directory).mkdir(exist_ok=True)
+        (tmp_path / path).write_text(text)
+        seeded.append(eid)
+
+    assert main(["schedule", str(tmp_path), "--json", "--today", "2026-08-13"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "task-c00001" in payload["entities"], "the planned control is scheduled"
+    for eid in seeded:
+        assert eid not in payload["entities"]
+        assert eid not in payload["spans"] and eid not in payload["explanations"]
+
+
+@pytest.fixture
+def sweep_client(tmp_path: Path):
+    """The SEED corpus plus one record of every unplanned kind, served."""
+    _armed()
+    path = tmp_path / "plan.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    seeded = dict(SEED)
+    for rung in UNPLANNED:
+        _, file_path, text = _seed_for(rung)
+        seeded[file_path] = text
+    commit_directly(path, seeded, "seed the exclusion sweep corpus")
+    with TestClient(create_app(path, auth="dev", secret="a-sweep-signing-secret")) as client:
+        yield client
+
+
+# Every PM page the spec names. The whole document is one response — rows,
+# embedded payload, facet bar, suggestions datalist — so absence of the id and
+# the title needle from the text is absence from all of them at once.
+PLAN_PAGES = ("/table", "/graph", "/timeline", "/people")
+
+
+def test_an_unplanned_record_is_on_its_own_page_and_the_landing_and_nowhere_else(
+    sweep_client: TestClient,
+):
+    for rung in _armed():
+        eid, _, _ = _seed_for(rung)
+        for route in PLAN_PAGES:
+            page = sweep_client.get(route)
+            assert page.status_code == 200
+            assert eid not in page.text, f"{eid} leaked onto {route}"
+            assert NEEDLE not in page.text, f"the {rung.name}'s title leaked onto {route}"
+
+        listed = sweep_client.get("/api/index.json").json()
+        assert eid not in listed["entities"], "the external contract is plan-only"
+        assert eid not in listed["spans"]
+
+        # Present exactly where a record lives: the landing list, and its own page.
+        landing = sweep_client.get("/")
+        assert landing.status_code == 200 and eid in landing.text
+        own = sweep_client.get(f"/detail/{eid}")
+        assert own.status_code == 200 and NEEDLE in own.text
