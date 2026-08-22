@@ -2687,17 +2687,26 @@ dt:has(+ dd .hill) { align-self: start; }
   transform: translate(-50%, -50%)
              translate(calc(var(--nx, 0) * var(--lift)), calc(var(--ny, -1) * var(--lift)));
 }
+/* Hidden until the hill is being used. jcanton, 2026-08-22: the stops should show
+   "only when dragging the ball or when hovering over one, not always" — a row of
+   grey dots on every record on every page is furniture, and the thing worth
+   looking at is where the ball is.
+   Revealed by a hover anywhere on the drawing rather than by a hover on one stop:
+   a stop that appears only once the pointer is already on it is a target you find
+   by accident. Focus reveals them for the same reason, for somebody arriving by
+   keyboard who never hovers anything at all. */
 .hill-ghost { width: var(--ghost); height: var(--ghost);
-              background: var(--line-strong); opacity: .35; }
+              background: var(--line-strong); opacity: 0; }
+.hill:hover .hill-ghost, .hill.dragging .hill-ghost,
+.hill:has(input:focus-visible) .hill-ghost { opacity: .5; }
 /* Half the line, and not a pixel guessed at: `.hill-line` is 2px painted, so the
    surface a ball rests on is 1px above the path's own coordinates. */
 .hill-ghost { --lift: calc(var(--ghost) / 2 + 1px); }
 .hill-ball, .hill-stop { --lift: calc(var(--ball) / 2 + 1px); }
-/* Firmer while the hill is a control. Reading a record, the other stops are
-   context and should stay quiet; editing one, they are the places the ball may
-   go, and a target nobody can see until they hover over it is a target nobody
-   finds. */
-.hill[role=radiogroup] .hill-ghost { opacity: .55; }
+/* Firmer while the hill is a control: reading a record the other stops are
+   context, and editing one they are the places the ball may go. */
+.hill[role=radiogroup]:hover .hill-ghost,
+.hill[role=radiogroup].dragging .hill-ghost { opacity: .65; }
 /* `left`/`top` and not `transform`, so one ball rolls between stops when the
    status changes instead of a second ball lighting up somewhere else. The shell's
    blanket reduced-motion block is inlined before every page's own stylesheet and
@@ -15553,8 +15562,6 @@ PRIORITY_GLYPH = {
 # owns a mark that is not colour: drawn at a bar's left edge, prefixed to a node's
 # title, and shown inside the legend swatch beside the word it stands for.
 #
-# All five are in the vendored face's latin subset, so a page that falls back to
-# no webfont at all still draws five different shapes rather than five boxes.
 # Chosen to be different SHAPES, not different weights of one shape: a small dot
 # and a large dot are two glyphs a reader has to compare, which is the failure
 # the ladder was already meant to fix.
@@ -15563,12 +15570,29 @@ PRIORITY_GLYPH = {
 # Text glyphs and not emoji, and that is a constraint rather than a taste: an
 # emoji is drawn by the platform's colour font, so it ignores `currentColor` and
 # arrives at a different weight on every machine — and these sit inside a 14px
-# timeline bar in the bar's own ink. A chequered flag exists only as one (U+1F3C1),
-# which is why `ready` is an arrow instead.
+# timeline bar in the bar's own ink. It is also why a drawing cannot replace them:
+# the same five characters go inside `<option>` elements, in the table's inline
+# status editor and in every facet menu, and an option is a string.
+#
+# **They say what the hill says.** Since the detail page draws a status as a ball
+# on a hill, a mark that means something unrelated is a second vocabulary for one
+# fact — so these are the hill in one character: climbing, over the top, coming
+# down. jcanton, 2026-08-22, choosing between four mocked options. `done` and
+# `shelved` keep their marks: they are the two the hill draws on flat ground, and
+# a tick and a cross are already what they mean.
+#
+# **Not all five are in the vendored face's latin subset**, and the line that used
+# to claim they were was measured and wrong: it holds 230 codepoints and has never
+# held U+2713 or U+2715. It does not matter, and here is why it does not. In HTML
+# the stack falls back — `--font-sans` names four faces after Inter. On the graph
+# the mark is drawn into an SVG data URI, which is an isolated document that
+# resolves against the system's own fonts and not the page's `@font-face` at all,
+# which is exactly how the tick has been drawing correctly all along. The cost of
+# a character no machine has is one 14px mark drawn as a box, not a broken page.
 STATUS_GLYPH = {
-    "shaping": "?",         # still a question
-    "ready": "↑",           # queued at the gate, pointing at the off
-    "in_progress": "»",     # under way
+    "shaping": "↗",         # the climb: figuring out what to do
+    "ready": "⌒",           # over the top, and knowing
+    "in_progress": "↘",     # the descent: getting it done
     "done": "✓",            # finished
     "shelved": "✕",         # struck out, not failed
 }

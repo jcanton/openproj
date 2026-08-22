@@ -189,6 +189,25 @@ One payload, `<script id="hill" type="application/json">`, in the shell beside `
 the viewBox, the path and the stops. `cardHtml` builds its hill from it; the server builds the
 detail page's from the same Python function that produced it. Two renderers, one set of numbers.
 
+## 6a. The other notation
+
+A status is also drawn as a one-character mark — `STATUS_GLYPH` — on timeline bars, graph nodes,
+legend keys and inside chips. Once the detail page draws a status as a ball on a hill, that mark is
+a second vocabulary for one fact.
+
+It cannot be replaced by a drawing. The same five characters go inside `<option>` elements, in the
+table's inline status editor and in every facet menu, and an option is a string. A hill in the chips
+would therefore not remove the second language; it would add a third. Four options were mocked
+against the real stylesheet and the small hill also loses what makes the big one good: at 26×11
+`shelved` reads as a ball floating inside the hill rather than resting on the ground under it, and
+`ready` and `shaping` are two dots a few pixels apart — in the one column already under width
+pressure, and in `tight-status` mode, where the word is hidden and only the mark survives.
+
+So the marks stay text and are changed to say what the hill says: `↗` the climb, `⌒` over the top,
+`↘` the descent. `done` and `shelved` keep `✓` and `✕` — they are the two the hill draws on flat
+ground, and a tick and a cross already mean what they mean. One vocabulary at two scales: the hill
+where there is room to draw it, its shorthand where there is not.
+
 ## 7. Tests
 
 - every stop that is on the curve satisfies `|y(t) − stop.y| < ε` — the geometry cannot drift from
