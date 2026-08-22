@@ -748,6 +748,7 @@ def test_the_page_stops_saving_when_the_room_says_there_was_nothing_to_save(
     answer = run_js(
         page,
         "(async () => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  if (!COEDIT.live()) return 'the room never came up';"
@@ -1401,6 +1402,7 @@ def typed_in_the_page(client: TestClient, shown: str, edits: list[str]) -> coedi
     answer = run_js(
         page,
         "(() => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  const box = document.querySelector('[name=body]');"
@@ -1562,6 +1564,11 @@ def in_chrome_room(
     )
     answer = measured_in(
         chrome(), seeded, where, 1400,
+        # A session first, or there is no socket to welcome: `connect()` runs at
+        # session start now — a reader holds no seat — so the room this helper
+        # welcomes the page into exists only once a session is open.
+        "if (!document.querySelector('article.entity').classList.contains('editing'))"
+        " flipEditing();\n"
         f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
         patience=6800, query=query,
     )
@@ -1693,11 +1700,11 @@ def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
 
 _REFLECTED = r"""
 const area = document.querySelector('textarea[name=body]');
-// In an editing session and focused, because that is the tab this is about: a
-// reader with the box closed has no caret to lose, and `reflect` deliberately
-// leaves an unfocused box alone rather than calling `setSelectionRange` on it,
-// which would also scroll it.
-document.getElementById('toggle').click();
+// Focused, because that is the tab this is about: a reader with the box closed
+// has no caret to lose, and `reflect` deliberately leaves an unfocused box
+// alone rather than calling `setSelectionRange` on it, which would also scroll
+// it. The session is already open — `in_chrome_room` opens one before the
+// welcome, since the room is only joined at session start.
 area.focus();
 area.setSelectionRange(2, 2);
 const caretWas = area.selectionStart;
@@ -2115,6 +2122,7 @@ def test_a_draft_in_the_box_is_offered_to_a_room_that_has_not_moved(client: Test
     answer = run_js(
         page,
         "(() => {"
+        "  flipEditing();"
         "  const box = document.querySelector('[name=body]');"
         f" box.value = {json.dumps(draft)};"
         "  __socket.opened();"
@@ -2817,7 +2825,7 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
             "(() => {"
             " const one = document.querySelector('article.entity');"
             " if (!one.classList.contains('editing'))"
-            "   document.getElementById('toggle').click();"
+            "   flipEditing();"
             " const who = document.getElementById('together').textContent;"
             " return who"
             "   ? who + ' | ' + document.getElementById('unsaved').textContent : '';"
@@ -3540,7 +3548,6 @@ def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
 
 
 _UNDO_IN_A_ROOM = r"""
-document.getElementById('toggle').click();
 const editor = ace.edit(document.querySelector('.acebox'));
 editor.focus();
 // Ann's own edit, made the way a person makes one, at the top of the document.
@@ -3626,7 +3633,6 @@ def test_undo_never_takes_back_something_somebody_else_typed(
 
 
 _UNDO_IN_A_ROOM_ON_THE_BOX = r"""
-document.getElementById('toggle').click();
 const box = document.querySelector('textarea[name=body]');
 const undo = [...document.querySelectorAll('#marks .hist')]
   .find(one => one.title.startsWith('Undo'));
@@ -3751,7 +3757,6 @@ def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
 
 
 _HISTORY_KEYS_IN_A_ROOM = r"""
-document.getElementById('toggle').click();
 const box = document.querySelector('textarea[name=body]');
 const of = word => [...document.querySelectorAll('#marks .hist')]
   .find(one => one.title.startsWith(word));
@@ -3898,6 +3903,7 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     answer = run_js(
         page,
         "(async () => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  if (!COEDIT.live()) return 'the room never came up';"
@@ -3944,6 +3950,7 @@ def test_what_the_room_said_about_a_save_survives_the_reload(
     answer = run_js(
         page,
         "(async () => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  await save();"

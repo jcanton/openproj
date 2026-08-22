@@ -10327,7 +10327,14 @@ const EDITOR = (() => {
     //
     // It is still a remembered preference — the segments write it — so this is
     // only what somebody who has never pressed one of them gets.
-    mode: one(held.mode, ['edit', 'both', 'view'], 'edit'),
+    //
+    // Only the two session modes. `view` stopped being a session shape when
+    // the landing state took its name: the same stored word meant "open
+    // sessions in preview-only" yesterday and "the sessionless read page"
+    // today, and a preference that changes meaning under a stored value is a
+    // trap. A legacy `view` reads as `edit` — the nearest session — and is
+    // rewritten the first time anything remembers.
+    mode: one(held.mode === 'view' ? 'edit' : held.mode, ['edit', 'both'], 'edit'),
     indent: one(held.indent, INDENT_WIDTHS, 2),
     autosave: one(held.autosave, DRAFT_SECONDS, 2),
     // Added to this key rather than bumping it to `openproj:editor:2`. A bump
@@ -11094,19 +11101,22 @@ function attachEditing(surface, bar) {
       // order of who gets it and why:
       //
       // 1. **The page, while there is something to come back out of.** On the
-      //    two pages with a full-page view, Escape leaves it. It goes first
-      //    because it is what a person pressing Escape in a screen-filling
-      //    editor means, because the change is visible the instant it happens,
-      //    and because one click puts it back. Announced by nothing, because the
-      //    whole screen answering is the answer.
+      //    pages with a full-page view, Escape leaves it — and on a record page
+      //    the place it leaves TO is the sessionless read page, so the session
+      //    ends with it. It goes first because it is what a person pressing
+      //    Escape in a screen-filling editor means, because the change is
+      //    visible the instant it happens, and because one click puts it back.
+      //    Announced by nothing, because the whole screen answering is the
+      //    answer.
       // 2. **The Tab hatch.** Tab indents here, which takes away the only way
       //    out of the box for somebody with no pointer. Escape gives it back for
       //    one press, and says so: an escape hatch nobody is told about is not
       //    one, and swallowing Tab in silence is the version of this feature
       //    that traps people.
-      // 3. **Ending the editing session: never.** That is Cancel, a button with
-      //    a name, because ending a session drops a restored draft — and a key
-      //    that discards writing is a key somebody presses by mistake once.
+      // 3. **Discarding writing: never.** The session Escape ends keeps the
+      //    text in the surface and the draft in its store; putting fields back
+      //    is Cancel, a button with a name, because a key that discards writing
+      //    is a key somebody presses by mistake once.
       //
       // The seam is an event on the element, the way the image button's is: this
       // block is shared by six pages and only two of them have a view to leave.
@@ -11638,20 +11648,20 @@ _EDITOR_SWITCH = (
 def _viewbar(switchable: bool, ace: bool) -> Markup:
     """The bar of controls that says how, and in what, this document is shown.
 
-    `switchable` is whether the second editor is obtainable on this page at all —
-    the two gates `_ace_wanted` asks that are not the address. A page that cannot
-    have it does not offer a switch, because a switch that cannot move is a
-    control that lies about what the page can do: the static export has no server
-    to render the other bytes, and a reader the server would refuse a save from
-    would be pressing it for a keymap whose every save is a 403.
+    The whole bar is withheld from a reader the server would refuse a write
+    from. The segments are the only door into an editing session, so for a
+    non-writer they would open an editor whose every save is a 403 — and the
+    read page is already the whole page they came for. `switchable` carries
+    that fact: `_either_editor_possible` is `base_commit and may_write`, and
+    every template that renders this bar sits behind `{% if editable %}`, so
+    within a rendered page it reduces to `may_write`.
 
-    `ace` is which way it is set, which is `_ace_wanted`'s own answer, so the
-    switch and the bytes cannot disagree.
+    `ace` is which way the editor switch is set, which is `_ace_wanted`'s own
+    answer, so the switch and the bytes cannot disagree.
     """
-    return Markup(
-        _VIEW_SEGMENTS
-        + (_EDITOR_SWITCH.format(checked="true" if ace else "false") if switchable else "")
-    )
+    if not switchable:
+        return Markup("")
+    return Markup(_VIEW_SEGMENTS + _EDITOR_SWITCH.format(checked="true" if ace else "false"))
 
 
 _SUGGEST_STYLE = """
@@ -12082,13 +12092,14 @@ def _control_html(
 # view of. The blocks share one lexical scope, so this runs after theirs and the
 # names are simply there.
 #
-# **A fourth state, which HackMD does not have.** HackMD is always full page, so
-# exactly one of its three segments is always pressed. Here the facts column, the
-# width grip and the reading measure are the ordinary page, and the writing
-# surface is somewhere you go and come back from — so full page OFF is a real
-# state, no segment is pressed in it, and `aria-pressed="false"` on all three is
-# what says so. It is left by pressing the pressed segment, by the same chord
-# that entered it, or by Escape.
+# **Three states, and the landing one is `view`.** HackMD is always full page;
+# here `view` is the ordinary page — the server-rendered document, the facts
+# column, the nav alive — and it is where every session ends. `edit` and `both`
+# are sessions and go full page. The fourth, unnamed state this used to carry
+# is gone from every record page: exactly one segment is always pressed. The
+# one exception is the create form, which has no stored document to land on —
+# see `LANDING` and `GROUND` in the script below; that exception dies with
+# `_NEW` when creating becomes a mode of the record page.
 _VIEWS = Markup(r"""
 <script>
 const VIEW_ARTICLE = BODY.closest('article.entity');
@@ -12105,9 +12116,16 @@ const CORNER_HOME = CORNER && CORNER.parentElement;
 // still passes without being rewritten to agree with the change.
 const VIEW_IDS = {edit: 'view-edit', both: 'view-both', view: 'preview'};
 const VIEWS = ['edit', 'both', 'view'];
-// null is full page off. See the comment on `_VIEWS` in render.py for why there
-// are four states here and three in the note this is modelled on.
-let VIEW = null;
+// The server-rendered document, present on every record page and absent on the
+// create form — the structural fact the whole machine branches on. A page with
+// a landing has a sessionless `view` state to come back to; the create form
+// has nothing to read yet, so its way out of full page is the old surface-off
+// state (`null`), kept only there and only until `_NEW` is absorbed.
+const LANDING = VIEW_ARTICLE.querySelector('.doc.read');
+// Where every exit lands: Escape, the pressed segment, the chord, and the end
+// of a session all come here.
+const GROUND = LANDING ? 'view' : null;
+let VIEW = GROUND;
 
 function showView(mode) {
   VIEW = mode;
@@ -12115,10 +12133,14 @@ function showView(mode) {
     VIEW_ARTICLE.classList.toggle('view-' + name, mode === name);
     document.getElementById(VIEW_IDS[name]).setAttribute('aria-pressed', String(mode === name));
   }
-  VIEW_ARTICLE.classList.toggle('full', mode !== null);
+  // Full page is what a SESSION looks like. On a record page `view` is the
+  // landing — the ordinary page, nav alive — and never full; the create form
+  // has no landing, so every view there is full and `null` is its off state.
+  const full = LANDING ? (mode === 'edit' || mode === 'both') : mode !== null;
+  VIEW_ARTICLE.classList.toggle('full', full);
   // The page behind a fixed, viewport-filling article has nothing left to show
   // and a scrollbar that scrolls it anyway is a scrollbar that moves nothing.
-  document.body.classList.toggle('fullpage', mode !== null);
+  document.body.classList.toggle('fullpage', full);
   // And nothing behind an opaque surface may still be tabbed into or read out.
   // Measured before this: 43 focusable elements on the page, 9 outside the
   // article, 8 of them painted over — so shift-tabbing back past the switcher
@@ -12133,7 +12155,7 @@ function showView(mode) {
   // well as focus — so inerting them would take the owner picker away in
   // exactly the view this stage is about.
   for (const covered of document.querySelectorAll('body > nav, body > a.skip')) {
-    covered.inert = mode !== null;
+    covered.inert = full;
   }
   // And the two controls that `inert` took with it come out from behind it —
   // jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem to
@@ -12156,19 +12178,24 @@ function showView(mode) {
   // that act on the document you are writing before the two that act on the
   // application. `.corner`'s own `margin-left: auto` puts them at the far end,
   // which is where they sit in the nav they came from.
-  if (CORNER) (mode === null ? CORNER_HOME : VIEW_BAR).append(CORNER);
+  if (CORNER) (full ? VIEW_BAR : CORNER_HOME).append(CORNER);
   // One mechanism for whether the preview pane is on the page, and it is the
-  // `hidden` attribute the pane was already drawn with. A second, in CSS, would
-  // be a second thing to keep in step — and a stale attribute underneath it is
-  // exactly how a pane comes to be invisible to a reader and present to a test.
-  VIEW_PANE.hidden = mode === null || mode === 'edit';
-  // A view of the document is a way into editing it: on the detail page the
-  // segments turn edit mode on rather than showing a preview of a page that is
-  // already showing one. They never turn it off — that is Cancel, which is where
-  // the draft is dealt with.
-  if (mode !== null && typeof showEditing === 'function'
-      && !VIEW_ARTICLE.classList.contains('editing')) {
-    showEditing(true);
+  // `hidden` attribute the pane was drawn with. The landing does not use the
+  // pane at all: the server already rendered this document into `.doc.read`
+  // through the same `_markdown`, and a pane here would be one `/api/preview`
+  // round trip to redraw what is on the screen. The create form has no
+  // rendered copy, so its `view` still previews the draft.
+  VIEW_PANE.hidden = mode === null || mode === 'edit' || (LANDING && mode === 'view');
+  // The machine owns the session on the pages that have both: `edit` and
+  // `both` ARE sessions, so entering one opens it, and the landing is
+  // sessionless, so landing ends it. `VIEW` is already set above, which is
+  // what keeps the `openproj:session` listener below out of the loop. The
+  // create form has no `showEditing` and never leaves editing; the issue and
+  // note pages bring their own.
+  if (LANDING && typeof showEditing === 'function') {
+    const editing = VIEW_ARTICLE.classList.contains('editing');
+    if (full && !editing) showEditing(true);
+    if (mode === 'view' && editing) showEditing(false);
   }
   // The room's bands are measured against a box that has a size, and a view
   // change is exactly when the box changes size. The Preview button this
@@ -12601,21 +12628,24 @@ addEventListener('openproj:editing', () => {
 // --- how a view is asked for ------------------------------------------------
 
 // Chosen, as against merely shown. The preference records what a person picked,
-// and only `chooseView` writes it: `showView` is also what Cancel calls to leave
-// the surface at the end of a session, and reading that as "this reader prefers
-// no surface" would take the split away from somebody who edits, cancels, and
-// edits again.
+// and only `chooseView` writes it: `showView` is also what the load branch, the
+// Escape hatch and the session listener call, and a preference written there
+// would record arrivals nobody chose.
 function chooseView(mode) {
   showView(mode);
-  rememberEditor({mode});
+  // Only a session mode is a preference. `EDITOR.mode` answers one question —
+  // which view a session opens in — and leaving a session is not an answer to
+  // it: recording the exit would take the split away from somebody who edits,
+  // lands back on the page, and edits again.
+  if (mode === 'edit' || mode === 'both') rememberEditor({mode});
 }
 
 for (const name of VIEWS) {
-  // Pressing the pressed segment is how you come back out with a pointer, which
-  // is the same gesture as the chord below and the only one that needs no
-  // fourth control on the bar.
+  // Pressing the pressed segment is how you come back out with a pointer — to
+  // the landing where the page has one, to the old surface-off state on the
+  // create form, which has no landing to come back to.
   document.getElementById(VIEW_IDS[name]).onclick =
-    () => chooseView(VIEW === name ? null : name);
+    () => chooseView(VIEW === name ? GROUND : name);
 }
 
 // --- which editor, beside which view ----------------------------------------
@@ -12721,16 +12751,20 @@ addEventListener('keydown', event => {
   const mode = {Digit1: 'edit', Digit2: 'both', Digit3: 'view'}[event.code];
   if (!mode) return;
   event.preventDefault();
-  chooseView(VIEW === mode ? null : mode);
+  chooseView(VIEW === mode ? GROUND : mode);
 });
 
 // Escape, arbitrated: see the block in `attachEditing` that dispatches this.
-// Answered here only when there is something to come back out of, so on a page
-// that is not full the hatch that gives Tab back opens on the first press.
+// Answered here only when there is a session view to leave, so on the landing
+// — and on the create form's ordinary page — the hatch that gives Tab back
+// opens on the first press. Leaving lands on `GROUND`: on a record page that
+// is the sessionless landing, so Escape ends the session — and ends it
+// without discarding anything, because the text stays in the surface and the
+// draft store is the body-undo; only Cancel restores fields.
 BODY.addEventListener('openproj:escaped', event => {
-  if (VIEW === null) return;
+  if (VIEW === GROUND) return;
   event.preventDefault();
-  showView(null);
+  showView(GROUND);
 });
 
 // `?edit`, `?both`, `?view`, read once at load. Flags and not values: the
@@ -12749,59 +12783,37 @@ const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 // looking at this particular document; a stored mode is only what this browser
 // last chose for itself.
 //
-// **The preference is applied when an editing SESSION starts, not when the page
-// loads.** Sticky-at-load would mean that after once choosing the split, every
-// detail page anybody opened afterwards opened as a full-screen editor over a
-// record they had come to read — and on this page reading is the ordinary case
-// and writing is the exception. So it is restored by pressing Edit, by a
-// restored draft, and by the create form, which is always editing and where
-// "when the session starts" therefore IS the load. That is the branch below.
-// A linked view opens the session it is a view OF. `?edit` on a page in read
-// mode used to draw the editor's shell over a record nobody was editing — and it
-// is what the editor switch adds when it reloads, which is the case that made it
-// matter: toggling between the two editors is a navigation, because which editor
-// is on the page is decided by the server, and the page that came back arrived
-// in read mode with the session gone. jcanton, 2026-08-21, asking whether that
-// was intentional. The reload is; losing the session is not.
+// **The preference is applied when a session starts, not when the page
+// loads.** Sticky-at-load would mean that after once choosing the split,
+// every record anybody opened afterwards opened as a full-screen editor over
+// a record they had come to read — and reading is the ordinary case.
 if (VIEW_LINKED) {
-  if (typeof showEditing === 'function' && !VIEW_ARTICLE.classList.contains('editing')) {
-    showEditing(true);
-  }
+  // `?view` is a sessionless read link: it lands on the page, not in a
+  // session. `?edit` and `?both` are views OF a session and `showView` opens
+  // the session they are views of — including for the editor switch, which
+  // re-adds the flag when it reloads so the session survives the navigation.
   showView(VIEW_LINKED);
-} else if (EDITOR.mode && VIEW_ARTICLE.classList.contains('editing')) {
+} else if (VIEW_ARTICLE.classList.contains('editing')) {
+  // A session that existed before this script ran: a restored draft — the one
+  // place where landing does not mean sessionless — or the create form, which
+  // is always editing. It lands in the mode a session opens in.
   showView(EDITOR.mode);
+} else {
+  // The ordinary page IS a state now, with its segment pressed and the
+  // switcher on it: the segments are the door into a session, and a door
+  // drawn only inside the room it opens is not a door.
+  showView('view');
 }
 
-// A session beginning after this script has run — the Edit button. `VIEW ===
-// null` is what stops the loop: `showView` sets `VIEW` before it calls
-// `showEditing`, which is what dispatches this.
-//
-// **And a session ENDING leaves the surface it was in, here and nowhere else.**
-// That rule was written three times — in `flipEditing`, and again in each of the
-// issue and note pages' toggles — and the fourth door had no copy: a Save made
-// in a room does not reload, so `_COEDIT`'s `saved` branch ends the session with
-// a bare `showEditing(false)`. Measured in Chrome from the split view: the
-// article kept `full view-both`, `<body>` kept `fullpage`, the nav stayed
-// `inert` and the switcher — drawn only under `.entity.editing`, and named in
-// the commit that fixed Cancel as the documented way back — went at the same
-// instant. That is the trap `test_cancel_leaves_the_surface_it_was_pressed_in`
-// exists for, arrived at through the door nobody had written the line on.
-//
-// So it is one line on the one event that means "a session began or ended",
-// rather than a fourth copy at a fourth call site — an invariant written four
-// times is an invariant guarded three.
-//
-// `VIEW !== null` asks whether there is a surface to leave, and it is there for
-// an ordering rather than for a case that happens today: the issue and note
-// pages call `showEditing(false)` at load to draw themselves in read mode, and
-// they only get away with it because this script is inlined AFTER theirs, so
-// there is no listener yet. Nothing on the page says that has to stay true, and
-// the failure if it stopped being true is a `refreshPreview` and a class sweep
-// on every load of those two pages — quiet, and nothing would report it. Asking
-// whether a surface is up costs one comparison and does not care about order.
+// A session beginning or ending through any door this script did not open —
+// the restored draft's `showEditing(true)` runs before this script, Cancel and
+// the room's save run after it. One listener on the one event that means "a
+// session began or ended", rather than a copy at every call site: an invariant
+// written four times is an invariant guarded three. `VIEW` is set before
+// `showView` touches the session, which is what keeps this from looping.
 addEventListener('openproj:session', event => {
-  if (event.detail && EDITOR.mode && VIEW === null) showView(EDITOR.mode);
-  if (!event.detail && VIEW !== null) showView(null);
+  if (event.detail && VIEW === GROUND) showView(EDITOR.mode);
+  if (!event.detail && VIEW !== GROUND) showView(GROUND);
 });
 </script>
 """)
@@ -13174,26 +13186,18 @@ _DETAIL = """
       column, level with the title, so nothing is further away than it was. -#}
   <p class="meta"><code>{{ e.id }}</code>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
-  {#- The way in, at the top, and since 2026-08-20 the way out with it. Both were
-      in a commit bar at the foot of the page, under the whole shaping document —
-      so on any record worth reading, the button that lets you change it was a
-      scroll away from the thing you had just decided to change, and the button
-      that ends the change was somewhere else again. -#}
   {% if editable %}
-  {#- Both ways of changing this record on one line, in the same clothes. Edit is
-      the way in; Delete is the way out; a reader looking for either looks here.
-      Delete carries no styling of its own beyond the colour it turns on hover,
-      so the two buttons match by construction rather than by two rules somebody
-      has to keep in step.
-
-      The view switcher is the third thing on this line and is never on it at the
-      same time as the other two: Edit and Delete are hidden the moment a session
-      begins, and a view of an editing surface is nothing at all when there is no
-      editing surface. So the row holds the way in, or the ways of looking at
-      what you are in — never both. -#}
-  <p class="editbar"><button type="button" id="toggle">Edit</button>
-    {% if may_write %}<button type="button" class="delete">Delete</button>{% endif %}
+  {#- The switcher is the way in: pressing Write or Write-and-preview opens
+      the session it is a view of, so there is no Edit button beside it — two
+      adjacent doors into one session are two controls nobody can tell apart.
+      Delete is the other thing a writer may do to a record and it leaves the
+      moment a session begins. The whole line is a writer's: a reader the
+      server would refuse gets no door at all, which makes the read page the
+      whole page for them instead of an editor whose every save is a 403. -#}
+  {% if may_write %}
+  <p class="editbar"><button type="button" class="delete">Delete</button>
     {{ viewbar }}</p>
+  {% endif %}
   {#- Save, Cancel and the count of what is unsaved, directly under the button
       that started the editing rather than at the far end of the document —
       jcanton, 2026-08-20. The old argument for the foot was that a commit bar
@@ -13611,14 +13615,11 @@ function showEditing(editing) {
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
-  // Three buttons and never two of them at once: Edit is the way in, Save and
-  // Cancel are the two ways one editing session ends, and all three are in the
-  // same place at the top of the record — the bar swaps one for the other two.
-  // The button that used to be here was Edit and Cancel by turns, in ONE
-  // element, which is how a page comes to disagree with itself about what
-  // pressing it does.
+  // Save and Cancel are the two ways one editing session ends, and they
+  // arrive together at the top of the record. The way IN is the view switcher
+  // on the editbar; the Edit button that used to be here was a second door
+  // into the same session, one control's width from the first.
   document.getElementById('cancel').hidden = !editing;
-  document.getElementById('toggle').hidden = editing;
   // Delete leaves while an edit is open. Two destructive-ish answers to "I am
   // done with this record" on one line is one too many, and the one that throws
   // the record away should not be a slip of the hand from the one that keeps it.
@@ -13641,9 +13642,11 @@ function showEditing(editing) {
   dispatchEvent(new CustomEvent('openproj:session', {detail: editing}));
 }
 
-// Both of the buttons that change the mode, through one handler: Edit at the top
-// turns it on, Cancel in the bar turns it off, and a second copy of what that
-// means is how the two come to disagree about the draft.
+// Cancel's handler — and still the one programmatic door: called on a page in
+// read mode it opens the session instead (the segments do the same through
+// `showView`), which is what the tests and the room's plumbing drive it by.
+// A second copy of what ending a session means is how two doors come to
+// disagree about the draft.
 function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   // The fields go back BEFORE the session is ended, and the order is the whole
@@ -13698,7 +13701,6 @@ function flipEditing() {
     announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
   }
 }
-document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
 
 // Deleting a record. Two presses and a named record between them, and every
@@ -14643,7 +14645,7 @@ const COEDIT = (() => {
   }
 
   function connect() {
-    if (dead) return;
+    if (dead || !wanted) return;
     const where = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
       + '/api/coedit/' + encodeURIComponent(FORM.dataset.id);
     try {
@@ -14651,6 +14653,13 @@ const COEDIT = (() => {
     } catch (error) {
       return stop('');
     }
+    // Which construction this closure belongs to. A session can end and the
+    // next one connect before the ended session's socket has delivered its
+    // `onclose` — the close is a task, the reconnect a click apart — and that
+    // stale close must neither wipe the live room's roster nor arm a reconnect
+    // BESIDE the live socket. Measured before this guard: two open sockets in
+    // one tab, one person seated twice.
+    const opened = socket;
     socket.onopen = () => {
       arrived = true;
       attempts = 0;
@@ -14665,20 +14674,66 @@ const COEDIT = (() => {
     // which is where the one decision lives.
     socket.onerror = () => {};
     socket.onclose = () => {
+      if (opened !== socket) return;
       settle(null);
       names([]);
       if (dead) return;
+      if (!wanted) return;
       // A socket that has worked once and then closed is the normal case, not a
       // fault: Cloud Run closes every one of them at five minutes. A socket that
       // has never worked is a deployment without websockets, a proxy that drops
       // the upgrade, or a reader who may not write — and asking it again forever
       // is a red line in the console of a page that is working as designed.
       if (!arrived && attempts >= 4) return stop('');
-      setTimeout(connect, Math.min(30000, 500 * Math.pow(2, attempts++)));
+      retry = setTimeout(connect, Math.min(30000, 500 * Math.pow(2, attempts++)));
     };
   }
 
-  connect();
+  // --- when a seat is taken --------------------------------------------------
+  //
+  // At session start, never at script load. `connect()` ran right here, at
+  // load, and that was a shipped bug with a cost at both ends of the wire: a
+  // signed-in person who merely OPENED a record took a co-editing seat, was
+  // listed to everyone else as "also editing", and left the server holding a
+  // Room, a `_watch` task and an outbox task per record they visited, kept
+  // warm for LINGER_SECONDS after they had gone. The landing list is a page
+  // whose whole purpose is opening records; it would have multiplied that.
+  //
+  // Deferring is safe because nothing above keys off "connected at load": the
+  // draft-versus-room arbitration in `welcomed` keys off `ORIGINAL_BODY`, a
+  // non-writer is refused at the handshake (and no longer even carries this
+  // script), and a non-member learns of moves from the shell's events banner.
+  let wanted = false;
+  let retry = 0;
+
+  addEventListener('openproj:session', event => {
+    if (event.detail && !wanted) {
+      wanted = true;
+      connect();
+    }
+    if (!event.detail && wanted) {
+      wanted = false;
+      // A reconnect armed while the session was open would take the seat back.
+      clearTimeout(retry);
+      settle(null);
+      names([]);
+      if (socket) socket.close();
+    }
+  });
+  // A session that began before this script ran, whose `openproj:session` had
+  // no listener yet: a restored draft — the one place where landing does not
+  // mean sessionless — or a `?edit`/`?both` link, which `_VIEWS` (inlined
+  // above) answered at load. The ORDER is the load-bearing half: the restore
+  // has already spliced the draft into the surface by the time this line
+  // runs, so the room is joined by a page that is visibly holding unsent work
+  // and `welcomed` can see two histories and refuse to guess. Restored lazily
+  // on the Write press instead, the draft would be spliced in AFTER binding,
+  // leave as ordinary typing, and bypass that refusal — the exact class of
+  // silent overwrite this branch has shipped three times.
+  if (FORM.closest('article.entity').classList.contains('editing')) {
+    wanted = true;
+    connect();
+  }
   return {live, save(fields) {
     // Anything typed since the last input event, then one commit over the
     // socket: the fields from this form, the body from the room, one
@@ -14787,12 +14842,12 @@ button.stat.pick:hover { color: var(--accent); }
 .stat.over { color: var(--danger); font-weight: 600; }
 .bodywrap { position: relative; }
 /* Three states of one thing, drawn as one control: adjacent segments inside a
-   single bordered box, the pressed one filled. Three separate buttons in a row
-   would say "three unrelated actions", which is exactly what these are not.
-   Hidden until the article is editing, for the same reason as every other
-   `.field` here: a view of an editing surface is nothing at all when there is no
-   editing surface, and the create form is always editing so it always has it. */
-.views { display: none; }
+   single bordered box, the pressed one filled. Visible outside a session as
+   well as in one, because the segments ARE the door in: `edit` and `both`
+   open the session they are views of, and a door drawn only inside the room
+   it opens is not a door. A reader the server would refuse a write from gets
+   no bar at all — `_viewbar` decides that — so there is no rule here for a
+   page that should not have one. */
 /* No `overflow: hidden`, and that is a correction rather than a simplification.
    The shell's focus ring is `outline: 2px solid var(--focus)` at `outline-offset:
    2px`, drawn entirely OUTSIDE the segment's border box, and the segments fill
@@ -14800,7 +14855,7 @@ button.stat.pick:hover { color: var(--accent); }
    ring away on every side. Pixel-diffed against the unfocused shot: 6 differing
    pixels on the first segment, against 404 for Save on the same page. The
    corners the clip existed for are given to the end segments instead. */
-.entity.editing .views {
+.views {
   display: inline-flex; vertical-align: middle;
   border: 1px solid var(--line-strong); border-radius: 3px;
 }
@@ -16858,7 +16913,7 @@ def render_new(
             _either_editor_possible(base_commit, may_write),
             _ace_wanted(editor, base_commit, may_write),
         ),
-        views=_VIEWS,
+        views=_VIEWS if may_write else Markup(""),
         splitter=_SPLIT_HANDLE,
         templates=TEMPLATES,
     )
@@ -19205,7 +19260,7 @@ def render_issue(
             _either_editor_possible(base_commit, may_write),
             _ace_wanted(editor, base_commit, may_write),
         ),
-        views=_VIEWS,
+        views=_VIEWS if may_write else Markup(""),
         splitter=_SPLIT_HANDLE,
         # The same machinery the notes page uses, and now the same shape as well:
         # two kinds and a picker to choose between them. A pitch when the fix is
@@ -19450,7 +19505,7 @@ def render_note(
             _either_editor_possible(base_commit, may_write),
             _ace_wanted(editor, base_commit, may_write),
         ),
-        views=_VIEWS,
+        views=_VIEWS if may_write else Markup(""),
         splitter=_SPLIT_HANDLE,
         promote=(
             _promote_html(
@@ -19808,7 +19863,10 @@ def render_detail(
             _either_editor_possible(base_commit, may_write),
             _ace_wanted(editor, base_commit, may_write),
         ),
-        views=_VIEWS,
+        # The machine drives the segments; a non-writer has neither, or the
+        # script would throw on `getElementById` of a control `_viewbar`
+        # deliberately withheld.
+        views=_VIEWS if may_write else Markup(""),
         splitter=_SPLIT_HANDLE,
         # The same gate the two lines below carry, and one more: the address had
         # to ask. See `_ace`.

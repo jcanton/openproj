@@ -261,11 +261,14 @@ def test_the_way_in_is_at_the_top_and_the_two_ways_out_are_together(page: str):
 
     bar = re.search(r'<div class="commitbar".*?</div>', page, re.S).group(0)
     assert 'id="save"' in bar and 'id="cancel"' in bar
-    # Edit stays its own control: it is the way IN, and a button that is Edit and
-    # Cancel by turns puts the way out under whatever you were doing.
-    assert 'id="toggle"' not in bar, "the way in is not one of the ways out"
-    assert page.index('id="toggle"') < page.index('id="commitbar"')
-    assert page.index('id="toggle"') < page.index('<dl id="facts">')
+    # The way in is the view switcher, and it is not one of the ways out: the
+    # segments live on the editbar above the commit bar, never inside it.
+    assert 'id="views"' not in bar, "the way in is one of the ways out"
+    assert page.index('id="views"') < page.index('id="commitbar"')
+    assert page.index('id="views"') < page.index('<dl id="facts">')
+    assert 'id="toggle"' not in page, (
+        "a second door into the session, one control's width from the switcher"
+    )
 
 
 def test_the_bar_says_how_much_is_unsaved(page: str):
@@ -300,7 +303,7 @@ def test_cancel_puts_the_fields_back(page: str, tmp_path: Path):
         """
         const bar = document.getElementById('commitbar');
         const owner = document.querySelector('[name=owner]');
-        document.getElementById('toggle').click();
+        flipEditing();
         await new Promise(settled => setTimeout(settled, 40));
         const was = owner.value;
         owner.value = 'somebody-else';
@@ -336,7 +339,7 @@ def test_cancelling_an_edit_nobody_made_says_nothing(page: str, tmp_path: Path):
     found = measured_in(
         chrome(), page, tmp_path / "quiet.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         await new Promise(settled => setTimeout(settled, 40));
         document.getElementById('cancel').click();
         await new Promise(settled => setTimeout(settled, 40));
@@ -965,8 +968,7 @@ def test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against(
     draft = {"base": first, "text": "Half a paragraph, left in the box.\n"}
     after = run_js(
         reopened,
-        "(() => { document.getElementById('toggle')"
-        "   .dispatchEvent(new Event('click'));"
+        "(() => { flipEditing();"
         "  return [document.querySelector('[name=base_commit]').value,"
         "          document.querySelector('[name=body]').value]; })()",
         page=True,
@@ -1441,7 +1443,7 @@ def test_starting_a_cycle_asks_for_dates_and_nothing_else(client: TestClient):
 # is a browser API and the shim has no history for it to keep.
 _TABBING = """
 const area = document.querySelector('textarea[name=body]');
-document.getElementById('toggle').click();
+flipEditing();
 
 const press = (key, shift) => {
   area.focus();
@@ -1486,36 +1488,15 @@ const wrote = area.value;
 document.execCommand('undo');
 const undone = area.value;
 
-// And Escape arms exactly one Tab, out loud, so the field can still be left by
-// keyboard.
-//
-// Two presses, and the order is the one the handler documents: a session now
-// starts in a full-page view, so the first Escape leaves that — "what a person
-// pressing Escape in a screen-filling editor means" — and the second opens the
-// Tab hatch. On a page with no view up the first press opens it, which is what
-// the third assertion below still shows.
-set('alpha', 0, 0);
-press('Escape');
-press('Escape');
-const said = document.getElementById('state').textContent;
-const passed = press('Tab');
-const untouched = area.value;
-// Spent: the press after it indents again.
-press('Tab');
-const spent = area.value;
-
-return {swallowed, indented, still, back, odd, even, nested, wrote, undone,
-        said, passed, untouched, spent};
+return {swallowed, indented, still, back, odd, even, nested, wrote, undone};
 """
 
 
-def test_tab_indents_the_lines_the_selection_touches_and_escape_then_tab_leaves_the_field(
-    client: TestClient, tmp_path: Path
-):
+def test_tab_indents_the_lines_the_selection_touches(client: TestClient, tmp_path: Path):
     """Tab is the fifth ask, and taking Tab away is how an editor traps somebody
-    who has no pointer. Both halves are here because neither is safe alone: an
-    indent that swallows Tab with no way out is worse than no indent, and an
-    escape hatch nobody is told about is not one."""
+    who has no pointer. The other half — the Escape hatch that gives Tab back —
+    lives in the test below, on the page where the box is on the ordinary page:
+    here Escape leaves the session and takes the box with it."""
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "tab.html", 1200, _TABBING
     )
@@ -1529,10 +1510,40 @@ def test_tab_indents_the_lines_the_selection_touches_and_escape_then_tab_leaves_
     assert got["nested"] == "- one\n  - two\n", "Tab in a bullet did not nest the item"
     assert got["wrote"] == "  alpha\n  beta\n"
     assert got["undone"] == "alpha\nbeta\n", "the whole indent is not one undo step"
-    assert "Tab" in got["said"], "swallowing Tab was not announced"
+
+
+def test_escape_still_arms_the_tab_hatch_where_the_box_is_on_the_page(
+    client: TestClient, tmp_path: Path
+):
+    """The hatch's home moved with the null state: on a record page Escape now
+    leaves the session (taking the box with it), so the place a first press
+    has nothing to leave — and must therefore give Tab back — is the create
+    form's ordinary page, which has no landing and keeps the surface-off
+    state."""
+    got = measured_in(
+        chrome(), client.get(f"/new{PLAIN}").text, tmp_path / "hatch.html", 1200,
+        _STUB_PREVIEW + """
+        const area = document.querySelector('textarea[name=body]');
+        // Out of the full-page view first: the create form's pressed segment
+        // goes to the old surface-off state and the box stays on the page.
+        const lit = ['view-edit', 'view-both', 'preview']
+          .map(id => document.getElementById(id))
+          .find(seg => seg.getAttribute('aria-pressed') === 'true');
+        if (lit) lit.click();
+        const press = key => { area.focus(); return area.dispatchEvent(new KeyboardEvent(
+          'keydown', {key, bubbles: true, cancelable: true})); };
+        area.value = 'alpha — β';
+        area.dispatchEvent(new Event('input', {bubbles: true}));
+        press('Escape');
+        const said = document.getElementById('state').textContent;
+        const passed = press('Tab');
+        return {said, passed, value: area.value};
+        """,
+        patience=2400,
+    )
+    assert "Tab" in got["said"], "the hatch opened silently or not at all"
     assert got["passed"], "Escape did not give the next Tab back to the browser"
-    assert got["untouched"] == "alpha", "the armed Tab indented instead of leaving"
-    assert got["spent"] == "  alpha", "the hatch stayed open for a second Tab"
+    assert got["value"] == "alpha — β", "the armed Tab indented instead of leaving"
 
 
 # The four marks the renderer learnt in the same commit, and the two pastes.
@@ -1541,7 +1552,7 @@ def test_tab_indents_the_lines_the_selection_touches_and_escape_then_tab_leaves_
 # pressed, and which are chosen afterwards.
 _MARKING = """
 const area = document.querySelector('textarea[name=body]');
-document.getElementById('toggle').click();
+flipEditing();
 const mark = name => FORMATS.find(m => m.title.split('  ')[0] === name);
 const set = (text, from, to) => {
   area.value = text;
@@ -1854,6 +1865,7 @@ const article = document.querySelector('article.entity');
 const area = document.querySelector('textarea[name=body]');
 const pane = document.getElementById('body-preview');
 const marks = document.getElementById('marks');
+const doc = article.querySelector('.doc.read');
 const seg = name => document.getElementById(
   {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
 const drawn = element => element.getClientRects().length > 0;
@@ -1861,28 +1873,29 @@ const state = () => ({
   classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
   pressed: ['edit', 'both', 'view'].filter(
     n => seg(n).getAttribute('aria-pressed') === 'true'),
+  editing: article.classList.contains('editing'),
   box: drawn(area),
   pane: drawn(pane),
   marks: drawn(marks),
+  doc: drawn(doc),
   position: getComputedStyle(article).position,
 });
 
-document.getElementById('toggle').click();
-// Enough lines that the box has something to scroll, and enough that a source
-// line is not a visual row.
-area.value = Array.from({length: 200}, (_, i) => `line ${i + 1} ` + 'w'.repeat(90)).join('\\n');
-area.dispatchEvent(new Event('input', {bubbles: true}));
+const atLoad = state();
+// The segment IS the door in: there is no Edit button beside a switcher that
+// opens the same session.
+seg('edit').click();
 const editing = state();
-
-// Let the gutter settle before counting. Its column is the box's own left
-// padding, so switching it on rewraps every line — it says so through this same
-// event, on purpose, and it says it once for the document below because two
-// hundred lines is three digits from the first draw to the last. Counting from
-// before that first draw would count a redraw as a view change.
+// Enough lines that the box has something to scroll — and not ASCII, because
+// no test drives this editor with ASCII alone.
+area.value = Array.from({length: 200},
+  (_, i) => `Zeile ${i + 1} — ` + 'w'.repeat(88)).join('\\n');
+area.dispatchEvent(new Event('input', {bubbles: true}));
 await new Promise(go => setTimeout(go, 80));
 
-// Every view change has to tell the seat layer the box moved. The Preview button
-// this replaces set `BODY.hidden = true` and dispatched nothing.
+// Every view change has to tell the seat layer the box moved; a change that
+// crosses the session boundary says it twice — once from `showEditing`, once
+// from `showView` — which the count below spells out.
 let told = 0;
 addEventListener('openproj:editing', () => { told++; });
 
@@ -1890,11 +1903,9 @@ seg('both').click();
 const both = state();
 await new Promise(go => setTimeout(go, 400));
 const split = {
-  // Side by side, not stacked, and both inside the window.
   sideBySide: area.getBoundingClientRect().right <= pane.getBoundingClientRect().left + 1,
   inside: area.getBoundingClientRect().bottom <= innerHeight + 1
           && pane.getBoundingClientRect().bottom <= innerHeight + 1,
-  // Each pane scrolls on its own, and the page does not scroll at all.
   boxScrolls: area.scrollHeight > area.clientHeight + 1,
   paneScrolls: pane.scrollHeight > pane.clientHeight + 1,
   pageScrolls: document.documentElement.scrollHeight > innerHeight + 1,
@@ -1904,12 +1915,11 @@ seg('view').click();
 const viewing = state();
 seg('edit').click();
 const writing = state();
-// Pressing the pressed segment is the way back out with a pointer.
+// Pressing the pressed segment is the way back out with a pointer — to the
+// landing, which ends the session.
 seg('edit').click();
 const out = state();
 
-// The chord, matched on `event.code`: shift-2 is `@` on a US layout and `"` on a
-// Swiss-German one, so a binding read off `key` is one that could never fire.
 const chord = code => dispatchEvent(new KeyboardEvent(
   'keydown', {ctrlKey: true, shiftKey: true, code, key: '@', bubbles: true}));
 chord('Digit2');
@@ -1917,67 +1927,57 @@ const chorded = state();
 chord('Digit2');
 const unchorded = state();
 
-// And AltGr does not reach it. Chrome on Windows delivers the AltGr key as
-// `ctrlKey` and `altKey` together, and on the Swiss-German layout half this team
-// types on, AltGr+E is the euro sign — so the chord this replaces swallowed a
-// character people type. The euro is dispatched here exactly as Chrome reports
-// it, including the modifier state, and the view must not move.
+// And AltGr does not reach it — the euro sign on the Swiss-German layout half
+// this team types on arrives as ctrl+alt, exactly as dispatched here.
 dispatchEvent(new KeyboardEvent('keydown', {
   ctrlKey: true, altKey: true, modifierAltGraph: true, code: 'KeyE', key: '€',
   bubbles: true, cancelable: true,
 }));
 const afterEuro = state();
 
-// Escape in the box, arbitrated: the page first while there is something to come
-// back out of, then the hatch that gives Tab back.
 seg('both').click();
-const escape = () => area.dispatchEvent(
-  new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
 area.focus();
-escape();
+area.dispatchEvent(new KeyboardEvent(
+  'keydown', {key: 'Escape', bubbles: true, cancelable: true}));
 const escaped = state();
-// `announce` writes into `#state` on a page that has one, which this page does.
-document.getElementById('state').textContent = '';
-escape();
-const said = document.getElementById('state').textContent;
 
-return {editing, both, split, viewing, writing, out, chorded, unchorded, afterEuro,
-        escaped, said, told, asked: window.asked.length};
+return {atLoad, editing, both, split, viewing, writing, out, chorded, unchorded,
+        afterEuro, escaped, told, asked: window.asked.length};
 """
 
 
 def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
     client: TestClient, tmp_path: Path
 ):
-    """Asks 1 and 3, which are the top two on the list, and they are one feature:
-    the three views are three shapes of the full-page surface.
+    """Three states, and the landing one is `view`.
 
-    Four states and not three. The note this is modelled on is always full page,
-    so exactly one of its three segments is always pressed; here the reading
-    measure, the facts column and the width handle are the ordinary page, and the
-    surface is somewhere you go and come back from. So `full page off` is a real
-    state with nothing pressed, and the way back out is the pressed segment, the
-    same chord, or Escape.
-
-    A session no longer STARTS in that state, which is the one thing here that
-    changed: pressing Edit lands in `edit` unless a remembered mode says
-    otherwise. jcanton, 2026-08-21 — "entering edit mode the first time opened the
-    editor without having selected one of the three... it looked different and
-    then jumped to fit width when I clicked one of them". The state is still real
-    and still reachable, three ways, and the three of them are asserted below.
+    HackMD is always full page; here `view` is the ordinary page — the
+    server-rendered document, the facts column, the nav alive — and it is
+    where every session ends. `edit` and `both` are sessions and go full page.
+    The fourth, unnamed state is gone: exactly one segment is always pressed,
+    the pressed segment and the chord and Escape all land on the landing, and
+    landing ends the session — without discarding anything, because the text
+    stays in the surface and only Cancel restores fields.
     """
+    LANDED = {
+        "classes": ["view-view"], "pressed": ["view"], "editing": False,
+        "box": False, "pane": False, "marks": False, "doc": True,
+        "position": "relative",
+    }
     got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "views.html", 1400, _VIEWING
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "views.html",
+        1400, _VIEWING, patience=4800,
     )
 
+    assert got["atLoad"] == LANDED, f"the page did not load on the landing: {got['atLoad']}"
     assert got["editing"] == {
-        "classes": ["full", "view-edit"], "pressed": ["edit"],
-        "box": True, "pane": False, "marks": True, "position": "fixed",
-    }, "pressing Edit does not land in one of the three views"
+        "classes": ["full", "view-edit"], "pressed": ["edit"], "editing": True,
+        "box": True, "pane": False, "marks": True, "doc": False, "position": "fixed",
+    }, "pressing Write did not open a session in the edit view"
 
     assert got["both"]["classes"] == ["full", "view-both"]
     assert got["both"]["pressed"] == ["both"], "two segments pressed is not a choice of three"
-    assert got["both"]["position"] == "fixed", "the surface does not fill the window"
+    assert got["both"]["position"] == "fixed" and got["both"]["editing"]
     assert got["both"]["box"] and got["both"]["pane"]
 
     assert got["split"] == {
@@ -1985,36 +1985,24 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
         "boxScrolls": True, "paneScrolls": True, "pageScrolls": False,
     }, "the two panes do not scroll on their own inside the window"
 
-    assert got["viewing"] == {
-        "classes": ["full", "view-view"], "pressed": ["view"],
-        "box": False, "pane": True, "marks": False, "position": "fixed",
-    }, "preview only still draws the box, or draws a toolbar over no box"
-    assert got["writing"] == {
-        "classes": ["full", "view-edit"], "pressed": ["edit"],
-        "box": True, "pane": False, "marks": True, "position": "fixed",
-    }
-    assert got["out"]["classes"] == [] and got["out"]["pressed"] == []
-    assert got["out"]["position"] == "relative", "the pressed segment did not leave full page"
-
-    assert got["chorded"]["pressed"] == ["both"], (
-        "Ctrl+Shift+2 was not read off event.code"
+    assert got["viewing"] == LANDED, (
+        "the eye did not land on the sessionless read page — a live pane, a "
+        f"surface, or a session survived: {got['viewing']}"
     )
-    assert got["unchorded"]["pressed"] == [], "and the same chord did not take it back"
-    assert got["afterEuro"]["pressed"] == [], (
-        "AltGr+E moved the view: the chord is on a modifier combination that half "
-        "this team types the euro sign with"
-    )
+    assert got["writing"]["classes"] == ["full", "view-edit"] and got["writing"]["editing"]
+    assert got["out"] == LANDED, "the pressed segment did not land on the landing"
 
-    assert got["escaped"]["classes"] == [], "Escape did not leave full page"
-    assert "Tab" in got["said"], (
-        "and the next Escape did not open the hatch that gives Tab back, which is "
-        "the claimant Escape has when there is nothing to leave"
+    assert got["chorded"]["pressed"] == ["both"], "Ctrl+Shift+2 was not read off event.code"
+    assert got["unchorded"] == LANDED, "the same chord did not come back to the landing"
+    assert got["afterEuro"] == LANDED, (
+        "AltGr+E moved the view: the chord swallows a character people type"
     )
+    assert got["escaped"] == LANDED, "Escape did not land on the landing"
 
-    # Eight view changes above this line, and the seat layer told about every
-    # one of them: three segments, the pressed one again, the chord on and off,
-    # the split re-entered, and Escape.
-    assert got["told"] == 8, "a view change the seat layer was not told about"
+    # One `openproj:editing` per view change, and a second per session
+    # boundary (from `showEditing`): both(1) + view(2) + edit(2) + edit(2)
+    # + chord(2) + chord(2) + euro(0) + both(2) + escape(2).
+    assert got["told"] == 15, f"a view change the seat layer was not told about: {got['told']}"
     assert got["asked"] >= 1, "the preview was never asked for"
 
 
@@ -2043,8 +2031,235 @@ def test_a_link_to_the_split_view_opens_in_the_split_view(client: TestClient, tm
     assert got["editing"], "a link into a writing view that does not open the writing view"
 
     plain = measured_in(chrome(), page, tmp_path / "plain.html", 1400, _DEEP_LINK)
-    assert plain["classes"] == [] and plain["pressed"] == []
-    assert not plain["editing"], "no link, and the page opened in a view anyway"
+    assert plain["classes"] == ["view-view"] and plain["pressed"] == ["preview"]
+    assert not plain["editing"], "no link, and the page opened a session anyway"
+
+
+# The socket, counted and timestamped: `bodyAtConnect` is what the surface held
+# at the instant the room was joined, which is the fact the restore-before-
+# connect ordering is pinned by.
+_SOCKETS = """
+window.__sockets = [];
+class CountingSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  constructor(url) {
+    window.__sockets.push(this);
+    this.url = url;
+    this.readyState = 1;
+    const body = document.querySelector('textarea[name=body]');
+    this.bodyAtConnect = body ? body.value : '';
+    setTimeout(() => this.onopen && this.onopen(), 0);
+  }
+  send(data) {}
+  close() { this.readyState = 3; setTimeout(() => this.onclose && this.onclose({}), 0); }
+  hear(message) { this.onmessage && this.onmessage({data: JSON.stringify(message)}); }
+}
+window.WebSocket = CountingSocket;
+"""
+
+# No `_STUB_PREVIEW` prefix here, deliberately: `measured_in` runs this script
+# at SETTLE (1200ms), AFTER the page's load-time behaviour. A fetch counter
+# installed here would miss every /api/preview the page asked at load — the
+# very thing `asked` pins — so the stub goes into the <head> beside `_SOCKETS`
+# and counts from t=0.
+_LINKED = """
+const article = document.querySelector('article.entity');
+const doc = article.querySelector('.doc.read');
+return {
+  classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  editing: article.classList.contains('editing'),
+  pressed: ['view-edit', 'view-both', 'preview'].filter(
+    id => document.getElementById(id).getAttribute('aria-pressed') === 'true'),
+  fullpage: document.body.classList.contains('fullpage'),
+  navInert: !!document.querySelector('body > nav').inert,
+  docShown: doc.getClientRects().length > 0,
+  paneHidden: document.getElementById('body-preview').hidden,
+  sockets: window.__sockets.length,
+  asked: window.asked.length,
+};
+"""
+
+
+def test_a_view_link_is_sessionless_and_a_both_link_opens_a_session(
+    client: TestClient, tmp_path: Path
+):
+    """Spec test 6, both halves in one place so a regression of either shows.
+
+    `?view` used to open a session — `showView` forced `showEditing(true)` —
+    so there was no way to hand somebody a link to LOOK at a rendered record.
+    It is the sessionless read page now: no full page, nav alive, the
+    server-rendered document on screen, no seat taken, and no `/api/preview`
+    round trip for bytes the server already rendered into the page. `?both` is
+    unchanged: a view of a session opens the session it is a view of.
+    """
+    page = client.get(f"/detail/{TASK}{PLAIN}").text.replace(
+        "<head>", "<head><script>" + _SOCKETS + _STUB_PREVIEW + "</script>", 1
+    )
+
+    viewed = measured_in(chrome(), page, tmp_path / "viewlink.html", 1400, _LINKED,
+                         query="?view=")
+    assert viewed["classes"] == ["view-view"] and viewed["pressed"] == ["preview"]
+    assert not viewed["editing"], "?view opened a session"
+    assert not viewed["fullpage"] and not viewed["navInert"]
+    assert viewed["docShown"], "the server-rendered document is not on the screen"
+    assert viewed["paneHidden"], "the landing is drawn in the preview pane, not the page"
+    assert viewed["sockets"] == 0, "?view took a co-editing seat"
+    assert viewed["asked"] == 0, (
+        "the landing asked /api/preview to redraw bytes the server already rendered"
+    )
+
+    both = measured_in(chrome(), page, tmp_path / "bothlink.html", 1400, _LINKED,
+                       query="?both=")
+    assert both["classes"] == ["full", "view-both"] and both["pressed"] == ["view-both"]
+    assert both["editing"], "?both did not open the session it is a view of"
+    assert both["fullpage"] and both["navInert"]
+    assert both["sockets"] == 1, "a session opened and no seat was taken"
+    assert both["asked"] >= 1, "the live pane never asked for its rendering"
+
+
+# The stub lives in the <head> here too (same reason as `_LINKED`), so the
+# input-driven refreshPreview below hits a working fetch from the first event.
+_DIVERGED = """
+const article = document.querySelector('article.entity');
+const area = document.querySelector('textarea[name=body]');
+const doc = article.querySelector('.doc.read');
+// Non-ASCII on purpose: no test drives this editor with plain ASCII alone —
+// the last three shipped defects each hid behind a corpus that did.
+const marker = ' — verworfen, aber aufgehoben ✎';
+document.getElementById('view-edit').click();
+area.value = area.value + marker;
+area.dispatchEvent(new Event('input', {bubbles: true}));
+await new Promise(go => setTimeout(go, 80));
+document.getElementById('cancel').click();
+await new Promise(go => setTimeout(go, 80));
+return {
+  landed: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
+  editing: article.classList.contains('editing'),
+  docShown: doc.getClientRects().length > 0,
+  docHoldsDraft: doc.textContent.includes(marker),
+  boxHoldsDraft: area.value.includes(marker),
+  paneHidden: document.getElementById('body-preview').hidden,
+};
+"""
+
+
+def test_cancel_with_a_divergent_draft_lands_on_the_stored_commit(
+    client: TestClient, tmp_path: Path
+):
+    """Spec test 7: the landing always renders the stored commit, never the
+    live surface.
+
+    Cancel deliberately leaves draft text in the box — the three worst rounds
+    this repository has had each destroyed somebody's writing without a word —
+    so the page Cancel lands on holds two truths at once: the box still has
+    the draft, and the document on screen is what git has. A landing wired to
+    the live surface would show uncommitted text as though it were the record.
+    """
+    page = client.get(f"/detail/{TASK}{PLAIN}").text.replace(
+        "<head>", "<head><script>" + _SOCKETS + _STUB_PREVIEW + "</script>", 1
+    )
+    got = measured_in(chrome(), page, tmp_path / "diverged.html", 1400, _DIVERGED,
+                      patience=2400)
+
+    assert got["landed"] == ["view-view"] and not got["editing"]
+    assert got["docShown"], "no document on the page Cancel landed on"
+    assert not got["docHoldsDraft"], (
+        "the landing shows the live surface: uncommitted text drawn as the record"
+    )
+    assert got["boxHoldsDraft"], "Cancel destroyed the draft instead of keeping it in the box"
+    assert got["paneHidden"]
+
+
+def test_a_draft_at_load_forces_a_session_and_the_room_refusal_still_fires(
+    client: TestClient, tmp_path: Path
+):
+    """Spec test 8: the one exception to sessionless landing, and why.
+
+    The stored-draft restore stays at page load and keeps forcing a session.
+    Deferred to the Write press, the draft would be spliced in AFTER the room
+    has bound, leave as ordinary typing, and bypass the draft-versus-moved-
+    room refusal. Restore-before-connect is the ordering that keeps the
+    refusal alive: the surface holds the draft when the room is joined, so
+    `welcomed` sees two histories and refuses to guess.
+    """
+    key = f"openproj:draft:2:{TASK}"
+    draft = {"base": "1" * 40, "text": "Größer als geplant — ein Entwurf №8\n"}
+    seed = (
+        f"try {{ localStorage.setItem({json.dumps(key)}, "
+        f"{json.dumps(json.dumps(draft))}); }} catch (e) {{}}"
+    )
+    page = _before_the_page_runs(client.get(f"/detail/{TASK}{PLAIN}").text, seed)
+    page = page.replace("<head>", "<head><script>" + _SOCKETS + _STUB_PREVIEW + "</script>", 1)
+
+    got = measured_in(
+        chrome(), page, tmp_path / "draftload.html", 1400,
+        """
+        const article = document.querySelector('article.entity');
+        const area = document.querySelector('textarea[name=body]');
+        const socket = window.__sockets[0] || null;
+        const forced = {editing: article.classList.contains('editing'),
+                        connected: window.__sockets.length,
+                        heldAtConnect: socket ? socket.bodyAtConnect : '',
+                        base: document.querySelector('[name=base_commit]').value};
+        // The room answers with a document that is not what this page was
+        // rendered from — an empty seed, which is what a moved room looks
+        // like to a page holding hour-old text.
+        if (socket) socket.hear({t: 'welcome', seed: 'a'.repeat(40),
+                                 base: 'a'.repeat(40), you: 'ann', sv: 'AA==',
+                                 update: '', people: ['ann']});
+        await new Promise(go => setTimeout(go, 80));
+        const box = document.getElementById('conflict');
+        return {forced, refused: socket ? !box.hidden : null,
+                report: box.textContent, boxNow: area.value};
+        """,
+        patience=2400,
+    )
+
+    marker = draft["text"].strip()
+    assert got["forced"]["editing"], "a stored draft no longer forces a session at load"
+    assert got["forced"]["connected"] == 1, "the forced session joined no room"
+    assert got["forced"]["base"] == draft["base"], (
+        "the restore did not move base_commit back under the draft"
+    )
+    assert marker in got["forced"]["heldAtConnect"], (
+        "the room was joined before the draft was in the surface — from here "
+        "the draft leaves as ordinary typing and the refusal below never fires"
+    )
+    assert got["refused"], "two histories, no common base, and nothing refused to guess"
+    assert marker in got["report"], "the refusal does not carry the draft back to its author"
+    assert marker not in got["boxNow"], (
+        "the draft is still in the box after the refusal said the room's text is"
+    )
+
+
+def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
+    client: TestClient, tmp_path: Path
+):
+    """The stored word `view` meant "open sessions in preview-only" yesterday
+    and names the sessionless landing today. A session cannot open
+    sessionless, so a legacy value migrates to `edit` on read rather than
+    being trusted into a state that no longer exists — risk 5's empty
+    full-page grid."""
+    got = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"mode": "view"}'
+        ),
+        tmp_path / "legacy.html", 1400,
+        _STUB_PREVIEW + """
+        flipEditing();
+        const article = document.querySelector('article.entity');
+        return {view: VIEW, editing: article.classList.contains('editing'),
+                full: article.classList.contains('full')};
+        """,
+        patience=1800,
+    )
+    assert got == {"view": "edit", "editing": True, "full": True}, (
+        f"a legacy stored mode landed a session somewhere that is not one: {got}"
+    )
 
 
 _GRIPPING = _STUB_PREVIEW + """
@@ -2063,17 +2278,15 @@ const where = () => ({
 });
 
 const reading = where();
-document.getElementById('toggle').click();
-// Pressing Edit lands in the `edit` VIEW now, which is full page — and the
-// handle is deliberately not drawn there. The state this asks about is the
-// ordinary page with a session open, which is one press of the lit segment away.
-seg('edit').click();
-const editing = where();
+// The segments are the door in, and each session view is full page — where the
+// handle is deliberately not drawn. Entered through the loop itself: pressing
+// the pressed segment would land back on the landing, so no segment is pressed
+// twice.
 const full = {};
-for (const name of ['edit', 'both', 'view']) { seg(name).click(); full[name] = where(); }
-seg('view').click();
+for (const name of ['edit', 'both']) { seg(name).click(); full[name] = where(); }
+seg('view').click();               // the landing: session over, column back
 const back = where();
-return {reading, editing, full, back};
+return {reading, full, back};
 """
 
 
@@ -2083,17 +2296,22 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     a second way to produce the same thing by a different route: it drags
     `--measure`, and in full page there is no measure — the surface is the
     window — so a handle drawn there would sit against the right edge of the
-    screen and change nothing when dragged."""
+    screen and change nothing when dragged.
+
+    Editing inline in the reading measure no longer exists: a session is full
+    page, so the handle and the box are never on screen together, and the
+    reading measure — with the handle on it — is the landing either side of
+    one."""
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "grip.html", 1400, _GRIPPING
     )
 
-    for mode in ("reading", "editing"):
+    for mode in ("reading",):
         assert not got[mode]["hidden"], f"no handle while {mode}"
         assert got[mode]["onEdge"], f"the handle is not on the column's edge while {mode}"
         assert got[mode]["spare"] > 20, f"the handle is against the window edge while {mode}"
 
-    for name in ("edit", "both", "view"):
+    for name in ("edit", "both"):
         assert got["full"][name]["hidden"], f"a width handle in the {name} view"
 
     assert not got["back"]["hidden"] and got["back"]["onEdge"], (
@@ -2433,7 +2651,7 @@ const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 const pane = article.querySelector('#body-preview');
 const split = article.querySelector('.bodysplit');
-document.getElementById('toggle').click();
+flipEditing();
 await new Promise(go => setTimeout(go, 80));
 return {
   view: VIEW,
@@ -2555,7 +2773,7 @@ const article = document.querySelector('article.entity');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 const pane = article.querySelector('#body-preview');
-document.getElementById('toggle').click();
+flipEditing();
 await new Promise(go => setTimeout(go, 80));
 return {box: box.getBoundingClientRect().width, pane: pane.getBoundingClientRect().width,
         held: EDITOR.split, view: VIEW};
@@ -2754,7 +2972,7 @@ const pane = document.getElementById('body-preview');
 const settle = ms => new Promise(go => setTimeout(go, ms));
 const after = () => settle(90);
 
-document.getElementById('toggle').click();
+flipEditing();
 area.value = WRAPPING_BODY;
 area.dispatchEvent(new Event('input', {bubbles: true}));
 document.getElementById('view-both').click();
@@ -2874,7 +3092,7 @@ const type = text => {
   area.dispatchEvent(new Event('input', {bubbles: true}));
 };
 
-document.getElementById('toggle').click();
+flipEditing();
 document.getElementById('view-both').click();
 await settle(400);
 const opened = window.asked.length;
@@ -2967,7 +3185,7 @@ const type = text => {
   area.value = text;
   area.dispatchEvent(new Event('input', {bubbles: true}));
 };
-document.getElementById('toggle').click();
+flipEditing();
 document.getElementById('view-both').click();
 await settle(340);
 type('later');
@@ -3045,7 +3263,6 @@ _GUTTER_BODY = "\n".join((
 
 _NUMBERING = f"const GUTTER_BODY = {json.dumps(_GUTTER_BODY)};" + """
 const area = document.querySelector('textarea[name=body]');
-const article = document.querySelector('article.entity');
 const settle = ms => new Promise(go => setTimeout(go, ms));
 
 // The ground truth, built here and owing nothing to the page. It is a
@@ -3093,11 +3310,13 @@ function truth() {
   return {tops, rows, lines: lines.length, origin};
 }
 
-document.getElementById('toggle').click();
-// Out of full page: a session now starts in the `edit` VIEW, where the
-// surface is the window and `--measure` — the thing this sweeps — decides
-// nothing. The gutter's claim is about the ordinary page's column.
-document.getElementById('view-edit').click();
+flipEditing();
+// In the full-page edit view, which is the only place the box exists now:
+// editing inline in the reading measure went with the null state. The sweep
+// drives the box's own container instead of `--measure`, which full page does
+// not read; the mirror-agreement claim is about widths, wherever they come
+// from.
+const wrap = document.querySelector('.bodywrap');
 area.value = GUTTER_BODY;
 area.dispatchEvent(new Event('input', {bubbles: true}));
 // The gutter coalesces onto a frame with a 32ms backstop, and under the headless
@@ -3110,7 +3329,7 @@ await settle(120);
 // and a coarse sweep steps straight over the widths where that happens.
 const answers = [];
 for (let measure = 520; measure < 580; measure++) {
-  article.style.setProperty('--measure', measure + 'px');
+  wrap.style.width = measure + 'px';
   dispatchEvent(new Event('openproj:editing'));
   // The gutter's backstop is 32ms.
   await settle(40);
@@ -3129,32 +3348,7 @@ for (let measure = 520; measure < 580; measure++) {
   });
 }
 
-// And the one control whose entire job is to change the width of the box. The
-// handle writes `--measure` and calls `place()`; before this it dispatched
-// nothing, so the numbers stayed where the old width had put them — measured, up
-// to six whole rows out — until a window resize happened to put them back. The
-// inline property this sweep has been using is removed first, or it would beat
-// the one the handle writes on the root and the drag would move nothing.
-article.style.removeProperty('--measure');
-const grip = document.getElementById('grip');
-grip.dispatchEvent(new PointerEvent(
-  'pointerdown', {bubbles: true, pointerId: 1, clientX: innerWidth / 2 + 400}));
-dispatchEvent(new PointerEvent(
-  'pointermove', {bubbles: true, pointerId: 1, clientX: innerWidth / 2 + 231}));
-dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
-await settle(80);
-const ground = truth();
-const numbers = [...document.querySelectorAll('.lineno')];
-const dragged = {
-  boxWidth: Math.round(area.getBoundingClientRect().width * 100) / 100,
-  count: numbers.length,
-  lines: ground.lines,
-  worst: numbers.length === ground.lines ? Math.max(...numbers.map(
-    (number, at) => Math.abs(
-      number.getBoundingClientRect().top - (ground.origin + ground.tops[at])))) : null,
-};
-
-return {answers, dragged};
+return {answers};
 """
 
 
@@ -3180,7 +3374,7 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
     )
 
     for answer in got["answers"]:
-        where = f"at --measure: {answer['measure']}px (box {answer['boxWidth']}px)"
+        where = f"at a pane width of {answer['measure']}px (box {answer['boxWidth']}px)"
         assert answer["count"] == answer["lines"], (
             f"{where}: {answer['count']} numbers for {answer['lines']} logical lines"
         )
@@ -3194,17 +3388,6 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
         assert answer["worst"] < 0.25, (
             f"{where}: a line number is {answer['worst']:.3f}px off the line it numbers"
         )
-
-    assert got["dragged"]["boxWidth"] != got["answers"][-1]["boxWidth"], (
-        "the width handle moved nothing, so the drag below asks nothing"
-    )
-    assert got["dragged"]["count"] == got["dragged"]["lines"]
-    assert got["dragged"]["worst"] < 0.25, (
-        f"after a drag of the width handle a line number is "
-        f"{got['dragged']['worst']:.3f}px off the line it numbers — the one control "
-        "whose whole job is to change the width of the box did not tell the column "
-        "of numbers beside it"
-    )
 
 
 _LEAVING = _STUB_PREVIEW + """
@@ -3235,13 +3418,9 @@ const shape = () => ({
 });
 
 const answers = {};
-for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view', 'preview']]) {
-  document.getElementById('toggle').click();
-  // Only if it is not already the view being asked about: a session starts in
-  // `edit` now, and pressing the lit segment is how you LEAVE full page — so
-  // clicking it here took the surface down instead of putting it up.
-  const seg = document.getElementById(id);
-  if (seg.getAttribute('aria-pressed') !== 'true') seg.click();
+for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both']]) {
+  // The segment is the door: pressing it opens the session in that view.
+  document.getElementById(id).click();
   const inside = shape();
   document.getElementById('cancel').click();
   answers[name] = {inside, after: shape()};
@@ -3255,14 +3434,16 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
     view, decide not to save, press Cancel.
 
     `flipEditing` dropped `.editing` and left `.full` and `body.fullpage` alone —
-    and `.views` is drawn only under `.entity.editing`, so the switcher, which the
-    commit message named as the way back, vanished at the same instant. The box
-    went with it, so Escape could not be reached either; the nav was painted over
-    by an opaque fixed article; and the only exits left were an undiscoverable
-    chord, the Back button and a reload.
+    and `.views` was drawn only under `.entity.editing` then, so the switcher,
+    which the commit message named as the way back, vanished at the same
+    instant. The box went with it, so Escape could not be reached either; the
+    nav was painted over by an opaque fixed article; and the only exits left
+    were an undiscoverable chord, the Back button and a reload.
 
-    Ending the session leaves the surface the session was in. Asked of all three
-    views, because each one takes a different thing away.
+    Ending the session lands on the landing — and `switcher: True` there is the
+    point of the whole change: the way back cannot vanish any more, because it
+    is drawn outside the session too. Asked of both session views, because each
+    takes a different thing away.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "leave.html", 1400,
@@ -3276,21 +3457,17 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
             f"{name}: the surface does not actually cover the nav, so nothing here is proved"
         )
         assert answer["after"] == {
-            "classes": [], "fullpage": False, "navInert": False, "over": True,
-            "switcher": False, "editing": False,
+            "classes": ["view-view"], "fullpage": False, "navInert": False, "over": True,
+            "switcher": True, "editing": False,
         }, (
-            f"Cancel from the {name} view left the reader in the surface: "
-            f"{answer['after']}"
+            f"Cancel from the {name} view did not land on the landing: {answer['after']}"
         )
 
 
-# The same question as `_LEAVING`, asked at the door Cancel is not.
-#
-# A Save made in a room does NOT reload — the document is already what everybody
-# in the room has — so `_COEDIT`'s `saved` branch ends the session with a bare
-# `showEditing(false)` and nothing else. That is the line driven here, and the
-# test above it checks it really is the line, so that this is the room's door and
-# not one invented for a test.
+# The same question as `_LEAVING`, asked at the door Cancel is not: a bare
+# `showEditing(false)`, the call every door out of a session ends in. The
+# room's own save reloads nowadays — the test above pins that — so what this
+# drives is the shared ending itself, not a door invented for a test.
 _SAVED_IN_A_ROOM = _STUB_PREVIEW + """
 const article = document.querySelector('article.entity');
 const nav = document.querySelector('body > nav');
@@ -3314,18 +3491,14 @@ const shape = () => ({
 });
 
 const answers = {};
-for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both'], ['view', 'preview']]) {
-  document.getElementById('toggle').click();
-  // Only if it is not already lit: a session starts in `edit`, and pressing the
-  // lit segment is how full page is left.
-  const seg = document.getElementById(id);
-  if (seg.getAttribute('aria-pressed') !== 'true') seg.click();
+for (const [name, id] of [['edit', 'view-edit'], ['both', 'view-both']]) {
+  // The segment is the door: pressing it opens the session in that view.
+  document.getElementById(id).click();
   const inside = shape();
-  // Ending the session and nothing else — the call every door makes.
+  // Ending the session and nothing else — the call every door makes. It lands
+  // on the landing, so the next pass starts from the page.
   showEditing(false);
   answers[name] = {inside, after: shape()};
-  // Back to read mode for the next pass: this door leaves Edit on the bar.
-  if (article.classList.contains('editing')) document.getElementById('cancel').click();
 }
 return answers;
 """
@@ -3370,8 +3543,8 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
     the one Cancel and the view toggle use.)
     Measured in Chrome from the split view before the fix: the article kept
     `full view-both`, `<body>` kept `fullpage`, the nav stayed `inert`, and the
-    switcher — drawn only under `.entity.editing`, and named by the commit that
-    fixed Cancel as the documented way back — went at the same instant. The
+    switcher — then drawn only under `.entity.editing`, and named by the commit
+    that fixed Cancel as the documented way back — went at the same instant. The
     reader was left inside a fixed, opaque, window-filling article showing a
     record nobody was editing.
 
@@ -3390,8 +3563,8 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
             f"{name}: the surface does not actually cover the nav, so nothing here is proved"
         )
         assert answer["after"] == {
-            "classes": [], "fullpage": False, "navInert": False, "over": True,
-            "switcher": False, "editing": False, "cornerInNav": True,
+            "classes": ["view-view"], "fullpage": False, "navInert": False, "over": True,
+            "switcher": True, "editing": False, "cornerInNav": True,
         }, (
             f"a room's save from the {name} view left the reader in the surface: "
             f"{answer['after']}"
@@ -3438,7 +3611,7 @@ const shape = () => ({
 });
 
 const before = shape();
-document.getElementById('toggle').click();
+flipEditing();
 document.getElementById('view-both').click();
 await new Promise(go => setTimeout(go, 300));
 const inside = shape();
@@ -3520,7 +3693,7 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
 # geometry of the ring, in one page.
 _THE_SWITCH = _STUB_PREVIEW + """
 const sw = document.getElementById('editorswitch');
-document.getElementById('toggle').click();
+flipEditing();
 document.getElementById('view-both').click();
 await new Promise(go => setTimeout(go, 300));
 
@@ -3700,7 +3873,7 @@ def test_the_editor_switch_takes_a_focus_ring_that_is_actually_painted(
         html.write_text(page.replace(
             "</body>",
             "<script>setTimeout(() => {"
-            "  document.getElementById('toggle').click();"
+            "  flipEditing();"
             "  document.getElementById('view-both').click();"
             f" {focus}"
             "}, 900);</script></body>",
@@ -3725,7 +3898,7 @@ const pane = document.getElementById('body-preview');
 const said = () => document.getElementById('state').textContent;
 const settle = ms => new Promise(go => setTimeout(go, ms));
 
-document.getElementById('toggle').click();
+flipEditing();
 document.getElementById('view-both').click();
 await settle(400);
 const refused = {pane: pane.textContent.trim(), said: said(), asked: window.asked};
@@ -3838,7 +4011,7 @@ const bar = document.getElementById('statusbar');
 const area = document.querySelector('textarea[name=body]');
 const item = at => bar.children[at].textContent;
 const spaces = bar.querySelector('button');
-document.getElementById('toggle').click();
+flipEditing();
 
 // A document whose third line carries an astral character, so "column" has to
 // mean a character and not a UTF-16 code unit.
@@ -3930,7 +4103,7 @@ def test_the_status_bar_says_where_the_caret_is_how_long_it_is_and_what_tab_type
 _LONG = _STUB_RENDER + r"""
 const size = document.getElementById('statusbar').lastElementChild;
 const area = document.querySelector('textarea[name=body]');
-document.getElementById('toggle').click();
+flipEditing();
 const said = () => document.getElementById('state').textContent;
 const shape = () => ({text: size.textContent, over: size.classList.contains('over')});
 area.value = 'x'.repeat(%d);
@@ -3982,7 +4155,7 @@ const held = () => {
 };
 const receipt = () => document.getElementById('draftsaved').textContent;
 const type = what => { area.value = what; area.dispatchEvent(new Event('input')); };
-document.getElementById('toggle').click();
+flipEditing();
 localStorage.removeItem(key);
 
 // The leading edge: the first keystroke of a burst goes in at once, so a tab
@@ -4007,7 +4180,7 @@ const after = {held: held(), receipt: receipt()};
 // receipt counts from, and the one the throttle measures the interval against.
 // Leaving the second set would hold the first character typed after a cancel
 // back by up to a whole interval, against a write that has nothing to do with it.
-document.getElementById('toggle').click();
+flipEditing();
 type('written after the cancel');
 const restarted = held();
 return {first, throttled, flushed, after, restarted,
@@ -4066,7 +4239,7 @@ def test_a_throttled_draft_is_still_written_before_the_tab_can_be_closed(
 _REFUSED = _STUB_RENDER + r"""
 const bar = document.getElementById('statusbar');
 const area = document.querySelector('textarea[name=body]');
-document.getElementById('toggle').click();
+flipEditing();
 // Every control still works, in memory, against a store that throws.
 bar.querySelector('button').click();
 area.value = 'writing into a browser that keeps nothing';
@@ -4174,17 +4347,13 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
 _STICKY = _STUB_RENDER + r"""
 const article = document.querySelector('article.entity');
 const mode = () => VIEW;
-// Reading a record is the ordinary case on this page, so a remembered mode does
-// not open one as a screen-filling editor.
 const atLoad = {view: mode(), full: article.classList.contains('full'),
                 editing: article.classList.contains('editing')};
-document.getElementById('toggle').click();
+flipEditing();
 const afterEdit = {view: mode(), full: article.classList.contains('full')};
-// And leaving the session is not a choice about how to look at documents.
 document.getElementById('cancel').click();
 const afterCancel = {view: mode(), stored: JSON.parse(localStorage.getItem('openproj:editor:1'))};
-// A segment IS a choice.
-document.getElementById('toggle').click();
+flipEditing();
 document.getElementById('view-edit').click();
 return {atLoad, afterEdit, afterCancel,
         chosen: JSON.parse(localStorage.getItem('openproj:editor:1')).mode};
@@ -4212,14 +4381,14 @@ def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
         tmp_path / "sticky.html", 1400, _STICKY, patience=4800,
     )
 
-    assert got["atLoad"] == {"view": None, "full": False, "editing": False}, (
+    assert got["atLoad"] == {"view": "view", "full": False, "editing": False}, (
         f"a remembered mode opened a record somebody came to read as a "
         f"full-screen editor: {got['atLoad']}"
     )
     assert got["afterEdit"] == {"view": "both", "full": True}, (
-        f"pressing Edit did not restore the remembered view: {got['afterEdit']}"
+        f"starting a session did not restore the remembered view: {got['afterEdit']}"
     )
-    assert got["afterCancel"]["view"] is None
+    assert got["afterCancel"]["view"] == "view"
     assert got["afterCancel"]["stored"]["mode"] == "both", (
         "Cancel was read as a preference for no surface, so using the split once "
         "and cancelling takes it away"
@@ -4230,7 +4399,7 @@ def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
 _ONE_FACE = """
 const area = document.querySelector('textarea[name=body]');
 const gutter = document.querySelector('.gutter');
-document.getElementById('toggle').click();
+flipEditing();
 return {
   box: getComputedStyle(area).fontFamily,
   gutter: getComputedStyle(gutter).fontFamily,
@@ -4288,7 +4457,7 @@ Element.prototype.appendChild = function (node) {
 """
 
 _KEYMAP_FETCHES = r"""
-  document.getElementById('toggle').click();
+  flipEditing();
   await new Promise(r => setTimeout(r, 300));
   const editor = SURFACE.editor;
   const table = editor.commands.commands;
@@ -4373,7 +4542,7 @@ def test_no_editor_asks_for_a_script_after_the_page_has_loaded(
 
 
 _PASTED_CRLF = r"""
-  document.getElementById('toggle').click();
+  flipEditing();
   await new Promise(r => setTimeout(r, 300));
   // ONE line, which is the state Ace re-detects the newline sequence in:
   // `Document.insert` is `this.getLength() <= 1 && this.$detectNewLine(text)`.
@@ -4429,7 +4598,7 @@ def test_the_second_surface_holds_one_line_ending_whatever_is_pasted_into_it(
 
 
 _VIM_ON = r"""
-  document.getElementById('toggle').click();
+  flipEditing();
   await new Promise(r => setTimeout(r, 300));
   const editor = SURFACE.editor;
   const keymap = [...document.querySelectorAll('#statusbar button')]
@@ -4566,7 +4735,7 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
 
 
 _KEYMAP_KEPT = r"""
-  document.getElementById('toggle').click();
+  flipEditing();
   await new Promise(r => setTimeout(r, 300));
   return {handler: String(SURFACE.editor.getKeyboardHandler().$id),
           label: [...document.querySelectorAll('#statusbar button')]
@@ -4752,9 +4921,8 @@ const state = () => ({
                   || facts.getBoundingClientRect().bottom <= panes.getBoundingClientRect().bottom,
 });
 
-// The create form is always editing and has no way in, so it has no `#toggle`.
-const into = document.getElementById('toggle');
-if (into) into.click();
+// The create form is always editing; the record page opens a session here.
+if (typeof flipEditing === 'function') flipEditing();
 const out = {};
 // The session already starts in `edit`, and pressing the lit segment leaves full
 // page — so this presses it only when something else is lit.
@@ -4766,16 +4934,18 @@ press('view-edit');
 out.write = state();
 press('view-both');
 out.split = state();
+out.fixed = getComputedStyle(article).position;
 out.paneRows = Math.round(
   pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight));
 press('preview');
+const doc = document.querySelector('article.entity .doc.read');
 out.read = {
   paneRows: Math.round(
     pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight)),
+  landed: doc ? doc.getClientRects().length > 0 : false,
   documentFirst: main.getBoundingClientRect().top < facts.getBoundingClientRect().top,
 };
 out.width = innerWidth;
-out.fixed = getComputedStyle(article).position;
 return out;
 """
 
@@ -4819,8 +4989,13 @@ def test_the_full_page_surface_is_a_writing_surface_at_a_window_that_is_not_wide
         )
         assert got[view]["factsReachable"], "and there is no way to scroll down to them"
     assert got["paneRows"] >= 12, "the rendered half of the split is not readable either"
-    assert got["read"]["paneRows"] >= 12
-    assert got["read"]["documentFirst"]
+    if where == "new":
+        assert got["read"]["paneRows"] >= 12, "the create form's preview is not readable"
+        assert got["read"]["documentFirst"]
+    else:
+        assert got["read"]["landed"], (
+            "pressing the eye did not land on the record's own read page"
+        )
 
 
 _TEMPLATE_SWAP = """
@@ -4886,7 +5061,7 @@ def test_choosing_a_template_leaves_the_numbers_and_the_length_telling_the_truth
 
 
 _HISTORY_WITH_NO_ROOM = r"""
-document.getElementById('toggle').click();
+flipEditing();
 const area = document.querySelector('textarea[name=body]');
 const of = word => [...document.querySelectorAll('#marks .hist')]
   .find(one => one.title.startsWith(word));
@@ -4997,7 +5172,7 @@ def test_the_history_buttons_use_the_browsers_own_stack_when_there_is_no_room(
 
 
 _HISTORY_ON_ACE = r"""
-document.getElementById('toggle').click();
+flipEditing();
 await new Promise(go => setTimeout(go, 300));
 const editor = SURFACE.editor;
 const of = word => [...document.querySelectorAll('#marks .hist')]
@@ -5098,7 +5273,7 @@ addEventListener('unhandledrejection', event => {
   loose.push(String(event.reason));
   event.preventDefault();
 });
-document.getElementById('toggle').click();
+flipEditing();
 const real = window.fetch;
 const set = text => {
   area.value = text;
@@ -5223,70 +5398,6 @@ def test_a_connection_that_drops_leaves_no_placeholder_and_no_sentence_that_is_s
     assert got["saving"]["enabled"], "the way out of a dropped connection is the same button"
 
 
-_PREVIEW_ONLY_BARS = _STUB_RENDER + r"""
-const article = document.querySelector('article.entity');
-const shows = what => getComputedStyle(document.querySelector(what)).display;
-const seatbar = document.getElementById('seatbar');
-document.getElementById('toggle').click();
-const empty = seatbar.getBoundingClientRect().height;
-document.getElementById('preview').click();
-await new Promise(go => setTimeout(go, 200));
-// Somebody else is in the document, which is when this bar has anything to say.
-document.getElementById('together').textContent = 'Also here: Ann';
-return {
-  view: VIEW,
-  full: article.classList.contains('full'),
-  box: shows('.bodywrap'),
-  markbar: shows('.markbar'),
-  statusbar: shows('.statusbar'),
-  seatbar: shows('#seatbar'),
-  emptyHeight: empty,
-  occupiedHeight: seatbar.getBoundingClientRect().height,
-};
-"""
-
-
-def test_preview_only_takes_away_the_controls_and_keeps_the_one_live_fact(
-    client: TestClient, tmp_path: Path
-):
-    """The hide list is a rule about what a bar IS, not a count of them.
-
-    It enumerated `.bodywrap`, `.statusbar` and `.markbar` under a comment saying
-    "the two bars", on a surface that has four — and the fourth, `#seatbar`, is a
-    `.bodybar` that neither name reaches, so `.entity.editing .bodybar` went on
-    winning. That was found as a leak. It is kept as a decision, and this test is
-    where the decision lives so the next person does not quietly flip it.
-
-    The two that go are CONTROLS for a box that is not on the screen: a toolbar
-    over no box writes into nothing, and a caret position is about a caret nobody
-    can see. The seat bar is not a control. It is a fact about the document, the
-    document is still on the screen, and it is the only live signal left in this
-    view — the room goes on applying somebody else's keystrokes to the text under
-    the rendered pane, and a preview changing under a reader with nothing to say
-    why is the worse silence. It costs no space while nobody else is here.
-    """
-    got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "previewbars.html",
-        1400, _PREVIEW_ONLY_BARS, patience=4800,
-    )
-
-    assert got["view"] == "view" and got["full"], (
-        f"the page is not in preview-only, so this asks nothing: {got}"
-    )
-    assert got["box"] == "none", "there is still an editing surface under the preview"
-    assert got["markbar"] == "none", "sixteen buttons over a box that is not there"
-    assert got["statusbar"] == "none", "a caret position for a caret nobody can see"
-    assert got["seatbar"] != "none", (
-        "who else is in the document went away with the controls — the room is "
-        "still live and the text under the preview is still moving"
-    )
-    assert got["emptyHeight"] == 0, (
-        "an empty room costs a line above the toolbar, which is why this bar "
-        f"carries no margin of its own: {got['emptyHeight']}"
-    )
-    assert got["occupiedHeight"] > 0, "and somebody arriving is not drawn at all"
-
-
 _TOOLBAR_AT_A_WIDTH = _STUB_RENDER + r"""
 // The detail page opens read-only and the create forms open editing, so this
 // asks for the surface rather than assuming which page it is on.
@@ -5373,7 +5484,7 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
 
 
 _ACE_CARET_MOVES = r"""
-document.getElementById('toggle').click();
+flipEditing();
 await new Promise(go => setTimeout(go, 300));
 const editor = SURFACE.editor;
 const bar = document.getElementById('statusbar');

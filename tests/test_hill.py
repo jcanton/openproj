@@ -360,7 +360,7 @@ def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Pat
     found = measured_in(
         browser, page, tmp_path / "detail.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
         // virtual clock, which drives timers and does not necessarily drive
         // frames — an `await` on a frame never resolves there, the report is
@@ -407,7 +407,7 @@ def test_dragging_the_ball_lands_on_a_stop(index: Index, tmp_path: Path) -> None
     found = measured_in(
         browser, page, tmp_path / "detail.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
         // virtual clock, which drives timers and does not necessarily drive
         // frames — an `await` on a frame never resolves there, the report is
@@ -454,7 +454,7 @@ def test_a_cancelled_drag_puts_the_ball_back(index: Index, tmp_path: Path) -> No
     found = measured_in(
         browser, page, tmp_path / "detail.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
         // virtual clock, which drives timers and does not necessarily drive
         // frames — an `await` on a frame never resolves there, the report is
@@ -495,7 +495,7 @@ def test_the_hill_takes_a_keyboard(index: Index, tmp_path: Path) -> None:
     found = measured_in(
         browser, page, tmp_path / "detail.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         // A timer and not `requestAnimationFrame`: this runs under Chrome's
         // virtual clock, which drives timers and does not necessarily drive
         // frames — an `await` on a frame never resolves there, the report is
@@ -589,7 +589,7 @@ def test_the_ball_follows_the_field_when_something_else_sets_it(
     found = measured_in(
         browser, page, tmp_path / "sync.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         await new Promise(settled => setTimeout(settled, 50));
         const hill = document.querySelector('.hill[role=radiogroup]');
         const value = document.querySelector('input[name=status]');
@@ -630,7 +630,7 @@ def test_cancelling_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) ->
     found = measured_in(
         browser, page, tmp_path / "cancel.html", 1100,
         """
-        document.getElementById('toggle').click();
+        flipEditing();
         await new Promise(settled => setTimeout(settled, 50));
         const hill = document.querySelector('.hill[role=radiogroup]');
         const value = document.querySelector('input[name=status]');

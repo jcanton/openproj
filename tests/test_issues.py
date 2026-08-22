@@ -460,16 +460,22 @@ seg('view').click();
 const only = {box: drawn(area), marks: drawn(document.getElementById('marks')),
               status: drawn(bar)};
 
-// Escape leaves the surface, which is the arbitration decided in S2 and the one
-// this page inherits by having a surface at all.
+// Back into a session first: pressing the eye above ended it, because `view`
+// is the sessionless landing now. Escape then ends the session too — and ends
+// it without discarding: the text stays in the box, which is the difference
+// between this and the key that destroys writing.
+seg('both').click();
+await new Promise(go => setTimeout(go, 60));
 area.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
 const left = {classes: [...article.classList].sort(),
-              editing: article.classList.contains('editing')};
+              editing: article.classList.contains('editing'),
+              kept: area.value.length > 0};
 
 // And Cancel from inside a view, which is the trap the detail page shipped and
-// this page would have grown with the surface: the switcher is drawn only while
-// the article is editing, so ending the session inside a full-page view without
-// leaving it takes away the documented way back at the same instant.
+// this page would have grown with the surface: the switcher was drawn only
+// while the article was editing, so ending the session inside a full-page view
+// without leaving it took away the documented way back at the same instant.
+// Ending a session lands on the landing now, switcher still on it.
 seg('both').click();
 document.getElementById('toggle').click();
 const nav = document.querySelector('body > nav a');
@@ -561,9 +567,12 @@ def test_an_issue_is_written_in_the_same_surface_a_pitch_is(
     assert "full" not in got["left"]["classes"], (
         f"Escape did not leave the full-page surface: {got['left']['classes']}"
     )
-    assert got["left"]["editing"], (
-        "Escape ended the editing session, which is Cancel's job — a key that "
-        "discards writing is one somebody presses by mistake once"
+    assert not got["left"]["editing"], (
+        "Escape lands on the sessionless read page now — a session it leaves open "
+        "is the vanished null state coming back"
+    )
+    assert got["left"]["kept"], (
+        "ending the session by Escape discarded the text — only Cancel restores"
     )
 
     assert "full" not in got["cancelled"]["classes"], (
