@@ -278,6 +278,77 @@ def test_the_bar_says_how_much_is_unsaved(page: str):
     assert ".commitbar.dirty { border-color: var(--warn); }" in page
 
 
+def test_cancel_puts_the_fields_back(page: str, tmp_path: Path):
+    """Cancel cancels, and the bar stops counting a field nothing is holding.
+
+    It used to put nothing back: it dropped the stored draft and left every typed
+    value sitting in its control, so the page returned to a read view showing the
+    old value while the commit bar went on reporting "1 unsaved change" — and the
+    count cleared only on a reload, which is also the moment that value was
+    silently lost. jcanton, 2026-08-22.
+
+    The fields and not the document: the text stays in the box on purpose, which
+    `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`
+    below asks for by name. So the bar may still be up after a cancel over a body
+    somebody is part way through, and there it is telling the truth.
+
+    Asked of the browser rather than of the source, because what went wrong was a
+    value left in a box and a box is a thing only a browser has.
+    """
+    found = measured_in(
+        chrome(), page, tmp_path / "cancel.html", 1100,
+        """
+        const bar = document.getElementById('commitbar');
+        const owner = document.querySelector('[name=owner]');
+        document.getElementById('toggle').click();
+        await new Promise(settled => setTimeout(settled, 40));
+        const was = owner.value;
+        owner.value = 'somebody-else';
+        owner.dispatchEvent(new Event('input', {bubbles: true}));
+        const typed = {said: document.getElementById('unsaved').textContent,
+                       hidden: bar.hidden};
+        document.getElementById('cancel').click();
+        await new Promise(settled => setTimeout(settled, 40));
+        return {was, typed, owner: owner.value, hidden: bar.hidden,
+                said: document.getElementById('unsaved').textContent,
+                announced: document.getElementById('state').textContent};
+        """,
+        height=1200, patience=2500,
+    )
+    # The change was real and counted while it was being made.
+    assert found["typed"] == {"said": "1 unsaved change", "hidden": False}
+    # And is gone afterwards, from the box as well as from the bar.
+    assert found["owner"] == found["was"], "Cancel left the typed value in the control"
+    assert found["hidden"], "the commit bar is still on screen over a page nobody is editing"
+    assert found["said"] == "Nothing to save"
+    # Said out loud. The three worst rounds this repository has had each destroyed
+    # somebody's writing without a word, and discarding an edit is that shape — the
+    # difference has to be that this one says what it did.
+    assert found["announced"] == "Edit cancelled, 1 change discarded"
+
+
+def test_cancelling_an_edit_nobody_made_says_nothing(page: str, tmp_path: Path):
+    """Opening an edit and closing it again is not an event.
+
+    An announcement for a discard of nothing is the sort of line that teaches
+    people to stop reading the live region the real ones arrive in.
+    """
+    found = measured_in(
+        chrome(), page, tmp_path / "quiet.html", 1100,
+        """
+        document.getElementById('toggle').click();
+        await new Promise(settled => setTimeout(settled, 40));
+        document.getElementById('cancel').click();
+        await new Promise(settled => setTimeout(settled, 40));
+        return {announced: document.getElementById('state').textContent,
+                hidden: document.getElementById('commitbar').hidden};
+        """,
+        height=1200, patience=2500,
+    )
+    assert found["announced"] == ""
+    assert found["hidden"]
+
+
 def test_the_status_a_row_is_set_to_says_what_it_will_be_refused_without(page: str):
     """The rules were a dict in `render.py` and nowhere on screen. Marked live,
     because moving a task to in_progress is the moment `assigned_on` starts
