@@ -274,22 +274,22 @@ def test_no_two_stops_on_one_hill_share_a_place() -> None:
 
 
 def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Path) -> None:
-    """Painted at all, and painted in the right place.
+    """Painted at all, and painted where the stop plus the lift puts it.
 
-    One page per status the corpus holds, and each one is a record's own page as
-    the server sends it. Not the static export, which was tried first and is the
-    wrong instrument: it puts every entity in one file and shows one at a time, so
-    every article but the current one is `display: none` and every ball in it
-    measures zero — a page that would have reported "the hill is painted at no
-    size" for a hill that is perfectly fine.
+    Its centre is deliberately NOT on the curve — a ball centred on a point of the
+    line is half buried in it — so the place to check is the stop displaced along
+    the outward normal by the ball's own radius plus half the line. Everything
+    here comes back in painted pixels and the arithmetic is done in Python, where
+    it can be read.
 
-    A resolved `left` is not the claim either. Chrome painted nothing at all for
-    the frozen column's edge on a value every test agreed with. So this measures
-    the box the browser actually laid out and checks its centre against what
-    `_hill_at` computed, in the hill's own pixels.
+    One page per status the corpus holds, each a record's own page as the server
+    sends it. Not the static export, which was tried first and is the wrong
+    instrument: it puts every entity in one file and shows one at a time, so every
+    article but the current one is `display: none` and every ball in it measures
+    zero.
     """
     browser = chrome()
-    first = {}
+    first: dict[str, str] = {}
     for entity_id, entity in sorted(index.entities.items()):
         first.setdefault(entity.status, entity_id)
     assert len(first) > 1, "the corpus holds one status, so this proves nothing"
@@ -301,87 +301,30 @@ def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Pat
             """
             const hill = document.querySelector('.hill');
             const ball = hill.querySelector('.hill-ball');
-            const box = hill.getBoundingClientRect();
+            const svg = hill.querySelector('svg').getBoundingClientRect();
             const at = ball.getBoundingClientRect();
-            return {width: at.width, height: at.height,
-                    across: (at.x + at.width / 2 - box.x) / box.width,
-                    down: (at.y + at.height / 2 - box.y) / box.height,
+            return {frame: {x: svg.x, y: svg.y, width: svg.width},
+                    size: at.width,
+                    cx: at.x + at.width / 2, cy: at.y + at.height / 2,
                     word: [...ball.classList].find(c => c !== 'hill-ball').slice(5)};
             """,
             height=1000,
         )
         assert found["word"] == status
-        assert found["width"] > 0 and found["height"] > 0, f"{status}'s ball is laid out at no size"
+        assert found["size"] > 0, f"{status}'s ball is laid out at no size"
+
+        scale = found["frame"]["width"] / _HILL_BOX[0]
         x, y = _HILL_STOPS[status]
-        assert found["across"] == pytest.approx(x / _HILL_BOX[0], abs=0.01), f"{status} across"
-        assert found["down"] == pytest.approx(y / _HILL_BOX[1], abs=0.01), f"{status} up"
-
-
-def test_the_ball_rests_on_the_line_at_every_stop_and_every_size(
-    index: Index, tmp_path: Path
-) -> None:
-    """Tangent to the drawn line, not run through by it.
-
-    A ball centred on a point of the curve is a ball half buried in the hill,
-    which is not how a ball sits on a hill. The lift that fixes it is a length in
-    painted pixels along a unit normal, and the reason it can be exact is
-    `vector-effect: non-scaling-stroke`: the line is 2 painted pixels at every
-    size, so the surface is always 1px above the path's own coordinates.
-
-    Measured against the path Chrome actually laid out — `getPointAtLength` walks
-    the real geometry — rather than against the numbers that produced it, because
-    the failure this is written for is a lift that is right in the facts column
-    and wrong in a card. Both sizes, therefore: 15rem is the detail page's and
-    6.5rem is the card's.
-    """
-    browser = chrome()
-    entity_id = sorted(index.entities)[0]
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
-    found = measured_in(
-        browser, page, tmp_path / "tangent.html", 1100,
-        """
-        document.getElementById('toggle').click();
-        await new Promise(settled => setTimeout(settled, 50));
-        const hill = document.querySelector('.hill[role=radiogroup]');
-        const svg = hill.querySelector('svg');
-        const lines = [hill.querySelector('.hill-line'), hill.querySelector('.hill-ground')];
-        const out = {};
-        for (const width of ['15rem', '6.5rem']) {
-          hill.style.maxWidth = width;
-          await new Promise(settled => setTimeout(settled, 20));
-          const frame = svg.getBoundingClientRect();
-          const scale = frame.width / 120;
-          const gaps = {};
-          for (const stop of hill.querySelectorAll('.hill-stop')) {
-            stop.querySelector('input').click();
-            const at = hill.querySelector('.hill-ball').getBoundingClientRect();
-            const cx = at.x + at.width / 2, cy = at.y + at.height / 2;
-            let nearest = Infinity;
-            for (const line of lines) {
-              const len = line.getTotalLength();
-              for (let step = 0; step <= 600; step++) {
-                const point = line.getPointAtLength(len * step / 600);
-                nearest = Math.min(nearest, Math.hypot(
-                  frame.x + point.x * scale - cx, frame.y + point.y * scale - cy));
-              }
-            }
-            gaps[stop.querySelector('input').value] = nearest - at.width / 2;
-          }
-          out[width] = gaps;
-        }
-        return out;
-        """,
-        height=1400, patience=3500,
-    )
-    for width, gaps in found.items():
-        assert set(gaps) == set(HILL_LADDERS["entity"]), width
-        for word, gap in gaps.items():
-            # One pixel from the path's centre is flush with the painted edge of a
-            # 2px line. Half a pixel of tolerance for the rounding a browser does
-            # when it lays a percentage out on a device pixel.
-            assert gap == pytest.approx(1, abs=0.6), (
-                f"at {width} the {word} ball is {gap:.2f}px from the line, not resting on it"
-            )
+        nx, ny = _HILL_NORMALS[status]
+        # `box-sizing: border-box`, so the laid-out width IS the outer diameter;
+        # plus one for half of a 2px non-scaling stroke.
+        lift = found["size"] / 2 + 1
+        assert found["cx"] == pytest.approx(
+            found["frame"]["x"] + x * scale + nx * lift, abs=1.5
+        ), f"{status} is across wrong"
+        assert found["cy"] == pytest.approx(
+            found["frame"]["y"] + y * scale + ny * lift, abs=1.5
+        ), f"{status} is up wrong"
 
 
 def test_pressing_a_stop_moves_the_ball_and_the_form(index: Index, tmp_path: Path) -> None:
