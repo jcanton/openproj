@@ -289,9 +289,10 @@ def _library(name: str) -> Markup:
 # --- the second editor's adapter, and where it is NOT ------------------------
 #
 # Out of `_COMBOBOX` and into its own block, on a measurement: `_COMBOBOX` is
-# emitted on SIX pages — table, new, detail, cycle, issue, note — and two of
-# them have no body editor at all. Leaving this beside `textareaSurface` cost
-# 12,978 B on every one of those pages including the two, for an adapter that
+# emitted on the table, the create form, the record page and the cycle page —
+# and the table and the cycle page have no body editor at all. Leaving this
+# beside `textareaSurface` cost 12,978 B on every one of those pages including
+# those two, for an adapter that
 # can only be reached where 594 KB of library is also in the page. It goes out
 # with the library or it does not go out.
 #
@@ -1252,8 +1253,9 @@ def _payload(index: Index) -> dict:
         # as refusing it while the mouse is still down, which is the difference
         # between a rule and a 422.
         "parent_kinds": {kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
-        # The same three templates `/new` offers. An entity created from the
-        # table is the same document as one created from the form — a plan where
+        # The same templates `/new` offers — one per kind, plus blank. An entity
+        # created from the table is the same document as one created from the
+        # form — a plan where
         # a pitch has a shaping template only if you happened to make it on the
         # other page is a plan with two kinds of pitch in it.
         "templates": TEMPLATES,
@@ -2406,8 +2408,8 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    element out of the accessibility tree, so a live region that must stay
    readable to a screen reader and invisible to everybody else is clipped.
 
-   Five page headings wear this, one per view whose whole heading was the single
-   word already sitting in the nav two rows above it. The nav now says which page
+   Every nav view's heading wears this — each was the single word already
+   sitting in the nav two rows above it. The nav now says which page
    you are on in the item it lights, so on screen that heading was a row of space
    spent saying nothing new. It stays in the document because a page with no
    top-level heading cannot be announced by name, cannot be found in a heading
@@ -2657,7 +2659,8 @@ li.task-list-item input { margin-right: .35em; }
    luminance ladder every other view already uses rather than inventing a hue that
    would be right in one theme block and wrong in the two nobody looks at.
    In the shell and not beside the detail page's stylesheet, because the card
-   draws one too and the card is drawn from here on three pages. */
+   draws one too and the card is drawn from here on the table, the graph and
+   the timeline. */
 /* A `<span>` rather than a `<div>`: the read view puts this inside the
    `<span class="read">` every fact row wears, and a block element in there is
    content a parser is entitled to do anything with. */
@@ -3194,11 +3197,13 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
    `bottom: auto` is as load-bearing as `top`: with both set the browser keeps
    the first and the bar stays at the foot.
 
-   Defined here rather than per page because four pages have one, and four copies
-   of a commit bar is four answers to "have I saved this yet". It was per page for
+   Defined here rather than per page because the record page, the create form,
+   the cycle page and the cycles index each have one, and four copies of a commit
+   bar is four answers to "have I saved this yet". It was per page for
    half of it, and that is exactly how the create form and the cycle page came to
    have a bar stuck to neither edge: `#commitbar { top: 0; bottom: auto }` was
-   written for the detail page and put in `_DETAIL_STYLE`, which four pages load —
+   written for the detail page and put in `_DETAIL_STYLE`, which more pages load
+   than draw a bar —
    so two pages whose bar is still last in the markup lost `bottom: 0` to it and
    became a plain block at the foot, off screen from the top of a form that
    scrolls. Measured in Chrome at 1400x900 before the move: 1178px down the create
@@ -3282,8 +3287,9 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 
    One blanket block rather than a `transition: none` beside each animated rule the
    app owns, because the next person to write a transition will not come back here
-   to add it. There are two: `#grip::before` on the detail page, the width handle's
-   fade, and `.hill-ball`, which rolls between its stops when a status changes and
+   to add it. There are two: `#grip::before`, the width handle's fade on the
+   record page and the create form, and `.hill-ball`, which rolls between its
+   stops when a status changes and
    is in this shell and therefore on every page. `test_the_app_moves_in_two_places`
    is the inventory, and it is a tripwire rather than a ban — what a new one has to
    pass is that it is inside this block's reach and not on a canvas.
@@ -3381,12 +3387,14 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     already understands. -#}
 <script id="words" type="application/json">{{ words|tojson }}</script>
 {#- The two ladders' marks, beside the words and for the same reason: the card is
-    drawn on three pages and the graph has no `DATA` of its own — its payload is
+    drawn on the table, the graph and the timeline, and the graph has no `DATA`
+    of its own — its payload is
     cytoscape elements — so a mark read from a page's payload is a mark the card
-    carries on two pages out of three.
+    carries on two of the three.
 
-    `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on two
-    pages — it is the span the mark buttons are drawn into — and a second element
+    `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on the
+    record page and the create form — it is the span the mark buttons are drawn
+    into — and a second element
     of that id in the shell made `getElementById('marks')` answer with this block
     instead: the toolbar drew its buttons into a script tag, and the editor's own
     tests caught it as an SVG laid out at 0x0. -#}
@@ -3409,7 +3417,7 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 // those two messages a ReferenceError instead.
 const ANNOUNCE = document.getElementById('announce');
 
-// Stored text into markup, for every script on every page. Five of these pages
+// Stored text into markup, for every script on every page. Page scripts
 // build markup by string concatenation out of a file in the plan repository,
 // and a title, a login, a tag and an id are all sentences somebody typed: `<`
 // opens a tag on everybody else's screen and `"` ends the attribute it is
@@ -4513,7 +4521,8 @@ function facetLabel(facet) {
 // three tag names do not fit in a button on a bar of ten of them.
 //
 // The word comes off the checkbox the server drew rather than from a map: this
-// script is shared by five pages and `HUMAN` is the table's payload, so a `human`
+// script is shared by every page with a filter bar — records, the table, the
+// graph, the timeline, the people page — and `HUMAN` is the table's payload, so a `human`
 // of its own here would be the same vocabulary written twice — and `in_progress`
 // would read as itself on the one page that had not been given the map.
 function facetSummary(facet, chosen) {
@@ -4739,8 +4748,8 @@ const FIELD_LABELS = DATA.labels;
 const human = value => HUMAN[value] ?? (value ?? '');
 
 // `esc` comes from the shell, which declares it before this script runs. It was
-// declared here as well as in the timeline, and the third page that needed it —
-// the combobox, on four pages — had neither copy in scope.
+// declared here as well as in the timeline, and the third script that needed
+// it — the combobox, on every page that edits — had neither copy in scope.
 
 // The same list the header row above was drawn from, emitted rather than
 // retyped: these were two literals that had to stay index-parallel, with a
@@ -7928,8 +7937,9 @@ _GRAPH = """
 </div>
 
   {#- `data-fills`: this is the box the shell measures the window into. A canvas
-      has no size of its own — whatever it is told, it draws — so it is the one
-      box on these three pages that takes a `height` rather than a cap. -#}
+      has no size of its own — whatever it is told, it draws — so of the three
+      boxes the shell measures (the table's, this one, the timeline's) it is
+      the one that takes a `height` rather than a cap. -#}
   <div id="cy" data-fills></div>
   {#- Written by the script, because which emptiness this is is not known until
       the payload has been parsed and the filter has run. -#}
@@ -9697,7 +9707,7 @@ _COMBOBOX = r"""
 // --- the textarea, as a surface --------------------------------------------
 //
 // Everything between this banner and the one that closes it is the only code on
-// any of these four pages that knows the document is being written in a
+// any page `_COMBOBOX` ships on that knows the document is being written in a
 // `<textarea>`. Nothing outside it reads `.value`, `selectionStart`,
 // `selectionEnd` or calls `setSelectionRange`, and
 // `test_the_body_is_read_through_one_place_and_nothing_else` holds it there.
@@ -10306,7 +10316,7 @@ const LIST_ITEM = /^(\s*)([-*+]|\d+\.)(\s+)(\[[ xX]\]\s+)?(.*)$/;
 //
 // And every value is checked against what the control actually offers rather
 // than trusted. `{"indent": "four"}` is one hand-edit away, and it would reach
-// `' '.repeat("four")` in the one script four pages share.
+// `' '.repeat("four")` in the one script every `_COMBOBOX` page shares.
 const EDITOR_KEY = 'openproj:editor:1';
 // What the indent picker offers. Two first, because that is what the plan is
 // already written at: 48 of the 56 nested bullets in it are indented by two.
@@ -10740,8 +10750,9 @@ function attachGutter(surface, note) {
       'translateY(' + (textTop(area, wrap) - area.scrollTop) + 'px)';
   };
 
-  // Named for what it draws, and not `draw`. This block ships on four pages, two
-  // of which have no body editor at all, and the table page declares a top-level
+  // Named for what it draws, and not `draw`. This block ships wherever
+  // `_COMBOBOX` does — the table and the cycle page have no body editor at
+  // all — and the table declares a top-level
   // `draw` of its own — so a generic name here is a name that reads as the
   // table's to anything looking at the page as text. It is nested and therefore
   // lexically safe, and the suite went red anyway: the test that greps out the
@@ -10884,9 +10895,9 @@ function attachGutter(surface, note) {
 // itself independently of the page is a colour with its only definition inside a
 // block half the readers never match.
 //
-// The bar is built rather than written into four templates, for the same reason
-// the toolbar is: this is one block and four mount sites, and four copies of a
-// row of spans is four places for one of them to fall behind. A page that wants
+// The bar is built rather than written into the template, for the same reason
+// the toolbar is: one block builds the strip wherever the markup mounts it, so
+// the row of spans has one author and no hand-written copy to fall behind. A page that wants
 // something of its own in the middle of the strip — the draft interval, on the
 // one page that has a draft — puts it in the markup and this wraps it, which is
 // why the two ends are `prepend` and `append` rather than `replaceChildren`.
@@ -11037,7 +11048,7 @@ function attachEditing(surface, bar) {
   const area = surface.el;
   // The two history buttons, so their disabled state can be kept honest. Empty
   // on a bar that was never drawn, which is what makes `syncHistory` a no-op on
-  // the two pages that inline this block and have no editor. Named rather than
+  // the table and the cycle page, which inline this block and have no editor. Named rather than
   // called `history`, which is a global this page has no business shadowing.
   const historyButtons = [];
   if (bar) {
@@ -11169,7 +11180,8 @@ function attachEditing(surface, bar) {
       //    is a key somebody presses by mistake once.
       //
       // The seam is an event on the element, the way the image button's is: this
-      // block is shared by four pages and only two of them have a view to leave.
+      // block is shared by every `_COMBOBOX` page and only the record page
+      // and the create form have a view to leave.
       // Where nothing listens, nothing is cancelled and the hatch opens straight
       // away. Vim, if it is ever bought, claims Escape ahead of all three while
       // it is in insert mode, and the same `cancelable` answer is how it says so.
@@ -12141,8 +12153,9 @@ def _control_html(
 #
 # Emitted by the detail page and the create form and by nothing else, because it
 # reaches for `BODY` and `TITLED` — the two boxes those two pages declare — and
-# because the other two pages that inline `_COMBOBOX` have no document to have a
-# view of. The blocks share one lexical scope, so this runs after theirs and the
+# because the table and the cycle page — the other two that inline `_COMBOBOX` —
+# have no document to have a view of. The blocks share one lexical scope, so
+# this runs after theirs and the
 # names are simply there.
 #
 # **Three states, and the landing one is `view`.** HackMD is always full page;
@@ -15006,9 +15019,10 @@ article.entity.full .panes > .main { min-height: 0; display: flex; flex-directio
 article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
                                  gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
 article.entity.full .bodywrap { min-height: 0; }
-/* `max-width: none` because one of the two sheets this block is concatenated to
-   caps the box at a reading measure — 44rem, right for a record page and wrong
-   for a pane that IS the window. */
+/* `max-width: none` guarded the full page against the record pages' 44rem cap
+   on this box. No sheet caps the box any more — the measure lives on the
+   article, and `.full` overrides it above — but a cap somebody writes tomorrow
+   must still lose here, where the pane IS the window. */
 article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: none;
                                           max-width: none; }
 /* The rendered pane is a document, not a field: it loses the rule and the space
@@ -15044,8 +15058,9 @@ article.entity.full.view-both .bodysplit {
   grid-template-columns: minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr);
   column-gap: 0;
 }
-/* Not a control in either of the other two views, on the two pages that inline
-   this sheet with no document to split, or outside the surface. Absent rather
+/* Not a control in either of the other two views, on the pages that inline this
+   sheet with no document to split — the cycle page, the cycles index and the
+   deck — or outside the surface. Absent rather
    than disabled: a separator in the tab order that divides nothing is a control
    that lies about what the page can do. */
 #splitter { display: none; }
@@ -15138,11 +15153,11 @@ article.entity.full.view-view .markbar { display: none; }
 
 _DETAIL_STYLE = """
 /* No `#commitbar` here. The bar sticks to the top on this page because the SHELL
-   says every commit bar does, which is one rule for the four pages that draw
-   one — and an id override in this sheet was the wrong shape for it twice over:
-   it beat the shell only on the pages that load this sheet, and four do, of which
-   two kept their bar at the foot of the markup and so ended up stuck to neither
-   edge. See `.commitbar` in the shell. */
+   says every commit bar does — one rule for every page that draws one — and an
+   id override in this sheet was the wrong shape for it twice over: it beat the
+   shell only on the pages that load this sheet, and the create form and the
+   cycle page, bars still last in their markup, ended up stuck to neither edge.
+   See `.commitbar` in the shell. */
 
 .tocgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
             color: var(--muted); font-weight: 600; margin: 1.4rem 0 .3rem; }
@@ -16286,8 +16301,10 @@ def _read_date(value: object) -> str:
 
 _ENV.globals["on"] = _read_date
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
-# Every chip on every page names its rung through this, so the two templates
-# that draw one cannot disagree with the three that build one in Python. They did:
+# Every chip on every page names its rung through this, so the templates that
+# draw one — the cycle page's betting table, the people page — cannot disagree
+# with the Python builders — the table payload, the progress panel, the record
+# page's rows. They did:
 # the detail page's meta line escaped the status into its class and the facts
 # list two elements away did not, which is one page holding both answers.
 _ENV.globals["status_class"] = _status_class
@@ -16876,8 +16893,9 @@ TEMPLATES = {
 def _new_rows() -> list[dict]:
     """One row per field any kind has, each saying which kinds have it.
 
-    The union rather than one kind's worth, because the page carries all three and
-    hides what does not apply. Rendering only the chosen kind meant switching kind
+    The union rather than one kind's worth, because the page carries every
+    kind's fields and hides what does not apply. Rendering only the chosen kind
+    meant switching kind
     was a fresh page, and a title typed before switching was gone.
     """
     rows: dict[str, dict] = {}
@@ -19842,7 +19860,8 @@ def _page(
         icon=_icon_uri(),
         links=links,
         # The word map, on every page rather than in the three payloads that
-        # happened to carry it. The hover card is drawn by three views and the
+        # happened to carry it. The hover card is drawn by the table, the graph
+        # and the timeline, and the
         # graph's payload is cytoscape elements — no `DATA` at all — so the card
         # read `in_progress` off a node and drew it as itself. `HUMAN` exists
         # because five pages inventing their own capitalisation is how one status

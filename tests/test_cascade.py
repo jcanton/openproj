@@ -869,7 +869,8 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
       on. `#splitter` is (1,0,0) and every rule that could give it back a box is a
       class selector, so the *default* has to be the id — an `article.entity.full
       .bodysplit > div` written to lay the panes out would otherwise draw a
-      separator on two pages that have no document to split;
+      separator on the cycle page, the cycles index and the deck, which have no
+      document to split;
     * the two prose tracks keep `minmax(0, …)`. A bare fraction there is a track
       whose minimum is its content, and one unbroken line of prose is wider than
       half a window;

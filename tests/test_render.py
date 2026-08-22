@@ -397,7 +397,7 @@ def test_the_graph_commits_in_the_same_place_every_other_page_does(
     # second answer to which edge a commit bar sticks to is asked where it can be
     # asked properly — `tests/test_cascade.py::test_every_commit_bar_sticks_to_
     # the_same_edge_and_one_rule_decides_it`, which resolves the cascade by name
-    # over all four pages. A substring search here cannot tell a rule from the
+    # over all four pages that draw one. A substring search here cannot tell a rule from the
     # comment above it, and this one was written and deleted for saying that a
     # paragraph explaining the old override was the old override.
     assert re.search(r"\.commitbar \{[^}]*position: sticky; top: 0; bottom: auto", live, re.S)
@@ -2874,7 +2874,9 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
 
 @pytest.fixture
 def server_pages(seed_index: Index) -> dict[str, str]:
-    """The three pages `render_static` never writes, rendered at the routes.
+    """Three of the four pages `render_static` never writes — the cycle page,
+    the create form and the served record page — rendered at the routes. The
+    fourth, the deck, has a suite of its own in `tests/test_deck.py`.
 
     Rendered here rather than fetched, because what is under test is the page and
     not the plumbing; `test_web.test_every_route_says_which_nav_item_it_is` asks
@@ -2891,7 +2893,7 @@ def server_pages(seed_index: Index) -> dict[str, str]:
 
 
 def test_the_headings_a_server_draws_are_the_same_two_kinds(server_pages: dict[str, str]):
-    """The three pages `render_static` does not write, decided the same way.
+    """The same three unexported pages, decided the same way.
 
     A cycle page and an entity page name what you are looking at and stay visible;
     the create form is the odd one, and it is visible for the opposite reason to
@@ -3801,8 +3803,9 @@ def test_the_motion_floor_is_the_shell_s_and_not_one_page_s(rendered: Path):
     """Where the block lives, which is the half the browser test cannot see.
 
     It measures `detail.html`, the only page with a transition on it. Written into
-    `_DETAIL_STYLE` that test would pass unchanged and the other six pages would
-    have no floor at all the day one of them grew an animation — which is the same
+    `_DETAIL_STYLE` that test would pass unchanged and every other exported
+    page would have no floor at all the day one of them grew an animation —
+    which is the same
     shape as the capacity meter's `.bar` rule reaching the timeline: a rule's page
     is a fact about the rule, and nobody notices it from inside one page.
     """

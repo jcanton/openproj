@@ -375,7 +375,7 @@ class Person(BaseModel):
     killed the first attempt does not get handled here; it stops existing.
 
     **The login is in the path and nowhere else**, which is a deliberate break
-    with the other three record types. They carry their id in the frontmatter too,
+    with every other record here. They carry their id in the frontmatter too,
     and they have to: an id there is minted, opaque and the join key other records
     point at — `parent`, `depends_on`, `pitched_into` — while the filename carries
     a slug that drifts as titles are edited. Nothing points at a person record. It
