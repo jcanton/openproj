@@ -81,7 +81,7 @@ OURS = ("form", "onsubmit", "return false")
 # What `served()` names an entity's own detail page — the editable one.
 ONE_ENTITY = "one entity"
 
-STATIC_PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
+STATIC_PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
                 "issues.html", "notes.html", "graph.html", "timeline.html")
 
 
@@ -269,6 +269,43 @@ def benign_static(tmp_path: Path) -> dict[str, str]:
     return static_pages(tmp_path / "benign", tmp_path / "benign-out", corpus(BENIGN))
 
 
+# The two page routes the census cannot open: an individual issue or note is
+# addressed by an id this corpus deliberately malforms (see `corpus`), so the
+# route refuses the path and the page under test never renders. Held both ways
+# by the completeness test below — a route that leaves the app makes this list
+# stale and FAILS, so an exemption cannot outlive its excuse. The flip commit
+# turns both routes into redirects and retires this set.
+CENSUS_BLIND = {"/issue/{issue_id}", "/note/{note_id}"}
+
+
+def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
+    """Every page the census opens, module-level so the completeness test can
+    hold it against `app.routes`. Named rather than keyed by URL: the entity
+    pages have the payload in their path, so the hostile plan and the benign
+    one address different URLs for the same page."""
+    return {
+        "records": "/", "table": "/table", "graph": "/graph", "timeline": "/timeline",
+        "people": "/people", "cycles": "/cycles", "cycle 41": "/cycle/41",
+        # The deck was left out of a census that says it covers every page the
+        # server draws, and it is the page a field is most likely to leave the
+        # building on: a deck is printed and handed to somebody who was not in
+        # the room. Same cycle as the one above, so both read the same plan.
+        "deck 41": "/deck/41",
+        # The two inboxes and their create forms. Individual issue and note
+        # pages are the two CENSUS_BLIND routes above.
+        "issues": "/issues", "notes": "/notes",
+        "issue new": "/issue/new", "note new": "/note/new",
+        "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
+        # `/detail` is the whole plan and read-only; an entity's own page is the
+        # editable one, and the only one that carries the combobox.
+        "every detail": "/detail",
+        **{
+            f"{ONE_ENTITY} {n}": f"/detail/{quote(entity_id, safe='')}"
+            for n, entity_id in enumerate(entity_ids)
+        },
+    }
+
+
 def served(
     tmp_path: Path, plan: dict[str, str], name: str, entity_ids: tuple[str, ...]
 ) -> dict[str, str]:
@@ -285,30 +322,7 @@ def served(
     path = tmp_path / f"{name}.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
     commit_directly(path, plan, "seed a hostile plan")
-    # Named rather than keyed by URL: the entity pages have the payload in their
-    # path, so the hostile plan and the benign one address different URLs for the
-    # same page and nothing could be compared against anything.
-    routes = {
-        "table": "/", "graph": "/graph", "timeline": "/timeline", "people": "/people",
-        "cycles": "/cycles", "cycle 41": "/cycle/41",
-        # The deck was left out of a census that says it covers every page the
-        # server draws, and it is the page a field is most likely to leave the
-        # building on: a deck is printed and handed to somebody who was not in
-        # the room. Same cycle as the one above, so both read the same plan.
-        "deck 41": "/deck/41",
-        # The two inboxes. Their list pages only: an individual issue or note is
-        # addressed by an id this corpus deliberately malforms, and a route that
-        # refuses the path never renders the page under test.
-        "issues": "/issues", "notes": "/notes",
-        "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
-        # `/detail` is the whole plan and read-only; an entity's own page is the
-        # editable one, and the only one that carries the combobox.
-        "every detail": "/detail",
-        **{
-            f"{ONE_ENTITY} {n}": f"/detail/{quote(entity_id, safe='')}"
-            for n, entity_id in enumerate(entity_ids)
-        },
-    }
+    routes = census_routes(entity_ids)
     pages = {}
     with TestClient(create_app(path, auth="dev", secret="a-signing-secret-for-tests")) as client:
         for name, route in routes.items():
@@ -343,6 +357,54 @@ def test_no_served_page_lets_a_field_become_markup(hostile_served, benign_served
     for route, html in hostile_served.items():
         assert_clean(html, f"served {route}")
         assert_same_shape(html, benign_served[route], f"served {route}")
+
+
+def test_every_html_get_route_is_in_the_census(tmp_path: Path):
+    """Risk 2 in the design, closed permanently: the census was a hand-written
+    list, and a hand-written list fails OPEN — move the table to /table and the
+    census stays green while covering the wrong URL. Held against `app.routes`
+    it fails CLOSED: an HTML GET route the census does not open is a failure on
+    the commit that adds the route, not a hole found later.
+
+    Filtered on `response_class`: JSON routes, redirects and the asset stream
+    are not pages, and a census of them would be a different test.
+    """
+    from fastapi.responses import HTMLResponse
+    from fastapi.routing import APIRoute
+
+    path = tmp_path / "census.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(path, corpus(BENIGN), "seed a plan for the route census")
+    app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
+    with TestClient(app):
+        def is_page(route) -> bool:
+            drawn = getattr(route, "response_class", None)
+            # FastAPI wraps an undeclared response class in a DefaultPlaceholder.
+            drawn = getattr(drawn, "value", drawn)
+            return isinstance(drawn, type) and issubclass(drawn, HTMLResponse)
+
+        pages = {
+            route
+            for route in app.routes
+            if isinstance(route, APIRoute) and "GET" in route.methods and is_page(route)
+        }
+        assert pages, "no HTML GET routes at all, so nothing was checked"
+
+        covered: set[str] = set()
+        for url in census_routes(ids(BENIGN)).values():
+            where = url.partition("?")[0]
+            for route in pages:
+                if route.path_regex.match(where):
+                    covered.add(route.path)
+
+        templates = {route.path for route in pages}
+        missing = templates - covered - CENSUS_BLIND
+        assert not missing, (
+            "HTML GET routes the injection census never opens — add each to "
+            f"census_routes() or, with a reason, to CENSUS_BLIND: {sorted(missing)}"
+        )
+        stale = CENSUS_BLIND - templates
+        assert not stale, f"CENSUS_BLIND names routes that no longer exist: {sorted(stale)}"
 
 
 def test_no_template_marks_a_value_safe():

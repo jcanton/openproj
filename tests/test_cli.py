@@ -173,7 +173,7 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
     assert "0 blockers" in capsys.readouterr().out
     assert main(["render", str(tmp_path), str(out)]) == 0
 
-    for name in ("index.html", "detail.html", "people.html",
+    for name in ("index.html", "table.html", "detail.html", "people.html",
                  "cycles.html", "graph.html", "timeline.html"):
         assert (out / name).is_file(), name
         assert len(read_bytes := (out / name).read_bytes()) > 1000, (name, len(read_bytes))
@@ -297,12 +297,14 @@ def test_demo_builds_a_repository_the_server_can_actually_serve(monkeypatch, cap
 
     def while_it_runs(app):
         with TestClient(app) as client:
-            seen["table"] = client.get("/")
+            seen["records"] = client.get("/")
+            seen["table"] = client.get("/table")
             seen["people"] = client.get("/people")
             seen["index"] = client.get("/api/index.json").json()
 
     assert run_demo(monkeypatch, while_it_runs) == 0
 
+    assert seen["records"].status_code == 200
     assert seen["table"].status_code == 200
     assert seen["people"].status_code == 200
     kinds = {entity["kind"] for entity in seen["index"]["entities"].values()}

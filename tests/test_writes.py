@@ -435,7 +435,7 @@ def broken_id_table(tmp_path_factory: pytest.TempPathFactory) -> str:
     commit_directly(repo, BROKEN_ID_PLAN, "a plan with an id nobody validated")
     with TestClient(create_app(repo, auth="dev", secret=SECRET)) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
-        answer = client.get("/")
+        answer = client.get("/table")
         assert answer.status_code == 200
         return answer.text
 

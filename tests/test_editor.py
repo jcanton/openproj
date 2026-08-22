@@ -830,7 +830,8 @@ def test_every_answer_a_write_gives_lands_in_a_live_region(client: TestClient, p
     assert '<span class="hint" id="upload" role="status" aria-live="polite">' in new
     assert '<ul id="problems" class="problems" role="status" aria-live="polite" hidden>' in new
     # And the table's, which writes the conflict into the box and returns.
-    assert '<div id="row-conflict" role="status" aria-live="polite" hidden>' in client.get("/").text
+    table = client.get("/table").text
+    assert '<div id="row-conflict" role="status" aria-live="polite" hidden>' in table
 
 
 def test_a_refusal_names_the_field_the_way_the_form_labels_it(client: TestClient):

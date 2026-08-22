@@ -84,6 +84,7 @@ from .model import (
     Note,
     Person,
     Unreadable,
+    edited_by_id,
     loop_made,
     parse_cycle_text,
     parse_issue_text,
@@ -1212,6 +1213,38 @@ def create_app(
             ),
         )
 
+    # The last history walk, and the head it walked TO. Keyed on the commit
+    # ALONE — deliberately narrower than the index cache's (commit, today)
+    # above: the map is a fact about history, not about the day the plan is
+    # drawn around, and an instance living across midnight must not re-walk a
+    # second of history to redraw the same answer.
+    #
+    # One name, swapped atomically, for the reason `held` gives at length: two
+    # dozen sync routes run on anyio worker threads, and reading a single name
+    # is one atomic load under the GIL.
+    edited_held: tuple[str, dict[str, int]] | None = None
+
+    def edited_now() -> tuple[str, dict[str, int]]:
+        nonlocal edited_held
+        memo = edited_held
+        if memo is not None and memo[0] == store.head():
+            return memo
+        # `known=memo` advances over just the new commits when the cached
+        # commit is an ancestor of head; anything else — a rewound ref after a
+        # lost push race is ROUTINE here, not a force-push story — discards and
+        # re-walks. Retract-by-rebuild: no retraction logic to get wrong, and
+        # affordable because the full walk is about a second (measured: ~0.5 ms
+        # per commit on a 520-record plan).
+        fresh = store.last_edited(known=memo)
+        edited_held = fresh
+        return fresh
+
+    # Startup owns the first walk: `cli._serve` calls this before uvicorn
+    # binds, and the lifespan hook stays empty at startup on purpose. The walk
+    # must never ride a request — a second billed to whichever reader loses
+    # the race is exactly the cost this cache exists to hide.
+    app.state.warm_edited = edited_now
+
     def viewer(request: Request) -> User | None:
         """Both names are read, prefixed first.
 
@@ -1326,6 +1359,23 @@ def create_app(
         return HTMLResponse(html)
 
     @app.get("/", response_class=HTMLResponse)
+    def records() -> HTMLResponse:
+        commit, index = index_now()
+        # The map may be one commit ahead of `commit` if a write lands between
+        # the two reads. The times are display; the rows are the index's; the
+        # event stream's reload reconciles them a moment later.
+        _, stamps = edited_now()
+        return page(
+            render.render_records(
+                index,
+                render.ROUTES,
+                base_commit=commit,
+                edited=edited_by_id(stamps),
+                now=int(time.time()),
+            )
+        )
+
+    @app.get("/table", response_class=HTMLResponse)
     def table() -> HTMLResponse:
         commit, index = index_now()
         return page(render.render_table(index, render.ROUTES, base_commit=commit))

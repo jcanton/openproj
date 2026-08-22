@@ -29,7 +29,7 @@ from typing import Literal
 
 import pygit2
 from pydantic import BaseModel
-from pygit2.enums import RepositoryOpenFlag
+from pygit2.enums import RepositoryOpenFlag, SortMode
 from ruamel.yaml import YAML
 
 _BRANCH = "refs/heads/main"
@@ -267,6 +267,130 @@ def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, st
     return f"---\n{front}---\n{body}", None
 
 
+def _tree_blobs(repo: pygit2.Repository, commit: str) -> dict[str, str]:
+    """Every file at this commit, and the id of the bytes in it.
+
+    Module-level so `last_edited_in` — a read-only walk over a repository no
+    Store is open on — shares the one tree walk instead of growing a second.
+    See `Store.blobs` for why callers want the whole map at once.
+    """
+    found: dict[str, str] = {}
+
+    def walk(tree, prefix: str) -> None:
+        for entry in tree:
+            name = f"{prefix}{entry.name}"
+            if entry.type_str == "tree":
+                walk(repo.get(entry.id), f"{name}/")
+            else:
+                found[name] = str(entry.id)
+
+    walk(repo.get(commit).tree, "")
+    return found
+
+
+def _stamp_trie(paths: set[str]) -> dict:
+    """The paths as a tree of names, each leaf holding its full path.
+
+    The walk compares whole subtrees by oid before it looks at a single entry,
+    and it can only do that if the paths it is still hunting are grouped the way
+    the trees are. A flat set would ask every commit about every path.
+    """
+    trie: dict = {}
+    for path in paths:
+        node = trie
+        *directories, name = path.split("/")
+        for part in directories:
+            node = node.setdefault(part, {})
+        node[name] = path
+    return trie
+
+
+def _entry(tree, name: str):
+    if tree is None:
+        return None
+    try:
+        return tree[name]
+    except KeyError:
+        return None
+
+
+def _touched(repo: pygit2.Repository, ours, theirs, trie: dict) -> set[str]:
+    """Which of the trie's paths hold different bytes between two trees.
+
+    Missing counts as different — that is what stamps an added path with the
+    commit that added it. Pruned on tree ids: two trees sharing an id share
+    every byte beneath, and almost every commit here touches one subtree of
+    five, which is what keeps a walk over thousands of commits near a second.
+    """
+    if ours is not None and theirs is not None and ours.id == theirs.id:
+        return set()
+    found: set[str] = set()
+    for name, below in trie.items():
+        mine, yours = _entry(ours, name), _entry(theirs, name)
+        if isinstance(below, dict):
+            us = repo.get(mine.id) if mine is not None and mine.type_str == "tree" else None
+            them = repo.get(yours.id) if yours is not None and yours.type_str == "tree" else None
+            if us is None and them is None:
+                continue
+            found |= _touched(repo, us, them, below)
+        else:
+            us = mine.id if mine is not None and mine.type_str == "blob" else None
+            them = yours.id if yours is not None and yours.type_str == "blob" else None
+            if us != them:
+                found.add(below)
+    return found
+
+
+def _stamps(
+    repo: pygit2.Repository, head: str, wanted: set[str], hide: str | None = None
+) -> dict[str, int]:
+    """When a commit last changed each of these paths, in git-log semantics.
+
+    A path is stamped by a commit when its blob differs from the SAME path in
+    ALL of the commit's parents. Not first-parent: merges are routine here, not
+    exceptional, and a first-parent diff stamps a side-branch edit with the
+    merge's time — the merge itself stamps a path only where it resolved to
+    bytes neither parent held, which is what a retry landing as a merge is.
+
+    Newest-first over a topological walk, first touch wins, and the walk stops
+    the moment every wanted path is settled. With `hide` set only commits in
+    hide..head are visited — the incremental advance — and a path no visited
+    commit touched is simply absent from the answer, for the caller to fill
+    from its cache.
+    """
+    unsettled = set(wanted)
+    stamped: dict[str, int] = {}
+    if not unsettled:
+        return stamped
+    trie = _stamp_trie(unsettled)
+    walker = repo.walk(repo[head].id, SortMode.TOPOLOGICAL | SortMode.TIME)
+    if hide is not None:
+        walker.hide(repo[hide].id)
+    for commit in walker:
+        if not unsettled:
+            break
+        if commit.parents:
+            touched: set[str] | None = None
+            for parent in commit.parents:
+                differs = _touched(repo, commit.tree, parent.tree, trie)
+                # Intersection: equal to ANY parent means some parent already
+                # carried these bytes, and this commit is not the edit.
+                touched = differs if touched is None else touched & differs
+                if not touched:
+                    break
+        else:
+            touched = _touched(repo, commit.tree, None, trie)
+        fresh = (touched or set()) & unsettled
+        if fresh:
+            for path in fresh:
+                stamped[path] = commit.commit_time
+            unsettled -= fresh
+            # Rebuilt so the subtree pruning keeps biting as paths settle. At
+            # most one rebuild per settling event, bounded by the path count.
+            trie = _stamp_trie(unsettled)
+    return stamped
+
+
 class Store:
     """One writer over one bare repository."""
 
@@ -388,18 +512,49 @@ class Store:
         Walked once and handed back whole rather than asked per path: the walk is
         the expensive half, and a caller that wants the ids wants all of them.
         """
-        found: dict[str, str] = {}
+        return _tree_blobs(self._repo, commit)
 
-        def walk(tree, prefix: str) -> None:
-            for entry in tree:
-                name = f"{prefix}{entry.name}"
-                if entry.type_str == "tree":
-                    walk(self._repo.get(entry.id), f"{name}/")
-                else:
-                    found[name] = str(entry.id)
+    # -- history ------------------------------------------------------------
 
-        walk(self._tree(commit), "")
-        return found
+    def last_edited(
+        self, known: tuple[str, dict[str, int]] | None = None
+    ) -> tuple[str, dict[str, int]]:
+        """(head commit, {path: epoch seconds a commit last touched it}).
+
+        The sha returned is the one the walk actually ran to, which is what
+        makes the pair atomically swappable as a cache entry: a caller that
+        stores exactly what came back can never hold one commit's sha over
+        another commit's map.
+
+        `known` is a previous answer. When its commit is an ancestor of head the
+        walk covers only known..head, first touch wins, and untouched paths keep
+        their cached stamp. When it is NOT an ancestor — which is routine, not a
+        force-push story: the branch ref is published before the push, and a
+        lost race rewinds it (`_attempt`, the `set_target(before)` arm) — the
+        map is discarded and rebuilt from scratch. Retract-by-rebuild is the
+        whole correctness story: there is no retraction logic to get wrong, it
+        is affordable because a full walk is about a second at any size this
+        plan will reach for years, and it is what stops a doomed commit's
+        "edited just now" outliving the commit.
+
+        Only paths present at head are in the map, so a deleted path drops out
+        by construction rather than by bookkeeping.
+        """
+        head = self.head()
+        present = set(_tree_blobs(self._repo, head))
+        if known is not None:
+            cached, stamps = known
+            if cached == head:
+                return head, dict(stamps)
+            if self.has(cached) and self._repo.descendant_of(head, cached):
+                fresh = _stamps(self._repo, head, present, hide=cached)
+                settled = {path: fresh.get(path, stamps.get(path)) for path in present}
+                if all(when is not None for when in settled.values()):
+                    return head, settled
+                # A path at head that neither the window nor the cache explains
+                # should be impossible; if it ever happens, rebuild rather than
+                # publish a hole.
+        return head, _stamps(self._repo, head, present)
 
     # -- the remote ---------------------------------------------------------
     #
@@ -851,6 +1006,30 @@ class Store:
     def close(self) -> None:
         fcntl.flock(self._lock, fcntl.LOCK_UN)
         self._lock.close()
+
+
+def last_edited_in(repo_path: Path) -> dict[str, int] | None:
+    """`Store.last_edited`'s map for the repository at this path, or None when
+    the path is not a repository at all.
+
+    `openproj render` is documented to accept a plain directory of files, and a
+    plan with no history has no last-edited to draw — None is the caller's cue
+    to omit the time column entirely. Never file mtimes: they lie after every
+    fresh clone.
+
+    Read-only on purpose, not a `Store`: a Store drops `openproj.lock` into a
+    directory somebody handed us to read, and refuses to run at all while a
+    server holds the plan. HEAD rather than `refs/heads/main`, because an
+    export is of whatever is checked out.
+    """
+    try:
+        repo = pygit2.Repository(str(repo_path), RepositoryOpenFlag.NO_SEARCH)
+    except pygit2.GitError:
+        return None
+    if repo.head_is_unborn:
+        return None
+    head = str(repo.head.target)
+    return _stamps(repo, head, set(_tree_blobs(repo, head)))
 
 
 def build_plan_repository(path: Path, files: dict[str, str], message: str) -> str:

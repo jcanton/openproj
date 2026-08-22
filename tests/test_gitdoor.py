@@ -207,7 +207,7 @@ def test_the_rest_of_the_plan_is_still_on_the_page(door, name: str, where: str, 
     push(where, content)
 
     with TestClient(create_app(path, auth="dev")) as client:
-        assert "Reproduce the 2-GPU equator artefact" in client.get("/").text, name
+        assert "Reproduce the 2-GPU equator artefact" in client.get("/table").text, name
         entities = client.get("/api/index.json").json()["entities"]
         assert TASK in entities, name
 
@@ -604,7 +604,7 @@ def test_a_reason_quoting_the_file_is_still_only_text(door):
     )
 
     with TestClient(create_app(path, auth="dev")) as client:
-        page = client.get("/").text
+        page = client.get("/table").text
         assert_clean(page, "the table with a hostile value in a reason")
         said = " ".join(unreadable_in(page))
         assert "cycles/0042.md" in said
@@ -628,6 +628,6 @@ def test_the_banner_does_not_change_the_shape_of_a_page_it_names(tmp_path: Path)
         pygit2.init_repository(str(path), bare=True, initial_head="main")
         commit_directly(path, SEED | {f"tasks/{name}.md": "no frontmatter\n"}, label)
         with TestClient(create_app(path, auth="dev")) as client:
-            pages[label] = client.get("/").text
+            pages[label] = client.get("/table").text
 
     assert_same_shape(pages["hostile"], pages["benign"], "the table's unreadable banner")

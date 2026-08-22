@@ -132,7 +132,7 @@ def client(repo_path: Path):
 
 @pytest.fixture
 def page(client: TestClient) -> str:
-    return client.get("/").text
+    return client.get("/table").text
 
 
 @pytest.fixture
@@ -594,7 +594,7 @@ def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: P
     """
     entities, config, _ = load_repo(seed_root)
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
-    exported = (tmp_path / "index.html").read_text(encoding="utf-8")
+    exported = (tmp_path / "table.html").read_text(encoding="utf-8")
 
     assert not controls(exported)
     assert "base_commit" not in exported
@@ -3034,7 +3034,7 @@ def test_a_rendered_file_offers_no_row_to_type_into(seed_root: Path, tmp_path: P
     """
     entities, config, _ = load_repo(seed_root)
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
-    exported = script((tmp_path / "index.html").read_text(encoding="utf-8"))
+    exported = script((tmp_path / "table.html").read_text(encoding="utf-8"))
 
     assert "function adderHtml" not in exported
     assert "+ New row" not in exported
@@ -4491,7 +4491,7 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
     def blockers_of(entity_id: str) -> int:
         # Off the table's own payload, which is what the column is drawn from —
         # `/api/index.json` is the flat index and answers a different question.
-        page = client.get("/").text
+        page = client.get("/table").text
         rows = json.loads(
             re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S)
             .group(1)

@@ -21,7 +21,7 @@ import os
 import re
 import shutil
 from collections.abc import Callable, Iterable, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import cache, lru_cache
 from pathlib import Path
 from urllib.parse import quote
@@ -1577,7 +1577,10 @@ class Links(BaseModel):
     mode it is in.
     """
 
-    table: str = "index.html"
+    # The landing list — every record, last edited first. It takes the root
+    # name in both modes because it is the page the tool opens on.
+    records: str = "index.html"
+    table: str = "table.html"
     detail: str = "detail.html"
     graph: str = "graph.html"
     timeline: str = "timeline.html"
@@ -1632,7 +1635,7 @@ assert not set(CSP) & set('<>&"'), "a policy needing escaping cannot be written 
 
 STATIC = Links()
 ROUTES = Links(
-    table="/", detail="/detail", graph="/graph", timeline="/timeline",
+    records="/", table="/table", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
     cycles="/cycles", cycle="/cycle/", issues="/issues", issue="/issue/",
     notes="/notes", note="/note/",
@@ -16154,6 +16157,45 @@ def _human(value: object) -> str:
     return HUMAN.get(str(value), str(value))
 
 
+# Where "how long ago" stops being the useful answer and "when" begins.
+# docs/hackmd-observed.md reads the boundary off the pixels: one column runs
+# `17 hours ago` … `10 days ago` and then switches to `2026-07-08` (about 43
+# days before the shot), so the threshold falls somewhere past ten days and
+# before forty-three. Fourteen keeps every relative form the screenshot shows
+# and abandons the form at the first round boundary after them — two weeks —
+# because the same observation says the relative answer stops being useful
+# before the absolute one does, so when in doubt, switch early.
+_ABSOLUTE_AFTER = 14 * 24 * 3600
+
+
+def _ago(epoch: int, now: int) -> str:
+    """`17 hours ago`, or `2026-05-26` once "ago" stops meaning anything.
+
+    Past the threshold the relative form is abandoned rather than extended —
+    nobody is shown "2 years ago". A stamp ahead of `now` is a wrong clock on
+    some committer's machine; "in 3 hours" under a last-edited column reads as
+    broken, so the absolute date — which is at least true — is the answer there
+    too.
+
+    Arithmetic and f-strings only: this file is AST-banned from every
+    `.replace` attribute call (`test_no_page_is_assembled_by_substitution`),
+    and `datetime.replace` is spelled exactly like `str.replace` to that test.
+    """
+    gone = now - epoch
+    if gone < 0 or gone >= _ABSOLUTE_AFTER:
+        return datetime.fromtimestamp(epoch, tz=UTC).date().isoformat()
+    if gone < 60:
+        return "just now"
+    if gone < 3600:
+        minutes = gone // 60
+        return "a minute ago" if minutes == 1 else f"{minutes} minutes ago"
+    if gone < 86400:
+        hours = gone // 3600
+        return "an hour ago" if hours == 1 else f"{hours} hours ago"
+    days = gone // 86400
+    return "a day ago" if days == 1 else f"{days} days ago"
+
+
 # Available to every template as both `human(x)` and `x|human`, so no page has to
 # be handed the map, and as `label(field)` for a field name.
 _ENV.globals["human"] = _human
@@ -20891,9 +20933,9 @@ _RECORD_STYLE = """
 
 
 _NAV = (
-    ("table", "Table"), ("graph", "Graph"), ("timeline", "Timeline"),
-    ("cycles", "Cycles"), ("people", "People"), ("issues", "Issues"),
-    ("notes", "Notes"),
+    ("records", "Records"), ("table", "Table"), ("graph", "Graph"),
+    ("timeline", "Timeline"), ("cycles", "Cycles"), ("people", "People"),
+    ("issues", "Issues"), ("notes", "Notes"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
 # Pages that exist and are not in the nav, and may still say which item to light.
@@ -21020,6 +21062,172 @@ def preview_html(body: str, links: Links = ROUTES, title: str = "") -> str:
     return _markdown(without_comments(_drop_repeated_title(body, title)), links)
 
 
+_RECORDS = """
+{#- Announced, not drawn: the lit nav item already says Records. -#}
+<h1 class="sr-only">Records</h1>
+{{ facets }}
+<ul id="records">
+{%- for r in rows %}
+  <li data-id="{{ r.id }}">
+    <span class="chip kind-{{ r.kind }}">{{ r.kind }}</span>
+    <a href="{{ links.entity }}{{ r.id }}">{{ r.title or r.id }}</a>
+    {%- if timed %}<span class="when">{{ r.ago }}</span>{% endif %}
+  </li>
+{%- endfor %}
+</ul>
+{#- The no-records sentence is server-rendered so it is right before any script
+    runs and in an export where none may. The script below redraws the same
+    block for the states only the browser can reach. -#}
+<div id="records-empty" role="status"{% if rows %} hidden{% endif %}>
+  <p class="headline">{% if not rows %}This plan has no records yet.{% endif %}</p>
+  <p class="hint">{% if not rows %}Nothing has been written down.{% endif %}</p>
+</div>
+<script id="landing" type="application/json">{{ payload|tojson }}</script>
+{{ filters }}
+<script>
+// The bar above is `_facets_html`, which renders #q, #query-error and #unfilter
+// unconditionally — exactly what `_FILTER_JS` requires, because its listeners
+// are unguarded. The rows are server-rendered; this script only hides them, so
+// a payload that did not survive the trip degrades to an unfiltered list
+// rather than an empty page.
+let RECORDS = null;
+try {
+  RECORDS = JSON.parse(document.getElementById('landing').textContent);
+} catch (error) { RECORDS = null; }
+const RECORDS_LOADED = RECORDS !== null;
+if (!RECORDS_LOADED) RECORDS = {rows: {}};
+
+const recordItems = [...document.querySelectorAll('#records li[data-id]')];
+const recordsEmpty = document.getElementById('records-empty');
+
+// Four states, four sentences, and they must not look like each other: a
+// payload that did not load, a plan with no records, a query that cannot be
+// read (whose parse error `sayQueryError` already puts beside the box — the
+// block only points at it), and a search that matched nothing.
+function recordsApply() {
+  let shown = 0;
+  for (const item of recordItems) {
+    const row = RECORDS.rows[item.dataset.id];
+    const kept = !RECORDS_LOADED || (!!row && matches(row));
+    item.hidden = !kept;
+    shown += kept ? 1 : 0;
+  }
+  let headline = '', hint = '';
+  if (!RECORDS_LOADED) {
+    headline = 'This search cannot run.';
+    hint = 'The page arrived without its search data, so the list is shown unfiltered.';
+  } else if (!recordItems.length) {
+    headline = 'This plan has no records yet.';
+    hint = 'Nothing has been written down.';
+  } else if (queryError()) {
+    headline = 'That search cannot be read.';
+    hint = 'What is wrong with it is beside the search box.';
+  } else if (!shown) {
+    headline = 'No record matches this search.';
+    hint = 'Every record is hidden by what is in the box.';
+  }
+  recordsEmpty.querySelector('.headline').textContent = headline;
+  recordsEmpty.querySelector('.hint').textContent = hint;
+  recordsEmpty.hidden = !headline;
+}
+addEventListener('openproj:filter', recordsApply);
+recordsApply();
+</script>
+"""
+
+_RECORDS_STYLE = """
+/* One line per record: chip, title, time. The chip rules come from the shell
+   (`.chip.kind-…`), so a kind added to the ladder arrives here already drawn. */
+#records { list-style: none; margin: 1rem 0 2rem; padding: 0; max-width: 62rem; }
+#records li { display: flex; align-items: baseline; gap: .6rem;
+              padding: .4rem .25rem; border-bottom: 1px solid var(--line); }
+/* The flex rule above is (1,0,1) and the browser's own `[hidden] { display:
+   none }` is (0,1,0), so without this a filtered-out row stayed on screen with
+   the attribute set — the `.commitbar[hidden]` lesson, on a new page. (1,1,1)
+   beats only the flex rule above; nothing else addresses these rows. */
+#records li[hidden] { display: none; }
+#records li a { min-width: 0; overflow-wrap: anywhere; }
+#records .when { margin-left: auto; color: var(--muted); font-size: 12px;
+                 white-space: nowrap; font-variant-numeric: tabular-nums; }
+#records-empty .headline { font-weight: 600; margin: 1.5rem 0 .25rem; }
+#records-empty .hint { color: var(--muted); margin: 0; }
+"""
+
+
+def render_records(
+    index: Index,
+    links: Links = STATIC,
+    base_commit: str | None = None,
+    edited: dict[str, int] | None = None,
+    now: int = 0,
+) -> str:
+    """The landing list: every record, sorted by when a commit last touched it.
+
+    One row is a kind badge, a title linking to the record's page, and one
+    relative time — the count of what a HackMD card carries. Nothing else: no
+    owner, no status, no tags. The table is the filtering surface; this is the
+    finding one.
+
+    `edited` is record id -> epoch seconds (`Store.last_edited` joined through
+    `edited_by_id`), or None where there is no history to ask — `openproj
+    render` over a plain directory. None OMITS the time column rather than
+    leaving it blank, because blank looks broken; the list then sorts by id,
+    the one order that exists without a clock. File mtimes are never consulted:
+    they lie after a fresh clone.
+
+    `base_commit` is accepted for signature parity with every other page
+    renderer and unused: the page offers no writes, so there is nothing to
+    compare-and-swap against.
+    """
+    timed = edited is not None
+    rows = []
+    for record_id, record in index.records.items():
+        epoch = (edited or {}).get(record_id, 0)
+        rows.append(
+            {
+                "id": record_id,
+                "kind": record.kind,
+                "title": record.title,
+                "tags": record.tags,
+                "epoch": epoch,
+                # Empty when the id has no stamp (a path collision the pages
+                # already report as a blocker): nothing, not 1970.
+                "ago": _ago(epoch, now) if timed and epoch else "",
+                "search": index.search_blob[record_id],
+            }
+        )
+    if timed:
+        rows.sort(key=lambda row: (-row["epoch"], row["id"]))
+    else:
+        rows.sort(key=lambda row: row["id"])
+    body = _ENV.from_string(_RECORDS).render(
+        rows=rows,
+        timed=timed,
+        links=links,
+        # `predicates: []`, literally: `matches()` dereferences it unguarded,
+        # and an omitted array plus a `?predicate=` in the URL is a blank page.
+        # Empty rather than computed, because predicates are plan diagnostics
+        # and the table is where they are drawn and filtered.
+        payload={
+            "rows": {
+                row["id"]: {
+                    "id": row["id"], "kind": row["kind"], "title": row["title"],
+                    "tags": row["tags"], "search": row["search"], "predicates": [],
+                }
+                for row in rows
+            }
+        },
+        # No dropdowns: facets are plan vocabulary and this page is the whole
+        # record population. The bar still renders #q, #query-error and
+        # #unfilter, which is all `_FILTER_JS`'s unguarded listeners need.
+        facets=_facets_html(index.facets, fields=()),
+        filters=_FILTER_JS,
+    )
+    return _page(
+        "openproj — records", body, _RECORDS_STYLE, links, "records", index.unreadable
+    )
+
+
 def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
     payload = _payload(index)
     blocking = [p for p in index.problems if p.severity == "blocker"]
@@ -21132,7 +21340,13 @@ def render_timeline(
     )
 
 
-def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tuple[str, ...]:
+def render_static(
+    index: Index,
+    out_dir: Path,
+    repo: Path | None = None,
+    edited: dict[str, int] | None = None,
+    now: int = 0,
+) -> tuple[str, ...]:
     """The pages, and the images they name. Returns what it wrote, in order.
 
     Without the copy an exported plan renders every uploaded figure as a broken
@@ -21143,6 +21357,10 @@ def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tupl
     already were: the export grew from three pages to six and the CLI went on
     announcing "index.html, graph.html and timeline.html" to somebody who had
     just been handed six files.
+
+    `edited` and `now` feed the landing's time column and come from the caller
+    (`cli._render`), which is the one that knows whether the directory it was
+    pointed at is a repository at all — None omits the column.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     assets = (repo / "assets") if repo else None
@@ -21150,7 +21368,8 @@ def render_static(index: Index, out_dir: Path, repo: Path | None = None) -> tupl
         shutil.copytree(assets, out_dir / "assets", dirs_exist_ok=True)
     written: list[str] = []
     for name, html in (
-        ("index.html", render_table(index)),
+        ("index.html", render_records(index, edited=edited, now=now)),
+        ("table.html", render_table(index)),
         ("detail.html", render_detail(index)),
         ("people.html", render_people(index)),
         ("cycles.html", render_cycles(index)),

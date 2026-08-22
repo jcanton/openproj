@@ -246,7 +246,8 @@ def test_the_server_answers_the_same_two_values(index: Index, page: str, tmp_pat
 # --------------------------------------------------------------------------- #
 
 
-PAGES = ("table", "graph", "timeline", "people", "cycle", "detail", "issues", "notes")
+PAGES = ("records", "table", "graph", "timeline", "people", "cycle", "detail", "issues",
+         "notes")
 
 
 def every_page(index: Index) -> dict[str, str]:
@@ -257,11 +258,15 @@ def every_page(index: Index) -> dict[str, str]:
         render_issues,
         render_notes,
         render_people,
+        render_records,
         render_timeline,
     )
 
     number = max(e.cycle for e in index.entities.values() if e.cycle)
     return {
+        # The landing shares the whole control bar's scope with a script of its
+        # own, so it is in the sweep from the commit that adds it.
+        "records": render_records(index, base_commit=HEAD, edited={}, now=0),
         "table": render_table(index, base_commit=HEAD),
         "graph": render_graph(index, base_commit=HEAD),
         "timeline": render_timeline(index),

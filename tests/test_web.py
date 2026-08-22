@@ -305,7 +305,7 @@ def bet_rows(page: str) -> list[tuple[str, str, str]]:
 
 
 @pytest.mark.parametrize(
-    "route", ["/", f"/detail/{TASK}", "/detail", "/graph", "/timeline"]
+    "route", ["/", "/table", f"/detail/{TASK}", "/detail", "/graph", "/timeline"]
 )
 def test_every_view_is_served_as_a_page(client: TestClient, route: str):
     response = client.get(route)
@@ -318,7 +318,7 @@ def test_every_view_is_served_as_a_page(client: TestClient, route: str):
 def test_the_table_renders_the_repository_as_it_is_right_now(client: TestClient):
     """Served from the live index, not from a `derived/` directory checked in
     yesterday: the one blocker in the corpus has to be counted here."""
-    body = client.get("/").text
+    body = client.get("/table").text
 
     assert "Reproduce the 2-GPU equator artefact" in body
     assert "Downgrade numpy for global sums" in body
@@ -357,7 +357,8 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
     from pages import lit
 
     for route, item in (
-        ("/", "Table"),
+        ("/", "Records"),
+        ("/table", "Table"),
         ("/graph", "Graph"),
         ("/timeline", "Timeline"),
         ("/cycles", "Cycles"),
@@ -1882,7 +1883,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
 
     assert 'class="table-scroll"' not in page
     # The class still exists, on the one table with a sticky header to hold up.
-    assert 'class="table-scroll"' in client.get("/").text
+    assert 'class="table-scroll"' in client.get("/table").text
     assert re.search(r'<input class="live wide" data-field="assignees"[^>]*data-suggest', page), (
         "and this is the reason: the popups live inside the cells"
     )
@@ -3241,10 +3242,10 @@ def test_a_deleted_record_is_gone_from_every_page_that_drew_it(
     """A 200 from the API and a row still on the table is the failure worth
     testing for: the index is rebuilt per request from the tree, so this is
     really asking whether the delete reached the tree rather than some cache."""
-    assert DONE in client.get("/").text
+    assert DONE in client.get("/table").text
     assert remove(client, DONE).status_code == 200
 
-    assert DONE not in client.get("/").text
+    assert DONE not in client.get("/table").text
     assert DONE not in client.get("/api/index.json").text
     assert client.get(f"/detail/{DONE}").status_code == 404
 
@@ -3543,10 +3544,10 @@ def test_a_write_is_seen_by_the_very_next_read(client: TestClient):
     from this route, from a co-editing room's timer, or from a fetch that brought
     somebody else's work in — is a different key and a different answer."""
     assert save(client, TASK, {"title": "a new name for it"}).status_code == 200
-    assert "a new name for it" in client.get("/").text
+    assert "a new name for it" in client.get("/table").text
 
     assert save(client, TASK, {"title": "and another"}).status_code == 200
-    page = client.get("/").text
+    page = client.get("/table").text
     assert "and another" in page
     assert "a new name for it" not in page, "the table is showing the previous commit"
 
@@ -3615,10 +3616,10 @@ def test_an_edited_record_is_read_again_rather_than_remembered(client: TestClien
     # Distinctive, because a page this size contains most short English words
     # somewhere — the first attempt used "first" and "second" and found both.
     assert save(client, TASK, {"title": "zzarple"}).status_code == 200
-    assert "zzarple" in client.get("/").text
+    assert "zzarple" in client.get("/table").text
 
     assert save(client, TASK, {"title": "qqundle"}).status_code == 200
-    page = client.get("/").text
+    page = client.get("/table").text
     assert "qqundle" in page
     assert "zzarple" not in page, "the table is showing the version before the edit"
 

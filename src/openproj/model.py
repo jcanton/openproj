@@ -1072,6 +1072,31 @@ _ID_PREFIXES = {rung.prefix: rung.name for rung in KINDS}
 # product, with nothing reported, because a directory nobody walks is a
 # directory whose files do not exist.
 _ENTITY_DIRS = tuple(rung.directory for rung in KINDS)
+
+
+def edited_by_id(stamps: dict[str, int]) -> dict[str, int]:
+    """Per-record last-edited epochs, joined from `Store.last_edited`'s per-path
+    map.
+
+    Here rather than in `web.py` or `cli.py` because the layout facts it reads —
+    which directories hold records, `<id>--<slug>.md` with a slug that drifts —
+    are this module's (`record_paths_in`, `_path_for`'s stem rule), and both the
+    server and the export need the join. Two copies is the drift this file bans.
+
+    Two files claiming one id is a blocker the pages already draw; for a time
+    column the newest claim wins, because the row exists either way and a wrong
+    recency beats a missing row.
+    """
+    record_paths, _ = record_paths_in(_ENTITY_DIRS, stamps)
+    found: dict[str, int] = {}
+    for path in record_paths:
+        stem = path.rpartition("/")[2].removesuffix(".md")
+        record_id = stem.partition("--")[0]
+        if stamps[path] > found.get(record_id, 0):
+            found[record_id] = stamps[path]
+    return found
+
+
 _SPLITTER = YAMLHandler()
 
 
