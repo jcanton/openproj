@@ -13198,30 +13198,13 @@ function flipEditing() {
   // a Save made in a room ends it with a bare `showEditing(false)`. It is one
   // listener on `openproj:session` in `_VIEWS` now, which `showEditing` above
   // dispatches, so every door is the same door. See the comment there.
-  //
-  // The stored draft goes; the base it brought with it stays. Moving the base
-  // forward here would be the silent overwrite by another route.
-  //
-  // And the edit itself goes with it, which is what the button has always said
-  // and did not do. Cancel used to leave every typed value in its control and
-  // only drop the SAVED draft — so the page went back to a read view showing the
-  // old value while the commit bar went on reporting "1 unsaved change" about a
-  // change nothing on screen was showing, and the count cleared only on a reload,
-  // which is also when the work was silently lost. jcanton, 2026-08-22.
-  //
-  // Announced rather than done in silence. This repository's three worst rounds
-  // each destroyed somebody's writing without a word, and a Cancel that empties a
-  // paragraph is exactly that shape — the difference is that this one is asked
-  // for, and now says what it did.
   if (!editing) {
-    // Cancel puts back what the server rendered, which is what the issue page and
-    // the note page have always done and this page did not: it dropped the SAVED
-    // draft and left every typed value sitting in its control. So the page went
-    // back to a read view showing the old value while the commit bar went on
-    // reporting "1 unsaved change" about a change nothing on screen was showing —
-    // and the count cleared only on a reload, which is also the moment the work
-    // was silently lost. jcanton, 2026-08-22. Three pages, one act, and the copy
-    // that was missing was the one on the page with the most fields on it.
+    // Cancel puts the FIELDS back to what the server rendered. It used to put
+    // nothing back: it dropped the saved draft and left every typed value sitting
+    // in its control, so the page returned to a read view showing the old value
+    // while the commit bar went on reporting "1 unsaved change" about a change
+    // nothing on screen was holding — and the count cleared only on a reload,
+    // which is also the moment that value was silently lost. jcanton, 2026-08-22.
     let undone = 0;
     try { undone = Object.keys(changed()).length; } catch (error) { undone = 0; }
     for (const control of CONTROLS) {
@@ -13229,18 +13212,27 @@ function flipEditing() {
       if (control.dataset.type === 'bool') control.checked = !!was;
       else control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
     }
-    // A whole-document replacement, made once and marked as the page's own:
-    // nothing about putting back what the server rendered is a keystroke.
-    if (SURFACE.text() !== ORIGINAL_BODY) {
-      undone += 1;
-      SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, ORIGINAL_BODY));
-    }
+    // The fields and NOT the document, which the issue page and the note page do
+    // put back. The difference is deliberate and is written down in
+    // `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`:
+    // the text stays in the box on purpose, so that a page holding work written
+    // against an older commit goes on holding it and `base_commit` is never
+    // sprung forward underneath it. A field is a discrete choice somebody can
+    // make again in one press; a shaping document is writing, and the three worst
+    // rounds this repository has had each destroyed somebody's writing without a
+    // word.
+    //
+    // So the bar may still be up after a cancel — and when it is, it is telling
+    // the truth: there is a paragraph in the box that is not in git, and pressing
+    // Edit shows it. What it may no longer do is count a field nothing is holding.
+    //
+    // The stored draft still goes, and the base it arrived with still stays:
+    // moving that forward here would be the silent overwrite by another route.
     forgetDraft();
     dirty();
-    // Said out loud rather than done in silence. The three worst rounds this
-    // repository has had each destroyed somebody's writing without a word, and a
-    // Cancel that empties a paragraph is that shape exactly — the differences are
-    // that this one was asked for, and that it now says what it did.
+    // Said out loud. Discarding is still discarding, even when what is discarded
+    // is a menu choice, and a page that quietly puts a value back is a page you
+    // have to re-check to trust.
     if (undone) {
       announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
     }

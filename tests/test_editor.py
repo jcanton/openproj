@@ -278,20 +278,22 @@ def test_the_bar_says_how_much_is_unsaved(page: str):
     assert ".commitbar.dirty { border-color: var(--warn); }" in page
 
 
-def test_cancel_puts_back_what_the_server_rendered(page: str, tmp_path: Path):
-    """Cancel cancels, and the bar stops claiming a change nothing is showing.
+def test_cancel_puts_the_fields_back(page: str, tmp_path: Path):
+    """Cancel cancels, and the bar stops counting a field nothing is holding.
 
-    It used to drop the stored draft and leave every typed value sitting in its
-    control, so the page went back to a read view showing the old value while the
-    commit bar went on reporting "1 unsaved change" — and the count cleared only
-    on a reload, which is also when the work was silently lost. jcanton,
-    2026-08-22.
+    It used to put nothing back: it dropped the stored draft and left every typed
+    value sitting in its control, so the page returned to a read view showing the
+    old value while the commit bar went on reporting "1 unsaved change" — and the
+    count cleared only on a reload, which is also the moment that value was
+    silently lost. jcanton, 2026-08-22.
 
-    The issue page and the note page have always put back what the server
-    rendered on Cancel. This is the copy that was missing, on the page with the
-    most fields on it, which is why it is asked of the browser rather than of the
-    source: what went wrong was a value left in a box, and a box is a thing only a
-    browser has.
+    The fields and not the document: the text stays in the box on purpose, which
+    `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`
+    below asks for by name. So the bar may still be up after a cancel over a body
+    somebody is part way through, and there it is telling the truth.
+
+    Asked of the browser rather than of the source, because what went wrong was a
+    value left in a box and a box is a thing only a browser has.
     """
     found = measured_in(
         chrome(), page, tmp_path / "cancel.html", 1100,

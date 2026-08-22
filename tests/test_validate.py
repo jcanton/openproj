@@ -447,6 +447,21 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     inherits = "the bet is on the pitch, so this task takes its cycle from {}; " \
         "the number here is ignored"
     assert summaries(validate_all(entities, config)) == {
+        # Nine records at ready or in_progress with nobody assigned, which is the
+        # argument for that rule made against real files: an owner answers for a
+        # bet and assignees are who is doing it, and the scheduler prices a record
+        # by the people on it — so each of these is forecast as though a whole
+        # person were on it while naming nobody. All warnings, because the corpus
+        # is created_schema_version 1 and the rule is 2.
+        ("warning", "pitch-1b3f9a", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "proj-7e57a0", "assignees", NEEDS_SOMEBODY_WIP, 2),
+        ("warning", "task-0e4b7a", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-2b6c94", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-53a9f0", "assignees", NEEDS_SOMEBODY_WIP, 2),
+        ("warning", "task-58d7c6", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-5a4e39", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-5c1d84", "assignees", NEEDS_SOMEBODY_READY, 2),
+        ("warning", "task-5f062b", "assignees", NEEDS_SOMEBODY_READY, 2),
         # wip without a start date
         ("blocker", "proj-7e57a0", "assigned_on", NEEDS_ASSIGNED_ON, 1),
         ("blocker", "pitch-48ea9e", "assigned_on", NEEDS_ASSIGNED_ON, 1),
@@ -753,13 +768,13 @@ def test_a_todo_entity_needs_somebody_on_it():
     nobody assigned is one that has been accepted and staffed with nobody — and it
     is then scheduled as if a full person were on it. jcanton, 2026-08-22.
     """
-    problem = only(check(task(assignees=[])), TASK_ID)
+    problem = only(check(task(assignees=[], created_schema_version=2)), TASK_ID)
     assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_READY, 2)
 
 
 def test_work_in_progress_needs_somebody_on_it():
     problem = only(check(task(status="in_progress", assigned_on=date(2026, 8, 3),
-                              assignees=[])), TASK_ID)
+                              assignees=[], created_schema_version=2)), TASK_ID)
     assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_WIP, 2)
 
 

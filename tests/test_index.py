@@ -436,15 +436,16 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
     """Severity-agnostic on purpose: a grandfathered rule reports a warning, and a
     field the team has decided it wants is still missing whichever way it reports."""
     entities = [
-        a_project("proj-a00001", owner="alice", reviewers=["bob"], status="in_progress",
-            assigned_on=TODAY),
-        a_pitch("pitch-b00001", parent="proj-a00001", owner="alice", reviewers=["bob"],
-                shaped_by=["alice"], person_weeks=2.0, status="ready"),
+        a_project("proj-a00001", owner="alice", assignees=["alice"], reviewers=["bob"],
+            status="in_progress", assigned_on=TODAY),
+        a_pitch("pitch-b00001", parent="proj-a00001", owner="alice", assignees=["alice"],
+                reviewers=["bob"], shaped_by=["alice"], person_weeks=2.0, status="ready"),
         a_task(
             "task-c00001",
             parent="pitch-b00001",
             status="ready",
             owner="alice",
+            assignees=["alice"],
             reviewers=["bob"],
             person_weeks=1.0,
         ),
