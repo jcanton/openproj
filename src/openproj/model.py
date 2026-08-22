@@ -2458,8 +2458,8 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
                     rule_version=rule_version,
                 )
             )
-    # Outside the loop above, and outside `shelved`'s exemption with it. Parked
-    # work is not broken work — but a shelved record can still be the one whose id
+    # Outside the loop above, and outside `_parked`'s exemption with it. Parked
+    # work is not broken work — but a parked record can still be the one whose id
     # a second file has taken, and the save that lands on the wrong file does not
     # care that one of the two is parked.
     problems.extend(_identity_problems(entities))

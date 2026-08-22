@@ -11756,15 +11756,13 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
    declaration would be inert, and an inert declaration under a comment calling
    it load-bearing is the next reader's wasted hour.
 
-   `@media` and not `@container`, and the reason is now historical: when this
-   was measured, the note and issue pages shipped `_RECORD_STYLE +
-   _SUGGEST_STYLE` and never loaded `_DETAIL_STYLE`'s
-   `container-type: inline-size` — a container query patched in there was
-   byte-identical to no fix at all on /note/new, because
-   `getComputedStyle(article).containerType` was "normal". Those pages are
-   folded into `_DETAIL` now, so a container query would engage everywhere;
-   the media query already answers the same widths and is not re-measured on
-   a commit that is about the fold.
+   `@media` and not `@container`, and that is measurement rather than taste: this
+   rule was proved at eight widths as a media query, in the days when the issue
+   and note pages loaded a stylesheet with no `container-type` in it and a
+   container query measured byte-identical to no fix at all on /note/new. Those
+   pages are gone and every editor now sits in `article.entity`, which IS a
+   container — but re-cutting this as a container query is a re-measurement at
+   eight widths on the merged page, not an edit.
 
    40rem and not the 34rem this was first written for: that number was measured
    against fourteen buttons needing 482.8px, and the history group made it
@@ -11814,10 +11812,11 @@ button.mark:disabled, button.mark:disabled:hover {
 /* A table in a shaping document. Tables have parsed since the day `_MD` was
    given the rule, and drew as four words in a row with no lines anywhere —
    which nobody had to look at until the toolbar gained a button that writes one.
-   Here and not beside the other `.doc` rules because those are written twice,
-   once in `_DETAIL_STYLE` and once in `_RECORD_STYLE`, and a third copy of a
-   border is a third place for two pages to disagree about what a table is. This
-   stylesheet is loaded by every page that shows a document.
+   Here and not beside `_DETAIL_STYLE`'s other `.doc` rules because this
+   stylesheet is loaded by every page that shows a document — which is what kept
+   this at one copy while the record pages still carried a `.doc` sheet of their
+   own, and is still the reason a second copy would be a place for two pages to
+   disagree about what a table is.
    A rule under the headings and a hairline between rows: a full grid is a
    spreadsheet, and what a reader needs is to see where a row stops.
    Resolved with `tests/cascade.py` rather than guessed at, because this
@@ -12899,11 +12898,11 @@ _DETAIL = """
 {% for e in entities %}
 <article {% if not creating %}id="{{ e.id }}" {% endif -%}
   class="entity{% if creating %} editing{% endif %}">
-  {#- Back to the table, which is where you came from and where everything is.
-      It pointed at the detail index, which was the same list with none of the
-      controls — and that index is no longer in the nav, so a link to it now
-      lands somewhere a reader has no other route to. -#}
-  <p class="back"><a href="{{ links.table }}">← all entities</a></p>
+  {#- Back to Records, which is where you came from and where every record is.
+      It pointed at the table once — a list a note or an issue never appears on,
+      so for two of the six kinds "back" led somewhere the record just read
+      does not exist. -#}
+  <p class="back"><a href="{{ links.records }}">← all records</a></p>
   {#- Above the title, not under it. What a thing *is* is the first question a
       page answers, and the kind was the third item on a line below the name,
       between an id and a status. It is also the one fact here that never
@@ -14750,23 +14749,21 @@ const COEDIT = (() => {
 """)
 
 
-# The editing surface, in one place, because two pages draw it and it was drawn
-# twice. `_DETAIL` puts the mode class on `article.entity`; `_ISSUE`
-# and `_NOTE` put it on `<body>` and kept their own copies of `.bodybar` and
-# `.body-field` in `_RECORD_STYLE` — so the toolbar, the box and the two bars
-# either side of it were two declarations of one thing, and only one of them ever
-# got a fix. `tests/test_issues.py` exists because one of those copies once lost
-# a specificity fight `.field` against `.bodybar` and put the textarea on the same
-# line as the buttons.
+# The editing surface, in one place, because it was once drawn twice. Before the
+# record pages folded into `_DETAIL`, `_ISSUE` and `_NOTE` put the mode class on
+# `<body>` and kept their own copies of `.bodybar` and `.body-field` — so the
+# toolbar, the box and the two bars either side of it were two declarations of
+# one thing, and only one of them ever got a fix: the note page had the hill and
+# the issue page a bare `<select>`, in the same commit, by the same author. That
+# is what a second surface does, and it is why there is no second surface.
 #
-# **Which way the unification goes is decided by a structural fact, not a
-# preference.** The detail template is rendered once per entity and the static
-# export puts every entity in ONE document, so "is this being edited" is a
-# property of an article and cannot be a class on `<body>`; a record page holds
-# exactly one record, so it can be either. So the record pages move to the
-# article and this block is written against `.entity.editing` once.
+# **Which way the unification went was decided by a structural fact, not a
+# preference.** The detail template is rendered once per record and the static
+# export puts every record in ONE document, so "is this being edited" is a
+# property of an article and cannot be a class on `<body>`. This block is
+# written against `.entity.editing` once.
 #
-# Concatenated at the END of both stylesheets, and that is load-bearing rather
+# Concatenated at the END of the stylesheet, and that is load-bearing rather
 # than tidy. `textarea.body-field` and `textarea.field` are both (0,1,1), and
 # `input.field, select.field, textarea.field { font: inherit }` in `_DETAIL_STYLE`
 # sets the same two properties the declaration below does — so at the front of
@@ -15298,11 +15295,9 @@ textarea.body-field { min-height: 60vh; resize: vertical; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }
 /* Where a promoted record says where it came from. It is the first thing in the
    document and it is not part of the problem statement, so it is set apart
-   rather than left as an indented paragraph that reads like one. Here as well as
-   in `_RECORD_STYLE`: this is the page those lines are mostly read on, and a
-   rule in the other file is a rule this page never loads. The two are the same
-   declaration on the same selector, so there is no cascade to resolve — no page
-   loads both. */
+   rather than left as an indented paragraph that reads like one. One copy now:
+   the record pages kept a second, identical declaration for as long as they had
+   a stylesheet of their own, and it went with the stylesheet. */
 .doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
                   border-left: 2px solid var(--line-strong); }
 /* No margin of its own: this row holds one live region that is empty whenever
@@ -19772,110 +19767,6 @@ _PROMOTE = """
 })();
 </script>
 """
-
-# The two inbox pages' stylesheet, UNREFERENCED since the commit that folded
-# those pages into `_DETAIL` — issues and notes render there now, and the
-# `#promote` rules that still had a page moved to `_DETAIL_STYLE` with the
-# panel. Left standing so the fold and the deletion are two reviewable diffs;
-# the next commit removes it.
-_RECORD_STYLE = """
-.records { border-collapse: collapse; width: 100%; font-size: 13px; }
-.records th, .records td {
-  border-bottom: 1px solid var(--line); padding: .35rem .6rem; text-align: left;
-  vertical-align: top;
-  /* Border-box, or a width set from a measured box gains the padding again and
-     every column grows by exactly one cell's worth on the first drag. The entity
-     table carries this rule in its own stylesheet, which these pages do not
-     get — and dragging one column here moved all six until it did. */
-  box-sizing: border-box;
-  /* A PR reference has no space in it, so at a narrow width it hangs over the
-     next column instead of wrapping inside its own. */
-  overflow-wrap: anywhere;
-}
-.records th { color: var(--muted); font-weight: 400; font-size: 11px;
-              text-transform: uppercase; letter-spacing: .04em; user-select: none;
-              position: sticky; top: 0; z-index: 3; background: var(--surface);
-              /* A collapsed border is not painted on a sticky cell — the first row
-                 scrolls straight over the top of it — so the rule is drawn inside
-                 the box instead. */
-              box-shadow: inset 0 -1px 0 var(--line); }
-/* The grip is positioned against this. */
-.records th { position: relative; }
-/* And the grip itself, which the entity table carries in ITS stylesheet — so
-   the span was rendered here with no width, no cursor and nothing to see: a
-   control that existed, worked when a script poked it, and could not be reached
-   by a hand. */
-.records th .grip {
-  position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize;
-}
-.records th .grip::before {
-  content: ""; position: absolute; top: 20%; bottom: 20%; right: 3px; width: 1px;
-  background: var(--line-strong);
-}
-.records th .grip:hover::before,
-.records th .grip.dragging::before { background: var(--accent); width: 2px; }
-.records th button { font: inherit; color: inherit; letter-spacing: inherit;
-                     text-transform: inherit; background: none; border: 0; padding: 0;
-                     cursor: pointer; }
-/* Reserved whether or not this is the sorted column, so sorting does not shove
-   every header one glyph to the left. */
-.records th .dir { display: inline-block; width: .8em; color: var(--accent); }
-.records th.sorted { color: inherit; font-weight: 700; }
-.records td:nth-child(2) { font-weight: 600; }
-/* Except on the row that says there is nothing here, whose cell is the second
-   one only by accident of spanning from it. */
-.records tr.nothing td { font-weight: 400; }
-.badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-         white-space: nowrap; }
-/* Live above the page's ground, over for everything that is finished with. The
-   word is in the element, so this is the second channel and not the only one —
-   which is the whole reason these are text and not four dots. */
-.state-ready { color: var(--accent); }
-.state-in_progress { color: var(--accent); }
-.state-thinking { color: var(--accent); }
-.state-done { color: var(--muted); }
-.state-shelved { color: var(--muted); }
-.state-promoted { color: var(--muted); }
-.state-dropped { color: var(--muted); }
-/* The few rules these pages share with the detail page, copied rather than
-   inherited. `_DETAIL_STYLE` carries the width grip and its transition, which is
-   a control these pages do not have — and the motion inventory is right that a
-   page should not ship animation for an element it never renders. */
-.problems { color: var(--warn); padding-left: 1.1rem; }
-.doc { border-top: 1px solid var(--line); padding-top: 1rem; }
-.doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
-.doc code { background: var(--surface-2); padding: 0 .25em; }
-.doc blockquote { margin: 0 0 1rem; padding-left: .8rem; color: var(--muted);
-                  border-left: 2px solid var(--line-strong); }
-/* `.bodybar` is no longer written here. It was a second copy of the same three
-   rules, differing only in a top margin, and it is now in `_EDITING_STYLE` with
-   the box it belongs to. The argument the copy carried is kept where it can
-   still be acted on — it is on the bar's markup, in both templates: the bar must
-   NOT carry `.field`, because with that class on it `.entity.editing .field` and
-   `.entity.editing .bodybar` are both (0,2,1), the later one wins, and the
-   textarea ends up on the same line as the buttons. */
-#facts { display: grid; grid-template-columns: 10rem 1fr; gap: .35rem .9rem;
-         margin: 1rem 0; align-items: baseline; }
-#facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
-            letter-spacing: .04em; }
-.field { display: none; }
-/* `inline-block` and not the `block` the detail page uses, which is why this
-   line is here and not in the shared block: a fact on this page is a `<dd>`
-   holding a control and a hint beside it, and `block` puts the hint on its own
-   row. The `[hidden]` guard that goes with it IS shared, because it is the same
-   rule on both pages and this sheet did not have one — an author rule of any
-   specificity beats the UA's `[hidden] { display: none }`, so a hidden control
-   in an editing session was a visible one. */
-.entity.editing .field { display: inline-block; }
-.entity.editing .read { display: none; }
-.title-field { font-size: 1.4rem; font-weight: 700; width: 100%; max-width: 44rem; }
-/* The measure this page reads at. The face and the line height are not written
-   here any more: they are one declaration shared with the column of line numbers
-   beside the box, because `--gutter` is written in `ch` and `ch` is resolved in
-   the font of whoever uses it. */
-.body-field { width: 100%; max-width: 44rem; }
-#facts .field { width: 100%; max-width: 28rem; font: inherit; font-size: 13px; }
-""" + _EDITING_STYLE
 
 
 # The nav, as the field on `Links` each item points at and the word it wears. One

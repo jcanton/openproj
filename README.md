@@ -19,13 +19,15 @@ plan repository with you as its author, and a file you change by hand and push i
 request. Both directions are first class on purpose — a tool that owns your files is a tool you
 cannot leave.
 
-The tabs are the same records seen several ways: **Table** is the one people live in, **Graph** is
-the dependency diagram, where dependencies are drawn and removed in a mode of its own, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets
-and its capacity, **People** who is on what and who is full, **Issues** the pile of things somebody
-noticed, **Notes** the pile of things somebody is still thinking about. Every filter is in the URL,
-so a view is a link, and a field can be asked for more than one value at a time — two statuses means
-either of them. Pointing at a row, a node or a bar opens the same card in all three: what the record
-is, who is on it, when it runs, and its shaping document under a rule.
+The landing page is **Records** — every record in the plan, one line each, sorted by last edited,
+with the search box above it. It is how you get back to the thing you were writing yesterday. The
+PM work happens in the tabs, which are the same records seen several ways: **Table** is the one
+people live in, **Graph** is the dependency diagram, where dependencies are drawn and removed in a
+mode of its own, **Timeline** the derived Gantt, **Cycles** one page per cycle with its bets and
+its capacity, **People** who is on what and who is full. Every filter is in the URL, so a view is a
+link, and a field can be asked for more than one value at a time — two statuses means either of
+them. Pointing at a row, a node or a bar opens the same card in all three: what the record is, who
+is on it, when it runs, and its shaping document under a rule.
 
 The search box is a small language, and it is the same language on the server and in the browser:
 bare words match a record's fields — its id, title, tags, PR references and the people named on it,
@@ -35,10 +37,11 @@ query the dropdowns cannot express, because a menu means OR within a field. A fi
 not got matches nothing rather than everything, and a query that cannot be read says what is wrong
 with it and matches nothing while you finish typing.
 
-The last two are inboxes rather than views of the plan, and they are two because they answer
-different questions: an issue is "we found something existing that is broken", a note is "we are
-thinking of creating something that does not exist and our ideas are confused". Neither carries an
-appetite or an owner and neither appears on the table, the graph or the timeline. **Promote** is
+The two inboxes — issues and notes — are records like any other now, with the same page and the
+same editor, and they are two because they answer different questions: an issue is "we found
+something existing that is broken", a note is "we are thinking of creating something that does not
+exist and our ideas are confused". Neither carries an appetite or an owner and neither appears on
+the table, the graph or the timeline; they live on Records and on their own pages. **Promote** is
 what stops either from being an inbox nobody empties: it turns a note into a project, a pitch or a
 task, and an issue into a pitch or a task — in one commit, and the new record says in its own
 shaping document where it came from.

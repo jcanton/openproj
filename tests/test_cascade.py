@@ -920,7 +920,7 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
     )
 
 # --------------------------------------------------------------------------- #
-# One editing surface, two stylesheets
+# One editing surface, one stylesheet
 # --------------------------------------------------------------------------- #
 
 
@@ -949,7 +949,7 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
     `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1), so
     the tie is decided by order and nothing else — which is why the answer has to
     be asked rather than assumed. The bar wins because `_EDITING_STYLE` is
-    concatenated after `_RECORD_STYLE`; and the markup carries no `.field` on the
+    concatenated after `_DETAIL_STYLE`; and the markup carries no `.field` on the
     bar either, so the tie does not arise on the page as it is written. Both
     halves, because either one alone is a guard somebody can remove.
     """
@@ -982,9 +982,10 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
     means the box: the record pages once had no `box-sizing` rule of their own,
     so their textarea hung past the container it was in.
 
-    The 44rem reading-measure cap this asserted is gone with `_RECORD_STYLE`:
-    on the surviving sheet the measure lives on `article.entity` as
-    `--measure`, dragged by `#grip`, and the box fills the article.
+    The 44rem reading-measure cap this asserted went with the record pages'
+    own stylesheet: on the surviving sheet the measure lives on
+    `article.entity` as `--measure`, dragged by `#grip`, and the box fills the
+    article.
     """
     box = _RECORD_EDITING + [
         el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),

@@ -5451,12 +5451,12 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
     way would be measuring something else and failing for a reason it did not
     name.
 
-    A media query and not a container query — a choice made when the note and
-    issue pages shipped `_RECORD_STYLE + _SUGGEST_STYLE` and never loaded
-    `_DETAIL_STYLE`'s `container-type: inline-size`; a container query patched
-    in there was byte-identical to no fix at all. Those pages are the shared
-    surface now; the parametrisation over both a stored record and a create
-    form stays, because the two open in different modes.
+    A media query and not a container query, proved in the days when the note
+    and issue pages shipped a stylesheet with no `container-type` in it — a
+    container query was patched in and measured byte-identical to no fix at all
+    there. Both parametrised URLs now draw the one merged surface, so the
+    parametrisation survives as reading against creating rather than page
+    against page.
     """
     page = (
         client.get(f"/detail/{TASK}").text

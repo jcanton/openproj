@@ -1,7 +1,7 @@
 # Working on openproj
 
 Git-backed appetite planning for the icon4py team. `README.md` has the shape of the thing: one
-markdown file per entity, the shaping document *is* the record, every date derived from one typed
+markdown file per record, the shaping document *is* the record, every date derived from one typed
 `assigned_on` and one size, the tool and the plan kept in two repositories on purpose. Read it
 first. This file is the part it does not say — the invariants that fail loudly when you step on
 them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
