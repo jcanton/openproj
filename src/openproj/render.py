@@ -12192,8 +12192,9 @@ function showView(mode) {
   // `both` ARE sessions, so entering one opens it, and the landing is
   // sessionless, so landing ends it. `VIEW` is already set above, which is
   // what keeps the `openproj:session` listener below out of the loop. The
-  // create form has no `showEditing` and never leaves editing; the issue and
-  // note pages bring their own.
+  // create form never leaves editing, and two locks hold that: it has no
+  // landing, so this branch is off, and its `showEditing` returns behind its
+  // own `CREATING` guard. The issue and note pages bring their own.
   if (LANDING && typeof showEditing === 'function') {
     const editing = VIEW_ARTICLE.classList.contains('editing');
     if (full && !editing) showEditing(true);
@@ -13479,6 +13480,10 @@ function showEditing(editing) {
 // A second copy of what ending a session means is how two doors come to
 // disagree about the draft.
 function flipEditing() {
+  // Nothing binds this when creating — no Cancel on the page — but called
+  // anyway it would put every field back to its load-time default before
+  // `showEditing`'s guard could refuse, so the door is barred here too.
+  if (CREATING) return;
   const editing = !document.querySelector('article.entity').classList.contains('editing');
   // The fields go back BEFORE the session is ended, and the order is the whole
   // point. `showEditing` dispatches `openproj:session`, and what listens for the
@@ -13506,7 +13511,7 @@ function flipEditing() {
     // the text stays in the box on purpose, so that a page holding work written
     // against an older commit goes on holding it and `base_commit` is never
     // sprung forward underneath it. A field is a discrete choice somebody can
-    // make again in one press; a shaping document is writing, and the three worst
+    // choose again in one press; a shaping document is writing, and the three worst
     // rounds this repository has had each destroyed somebody's writing without a
     // word.
     //
@@ -13686,7 +13691,9 @@ async function save() {
 
 // The create half of Save, from the page this one absorbed: collect every
 // visible field, check the gates the labels are marked from, POST once, land
-// on the record that now exists.
+// on the record that now exists. One drift from the absorbed copy: the title
+// box sits inside `<form>` here, so the field loop collects `title` too — the
+// explicit `TITLED` line below then overwrites it with the same trimmed value.
 async function createRecord() {
   const fields = {kind: KIND.value};
   const status = FORM.querySelector('[name=status]')?.value || 'shaping';
