@@ -967,12 +967,16 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
 # --------------------------------------------------------------------------- #
 
 
+# A create that breaks no rule. `assignees` is here for the reason `owner` and
+# `reviewers` are: a `ready` record is refused without it, and a create fixture
+# that trips a gate makes every test using it a test about that gate.
 VALID_TASK = {
     "kind": "task",
     "title": "Per-field delta tolerances",
     "parent": PITCH,
     "status": "ready",
     "owner": "ann",
+    "assignees": ["ann"],
     "reviewers": ["bo"],
     "person_weeks": 1.0,
 }
@@ -1041,10 +1045,12 @@ def test_a_create_is_not_refused_over_a_warning(client: TestClient):
 
 def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path: Path):
     """Grandfathering protects the corpus that already exists, not the entity being
-    created right now. The seeded pitch only warns about `shaped_by`; a pitch
-    created today is created at the repository's `schema_version` and is blocked
-    without it. This is the mechanism working end to end rather than in a unit
-    test, and it is the reason a required field can ever be added at all."""
+    created right now. The seeded pitch only warns about `shaped_by` and about
+    having nobody on it; a pitch created today is created at the repository's
+    `schema_version` and is blocked without either. This is the mechanism working
+    end to end rather than in a unit test, and it is the reason a required field
+    can ever be added at all — there are two of them at version 2 now, and both
+    refuse this create while neither breaks a file already in the corpus."""
     base = head(client)
     response = create(
         client,
@@ -1059,7 +1065,7 @@ def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path
     )
 
     assert response.status_code == 422
-    assert [p["field"] for p in response.json()["problems"]] == ["shaped_by"]
+    assert [p["field"] for p in response.json()["problems"]] == ["assignees", "shaped_by"]
     assert git_head(repo_path) == base
 
 

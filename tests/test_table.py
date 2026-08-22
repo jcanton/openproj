@@ -745,12 +745,16 @@ def test_a_page_that_never_advances_its_base_collides_with_itself(client: TestCl
     assert save(client, TASK, {"priority": "low"}, base=stale).status_code == 409
 
 
+# A create that breaks no rule. `assignees` is here for the reason `owner` and
+# `reviewers` are: a `ready` record is refused without it, and a create fixture
+# that trips a gate makes every test using it a test about that gate.
 NEW_TASK = {
     "kind": "task",
     "title": "Per-field delta tolerances",
     "parent": PITCH,
     "status": "ready",
     "owner": "ann",
+    "assignees": ["ann"],
     "reviewers": ["bo"],
     "person_weeks": 1.0,
 }
@@ -818,6 +822,7 @@ def test_a_create_that_waives_review_is_accepted(client: TestClient):
             "parent": PITCH,
             "status": "ready",
             "owner": "cy",
+            "assignees": ["cy"],
             "review_waived": True,
             "person_weeks": 0.5,
         },

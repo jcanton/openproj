@@ -13484,7 +13484,15 @@ const SAID = 'openproj:said';
 
 function read(control) {
   const type = control.dataset.type;
-  if (type === 'bool') return control.checked;
+  // `!!`, so a bool is always a bool rather than whatever the DOM happens to
+  // answer. A browser answers `checked` with `false` on a box carrying no
+  // attribute and this was never wrong in one; the JS harness answers `undefined`,
+  // and `JSON.stringify(undefined)` is the VALUE undefined rather than the string
+  // "undefined" — so `ORIGINAL.review_waived` was not a JSON document there at
+  // all. Harmless while `changed()` only ever compared it, and a thrown
+  // `JSON.parse` the moment Cancel started reading `ORIGINAL` back. The contract
+  // is now the same in both.
+  if (type === 'bool') return !!control.checked;
   const raw = control.value.trim();
   // Deduplicated: picking a name already in the list is a slip, not an intent to
   // have it twice, and a duplicate reviewer reads as two people.
@@ -13609,11 +13617,45 @@ function flipEditing() {
   // a Save made in a room ends it with a bare `showEditing(false)`. It is one
   // listener on `openproj:session` in `_VIEWS` now, which `showEditing` above
   // dispatches, so every door is the same door. See the comment there.
-  //
-  // The stored draft goes; the base it brought with it stays. The text is still
-  // in the box, so the page is still holding work written against that commit —
-  // moving the base forward here is the silent overwrite by another route.
-  if (!editing) forgetDraft();
+  if (!editing) {
+    // Cancel puts the FIELDS back to what the server rendered. It used to put
+    // nothing back: it dropped the saved draft and left every typed value sitting
+    // in its control, so the page returned to a read view showing the old value
+    // while the commit bar went on reporting "1 unsaved change" about a change
+    // nothing on screen was holding — and the count cleared only on a reload,
+    // which is also the moment that value was silently lost. jcanton, 2026-08-22.
+    let undone = 0;
+    try { undone = Object.keys(changed()).length; } catch (error) { undone = 0; }
+    for (const control of CONTROLS) {
+      const was = JSON.parse(ORIGINAL[control.name]);
+      if (control.dataset.type === 'bool') control.checked = !!was;
+      else control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
+    }
+    // The fields and NOT the document, which the issue page and the note page do
+    // put back. The difference is deliberate and is written down in
+    // `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`:
+    // the text stays in the box on purpose, so that a page holding work written
+    // against an older commit goes on holding it and `base_commit` is never
+    // sprung forward underneath it. A field is a discrete choice somebody can
+    // make again in one press; a shaping document is writing, and the three worst
+    // rounds this repository has had each destroyed somebody's writing without a
+    // word.
+    //
+    // So the bar may still be up after a cancel — and when it is, it is telling
+    // the truth: there is a paragraph in the box that is not in git, and pressing
+    // Edit shows it. What it may no longer do is count a field nothing is holding.
+    //
+    // The stored draft still goes, and the base it arrived with still stays:
+    // moving that forward here would be the silent overwrite by another route.
+    forgetDraft();
+    dirty();
+    // Said out loud. Discarding is still discarding, even when what is discarded
+    // is a menu choice, and a page that quietly puts a value back is a page you
+    // have to re-check to trust.
+    if (undone) {
+      announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
+    }
+  }
 }
 document.getElementById('toggle').onclick = flipEditing;
 document.getElementById('cancel').onclick = flipEditing;
