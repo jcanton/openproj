@@ -2897,8 +2897,9 @@ def test_the_headings_a_server_draws_are_the_same_two_kinds(server_pages: dict[s
 
     A cycle page and an entity page name what you are looking at and stay visible;
     the create form is the odd one, and it is visible for the opposite reason to
-    the other two — it is the only page whose nav item does not exist, so with
-    nothing lit above it the heading is all that says what the form will make.
+    the other two — its nav item does not exist (the record page's does not
+    either), so with nothing lit above it the heading is all that says what the
+    form will make.
     """
     for route, name in (("cycle", "Cycle 37"), ("new", "New record")):
         found = headings(server_pages[route])

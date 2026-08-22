@@ -1096,7 +1096,7 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
     This is the test the defect it was written for would have failed. The detail
     page's bar moved to the top by way of `#commitbar { top: 0; bottom: auto }` in
     `_DETAIL_STYLE` — and `_DETAIL_STYLE` is loaded by the detail page, the create
-    form, the cycle page and the cycles index. Two of those still had their bar
+    form, the cycle page, the cycles index and the deck. Two of those still had their bar
     last in the markup, so an id override written for one page took `bottom: 0`
     away from two others and gave them nothing in its place: a `top: 0` sticky box
     at the foot of a document is a box you cannot see until you have scrolled to

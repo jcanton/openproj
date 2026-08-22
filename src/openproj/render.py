@@ -3075,7 +3075,7 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    two of them stacked. */
 .keyrow > .legend, .keyrow > #summary { margin: 0; }
 .keyrow > #summary { margin-left: auto; text-align: right; }
-/* The row a page's own controls stand in — grep `class="editbar"`: the table's
+/* The row a page's own controls stand in — grep `class="editbar`: the table's
    create link, the record page's Delete-and-views row in both modes, the cycle
    page's "add somebody" and its goal bar, the one row of the cycles index's
    create form. The rule was in _DETAIL_STYLE — which the cycle pages load and
@@ -3183,7 +3183,7 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
    border, the same background, the same hover — and the copy is how it came to
    be the one control still drawn with the old corner after the line above moved
    to 3px. A control that wants the default says nothing. */
-/* The one action that writes, on every page that writes, and it is at the TOP of
+/* The save, on every page that draws a commit bar, and it is at the TOP of
    what it writes — jcanton, 2026-08-20, "move the create bar up top too,
    consistency!".
 
@@ -11831,9 +11831,10 @@ button.mark:disabled, button.mark:disabled:hover {
    given the rule, and drew as four words in a row with no lines anywhere —
    which nobody had to look at until the toolbar gained a button that writes one.
    Here and not beside `_DETAIL_STYLE`'s other `.doc` rules because this
-   stylesheet is loaded by every page that shows a document — which is what kept
-   this at one copy while the record pages still carried a `.doc` sheet of their
-   own, and is still the reason a second copy would be a place for two pages to
+   stylesheet is loaded by the table, the cycle page and the record page in both
+   modes (grep `_SUGGEST_STYLE` in the `_page` calls) — which is what kept this
+   at one copy while the record pages still carried a `.doc` sheet of their own,
+   and is still the reason a second copy would be a place for two pages to
    disagree about what a table is.
    A rule under the headings and a hairline between rows: a full grid is a
    spreadsheet, and what a reader needs is to see where a row stops.
