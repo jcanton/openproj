@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import shutil
@@ -2593,13 +2594,16 @@ body:has([data-fills]) { padding-bottom: 1rem; }
    is read properly. Scrollable and not clipped, because a card that ends
    mid-sentence with no way to see the rest reads as a broken card.
    The cap is in `em` so it is a number of LINES rather than a number of pixels. */
-/* 11em and not the 12 it was: the card gained a Progress row when the table's
-   column gave up its count, and the whole box has to stay under half the window
-   — a card that covers the table it was opened from has to be dismissed before
-   the plan can be read again, which is what
-   `test_a_nine_hundred_word_document_does_not_cover_the_table` measures. One
-   line of facts is paid for with one line of document. */
-#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 11em;
+/* 8em, and it has been 12 and then 11: the card gained a Progress row when the
+   table's column gave up its count, and then a hill on its chip line. The whole
+   box has to stay under half the window — a card that covers the table it was
+   opened from has to be dismissed before the plan can be read again, which is
+   what `test_a_nine_hundred_word_document_does_not_cover_the_table` measures.
+   One line of facts is paid for with one line of document, and the hill is drawn
+   beside the status chip rather than under it so that it costs two rather than
+   the five a row of its own would have. 9em cleared the cap by six pixels, which
+   is not a margin — it is the same number twice with a rounding between them. */
+#card .card-body { margin: .4rem 0 0; padding-top: .35rem; max-height: 8em;
                    overflow-y: auto; border-top: 1px solid var(--line); }
 #card .card-body > :first-child { margin-top: 0; }
 #card .card-body > :last-child { margin-bottom: 0; }
@@ -2622,6 +2626,187 @@ li.task-list-item input { margin-right: .35em; }
 .hint { color: var(--muted); font-size: 12px; }
 .empty { color: var(--empty); }
 .num { font-variant-numeric: tabular-nums; }
+/* The hill. One drawing, two sizes, and no token of its own: the curve wears the
+   rules' colours and the ball wears the status ladder's, so the picture obeys the
+   luminance ladder every other view already uses rather than inventing a hue that
+   would be right in one theme block and wrong in the two nobody looks at.
+   In the shell and not beside the detail page's stylesheet, because the card
+   draws one too and the card is drawn from here on three pages. */
+/* A `<span>` rather than a `<div>`: the read view puts this inside the
+   `<span class="read">` every fact row wears, and a block element in there is
+   content a parser is entitled to do anything with. */
+.hill { --ball: 17px; --ghost: 9px; display: block;
+        position: relative; width: 100%; max-width: 15rem; aspect-ratio: 120 / 48; }
+/* The control hill follows `.field`'s rule without wearing `.field`: that class
+   also carries `#facts .field { max-width: 28rem }` on the record pages, which is
+   twice the width this drawing wants.
+   `.hill-control` and not `[role=radiogroup]`, which is what this was: a promoted
+   note's hill is still the control in its row, and it has no stops to press
+   because `promoted` is derived — so it was the one hill in the app that never
+   hid, and that note drew two hills at once, one under the other. What an element
+   is FOR is not the same question as whether anything on it can be pressed. */
+.hill-control { display: none; }
+.entity.editing .hill-control { display: block; }
+/* A drawing has no text in it and so no baseline of its own, and the record
+   pages' facts list aligns its rows on one (`#facts { align-items: baseline }`).
+   The label for a hill was therefore hung off the BOTTOM of the picture, a
+   hundred pixels below the row it names. The row that holds a hill aligns at the
+   top instead — `:has` rather than a class on the `<dt>`, because the two facts
+   lists that draw one are built by two different templates and a class would
+   have to be remembered in both. */
+dt:has(+ dd .hill) { align-self: start; }
+/* `overflow: visible`, so a round cap at the foot of the hill is drawn rather
+   than sliced off flat by the viewBox it sits exactly on. */
+.hill svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* `non-scaling-stroke` so the line is the same weight in a facts column and in a
+   card, and — the reason it is load-bearing rather than taste — so that the lift
+   below can be exact. The ball is lifted by its own radius plus half the line's
+   width; a stroke that scales with the viewBox has a different painted half-width
+   at every size, so the ball would rest on the line at one width and be buried in
+   it at another. Non-scaling makes `stroke-width: 2` mean two painted pixels
+   everywhere, and half of it a constant this stylesheet can add. */
+.hill-line, .hill-ground { fill: none; stroke-linecap: round;
+                           vector-effect: non-scaling-stroke; }
+/* Round and unhurried is the whole of the cartoon: no filter, no gradient,
+   nothing that needs a second definition per theme. 2 and not the 2.5 it was —
+   jcanton, 2026-08-22, and the thinner line also leaves the ball as the heaviest
+   thing in the drawing, which is what a reader should be looking at. */
+.hill-line { stroke: var(--line-strong); stroke-width: 2; }
+.hill-ground { stroke: var(--line); stroke-width: 1.25; }
+/* Lifted along the outward normal, so the ball RESTS on the line instead of
+   being run through by it — a stop is a point ON the curve, and a ball centred
+   on that point is half buried in the hill.
+   The lift is in painted pixels and the direction is a unit vector, which is the
+   only combination that is right at every size: the ball is an HTML element sized
+   in px so that it can carry a real radio, and the drawing is a viewBox that
+   scales with the column it is in. A lift written in viewBox units would be
+   correct at exactly one width. `--ny` defaults to straight up, which is the
+   answer on level ground and the right answer for anything that forgets to say. */
+.hill-ghost, .hill-ball, .hill-stop {
+  position: absolute; border-radius: 50%;
+  transform: translate(-50%, -50%)
+             translate(calc(var(--nx, 0) * var(--lift)), calc(var(--ny, -1) * var(--lift)));
+}
+/* Hidden until the hill is being used. jcanton, 2026-08-22: the stops should show
+   "only when dragging the ball or when hovering over one, not always" — a row of
+   grey dots on every record on every page is furniture, and the thing worth
+   looking at is where the ball is.
+   Revealed by a hover anywhere on the drawing rather than by a hover on one stop:
+   a stop that appears only once the pointer is already on it is a target you find
+   by accident. Focus reveals them for the same reason, for somebody arriving by
+   keyboard who never hovers anything at all. */
+.hill-ghost { width: var(--ghost); height: var(--ghost);
+              background: var(--line-strong); opacity: 0; }
+.hill:hover .hill-ghost, .hill.dragging .hill-ghost,
+.hill:has(input:focus-visible) .hill-ghost { opacity: .5; }
+/* Half the line, and not a pixel guessed at: `.hill-line` is 2px painted, so the
+   surface a ball rests on is 1px above the path's own coordinates. */
+.hill-ghost { --lift: calc(var(--ghost) / 2 + 1px); }
+.hill-ball, .hill-stop { --lift: calc(var(--ball) / 2 + 1px); }
+/* Firmer while the hill is a control: reading a record the other stops are
+   context, and editing one they are the places the ball may go. */
+.hill[role=radiogroup]:hover .hill-ghost,
+.hill[role=radiogroup].dragging .hill-ghost { opacity: .65; }
+/* `left`/`top` and not `transform`, so one ball rolls between stops when the
+   status changes instead of a second ball lighting up somewhere else. The shell's
+   blanket reduced-motion block is inlined before every page's own stylesheet and
+   marked `!important`, so this needs no rule of its own to be switched off.
+   The roll is a token so that a ball being dragged can stop rolling — under the
+   pointer it should be under the pointer — without a second `transition:` in the
+   stylesheet. `transition: none` is the absence of motion written in the grammar
+   of motion, and `test_the_app_moves_in_exactly_one_place` counts declarations. */
+.hill { --roll: .22s; }
+.hill.dragging { --roll: 0s; }
+.hill-ball { width: var(--ball); height: var(--ball); border: 2px solid;
+             box-sizing: border-box;
+             transition: left var(--roll) ease, top var(--roll) ease,
+                         transform var(--roll) ease; }
+{#- Scoped to the ball, and that is not tidiness: a stop wears `hill-<word>` too,
+    so that the chip it shows on hover is that status's own chip — and an unscoped
+    fill would paint every hit target on the hill as a solid disc. -#}
+{% for s in statuses %}
+.hill-ball.hill-{{ s }} { background: var(--st-{{ s }}); border-color: var(--st-{{ s }}-line); }
+{%- endfor %}
+/* A note has neither of its two words on the status ladder, so neither has tokens
+   of its own. `dropped` borrows shelved's — it is the same sentence in the other
+   vocabulary — and `thinking` wears the accent, which is what the notes page
+   already colours that word with. */
+.hill-ball.hill-dropped { background: var(--st-shelved); border-color: var(--st-shelved-line); }
+.hill-ball.hill-thinking { background: var(--accent); border-color: var(--accent); }
+/* Hollow, and the one ball that is: a promoted note is not standing there, the
+   record it became is. Filled, it would claim the note is a quarter of the way up
+   a hill it never climbed. */
+.hill-ball.hill-promoted { background: none; border-color: var(--accent); }
+/* Off the path: the hill goes quiet and the ball keeps its colour, because the
+   one thing still worth finding on a shelved record is where the ball is. */
+.hill-off :is(.hill-line, .hill-ground) { opacity: .4; }
+.hill-off .hill-ghost { opacity: .18; }
+/* The hit target, present only in edit mode. The input paints its own focus ring
+   and nothing else: an `opacity: 0` element takes its outline with it, and the
+   ring has to be on the thing a reader is looking at. */
+.hill-stop { width: 26px; height: 26px; display: grid; place-items: center; }
+.hill-stop input { appearance: none; -webkit-appearance: none; margin: 0; border: 0;
+                   width: 24px; height: 24px; border-radius: 50%; background: none;
+                   cursor: pointer; }
+.hill-stop input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* Where this one would land, said before it is let go. Dashed, so it reads as a
+   target rather than as a second ball already there. */
+.hill-stop::before { content: ""; position: absolute; inset: 3px; border-radius: 50%;
+                     border: 2px dashed transparent; }
+.hill-stop:hover::before, .hill-stop:has(input:focus-visible)::before {
+  border-color: var(--line-strong); }
+/* And the word, because a position is only obvious to somebody who already knows
+   what the positions mean — jcanton, 2026-08-22: "people are forced to know". It
+   is not printed permanently: the whole argument for replacing the chip was that
+   the drawing says something the word cannot, and a word standing beside it all
+   the time is the chip back with extra steps. So it is asked for — hover or
+   focus a stop and that stop says its name, drag the ball and the ball says the
+   name it is about to take.
+   No transition on it: the appearing is the answer to a question somebody just
+   asked, and `test_the_app_moves_in_two_places` is an inventory worth keeping
+   short. */
+.hill-stop::after, .hill-ball::after {
+  content: attr(data-word); position: absolute; bottom: calc(100% + 4px); left: 50%;
+  transform: translateX(-50%); z-index: 2;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: .1rem .4rem; border-radius: 2px; white-space: nowrap;
+  background: var(--surface); border: 1px solid var(--line-strong); color: var(--fg);
+  visibility: hidden; pointer-events: none;
+}
+{#- The same chip the table wears, and not a tooltip that merely says the same
+    word: `.chip.st-X` above is generated from these tokens too, so the thing that
+    appears over a stop is recognisably the thing the rest of the app calls a
+    status. Written by the same loop for the same reason — five statuses times
+    three tokens is a set that drifts by hand. -#}
+{% for s in statuses %}
+.hill-stop.hill-{{ s }}::after, .hill-ball.hill-{{ s }}::after {
+  background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
+  border-color: var(--st-{{ s }}-line); }
+{%- endfor %}
+/* A note's two words are not on the status ladder and have no tokens of their
+   own. `dropped` borrows shelved's, which is the same sentence; `thinking`
+   borrows the accent, which is what the notes page already colours it with. */
+.hill-stop.hill-dropped::after, .hill-ball.hill-dropped::after {
+  background: var(--st-shelved-soft); color: var(--st-shelved-text);
+  border-color: var(--st-shelved-line); }
+.hill-stop.hill-thinking::after, .hill-ball.hill-thinking::after {
+  color: var(--accent); border-color: var(--accent); }
+.hill-stop:hover::after, .hill-stop:has(input:focus-visible)::after,
+.hill-ball:hover::after, .hill.dragging .hill-ball::after { visibility: visible; }
+/* The ball is under the stops in the stacking order, so on a live hill a hover
+   reaches the stop and not the ball. Reading a record there are no stops, and the
+   ball is the only thing to point at. */
+.hill-ball { pointer-events: auto; }
+/* On the chip line and not under it. A card is a glance and it is drawn over the
+   table it was opened from, so every row it grows is a row of the plan it hides —
+   `test_a_nine_hundred_word_document_does_not_cover_the_table` holds it under half
+   the window. Beside the word, the hill costs the difference between a line of
+   chips and a small drawing rather than a whole row of its own. */
+#card .hill { --ball: 11px; --ghost: 6px; max-width: 6.5rem; }
+#card .card-hill { display: inline-block; vertical-align: middle;
+                   margin-left: .35rem; }
+#card .card-chips { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
 /* The two lines every view writes about itself: the count under the controls of
    what is on screen, and the place a refusal or a receipt is written into. Four
    pages drew `#summary` and three drew `#state`, and the copies had already come
@@ -3066,11 +3251,13 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    It is a system setting and not a preference this app keeps, so there is no
    toggle for it and nothing in `remembered` — the browser answers, every page.
 
-   One blanket block rather than a `transition: none` beside the single animated
-   rule the app owns, because the next person to write a transition will not come
-   back here to add it. That rule is `#grip::before` on the detail page, the width
-   handle's fade, and it is the only one: `transition`, `animation` and
-   `@keyframes` across `src/` return it and nothing else.
+   One blanket block rather than a `transition: none` beside each animated rule the
+   app owns, because the next person to write a transition will not come back here
+   to add it. There are two: `#grip::before` on the detail page, the width handle's
+   fade, and `.hill-ball`, which rolls between its stops when a status changes and
+   is in this shell and therefore on every page. `test_the_app_moves_in_two_places`
+   is the inventory, and it is a tripwire rather than a ban — what a new one has to
+   pass is that it is inside this block's reach and not on a canvas.
 
    `!important` is load-bearing rather than shouting. Each page's own stylesheet is
    inlined immediately below this block, so a page rule is *later* in the sheet and
@@ -3175,6 +3362,16 @@ tr.nothing .hint { margin: 0 0 .75rem; }
     instead: the toolbar drew its buttons into a script tag, and the editor's own
     tests caught it as an SVG laid out at 0x0. -#}
 <script id="chipmarks" type="application/json">{{ cardmarks|tojson }}</script>
+{#- The hill's geometry, beside them and for the same reason again. The detail
+    page's hill is drawn in Jinja and the card's is drawn in JavaScript, and this
+    is the one set of numbers both read: a second implementation of the curve is
+    two pages disagreeing about where `ready` is, which is the mistake this
+    codebase has already paid for once under the name `appetite_weeks`.
+
+    `id="hill"` here and the `hill` variable the two forms render are different
+    things: that one is the script that moves the ball, and this is the payload
+    every page that can draw a card carries. -#}
+<script id="hill" type="application/json">{{ hillgeom|tojson }}</script>
 <script>
 // Declared before the content, because the pages' own scripts are inside it and
 // some of them announce while loading — the cycle page's receipt, the detail
@@ -3271,6 +3468,44 @@ function cardMark(ladder, value) {
 // under a page that has not been reloaded, because a save reloads the rows.
 const CARD_BODIES = new Map();
 
+// The curve, the stops and the sentence each stop means, drawn by the server and
+// read here rather than worked out again. Absent on a page with no card, which is
+// why every use of it is guarded.
+const HILL = JSON.parse(document.getElementById('hill')?.textContent || 'null');
+
+// The card's hill: the same picture as the detail page's, at two thirds the size
+// and with no stops on it. A card is a look and not a control — every gesture it
+// could offer would commit a status change from a box that disappears when the
+// pointer moves.
+function hillHtml(status) {
+  if (!HILL) return '';
+  const ladder = HILL.ladders.entity;
+  const place = word => `left: ${100 * HILL.stops[word][0] / HILL.box[0]}%; `
+    + `top: ${100 * HILL.stops[word][1] / HILL.box[1]}%; `
+    + `--nx: ${HILL.normals[word][0]}; --ny: ${HILL.normals[word][1]}`;
+  const ghosts = ladder
+    .map(word => `<span class="hill-ghost" style="${place(word)}"></span>`)
+    .join('');
+  // A word this ladder does not have gets no ball, exactly as the server does it:
+  // `status` holds whatever a hand-edited file holds, and the alternative — the
+  // chip's `st-ready` fallback — would put an unrecognised status on the summit.
+  // It is also what makes `hill-${status}` safe to write into a class at all.
+  const known = ladder.includes(status);
+  const ball = known
+    ? `<span class="hill-ball hill-${status}" data-word="${esc(cardWord(status))}"`
+      + ` style="${place(status)}"></span>`
+    : '';
+  const said = `${cardWord(status)} — ${known ? HILL.where[status] : 'not on the hill'}`;
+  const dim = !known || HILL.off.includes(status);
+  return `<span class="card-hill"><span class="hill${dim ? ' hill-off' : ''}"`
+    + ` role="img" aria-label="${esc(said)}">`
+    + `<svg viewBox="0 0 ${HILL.box[0]} ${HILL.box[1]}" aria-hidden="true" focusable="false">`
+    + `<path class="hill-ground" d="M${HILL.apron[0]} ${HILL.ground}`
+    + `L${HILL.apron[1]} ${HILL.ground}"/>`
+    + `<path class="hill-line" d="${HILL.path}"/></svg>`
+    + ghosts + ball + '</span></span>';
+}
+
 function cardHtml(row, extra) {
   // An owner who is also an assignee is one person, not two. The scheduler reads
   // them that way — `_people_on` dedupes — and a box that says "ann, ann" is a
@@ -3319,13 +3554,19 @@ function cardHtml(row, extra) {
       ? [chip(`pri pri-${esc(row.priority)}`, cardMark('priority', row.priority),
               cardWord(row.priority))]
       : []),
+    // The status chip stays, and the hill goes under it. On the detail page the
+    // hill replaces the chip because a `<dt>` beside it says STATUS; a card has
+    // no labels on its chip line, so the hill alone would be a picture with no
+    // word — and the two are not the same fact twice here, because the word says
+    // which status and the shape says which side of the hill that is.
     ...(row.status
       ? [chip(stClass(row.status), cardMark('status', row.status),
               cardWord(row.status))]
       : []),
   ];
   return `<p class="card-title">${esc(row.title)}</p>` +
-    `<p class="card-chips">${marks.join(' ')}</p>` +
+    `<p class="card-chips">${marks.join(' ')}` +
+    (row.status ? hillHtml(row.status) : '') + '</p>' +
     '<dl>' + facts.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('') +
     '</dl>' + (row.tip ? `<p class="card-why">${esc(row.tip)}</p>` : '');
 }
@@ -11635,7 +11876,167 @@ function watchRequired(form) {
 """)
 
 
+# The ball, moved. Everything that makes this a control — arrow keys, the focus
+# ring, the group, "3 of 5" — is the radios' and the browser's; this is what makes
+# the picture follow them and the form serialise the answer.
+#
+# Emitted beside `_REQUIRED_JS` and for the same reason: the create form and the
+# detail page carry the same hill, and two copies of a gesture is one copy that
+# quietly stops matching.
+_HILL_JS = Markup("""
+function attachHill(form) {
+  const hill = form.querySelector('.hill[role=radiogroup]');
+  // What the form actually sends. `markRequired` and the create form's refusal
+  // both ask this element for a value and neither knows the control became a
+  // picture.
+  const value = form.querySelector('input[name=status]');
+  const ball = hill && hill.querySelector('.hill-ball');
+  const stops = hill ? [...hill.querySelectorAll('.hill-stop')] : [];
+  if (!hill || !value || !ball || !stops.length) return;
+
+  // Where a stop stands, read off the percentages the server positioned it with.
+  // Read and not recomputed: the curve is one function in `render.py`, and a
+  // second copy of it here is exactly the drift that puts a ball off its line.
+  const at = stop => [parseFloat(stop.style.left), parseFloat(stop.style.top)];
+  const wordOf = stop => stop.querySelector('input').value;
+
+  function show(word) {
+    const stop = stops.find(one => wordOf(one) === word);
+    if (!stop) return;
+    ball.style.left = stop.style.left;
+    ball.style.top = stop.style.top;
+    // Which way is up where it lands, so it rests on the line there rather than
+    // keeping the angle of the place it came from. Copied off the stop rather
+    // than recomputed: the curve is one function in `render.py`.
+    ball.style.setProperty('--nx', stop.style.getPropertyValue('--nx'));
+    ball.style.setProperty('--ny', stop.style.getPropertyValue('--ny'));
+    // The word it is about to take, said while a drag is in flight. `data-word`
+    // on the stop and not `_human` again here: the words on this page come from
+    // one map, and the second copy is the one that goes stale.
+    ball.dataset.word = stop.dataset.word;
+    // Only ever one of this ladder's own words, which is why it may be written
+    // into a class at all — nothing out of a file reaches this line.
+    ball.className = 'hill-ball hill-' + word;
+  }
+
+  function choose(word) {
+    const stop = stops.find(one => wordOf(one) === word);
+    if (!stop) return;
+    const input = stop.querySelector('input');
+    input.checked = true;
+    show(word);
+    value.value = word;
+    // The word beside the value, because the create form's refusal prints the
+    // status in the words on the page and used to read them off a `<select>`'s
+    // selected option. Without this it would print `in_progress`, which is what
+    // git holds and not what anybody is looking at.
+    value.dataset.word = input.dataset.word;
+    // `change` bubbles, so the unsaved counter and the required marks answer
+    // without either of them knowing that a hill exists.
+    value.dispatchEvent(new Event('change', {bubbles: true}));
+  }
+
+  hill.addEventListener('change', event => choose(event.target.value));
+
+  // And the other direction, for when something that is not this hill sets the
+  // status. Nothing does today; Cancel is about to, once it puts back what the
+  // server rendered — it writes `ORIGINAL` into every control, and a value
+  // assigned by script fires no event for the picture to hear. Hung off the
+  // session ending rather than off Cancel, because that is the fact this cares
+  // about and there are four doors out of a session.
+  addEventListener('openproj:session', event => {
+    if (event.detail) return;                      // a session beginning, not ending
+    const input = stops.map(one => one.querySelector('input'))
+      .find(one => one.value === value.value);
+    if (input) input.checked = true;
+    show(value.value);
+  });
+
+  // Distance in painted pixels and not in the box's own units: the box is two and
+  // a half times wider than it is tall, so a nearest-stop measured in percent
+  // would answer with the stop that looks further away.
+  function nearest(x, y) {
+    const box = hill.getBoundingClientRect();
+    let best = stops[0], closest = Infinity;
+    for (const stop of stops) {
+      const [left, top] = at(stop);
+      const dx = box.left + box.width * left / 100 - x;
+      const dy = box.top + box.height * top / 100 - y;
+      if (dx * dx + dy * dy < closest) { closest = dx * dx + dy * dy; best = stop; }
+    }
+    return best;
+  }
+
+  // Drag is an enhancement over the radios and lands only on stops, because there
+  // is nothing between them for a ball to mean. `pointerdown` does not
+  // `preventDefault`: a press that begins and ends on one stop is a click on that
+  // stop's own label element, and letting the browser handle it is what puts focus
+  // where the ball is. A press that ends somewhere else fires no label click at
+  // all — the two events share only the hill as an ancestor — which is why the
+  // drag has to commit for itself.
+  let from = null;
+  hill.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    from = value.value;
+    hill.classList.add('dragging');
+    hill.setPointerCapture(event.pointerId);
+    show(wordOf(nearest(event.clientX, event.clientY)));
+  });
+  hill.addEventListener('pointermove', event => {
+    if (from !== null) show(wordOf(nearest(event.clientX, event.clientY)));
+  });
+  hill.addEventListener('pointerup', event => {
+    if (from === null) return;
+    from = null;
+    hill.classList.remove('dragging');
+    const stop = nearest(event.clientX, event.clientY);
+    choose(wordOf(stop));
+    stop.querySelector('input').focus({preventScroll: true});
+  });
+  // A cancelled drag is not a status change. Put the ball back where it was
+  // rather than wherever the pointer happened to be when the gesture died.
+  hill.addEventListener('pointercancel', () => {
+    if (from === null) return;
+    show(from);
+    from = null;
+    hill.classList.remove('dragging');
+  });
+}
+""")
+
+
 def _control_html(field: dict) -> Markup:
+    # Status is the one field whose control is not a box. It is the hill, and the
+    # `<select>` that was here is gone rather than kept beside it: `render.py`'s
+    # header already carries the note about what the same word in the same colour
+    # twice costs, and a dropdown under a hill that sets the same field is that
+    # note again with an extra control.
+    #
+    # The hidden input, and not the radios, is what the form serialises. `CONTROLS`
+    # is `querySelectorAll('[data-type]')` keyed by `name`, so five radios sharing
+    # one name would leave `ORIGINAL` holding a single entry and `changed()`
+    # answering for whichever radio it read last. `markRequired` and the create
+    # form's refusal both ask `[name=status]` for a value and neither has to know
+    # that the thing behind it became a picture.
+    if field["type"] == "status":
+        return Markup(
+            # No `.field`: that class is what `.entity.editing .field { display:
+            # block }` switches on, and a hidden input is the one control that must
+            # not gain a box when the form opens. `CONTROLS` reads `[data-type]`,
+            # which is the attribute that matters here.
+            '<input type="hidden" name="{}" id="{}" data-type="text"'
+            ' value="{}" data-word="{}">{}'
+        ).format(
+            field["name"],
+            field["id"],
+            field["value"],
+            _human(field["value"]),
+            # Grouped by the control's own id. The static export puts every entity
+            # in one file, and one group name would have made four hundred records
+            # share a single radio group — pressing a stop on one moves the ball on
+            # all of them.
+            _hill_html(field["value"], live=True, group=f"hill-{field['id']}"),
+        )
     return _fragment(_CONTROL, f=field, statuses=STATUSES, priorities=PRIORITIES)
 
 
@@ -12435,8 +12836,12 @@ _NEW = """
       <aside class="facts">
         <dl id="facts">
           {% for row in rows %}
-          <dt data-kinds="{{ row.kinds }}"><label for="{{ row.for
-            }}">{{ row.label }}</label>{% if row.gates %}
+          {#- No `for` on the row whose control is a radio group: a label can name
+              one element, and naming one stop of a hill would tell a screen
+              reader that "Status" is the word for `shaping`. The group says its
+              own name. -#}
+          <dt data-kinds="{{ row.kinds }}">{% if row.for %}<label for="{{ row.for
+            }}">{{ row.label }}</label>{% else %}{{ row.label }}{% endif %}{% if row.gates %}
             <span class="req" hidden>required</span>{% endif %}</dt>
           <dd data-kinds="{{ row.kinds }}">{{ row.control }}</dd>
           {% endfor %}
@@ -12519,6 +12924,7 @@ _NEW = """
 {{ acesurface }}{% endif %}
 {{ combobox }}
 <script>{{ required }}</script>
+<script>{{ hill }}</script>
 <script>
 const FORM = document.getElementById('edit');
 const PROBLEMS = document.getElementById('problems');
@@ -12536,6 +12942,8 @@ showKind();
 // The status select is inside the form, so one listener on the form catches both
 // it and the review_waived checkbox that lets one of its rules off.
 watchRequired(FORM);
+// The same form, and the same status: the hill is the control that sets it.
+attachHill(FORM);
 
 function read(control) {
   if (control.dataset.type === 'bool') return control.checked;
@@ -12846,7 +13254,8 @@ _DETAIL = """
         {% for row in e.rows %}
         <dt class="{% if row.derived %}derived{% endif %}
                    {% if row.editing_only %}editing-only{% endif %}">{% if
-          editable and row.control %}<label for="{{ row.for }}">{{ row.label }}</label>{%
+          editable and row.control and row.for %}<label for="{{ row.for
+          }}">{{ row.label }}</label>{%
           else %}{{ row.label }}{% endif %}{% if
           editable and row.gates %} <span class="req" hidden>required</span>{% endif %}</dt>
         <dd class="{% if row.derived %}derived{% endif %}
@@ -13024,7 +13433,7 @@ grip.onpointerdown = event => {
 {% if ace %}<script>{{ ace }}</script>
 {{ acesurface }}{% endif %}
 {% if editable %}{{ combobox }}{% endif %}
-{% if editable %}<script>{{ required }}</script>{% endif %}
+{% if editable %}<script>{{ required }}</script><script>{{ hill }}</script>{% endif %}
 {% if editable %}<script>
 // Only what changed travels. Serialising the whole form would send back every
 // field as this tab last saw it, overwriting whatever somebody else changed while
@@ -13151,6 +13560,8 @@ dirty();
 // The status select decides which fields the server will refuse this without,
 // and the checkbox beside it lets one of those rules off.
 watchRequired(FORM);
+// The same form, and the same status: the hill is the control that sets it.
+attachHill(FORM);
 
 // `showEditing` and not `show`: the detail page's hash router declares a `show`
 // of its own in another `<script>`, and two top-level functions of one name in
@@ -13199,13 +13610,13 @@ function showEditing(editing) {
 // means is how the two come to disagree about the draft.
 function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
-  showEditing(editing);
-  // Ending the session leaves the surface the session was in — and the line that
-  // does it is not here any more. It was here, and in the issue page's toggle,
-  // and in the note page's, and the fourth door out of a session had no copy:
-  // a Save made in a room ends it with a bare `showEditing(false)`. It is one
-  // listener on `openproj:session` in `_VIEWS` now, which `showEditing` above
-  // dispatches, so every door is the same door. See the comment there.
+  // The fields go back BEFORE the session is ended, and the order is the whole
+  // point. `showEditing` dispatches `openproj:session`, and what listens for the
+  // end of a session includes the hill, which has to read the status it is going
+  // to keep rather than the one that is about to be undone. Ended first, Cancel
+  // put `in_progress` back into the field and left the ball sitting on `ready`,
+  // with the picture and the value disagreeing on a page nobody was editing.
+  let undone = 0;
   if (!editing) {
     // Cancel puts the FIELDS back to what the server rendered. It used to put
     // nothing back: it dropped the saved draft and left every typed value sitting
@@ -13213,7 +13624,6 @@ function flipEditing() {
     // while the commit bar went on reporting "1 unsaved change" about a change
     // nothing on screen was holding — and the count cleared only on a reload,
     // which is also the moment that value was silently lost. jcanton, 2026-08-22.
-    let undone = 0;
     try { undone = Object.keys(changed()).length; } catch (error) { undone = 0; }
     for (const control of CONTROLS) {
       const was = JSON.parse(ORIGINAL[control.name]);
@@ -13237,13 +13647,19 @@ function flipEditing() {
     // The stored draft still goes, and the base it arrived with still stays:
     // moving that forward here would be the silent overwrite by another route.
     forgetDraft();
-    dirty();
-    // Said out loud. Discarding is still discarding, even when what is discarded
-    // is a menu choice, and a page that quietly puts a value back is a page you
-    // have to re-check to trust.
-    if (undone) {
-      announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
-    }
+  }
+  // Ending the session leaves the surface the session was in — and the line that
+  // does it is not here any more. It was here, and in the issue page's toggle,
+  // and in the note page's, and the fourth door out of a session had no copy:
+  // a Save made in a room ends it with a bare `showEditing(false)`. It is one
+  // listener on `openproj:session` in `_VIEWS` now, which this dispatches, so
+  // every door is the same door. See the comment there.
+  showEditing(editing);
+  // Said out loud. Discarding is still discarding, even when what is discarded
+  // is a menu choice, and a page that quietly puts a value back is a page you
+  // have to re-check to trust.
+  if (undone) {
+    announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
   }
 }
 document.getElementById('toggle').onclick = flipEditing;
@@ -14871,6 +15287,286 @@ STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
 # sorts by. Five rungs, because three left the team writing `High+` in the margin.
 PRIORITIES = ("very_high", "high", "medium", "low", "very_low")
 
+# The hill, and where each word stands on it.
+#
+# Shape Up draws a piece of work as a ball on a hill: uphill is figuring out what
+# to do, the summit is knowing, downhill is doing it. `status` already carries
+# that distinction and a chip cannot say it — `shaping` and `in_progress` are one
+# rung apart in a list and opposite sides of a hill in the book. This is the same
+# five words, drawn as the shape they mean.
+#
+# A raised cosine, chosen for where its slope is steepest rather than for its
+# looks: it grounds at both ends, peaks at t=0.5, and passes through exactly half
+# its height at t=0.25 and t=0.75 — so `shaping` stands halfway up and
+# `in_progress` halfway down without a coordinate anybody typed.
+_HILL_BOX = (120, 48)
+_HILL_GROUND = 40.0
+_HILL_AMPLITUDE = 32.0
+_HILL_FOOT, _HILL_CREST = 12.0, 108.0
+# Ground drawn past both feet. A hill whose ground begins where the hill does
+# reads as a ramp off the edge of the box rather than as a hill standing on
+# something.
+_HILL_APRON = 8.0
+# Smooth at 240px wide, and 48 segments rather than 240 because this path ships
+# on every page that can draw a card.
+_HILL_SAMPLES = 48
+
+
+def _hill_at(t: float) -> tuple[float, float]:
+    """Where the line is at `t` along the hill: 0 at the foot, 1 at the finish."""
+    x = _HILL_FOOT + t * (_HILL_CREST - _HILL_FOOT)
+    y = _HILL_GROUND - _HILL_AMPLITUDE * (1 - math.cos(2 * math.pi * t)) / 2
+    return round(x, 2), round(y, 2)
+
+
+def _hill_normal(t: float) -> tuple[float, float]:
+    """Which way is up, out of the hill, at `t`. A unit vector in SVG's axes.
+
+    A stop is a point ON the line, and a ball centred on a point is a ball the
+    line runs through — which is not how a ball rests on a hill. It is lifted
+    along this, by its own radius, in CSS: the lift has to be in painted pixels
+    because the ball is an HTML element sized in px while the drawing is a
+    viewBox that scales, and a lift written in viewBox units would be right at
+    exactly one width. A unit vector times a pixel length is right at all of them.
+
+    `y` grows downward here, so the outward normal is the one with the negative
+    `y`: `(m, -1)` normalised, where `m` is the slope. On the flat — the two ends
+    and the two that came off the path — that is straight up, which is also the
+    answer for a ball resting on level ground.
+    """
+    slope = -_HILL_AMPLITUDE * math.pi * math.sin(2 * math.pi * t) / (_HILL_CREST - _HILL_FOOT)
+    length = math.hypot(slope, 1)
+    return round(slope / length, 4), round(-1 / length, 4)
+
+
+# On the curve for the five words work moves through; on the ground under the
+# summit for the two that mean "this came off the path". Not past the finish:
+# past the finish reads as "after done", which is the one thing shelved is not.
+_HILL_ALONG = {"thinking": 0.0, "shaping": 0.25, "ready": 0.5, "in_progress": 0.75, "done": 1.0}
+_HILL_OFF_THE_PATH = ("shelved", "dropped")
+_HILL_STOPS = {word: _hill_at(t) for word, t in _HILL_ALONG.items()} | {
+    word: (_hill_at(0.5)[0], _HILL_GROUND) for word in _HILL_OFF_THE_PATH
+}
+# And which way each of them is up. Off the path is level ground, so it is the
+# same answer the two ends of the hill give.
+_HILL_NORMALS = {word: _hill_normal(t) for word, t in _HILL_ALONG.items()} | {
+    word: (0.0, -1.0) for word in _HILL_OFF_THE_PATH
+}
+# Which stops a record of each kind may stand on, in ladder order. Derived from
+# the two vocabularies rather than written out beside them: a status added to
+# `STATUSES` tomorrow fails `test_every_status_has_a_stop_on_the_hill` instead of
+# quietly having nowhere to stand, which on a hill means no ball at all.
+HILL_LADDERS = {
+    "entity": tuple(word for word in STATUSES if word in _HILL_STOPS),
+    "note": tuple(word for word in NOTE_STATUS if word in _HILL_STOPS),
+}
+
+
+def _hill_path() -> str:
+    """The curve, sampled from `_hill_at` and from nothing else.
+
+    One function emits both this and the stops, for the reason `days_after` is one
+    function: a number written in two places is a number that will be wrong in one
+    of them, and here that is a ball floating off the line it is drawn on. Held by
+    `test_every_hill_stop_is_on_the_line`.
+    """
+    points = (_hill_at(step / _HILL_SAMPLES) for step in range(_HILL_SAMPLES + 1))
+    return "M" + " L".join(f"{x:g} {y:g}" for x, y in points)
+
+
+def hill_geometry() -> dict:
+    """The numbers both renderers draw from.
+
+    The detail page builds its hill in Jinja and the card builds one in
+    JavaScript. Handing the browser this rather than a second implementation is
+    what stops the two from disagreeing about where `ready` is — the mistake
+    `appetite_weeks` reading as three numbers on three pages already cost once.
+    """
+    return {
+        "box": list(_HILL_BOX),
+        "ground": _HILL_GROUND,
+        "apron": [_HILL_FOOT - _HILL_APRON, _HILL_CREST + _HILL_APRON],
+        "path": _hill_path(),
+        "stops": {word: list(where) for word, where in _HILL_STOPS.items()},
+        # Which way is up at each of them, so the card rests its ball on the line
+        # the same way the server does rather than working the curve out again.
+        "normals": {word: list(up) for word, up in _HILL_NORMALS.items()},
+        "ladders": {kind: list(words) for kind, words in HILL_LADDERS.items()},
+        # Position is the channel this control is made of and the one channel a
+        # screen reader never gets, so the sentence each coordinate draws travels
+        # with the coordinates rather than being written a second time in JS.
+        "where": dict(_HILL_WHERE),
+        # Which words mean "this came off the path", so the browser dims the hill
+        # for the same two the server does rather than for a list of its own.
+        "off": list(_HILL_OFF_THE_PATH),
+    }
+
+
+def _hill_percent(where: tuple[float, float]) -> tuple[str, str]:
+    """A stop as percentages of the box, which is how it is positioned in CSS.
+
+    Percent and not the SVG's own units: the ball is an HTML element over the
+    drawing rather than a `<circle>` in it, so that it can carry a real
+    `<input type=radio>` and take its keyboard, its focus ring and its group
+    semantics from the platform instead of from hand-written ARIA.
+    """
+    return f"{100 * where[0] / _HILL_BOX[0]:.3f}%", f"{100 * where[1] / _HILL_BOX[1]:.3f}%"
+
+
+# Where the ball is, said in words. Position is the whole point of this control
+# and position is the one channel that reaches nobody using a screen reader, so
+# each stop carries the sentence its coordinates draw. Not "25% along": that is
+# the implementation, and what a person means by it is halfway up.
+_HILL_WHERE = {
+    "thinking": "at the foot of the hill",
+    "shaping": "halfway up the hill",
+    "ready": "at the top of the hill",
+    "in_progress": "halfway down the hill",
+    "done": "at the bottom, over the hill",
+    "shelved": "off the hill",
+    "dropped": "off the hill",
+    "promoted": "handed on, at the start of the climb",
+}
+
+# A state that is not a stop, and where it stands anyway.
+#
+# `promoted` is a note's, it is derived from `became` and no person can set it, so
+# it is not on the note's ladder and there is no radio for it. Left at that, every
+# promoted note drew a hill with no ball on it — empty looking exactly like
+# broken, which is finding F1 arriving through a new mechanism. It stands where
+# `shaping` does because that is literally where it went: `promote` creates the
+# pitch or the task in `shaping`, so the ball did not roll back down, it was
+# handed to a record that is now a quarter of the way up a hill of its own.
+_HILL_HANDED_ON = {"promoted": "shaping"}
+
+# `hill-<word>` and not `st-<word>`: the invariant is that a status out of a FILE
+# reaches a class attribute only through `_status_class`, and no word here comes
+# out of a file. These come from `HILL_LADDERS`, which is built from the two
+# vocabularies in this module — the entity's own `status` is used to compare
+# against them and never to build an attribute. A `thinking` note has no rung on
+# the status ladder to borrow a colour from, which is the other half of the
+# reason: `_status_class` would have called it `st-ready` and put it on a summit.
+_HILL = """
+<span data-hill="{{ ladder }}"
+      class="hill{% if control %} hill-control{% endif %}{% if dim %} hill-off{% endif %}"
+     {% if live %}role="radiogroup" aria-label="{{ label }}"
+     {% else %}role="img" aria-label="{{ said }}"{% endif %}>
+  {#- The drawing is scenery: every name a reader needs is on the stops, and a
+      screen reader announcing a path element would announce the hill twice. -#}
+  <svg viewBox="0 0 {{ box[0] }} {{ box[1] }}" aria-hidden="true" focusable="false">
+    <path class="hill-ground" d="M{{ apron[0] }} {{ ground }}L{{ apron[1] }} {{ ground }}"/>
+    <path class="hill-line" d="{{ path }}"/>
+  </svg>
+  {#- Faint at every stop this record could stand on. They are the encoding and
+      not decoration: one ball on a curve says where the work is, and a row of
+      ghosts says that the curve has places to be and which ones. -#}
+  {% for stop in stops %}
+  <span class="hill-ghost" style="left: {{ stop.left }}; top: {{ stop.top }};
+        --nx: {{ stop.nx }}; --ny: {{ stop.ny }}"></span>
+  {% endfor %}
+  {#- No ball at all when the status is a word nobody defined. `status` is
+      permissive on purpose, so a hand-edited file reaches here holding anything;
+      `_status_class` answers `st-ready` for those, which is right for a chip
+      whose word says what it really is and wrong here, where it would park an
+      unrecognised status on the summit and say something false. -#}
+  {% if ball %}
+  <span class="hill-ball hill-{{ ball.word }}" data-word="{{ ball.label }}"
+        style="left: {{ ball.left }}; top: {{ ball.top }};
+        --nx: {{ ball.nx }}; --ny: {{ ball.ny }}"></span>
+  {% endif %}
+  {#- One real radio per stop, so arrow keys, the focus ring, the group and
+      "3 of 5" all come from the browser. The input is the hit target and paints
+      its own outline; it carries no `data-type`, because `CONTROLS` is keyed by
+      `name` and five elements sharing one would leave `ORIGINAL` with one entry
+      and `changed()` with four wrong answers. The value the form serialises is
+      the hidden input beside this. -#}
+  {% if live %}{% for stop in stops %}
+  <label class="hill-stop hill-{{ stop.word }}" data-word="{{ stop.label }}"
+         style="left: {{ stop.left }}; top: {{ stop.top }};
+         --nx: {{ stop.nx }}; --ny: {{ stop.ny }}">
+    <input type="radio" name="{{ group }}" value="{{ stop.word }}"
+           data-word="{{ stop.label }}"{% if stop.checked %} checked{% endif %}>
+    <span class="sr-only">{{ stop.said }}</span>
+  </label>
+  {% endfor %}{% endif %}
+</span>
+"""
+
+
+def _hill_html(
+    status: str,
+    ladder: str = "entity",
+    *,
+    live: bool = False,
+    control: bool = False,
+    label: str = "Status",
+    group: str = "hill",
+) -> Markup:
+    """The ball on the hill: read-only, or with its stops live.
+
+    `live` is edit mode and nothing else. A drag that committed on its own would
+    make a status change the cheapest thing on the page, and a status change is
+    the one that should cost the sentence in the body explaining it.
+    """
+    words = HILL_LADDERS[ladder]
+    stops = []
+    for word in words:
+        left, top = _hill_percent(_HILL_STOPS[word])
+        up, down = _HILL_NORMALS[word]
+        stops.append(
+            {
+                "word": word,
+                "label": _human(word),
+                "said": f"{_human(word)} — {_HILL_WHERE[word]}",
+                "left": left,
+                "top": top,
+                "nx": f"{up:g}",
+                "ny": f"{down:g}",
+                "checked": word == status,
+            }
+        )
+    # This ladder's own words and not `_HILL_STOPS`: `thinking` has a stop, and an
+    # entity whose file says `thinking` is as unrecognisable to a pitch's hill as
+    # `banana` is. Both get the same answer — no ball, and the word said in full.
+    known = status in words
+    stands_at = status if known else _HILL_HANDED_ON.get(status)
+    ball = None
+    if stands_at:
+        left, top = _hill_percent(_HILL_STOPS[stands_at])
+        up, down = _HILL_NORMALS[stands_at]
+        ball = {
+            "word": status,
+            "label": _human(status),
+            "left": left,
+            "top": top,
+            "nx": f"{up:g}",
+            "ny": f"{down:g}",
+        }
+    return _fragment(
+        _HILL,
+        ladder=ladder,
+        live=live,
+        # A hill that is the row's control, whether or not it has stops on it.
+        control=control or live,
+        label=label,
+        # The word as written when it is one nobody defined, so the page says what
+        # the file holds rather than pretending the record has no status at all.
+        said=f"{_human(status)} — {_HILL_WHERE.get(status, 'not on the hill')}"
+        if stands_at
+        else f"{_human(status)} — not on the hill",
+        # Quiet for the two that came off the path, and for a word nobody defined.
+        # Not for `promoted`: that ball is on its way up, which is the opposite of
+        # what a dimmed hill says.
+        dim=status in _HILL_OFF_THE_PATH or not stands_at,
+        stops=stops,
+        ball=ball,
+        group=group,
+        box=_HILL_BOX,
+        ground=f"{_HILL_GROUND:g}",
+        apron=[f"{_HILL_FOOT - _HILL_APRON:g}", f"{_HILL_CREST + _HILL_APRON:g}"],
+        path=_hill_path(),
+    )
+
 # How many bars of five a priority lights. One integer, shipped to the browser in
 # the page's own data, because the table draws its rows in JavaScript and the
 # legend and the detail page are Jinja — two hand-written copies of this map is
@@ -14927,8 +15623,6 @@ PRIORITY_GLYPH = {
 # owns a mark that is not colour: drawn at a bar's left edge, prefixed to a node's
 # title, and shown inside the legend swatch beside the word it stands for.
 #
-# All five are in the vendored face's latin subset, so a page that falls back to
-# no webfont at all still draws five different shapes rather than five boxes.
 # Chosen to be different SHAPES, not different weights of one shape: a small dot
 # and a large dot are two glyphs a reader has to compare, which is the failure
 # the ladder was already meant to fix.
@@ -14937,12 +15631,29 @@ PRIORITY_GLYPH = {
 # Text glyphs and not emoji, and that is a constraint rather than a taste: an
 # emoji is drawn by the platform's colour font, so it ignores `currentColor` and
 # arrives at a different weight on every machine — and these sit inside a 14px
-# timeline bar in the bar's own ink. A chequered flag exists only as one (U+1F3C1),
-# which is why `ready` is an arrow instead.
+# timeline bar in the bar's own ink. It is also why a drawing cannot replace them:
+# the same five characters go inside `<option>` elements, in the table's inline
+# status editor and in every facet menu, and an option is a string.
+#
+# **They say what the hill says.** Since the detail page draws a status as a ball
+# on a hill, a mark that means something unrelated is a second vocabulary for one
+# fact — so these are the hill in one character: climbing, over the top, coming
+# down. jcanton, 2026-08-22, choosing between four mocked options. `done` and
+# `shelved` keep their marks: they are the two the hill draws on flat ground, and
+# a tick and a cross are already what they mean.
+#
+# **Not all five are in the vendored face's latin subset**, and the line that used
+# to claim they were was measured and wrong: it holds 230 codepoints and has never
+# held U+2713 or U+2715. It does not matter, and here is why it does not. In HTML
+# the stack falls back — `--font-sans` names four faces after Inter. On the graph
+# the mark is drawn into an SVG data URI, which is an isolated document that
+# resolves against the system's own fonts and not the page's `@font-face` at all,
+# which is exactly how the tick has been drawing correctly all along. The cost of
+# a character no machine has is one 14px mark drawn as a box, not a broken page.
 STATUS_GLYPH = {
-    "shaping": "?",         # still a question
-    "ready": "↑",           # queued at the gate, pointing at the off
-    "in_progress": "»",     # under way
+    "shaping": "↗",         # the climb: figuring out what to do
+    "ready": "⌒",           # over the top, and knowing
+    "in_progress": "↘",     # the descent: getting it done
     "done": "✓",            # finished
     "shelved": "✕",         # struck out, not failed
 }
@@ -15505,15 +16216,13 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
         elif name == "review_waived":
             display = Markup("waived") if entity.review_waived else empty
         elif name == "status":
-            # The same chip the table, the people page and the bet table wear. A
-            # status is the one field on this page every other view colours.
-            # Through `_status_class`, so a status nobody has heard of gets the
-            # ready ladder rung rather than putting its own text in a class
-            # attribute: an unknown status is a *reported problem*, not a
-            # refusal, so `status` holds whatever a hand-edited file holds.
-            display = Markup('<span class="chip {}">{}</span>').format(
-                _status_class(entity.status), _human(entity.status)
-            )
+            # The ball on the hill, and not the chip the table wears. The chip says
+            # the word; the hill says the shape the word means — `shaping` and
+            # `in_progress` are one rung apart on a ladder and opposite sides of a
+            # hill, which is the distinction the whole method turns on and the one
+            # a list cannot draw. Read-only here and live in `control`, the same
+            # row and the same picture, so pressing Edit moves nothing.
+            display = _hill_html(entity.status)
         elif name == "priority":
             # The same chip the table wears, mark and all: this row and that cell
             # are the same fact, and the menu below this row already leads with
@@ -15558,7 +16267,13 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 # What the `<dt>`'s label points at. The derived rows below have
                 # no control, so they get no label — a `for` naming nothing is a
                 # label the reader is told about and cannot reach.
-                "for": field["id"],
+                #
+                # Status points at nothing on purpose. Its control is a group of
+                # radios, and a `<label for>` can only name one element: naming one
+                # stop of five would tell a screen reader that "Status" is the word
+                # for `shaping`. The group carries its own `aria-label` instead, and
+                # the `<dt>` falls back to plain text.
+                "for": "" if name == "status" else field["id"],
                 "display": display,
                 "control": _control_html(field),
                 "gates": field["gates"],
@@ -15917,7 +16632,10 @@ def _new_rows() -> list[dict]:
                 continue          # the title is the heading, not a row
             row = rows.setdefault(
                 field["name"],
-                {"label": LABELS.get(field["name"], field["name"]), "for": field["id"],
+                {"label": LABELS.get(field["name"], field["name"]),
+                 # Empty for status, for the reason the `<dt>` above gives: its
+                 # control is a group, and a label names one element.
+                 "for": "" if field["name"] == "status" else field["id"],
                  "control": _control_html(field), "gates": field["gates"], "kinds": []},
             )
             row["kinds"].append(kind)
@@ -15993,6 +16711,7 @@ def render_new(
         acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        hill=_HILL_JS,
         viewbar=_viewbar(
             _either_editor_possible(base_commit, may_write),
             _ace_wanted(editor, base_commit, may_write),
@@ -18569,6 +19288,14 @@ def render_note(
         note=view,
         creating=creating,
         statuses=list(NOTE_STATUS),
+        # Read from the derived state and written to the stored one. They differ
+        # by `promoted`, which the ball may stand at and no stop may set — the
+        # same split `NOTE_STATES` and `NOTE_STATUS` already are.
+        hill_read=_hill_html(view["state"], "note", label="State"),
+        hill_edit=_hill_html(
+            view["status"], "note", live=not view["derived"], control=True, label="State",
+            group=f"hill-note-{view['id'] or 'new'}",
+        ),
         human=_human,
         links=links,
         editable=base_commit is not None,
@@ -18934,6 +19661,7 @@ def render_detail(
         statuses=STATUSES,
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
+        hill=_HILL_JS,
         viewbar=_viewbar(
             _either_editor_possible(base_commit, may_write),
             _ace_wanted(editor, base_commit, may_write),
@@ -19688,13 +20416,16 @@ _NOTE = """
   <input name="title" class="field title-field" value="{{ note.title }}"
          placeholder="What are you thinking about?" autocomplete="off" aria-label="Title">
   <dl id="facts">
+    {#- The same hill an entity wears, with a note's own two stops on it. A note
+        is not on the hill yet, which is what the ball at its foot says and what
+        no word in a dropdown could. `promoted` has no stop — it is derived from
+        `became` and no press can set it — and stands at `shaping` anyway,
+        because that is where `promote` puts the record it became. -#}
     <dt>State</dt>
-    <dd><span class="read">{{ human(note.state) }}</span>
-      <select name="status" class="field" {{ 'disabled' if note.derived else '' }}>
-        {% for value in statuses %}<option value="{{ value }}"
-          {{ 'selected' if value == note.status else '' }}>{{ human(value) }}</option>
-        {% endfor %}
-      </select>
+    <dd><span class="read">{{ hill_read }}</span>
+      <input type="hidden" name="status" value="{{ note.status }}"
+             data-word="{{ human(note.status) }}">
+      {{ hill_edit }}
       {% if note.derived %}<span class="hint">from what it became</span>
       {% endif %}</dd>
     <dt>Written by</dt>
@@ -20082,6 +20813,7 @@ def _page(
         # The marks that go with those words, for the hover card: one map per
         # ladder, so a card says the rung the same way on all three views.
         cardmarks={"status": STATUS_GLYPH, "priority": PRIORITY_GLYPH},
+        hillgeom=hill_geometry(),
         unreadable=list(unreadable),
         # The sentence is built here rather than in the template, because English
         # is not something Jinja should be doing arithmetic about and "1 files

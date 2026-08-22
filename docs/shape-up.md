@@ -24,7 +24,13 @@ Deliberately, and with the team's practice as the reason:
 - `project` is a milestone layer the book does not have, because the Greenline table already tracks
   cross-cycle dependencies.
 - Progress is the body's own checklist rather than a hill chart, because a checklist is what the
-  team actually keeps.
+  team actually keeps. The hill is on every record and draws `status`, not progress: `shaping` is
+  the climb, `ready` the summit, `in_progress` the descent, and `shelved` the ground under the
+  summit. The two measure different things — nine of ten boxes ticked can honestly still be
+  uphill, because the tenth is the one nobody knows how to do — so the tool draws both and
+  converts neither into the other. The ball is the control that sets the status, and it only
+  moves while the record is being edited, so a move costs the sentence in the body that explains
+  it.
 
 The reasoning behind each is in `docs/superpowers/specs/2026-08-16-tailoring-plan.md`.
 

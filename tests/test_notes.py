@@ -391,9 +391,15 @@ def test_the_note_stays_and_points_at_what_it_became(client: TestClient, repo_pa
     assert client.get(f"/note/{note_id}").status_code == 200
     page = client.get(f"/note/{note_id}").text
     assert "Promoted" in page
-    # Derived, so it cannot also be typed: the select that would disagree with the
-    # link is disabled, exactly as the issue page's is.
-    assert "disabled" in re.search(r'<select name="status"[^>]*>', page).group(0)
+    # Derived, so it cannot also be typed. The control that would disagree with the
+    # link is the hill, and a derived state gets one with no stops on it at all —
+    # which is the same refusal the issue page's `disabled` select makes, by
+    # construction rather than by an attribute.
+    assert 'data-hill="note"' in page
+    assert 'role="radiogroup"' not in page, "a promoted note offers a status to press"
+    assert "hill-ball hill-promoted" in page, (
+        "and it stands where the record it became does, rather than nowhere"
+    )
 
 
 def test_a_promotion_is_one_commit(client: TestClient, repo_path: Path):
