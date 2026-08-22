@@ -289,12 +289,12 @@ def _library(name: str) -> Markup:
 # --- the second editor's adapter, and where it is NOT ------------------------
 #
 # Out of `_COMBOBOX` and into its own block, on a measurement: `_COMBOBOX` is
-# emitted on the table, the create form, the record page and the cycle page —
-# and the table and the cycle page have no body editor at all. Leaving this
-# beside `textareaSurface` cost 12,978 B on every one of those pages including
-# those two, for an adapter that
-# can only be reached where 594 KB of library is also in the page. It goes out
-# with the library or it does not go out.
+# emitted on the table, the create form, the record page and the cycle page
+# (grep `combobox=_combobox_html`) — and the table and the cycle page have no
+# body editor at all. Leaving this beside `textareaSurface` cost 12,978 B on
+# every one of those pages including those two, for an adapter that can only be
+# reached where 594 KB of library is also in the page. It goes out with the
+# library or it does not go out.
 #
 # Inlined AFTER `ace.js`, so `ace.require` is there when it parses, and BEFORE
 # the page script that calls `bodySurface`.
@@ -1253,11 +1253,11 @@ def _payload(index: Index) -> dict:
         # as refusing it while the mouse is still down, which is the difference
         # between a rule and a 422.
         "parent_kinds": {kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
-        # The same templates `/new` offers — one per kind, plus blank. An entity
-        # created from the table is the same document as one created from the
-        # form — a plan where
-        # a pitch has a shaping template only if you happened to make it on the
-        # other page is a plan with two kinds of pitch in it.
+        # The same templates `/new` offers — one per planned kind, plus blank.
+        # An entity created from the table is the same document as one created
+        # from the form — a plan where a pitch has a shaping template only if
+        # you happened to make it on the other page is a plan with two kinds of
+        # pitch in it.
         "templates": TEMPLATES,
         # The word a reader gets, shipped rather than baked into the cells: the
         # rows are drawn by script, and a status the script renders has to reach
@@ -3075,12 +3075,12 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    two of them stacked. */
 .keyrow > .legend, .keyrow > #summary { margin: 0; }
 .keyrow > #summary { margin-left: auto; text-align: right; }
-/* The row a page's own controls stand in: the table's create link, the cycle
-   page's "back to all cycles" and its "add somebody", the two rows of the cycles
-   index's create form. Three pages draw one and the rule was in _DETAIL_STYLE —
-   which the cycle pages load and the table does not, so on the table it was a
-   `<p>` with the browser's default margin and the create action sat in it as a
-   bare inline link. */
+/* The row a page's own controls stand in — grep `class="editbar"`: the table's
+   create link, the record page's Delete-and-views row in both modes, the cycle
+   page's "add somebody" and its goal bar, the one row of the cycles index's
+   create form. The rule was in _DETAIL_STYLE — which the cycle pages load and
+   the table does not, so on the table it was a `<p>` with the browser's default
+   margin and the create action sat in it as a bare inline link. */
 /* `flex-wrap`, because the row now ends in the control that acts on it rather
    than in the last field: unwrapped, a narrow window squeezed three date boxes
    to make room for a button instead of putting the button underneath them. */
@@ -3197,17 +3197,19 @@ input:not([type="checkbox"]):not([type="radio"]), textarea {
    `bottom: auto` is as load-bearing as `top`: with both set the browser keeps
    the first and the bar stays at the foot.
 
-   Defined here rather than per page because the record page, the create form,
-   the cycle page and the cycles index each have one, and four copies of a commit
-   bar is four answers to "have I saved this yet". It was per page for
-   half of it, and that is exactly how the create form and the cycle page came to
-   have a bar stuck to neither edge: `#commitbar { top: 0; bottom: auto }` was
-   written for the detail page and put in `_DETAIL_STYLE`, which more pages load
-   than draw a bar —
-   so two pages whose bar is still last in the markup lost `bottom: 0` to it and
-   became a plain block at the foot, off screen from the top of a form that
-   scrolls. Measured in Chrome at 1400x900 before the move: 1178px down the create
-   page and 1113px down the cycle page, with nothing on screen at all. */
+   Defined here rather than per page because four pages draw one — the record
+   page, the create form, the cycle page and the served graph, the set
+   `test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it`
+   resolves by rendering each of them — and four copies of a commit bar is four
+   answers to "have I saved this yet". It was per page for half of it, and that
+   is exactly how the create form and the cycle page came to have a bar stuck
+   to neither edge: `#commitbar { top: 0; bottom: auto }` was written for the
+   detail page and put in `_DETAIL_STYLE`, which more pages load than draw a
+   bar — so two pages whose bar was still last in the markup lost `bottom: 0`
+   to it and became a plain block at the foot, off screen from the top of a
+   form that scrolls. Measured in Chrome at 1400x900 before the move: 1178px
+   down the create page and 1113px down the cycle page, with nothing on screen
+   at all. */
 .commitbar {
   /* Under the suggestion popup (20) and under the shell's banner (40): a bar
      that is always on screen is always in front of something. */
@@ -3388,14 +3390,13 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 <script id="words" type="application/json">{{ words|tojson }}</script>
 {#- The two ladders' marks, beside the words and for the same reason: the card is
     drawn on the table, the graph and the timeline, and the graph has no `DATA`
-    of its own — its payload is
-    cytoscape elements — so a mark read from a page's payload is a mark the card
-    carries on two of the three.
+    of its own — its payload is cytoscape elements — so a mark read from a
+    page's payload is a mark the card carries on two of the three.
 
     `chipmarks` and not `marks`. The editor's toolbar owns `id="marks"` on the
     record page and the create form — it is the span the mark buttons are drawn
-    into — and a second element
-    of that id in the shell made `getElementById('marks')` answer with this block
+    into — and a second element of that id in the shell made
+    `getElementById('marks')` answer with this block
     instead: the toolbar drew its buttons into a script tag, and the editor's own
     tests caught it as an SVG laid out at 0x0. -#}
 <script id="chipmarks" type="application/json">{{ cardmarks|tojson }}</script>
@@ -4749,7 +4750,8 @@ const human = value => HUMAN[value] ?? (value ?? '');
 
 // `esc` comes from the shell, which declares it before this script runs. It was
 // declared here as well as in the timeline, and the third script that needed
-// it — the combobox, on every page that edits — had neither copy in scope.
+// it — the combobox, on every page `_COMBOBOX` ships on — had neither copy in
+// scope.
 
 // The same list the header row above was drawn from, emitted rather than
 // retyped: these were two literals that had to stay index-parallel, with a
@@ -10752,8 +10754,8 @@ function attachGutter(surface, note) {
 
   // Named for what it draws, and not `draw`. This block ships wherever
   // `_COMBOBOX` does — the table and the cycle page have no body editor at
-  // all — and the table declares a top-level
-  // `draw` of its own — so a generic name here is a name that reads as the
+  // all — and the table declares a top-level `draw` of its own — so a generic
+  // name here is a name that reads as the
   // table's to anything looking at the page as text. It is nested and therefore
   // lexically safe, and the suite went red anyway: the test that greps out the
   // table's sort routine by name matched this one first, because it comes
@@ -12155,8 +12157,7 @@ def _control_html(
 # reaches for `BODY` and `TITLED` — the two boxes those two pages declare — and
 # because the table and the cycle page — the other two that inline `_COMBOBOX` —
 # have no document to have a view of. The blocks share one lexical scope, so
-# this runs after theirs and the
-# names are simply there.
+# this runs after theirs and the names are simply there.
 #
 # **Three states, and the landing one is `view`.** HackMD is always full page;
 # here `view` is the ordinary page — the server-rendered document, the facts
@@ -15060,9 +15061,10 @@ article.entity.full.view-both .bodysplit {
 }
 /* Not a control in either of the other two views, on the pages that inline this
    sheet with no document to split — the cycle page, the cycles index and the
-   deck — or outside the surface. Absent rather
-   than disabled: a separator in the tab order that divides nothing is a control
-   that lies about what the page can do. */
+   deck, the `_DETAIL_STYLE` loaders with no `.bodysplit` in their markup — or
+   outside the surface. Absent rather than disabled: a separator in the tab
+   order that divides nothing is a control that lies about what the page can
+   do. */
 #splitter { display: none; }
 /* `touch-action: none` because the alternative is the browser deciding this drag
    was a pan: it then revokes the pointer with a `pointercancel` and no `pointerup`
@@ -16302,9 +16304,9 @@ def _read_date(value: object) -> str:
 _ENV.globals["on"] = _read_date
 _ENV.globals["label"] = lambda field: LABELS.get(field, field)
 # Every chip on every page names its rung through this, so the templates that
-# draw one — the cycle page's betting table, the people page — cannot disagree
-# with the Python builders — the table payload, the progress panel, the record
-# page's rows. They did:
+# call it (grep `{{ status_class(`: the cycle page's betting table, the people
+# page) cannot disagree with the Python callers (grep `_status_class(`: the
+# timeline's bars, `_progress_view`, the deck's `_slide`). They did:
 # the detail page's meta line escaped the status into its class and the facts
 # list two elements away did not, which is one page holding both answers.
 _ENV.globals["status_class"] = _status_class
@@ -19861,8 +19863,8 @@ def _page(
         links=links,
         # The word map, on every page rather than in the three payloads that
         # happened to carry it. The hover card is drawn by the table, the graph
-        # and the timeline, and the
-        # graph's payload is cytoscape elements — no `DATA` at all — so the card
+        # and the timeline, and the graph's payload is cytoscape elements — no
+        # `DATA` at all — so the card
         # read `in_progress` off a node and drew it as itself. `HUMAN` exists
         # because five pages inventing their own capitalisation is how one status
         # came to be spelled three ways on one screen; a card is the fourth page.

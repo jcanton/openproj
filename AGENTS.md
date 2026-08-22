@@ -272,8 +272,8 @@ than a ban, and what a third has to pass is that it is inside the shell's reach 
 The first is `#grip::before`, the width handle on the record page and the create form, and those
 are not the only pages that carry the rule: `_DETAIL_STYLE` is inlined by the record page, the
 create form, the cycle page, the cycles index and the deck, so the last three ship a fade with no
-`#grip` to move. Inert there, and exactly why the
-floor belongs in the shell rather than beside the rule it switches off. The second is `.hill-ball`,
+`#grip` to move. Inert there, and exactly why the floor belongs in the shell rather than beside the
+rule it switches off. The second is `.hill-ball`,
 which rolls between its stops when a status changes; its duration is a `--roll` token so that a drag
 can switch the roll off without writing a second `transition:` into the stylesheet. CSS cannot reach a canvas:
 cytoscape's layout runs at `animate: false` and has to stay there, or the graph moves for a reader

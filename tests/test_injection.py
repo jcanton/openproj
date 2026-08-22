@@ -72,7 +72,8 @@ BENIGN = "a perfectly ordinary sentence about the tracer advection port"
 # substring search, because the whole point is to ask the parser.
 FORGED_IMAGES = {"x", "y"}
 
-# The app's own inline handler, written into three templates by hand and into no
+# The app's own inline handler, written into two templates by hand — grep
+# `onsubmit`: the record page's edit form, the cycle page's setup form — and into no
 # value: a form on a page that saves over fetch must not navigate. Named here so
 # that "no event handlers" can stay an absolute rule with one stated exception
 # rather than a rule with a hole in it.
