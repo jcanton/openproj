@@ -11938,6 +11938,20 @@ function attachHill(form) {
 
   hill.addEventListener('change', event => choose(event.target.value));
 
+  // And the other direction, for when something that is not this hill sets the
+  // status. Nothing does today; Cancel is about to, once it puts back what the
+  // server rendered — it writes `ORIGINAL` into every control, and a value
+  // assigned by script fires no event for the picture to hear. Hung off the
+  // session ending rather than off Cancel, because that is the fact this cares
+  // about and there are four doors out of a session.
+  addEventListener('openproj:session', event => {
+    if (event.detail) return;                      // a session beginning, not ending
+    const input = stops.map(one => one.querySelector('input'))
+      .find(one => one.value === value.value);
+    if (input) input.checked = true;
+    show(value.value);
+  });
+
   // Distance in painted pixels and not in the box's own units: the box is two and
   // a half times wider than it is tall, so a nearest-stop measured in percent
   // would answer with the stop that looks further away.

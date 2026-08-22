@@ -607,3 +607,43 @@ def _rendered_shell() -> str:
     entities, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
     index = build_index(entities, config, date(2026, 8, 17))
     return render_detail(index, ROUTES, only=sorted(index.entities)[0])
+
+
+def test_the_ball_follows_the_field_when_something_else_sets_it(
+    index: Index, tmp_path: Path
+) -> None:
+    """The other direction, which nothing exercises yet and something is about to.
+
+    The hill writes the status and the status is written back into the hill. Today
+    nothing but the hill sets that field; Cancel is about to, once it puts back
+    what the server rendered — it assigns `ORIGINAL` into every control, and a
+    value assigned by script fires no event a picture could hear. The sync hangs
+    off the session ending rather than off Cancel, because that is the fact it
+    cares about and a session has four doors out of it.
+    """
+    browser = chrome()
+    entity_id = next(i for i, e in sorted(index.entities.items()) if e.status != "ready")
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    found = measured_in(
+        browser, page, tmp_path / "sync.html", 1100,
+        """
+        document.getElementById('toggle').click();
+        await new Promise(settled => setTimeout(settled, 50));
+        const hill = document.querySelector('.hill[role=radiogroup]');
+        const value = document.querySelector('input[name=status]');
+        const ball = hill.querySelector('.hill-ball');
+        [...hill.querySelectorAll('.hill-stop')]
+          .find(s => s.querySelector('input').value === 'ready').click();
+        const moved = ball.style.left;
+        // What a restore looks like: the field is put back and nothing is fired.
+        value.value = 'shaping';
+        dispatchEvent(new CustomEvent('openproj:session', {detail: false}));
+        await new Promise(settled => setTimeout(settled, 20));
+        return {moved, after: ball.style.left, klass: ball.className,
+                checked: hill.querySelector('input:checked').value};
+        """,
+        height=1400, patience=2500,
+    )
+    assert found["checked"] == "shaping", "the stop the field names is not the one checked"
+    assert found["klass"] == "hill-ball hill-shaping"
+    assert found["after"] != found["moved"], "the ball stayed where the hill had put it"
