@@ -1806,9 +1806,13 @@ def create_app(
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
         commit, index = index_now()
         return page(
-            render.render_new(
-                kind, commit, render.ROUTES, index,
-                editor=which_editor(request), may_write=may_write(request),
+            render.render_detail(
+                index,
+                render.ROUTES,
+                base_commit=commit,
+                may_write=may_write(request),
+                editor=which_editor(request),
+                creating=kind,
             )
         )
 
@@ -1819,7 +1823,7 @@ def create_app(
     @app.get("/detail/{entity_id}", response_class=HTMLResponse)
     def detail(entity_id: str, request: Request) -> HTMLResponse:
         commit, index = index_now()
-        if entity_id not in index.entities:
+        if entity_id not in index.records:
             raise HTTPException(404, f"no entity {entity_id!r}")
         # The page carries the commit it was rendered at, so a save is compared
         # against what the person actually saw rather than against whatever HEAD

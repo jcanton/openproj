@@ -366,6 +366,64 @@ def test_the_create_form_offers_the_three_kinds_and_nothing_else(client: TestCli
     assert client.get("/new?kind=milestone").status_code == 422
 
 
+def test_the_kind_picker_offers_every_rung_and_only_rungs(new_page: str):
+    """Derived on both sides: `KINDS` draws the options and the route refuses
+    the rest, so a rung added to the ladder is creatable the day it lands
+    rather than the day somebody remembers this select."""
+    pick = re.search(r'<select id="kind">.*?</select>', new_page, re.S)
+    assert pick, "the create page must carry the kind picker"
+    assert options(pick.group(0)) == set(KIND_NAMES)
+
+
+def test_the_create_page_is_the_record_page_in_a_mode(client: TestClient):
+    """One template, one script, two verbs. The create form was forked markup
+    once (`_NEW`), and a fork is what the issue and note pages proved a fork
+    does — the note got the hill and the issue did not, in one commit. Which
+    verb runs is data (`CREATING`), never a second page."""
+    import openproj.render as render
+
+    new = client.get("/new?kind=task").text
+    detail = client.get(f"/detail/{TASK}").text
+
+    assert not hasattr(render, "_NEW"), "the forked template is gone"
+    assert not hasattr(render, "render_new"), "and so is its renderer"
+    for html in (new, detail):
+        assert "if (CREATING) { await createRecord(); return; }" in html
+        assert "async function createRecord()" in html
+    assert 'const CREATING = "task";' in new
+    assert "const CREATING = null;" in detail, "a stored record's page creates nothing"
+
+
+@pytest.mark.parametrize("kind", KIND_NAMES)
+def test_a_record_created_from_the_merged_page_round_trips(client: TestClient, kind: str):
+    """The whole create flow per kind, through the page's own base commit: the
+    page renders, the POST lands, and the record comes back as a page. The
+    read-back is the record's own page, never /api/index.json — that map is
+    plan-only by design and cannot answer for an unplanned rung. Parametrized
+    over the ladder, so the rungs Task 8 adds walk through this door on the
+    day they exist — if their server stamping is missing, this is the test
+    that says so."""
+    page = client.get(f"/new?kind={kind}")
+    assert page.status_code == 200
+    base = re.search(r'name="base_commit" value="([0-9a-f]{40})"', page.text).group(1)
+
+    made = client.post(
+        "/api/entity",
+        json={"base_commit": base,
+              "fields": {"kind": kind, "title": f"Round trip {kind}"},
+              "body": "A record made from the merged page.\n"},
+    )
+    assert made.status_code == 201, made.json()
+    new_id = made.json()["id"]
+    own = client.get(f"/detail/{new_id}")
+    assert own.status_code == 200
+    assert f"Round trip {kind}" in own.text, (
+        "the record's own page is the read-back for every kind — "
+        "/api/index.json is plan-only by design and cannot answer for an "
+        "unplanned rung"
+    )
+
+
 def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
     new_page: str, client: TestClient
 ):

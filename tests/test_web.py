@@ -351,8 +351,8 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
     them dark, which is the state every page on this app was in before this round.
 
     `/new` marks nothing, on purpose: it is not one of them, and pressing Table
-    from it abandons the form rather than staying put. `render_new`'s docstring is
-    where that is argued; this is where it is held.
+    from it abandons the form rather than staying put. `render_detail`'s creating
+    branch is where that is argued; this is where it is held.
     """
     from pages import lit
 

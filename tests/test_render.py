@@ -2877,12 +2877,12 @@ def server_pages(seed_index: Index) -> dict[str, str]:
     not the plumbing; `test_web.test_every_route_says_which_nav_item_it_is` asks
     the real URLs, which is the half this cannot see.
     """
-    from openproj.render import ROUTES, render_cycle, render_detail, render_new
+    from openproj.render import ROUTES, render_cycle, render_detail
 
     one = next(iter(seed_index.entities))
     return {
         "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),
-        "new": render_new("task", "deadbee", ROUTES, seed_index),
+        "new": render_detail(seed_index, ROUTES, base_commit="deadbee", creating="task"),
         "entity": render_detail(seed_index, ROUTES, only=one, base_commit="deadbee"),
     }
 

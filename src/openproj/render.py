@@ -12098,8 +12098,9 @@ def _control_html(
 # are sessions and go full page. The fourth, unnamed state this used to carry
 # is gone from every record page: exactly one segment is always pressed. The
 # one exception is the create form, which has no stored document to land on —
-# see `LANDING` and `GROUND` in the script below; that exception dies with
-# `_NEW` when creating becomes a mode of the record page.
+# see `LANDING` and `GROUND` in the script below. Creating is a mode of the
+# record page now, and the exception is structural: the creating markup carries
+# no `.doc.read`, so there is nothing for a sessionless `view` to show.
 _VIEWS = Markup(r"""
 <script>
 const VIEW_ARTICLE = BODY.closest('article.entity');
@@ -12120,7 +12121,8 @@ const VIEWS = ['edit', 'both', 'view'];
 // create form — the structural fact the whole machine branches on. A page with
 // a landing has a sessionless `view` state to come back to; the create form
 // has nothing to read yet, so its way out of full page is the old surface-off
-// state (`null`), kept only there and only until `_NEW` is absorbed.
+// state (`null`). Structural on purpose: the creating mode of the record page
+// keeps `.doc.read` out of its markup so this branch cannot drift.
 const LANDING = VIEW_ARTICLE.querySelector('.doc.read');
 // Where every exit lands: Escape, the pressed segment, the chord, and the end
 // of a session all come here.
@@ -12819,329 +12821,6 @@ addEventListener('openproj:session', event => {
 """)
 
 
-_NEW = """
-<article class="entity editing">
-  <p class="back"><a href="{{ links.table }}">← table</a></p>
-  {#- The kind sits where the detail page's kind chip sits, above the heading:
-      the two are the same document in two modes, and this is the control that
-      decides which of the three the reader will be looking at afterwards — the
-      first decision on the form, and it was the third thing on a line under the
-      title box. -#}
-  <p class="eyebrow"><label class="kindpick">kind
-      <select id="kind">
-        {% for k in kinds %}<option value="{{ k }}"
-          {% if k == kind %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
-      </select>
-    </label></p>
-  {#- The heading names the page; the title box below it is a control. It used to
-      BE the heading — a heading whose only content was an empty input, which is
-      a page with no name at all and a box with no name either. `aria-label`
-      rather than a `<label for>` because the visible word is the placeholder,
-      and a placeholder disappears the moment anything is typed. -#}
-  <h1>New entity</h1>
-  <input name="title" data-type="text" form="edit" value="" aria-label="Title"
-         class="field title-field" placeholder="Title">
-  <p class="meta">the id and the file are the server's to choose</p>
-  {#- The same bar the detail page carries, in the same place, holding the same
-      control: this page is that page in edit mode, and a switcher that moves
-      between the two is a switcher somebody has to find twice. There is no Edit
-      button beside it because this article never leaves edit mode. -#}
-  <p class="editbar">{{ viewbar }}</p>
-  {#- Create, and the count of what is unsaved, at the head of the form rather
-      than at its foot — jcanton, 2026-08-20, "move the create bar up top too,
-      consistency!". The detail page moved its bar up on the same day and the two
-      are the same document in two modes: a control that changes place between
-      reading a record and making one is a control somebody has to find twice.
-
-      The argument that put it at the foot is in the shell's `.commitbar` and it
-      was half right. It said the last thing on screen after filling this form in
-      was the body box, so the action was a scroll back up — true of a STATIC bar
-      above a long form, and the fix it shipped was two things at once. The
-      stickiness is the half that delivered it, and a bar stuck to the top is on
-      screen from wherever the form has got to just as surely as one stuck to the
-      foot. Measured in Chrome, filled in, at the top, the middle and the end.
-
-      Not hidden, unlike the detail page's: there, editing is a session you enter
-      and the bar arrives with it; here the page IS the session and a form whose
-      only way to commit it appears later is a form with no way to commit it. -#}
-  <div class="commitbar" id="commitbar">
-    <span id="unsaved">Nothing is written until you press Create</span>
-    <button type="button" id="save">Create</button>
-    <span id="state" role="status"></span>
-  </div>
-  <form id="edit" onsubmit="return false">
-    <input type="hidden" name="base_commit" value="{{ base_commit }}">
-    <div class="panes">
-      <aside class="facts">
-        <dl id="facts">
-          {% for row in rows %}
-          {#- No `for` on the row whose control is a radio group: a label can name
-              one element, and naming one stop of a hill would tell a screen
-              reader that "Status" is the word for `shaping`. The group says its
-              own name. -#}
-          <dt data-kinds="{{ row.kinds }}">{% if row.for %}<label for="{{ row.for
-            }}">{{ row.label }}</label>{% else %}{{ row.label }}{% endif %}{% if row.gates %}
-            <span class="req" hidden>required</span>{% endif %}</dt>
-          <dd data-kinds="{{ row.kinds }}">{{ row.control }}</dd>
-          {% endfor %}
-        </dl>
-      </aside>
-      <div class="main">
-        {#- What the form or the server refused this with. Filled by script, so
-            it is news arriving on a page that is already open. -#}
-        <ul id="problems" class="problems" role="status" aria-live="polite" hidden></ul>
-        {#- Two rows, in the order the two kinds of control are reached for. The
-            first says what this box will BE — a preview of it, and the template
-            it starts from; the second is the typing furniture. One row put a
-            seven-character select between `Preview the body` and eight
-            single-character buttons, and nothing on the line lined up with
-            anything else on it. -#}
-        <p class="field bodybar">
-          {#- The template is offered, never imposed: it fills an untouched box
-              and refuses to overwrite one somebody has typed in. `template` and
-              not `start from`: the label names the control, and the sentence it
-              was part of ended in the option list. -#}
-          <label class="tplpick">template
-            <select id="template">
-              <option value="pitch">the shaping template</option>
-              <option value="task">a task</option>
-              <option value="project">a project</option>
-              <option value="product">a product</option>
-              <option value="blank">nothing</option>
-            </select>
-          </label>
-          <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
-        </p>
-        {#- The hint that was here — "paste or drop an image to put it in the
-            plan" — is gone, and the Image button is what replaced it: a sentence
-            describing a gesture is what a toolbar puts in a control. -#}
-        <p class="field bodybar markbar">
-          <span id="marks" class="marks"></span>
-          <span class="hint" id="upload" role="status" aria-live="polite"></span>
-          {#- Where the gutter says it has switched itself off, and why. A count
-              of lines is a fact about the document, so it belongs beside the box
-              and not in a banner: a gutter that simply vanishes on a long
-              document is the one somebody reports as broken. -#}
-          <span class="hint" id="gutter-note" role="status" aria-live="polite"></span>
-        </p>
-        <div class="bodysplit">
-          <div class="bodywrap">
-            <textarea name="body" class="field body-field" rows="14"
-                      aria-label="Shaping document"
-                      placeholder="The shaping document."></textarea>
-          </div>
-          {#- Between the two panes and not over them: it is a grid track of its
-              own, so the width it takes is width the panes never had rather than
-              a strip drawn on top of one of them. -#}
-          {{ splitter }}
-          {#- The same id and the same classes the detail page's preview pane
-              carries, so one implementation serves both. It was a bare `.doc`
-              found by `querySelector`, which is one more thing for the two pages
-              to disagree about. -#}
-          <div id="body-preview" class="field doc" hidden></div>
-        </div>
-        {#- The strip along the foot of the box: where the caret is, how long the
-            document is, and the one control that is a typing setting rather than
-            a command. Empty in the markup and filled by `attachStatus`, so the
-            four pages that carry one carry one line each. -#}
-        <p class="field bodybar statusbar" id="statusbar"></p>
-      </div>
-    </div>
-  </form>
-</article>
-{#- The second editor, and 594 KB of it. It is what a writer gets unless the
-    address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
-    think it's worth it" — and `_ace_wanted` is where that decision is recorded
-    as his rather than as a measurement's. What did NOT move is who pays:
-    `editable` is gated on `base_commit` alone, so a signed-out reader already
-    receives the box and the toolbar, and putting Ace at that gate would have
-    shipped this to every public reader at 4.19x their page for a keymap whose
-    every save is a 403. `remembered` is this browser's own store and the server
-    cannot read it, which is why the address and not the preference decides
-    which bytes render. -#}
-{% if ace %}<script>{{ ace }}</script>
-{{ acesurface }}{% endif %}
-{{ combobox }}
-<script>{{ required }}</script>
-<script>{{ hill }}</script>
-<script>
-const FORM = document.getElementById('edit');
-const PROBLEMS = document.getElementById('problems');
-const KIND = document.getElementById('kind');
-
-// Every kind's fields are on the page and the ones this kind does not have are
-// hidden, rather than each kind being its own round trip. Switching kind after
-// typing a title used to mean typing it again.
-function showKind() {
-  for (const element of FORM.querySelectorAll('[data-kinds]'))
-    element.hidden = !element.dataset.kinds.split(' ').includes(KIND.value);
-}
-
-showKind();
-// The status select is inside the form, so one listener on the form catches both
-// it and the review_waived checkbox that lets one of its rules off.
-watchRequired(FORM);
-// The same form, and the same status: the hill is the control that sets it.
-attachHill(FORM);
-
-function read(control) {
-  if (control.dataset.type === 'bool') return control.checked;
-  const raw = control.value.trim();
-  if (control.dataset.type === 'list')
-    return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-  if (control.dataset.type === 'number') {
-    if (raw === '') return null;
-    const n = Number(raw);
-    if (Number.isNaN(n)) throw new Error(`${control.name} must be a number, not "${raw}"`);
-    return n;
-  }
-  return raw === '' ? null : raw;
-}
-
-const BODY = FORM.querySelector('[name=body]');
-// The box holding the title, for the preview: the page suppresses the document's
-// own leading heading when it repeats the title, and a preview that does not know
-// the title cannot suppress it. Found by class rather than through the form,
-// because on the create page the title sits outside `<form>` and is bound to it
-// by a `form=` attribute — which `querySelector` on the form does not see.
-const TITLED = document.querySelector('.title-field');
-// The one place any of this reads or writes the document. Seven operations,
-// every index in UTF-16 code units, one implementation — see the banner in the
-// shared block. Nothing below this line touches `.value` or a selection.
-const SURFACE = bodySurface(BODY);
-attachUploads(SURFACE, document.getElementById('upload'));
-attachEditing(SURFACE, document.getElementById('marks'));
-attachGutter(SURFACE, document.getElementById('gutter-note'));
-attachStatus(SURFACE, document.getElementById('statusbar'));
-
-// The body a new entity starts from. Switching kind switches template, because
-// picking "pitch" and getting a task's headings is the wrong default in the one
-// place the tool can teach the shape of a pitch — but only while the box is
-// still one of ours. Once somebody has typed, the box is theirs: the template
-// never changes underneath a sentence, and the picker says so rather than
-// appearing to do nothing.
-const TEMPLATES = {{ templates|tojson }};
-const TPL = document.getElementById('template');
-const TPLSTATE = document.getElementById('tplstate');
-
-function untouched() {
-  return Object.values(TEMPLATES).some(text => text.trim() === SURFACE.text().trim());
-}
-
-function applyTemplate(name) {
-  if (!untouched()) {
-    TPLSTATE.textContent = 'the body has been edited — clear it to start from a template';
-    return false;
-  }
-  // A whole-document replacement, said in those words and made once. `apply` is
-  // what marks it as the page writing rather than a person typing: no focus
-  // stolen from the picker that asked for it, no `input` event, and no undo step
-  // for a gesture that was not an edit to anybody's writing — this branch only
-  // runs while the box still holds one of ours.
-  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
-  // And say that the document changed, because `apply` deliberately fires no
-  // `input` and everything drawn beside this box hangs off one. `reflect()` in
-  // `_COEDIT` dispatches this for exactly the same reason and in the same words:
-  // the one place that changes the text without typing it tells the layers once,
-  // rather than a call being added here every time something new listens.
-  // Measured without it: choosing `blank` emptied the box and left twenty-one
-  // line numbers down the side of it and `21 Lines — Length: 661` under it.
-  dispatchEvent(new Event('openproj:editing'));
-  TPLSTATE.textContent = '';
-  return true;
-}
-
-TPL.onchange = () => { applyTemplate(TPL.value); };
-KIND.onchange = () => {
-  showKind();
-  if (untouched() && TEMPLATES[KIND.value] !== undefined) {
-    TPL.value = KIND.value;
-    applyTemplate(KIND.value);
-  }
-};
-TPL.value = TEMPLATES[KIND.value] !== undefined ? KIND.value : 'blank';
-applyTemplate(TPL.value);
-
-document.getElementById('save').onclick = async () => {
-  const fields = {kind: KIND.value};
-  const status = FORM.querySelector('[name=status]')?.value || 'shaping';
-  const missing = [];
-  for (const control of FORM.querySelectorAll('[data-type]')) {
-    // A field this kind does not have is not empty, it is absent — sending it
-    // would ask the server to set an attribute the model does not define.
-    if (control.closest('[data-kinds]')?.hidden) continue;
-    let value;
-    try { value = read(control); } catch (error) { announce(error.message); return; }
-    const empty = value === null || (Array.isArray(value) && !value.length);
-    const waived = control.name === 'reviewers' &&
-      FORM.querySelector('[name=review_waived]')?.checked;
-    // The same gates the labels are marked from, so what the form refuses and
-    // what it warned you about cannot be two different lists.
-    const gates = control.dataset.requiredAt;
-    if (gates && empty && !waived && gates.split(' ').includes(status))
-      missing.push(labelOf(control));
-    if (!empty) fields[control.name] = value;
-  }
-  const title = document.querySelector('.title-field');
-  if (title.value.trim()) fields.title = title.value.trim(); else missing.push('Title');
-  if (missing.length) {
-    // The words on the page, not the words in the file: `person_weeks` and
-    // `in_progress` are what git holds, and a refusal that names them sends
-    // somebody looking for a field with that label.
-    const chosen = FORM.querySelector('[name=status]');
-    PROBLEMS.hidden = false;
-    // `replaceChildren` with one line of text, not `innerHTML`: every word in
-    // this sentence comes off the page — an option's label, a control's `<dt>` —
-    // and the page it comes off is one whose fields hold whatever the plan
-    // holds. There is no markup wanted here at all, so none is built.
-    const line = document.createElement('li');
-    line.textContent = 'still needed at status '
-      + `${chosen?.selectedOptions[0]?.textContent.trim() || status}: `
-      + missing.join(', ');
-    PROBLEMS.replaceChildren(line);
-    return;
-  }
-  // The shell's banner is told before the request goes and told the sha after,
-  // because the server announces a commit to the event stream before it answers
-  // the request that made it. Creating an entity is a write like any other, and
-  // an unannounced one comes back to this tab as somebody else's news.
-  dispatchEvent(new Event('openproj:writing'));
-  let committed = null;
-  try {
-    const response = await fetch('/api/entity', {
-      method: 'POST', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({
-        base_commit: FORM.querySelector('[name=base_commit]').value, fields,
-        body: SURFACE.text() || '',
-      }),
-    });
-    const answer = await answerOf(response);
-    if (!response.ok) {
-      // The client check is a courtesy; this is the truth, and swallowing it leaves
-      // somebody staring at a form that looks fine. Named by the same `labelOf`
-      // the check above uses, so the server's refusal and the form's own name the
-      // field identically — and built as text nodes, because `answer.detail`
-      // quotes back whatever key was posted.
-      PROBLEMS.hidden = false;
-      PROBLEMS.replaceChildren(...refusals(answer, response.status).map(text => {
-        const item = document.createElement('li');
-        item.textContent = text;
-        return item;
-      }));
-      return;
-    }
-    committed = answer.commit;
-    location.href = '/detail/' + answer.id;
-  } finally {
-    // Announced even when refused, or one rejected form leaves every later event
-    // held back and the banner never appears again.
-    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
-  }
-};
-</script>
-{{ views }}
-"""
-
 _DETAIL = """
 {#- The index view is one of the views this page routes between, and it had no
     heading of its own — so with no hash in the URL the page was a list of links
@@ -13167,7 +12846,8 @@ _DETAIL = """
   {% endfor %}
 </div>{% endif %}
 {% for e in entities %}
-<article id="{{ e.id }}" class="entity">
+<article {% if not creating %}id="{{ e.id }}" {% endif -%}
+  class="entity{% if creating %} editing{% endif %}">
   {#- Back to the table, which is where you came from and where everything is.
       It pointed at the detail index, which was the same list with none of the
       controls — and that index is no longer in the nav, so a link to it now
@@ -13177,15 +12857,36 @@ _DETAIL = """
       page answers, and the kind was the third item on a line below the name,
       between an id and a status. It is also the one fact here that never
       changes, which is why it is the one that sits here. -#}
+  {%- if creating %}
+  {#- The kind sits where the stored record's kind chip sits: the two are the
+      same document in two modes, and this is the control that decides which
+      kind the reader will be looking at afterwards. Options come off `KINDS`,
+      never written out — a rung added to the ladder is on this menu the day it
+      lands. -#}
+  <p class="eyebrow"><label class="kindpick">kind
+      <select id="kind">
+        {% for k in kinds %}<option value="{{ k }}"
+          {% if k == creating %}selected{% endif %}>{{ k|human }}</option>{% endfor %}
+      </select>
+    </label></p>
+  {%- else %}
   <p class="eyebrow"><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span></p>
-  <h1><span class="read">{{ e.title }}</span></h1>
+  {%- endif %}
+  {#- The heading names the page; on the create page the title box below it is
+      a control, because a heading whose only content is an empty input is a
+      page with no name and a box with no name either. -#}
+  <h1>{% if creating %}New entity{% else %}<span class="read">{{ e.title }}</span>{% endif %}</h1>
   {#- No status chip. It was here as well as in the facts column forty pixels
       below — the same word, in the same colour, twice, and in edit mode the
       lower one is the select that changes it. A field that can be changed is
       stated where it can be changed: STATUS is the first row of the facts
       column, level with the title, so nothing is further away than it was. -#}
+  {% if creating %}
+  <p class="meta">the id and the file are the server's to choose</p>
+  {% else %}
   <p class="meta"><code>{{ e.id }}</code>
      {% if e.parent %}· in {{ e.parent_link }}{% endif %}</p>
+  {% endif %}
   {% if editable %}
   {#- The switcher is the way in: pressing Write or Write-and-preview opens
       the session it is a view of, so there is no Edit button beside it — two
@@ -13195,8 +12896,8 @@ _DETAIL = """
       server would refuse gets no door at all, which makes the read page the
       whole page for them instead of an editor whose every save is a 403. -#}
   {% if may_write %}
-  <p class="editbar"><button type="button" class="delete">Delete</button>
-    {{ viewbar }}</p>
+  <p class="editbar">{% if not creating %}<button type="button" class="delete">Delete</button>
+    {% endif %}{{ viewbar }}</p>
   {% endif %}
   {#- Save, Cancel and the count of what is unsaved, directly under the button
       that started the editing rather than at the far end of the document —
@@ -13209,8 +12910,19 @@ _DETAIL = """
       Still sticky, so it is still reachable from the bottom of a long record —
       but stuck to the TOP now, which is where it is. Hidden in the markup and
       revealed by `dirty()`, so it does not flash on every load before the script
-      decides it had nothing to say. -#}
-  <div class="commitbar" id="commitbar" hidden>
+      decides it had nothing to say.
+
+      Except when creating, where the bar is visible from birth with a static
+      sentence: the page IS the session, and a form whose only way to commit it
+      appears later is a form with no way to commit it. Creating has no Delete
+      and no Cancel — the article never leaves edit mode and there is nothing
+      stored to go back to or delete. -#}
+  <div class="commitbar" id="commitbar"{% if not creating %} hidden{% endif %}>
+    {% if creating %}
+    <span id="unsaved">Nothing is written until you press Create</span>
+    <button type="button" id="save">Create</button>
+    <span id="state" role="status"></span>
+    {% else %}
     <span id="unsaved">Nothing to save</span>
     {#- Ask 7's receipt, beside the count of what is unsaved because that is the
         sentence it qualifies: a draft is what is holding the writing that has
@@ -13225,11 +12937,13 @@ _DETAIL = """
         closes a tab believing the other one was the way out. -#}
     <button type="button" id="cancel" hidden>Cancel</button>
     <span id="state" role="status"></span>
+    {% endif %}
   </div>
-  {% if may_write %}
+  {% if may_write and not creating %}
   {#- The question, under the button that asks it. Hidden until then: a page that
       is always showing a way to delete the thing you are reading is a page that
-      is always slightly threatening you. -#}
+      is always slightly threatening you. A record that does not exist yet cannot
+      be deleted, and `cascade_of` was never asked about it. -#}
   <div class="confirming" data-also="{{ (e.deletes + e.frees)|join(" ") }}" hidden>
     <p class="asking">Delete <strong>{{ e.title }}</strong>
       (<code>{{ e.id }}</code>)?<br>
@@ -13263,7 +12977,7 @@ _DETAIL = """
   <form id="edit" data-id="{{ e.id }}" onsubmit="return false">
     <input type="hidden" name="base_commit" value="{{ base_commit }}">
     <input name="title" data-type="text" value="{{ e.title }}" aria-label="Title"
-           class="field title-field">
+           class="field title-field"{% if creating %} placeholder="Title"{% endif %}>
   {% endif %}
   <div class="panes">
     <aside class="facts">
@@ -13283,6 +12997,17 @@ _DETAIL = """
             `<dt>`/`<dd>` pair reads as a caption to a person and as two
             unrelated blocks of text to everything else. -#}
         {% for row in e.rows %}
+        {% if creating %}
+        {#- The `_NEW` row shape, absorbed: every kind's fields are on the page
+            and `data-kinds` says whose each one is — this hide/show IS the kind
+            switch. No `for` on the row whose control is a radio group: a label
+            can name one element, and naming one stop of a hill would tell a
+            screen reader that "Status" is the word for `shaping`. -#}
+        <dt data-kinds="{{ row.kinds }}">{% if row.for %}<label for="{{ row.for
+          }}">{{ row.label }}</label>{% else %}{{ row.label }}{% endif %}{% if row.gates %}
+          <span class="req" hidden>required</span>{% endif %}</dt>
+        <dd data-kinds="{{ row.kinds }}">{{ row.control }}</dd>
+        {% else %}
         <dt class="{% if row.derived %}derived{% endif %}
                    {% if row.editing_only %}editing-only{% endif %}">{% if
           editable and row.control and row.for %}<label for="{{ row.for
@@ -13303,11 +13028,17 @@ _DETAIL = """
           {% if row.hint %}<span class="hint" id="{{ row.hint_id }}">{{ row.hint }}</span>
           {% endif %}
         </dd>
+        {% endif %}
         {% endfor %}
       </dl>
     </aside>
     <div class="main">
-      {% if e.problems %}<ul class="problems">
+      {#- What the form or the server refused a create with: empty markup filled
+          by script, news arriving on a page that is already open. The stored
+          page's problems are the index's own, rendered by the server. -#}
+      {% if creating %}
+      <ul id="problems" class="problems" role="status" aria-live="polite" hidden></ul>
+      {% elif e.problems %}<ul class="problems">
         {% for p in e.problems %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
       {% if e.hints %}<ul class="hints">
         {% for h in e.hints %}<li>{{ h }}</li>{% endfor %}</ul>{% endif %}
@@ -13334,7 +13065,11 @@ _DETAIL = """
         </ul>
       </section>
       {% endif %}
-      <div class="doc read">{{ e.body }}</div>
+      {#- The landing document. Absent when creating, and structurally so: the
+          view machine's `LANDING` looks for exactly this element, and the
+          create form having nothing to land on is what keeps its `view` a
+          draft preview instead of a sessionless page. -#}
+      {% if not creating %}<div class="doc read">{{ e.body }}</div>{% endif %}
       {% if editable %}
       {#- Who else is in this document, by name. A name is the channel that
           survives every reader; a colour is not, and a caret drawn one line off
@@ -13343,9 +13078,29 @@ _DETAIL = """
           row carries no margin of its own for exactly that reason, so an empty
           room costs no space above the toolbar and somebody arriving pushes it
           down by the one line they are announced on. -#}
+      {%- if not creating %}
       <p id="seatbar" class="field bodybar">
         <span id="together" class="together" role="status" aria-live="polite"></span>
       </p>
+      {%- endif %}
+      {% if creating %}
+      {#- The template is offered, never imposed: it fills an untouched box and
+          refuses to overwrite one somebody has typed in. `template` and not
+          `start from`: the label names the control, and the sentence it was
+          part of ended in the option list. -#}
+      <p class="field bodybar">
+        <label class="tplpick">template
+          <select id="template">
+            <option value="pitch">the shaping template</option>
+            <option value="task">a task</option>
+            <option value="project">a project</option>
+            <option value="product">a product</option>
+            <option value="blank">nothing</option>
+          </select>
+        </label>
+        <span class="hint" id="tplstate" role="status" aria-live="polite"></span>
+      </p>
+      {% endif %}
       {#- The hint that was here — "paste or drop an image to put it in the
           plan" — is gone, and it is the Image button that replaced it: a
           sentence describing a gesture is what a toolbar puts in a control. It
@@ -13368,9 +13123,10 @@ _DETAIL = """
           thing under them is the thing being typed in. -#}
       <div class="bodysplit">
         <div class="bodywrap">
-          <div id="seats" class="seats" aria-hidden="true"></div>
+          {% if not creating %}<div id="seats" class="seats" aria-hidden="true"></div>{% endif %}
           <textarea name="body" class="field body-field"
-                    aria-label="Shaping document">{{ e.raw_body }}</textarea>
+                    {% if creating %}rows="14" placeholder="The shaping document."
+                    {% endif %}aria-label="Shaping document">{{ e.raw_body }}</textarea>
         </div>
         {{ splitter }}
         <div id="body-preview" class="field doc" hidden></div>
@@ -13380,9 +13136,13 @@ _DETAIL = """
           this is the one page with a draft and because an interval is a setting
           and this is where the settings are. -#}
       <p class="field bodybar statusbar" id="statusbar">
-        <button type="button" id="draftevery"></button>
+        {% if not creating %}<button type="button" id="draftevery"></button>{% endif %}
       </p>
+      {#- No draft and no 409-with-a-report on a create; a refused create lands
+          in `#problems` above. -#}
+      {% if not creating %}
       <div id="conflict" role="status" aria-live="polite" hidden></div>
+      {% endif %}
       {% endif %}
     </div>
   </div>
@@ -13479,14 +13239,23 @@ grip.onpointerdown = event => {
 // field as this tab last saw it, overwriting whatever somebody else changed while
 // it sat open — which is exactly what scoped compare-and-swap exists to prevent.
 const FORM = document.getElementById('edit');
+// Creating or editing: one template, one script, two write paths. `null` on a
+// stored record's page; the kind being made on `/new`. This is the same flag
+// the issue and note pages grew for their create modes — theirs die with those
+// templates, and this copy becomes the only one.
+const CREATING = {{ creating|tojson }};
+// Create-page furniture: null on a stored record, dereferenced only behind
+// `CREATING`.
+const KIND = document.getElementById('kind');
+const PROBLEMS = document.getElementById('problems');
 const ORIGINAL = {};
 const CONTROLS = [...FORM.querySelectorAll('[data-type]')];
 const BODY = FORM.querySelector('[name=body]');
 // The box holding the title, for the preview: the page suppresses the document's
 // own leading heading when it repeats the title, and a preview that does not know
-// the title cannot suppress it. Found by class rather than through the form,
-// because on the create page the title sits outside `<form>` and is bound to it
-// by a `form=` attribute — which `querySelector` on the form does not see.
+// the title cannot suppress it. Found by class: it once had to be, when the
+// create page kept this box outside `<form>`, and the class find is the one
+// that keeps working wherever the box sits.
 const TITLED = document.querySelector('.title-field');
 // The one place any of this reads or writes the document. Seven operations,
 // every index in UTF-16 code units, one implementation — see the banner in the
@@ -13571,6 +13340,9 @@ const BAR = document.getElementById('commitbar');
 const UNSAVED = document.getElementById('unsaved');
 
 function dirty() {
+  // The create bar's sentence is static — "Nothing is written until you press
+  // Create". A counter here would count fields against defaults nobody typed.
+  if (CREATING) return;
   let fields = {};
   // A number typed as a word throws in `read`; that is Save's message to deliver,
   // not a reason for the counter to stop counting the rest.
@@ -13603,6 +13375,59 @@ watchRequired(FORM);
 // The same form, and the same status: the hill is the control that sets it.
 attachHill(FORM);
 
+// The create mode's two pickers. Everything here exists only on `/new`; a
+// stored record has a kind already and a body somebody wrote. Declarations,
+// not consts, and indented inside the block on purpose: the pinned suite
+// reads them by their `function` spelling, and the collision test only counts
+// names declared at column 0.
+if (CREATING) {
+  // Every kind's fields are on the page and the ones this kind does not have
+  // are hidden, rather than each kind being its own round trip — switching
+  // kind after typing a title used to mean typing it again. This hide/show is
+  // the kind switch the merged page runs on.
+  function showKind() {
+    for (const element of FORM.querySelectorAll('[data-kinds]'))
+      element.hidden = !element.dataset.kinds.split(' ').includes(KIND.value);
+  }
+  showKind();
+
+  // The body a new record starts from. Switching kind switches template, but
+  // only while the box is still one of ours: once somebody has typed, the box
+  // is theirs — the template never changes underneath a sentence, and the
+  // picker says so rather than appearing to do nothing.
+  const TEMPLATES = {{ templates|tojson }};
+  const TPL = document.getElementById('template');
+  const TPLSTATE = document.getElementById('tplstate');
+  function untouched() {
+    return Object.values(TEMPLATES).some(text => text.trim() === SURFACE.text().trim());
+  }
+  function applyTemplate(name) {
+    if (!untouched()) {
+      TPLSTATE.textContent = 'the body has been edited — clear it to start from a template';
+      return false;
+    }
+    // A whole-document replacement, said in those words and made once. `apply`
+    // marks it as the page writing rather than a person typing, and the event
+    // tells the layers drawn beside the box, because `apply` deliberately
+    // fires no `input` — without it, choosing `blank` left twenty-one line
+    // numbers down the side of an empty box.
+    SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, TEMPLATES[name] ?? ''));
+    dispatchEvent(new Event('openproj:editing'));
+    TPLSTATE.textContent = '';
+    return true;
+  }
+  TPL.onchange = () => { applyTemplate(TPL.value); };
+  KIND.onchange = () => {
+    showKind();
+    if (untouched() && TEMPLATES[KIND.value] !== undefined) {
+      TPL.value = KIND.value;
+      applyTemplate(KIND.value);
+    }
+  };
+  TPL.value = TEMPLATES[KIND.value] !== undefined ? KIND.value : 'blank';
+  applyTemplate(TPL.value);
+}
+
 // `showEditing` and not `show`: the detail page's hash router declares a `show`
 // of its own in another `<script>`, and two top-level functions of one name in
 // one page are one function. The two blocks are never emitted together today —
@@ -13611,6 +13436,12 @@ attachHill(FORM);
 // (Written without naming the tag: this block is a Jinja template, and a comment
 // that mentions one is a comment the template engine reads.)
 function showEditing(editing) {
+  // Unreachable when creating — `showView` touches the session only where a
+  // landing exists and the create page has none, and neither Cancel nor
+  // Delete is on the page to reach it through `flipEditing` — and guarded
+  // anyway, because the failure if that ordering ever changed is a null deref
+  // that takes the whole script.
+  if (CREATING) return;
   // One class on the article. Each fact is a single row whose value swaps for its
   // control, so nothing is shown twice and the page does not jump when you start.
   document.querySelector('article.entity').classList.toggle('editing', editing);
@@ -13701,7 +13532,9 @@ function flipEditing() {
     announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
   }
 }
-document.getElementById('cancel').onclick = flipEditing;
+if (!CREATING) {
+  document.getElementById('cancel').onclick = flipEditing;
+}
 
 // Deleting a record. Two presses and a named record between them, and every
 // element found through the article it belongs to rather than by id — this page
@@ -13777,6 +13610,11 @@ for (const article of document.querySelectorAll('article.entity')) {
 }
 
 async function save() {
+  // One button, two verbs: a record that exists is PATCHed with what changed;
+  // a record that does not exist yet is POSTed whole. The branch is the entire
+  // difference between the two modes' write paths — everything around it,
+  // Cmd+S included, is shared.
+  if (CREATING) { await createRecord(); return; }
   let fields;
   try {
     fields = changed();
@@ -13846,6 +13684,81 @@ async function save() {
 
 
 
+// The create half of Save, from the page this one absorbed: collect every
+// visible field, check the gates the labels are marked from, POST once, land
+// on the record that now exists.
+async function createRecord() {
+  const fields = {kind: KIND.value};
+  const status = FORM.querySelector('[name=status]')?.value || 'shaping';
+  const missing = [];
+  for (const control of FORM.querySelectorAll('[data-type]')) {
+    // A field this kind does not have is not empty, it is absent — sending it
+    // would ask the server to set an attribute the model does not define.
+    if (control.closest('[data-kinds]')?.hidden) continue;
+    let value;
+    try { value = read(control); } catch (error) { announce(error.message); return; }
+    const empty = value === null || (Array.isArray(value) && !value.length);
+    const waived = control.name === 'reviewers' &&
+      FORM.querySelector('[name=review_waived]')?.checked;
+    // The same gates the labels are marked from, so what the form refuses and
+    // what it warned you about cannot be two different lists.
+    const gates = control.dataset.requiredAt;
+    if (gates && empty && !waived && gates.split(' ').includes(status))
+      missing.push(labelOf(control));
+    if (!empty) fields[control.name] = value;
+  }
+  if (TITLED.value.trim()) fields.title = TITLED.value.trim(); else missing.push('Title');
+  if (missing.length) {
+    // The words on the page, not the words in the file: `person_weeks` is what
+    // git holds, and a refusal that names it sends somebody looking for a
+    // field with that label.
+    const chosen = FORM.querySelector('[name=status]');
+    PROBLEMS.hidden = false;
+    // `replaceChildren` with one line of text, not `innerHTML`: every word in
+    // this sentence comes off the page, and the page's fields hold whatever
+    // the plan holds. There is no markup wanted here at all, so none is built.
+    const line = document.createElement('li');
+    line.textContent = 'still needed at status '
+      + `${chosen?.selectedOptions[0]?.textContent.trim() || status}: `
+      + missing.join(', ');
+    PROBLEMS.replaceChildren(line);
+    return;
+  }
+  // The shell's banner is told before the request goes and the sha after,
+  // because the server announces a commit to the event stream before it
+  // answers the request that made it.
+  dispatchEvent(new Event('openproj:writing'));
+  let committed = null;
+  try {
+    const response = await fetch('/api/entity', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        base_commit: BASE.value, fields,
+        body: SURFACE.text() || '',
+      }),
+    });
+    const answer = await answerOf(response);
+    if (!response.ok) {
+      // The client check is a courtesy; this is the truth, and swallowing it
+      // leaves somebody staring at a form that looks fine. Built as text
+      // nodes, because `answer.detail` quotes back whatever key was posted.
+      PROBLEMS.hidden = false;
+      PROBLEMS.replaceChildren(...refusals(answer, response.status).map(text => {
+        const item = document.createElement('li');
+        item.textContent = text;
+        return item;
+      }));
+      return;
+    }
+    committed = answer.commit;
+    location.href = '/detail/' + answer.id;
+  } finally {
+    // Announced even when refused, or one rejected form leaves every later
+    // event held back and the banner never appears again.
+    dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
+  }
+}
+
 document.getElementById('save').onclick = save;
 addEventListener('keydown', event => {
   if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); save(); }
@@ -13906,6 +13819,8 @@ let draftTicker = 0;
 let draftRefused = false;
 
 function sayDraft() {
+  // `#draftsaved` is not in the creating commitbar: no draft, no receipt.
+  if (!RECEIPT) return;
   if (!draftWritten) { RECEIPT.textContent = ''; return; }
   const seconds = Math.round((Date.now() - draftWritten) / 1000);
   // "just now" rather than "0s ago", and minutes past ninety seconds: a counter
@@ -13969,7 +13884,9 @@ function forgetDraft() {
   sayDraft();
 }
 
-SURFACE.onInput(() => {
+// No draft on the create page: nothing stored means nothing to restore over a
+// room, and no key with no id to hang one on.
+if (!CREATING) SURFACE.onInput(() => {
   if (draftTimer) return;
   const wait = draftTried + draftMs - Date.now();
   if (wait <= 0) writeDraft();
@@ -13987,42 +13904,51 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && draftTimer) writeDraft();
 });
 
-statusPick(document.getElementById('draftevery'), 'Draft', DRAFT_SECONDS, EDITOR.autosave,
-           seconds => {
-             draftMs = seconds * 1000;
-             rememberEditor({autosave: seconds});
-             announce(`An unsaved draft is kept in this browser every ${seconds} seconds. `
-                      + 'Nothing is committed on a timer.');
-           });
-
-const draft = remembered.map(DRAFT);
-// A draft from before this — bare text under the old key — records no commit,
-// and there is nothing honest to do with one: pairing it with today's base is
-// the defect above, and inventing a base is worse. Dropped, and said out loud
-// unless a newer draft supersedes it, because work that goes quietly is the
-// other half of this section.
-const older = `openproj:${FORM.dataset.id}`;
-if (remembered.get(older) !== null) {
-  remembered.forget(older);
-  if (typeof draft.text !== 'string') {
-    announce('a draft saved by an older version of this page was discarded');
-  }
+// The interval is a draft setting, and the button it fills is not on the
+// creating page.
+if (!CREATING) {
+  statusPick(document.getElementById('draftevery'), 'Draft', DRAFT_SECONDS, EDITOR.autosave,
+             seconds => {
+               draftMs = seconds * 1000;
+               rememberEditor({autosave: seconds});
+               announce(`An unsaved draft is kept in this browser every ${seconds} seconds. `
+                        + 'Nothing is committed on a timer.');
+             });
 }
-if (typeof draft.text === 'string' && draft.text !== SURFACE.text()) {
-  // The page is at HEAD and this text is not. Saving it is compared against the
-  // commit it was drafted against, so the server can tell a merge from an
-  // overwrite — and whoever restores it is told the ground moved rather than
-  // finding out from a refusal one keystroke later.
-  const moved = draft.base && draft.base !== BASE.value;
-  if (draft.base) BASE.value = draft.base;
-  announce(moved
-    ? 'unsaved draft restored — somebody else has changed this since it was written'
-    : 'unsaved draft restored');
-  // The whole document, replaced once and said so. `apply` because this is the
-  // page restoring, not a person typing: at load there is no history to protect
-  // and nothing may be told that somebody just wrote 400 lines.
-  SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, draft.text));
-  showEditing(true);
+
+// No restore on the create page: with no stored record there is no id, and a
+// draft key built from an empty id would be every create page's at once. The
+// restore-forces-a-session rule for stored records is untouched by this gate.
+if (!CREATING) {
+  const draft = remembered.map(DRAFT);
+  // A draft from before this — bare text under the old key — records no commit,
+  // and there is nothing honest to do with one: pairing it with today's base is
+  // the defect above, and inventing a base is worse. Dropped, and said out loud
+  // unless a newer draft supersedes it, because work that goes quietly is the
+  // other half of this section.
+  const older = `openproj:${FORM.dataset.id}`;
+  if (remembered.get(older) !== null) {
+    remembered.forget(older);
+    if (typeof draft.text !== 'string') {
+      announce('a draft saved by an older version of this page was discarded');
+    }
+  }
+  if (typeof draft.text === 'string' && draft.text !== SURFACE.text()) {
+    // The page is at HEAD and this text is not. Saving it is compared against the
+    // commit it was drafted against, so the server can tell a merge from an
+    // overwrite — and whoever restores it is told the ground moved rather than
+    // finding out from a refusal one keystroke later.
+    const moved = draft.base && draft.base !== BASE.value;
+    if (draft.base) BASE.value = draft.base;
+    announce(moved
+      ? 'unsaved draft restored — somebody else has changed this since it was written'
+      : 'unsaved draft restored');
+    // The whole document, replaced once and said so. `apply` because this is the
+    // page restoring, not a person typing: at load there is no history to protect
+    // and nothing may be told that somebody just wrote 400 lines.
+    SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, draft.text));
+    showEditing(true);
+  }
 }
 </script>{% endif %}
 {% if editable %}{{ views }}{% endif %}
@@ -14764,7 +14690,7 @@ const COEDIT = (() => {
 
 
 # The editing surface, in one place, because two pages draw it and it was drawn
-# twice. `_DETAIL` (with `_NEW`) put the mode class on `article.entity`; `_ISSUE`
+# twice. `_DETAIL` puts the mode class on `article.entity`; `_ISSUE`
 # and `_NOTE` put it on `<body>` and kept their own copies of `.bodybar` and
 # `.body-field` in `_RECORD_STYLE` — so the toolbar, the box and the two bars
 # either side of it were two declarations of one thing, and only one of them ever
@@ -16704,6 +16630,10 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
     reached no template and no test after `_fact_rows` superseded them. A field
     formatted in two places is a field that will be formatted two ways.
     """
+    # Over `records`, not `entities`: the record page is the one page every
+    # kind gets (spec §2). Until an unplanned rung exists the two maps are
+    # equal, so nothing changes at this commit — the line is here so the flip
+    # commit ships pages, not KeyErrors.
     return [
         {
             "id": entity_id,
@@ -16723,7 +16653,7 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
             "progress": _progress_view(index, entity),
             "body": _body_html(entity, links),
         }
-        for entity_id, entity in sorted(index.entities.items())
+        for entity_id, entity in sorted(index.records.items())
     ]
 
 
@@ -16891,55 +16821,6 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
                 fields[column] = field
         per_kind[kind] = fields
     return per_kind
-
-
-def render_new(
-    kind: str,
-    base_commit: str,
-    links: Links = ROUTES,
-    index: Index | None = None,
-    editor: str = "",
-    may_write: bool = False,
-) -> str:
-    """The create page, which is the detail page in edit mode with nothing in it.
-
-    A second, differently-shaped form for creating was the thing that made the
-    tool feel like two tools, so this is the same markup, the same controls and
-    the same stylesheet — a blank entity rather than a stored one.
-
-    The only page that marks no nav item. `aria-current="page"` claims a page
-    within a set of pages and this form is not in that set: pressing Table from it
-    abandons the form rather than staying put, so lighting Table would be a claim
-    the link does not keep. That is also why `<h1>New entity</h1>` is the one page
-    label still on the screen — with nothing lit in the nav, the heading is all
-    that says what this page will make.
-    """
-    body = _ENV.from_string(_NEW).render(
-        kind=kind,
-        kinds=KINDS,
-        rows=_new_rows(),
-        base_commit=base_commit,
-        links=links,
-        ace=_ace() if _ace_wanted(editor, base_commit, may_write) else Markup(""),
-        acesurface=_ACE_SURFACE if _ace_wanted(editor, base_commit, may_write) else Markup(""),
-        combobox=_combobox_html(index),
-        required=_REQUIRED_JS,
-        hill=_HILL_JS,
-        viewbar=_viewbar(
-            _either_editor_possible(base_commit, may_write),
-            _ace_wanted(editor, base_commit, may_write),
-        ),
-        views=_VIEWS if may_write else Markup(""),
-        splitter=_SPLIT_HANDLE,
-        templates=TEMPLATES,
-    )
-    return _page(
-        f"openproj — new {kind}",
-        body,
-        _DETAIL_STYLE + _SUGGEST_STYLE,
-        links,
-        unreadable=index.unreadable if index else (),
-    )
 
 
 def _pr_sort(ref: str) -> tuple[str, int]:
@@ -19832,36 +19713,68 @@ def render_detail(
     base_commit: str | None = None,
     may_write: bool = False,
     editor: str = "",
+    creating: str | None = None,
 ) -> str:
-    """Every entity, or exactly one.
+    """Every entity, exactly one — or one that does not exist yet.
 
     The server serves one per route; the static build serves them all in a page
     that hides everything but the hash. Same markup, so the two cannot drift.
+
+    `creating` is the kind being made. The create page was a forked template
+    once (`_NEW`), and a fork is what the issue and note pages proved a fork
+    does; it is now this template with a blank record, the union of every
+    kind's fields, and `data-kinds` deciding what shows.
     """
-    rows = _detail_rows(index, links)
-    if only is not None:
-        rows = [row for row in rows if row["id"] == only]
-    # Every entity gets its facts, not only the one being served on its own route:
-    # the static export renders them all, and it is the same page.
-    for row in rows:
-        entity = index.entities[row["id"]]
-        row["rows"] = _fact_rows(index, entity, links)
-        row["raw_body"] = entity.body
-        # What deleting it would take with it, drawn into the confirmation before
-        # anybody presses anything. From `cascade_of`, which is what the route
-        # itself asks — a panel that listed the consequences from a second
-        # derivation of them would be a panel that can be wrong about the commit
-        # it is authorising.
-        row["deletes"], row["frees"] = cascade_of(index, row["id"])
+    if creating is not None:
+        # A blank record through the same row machinery. No id (the server
+        # mints it), no cascade (nothing to delete), no problems (nothing has
+        # been refused yet).
+        rows: list[dict] = [{
+            "id": "",
+            "title": "",
+            "kind": creating,
+            "parent": None,
+            "parent_link": "",
+            "problems": [],
+            "hints": [],
+            "progress": None,
+            "body": Markup(""),
+            "rows": _new_rows(),
+            "raw_body": "",
+            "deletes": [],
+            "frees": [],
+        }]
+    else:
+        rows = _detail_rows(index, links)
+        if only is not None:
+            rows = [row for row in rows if row["id"] == only]
+        # Every entity gets its facts, not only the one being served on its own
+        # route: the static export renders them all, and it is the same page.
+        # `records`, not `entities`: this page is every record's page — spec §2
+        # puts it on the total side of the inversion, and the day an unplanned
+        # rung lands its records get their pages through this line unchanged.
+        for row in rows:
+            entity = index.records[row["id"]]
+            row["rows"] = _fact_rows(index, entity, links)
+            row["raw_body"] = entity.body
+            # What deleting it would take with it, drawn into the confirmation
+            # before anybody presses anything. From `cascade_of`, which is what
+            # the route itself asks — a panel that listed the consequences from
+            # a second derivation of them would be a panel that can be wrong
+            # about the commit it is authorising.
+            row["deletes"], row["frees"] = cascade_of(index, row["id"])
     body = _ENV.from_string(_DETAIL).render(
         entities=rows,
-        groups=_by_status(rows),
+        groups=[] if creating else _by_status(rows),
         # Every entity this page holds, not the one in the URL: the static export
         # is all of them in one file, and the shell's banner has no other way to
         # tell "somebody changed what you are reading" from "somebody changed
         # something".
-        showing=[row["id"] for row in rows],
-        single=only is not None,
+        showing=[] if creating else [row["id"] for row in rows],
+        single=creating is not None or only is not None,
+        creating=creating,
+        kinds=KINDS,
+        templates=TEMPLATES if creating else {},
         links=links,
         editable=base_commit is not None,
         # The Delete control asks for both, and `editable` alone is not enough.
@@ -19906,9 +19819,22 @@ def render_detail(
         # route answers `viewer`, and under `--auth dev` there is no session while
         # the write is permitted. A gate on the corner would silence the editor in
         # exactly the mode this tool is tried in.
-        yjs=_yjs() if base_commit is not None and may_write else Markup(""),
-        coedit=_COEDIT if base_commit is not None and may_write else Markup(""),
+        #
+        # And never when creating: a record with no id has no room to join,
+        # exactly as the old create page never carried these bytes.
+        yjs=_yjs() if base_commit is not None and may_write and creating is None else Markup(""),
+        coedit=(
+            _COEDIT if base_commit is not None and may_write and creating is None else Markup("")
+        ),
     )
+    if creating is not None:
+        # No nav item marked, deliberately: `aria-current="page"` claims a page
+        # within the set, and pressing Table from this form abandons it rather
+        # than staying put. With nothing lit, the <h1> is what names the page.
+        return _page(
+            f"openproj — new {creating}", body, _DETAIL_STYLE + _SUGGEST_STYLE, links,
+            unreadable=index.unreadable,
+        )
     return _page(
         "openproj — detail", body, _DETAIL_STYLE + _SUGGEST_STYLE, links, "detail",
         index.unreadable,

@@ -50,7 +50,6 @@ def served_pages(index: Index) -> dict[str, str]:
     from openproj.render import (
         render_graph,
         render_issues,
-        render_new,
         render_notes,
         render_timeline,
     )
@@ -69,7 +68,8 @@ def served_pages(index: Index) -> dict[str, str]:
         # have no client rects and the sweep below never sees them. The create
         # page is the same markup and the same stylesheet with the mode already
         # on — twenty controls that would otherwise be measured on no page at all.
-        "create": render_new("task", HEAD, ROUTES, index, may_write=True),
+        "create": render_detail(index, ROUTES, base_commit=HEAD, may_write=True,
+                                creating="task"),
     }
 
 
@@ -1126,7 +1126,7 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
     What was wrong was which one won, on which pages — so that is what is asked,
     by name, per page.
     """
-    from openproj.render import render_cycle, render_graph, render_new
+    from openproj.render import render_cycle, render_graph
 
     number = sorted(index.cycles)[0]
     bar = el("div", "commitbar", id="commitbar")
@@ -1134,7 +1134,8 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
         "detail": (render_detail(index, ROUTES, only=sorted(index.entities)[0],
                                  base_commit=HEAD, may_write=True),
                    [el("article", "entity editing"), bar]),
-        "create": (render_new("task", HEAD, ROUTES, index, may_write=True),
+        "create": (render_detail(index, ROUTES, base_commit=HEAD, may_write=True,
+                                 creating="task"),
                    [el("article", "entity editing"), bar]),
         "cycle": (render_cycle(index, number, ROUTES, base_commit=HEAD), [bar]),
         "graph": (render_graph(index, ROUTES, base_commit=HEAD), [bar]),
