@@ -14655,17 +14655,33 @@ const COEDIT = (() => {
     }
     // Which construction this closure belongs to. A session can end and the
     // next one connect before the ended session's socket has delivered its
-    // `onclose` — the close is a task, the reconnect a click apart — and that
-    // stale close must neither wipe the live room's roster nor arm a reconnect
-    // BESIDE the live socket. Measured before this guard: two open sockets in
-    // one tab, one person seated twice.
+    // queued events — every one of them is a task, and the reconnect is a click
+    // apart — so a socket can speak for a room that has been replaced, or for a
+    // session that has ended and not been replaced at all. A stale close must
+    // neither wipe the live room's roster nor arm a reconnect BESIDE the live
+    // socket (measured before this guard: two open sockets in one tab, one
+    // person seated twice); and what is true of the close is true of every
+    // frame in flight when the session ended: `heard()` against a landed page
+    // is the silent-overwrite family by wire — a stale `update` splices
+    // somebody's change into text Escape deliberately kept in the box, a stale
+    // `saved` moves `base_commit` and `ORIGINAL_BODY` and drops the draft.
+    //
+    // Guarded IN the handlers (`opened !== socket || !wanted`) rather than by
+    // nulling them at session end: the wiring stays in this one function, and
+    // the guard does not rest on the browser's promise that no message follows
+    // a close — a promise the suite's hand-driven sockets do not keep, and the
+    // `!wanted` half of which nulling would need a second site to cover anyway.
+    // `onclose` alone answers for the ended session's own socket, because its
+    // settle-and-clear IS that session's cleanup; it stops before the reconnect.
     const opened = socket;
     socket.onopen = () => {
+      if (opened !== socket || !wanted) return;
       arrived = true;
       attempts = 0;
       send({t: 'hello', seed: seed, sv: b64(YJS.encodeStateVector(doc))});
     };
     socket.onmessage = event => {
+      if (opened !== socket || !wanted) return;
       let message;
       try { message = JSON.parse(event.data); } catch (error) { return; }
       heard(message);

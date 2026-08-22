@@ -670,22 +670,46 @@ addEventListener('load', () => setTimeout(() => {
   document.getElementById('cancel').click();
   flipEditing();
   window.__now = window.__sockets.map(one => one.readyState);
-  // Past the first reconnect backoff (500ms), where the stale close's
-  // reconnect would have landed.
-  setTimeout(() => { window.__later = window.__sockets.map(one => one.readyState); }, 800);
+  const stale = window.__sockets[0];
+  const live = window.__sockets[1];
+  // The live room seats somebody and hands this tab its base.
+  live.hear({t: 'welcome', seed: null, base: '1'.repeat(40), you: 'ann',
+             sv: 'AA==', update: '', people: ['ann', 'bo']});
+  live.hear({t: 'who', people: ['ann', 'bo'], where: []});
+  window.__roster = document.getElementById('together').textContent;
+  // Frames that were in flight when the first session ended deliver as their
+  // own tasks, through the closed socket: a roster and a commit that must not
+  // reach a page that socket no longer speaks for.
+  stale.hear({t: 'who', people: ['ann', 'cy'], where: []});
+  stale.hear({t: 'saved', commit: 'f'.repeat(40), outcome: 'committed', pushed: true});
+  window.__afterStale = {
+    roster: document.getElementById('together').textContent,
+    base: document.querySelector('[name=base_commit]').value,
+  };
+  // Past the stale socket's own close event AND the first reconnect backoff
+  // (500ms), where a reconnect it armed would have landed.
+  setTimeout(() => { window.__later = {
+    states: window.__sockets.map(one => one.readyState),
+    roster: document.getElementById('together').textContent,
+  }; }, 800);
 }, 200));
 </script>
 """
 
 
 def test_the_next_session_is_one_seat_not_two(index: Index, tmp_path: Path):
-    """A session ended and the next begun before the old socket's close fired.
+    """A session ended and the next begun before the old socket has gone quiet.
 
-    The close is a queued task and the next Write press is a click away, so the
-    stale close arrives while the new session's socket is already live — and it
-    must neither wipe the live room's roster nor arm a reconnect BESIDE the
-    live socket. Measured without the `opened !== socket` guard in `connect`:
-    a third socket at the backoff, two open at once, one person seated twice.
+    Every socket event is a queued task and the next Write press is a click
+    away, so the ended session's socket still speaks after the live one is up —
+    its close, and any frame that was in flight when the session ended. None of
+    it may reach the page: the close must not wipe the live room's roster or
+    arm a reconnect BESIDE the live socket (measured without the
+    `opened !== socket` guard in `connect`: a third socket at the backoff, two
+    open at once, one person seated twice), and a stale frame must not be
+    heard — a stale `who` rewrites who is listed as editing, and a stale
+    `saved` moves `base_commit` under a session it does not belong to, which is
+    the silent-overwrite family by wire.
     """
     entity_id = a_record_with_a_document(index)
     page = render_detail(
@@ -695,11 +719,28 @@ def test_the_next_session_is_one_seat_not_two(index: Index, tmp_path: Path):
 
     got = measured_in(
         chrome(), page, tmp_path / "reseated.html", 1200,
-        "return {now: window.__now, later: window.__later};",
+        "return {now: window.__now, roster: window.__roster,"
+        "        afterStale: window.__afterStale, later: window.__later};",
         height=900, patience=2400,
     )
 
     assert got["now"] == [3, 1], f"one closed seat and one live one, not {got['now']}"
-    assert got["later"] == [3, 1], (
-        f"the ended session's close re-seated this reader beside the live socket: {got['later']}"
+    assert got["roster"] == "also editing: bo", (
+        f"the live room never seated bo, so the stale halves below prove nothing: "
+        f"{got['roster']!r}"
+    )
+    assert got["afterStale"]["roster"] == "also editing: bo", (
+        "a frame in flight when the old session ended was heard: the ended socket "
+        f"rewrote the live room's roster to {got['afterStale']['roster']!r}"
+    )
+    assert got["afterStale"]["base"] == "1" * 40, (
+        "a stale `saved` moved base_commit under a session it does not belong to: "
+        f"{got['afterStale']['base']!r}"
+    )
+    assert got["later"]["states"] == [3, 1], (
+        f"the ended session's close re-seated this reader beside the live socket: "
+        f"{got['later']['states']}"
+    )
+    assert got["later"]["roster"] == "also editing: bo", (
+        "the ended session's close wiped the live room's roster"
     )
