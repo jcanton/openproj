@@ -692,8 +692,8 @@ def test_the_status_ladder_is_the_validator_s_and_not_a_hand_copy() -> None:
 def test_every_issue_word_stands_on_the_hill() -> None:
     """All four of `ISSUE_STATUS` already have stops — `ready` at the summit,
     `in_progress` halfway down, `done` at the bottom, `shelved` on the ground
-    under the summit — so the issue page gets the hill and the last of #67's
-    asymmetry goes with it. Derived from the vocabulary, like the other two
+    under the summit — so an issue's record page gets the hill and the last of
+    #67's asymmetry goes with it. Derived from the vocabulary, like the other two
     ladders, so a word added to `ISSUE_STATUS` fails here rather than quietly
     having nowhere to stand."""
     assert HILL_LADDERS["issue"] == tuple(ISSUE_STATUS)
@@ -704,7 +704,7 @@ def test_every_issue_word_stands_on_the_hill() -> None:
 
 
 def test_the_lock_hint_keeps_the_two_pages_own_words() -> None:
-    """Copy carried verbatim from the issue and note pages it replaces. A changed
+    """Copy carried verbatim from the issue and note pages it replaced. A changed
     word here is a changed sentence on a page somebody already learned to read."""
     assert _STATE_HINT == {
         "issue": "from the work it was pitched into",

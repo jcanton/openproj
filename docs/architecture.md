@@ -3,12 +3,12 @@
 ## The pages
 
 `index.html` is **Records**, the landing page — every record in the plan, one line each, sorted by
-last edited, with the search box above it. `table.html` is the filterable,
-searchable table and the page PM work lives in. `graph.html` is the dependency DAG, grouped by
-project and pitch. `timeline.html` is the derived Gantt. `cycles.html` and `people.html` are the
-cycle records with their betting tables, and who is on what and who is full; `detail.html` is one
-record on its own page — any of the six kinds — and under the server it is also where a record is
-edited.
+last edited where there is git history to ask and by id in an export of a plain directory, with the
+search box above it. `table.html` is the filterable, searchable table and the page PM work lives
+in. `graph.html` is the dependency DAG, grouped by project and pitch. `timeline.html` is the
+derived Gantt. `cycles.html` and `people.html` are the cycle records with their betting tables, and
+who is on what and who is full; `detail.html` is one record on its own page — any of the six kinds
+— and under the server it is also where a record is edited.
 
 Issues and notes are records whose rung says `planned=False`: they are on Records and on their own
 pages, and never in the plan views. The exclusion is not a filter on each page — `Index.entities`

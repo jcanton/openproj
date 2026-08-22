@@ -2662,9 +2662,11 @@ li.task-list-item input { margin-right: .35em; }
    content a parser is entitled to do anything with. */
 .hill { --ball: 17px; --ghost: 9px; display: block;
         position: relative; width: 100%; max-width: 15rem; aspect-ratio: 120 / 48; }
-/* The control hill follows `.field`'s rule without wearing `.field`: that class
-   also carries `#facts .field { max-width: 28rem }` on the record pages, which is
-   twice the width this drawing wants.
+/* The control hill follows `.field`'s rule without wearing `.field`: the class
+   brings every `.field` rule with it, not only the display toggle — on the
+   record pages it also brought a `#facts .field { max-width: 28rem }`, twice
+   the width this drawing wants — so the toggle is mirrored in two lines here
+   instead of one word in the class list.
    `.hill-control` and not `[role=radiogroup]`, which is what this was: a promoted
    note's hill is still the control in its row, and it has no stops to press
    because `promoted` is derived — so it was the one hill in the app that never
@@ -2811,7 +2813,8 @@ dt:has(+ dd .hill) { align-self: start; }
 {%- endfor %}
 /* A note's two words are not on the status ladder and have no tokens of their
    own. `dropped` borrows shelved's, which is the same sentence; `thinking`
-   borrows the accent, which is what the notes page already colours it with. */
+   borrows the accent, which is what the notes page coloured it with before it
+   folded into this one. */
 .hill-stop.hill-dropped::after, .hill-ball.hill-dropped::after {
   background: var(--st-shelved-soft); color: var(--st-shelved-text);
   border-color: var(--st-shelved-line); }
@@ -13558,8 +13561,8 @@ function flipEditing() {
       if (control.dataset.type === 'bool') control.checked = !!was;
       else control.value = Array.isArray(was) ? was.join(', ') : (was ?? '');
     }
-    // The fields and NOT the document, which the issue page and the note page do
-    // put back. The difference is deliberate and is written down in
+    // The fields and NOT the document, which the issue page and the note page
+    // used to put back. The difference is deliberate and is written down in
     // `test_cancelling_a_restored_draft_keeps_the_commit_it_was_written_against`:
     // the text stays in the box on purpose, so that a page holding work written
     // against an older commit goes on holding it and `base_commit` is never
@@ -15482,7 +15485,7 @@ _LADDER_OF = {"issue": "issue", "note": "note"}
 
 # Why a status control is locked, per kind — the sentence beside it when the
 # state is derived from a link rather than typed. Verbatim from the two pages
-# this replaces, because the people reading it already learned these words. No
+# this replaced, because the people reading it already learned these words. No
 # planned kind appears: `Entity.state` answers `status`, so a planned kind can
 # never satisfy the lock condition and never needs a sentence.
 _STATE_HINT = {
@@ -19239,7 +19242,7 @@ def _promote_html(
     control that names what will happen beats a control naming the mechanism. It
     stops being available with two, because "Shape it into a pitch or a task" is a
     button arguing with the picker next to it, and picking the destination is now
-    the picker's job on both pages. So both say Promote — the word the label above
+    the picker's job for either kind. So both say Promote — the word the label above
     the picker already uses, kept the same through the flow, because five pages
     inventing their own word for one act is how `in_progress` came to be spelled
     three ways on one screen.

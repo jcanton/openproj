@@ -948,10 +948,12 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
 
     `.entity.editing .field` and `.entity.editing .bodybar` are both (0,2,1), so
     the tie is decided by order and nothing else — which is why the answer has to
-    be asked rather than assumed. The bar wins because `_EDITING_STYLE` is
-    concatenated after `_DETAIL_STYLE`; and the markup carries no `.field` on the
-    bar either, so the tie does not arise on the page as it is written. Both
-    halves, because either one alone is a guard somebody can remove.
+    be asked rather than assumed. And the tie is real: every bar on the merged
+    page wears `.field`, because that class is how a bar hides in read mode, so
+    `_EDITING_STYLE` being concatenated after `_DETAIL_STYLE` is the only guard
+    between the toolbar and `.field`'s `display: block`. The bare bar is asked
+    too, because the answer must not depend on a class list a refactor could
+    trim.
     """
     bar = _RECORD_EDITING + [el("p", "bodybar markbar")]
     won = record.winner(bar, "display")
@@ -959,12 +961,12 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
         f"the toolbar is displayed by {won}\n" + says(record, bar, "display")
     )
 
-    # And what it would resolve to if somebody put `.field` back on it, which is
-    # the failure this is guarding: `flex`, still, and by order alone.
+    # And the bar as the page actually writes it, wearing `.field`: `flex`
+    # still, and by order alone — this half is the live markup.
     with_field = _RECORD_EDITING + [el("p", "field bodybar markbar")]
     reaching = record.selectors_reaching(with_field, "display")
     assert reaching[-1].selector == ".entity.editing .bodybar", (
-        "the bar loses to `.field` again the moment it carries one\n"
+        "the bar loses to `.field` on the page as it is written\n"
         + says(record, with_field, "display")
     )
     assert reaching[-1].specificity == reaching[-2].specificity, (

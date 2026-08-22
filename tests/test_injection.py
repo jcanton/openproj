@@ -115,11 +115,12 @@ def corpus(text: str) -> dict[str, str]:
     All three are bet into a cycle whose roster names the same hostile login, so
     the cycle page, the people page and the cycles index come with the fixture.
 
-    And one issue and one note, because the two inboxes are pages this app draws
-    and a corpus that does not hold the one string that matters proves nothing
-    about them. They are not entities and they are drawn by different code, and
-    each links at the hostile pitch — so one record's id reaching another
-    record's markup is under test on those pages too.
+    And one issue and one note, because a corpus that does not hold the one
+    string that matters proves nothing about them. They are entities on
+    unplanned rungs now, drawn by the one record template — but through fact
+    rows no planned kind has (`reported_by`, `written_by`, `pitched_into`,
+    `became`), and each links at the hostile pitch — so one record's id
+    reaching another record's markup is under test on those rows too.
 
     The ids are hostile too. A malformed id is a *reported* blocker and not a
     refusal — the entity still loads and every page still draws it — so an id is

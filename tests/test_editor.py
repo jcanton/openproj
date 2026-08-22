@@ -4416,8 +4416,8 @@ def test_the_box_and_the_column_beside_it_are_one_face(client: TestClient, tmp_p
     The box and the gutter are one declaration, and they have to be: `--gutter`
     is written in `ch`, and `ch` is resolved in the font of whoever uses the
     value — the column resolves it, and so does the box's own `padding-left`. The
-    declaration is in `_EDITING_STYLE` now, which is concatenated after each of
-    the two stylesheets that carry it, and on the detail page that ORDER is the
+    declaration is in `_EDITING_STYLE` now, which is concatenated after the one
+    stylesheet that carries it, and on the detail page that ORDER is the
     whole of the answer: `input.field, select.field, textarea.field { font:
     inherit }` is the same weight and sets the same two properties through a
     shorthand.
