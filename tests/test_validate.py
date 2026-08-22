@@ -13,8 +13,10 @@ import time
 from datetime import date
 from pathlib import Path
 
+from openproj.cli import main
 from openproj.model import (
     _ID_PATTERN,
+    KINDS,
     Config,
     Entity,
     Pitch,
@@ -502,6 +504,38 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     }
 
 
+def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(
+    seed_root: Path, capsys
+):
+    """The seed-check pin, CLI half. The snapshot test above pins WHAT
+    `validate_all` says about the real corpus, entry by entry; this pins that
+    `openproj check` relays all of it — every line, the sort, the count, the
+    exit code — and adds nothing. Together they freeze the command's output
+    over `seed/`, which is what has to survive the `unread_fields` re-cut and
+    the per-rung vocabulary unchanged: a problem this pair does not notice
+    appearing or vanishing is a validation change that got past the refactor.
+    """
+    entities, config, unreadable = load_repo(seed_root)
+    problems = sorted(
+        validate_all(entities, config), key=lambda p: (p.severity, p.entity_id, p.field or "")
+    )
+    blockers = [p for p in problems if p.severity == "blocker"]
+
+    assert main(["check", str(seed_root)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+
+    expected = [
+        f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
+        f"{one.why}"
+        for one in unreadable
+    ]
+    expected += [f"{p.severity}: {p.entity_id}: {p.field}: {p.message}" for p in problems]
+    expected.append(
+        f"{len(blockers) + len(unreadable)} blockers, {len(problems) - len(blockers)} warnings"
+    )
+    assert lines == expected
+
+
 # --- the roster -------------------------------------------------------------
 
 
@@ -553,6 +587,49 @@ def test_a_word_nobody_defined_is_a_problem_and_not_a_crash():
     fields = {(p.field, p.severity) for p in check(stale)}
     assert ("status", "blocker") in fields
     assert ("priority", "blocker") in fields
+
+
+def test_each_rung_accepts_exactly_its_own_status_words():
+    """The vocabulary is a per-rung fact now, not one module-level ladder.
+
+    Derived from `KINDS` rather than written out per kind, so a rung added
+    later — an issue, whose ladder has no `shaping` — is held to its own words
+    by this same loop on the day it lands. Only `p.field == "status"` is
+    filtered for, because a valid word can still gate other fields (`ready`
+    demands an owner) and those problems are some other test's business.
+    """
+    for rung in KINDS:
+        blank = rung.model(id=f"{rung.prefix}-000000", kind=rung.name, title="T")
+        for word in rung.statuses:
+            said = check(blank.model_copy(update={"status": word}))
+            assert not [p for p in said if p.field == "status"], (rung.name, word)
+        if rung.statuses:
+            vocab = only(check(blank.model_copy(update={"status": "wip"})), blank.id,
+                         field="status")
+            assert summary(vocab) == (
+                "blocker",
+                "status",
+                f"'wip' is not a status: expected one of {', '.join(rung.statuses)}",
+                1,
+            ), rung.name
+
+
+def test_a_kind_that_reads_no_status_has_no_vocabulary_to_violate():
+    """A product's status is unread, so no word on it is a vocabulary blocker —
+    the "not read" warning from `unread_fields` is the whole report, whether the
+    word is on the work ladder or on no ladder at all. `shelved` is the case
+    that changed: it used to buy the file a silent skip through the parked
+    exemption, using a word a product does not even read, and now the exemption
+    is structural (`_parked`) a product cannot park and the warning appears.
+    """
+    for word in ("shelved", "banana"):
+        written = parse_text(
+            f"---\nid: prod-000001\nkind: product\ntitle: gt4py\nstatus: {word}\n---\n\nx\n",
+            "products/prod-000001.md",
+        )
+        said = validate_all([written], Config())
+        assert [(p.severity, p.field) for p in said] == [("warning", "status")], (word, said)
+        assert "not read" in said[0].message
 
 
 def test_a_stale_vocabulary_still_schedules_and_renders():

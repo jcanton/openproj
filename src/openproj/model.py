@@ -905,6 +905,17 @@ class Entity(BaseModel):
         """
         return value if value is None else str(value)
 
+    def state(self, entities: dict[str, Entity]) -> str:
+        """What this record actually is — for a plan record, its written status.
+
+        The base of the derivation `Issue.state` and `Note.state` already do:
+        one method any page can call on any record, so a read display never has
+        to know which kinds derive their state from links and which just have
+        one. The argument goes unused here because the derivations need it — a
+        state read off a link needs the link's targets to look at.
+        """
+        return self.status
+
 
 class Project(Entity):
     pass
@@ -952,6 +963,16 @@ class Product(Entity):
     """
 
 
+# Statuses in the order work moves through them. `shaping` is an idea nobody has
+# committed to yet, so it demands nothing — the same reason `shelved` does not.
+# The gates are cumulative from `ready` onwards.
+#
+# Above the ladder rather than with `PRIORITY_RANK`, because the ladder now
+# reads it: a rung carries the status vocabulary its kind reads, and three of
+# the four rungs carry this one.
+STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
+
+
 # THE LADDER. Every other map about kinds is derived from this one, in this
 # order, coarsest first — which is what makes "the top of the tree" a fact about
 # the list rather than the word `project` written down in twenty places.
@@ -974,21 +995,30 @@ class Rung(NamedTuple):
     depends: bool          # may it wait on anything
     sized: bool            # may it carry person_weeks
     carded: bool           # does a hover show its shaping document
+    planned: bool          # does it appear in the plan: table, graph, timeline, people, scheduler
+    statuses: tuple[str, ...]  # the status vocabulary this kind reads; () means status is not read
 
 
 KINDS: tuple[Rung, ...] = (
+    # `statuses=()` — status is one of the nine fields a product does not read
+    # (jcanton, 2026-08-20: a codebase is not `in_progress`), and () is how the
+    # ladder says so now that the vocabulary is a per-rung fact.
     Rung("product", "prod", "products", Product, under=(),
-         schedules=False, depends=False, sized=False, carded=False),
+         schedules=False, depends=False, sized=False, carded=False,
+         planned=True, statuses=()),
     Rung("project", "proj", "projects", Project, under=("product",),
-         schedules=True, depends=True, sized=False, carded=True),
+         schedules=True, depends=True, sized=False, carded=True,
+         planned=True, statuses=STATUS_ORDER),
     Rung("pitch", "pitch", "pitches", Pitch, under=("project",),
-         schedules=True, depends=True, sized=True, carded=True),
+         schedules=True, depends=True, sized=True, carded=True,
+         planned=True, statuses=STATUS_ORDER),
     # A task may skip the pitch — work that nobody shaped still belongs to a
     # project — which is why `under` is written out per rung rather than derived
     # as "everything coarser". Derived, a task could be filed straight under a
     # product, three rungs up, which is not a thing anybody means.
     Rung("task", "task", "tasks", Task, under=("pitch", "project"),
-         schedules=True, depends=True, sized=True, carded=True),
+         schedules=True, depends=True, sized=True, carded=True,
+         planned=True, statuses=STATUS_ORDER),
 )
 
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
@@ -996,13 +1026,14 @@ KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
 
 # The fields that describe work being done, or evidence that it was: a rung the
 # scheduler never sees reads none of them. Nobody is assigned to a codebase, a
-# codebase is not in a cycle, and — jcanton, 2026-08-20 — a codebase is not
-# `in_progress` and does not have a pull request either. `status` and `prs` are
-# here for the same reason as the rest: a product is a container, and the state
-# of the work is the state of the work inside it.
+# codebase is not in a cycle, and — jcanton, 2026-08-20 — a codebase does not
+# have a pull request either. `status` is not in this tuple any more: whether a
+# kind reads a status is its own axis (`Rung.statuses`), because a kind can
+# read one without ever being scheduled — gated here, giving it a status would
+# have dragged in the eight fields that come with being work.
 _WORK_FIELDS = (
     "owner", "assignees", "reviewers", "review_waived", "assigned_on",
-    "cycle", "priority", "status", "prs",
+    "cycle", "priority", "prs",
 )
 
 
@@ -1023,6 +1054,13 @@ def unread_fields(kind: str) -> tuple[str, ...]:
         fields.append("person_weeks")
     if not rung.schedules:
         fields.extend(_WORK_FIELDS)
+    # `status` on its own gate: a kind with an empty vocabulary reads no status.
+    # Today that is only `product`, whose behaviour this preserves exactly —
+    # `statuses=()` keeps status unread — but gating on the vocabulary rather
+    # than on `schedules` is what lets a rung read a status without inheriting
+    # the eight scheduling fields above.
+    if not rung.statuses:
+        fields.append("status")
     return tuple(fields)
 RUNG: dict[str, Rung] = {rung.name: rung for rung in KINDS}
 _MODELS: dict[str, type[Entity]] = {rung.name: rung.model for rung in KINDS}
@@ -1708,10 +1746,6 @@ NOTE_ID_PATTERN = re.compile(r"\Anote-[0-9a-f]{6}\Z")
 _PREFIX_FOR_KIND = {rung.name: rung.prefix for rung in KINDS}
 _SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
 
-# Statuses in the order work moves through them. `shaping` is an idea nobody has
-# committed to yet, so it demands nothing — the same reason `shelved` does not.
-# The gates are cumulative from `ready` onwards.
-STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
 # Five levels, because three were not enough to say the thing the team was already
 # writing: the HackMD table escalates past its top value as `High+`. A scale whose
 # top is used for everything urgent stops ordering anything.
@@ -1972,11 +2006,19 @@ def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
 
 def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
     """A word nobody defined, named where it is rather than as a stack trace."""
-    if entity.status not in STATUS_ORDER:
+    statuses = RUNG[entity.kind].statuses
+    # An empty vocabulary means the kind reads no status, so there is no word to
+    # judge: `unread_fields` already reports a status written on such a file as
+    # "not read", and a blocker on top of that would hold a product to a ladder
+    # it was just told it does not have. Judging against `STATUS_ORDER` here is
+    # what this replaced, and it was wrong in both directions at once: it would
+    # turn every stale note into an ungrandfatherable blocker the day notes
+    # become records, and it makes `shaping` silently legal on an issue.
+    if statuses and entity.status not in statuses:
         yield (
             "blocker",
             "status",
-            f"{entity.status!r} is not a status: expected one of {', '.join(STATUS_ORDER)}",
+            f"{entity.status!r} is not a status: expected one of {', '.join(statuses)}",
             1,
         )
     if entity.priority not in PRIORITY_RANK:
@@ -2518,10 +2560,26 @@ def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
             )
 
 
+def _parked(entity: Entity) -> bool:
+    """Exempt from every rule: parked work is not broken work.
+
+    Structural rather than the word `shelved`: every status ladder ends in its
+    kind's terminal state — `STATUS_ORDER` and `ISSUE_STATUS` in `shelved`,
+    `NOTE_STATUS` in `dropped` — so "the last word of this rung's own ladder" is
+    the rule, and a rung added later is exempt in its own vocabulary with no
+    edit here. A kind with no vocabulary is never parked: a product claiming
+    `status: shelved` used to buy itself a silent skip with a word it does not
+    even read, and now its written-but-unread status is reported instead.
+    """
+    statuses = RUNG[entity.kind].statuses
+    return bool(statuses) and entity.status == statuses[-1]
+
+
 def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     """Check every entity against every rule it is old enough to be held to.
 
-    Shelved entities are exempt from all of them: parked work is not broken work,
+    Parked entities — those at their own ladder's terminal status, see
+    `_parked` — are exempt from all of them: parked work is not broken work,
     and a validator that nags about it teaches people to ignore the validator.
     """
     by_id = {entity.id: entity for entity in entities}
@@ -2529,12 +2587,12 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in entities})
     children: dict[str, list[Entity]] = {}
     for entity in entities:
-        if entity.parent in by_id and entity.status != "shelved":
+        if entity.parent in by_id and not _parked(entity):
             children.setdefault(entity.parent, []).append(entity)
 
     problems: list[Problem] = []
     for entity in entities:
-        if entity.status == "shelved":
+        if _parked(entity):
             continue
         for severity, field, message, rule_version in _problems_for(
             entity, config, by_id, children, parent_cycles, dep_cycles
