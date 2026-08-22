@@ -13075,7 +13075,15 @@ const SAID = 'openproj:said';
 
 function read(control) {
   const type = control.dataset.type;
-  if (type === 'bool') return control.checked;
+  // `!!`, so a bool is always a bool rather than whatever the DOM happens to
+  // answer. A browser answers `checked` with `false` on a box carrying no
+  // attribute and this was never wrong in one; the JS harness answers `undefined`,
+  // and `JSON.stringify(undefined)` is the VALUE undefined rather than the string
+  // "undefined" — so `ORIGINAL.review_waived` was not a JSON document there at
+  // all. Harmless while `changed()` only ever compared it, and a thrown
+  // `JSON.parse` the moment Cancel started reading `ORIGINAL` back. The contract
+  // is now the same in both.
+  if (type === 'bool') return !!control.checked;
   const raw = control.value.trim();
   // Deduplicated: picking a name already in the list is a slip, not an intent to
   // have it twice, and a duplicate reviewer reads as two people.
