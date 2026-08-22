@@ -13610,13 +13610,13 @@ function showEditing(editing) {
 // means is how the two come to disagree about the draft.
 function flipEditing() {
   const editing = !document.querySelector('article.entity').classList.contains('editing');
-  showEditing(editing);
-  // Ending the session leaves the surface the session was in — and the line that
-  // does it is not here any more. It was here, and in the issue page's toggle,
-  // and in the note page's, and the fourth door out of a session had no copy:
-  // a Save made in a room ends it with a bare `showEditing(false)`. It is one
-  // listener on `openproj:session` in `_VIEWS` now, which `showEditing` above
-  // dispatches, so every door is the same door. See the comment there.
+  // The fields go back BEFORE the session is ended, and the order is the whole
+  // point. `showEditing` dispatches `openproj:session`, and what listens for the
+  // end of a session includes the hill, which has to read the status it is going
+  // to keep rather than the one that is about to be undone. Ended first, Cancel
+  // put `in_progress` back into the field and left the ball sitting on `ready`,
+  // with the picture and the value disagreeing on a page nobody was editing.
+  let undone = 0;
   if (!editing) {
     // Cancel puts the FIELDS back to what the server rendered. It used to put
     // nothing back: it dropped the saved draft and left every typed value sitting
@@ -13624,7 +13624,6 @@ function flipEditing() {
     // while the commit bar went on reporting "1 unsaved change" about a change
     // nothing on screen was holding — and the count cleared only on a reload,
     // which is also the moment that value was silently lost. jcanton, 2026-08-22.
-    let undone = 0;
     try { undone = Object.keys(changed()).length; } catch (error) { undone = 0; }
     for (const control of CONTROLS) {
       const was = JSON.parse(ORIGINAL[control.name]);
@@ -13648,13 +13647,19 @@ function flipEditing() {
     // The stored draft still goes, and the base it arrived with still stays:
     // moving that forward here would be the silent overwrite by another route.
     forgetDraft();
-    dirty();
-    // Said out loud. Discarding is still discarding, even when what is discarded
-    // is a menu choice, and a page that quietly puts a value back is a page you
-    // have to re-check to trust.
-    if (undone) {
-      announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
-    }
+  }
+  // Ending the session leaves the surface the session was in — and the line that
+  // does it is not here any more. It was here, and in the issue page's toggle,
+  // and in the note page's, and the fourth door out of a session had no copy:
+  // a Save made in a room ends it with a bare `showEditing(false)`. It is one
+  // listener on `openproj:session` in `_VIEWS` now, which this dispatches, so
+  // every door is the same door. See the comment there.
+  showEditing(editing);
+  // Said out loud. Discarding is still discarding, even when what is discarded
+  // is a menu choice, and a page that quietly puts a value back is a page you
+  // have to re-check to trust.
+  if (undone) {
+    announce(`Edit cancelled, ${undone} change${undone === 1 ? '' : 's'} discarded`);
   }
 }
 document.getElementById('toggle').onclick = flipEditing;

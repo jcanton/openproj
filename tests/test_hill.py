@@ -590,3 +590,50 @@ def test_the_ball_follows_the_field_when_something_else_sets_it(
     assert found["checked"] == "shaping", "the stop the field names is not the one checked"
     assert found["klass"] == "hill-ball hill-shaping"
     assert found["after"] != found["moved"], "the ball stayed where the hill had put it"
+
+
+def test_cancelling_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) -> None:
+    """The seam between the hill and Cancel, which only exists once both are here.
+
+    Cancel puts every field back to what the server rendered, and it does that by
+    assigning into the control — which fires no event a picture could hear. The
+    hill listens for the session ending instead. What this asks is the ORDER those
+    two happen in: `showEditing` is what dispatches the end of a session, so the
+    fields have to be back before it is called. Ended first, Cancel put
+    `in_progress` back into the field and left the ball sitting on `ready`, with
+    the picture and the value disagreeing on a page nobody was editing — and both
+    branches passed on their own.
+    """
+    browser = chrome()
+    entity_id = next(i for i, e in sorted(index.entities.items()) if e.status != "ready")
+    was = index.entities[entity_id].status
+    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    found = measured_in(
+        browser, page, tmp_path / "cancel.html", 1100,
+        """
+        document.getElementById('toggle').click();
+        await new Promise(settled => setTimeout(settled, 50));
+        const hill = document.querySelector('.hill[role=radiogroup]');
+        const value = document.querySelector('input[name=status]');
+        const ball = hill.querySelector('.hill-ball');
+        const before = ball.style.left;
+        [...hill.querySelectorAll('.hill-stop')]
+          .find(s => s.querySelector('input').value === 'ready').click();
+        const moved = ball.style.left;
+        document.getElementById('cancel').click();
+        await new Promise(settled => setTimeout(settled, 50));
+        return {before, moved, after: ball.style.left, klass: ball.className,
+                status: value.value,
+                checked: hill.querySelector('input:checked').value,
+                unsaved: document.getElementById('unsaved').textContent};
+        """,
+        height=1400, patience=3000,
+    )
+    assert found["moved"] != found["before"], "the ball never moved, so nothing was cancelled"
+    assert found["status"] == was, "the field was not put back"
+    # All four say the same thing, which is the whole point: the value the form
+    # will send, the stop the keyboard is on, the ball, and its colour.
+    assert found["after"] == found["before"], "the ball stayed where the cancelled edit put it"
+    assert found["checked"] == was, "the stop the keyboard is on is not the one the field holds"
+    assert found["klass"] == f"hill-ball hill-{was}"
+    assert found["unsaved"] == "Nothing to save"
