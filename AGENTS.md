@@ -6,6 +6,27 @@ markdown file per entity, the shaping document *is* the record, every date deriv
 first. This file is the part it does not say — the invariants that fail loudly when you step on
 them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
 
+## Work in a worktree, never at the root
+
+`git worktree add .worktrees/<branch> -b <branch> origin/main`, and do everything there. **The
+repository root stays on `main` and stays clean.** It is where releases are cut from and where a
+deploy builds its image, and it is the one checkout more than one session reaches for.
+
+This is written down because it has now gone wrong twice in one night, in both directions:
+
+- A shell's working directory resets between commands more often than it looks like it does — twice
+  a `python3 - <<PY` heredoc meant for a branch edited the root's copy of a file instead, and the
+  test it was fixing went on failing for the same reason it had failed before.
+- The root had another session's unfinished work in it — 320 uncommitted lines of a half-drawn
+  feature — at the moment a release was being tagged. `gcloud_deploy.sh` builds `./Dockerfile` from
+  the working tree it is run in, so deploying from the root would have shipped somebody else's
+  half-finished code to Cloud Run. The tag went on the merge commit by sha and the deploy ran from
+  a clean checkout of the tag in a spare worktree.
+
+So: `pwd` before an edit if a command has just failed, and `git status` in the root before a
+release. A root that is not clean is somebody else's work, not yours to stash — and never `git
+checkout` a file there to "fix" a diff you did not write.
+
 ## This branch's history does not move
 
 `review_design` has two other worktrees based on it — `shapeup_feats` and `two_feats`, both
