@@ -51,6 +51,7 @@ from .model import (
     NOTE_STATUS,
     PARENT_KINDS,
     RUNG,
+    STATUS_ORDER,
     Config,
     Cycle,
     Entity,
@@ -11782,34 +11783,35 @@ button.mark:disabled, button.mark:disabled:hover {
 # reader and nothing at all to the accessibility tree, so before this not one
 # control on the detail page or the create page had a name.
 _CONTROL = """
-{% if f.type in ("status", "priority") %}
+{% if f.type == "priority" %}
 <select name="{{ f.name }}" id="{{ f.id }}" data-type="text" class="field"
+        {% if f.disabled %}disabled{% endif %}
         {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
   {#- The mark in front of the word, the same one the graph draws on a node and
       the table draws in a cell — jcanton, 2026-08-20: "can we have the status and
       priority icons and colours also in the dropdowns for editing a record".
-
-      Text and not markup, because an `<option>` is text: what a browser will
-      draw inside one is a string, and every attempt to style the inside of a
-      native dropdown ends either in a control that works on one platform or in a
-      popup written from scratch. The colour is the one thing that does not come
-      with it, and that is the honest cost of keeping a real `<select>` — the
-      choice made when these were left native. -#}
-  {% for s in (statuses if f.type == "status" else priorities) %}
+      Status used to share this branch and left when it became the hill; priority
+      keeps the native `<select>`, and the mark-as-text is the honest cost of
+      keeping one. -#}
+  {% for s in priorities %}
   <option value="{{ s }}" {% if s == f.value %}selected{% endif %}>{{
     mark(f.type, s) }}{{ s|human }}</option>
   {% endfor %}
 </select>
 {% elif f.type == "bool" %}
 <input type="checkbox" name="{{ f.name }}" id="{{ f.id }}" data-type="bool" class="field"
+       {% if f.disabled %}disabled{% endif %}
        {% if f.value %}checked{% endif %}>
 {% elif f.type == "date" %}
 <input type="date" name="{{ f.name }}" id="{{ f.id }}" data-type="date" value="{{ f.text }}"
        class="field"
+       {% if f.disabled %}disabled{% endif %}
        {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% else %}
 <input name="{{ f.name }}" id="{{ f.id }}" data-type="{{ f.type }}" value="{{ f.text }}"
        class="field" autocomplete="off"
+       {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %}
+       {% if f.disabled %}disabled{% endif %}
        {% if f.list %}data-suggest="{{ f.list }}"{% endif %}
        {% if f.gates %}data-required-at="{{ f.gates|join(' ') }}"{% endif %}>
 {% endif %}
@@ -12005,7 +12007,14 @@ function attachHill(form) {
 """)
 
 
-def _control_html(field: dict) -> Markup:
+def _control_html(
+    field: dict,
+    *,
+    ladder: str = "entity",
+    live: bool = True,
+    shown: str | None = None,
+    describedby: str = "",
+) -> Markup:
     # Status is the one field whose control is not a box. It is the hill, and the
     # `<select>` that was here is gone rather than kept beside it: `render.py`'s
     # header already carries the note about what the same word in the same colour
@@ -12018,6 +12027,11 @@ def _control_html(field: dict) -> Markup:
     # answering for whichever radio it read last. `markRequired` and the create
     # form's refusal both ask `[name=status]` for a value and neither has to know
     # that the thing behind it became a picture.
+    #
+    # `shown` is the word the picture draws; the input keeps the stored one. They
+    # differ only on a locked control, where the state is derived from a link —
+    # the read view already shows the derived word, and "pressing Edit moves
+    # nothing" is a promise this row makes two comments up.
     if field["type"] == "status":
         return Markup(
             # No `.field`: that class is what `.entity.editing .field { display:
@@ -12025,19 +12039,32 @@ def _control_html(field: dict) -> Markup:
             # not gain a box when the form opens. `CONTROLS` reads `[data-type]`,
             # which is the attribute that matters here.
             '<input type="hidden" name="{}" id="{}" data-type="text"'
-            ' value="{}" data-word="{}">{}'
+            ' value="{}" data-word="{}"{}>{}'
         ).format(
             field["name"],
             field["id"],
             field["value"],
             _human(field["value"]),
+            # `disabled` on the input as well as no stops on the hill. The form's
+            # own serialiser never sends an unchanged field, so this submits
+            # nothing differently — it is the DOM saying what the page means, so
+            # a test can ask the input rather than inferring the lock from an
+            # absence of radios.
+            Markup(" disabled") if not live else Markup(""),
             # Grouped by the control's own id. The static export puts every entity
             # in one file, and one group name would have made four hundred records
             # share a single radio group — pressing a stop on one moves the ball on
             # all of them.
-            _hill_html(field["value"], live=True, group=f"hill-{field['id']}"),
+            _hill_html(
+                shown if shown is not None else field["value"],
+                ladder,
+                live=live,
+                control=True,
+                group=f"hill-{field['id']}",
+                describedby=describedby,
+            ),
         )
-    return _fragment(_CONTROL, f=field, statuses=STATUSES, priorities=PRIORITIES)
+    return _fragment(_CONTROL, f=field, priorities=PRIORITIES)
 
 
 # `_FIELDS` and `_fields_html` were the flat list of `<label>field</label>` this
@@ -13262,6 +13289,15 @@ _DETAIL = """
                    {% if row.editing_only %}editing-only{% endif %}">
           <span class="read">{{ row.display }}</span>
           {% if editable and row.control %}{{ row.control }}{% endif %}
+          {#- Why this value is what it is, when it is derived from a link: "from
+              the work it was pitched into", "from what it became". Outside both
+              the `.read` span and the control, so it reads in both modes — the
+              two pages this copy comes from showed it in both. The id is what
+              the locked control's `aria-describedby` points at, so the sentence
+              reaches a screen reader as the control's own description and not
+              only as nearby text. -#}
+          {% if row.hint %}<span class="hint" id="{{ row.hint_id }}">{{ row.hint }}</span>
+          {% endif %}
         </dd>
         {% endfor %}
       </dl>
@@ -15269,6 +15305,13 @@ EDITABLE: dict[str, str] = {
     "title": "text",
     "status": "status",
     "owner": "text",
+    # An issue's and a note's "who to ask". Inert on every kind in the tree
+    # today — `_editable_for` intersects with `model_fields`, and no model
+    # carries these until Issue and Note become entities — which is the point:
+    # the pipeline is ready before the kinds arrive, so the flip commit adds
+    # rungs and deletes pages without touching a form.
+    "reported_by": "text",
+    "written_by": "text",
     "assignees": "list",
     "reviewers": "list",
     "review_waived": "bool",
@@ -15277,12 +15320,21 @@ EDITABLE: dict[str, str] = {
     "cycle": "number",
     "parent": "text",
     "depends_on": "list",
+    # The two one-way edges an inbox record carries; rendered through `_links`
+    # like `depends_on`, which is links rather than the bare ids both old pages
+    # printed. Inert today, same as the pair above.
+    "pitched_into": "list",
+    "became": "list",
     "tags": "list",
     "prs": "list",
     "person_weeks": "number",
     "shaped_by": "list",
 }
-STATUSES = ("shaping", "ready", "in_progress", "done", "shelved")
+# The validator's own ladder, aliased and not retyped. This line was the five
+# words written out a second time — the same defect `PREFIX` below records being
+# the third copy of the kind ladder — and the two copies could only ever agree
+# by luck. `STATUSES` stays as the name this file reads it by.
+STATUSES = STATUS_ORDER
 # Highest first, which is the order a picker is read in and the order the table
 # sorts by. Five rungs, because three left the team writing `High+` in the margin.
 PRIORITIES = ("very_high", "high", "medium", "low", "very_low")
@@ -15353,12 +15405,30 @@ _HILL_NORMALS = {word: _hill_normal(t) for word, t in _HILL_ALONG.items()} | {
     word: (0.0, -1.0) for word in _HILL_OFF_THE_PATH
 }
 # Which stops a record of each kind may stand on, in ladder order. Derived from
-# the two vocabularies rather than written out beside them: a status added to
-# `STATUSES` tomorrow fails `test_every_status_has_a_stop_on_the_hill` instead of
-# quietly having nowhere to stand, which on a hill means no ball at all.
+# the vocabularies rather than written out beside them: a status added to one of
+# them tomorrow fails `test_every_issue_word_stands_on_the_hill` (or its entity
+# and note twins) instead of quietly having nowhere to stand, which on a hill
+# means no ball at all.
 HILL_LADDERS = {
     "entity": tuple(word for word in STATUSES if word in _HILL_STOPS),
+    "issue": tuple(word for word in ISSUE_STATUS if word in _HILL_STOPS),
     "note": tuple(word for word in NOTE_STATUS if word in _HILL_STOPS),
+}
+
+# Which ladder each kind's status stands on. Only the two unplanned kinds have
+# ladders of their own; every planned kind shares the entity's, and product is
+# not here because `statuses=()` keeps status in its `unread_fields` — no status
+# row is ever built for it.
+_LADDER_OF = {"issue": "issue", "note": "note"}
+
+# Why a status control is locked, per kind — the sentence beside it when the
+# state is derived from a link rather than typed. Verbatim from the two pages
+# this replaces, because the people reading it already learned these words. No
+# planned kind appears: `Entity.state` answers `status`, so a planned kind can
+# never satisfy the lock condition and never needs a sentence.
+_STATE_HINT = {
+    "issue": "from the work it was pitched into",
+    "note": "from what it became",
 }
 
 
@@ -15449,6 +15519,7 @@ _HILL_HANDED_ON = {"promoted": "shaping"}
 _HILL = """
 <span data-hill="{{ ladder }}"
       class="hill{% if control %} hill-control{% endif %}{% if dim %} hill-off{% endif %}"
+     {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
      {% if live %}role="radiogroup" aria-label="{{ label }}"
      {% else %}role="img" aria-label="{{ said }}"{% endif %}>
   {#- The drawing is scenery: every name a reader needs is on the stops, and a
@@ -15501,6 +15572,7 @@ def _hill_html(
     control: bool = False,
     label: str = "Status",
     group: str = "hill",
+    describedby: str = "",
 ) -> Markup:
     """The ball on the hill: read-only, or with its stops live.
 
@@ -15561,6 +15633,7 @@ def _hill_html(
         stops=stops,
         ball=ball,
         group=group,
+        describedby=describedby,
         box=_HILL_BOX,
         ground=f"{_HILL_GROUND:g}",
         apron=[f"{_HILL_FOOT - _HILL_APRON:g}", f"{_HILL_CREST + _HILL_APRON:g}"],
@@ -15996,6 +16069,9 @@ LABELS = {
     "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
     "tags": "Tags", "prs": "PRs", "person_weeks": "Appetite (person-weeks)",
     "shaped_by": "Shaped by",
+    "reported_by": "Reported by", "written_by": "Written by",
+    "pitched_into": "Pitched into", "became": "Became",
+    "opened_on": "Opened on", "written_on": "Written on",
     # Not stored fields: a facet and a derived column. They are read by the same
     # people in the same control bar, so they take their words from here too.
     "kind": "Kind", "project": "Project", "product": "Product",
@@ -16117,6 +16193,8 @@ PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by")
 SUGGESTS = {
     "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
     "parent": "entities", "depends_on": "entities", "tags": "tags", "prs": "prs",
+    "reported_by": "people", "written_by": "people",
+    "pitched_into": "entities", "became": "entities",
     # A cycle number is a reference too. Typed from memory it is off by one as
     # often as it is right, and an entity bet into a cycle nobody has named is
     # weeks that never appear on anybody's capacity.
@@ -16124,7 +16202,13 @@ SUGGESTS = {
 }
 
 
-def _editable_for(entity: Entity, prefix: str = "field") -> list[dict]:
+# The two fields whose empty box says who the server will write. The placeholder
+# is the signed-in login because that is the value `POST /api/entity` stamps when
+# the box is left empty — a hint that tells the truth about what will happen.
+_LOGIN_PLACEHOLDER = ("reported_by", "written_by")
+
+
+def _editable_for(entity: Entity, prefix: str = "field", signed_in: str = "") -> list[dict]:
     """The fields this kind actually has, with the type a form must coerce back to.
 
     The prefix is what makes a control's id unique on the page it lands on: the
@@ -16140,6 +16224,7 @@ def _editable_for(entity: Entity, prefix: str = "field") -> list[dict]:
             "value": getattr(entity, name),
             "gates": REQUIRED_AT.get(name, ()),
             "list": SUGGESTS.get(name),
+            "placeholder": signed_in if name in _LOGIN_PLACEHOLDER else "",
             "text": ", ".join(str(v) for v in getattr(entity, name))
             if kind == "list"
             else ("" if getattr(entity, name) is None else getattr(entity, name)),
@@ -16178,7 +16263,7 @@ def _links(ids: list[str], index: Index, links: Links = STATIC) -> Markup:
     )
 
 
-def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
+def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") -> list[dict]:
     """The rows of the facts list, each carrying both how it reads and how it edits.
 
     One row per fact, not two lists: the edit view is the read view with the values
@@ -16200,10 +16285,13 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
     # `nothing`, `none`, `no` — sit at the same weight as a real value and have
     # to be read before you know the row is empty; a dash is empty at a glance.
     empty = Markup('<span class="empty">—</span>')
-    for field in _editable_for(entity, entity.id):
+    for field in _editable_for(entity, entity.id, signed_in):
         name = field["name"]
         if name == "title":
             continue
+        control = None
+        hint = ""
+        hint_id = ""
         if name == "depends_on":
             display = _links(index.blocked_by[entity.id], index, links) or empty
         elif name == "parent":
@@ -16211,6 +16299,11 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             # the field stores; it is not what anybody is looking for when they
             # ask what this belongs to.
             display = _links([entity.parent], index, links) if entity.parent else empty
+        elif name in ("pitched_into", "became"):
+            # Links, not the bare ids the two old pages' edit boxes held: the
+            # question a reader asks of this row is "what did it become", and an
+            # id is not an answer anybody can press.
+            display = _links(getattr(entity, name), index, links) or empty
         elif name == "prs":
             display = Markup(", ").join(_pr_link(ref) for ref in entity.prs) or empty
         elif name == "review_waived":
@@ -16222,7 +16315,32 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
             # hill, which is the distinction the whole method turns on and the one
             # a list cannot draw. Read-only here and live in `control`, the same
             # row and the same picture, so pressing Edit moves nothing.
-            display = _hill_html(entity.status)
+            #
+            # The word is `state()`, never `status`: an issue whose pitch has
+            # shipped would otherwise read "ready" on its own page. Over `records`
+            # because a derived state may follow a link to any kind. For every
+            # planned kind `Entity.state` answers `status`, so no page in the tree
+            # changes until a kind that derives exists.
+            ladder = _LADDER_OF.get(entity.kind, "entity")
+            said = entity.state(index.records)
+            display = _hill_html(said, ladder)
+            # The lock, expressed once. A derived state cannot also be set by
+            # hand — two ways to say one thing disagree the moment one is used —
+            # so the control keeps the derived picture, loses its stops, and the
+            # hint says where the word comes from. `state() != status` and not
+            # the old pages' `bool(pitched_into)`: a link whose targets are all
+            # dangling derives nothing and should stay fixable, and a stored
+            # word that equals the derived one is harmless to retype.
+            if said != entity.status:
+                hint = _STATE_HINT.get(entity.kind, "")
+                hint_id = f"hint-{field['id']}" if hint else ""
+            control = _control_html(
+                field,
+                ladder=ladder,
+                live=said == entity.status,
+                shown=said,
+                describedby=hint_id,
+            )
         elif name == "priority":
             # The same chip the table wears, mark and all: this row and that cell
             # are the same fact, and the menu below this row already leads with
@@ -16275,15 +16393,39 @@ def _fact_rows(index: Index, entity: Entity, links: Links) -> list[dict]:
                 # the `<dt>` falls back to plain text.
                 "for": "" if name == "status" else field["id"],
                 "display": display,
-                "control": _control_html(field),
+                "control": control if control is not None else _control_html(field),
                 "gates": field["gates"],
                 "derived": False,
+                # Only a locked status row carries these; the other appends in
+                # this function omit them, and Jinja reads a missing key as
+                # falsy, which is the correct answer for "no hint".
+                "hint": hint,
+                "hint_id": hint_id,
                 # "Review waived: no" is a line that says nothing. The row still
                 # exists while editing, because turning the waiver on is the whole
                 # point of having it; it just does not clutter the read view.
                 "editing_only": name == "review_waived" and not entity.review_waived,
             }
         )
+    # The server's two creation stamps, shown and never offered. `opened_on` and
+    # `written_on` are set by `POST /api/entity` when the record is made; a box
+    # for one would invite a hand-typed lie about the file's own history. Guarded
+    # on the model rather than the rung, so these lines are inert until the kinds
+    # that carry them exist.
+    for stamped in ("opened_on", "written_on"):
+        if stamped in type(entity).model_fields:
+            written = getattr(entity, stamped)
+            rows.append(
+                {
+                    "label": LABELS[stamped],
+                    "for": "",
+                    "display": escape(_read_date(written.isoformat())) if written else empty,
+                    "control": "",
+                    "gates": (),
+                    "derived": True,
+                    "editing_only": False,
+                }
+            )
     # The one derived line on the page that is a decision and not a fact. It wore
     # the same muted italic as every other computed value, so the sentence that
     # says this bet does not fit read exactly like the sentence saying when it

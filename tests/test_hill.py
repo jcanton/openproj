@@ -27,7 +27,18 @@ from browser import chrome, measured_in
 from test_injection import run_js
 
 from openproj.index import Index, build_index
-from openproj.model import NOTE_STATUS, load_repo
+from openproj.model import (
+    ISSUE_STATUS,
+    KINDS,
+    NOTE_STATUS,
+    RUNG,
+    STATUS_ORDER,
+    Config,
+    Issue,
+    Pitch,
+    Task,
+    load_repo,
+)
 from openproj.render import (
     _HILL_ALONG,
     _HILL_BOX,
@@ -35,9 +46,17 @@ from openproj.render import (
     _HILL_NORMALS,
     _HILL_OFF_THE_PATH,
     _HILL_STOPS,
+    _LADDER_OF,
+    _STATE_HINT,
+    EDITABLE,
     HILL_LADDERS,
+    LABELS,
     ROUTES,
     STATUSES,
+    SUGGESTS,
+    _control_html,
+    _editable_for,
+    _fact_rows,
     _hill_at,
     _hill_html,
     _hill_path,
@@ -637,3 +656,184 @@ def test_cancelling_an_edit_rolls_the_ball_back(index: Index, tmp_path: Path) ->
     assert found["checked"] == was, "the stop the keyboard is on is not the one the field holds"
     assert found["klass"] == f"hill-ball hill-{was}"
     assert found["unsaved"] == "Nothing to save"
+
+
+# ---------------------------------------------------------------------------
+# The control takes its ladder, its lock and its hint from the record.
+#
+# Half of these run today and half are armed. Until the flip commit no kind's
+# `state()` disagrees with its `status` — `Entity.state` answers `status`, and
+# `Issue` and `Note` are not entities yet — so the lock is exercised through a
+# subclass that derives its state, which is also all an Issue will be. The one
+# test that needs a real issue on a real index is skipif-armed on the rung and
+# starts running, unedited, the moment the flip lands.
+# ---------------------------------------------------------------------------
+
+
+class Handed(Task):
+    """A record whose state comes from somewhere else, before any such kind exists.
+
+    Stands in for `Issue` and `Note`: a stored `ready` and a derived `done`, the
+    exact disagreement the lock exists for.
+    """
+
+    def state(self, entities: dict) -> str:
+        return "done"
+
+
+def test_the_status_ladder_is_the_validator_s_and_not_a_hand_copy() -> None:
+    """`STATUSES` was the five words typed out a second time, in the file whose
+    own comments record what hand copies of a ladder cost. Aliased, not retyped:
+    a word added to `STATUS_ORDER` reaches every chip rule, select and hill here
+    without anybody remembering this line exists."""
+    assert STATUSES is STATUS_ORDER
+
+
+def test_every_issue_word_stands_on_the_hill() -> None:
+    """All four of `ISSUE_STATUS` already have stops — `ready` at the summit,
+    `in_progress` halfway down, `done` at the bottom, `shelved` on the ground
+    under the summit — so the issue page gets the hill and the last of #67's
+    asymmetry goes with it. Derived from the vocabulary, like the other two
+    ladders, so a word added to `ISSUE_STATUS` fails here rather than quietly
+    having nowhere to stand."""
+    assert HILL_LADDERS["issue"] == tuple(ISSUE_STATUS)
+    for word in ISSUE_STATUS:
+        assert word in _HILL_STOPS, f"{word} is an issue status with nowhere to stand"
+    # And the browser is handed it, so a card can draw an issue the day one exists.
+    assert hill_geometry()["ladders"]["issue"] == list(ISSUE_STATUS)
+
+
+def test_the_lock_hint_keeps_the_two_pages_own_words() -> None:
+    """Copy carried verbatim from the issue and note pages it replaces. A changed
+    word here is a changed sentence on a page somebody already learned to read."""
+    assert _STATE_HINT == {
+        "issue": "from the work it was pitched into",
+        "note": "from what it became",
+    }
+    assert _LADDER_OF == {"issue": "issue", "note": "note"}
+
+
+def test_a_derived_state_locks_the_control_in_the_dom_not_in_paint() -> None:
+    """Genuinely disabled: the hidden input carries `disabled`, the hill has no
+    radios to press and says so as `role="img"`, and the picture shows the
+    derived word — the same ball the read view shows, so pressing Edit moves
+    nothing."""
+    held = Handed(
+        id="task-000001", kind="task", title="Waits on something else",
+        status="ready", owner="ann",
+    )
+    index = build_index([held], Config(), date(2026, 8, 17))
+    row = next(r for r in _fact_rows(index, held, ROUTES) if r["label"] == "Status")
+
+    assert "hill-ball hill-done" in str(row["display"]), "the page reads the stored word"
+    control = str(row["control"])
+    assert re.search(r'<input type="hidden" name="status"[^>]* disabled', control)
+    assert 'role="radiogroup"' not in control, "a locked hill is offering stops to press"
+    assert 'role="img"' in control
+    assert "hill-ball hill-done" in control, "Edit moves the ball, which the row promises not to"
+
+
+def test_the_locked_control_carries_its_explanation_for_a_screen_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not just a visual grey: the why-sentence is a real element in the row,
+    and the control points at it with `aria-describedby`. The sentence is
+    patched in because no planned kind has one — the two kinds that do arrive
+    in the flip commit, and the armed test below takes over then."""
+    import openproj.render as render
+
+    monkeypatch.setitem(render._STATE_HINT, "task", "from what it waits on")
+    held = Handed(
+        id="task-000001", kind="task", title="Handed on", status="ready", owner="ann",
+    )
+    index = build_index([held], Config(), date(2026, 8, 17))
+    page = render_detail(index, ROUTES, only="task-000001", base_commit=HEAD, may_write=True)
+
+    assert '<span class="hint" id="hint-task-000001-status">from what it waits on</span>' in page
+    assert 'aria-describedby="hint-task-000001-status"' in page
+    assert re.search(r'<input type="hidden" name="status"[^>]* disabled', page)
+    assert 'role="radiogroup"' not in page
+
+
+def test_a_text_control_can_carry_a_placeholder_and_refuse_the_pen() -> None:
+    """The two field-dict keys `_CONTROL` gained. `placeholder` is how
+    `reported_by` and `written_by` will say who the server stamps; `disabled`
+    is the generic lock for any boxed control."""
+    field = {
+        "name": "reported_by", "id": "x-reported_by", "type": "text", "value": None,
+        "gates": (), "list": "people", "text": "", "placeholder": "ann",
+    }
+    drawn = str(_control_html(field))
+    assert 'placeholder="ann"' in drawn
+    assert " disabled" not in drawn
+    assert re.search(r"<input[^>]* disabled", str(_control_html({**field, "disabled": True})))
+
+
+def test_what_a_person_owns_on_an_issue_or_a_note_and_what_the_server_stamps() -> None:
+    """The four new editable fields, with their suggestion lists and their
+    reader's names — and the two creation stamps deliberately absent, because a
+    date the server set is not a thing a form may offer a box for."""
+    assert EDITABLE["reported_by"] == "text"
+    assert EDITABLE["written_by"] == "text"
+    assert EDITABLE["pitched_into"] == "list"
+    assert EDITABLE["became"] == "list"
+    assert "opened_on" not in EDITABLE
+    assert "written_on" not in EDITABLE
+    assert SUGGESTS["reported_by"] == "people"
+    assert SUGGESTS["written_by"] == "people"
+    assert SUGGESTS["pitched_into"] == "entities"
+    assert SUGGESTS["became"] == "entities"
+    for name in (
+        "reported_by", "written_by", "pitched_into", "became", "opened_on", "written_on",
+    ):
+        assert name in LABELS, f"{name} would reach a reader as an identifier"
+
+
+def test_no_plan_kind_is_offered_an_issue_s_or_a_note_s_fields() -> None:
+    """The new `EDITABLE` entries are inert on every planned kind, today and
+    forever: the intersection with `model_fields` is what keeps a pitch from
+    being offered a `reported_by` box its validator would then refuse."""
+    for rung in KINDS:
+        if not rung.planned:
+            continue
+        blank = rung.model(id=f"{rung.prefix}-000000", kind=rung.name, title="")
+        offered = {field["name"] for field in _editable_for(blank)}
+        assert not offered & {"reported_by", "written_by", "pitched_into", "became"}, (
+            f"{rung.name} is offered a box its validator will refuse"
+        )
+
+
+@pytest.mark.skipif(
+    "issue" not in RUNG,
+    reason="arms in the flip commit, when the issue rung and the Issue entity land",
+)
+def test_an_issue_whose_pitch_is_done_reads_done_with_a_locked_hill_and_the_hint() -> None:
+    """Spec test 9. The stored word is `ready`; the pitch it was pitched into is
+    `done`; the page must read the derived state on a hill with no stops, say
+    why in the page's own copy, and stamp the signed-in login as the
+    `reported_by` placeholder."""
+    pitch = Pitch(
+        id="pitch-000001", kind="pitch", title="The fix", status="done",
+        owner="ann", person_weeks=1.0,
+    )
+    noticed = Issue(
+        id="issue-000001", kind="issue", title="Something broke",
+        status="ready", pitched_into=["pitch-000001"],
+    )
+    index = build_index([pitch, noticed], Config(), date(2026, 8, 17))
+    rows = _fact_rows(index, noticed, ROUTES, signed_in="ann")
+
+    status = next(r for r in rows if r["label"] == "Status")
+    assert "hill-ball hill-done" in str(status["display"]), "the page reads the stored word"
+    control = str(status["control"])
+    assert 'data-hill="issue"' in control
+    assert 'role="radiogroup"' not in control
+    assert re.search(r'<input type="hidden" name="status"[^>]* disabled', control)
+    assert status["hint"] == "from the work it was pitched into"
+    assert status["hint_id"] == "hint-issue-000001-status"
+    assert f'aria-describedby="{status["hint_id"]}"' in control
+
+    reported = next(r for r in rows if r["label"] == "Reported by")
+    assert 'placeholder="ann"' in str(reported["control"])
+    opened = next(r for r in rows if r["label"] == "Opened on")
+    assert opened["derived"] and opened["control"] == ""
