@@ -3310,7 +3310,13 @@ def test_opening_the_second_surface_changes_no_byte_of_the_document(
     assert answer["opened"] == answer["original"], (
         "the surface holds a different document from the one the page was rendered with"
     )
-    assert answer["dirty"] == "Nothing to save", (
+    # The IN-SESSION spelling of a count of zero. `dirty()` writes one of two
+    # pristine messages off the same `count === 0` — "Nothing to save" outside a
+    # session, "Nothing changed yet" inside one — and `in_chrome_room` now opens
+    # a session before the welcome, because a seat is taken at session start and
+    # a page with no socket has no welcome to hear. The property pinned is the
+    # count: a surface that rewrote a byte on sight reads "1 unsaved change".
+    assert answer["dirty"] == "Nothing changed yet", (
         f"opening the editor made the page think there was a change: {answer['dirty']!r}"
     )
     # Against the room's own normalisation and not against the file: the room
