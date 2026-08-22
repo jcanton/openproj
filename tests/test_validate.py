@@ -41,6 +41,8 @@ NEEDS_EFFORT = "a ready task needs an appetite"
 NEEDS_APPETITE = "a ready pitch needs an appetite"
 NEEDS_SHAPED_BY = "a ready pitch needs to say who shaped it"
 NEEDS_ASSIGNED_ON = "work in progress needs the date it was assigned"
+NEEDS_SOMEBODY_READY = "a ready entity needs somebody on it"
+NEEDS_SOMEBODY_WIP = "work in progress needs somebody on it"
 NEEDS_INDEPENDENT_REVIEWER = (
     "work in progress needs a reviewer other than its owner, or review waived"
 )
@@ -75,6 +77,10 @@ def task(**overrides: object) -> Task:
 
     Its parent is PITCH_ID, which most tests do not bother to pass alongside it:
     a parent that is absent from the repository is not itself a rule violation.
+
+    "No rule" includes the schema_version 2 ones, the same way `pitch` below has
+    always had to carry `shaped_by`. Without `assignees` here every test in this
+    file would be asserting about one problem while a second sat beside it.
     """
     fields: dict[str, object] = {
         "id": TASK_ID,
@@ -83,6 +89,7 @@ def task(**overrides: object) -> Task:
         "parent": PITCH_ID,
         "status": "ready",
         "owner": "jcanton",
+        "assignees": ["jcanton"],
         "reviewers": ["msimberg"],
         "person_weeks": 1.0,
     }
@@ -90,7 +97,7 @@ def task(**overrides: object) -> Task:
 
 
 def pitch(**overrides: object) -> Pitch:
-    """A todo pitch that breaks no rule, including the schema_version 2 one."""
+    """A todo pitch that breaks no rule, including the schema_version 2 ones."""
     fields: dict[str, object] = {
         "id": PITCH_ID,
         "kind": "pitch",
@@ -98,6 +105,7 @@ def pitch(**overrides: object) -> Pitch:
         "parent": None,
         "status": "ready",
         "owner": "jcanton",
+        "assignees": ["jcanton"],
         "reviewers": ["msimberg"],
         "person_weeks": 2.0,
         "shaped_by": "havogt",
@@ -114,6 +122,7 @@ def project(**overrides: object) -> Project:
         "parent": None,
         "status": "in_progress",
         "owner": "jcanton",
+        "assignees": ["jcanton"],
         "reviewers": ["msimberg"],
         "assigned_on": date(2026, 8, 3),
     }
@@ -734,3 +743,56 @@ def test_a_parent_cycle_does_not_send_the_delete_walk_round_for_ever():
 
     assert took < 5, f"the walk took {took:.1f}s over a two-record cycle"
     assert found == [OTHER_PITCH_ID], "a record must not be filed under itself"
+
+
+def test_a_todo_entity_needs_somebody_on_it():
+    """An owner answers for the bet; assignees are who is doing the work.
+
+    Not the same question, and the scheduler already reads them as different
+    things: it prices a record by the people on it, so a bet with an owner and
+    nobody assigned is one that has been accepted and staffed with nobody — and it
+    is then scheduled as if a full person were on it. jcanton, 2026-08-22.
+    """
+    problem = only(check(task(assignees=[])), TASK_ID)
+    assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_READY, 2)
+
+
+def test_work_in_progress_needs_somebody_on_it():
+    problem = only(check(task(status="in_progress", assigned_on=date(2026, 8, 3),
+                              assignees=[])), TASK_ID)
+    assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_WIP, 2)
+
+
+def test_shaping_and_shelved_are_not_asked_who_is_on_them():
+    """The two statuses that demand nothing at all go on demanding nothing.
+
+    A rule added at one rung has to stay at that rung: an idea nobody has bet on
+    owes nothing, and neither does parked work.
+    """
+    for status in ("shaping", "shelved"):
+        found = [p for p in check(task(status=status, assignees=[])) if p.field == "assignees"]
+        assert found == [], status
+
+
+def test_the_rule_only_blocks_a_record_written_after_it_existed():
+    """The grandfathering bargain, on the newest rule to take it.
+
+    Adding a required field must never invalidate a corpus written before the
+    field existed, or the rule gets reverted rather than adopted. A record created
+    at schema_version 1 is warned; one created at 2 is refused.
+    """
+    older = only(check(task(assignees=[], created_schema_version=1)), TASK_ID)
+    newer = only(check(task(assignees=[], created_schema_version=2)), TASK_ID)
+    assert older.severity == "warning"
+    assert newer.severity == "blocker"
+    assert older.message == newer.message == NEEDS_SOMEBODY_READY
+
+
+def test_the_form_is_told_to_ask_for_somebody():
+    """`required_at` is what marks the label, and it is derived from the gate
+    rather than restated — so this is the same rule, read the way a form reads
+    it."""
+    from openproj.model import required_at
+
+    for kind in ("project", "pitch", "task"):
+        assert set(required_at(kind)["assignees"]) == {"ready", "in_progress"}, kind

@@ -1900,6 +1900,13 @@ def _status_problems(
     if entity.status == "ready":
         if entity.owner is None:
             yield "blocker", "owner", "a ready entity needs an owner", 1
+        # And somebody actually on it. An owner is who answers for the bet, which
+        # is not the same question as who is doing the work — the scheduler prices
+        # a record by the people on it (`_people_on`), so a bet with an owner and
+        # nobody assigned is a bet that has been accepted and staffed with nobody.
+        # jcanton, 2026-08-22.
+        if not entity.assignees:
+            yield "blocker", "assignees", "a ready entity needs somebody on it", 2
         if not (entity.review_waived or reviews):
             yield "blocker", "reviewers", "a ready entity needs a reviewer, or review waived", 1
         field = _SIZE_FIELD.get(entity.kind)
@@ -1913,6 +1920,8 @@ def _status_problems(
     elif entity.status == "in_progress":
         if entity.assigned_on is None:
             yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
+        if not entity.assignees:
+            yield "blocker", "assignees", "work in progress needs somebody on it", 2
         if not entity.review_waived and not (set(reviews) - {entity.owner}):
             yield (
                 "blocker",
