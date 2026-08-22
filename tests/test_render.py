@@ -2898,7 +2898,7 @@ def test_the_headings_a_server_draws_are_the_same_two_kinds(server_pages: dict[s
     the other two — it is the only page whose nav item does not exist, so with
     nothing lit above it the heading is all that says what the form will make.
     """
-    for route, name in (("cycle", "Cycle 37"), ("new", "New entity")):
+    for route, name in (("cycle", "Cycle 37"), ("new", "New record")):
         found = headings(server_pages[route])
         assert [text for _, text in found] == [name], route
         assert "sr-only" not in found[0][0], f"{route}: nothing else on the page says this"
@@ -2991,7 +2991,7 @@ def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Inde
     table = read(rendered, "table.html")
     cycles = read(rendered, "cycles.html")
 
-    assert "New entity" not in table
+    assert "New record" not in table
     assert "double-click a cell" not in table
     assert '<a class="button" href="">' not in table
     for number in sorted(set(seed_index.plans) | set(seed_index.cycles)):
@@ -3391,7 +3391,7 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
 
     The table keeps its instruction where it is, and that is the pattern rather
     than an exception to it: the rule is about rows, and "double-click a cell to
-    edit it" is already inline beside New entity — the control it shares a subject
+    edit it" is already inline beside New record — the control it shares a subject
     with — so it costs no row to move and no row to leave.
 
     The heading is still first in the list and is now `.sr-only` — the seventh of

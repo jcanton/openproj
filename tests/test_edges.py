@@ -19,7 +19,7 @@ import pytest
 from browser import chrome, measured_in
 
 from openproj.index import Index, build_index
-from openproj.model import load_repo
+from openproj.model import Config, Issue, Task, load_repo
 from openproj.render import ROUTES, render_graph
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -145,3 +145,78 @@ def test_reset_and_leaving_the_mode_both_put_a_marked_edge_back(
     assert got["afterReset"] == 0, "Reset left an edge marked for removal"
     assert got["afterLeaving"] == 0, "leaving the mode left an edge marked for removal"
     assert got["stillThere"] == 1, "an edge nobody committed came off the diagram"
+
+
+_OFF_PLAN = """
+window.__wrote = [];
+window.fetch = (url, options) => {
+  window.__wrote.push({url});
+  return new Promise(() => {});
+};
+document.getElementById('connect').click();
+// Adding: pick a blocker, then tap the record whose stored field the canvas
+// cannot fully see.
+cy.getElementById('task-cc0001').emit('tap');
+cy.getElementById('task-aa0001').emit('tap');
+const refusedAdd = document.getElementById('state').textContent;
+const drawn = cy.edges('.pending').length;
+// Removing: tap the one stored edge the canvas does draw into that record.
+const edge = cy.edges().filter(one =>
+  one.source().id() === 'task-bb0001' && one.target().id() === 'task-aa0001')[0];
+edge.emit('tap');
+const marked = edge.hasClass('dropping');
+// The same sentence twice in a row goes through announce()'s repeat trick —
+// cleared, then re-set on a zero timer so the live region speaks again — so
+// the read has to wait a tick.
+await new Promise(go => setTimeout(go, 30));
+const refusedDrop = document.getElementById('state').textContent;
+// And the same gestures on a record the canvas sees whole still work.
+cy.getElementById('task-cc0001').emit('tap');
+cy.getElementById('task-bb0001').emit('tap');
+return {refusedAdd, drawn, marked, refusedDrop,
+        drawnOk: cy.edges('.pending').length,
+        canSave: !document.getElementById('save').disabled,
+        wrote: window.__wrote};
+"""
+
+
+@pytest.fixture
+def hand_index() -> Index:
+    """A plan where one task's stored `depends_on` also names an issue — the
+    hand-written edge the canvas cannot draw and must not rebuild away."""
+    from datetime import date
+
+    waits = Task(id="task-aa0001", kind="task", title="Waits by hand", status="ready",
+                 depends_on=["task-bb0001", "issue-0f0001"])
+    first = Task(id="task-bb0001", kind="task", title="Finishes first", status="ready")
+    third = Task(id="task-cc0001", kind="task", title="A third record", status="ready")
+    noticed = Issue(id="issue-0f0001", kind="issue", title="Hand-written blocker")
+    return build_index([waits, first, third, noticed], Config(), date(2026, 8, 17))
+
+
+def test_an_edge_edit_is_refused_where_it_would_delete_a_hand_written_line(
+    hand_index: Index, tmp_path: Path
+):
+    """Save PATCHes the waiter's whole `depends_on` rebuilt from what the canvas
+    carries, and the canvas deliberately carries only what it can draw — so on
+    a record whose stored field also names an issue, either edge gesture would
+    silently delete the hand-written line under a commit message that says only
+    "depends_on". The server cannot refuse it for us: the record page draws the
+    full field through `_links`, so a list arriving without that target is a
+    legitimate removal from THERE and destruction from HERE, and the two are
+    the same bytes on the wire. So the canvas is the only gate, the gesture is
+    refused where the other impossible edges are refused, and the message names
+    the way out. A rare gesture failing with a sentence that teaches beats a
+    common gesture silently destroying somebody's line."""
+    page = render_graph(hand_index, ROUTES, base_commit=HEAD)
+    assert "issue-0f0001" not in page, "the off-plan id must not reach a plan page"
+
+    got = measured_in(chrome(), page, tmp_path / "offplan.html", 1400, _OFF_PLAN, height=1000)
+
+    assert got["drawn"] == 0, "the refused edge was drawn anyway"
+    for said in (got["refusedAdd"], got["refusedDrop"]):
+        assert "task-aa0001" in said and "cannot draw" in said, said
+        assert "its own page" in said, "the refusal must name the way out"
+    assert got["marked"] is False, "the stored edge was marked for a removal that destroys"
+    assert got["drawnOk"] == 1, "a record the canvas sees whole stopped taking edges"
+    assert got["wrote"] == [], "a refusal must not reach the server"

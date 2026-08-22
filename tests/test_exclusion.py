@@ -83,11 +83,21 @@ def _seed_for(rung: Rung) -> tuple[str, str, str]:
     the rung's own ladder. If a future unplanned kind grows a required field,
     `parse_text` refuses this text and the sweep fails LOUDLY, which is the
     correct failure: extend this helper, never skip the kind.
+
+    Plus one hand-written unread field, so every seed carries exactly one
+    WARNING: the plan-only problem lists (`/api/index.json`, the table
+    payload) are asserted not to name these ids, and an assertion over lists
+    that would have been empty anyway is an assertion that cannot fail.
+    `review_waived` because it is a work field no unplanned rung reads and it
+    feeds no suggestion blob; the sweep asserts the warning exists on the
+    record's own page, so if a future unplanned rung starts reading it, the
+    non-vacuity check fails loudly rather than this going quiet.
     """
     eid = f"{rung.prefix}-0faded"
     front = [f"id: {eid}", f"kind: {rung.name}", f"title: {NEEDLE} {rung.name}"]
     if rung.statuses:
         front.append(f"status: {rung.statuses[0]}")
+    front.append("review_waived: true")
     text = "---\n" + "\n".join(front) + "\n---\n\nSeeded by the exclusion sweep.\n"
     return eid, f"{rung.directory}/{eid}.md", text
 
@@ -261,9 +271,22 @@ def test_an_unplanned_record_is_on_its_own_page_and_the_landing_and_nowhere_else
         listed = sweep_client.get("/api/index.json").json()
         assert eid not in listed["entities"], "the external contract is plan-only"
         assert eid not in listed["spans"]
+        # The problems list too: its keys are ids the payload's own `entities`
+        # map must be able to resolve, and every seed deliberately carries one
+        # warning (see `_seed_for`) so this line has something to hold out.
+        assert eid not in {p["entity_id"] for p in listed["problems"]}, (
+            "a problem keyed by an unplanned id rode the plan-only contract"
+        )
 
         # Present exactly where a record lives: the landing list, and its own page.
         landing = sweep_client.get("/")
         assert landing.status_code == 200 and eid in landing.text
         own = sweep_client.get(f"/detail/{eid}")
         assert own.status_code == 200 and NEEDLE in own.text
+        # The seeded warning is real and drawn beside the record — which is what
+        # makes the problems assertion above non-vacuous, and what fails loudly
+        # if a future unplanned rung starts reading `review_waived`.
+        assert "review_waived is not read" in own.text, (
+            f"the {rung.name} seed lost its warning, so the problems assertion "
+            "above is checking an empty list"
+        )

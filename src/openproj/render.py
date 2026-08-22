@@ -1287,6 +1287,15 @@ def _elements(index: Index) -> list[dict]:
             # draw is the same case; the record page is where the full field is
             # read and edited.
             "depends_on": [b for b in index.blocked_by[entity_id] if b in index.entities],
+            # Whether the stored field holds MORE than the list above — a
+            # hand-written dependency on a record this page cannot draw. A
+            # boolean and never the ids (the exclusion sweep forbids an inbox
+            # id in this page's bytes): it is what lets the canvas refuse an
+            # edge edit that would rebuild `depends_on` from the filtered list
+            # and silently delete somebody's line.
+            "off_plan_deps": any(
+                b not in index.entities for b in index.blocked_by[entity_id]
+            ),
         }
         if entity.parent in index.entities:
             data["parent"] = entity.parent
@@ -4638,14 +4647,14 @@ _TABLE = """
 {#- The count rides at the far end of this row rather than owning one below it,
     which is the same move the graph and the timeline make — there it is the key's
     row, here it is the page's own controls, because the table has no key and this
-    is the last row it has to offer. The instruction beside New entity was already
+    is the last row it has to offer. The instruction beside New record was already
     inline and already costs nothing, so it stays where it is: it belongs next to
     the control it shares a subject with. -#}
 {#- Three gestures in one line, because a page that teaches them one at a time
     teaches the third to nobody: a drag has no name written on it anywhere, and
     the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
     what it is by being a control. -#}
-<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New entity</a>
+<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New record</a>
    <span class="hint">double-click a cell, or press Enter on it, to edit it ·
      drag a row by the grip beside its id onto another to file it there</span>
    {% endif %}<span id="state" role="status"></span><span id="summary">
@@ -5904,7 +5913,7 @@ function draftRowHtml() {
 function adderHtml() {
   const wide = ` colspan="${keys.length}"`;
   if (!DRAFT) {
-    // "New row" and not "New entity", although an entity is what it makes: the
+    // "New row" and not "New record", although a record is what it makes: the
     // control beside the heading is already called that and goes to the form
     // that writes one properly. Two controls with one name on one page is how a
     // person learns to trust neither, and what this one does when you press it
@@ -9026,6 +9035,19 @@ cy.on('tap', 'edge', evt => {
     tally('undrawn');
     return;
   }
+  // The one refusal the server cannot make for us. Save PATCHes the waiter's
+  // whole `depends_on` rebuilt from what this canvas carries, and the canvas
+  // deliberately carries only what it can draw — so on a record whose stored
+  // field also names something off the plan (a hand-written dependency on an
+  // issue), that save would silently delete somebody's line. The server
+  // cannot tell it from the record page legitimately removing that target,
+  // so the canvas is the only gate: refused here, where the other impossible
+  // edges are refused, with the way out named.
+  if (edge.target().data('off_plan_deps')) {
+    tally(`${edge.target().id()} waits on something this graph cannot draw — `
+          + 'its dependencies are edited on its own page');
+    return;
+  }
   edge.toggleClass('dropping');
   tally(edge.hasClass('dropping')
     ? `${edge.source().id()} → ${edge.target().id()} will be removed`
@@ -9046,6 +9068,15 @@ cy.on('tap', 'node', evt => {
   from.removeClass('picked');
 
   if (from.id() === node.id()) { tally('an entity cannot wait for itself'); return; }
+  // Same refusal as the edge handler above, for the same record: the new edge
+  // would be saved as this waiter's whole `depends_on` rebuilt from the
+  // canvas, and the canvas cannot see the hand-written off-plan line it
+  // would be deleting.
+  if (node.data('off_plan_deps')) {
+    tally(`${node.id()} waits on something this graph cannot draw — `
+          + 'its dependencies are edited on its own page');
+    return;
+  }
   if (cy.edges().some(e => e.source().id() === from.id() && e.target().id() === node.id())) {
     tally('that dependency is already there');
     return;
@@ -12895,7 +12926,7 @@ _DETAIL = """
   {#- The heading names the page; on the create page the title box below it is
       a control, because a heading whose only content is an empty input is a
       page with no name and a box with no name either. -#}
-  <h1>{% if creating %}New entity{% else %}<span class="read">{{ e.title }}</span>{% endif %}</h1>
+  <h1>{% if creating %}New record{% else %}<span class="read">{{ e.title }}</span>{% endif %}</h1>
   {#- No status chip. It was here as well as in the facts column forty pixels
       below — the same word, in the same colour, twice, and in edit mode the
       lower one is the select that changes it. A field that can be changed is
@@ -16152,6 +16183,11 @@ HUMAN = {
     "project": "Project",
     "pitch": "Pitch",
     "task": "Task",
+    # The two inbox kinds, fed the day they joined the ladder: chips masked the
+    # gap with `text-transform: uppercase`, and the /new kind picker did not —
+    # it read "Product, Project, Pitch, Task, issue, note".
+    "issue": "Issue",
+    "note": "Note",
     # predicates, as COMPUTED_PREDICATES spells them. `missing_required_fields`
     # is not what it does — it matches any problem of any severity — so it says so.
     "blocked": "Blocked",
@@ -16511,19 +16547,25 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
         if span and span.overruns_cycle_weeks
         else Markup("")
     )
-    rows.append(
-        {
-            "label": "Scheduled",
-            "for": "",
-            "display": (
-                Markup("{} → {}{}").format(span.start, span.end, overrun) if span else empty
-            ),
-            "control": "",
-            "gates": (),
-            "derived": True,
-            "editing_only": False,
-        }
-    )
+    # Only for kinds the scheduler dates. On an issue or a product the em-dash
+    # would mean "cannot exist" while everywhere else on this page it means
+    # "not set yet" — empty must not look like broken, and this dash was both.
+    if RUNG[entity.kind].schedules:
+        rows.append(
+            {
+                "label": "Scheduled",
+                "for": "",
+                "display": (
+                    Markup("{} → {}{}").format(span.start, span.end, overrun)
+                    if span
+                    else empty
+                ),
+                "control": "",
+                "gates": (),
+                "derived": True,
+                "editing_only": False,
+            }
+        )
     if why:
         rows.append(
             {
@@ -16540,17 +16582,23 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
                 "editing_only": False,
             }
         )
-    rows.append(
-        {
-            "label": "Blocks",
-            "for": "",
-            "display": _links(index.blocks[entity.id], index, links) or empty,
-            "control": "",
-            "gates": (),
-            "derived": True,
-            "editing_only": False,
-        }
-    )
+    # For kinds that may wait on things — and for any record something actually
+    # waits on. The disjunct is load-bearing: a hand-written `depends_on` can
+    # name an issue, and on that issue's page a populated Blocks row is true
+    # and useful (the delete cascade even edits it). What goes for the kinds
+    # that cannot depend is only the permanent em-dash.
+    if RUNG[entity.kind].depends or index.blocks[entity.id]:
+        rows.append(
+            {
+                "label": "Blocks",
+                "for": "",
+                "display": _links(index.blocks[entity.id], index, links) or empty,
+                "control": "",
+                "gates": (),
+                "derived": True,
+                "editing_only": False,
+            }
+        )
     # Derived, never written: from the tasks under it where there are any, and
     # from the body's own checklist where there are none. The full list is a panel
     # of its own beside the document (`_progress_view`); this line is the number,

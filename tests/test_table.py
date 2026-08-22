@@ -2929,7 +2929,7 @@ def test_every_control_on_the_create_form_has_a_name(new_page: str):
     assert re.search(r'<textarea name="body"[^>]*aria-label="Shaping document"', new_page, re.S)
     # And the page says what it is, which it did not: its `<h1>` was an empty
     # input.
-    assert "<h1>New entity</h1>" in new_page
+    assert "<h1>New record</h1>" in new_page
 
 
 # --------------------------------------------------------------------------- #

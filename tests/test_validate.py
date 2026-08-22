@@ -171,6 +171,12 @@ def test_an_id_must_match_the_pattern_and_agree_with_the_kind():
     assert summary(malformed) == ("blocker", "id", BAD_ID_PATTERN, 1)
     mismatched = only(check(task(id="pitch-aaa111")), "pitch-aaa111")
     assert summary(mismatched) == ("blocker", "id", bad_id_prefix("task"), 1)
+    # Asked of the pattern directly, because httpx refuses to send a bare
+    # newline in a URL and a proxy that does not is the whole point of the
+    # anchors: written `^…$` this matches, and the id becomes a path with a
+    # newline in it. `BAD_ID_PATTERN` derives from `.pattern` and cannot
+    # catch a revert; this line is the one that can.
+    assert not ID_PATTERN.match(TASK_ID + "\n")
 
 
 def test_every_depends_on_target_must_exist():

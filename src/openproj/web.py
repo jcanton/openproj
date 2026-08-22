@@ -1450,8 +1450,7 @@ def create_app(
         # id, because "promote a task" is not a request this route has ever
         # taken and the tell is the same either way: the source is not a note
         # or an issue.
-        prefix = source_id.split("-")[0]
-        kind_of_source = next((r.name for r in KINDS if r.prefix == prefix), None)
+        kind_of_source = KIND_OF_PREFIX.get(source_id.split("-")[0])
         if not ID_PATTERN.match(source_id) or kind_of_source not in INBOXES:
             raise HTTPException(400, f"{source_id!r} is not a note or an issue")
         inbox = kind_of_source
@@ -1459,7 +1458,7 @@ def create_app(
         # One phrase, used by the refusal and by the citation the promoted
         # document carries. Written twice they drift, and one of the two is prose
         # that ends up committed to the plan.
-        article = "an issue" if inbox == "issue" else "a note"
+        article = _an(inbox)
         if kind not in render.PROMOTABLE[inbox]:
             raise HTTPException(
                 422,
@@ -1750,7 +1749,16 @@ def create_app(
                     "entities": {i: e.model_dump(mode="json") for i, e in index.entities.items()},
                     "spans": {i: s.model_dump(mode="json") for i, s in index.spans.items()},
                     "explanations": {i: e.text for i, e in index.explanations.items()},
-                    "problems": [p.model_dump(mode="json") for p in index.problems],
+                    # The PLAN's problems only, now that `validate_all` covers
+                    # every record: this payload's `entities` map is plan-only,
+                    # so a problem keyed by an inbox id would be keyed by an id
+                    # the payload's own map cannot resolve — the count-versus-
+                    # filter mismatch the table was already fixed for.
+                    "problems": [
+                        p.model_dump(mode="json")
+                        for p in index.problems
+                        if p.entity_id in index.entities
+                    ],
                     # A script reading this has to be able to tell "the plan
                     # holds sixteen tasks" from "the plan holds sixteen tasks
                     # that parsed", and nothing else in this payload says so.

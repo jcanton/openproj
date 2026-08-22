@@ -258,11 +258,17 @@ def test_a_hand_written_edge_to_an_issue_does_not_500_the_table(
     with TestClient(create_app(path, auth="dev", secret=SECRET)) as client:
         table = client.get("/table")
         graph = client.get("/graph")
+        own = client.get("/detail/issue-9a9a9a")
 
     assert table.status_code == 200
     assert "issue-9a9a9a" not in table.text, "an inbox id leaked onto a plan page"
     assert graph.status_code == 200
     assert "issue-9a9a9a" not in graph.text, "an inbox id leaked into the graph"
+    # And on the issue's own page the edge is drawn, not hidden: a populated
+    # Blocks row on a record something waits on by hand is true and useful —
+    # the delete cascade even edits it. Only the permanent em-dash went.
+    assert "Blocks</dt>" in own.text
+    assert "task-9b9b9b" in own.text, "the waiting task is linked from the issue"
 
 
 def test_deleting_what_a_hand_written_issue_waits_on_edits_the_issue(
@@ -322,6 +328,11 @@ def test_an_issue_renders_on_the_shared_record_page(
 
     assert "Halo exchange drops a rank" in page
     assert 'id="promote-go"' in page, "the promote panel moved here with the record"
+    # No Scheduled and no Blocks row: on a kind the scheduler never dates and
+    # nothing waits on, the em-dash would mean "cannot exist" while everywhere
+    # else on this page it means "not set yet" — empty looking broken.
+    assert "Scheduled</dt>" not in page
+    assert "Blocks</dt>" not in page
     hovered = client.get(f"/api/body/{issue_id}")
     assert hovered.status_code == 200, "the hover card reads records, not the plan"
     # The commitbar arrives with the shared page. Cancel now means what it
