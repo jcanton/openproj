@@ -49,7 +49,7 @@ WRITERS = 8
 def record(
     *,
     id: str = "task-c00001",
-    title: str = "Reproduce the equator artefact",
+    title: str = "Reproduce the seam artefact",
     status: str = "ready",
     owner: str = "ann",
     priority: str = "medium",
@@ -796,7 +796,7 @@ def test_a_path_that_is_not_a_repository_is_refused_rather_than_searched_upwards
 ANN_RECORD = "people/ann.md"
 BO_RECORD = "people/bo.md"
 
-ANN_ABOUT = "\nAnn, who works on the dycore.\n"
+ANN_ABOUT = "\nAnn, who works on the core solver.\n"
 
 
 def person(icon: str, body: str = "") -> str:
@@ -855,7 +855,7 @@ def test_a_merge_inside_one_persons_record_still_reads_back_as_a_person(
     base = store.head()
     commit_directly(
         repo_path,
-        {**SEED, ANN_RECORD: person("fox", "\nAnn, who works on the dycore and the halo.\n")},
+        {**SEED, ANN_RECORD: person("fox", "\nAnn, who works on the core solver and the halo.\n")},
         "a longer sentence about ann",
     )
 

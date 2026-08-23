@@ -67,7 +67,7 @@ from openproj.web import create_app
 PAYLOAD = '" ><img src=x onerror=alert(1)> & </script><img src=y onerror=alert(2)>'
 # The same field, filled the way a person fills it. Nothing here can become
 # markup, so every element on this page is one the renderer meant to write.
-BENIGN = "a perfectly ordinary sentence about the tracer advection port"
+BENIGN = "a perfectly ordinary sentence about the aroma transport port"
 
 # What the payload builds if anything lets it. Kept as a set rather than a
 # substring search, because the whole point is to ask the parser.

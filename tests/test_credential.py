@@ -115,7 +115,7 @@ def test_a_remote_that_needs_a_credential_and_has_none_is_refused(tmp_path: Path
     pygit2.init_repository(str(repo), bare=True, initial_head="main")
 
     with pytest.raises(ValueError, match="needs a credential"):
-        create_app(repo, remote="https://github.com/jcanton/icon4py-plan.git")
+        create_app(repo, remote="https://github.com/jackdawrie/kiln4py-plan.git")
 
     # A `file://` remote is the local case the tests and every development run
     # use, and it needs nothing.
@@ -166,7 +166,7 @@ def test_the_startup_refusal_says_which_variable_is_unset(tmp_path: Path, monkey
     monkeypatch.setenv("OPENPROJ_APP_ID", "123456")
 
     with pytest.raises(ValueError) as refusal:
-        create_app(repo, remote="https://github.com/jcanton/icon4py-plan.git")
+        create_app(repo, remote="https://github.com/jackdawrie/kiln4py-plan.git")
 
     assert "OPENPROJ_INSTALLATION_ID" in str(refusal.value)
     assert "OPENPROJ_APP_KEY" in str(refusal.value)

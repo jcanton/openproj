@@ -1,0 +1,15 @@
+{
+ "probe": "index-warm",
+ "records": 561,
+ "first_build_in_a_fresh_process_ms": 581.2,
+ "same_commit_again_ms": [
+  29.5,
+  29.4,
+  29.2
+ ],
+ "after_one_record_changed_ms": [
+  30.7,
+  38.7,
+  30.6
+ ]
+}

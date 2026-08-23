@@ -46,24 +46,24 @@ PLAN = {
     # parity check passes vacuously. That shape is what broke last time: a
     # sweep seeded `depends_on` but not `parent`, and the twin hazard sat
     # green behind it.
-    "products/prod-e00001--icon4py.md": (
-        "---\nid: prod-e00001\nkind: product\ntitle: icon4py\n---\n\nThe codebase.\n"
+    "products/prod-e00001--kiln4py.md": (
+        "---\nid: prod-e00001\nkind: product\ntitle: kiln4py\n---\n\nThe codebase.\n"
     ),
-    "projects/proj-a10000--tracer-engine.md": (
-        "---\nid: proj-a10000\nkind: project\ntitle: Tracer engine\n"
+    "projects/proj-a10000--aroma-engine.md": (
+        "---\nid: proj-a10000\nkind: project\ntitle: Aroma engine\n"
         "status: in_progress\nowner: ann\nparent: prod-e00001\n---\n\nThe project.\n"
     ),
     # A non-ASCII title and tag, because blob drift between the shared search
     # helper and its JS twin is exactly the kind of defect ASCII cannot see.
     "pitches/pitch-b20000--tracage.md": (
-        "---\nid: pitch-b20000\nkind: pitch\ntitle: \"Traçage à l'équateur\"\n"
-        "status: ready\nowner: ann\ntags: [gpu, 平流]\nparent: proj-a10000\n"
+        "---\nid: pitch-b20000\nkind: pitch\ntitle: \"Traçage à l'écoulement\"\n"
+        "status: ready\nowner: ann\ntags: [gpu, 焙煎]\nparent: proj-a10000\n"
         "cycle: 1\nperson_weeks: 2\n---\n\nA pitch.\n"
     ),
     TASK_PATH: (
         "---\nid: task-c00001\nkind: task\ntitle: Downgrade numpy\nstatus: ready\n"
         "owner: bo\nassignees: [cara]\nreviewers: [dan]\n"
-        "prs: ['C2SM/icon4py#1223']\nparent: pitch-b20000\n"
+        "prs: ['kilnlab/kiln4py#2211']\nparent: pitch-b20000\n"
         "person_weeks: 1\n---\n\nA task.\n"
     ),
     # An issue and a note, in the file format that never changed: no `kind:`
@@ -71,11 +71,11 @@ PLAN = {
     # in this corpus one commit ahead of the flip, matching nothing; now they
     # are records like everything else, and the needles below land on them.
     "issues/issue-ab12cd.md": (
-        "---\nid: issue-ab12cd\ntitle: \"Renormalisation à l'équateur\"\n"
-        "status: ready\nreported_by: ann\ntags: [数值]\n---\n\nSeen near the pole.\n"
+        "---\nid: issue-ab12cd\ntitle: \"Renormalisation à l'écoulement\"\n"
+        "status: ready\nreported_by: ann\ntags: [数值]\n---\n\nSeen near the drum wall.\n"
     ),
     "notes/note-ef34ab.md": (
-        "---\nid: note-ef34ab\ntitle: \"Idée: traceur passif\"\nstatus: thinking\n"
+        "---\nid: note-ef34ab\ntitle: \"Idée: flux passif\"\nstatus: thinking\n"
         "written_by: bo\ntags: [gpu]\n---\n\nHalf a thought.\n"
     ),
 }
@@ -534,8 +534,8 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     records, config, _ = load_repo_from_git(path)
     index = build_index(records, config, date(2026, 8, 17))
 
-    needles = ["traçage", "équateur", "Équateur", "平流", "gpu", "ann",
-               "task-c00001", "1223", "downgrade", "tag:gpu", "kind:pitch",
+    needles = ["traçage", "écoulement", "Écoulement", "焙煎", "gpu", "ann",
+               "task-c00001", "2211", "downgrade", "tag:gpu", "kind:pitch",
                # The issue's and the note's words, non-ASCII where it counts —
                # and their kinds by name, which only exist as facet values on
                # the records side.
@@ -547,7 +547,7 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
                # plan/inbox line. `assignee:` and `reviewer:` are the aliases,
                # so the alias map is in the claim too.
                "status:ready", "owner:ann", "priority:medium",
-               "cycle:1", "assignee:cara", "reviewer:dan", "prs:1223",
+               "cycle:1", "assignee:cara", "reviewer:dan", "prs:2211",
                "project:proj-a10000", "product:prod-e00001",
                "predicate:untracked", "predicate:has_blocker"]
     disagreed = {}
@@ -573,7 +573,7 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     # The vacuity guard for the widened fields: every field-needle must FIND
     # something on the server side, or its parity above proved [] == [].
     for needle in ("status:ready", "owner:ann", "priority:medium", "cycle:1",
-                   "assignee:cara", "reviewer:dan", "prs:1223",
+                   "assignee:cara", "reviewer:dan", "prs:2211",
                    "project:proj-a10000", "product:prod-e00001",
                    "predicate:untracked", "predicate:has_blocker"):
         assert apply_filters(index, {}, needle, over=index.records), needle

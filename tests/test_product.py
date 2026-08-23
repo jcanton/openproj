@@ -1,6 +1,7 @@
 """The rung above project, and the ladder every kind is now read from.
 
-A product groups the codebases one plan spans — gt4py under icon4py, dace, pmap —
+A product groups the codebases one plan spans — hearth under kiln4py, and the
+tools beside them —
 and it exists for one reason, in jcanton's words: separate corpora "would prevent
 cross-dependencies", and a dependency this tool cannot express is one somebody
 tracks in their head.
@@ -83,7 +84,7 @@ def test_a_product_is_the_top_and_a_project_sits_under_one():
 def test_a_product_waits_on_nothing():
     """Its projects, pitches and tasks do. jcanton: it "should not be allowed to
     have dependencies (only its projects/pitches/tasks can)"."""
-    one = Product(id="prod-000001", kind="product", title="gt4py",
+    one = Product(id="prod-000001", kind="product", title="hearth",
                   depends_on=["proj-000001"])
     problems = validate_all([one], Config())
     waiting = [p for p in problems if p.field == "depends_on" and p.severity == "blocker"]
@@ -97,7 +98,7 @@ def test_a_product_carries_no_appetite_and_is_never_scheduled():
     at all, so parsing drops the key, and a rule reading the object alone would
     be a rule that can never fire on any file anybody writes."""
     one = parse_text(
-        "---\nid: prod-000001\nkind: product\ntitle: gt4py\n"
+        "---\nid: prod-000001\nkind: product\ntitle: hearth\n"
         "person_weeks: 4\nowner: ann\n---\n\nThe DSL.\n",
         "products/prod-000001.md",
     )
@@ -115,7 +116,7 @@ def test_the_product_rules_are_as_old_as_the_kind():
     file red. No file can predate a KIND, though — every product that will ever
     exist is written after the rules about products — so those rules are stamped
     version 1 and are blockers on a hand-written file, which defaults to 1."""
-    one = Product(id="prod-000001", kind="product", title="gt4py",
+    one = Product(id="prod-000001", kind="product", title="hearth",
                   depends_on=["proj-000001"], created_schema_version=1)
     waiting = [
         p for p in validate_all([one], Config())
@@ -148,9 +149,9 @@ def plan(tmp_path: Path) -> Path:
         (root / name).mkdir(parents=True)
     (root / "config" / "defaults.yaml").write_text("schema_version: 2\n")
     (root / "products" / "prod-000001.md").write_text(
-        "---\nid: prod-000001\nkind: product\ntitle: icon4py\n---\n\nThe port.\n")
+        "---\nid: prod-000001\nkind: product\ntitle: kiln4py\n---\n\nThe port.\n")
     (root / "products" / "prod-000002.md").write_text(
-        "---\nid: prod-000002\nkind: product\ntitle: gt4py\n---\n\nThe DSL under it.\n")
+        "---\nid: prod-000002\nkind: product\ntitle: hearth\n---\n\nThe DSL under it.\n")
     (root / "projects" / "proj-000001.md").write_text(
         "---\nid: proj-000001\nkind: project\ntitle: The port\nparent: prod-000001\n"
         "status: ready\nowner: ann\nreviewers: [bo]\n---\n\nx\n")
@@ -158,11 +159,11 @@ def plan(tmp_path: Path) -> Path:
         "---\nid: proj-000002\nkind: project\ntitle: The DSL\nparent: prod-000002\n"
         "status: ready\nowner: bo\nreviewers: [ann]\n---\n\nx\n")
     (root / "pitches" / "pitch-000002.md").write_text(
-        "---\nid: pitch-000002\nkind: pitch\ntitle: Field view lowering\n"
+        "---\nid: pitch-000002\nkind: pitch\ntitle: Stencil lowering\n"
         "parent: proj-000002\nstatus: ready\nowner: bo\nreviewers: [ann]\n"
         "person_weeks: 3\n---\n\nx\n")
     (root / "pitches" / "pitch-000001.md").write_text(
-        "---\nid: pitch-000001\nkind: pitch\ntitle: Port the advection\n"
+        "---\nid: pitch-000001\nkind: pitch\ntitle: Port the transport\n"
         "parent: proj-000001\nstatus: ready\nowner: ann\nreviewers: [bo]\n"
         "person_weeks: 2\ndepends_on: [pitch-000002]\n---\n\nx\n")
     return root
@@ -241,7 +242,7 @@ def test_a_container_has_no_work_state_to_gate():
     assert "owner" in required_at("pitch")
 
     ready = parse_text(
-        "---\nid: prod-000001\nkind: product\ntitle: gt4py\nstatus: ready\n---\n\nx\n",
+        "---\nid: prod-000001\nkind: product\ntitle: hearth\nstatus: ready\n---\n\nx\n",
         "products/prod-000001.md",
     )
     said = validate_all([ready], Config())
@@ -256,7 +257,7 @@ def test_the_editors_do_not_offer_a_field_the_rung_does_not_read():
     from openproj.render import _editable_for, _new_row_fields
 
     one = parse_text(
-        "---\nid: prod-000001\nkind: product\ntitle: gt4py\n---\n\nx\n",
+        "---\nid: prod-000001\nkind: product\ntitle: hearth\n---\n\nx\n",
         "products/prod-000001.md",
     )
     offered = {field["name"] for field in _editable_for(one)}
@@ -308,8 +309,8 @@ def test_a_product_can_be_made_through_the_api(tmp_path: Path):
         made = client.post(
             "/api/record",
             json={"base_commit": base,
-                  "fields": {"kind": "product", "title": "gt4py"},
-                  "body": "The DSL under icon4py.\n"},
+                  "fields": {"kind": "product", "title": "hearth"},
+                  "body": "The DSL under kiln4py.\n"},
         )
         assert made.status_code == 201, made.json()
         product = made.json()["id"]
@@ -354,8 +355,8 @@ def test_a_status_on_a_product_still_warns_rather_than_refuses(tmp_path: Path):
         made = client.post(
             "/api/record",
             json={"base_commit": head,
-                  "fields": {"kind": "product", "title": "gt4py", "status": "ready"},
-                  "body": "The DSL under icon4py.\n"},
+                  "fields": {"kind": "product", "title": "hearth", "status": "ready"},
+                  "body": "The DSL under kiln4py.\n"},
         )
         assert made.status_code == 201, made.json()
         product = made.json()["id"]
@@ -391,8 +392,8 @@ def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
         made = client.post(
             "/api/record",
             json={"base_commit": head,
-                  "fields": {"kind": "product", "title": "gt4py"},
-                  "body": "The DSL under icon4py.\n"},
+                  "fields": {"kind": "product", "title": "hearth"},
+                  "body": "The DSL under kiln4py.\n"},
         )
         assert made.status_code == 201, made.json()
         product = made.json()["id"]
@@ -400,11 +401,11 @@ def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
         renamed = client.patch(
             f"/api/record/{product}",
             json={"base_commit": made.json()["commit"],
-                  "fields": {"title": "gt4py-next"}, "body": None},
+                  "fields": {"title": "hearth-next"}, "body": None},
         )
         assert renamed.status_code == 200, renamed.json()
         records = client.get("/api/index.json").json()["plan"]
-        assert records[product]["title"] == "gt4py-next"
+        assert records[product]["title"] == "hearth-next"
 
         gone = client.request(
             "DELETE", f"/api/record/{product}",

@@ -153,9 +153,9 @@ def slides_in(page: str) -> list[dict]:
 # each assertion is about is on the screen with it.
 # --------------------------------------------------------------------------- #
 
-LAND = """## Problem
+BED = """## Problem
 
-JSBACH is Fortran and the interface is not.
+DRUMBED is Fortran and the interface is not.
 
 ## Progress
 
@@ -173,30 +173,30 @@ The gather/scatter seam is the one to watch.
 
 def corpus() -> list[Record]:
     project = Project(id="proj-000001", kind="project", title="Physics")
-    land = Pitch(id="pitch-0c0001", kind="pitch", title="Porting land", owner="ann",
+    bed = Pitch(id="pitch-0c0001", kind="pitch", title="Porting the bed", owner="ann",
                  person_weeks=6.0, parent="proj-000001", status="in_progress", cycle=37,
                  assigned_on=date(2026, 8, 17), reviewers=["bo"])
-    jsbach = Task(id="task-0c1001", kind="task", title="Port JSBACH", owner="ann",
+    solver = Task(id="task-0c1001", kind="task", title="Port the bed solver", owner="ann",
                   person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
                   assigned_on=date(2026, 8, 17), reviewers=["bo"],
-                  prs=["C2SM/icon4py#1427", "GridTools/gt4py#2765"], body=LAND)
-    fluxes = Task(id="task-0c1002", kind="task", title="Coordinate with MPI-M", owner="bo",
+                  prs=["kilnlab/kiln4py#2427", "kilnlab/hearth#2765"], body=BED)
+    fluxes = Task(id="task-0c1002", kind="task", title="Coordinate with Kettleworth", owner="bo",
                   person_weeks=1.0, parent="pitch-0c0001", status="done",
-                  assigned_on=date(2026, 8, 17), reviewers=["ann"], prs=["C2SM/icon4py#1403"])
+                  assigned_on=date(2026, 8, 17), reviewers=["ann"], prs=["kilnlab/kiln4py#2403"])
     # A chore nobody pitched: bettable in its own right, so its cycle is its own.
     chore = Task(id="task-0f0001", kind="task", title="Tidy the serialisation scripts",
                  owner="cy", person_weeks=0.5, status="ready", cycle=37, reviewers=["ann"],
-                 body="## Progress\n\n- [ ] Move the docs out of HackMD\n")
+                 body="## Progress\n\n- [ ] Move the docs out of the shared drive\n")
     # Bet into a different cycle, and therefore on a different deck.
-    other = Pitch(id="pitch-0d0001", kind="pitch", title="Tracer advection", owner="cy",
+    other = Pitch(id="pitch-0d0001", kind="pitch", title="Aroma transport", owner="cy",
                   person_weeks=2.0, status="ready", cycle=36, reviewers=["ann"])
-    return [project, land, jsbach, fluxes, chore, other]
+    return [project, bed, solver, fluxes, chore, other]
 
 
 def plan_of(number: int = 37) -> Cycle:
     return Cycle(cycle=number, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 28),
                  availability={"ann": 0.5, "bo": 1.0, "cy": 0.6},
-                 body="## Goal\n\nThe land port is the one that cannot slip.\n")
+                 body="## Goal\n\nThe bed port is the one that cannot slip.\n")
 
 
 @pytest.fixture
@@ -239,31 +239,31 @@ def test_the_deck_is_a_title_slide_and_then_one_slide_per_piece_of_work(deck: st
         "Cycle 37",
         # The bet first, then by id inside it — which is the order the pitch's
         # own progress panel lists the same tasks in.
-        "Port JSBACH",
-        "Coordinate with MPI-M",
+        "Port the bed solver",
+        "Coordinate with Kettleworth",
         "Tidy the serialisation scripts",
     ]
     assert "title" in found[0]["classes"]
     # The pitch these two belong to is a rollup and gets no slide of its own.
-    assert not any("Porting land" == s["heading"] for s in found)
+    assert not any("Porting the bed" == s["heading"] for s in found)
 
 
 def test_a_slide_is_headed_by_what_the_work_belongs_to_and_then_by_itself(deck: str):
-    """`[GT4Py] Features` — the real deck's own convention, typed by hand into
+    """`[hearth] Features` — the real deck's own convention, typed by hand into
     sixteen titles. The bracket is the pitch, so nobody types it; and it is blank
     where the record IS the bet, because a bracket repeating the line under it is
     furniture."""
     under = {s["heading"]: s["under"] for s in slides_in(deck)}
 
-    assert under["Port JSBACH"] == "Porting land"
-    assert under["Coordinate with MPI-M"] == "Porting land"
+    assert under["Port the bed solver"] == "Porting the bed"
+    assert under["Coordinate with Kettleworth"] == "Porting the bed"
     # A chore nobody pitched is its own bet.
     assert under["Tidy the serialisation scripts"] == ""
 
 
 def test_the_slides_of_one_bet_are_consecutive(index: Index):
     """Which is what the bracket in the real deck's titles was doing by hand:
-    four GT4Py slides in a row, and then four ICON4Py ones. Ordered by id alone
+    four hearth slides in a row, and then four kiln4py ones. Ordered by id alone
     they interleave, and a deck that jumps between two subjects and back is a
     deck the room cannot follow."""
     more = corpus() + [
@@ -274,16 +274,16 @@ def test_the_slides_of_one_bet_are_consecutive(index: Index):
     headings = [s["heading"] for s in slides_in(render_deck(build_index(more, config, TODAY),
                                                             37, ROUTES))]
 
-    land = [at for at, name in enumerate(headings)
-            if name in ("Port JSBACH", "Coordinate with MPI-M")]
-    assert land == [min(land), min(land) + 1], headings
+    bed = [at for at, name in enumerate(headings)
+           if name in ("Port the bed solver", "Coordinate with Kettleworth")]
+    assert bed == [min(bed), min(bed) + 1], headings
 
 
 def test_a_slide_shows_the_points_ticked_and_the_share_the_index_counted(deck: str):
     """The tick and the percentage are `index.progress`, which counted them once
     for the table, the detail page and this. Counting them again here is how the
     number above a list and the ticks in it come to disagree."""
-    slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(deck) if s["heading"] == "Port the bed solver")
 
     assert slide["points"] == [
         {"done": True, "text": "Read the tiling code"},
@@ -300,7 +300,7 @@ def test_the_points_are_drawn_once_and_not_twice(deck: str):
     it is not printed above the document and inside it. A slide has to lift it —
     `[x]` read from the back of a room is not a tick — so the notes below must
     lose it, heading and all."""
-    slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(deck) if s["heading"] == "Port the bed solver")
 
     assert slide["doc"], "the notes are the rest of the body and must still be there"
     assert "Wire up the surface fluxes" not in slide["doc"]
@@ -317,9 +317,9 @@ def test_a_slide_carries_the_notes_and_not_the_shaping_argument(deck: str):
     three of seven slides ran onto a second sheet before this, which is the one
     thing a deck must not do. What leads is what somebody wrote about what
     happened."""
-    slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(deck) if s["heading"] == "Port the bed solver")
 
-    assert "JSBACH is Fortran" not in slide["doc"], "the Problem section is the bet"
+    assert "DRUMBED is Fortran" not in slide["doc"], "the Problem section is the bet"
     assert "Problem" not in slide["doc"]
     assert "The gather/scatter seam is the one to watch." in slide["doc"]
     # And the record is on the slide, because that is where the argument is.
@@ -359,17 +359,17 @@ def test_the_progress_section_is_what_a_review_slide_is_for(index: Index):
     """The checklist is lifted to the points at the top, and whatever else
     somebody wrote under `## Progress` is the sentence they are about to say out
     loud. It was being deleted along with the rest of the template."""
-    said = Task(id="task-0c1001", kind="task", title="Port JSBACH", owner="ann",
+    said = Task(id="task-0c1001", kind="task", title="Port the bed solver", owner="ann",
                 person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
                 assigned_on=TODAY, reviewers=["bo"],
                 body="## Problem\n\nFortran.\n\n## Progress\n\n- [x] Bindings\n\n"
-                     "Blocked on a savepoint nobody has generated yet.\n")
+                     "Blocked on a tap point nobody has generated yet.\n")
     other = [e for e in corpus() if e.id != "task-0c1001"]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     found = slides_in(render_deck(build_index([*other, said], config, TODAY), 37, ROUTES))
-    slide = next(s for s in found if s["heading"] == "Port JSBACH")
+    slide = next(s for s in found if s["heading"] == "Port the bed solver")
 
-    assert "Blocked on a savepoint nobody has generated yet." in slide["doc"]
+    assert "Blocked on a tap point nobody has generated yet." in slide["doc"]
     assert "Fortran" not in slide["doc"]
     # Lifted to the points, so it is not printed twice.
     assert [p["text"] for p in slide["points"]] == ["Bindings"]
@@ -416,14 +416,14 @@ def test_a_heading_the_bet_emptied_is_not_printed_over_blank_paper():
     whose only content was a `### Solution` written under it arrived as
     `<h2>Notes</h2>` and nothing else, and was truthy enough to suppress the
     fallback that exists to stop exactly this."""
-    only = Task(id="task-0c1001", kind="task", title="Port JSBACH", owner="ann",
+    only = Task(id="task-0c1001", kind="task", title="Port the bed solver", owner="ann",
                 person_weeks=4.0, parent="pitch-0c0001", status="in_progress",
                 assigned_on=TODAY, reviewers=["bo"],
                 body="## Notes\n\n### Solution\n\nThe plan lives here.\n")
     others = [e for e in corpus() if e.id != "task-0c1001"]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index([*others, only], config, TODAY), 37, ROUTES)
-    slide = next(s for s in slides_in(page) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(page) if s["heading"] == "Port the bed solver")
 
     assert "Notes" not in slide["doc"], "a heading whose whole content was the bet"
     assert slide["doc"], "and therefore nothing at all was left to print"
@@ -437,11 +437,11 @@ def test_a_pull_request_on_a_slide_is_a_link_to_the_pull_request(deck: str):
     """A dead reference teaches people the field is decorative, and the deck is
     where the field is most read: the real one links a PR on nearly every slide.
     The same `_pr_link` the facts list uses, so the two cannot point differently."""
-    slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(deck) if s["heading"] == "Port the bed solver")
 
     assert slide["prs"] == [
-        "https://github.com/C2SM/icon4py/pull/1427",
-        "https://github.com/GridTools/gt4py/pull/2765",
+        "https://github.com/kilnlab/kiln4py/pull/2427",
+        "https://github.com/kilnlab/hearth/pull/2765",
     ]
 
 
@@ -455,7 +455,7 @@ def test_the_title_slide_names_the_cycle_its_review_and_what_it_was_for(deck: st
     assert title["heading"] == "Cycle 37"
     assert "Review" in title["text"]
     assert "2026-09-28" in title["text"]
-    assert "The land port is the one that cannot slip." in title["text"]
+    assert "The bed port is the one that cannot slip." in title["text"]
 
 
 def test_a_review_date_nobody_chose_is_not_printed_as_though_somebody_had(index: Index):
@@ -482,7 +482,7 @@ def test_a_review_date_nobody_chose_is_not_printed_as_though_somebody_had(index:
 def test_work_bet_into_another_cycle_is_on_another_deck(deck: str):
     """A deck is a cycle review. `cycle:` records where a bet was made and is
     never re-stamped, so this is the same question every page asks."""
-    assert "Tracer advection" not in " ".join(s["text"] for s in slides_in(deck))
+    assert "Aroma transport" not in " ".join(s["text"] for s in slides_in(deck))
     assert "pitch-0d0001" not in deck
 
 
@@ -501,7 +501,7 @@ def test_a_review_shows_what_was_finished_and_what_was_parked(index: Index):
                                       37, ROUTES))]
 
     assert not any(index.counts_in(e, 37) for e in (parked,))
-    assert "Coordinate with MPI-M" in headings, "a done task is what a review is about"
+    assert "Coordinate with Kettleworth" in headings, "a done task is what a review is about"
     assert "Circuit broken" in headings, "a shelved bet is a decision, not an absence"
 
 
@@ -535,7 +535,7 @@ def test_a_screenshot_travels_inside_the_deck(index: Index):
     export. A deck is mailed to the people who were not in the room, and a
     screenshot that only resolves next to its own repository does not arrive."""
     page = render_deck(index, 37, ROUTES, lambda name: PIXEL if "0123" in name else None)
-    slide = next(s for s in slides_in(page) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(page) if s["heading"] == "Port the bed solver")
 
     assert slide["images"] == [f"data:image/png;base64,{B64}"]
     # Nothing is left pointing at a directory that will not be there.
@@ -548,7 +548,7 @@ def test_bytes_that_will_not_come_back_cost_the_picture_and_not_the_page(index: 
     image must fall back to what every other page draws, not to a traceback."""
     for read in (None, lambda name: None):
         page = render_deck(index, 37, ROUTES, read)
-        slide = next(s for s in slides_in(page) if s["heading"] == "Port JSBACH")
+        slide = next(s for s in slides_in(page) if s["heading"] == "Port the bed solver")
 
         assert slide["images"] == ["/assets/0123456789abcdef.png"]
 
@@ -665,19 +665,19 @@ def test_a_record_that_is_only_its_bet_falls_back_to_what_it_was_going_to_do(
     It keeps its own heading so that nobody in the room mistakes the plan for a
     report of it."""
     slide = next(s for s in slides_in(render_deck(demo_index, 37, ROUTES))
-                 if s["heading"] == "Port JSBACH")
+                 if s["heading"] == "Port the bed solver")
 
     assert slide["doc"].startswith("Solution")
     assert "Finish the forward-elimination half" in slide["doc"]
     # And still not the rest of the argument.
-    assert "The first slice of ICON-Land" not in slide["doc"], "Problem is the bet"
+    assert "The first slice of DRUMBED" not in slide["doc"], "Problem is the bet"
     assert "Do not write a fourth TDMA" not in slide["doc"], "Rabbit holes are the bet"
 
 
 def long_plan(paragraphs: int = 12) -> str:
     """A Solution nobody ever wrote a note against, at the length people write
     them: the frozen corpus already carries two of 232 and 301 words."""
-    said = "The savepoint interface is the seam nobody has looked at yet."
+    said = "The tap-point interface is the seam nobody has looked at yet."
     return "## Solution\n\n" + "\n\n".join(
         f"Step {n}. " + " ".join([said] * 4) for n in range(paragraphs)
     )
@@ -698,13 +698,13 @@ def test_the_plan_a_slide_falls_back_to_is_cut_to_the_sheet_and_says_so(tmp_path
     from browser import chrome, printed
 
     plan = long_plan()
-    unread = Task(id="task-0c1002", kind="task", title="Coordinate with MPI-M", owner="bo",
+    unread = Task(id="task-0c1002", kind="task", title="Coordinate with Kettleworth", owner="bo",
                   person_weeks=1.0, parent="pitch-0c0001", status="done",
                   assigned_on=TODAY, reviewers=["ann"], body=plan)
     others = [e for e in corpus() if e.id != "task-0c1002"]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index([*others, unread], config, TODAY), 37, ROUTES)
-    slide = next(s for s in slides_in(page) if s["heading"] == "Coordinate with MPI-M")
+    slide = next(s for s in slides_in(page) if s["heading"] == "Coordinate with Kettleworth")
     where = tmp_path / "long.html"
     where.write_text(page, encoding="utf-8")
 
@@ -721,7 +721,7 @@ def test_a_note_somebody_wrote_beats_the_plan_it_would_have_fallen_back_to(deck:
     """The fallback is a floor and not a preference. Where there is a note about
     what happened, that is the slide; the Solution appears only where the record
     said nothing else at all."""
-    slide = next(s for s in slides_in(deck) if s["heading"] == "Port JSBACH")
+    slide = next(s for s in slides_in(deck) if s["heading"] == "Port the bed solver")
 
     assert "The gather/scatter seam is the one to watch." in slide["doc"]
     assert "Solution" not in slide["doc"]
@@ -765,7 +765,7 @@ BET_FILE = (
     "assigned_on: 2026-08-17\n"
     "person_weeks: 2\n"
     "cycle: 37\n"
-    "prs: [\"C2SM/icon4py#1403\"]\n"
+    "prs: [\"kilnlab/kiln4py#2403\"]\n"
     "---\n"
     "\n## Progress\n\n- [x] Gather to rank 0\n- [ ] Parallel netCDF\n"
 )
@@ -843,7 +843,7 @@ def test_the_points_on_a_slide_are_the_ones_the_meter_counted():
     `checklist_items` summed, so there is one parse of one document. Two walks of
     the same lines is two answers to "how many", and the slide draws one of them
     directly under the other."""
-    bodies = [LAND, "- [X] upper\n- [ ] lower\n", "", "no list at all",
+    bodies = [BED, "- [X] upper\n- [ ] lower\n", "", "no list at all",
               "```\n- [x] an example, not a point\n```\n"]
 
     for body in bodies:
@@ -944,7 +944,7 @@ def test_every_deck_this_suite_can_reach_prints_one_slide_to_a_page(
 
 
 def test_a_point_is_a_line_of_markdown_and_is_rendered_as_one(index: Index):
-    """The corpus writes `` `jsbach_setup` `` and `C2SM/icon4py#1403` inside its
+    """The corpus writes `` `bed_setup` `` and `kilnlab/kiln4py#2403` inside its
     points, and the real deck links exactly those references from exactly those
     bullets. Taken as plain text a point came out with literal backticks and a
     dead reference — the field looking decorative, which is the thing `_pr_link`
@@ -952,16 +952,16 @@ def test_a_point_is_a_line_of_markdown_and_is_rendered_as_one(index: Index):
     more = [e for e in corpus() if e.id != "task-0f0001"] + [
         Task(id="task-0f0001", kind="task", title="Tidy the serialisation scripts",
              owner="cy", person_weeks=0.5, status="ready", cycle=37, reviewers=["ann"],
-             body="- [ ] call `inspect_savepoints` from C2SM/icon4py#1409\n"),
+             body="- [ ] call `inspect_tappoints` from kilnlab/kiln4py#2409\n"),
     ]
     config = Config(known_people=["ann", "bo", "cy"]).with_plans([plan_of()])
     page = render_deck(build_index(more, config, TODAY), 37, ROUTES)
     slide = next(s for s in slides_in(page)
                  if s["heading"] == "Tidy the serialisation scripts")
 
-    assert "<code>inspect_savepoints</code>" in page
+    assert "<code>inspect_tappoints</code>" in page
     assert slide["prs"] == [], "the links inside a point are not the PR field"
-    assert "https://github.com/C2SM/icon4py/pull/1409" in page
+    assert "https://github.com/kilnlab/kiln4py/pull/2409" in page
     # And it stays on the row with its own tick rather than starting a paragraph.
     assert "<li class=\"\"><span class=\"box\" aria-hidden=\"true\">☐</span><p>" not in page
 

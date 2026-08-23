@@ -595,8 +595,8 @@ def test_a_commit_made_in_git_arrives_whole_in_a_body_written_in_house_style(
     """
     front, _ = split_front_matter(stored(plan))
     house = (
-        "The artefact shows up on the equator only — and only with two ranks.\n"
-        "It is not visible in the serialbox reference data.\n"
+        "The artefact shows up at the drum seam only — and only with two ranks.\n"
+        "It is not visible in the tapdeck reference data.\n"
     )
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\n{house}"}, "the way people write", author="ann"
@@ -640,7 +640,7 @@ def test_an_overlap_is_still_the_same_refusal_it_has_always_been(
         # says what both sides wrote; anything short of the same lines merges,
         # which is the case the test above covers.
         front, body = split_front_matter(stored(plan))
-        line = "The artefact shows up on the equator only, and only with two ranks.\n"
+        line = "The artefact shows up at the drum seam only, and only with two ranks.\n"
         assert line in body
         at = body.index(line)
         commit_directly(
@@ -1261,7 +1261,7 @@ def test_a_body_with_an_em_dash_is_absorbed_exactly():
     a reconnection makes — starts from the mangled text and mangles it again.
     """
     body = (
-        "The artefact shows up on the equator only — and only with two ranks.\n"
+        "The artefact shows up at the drum seam only — and only with two ranks.\n"
         "\n"
         "We are still on the contraction-off run.\n"
     )

@@ -557,7 +557,7 @@ def test_an_overrunning_bar_still_reads_as_overrunning(index: Index):
     the alarm out in a status colour on every bar that carries it — while every
     existing assertion about `rect.late` keeps passing, because the rule is
     still in the sheet. Ten of the seventeen bars in the shipped demo corpus
-    overrun, `Porting land` among them.
+    overrun, `Porting the bed` among them.
     """
     sheet = sheet_of(render_timeline(index, ROUTES))
     plot = PAGE + [el("div", "tl"), el("div", "scroll"), el("svg"), el("a")]

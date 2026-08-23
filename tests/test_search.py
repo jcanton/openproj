@@ -182,19 +182,20 @@ def ids(index: Index, query: str) -> list[str]:
 def test_a_bare_word_is_a_substring_of_the_searchable_text(index: Index):
     """What the box always did, and it keeps doing it: the language is something
     a query grows into rather than something it has to opt into."""
-    assert ids(index, "turbulence") == ids(index, "TURBULENCE")
-    assert ids(index, "turbulence")
+    assert ids(index, "throughflow") == ids(index, "THROUGHFLOW")
+    assert ids(index, "throughflow")
     assert ids(index, "no such word anywhere") == []
 
 
 def test_a_field_asks_that_field_and_nothing_else(index: Index):
-    """`owner:jcanton` is not `jcanton`: the second finds every record his name is
-    on in any role, which is the whole reason a field is worth spelling out."""
-    everywhere = set(ids(index, "jcanton"))
-    owned = set(ids(index, "owner:jcanton"))
+    """`owner:jackdawrie` is not `jackdawrie`: the second finds every record that
+    name is on in any role, which is the whole reason a field is worth spelling
+    out."""
+    everywhere = set(ids(index, "jackdawrie"))
+    owned = set(ids(index, "owner:jackdawrie"))
 
     assert owned < everywhere, "owner: found no fewer records than the bare word"
-    assert all(index.plan[i].owner == "jcanton" for i in owned)
+    assert all(index.plan[i].owner == "jackdawrie" for i in owned)
 
 
 def test_two_tags_can_be_asked_for_at_once(index: Index):
@@ -252,8 +253,10 @@ def test_adjacent_terms_are_anded(index: Index):
 def test_an_unknown_field_matches_nothing_rather_than_everything(index: Index):
     """The rule `apply_filters` already had, extended to the language: a typo that
     silently widens a result set is worse than one that visibly empties it."""
-    assert ids(index, "onwer:jcanton") == []
-    assert ids(index, "owner:jcanton or onwer:jcanton") == ids(index, "owner:jcanton")
+    assert ids(index, "onwer:jackdawrie") == []
+    assert ids(index, "owner:jackdawrie or onwer:jackdawrie") == ids(
+        index, "owner:jackdawrie"
+    )
 
 
 def test_a_malformed_query_says_so_and_matches_nothing(index: Index):
@@ -278,7 +281,7 @@ def test_the_empty_menu_option_is_askable_in_the_language(index: Index):
 
 
 def test_a_pr_is_found_however_it_is_written(index: Index):
-    """`#1364`, `1364` and the whole `C2SM/icon4py#1364` are one PR, and a person
+    """`#2318`, `2318` and the whole `kilnlab/kiln4py#2318` are one PR, and a person
     reading a review types whichever of the three is in front of them."""
     holders = [e for e in index.plan.values() if e.prs]
     assert holders, "no record in this corpus names a PR"
@@ -299,9 +302,9 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
     tags = [t for t in index.facets["tags"] if t != "(none)"][:2]
     queries = [
         "",
-        "turbulence",
-        "TURBULENCE",
-        "port turbulence",
+        "throughflow",
+        "THROUGHFLOW",
+        "port throughflow",
         "kind:task",
         "kind:task and status:ready",
         "kind:task status:ready",
@@ -310,17 +313,17 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
         "not (kind:task or kind:pitch)",
         "kind:task and (status:ready or status:done)",
         "(kind:task and status:ready) or status:done",
-        "owner:jcanton",
-        "assignee:jcanton",
-        "reviewer:jcanton",
+        "owner:jackdawrie",
+        "assignee:jackdawrie",
+        "reviewer:jackdawrie",
         f"tag:{tags[0]}",
         f"tag:{tags[0]} and tag:{tags[1]}",
         f"tag:{tags[0]} or tag:{tags[1]}",
         'cycle:"(none)"',
-        "onwer:jcanton",
+        "onwer:jackdawrie",
         "id:pitch-0b0001",
         "title:porting",
-        "pr:1364",
+        "pr:2318",
         "(kind:task",
         "kind:task and",
         "not",
@@ -339,7 +342,7 @@ def test_the_language_is_evaluated_the_same_in_the_browser(index: Index, page: s
 def test_the_two_field_lists_are_the_same():
     """The language names the same fields in both places.
 
-    A field in one list and not the other is `owner:jcanton` answering on the
+    A field in one list and not the other is `owner:jackdawrie` answering on the
     server and matching nothing in the table — the `(none)` sentinel's failure
     with a different name, which is why that one is pinned the same way.
     """
@@ -357,7 +360,7 @@ def test_the_two_field_lists_are_the_same():
 def test_the_aliases_and_the_free_text_fields_are_the_same():
     """The rest of the language's vocabulary, pinned the same way. An alias in one
     place only means `tag:gpu` narrows in the table and matches nothing through a
-    link; a free-text field in one place only means `pr:1364` finds the record in
+    link; a free-text field in one place only means `pr:2318` finds the record in
     one of them and not the other."""
     from openproj.query import ALIASES, FREE_TEXT
     from openproj.render import _FILTER_JS
@@ -421,7 +424,7 @@ MALFORMED = [
     "or",
     ")",
     "kind:",
-    ":jcanton",
+    ":jackdawrie",
     'title:"unclosed',
 ]
 
