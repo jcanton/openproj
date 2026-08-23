@@ -36,13 +36,12 @@ from mdit_py_plugins.tasklists import tasklists_plugin
 from pydantic import BaseModel
 
 from .index import (
-    COMPUTED_PREDICATES,
     Index,
-    _matches_predicate,
     _people_on,
     _product_of,
     _project_of,
     cascade_of,
+    predicates_of,
 )
 from .model import (
     ISSUE_STATUS,
@@ -1149,7 +1148,7 @@ def _row(index: Index, entity_id: str) -> dict:
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
         "product": _product_of(entity, index.entities),
-        "predicates": [p for p in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, p)],
+        "predicates": predicates_of(index, entity_id),
         # What the box searches, built once by `searchable` (`index.py`) and
         # carried rather than rebuilt: the browser used to search
         # `row.title + ' ' + row.tags` while the server searched four fields and
@@ -20084,23 +20083,35 @@ function recordsApply() {
     item.hidden = !kept;
     shown += kept ? 1 : 0;
   }
-  let headline = '', hint = '';
+  let headline = '', hint = '', spoken = '';
   if (!recordItems.length) {
     headline = SAID.empty_headline;
     hint = SAID.empty_hint;
   } else if (!RECORDS_LOADED) {
     headline = 'This search cannot run.';
     hint = 'The page arrived without its search data, so the list is shown unfiltered.';
+    spoken = headline;
   } else if (queryError()) {
     headline = 'That search cannot be read.';
     hint = 'What is wrong with it is beside the search box.';
   } else if (!shown) {
     headline = SAID.none_headline;
     hint = SAID.none_hint;
+    spoken = headline;
   }
   recordsEmpty.querySelector('.headline').textContent = headline;
   recordsEmpty.querySelector('.hint').textContent = hint;
   recordsEmpty.hidden = !headline;
+  // The row is not a live region, and must not be: role="status" on the tr or
+  // its cell would overwrite the table's row and cell semantics. So the two
+  // states only this script can reach a reader through go out over the shell's
+  // `announce` into the sr-only #announce region (this page has no #state).
+  // NOT the query-error state — #query-error is role="status" and speaks the
+  // parse error itself, so a second sentence here would double-speak — and not
+  // the empty view, which is server-rendered and never changes under a reader.
+  // '' when rows are showing again, so the region does not hold a stale "no
+  // match" and a later identical state is a change the region announces.
+  announce(spoken);
 }
 addEventListener('openproj:filter', recordsApply);
 recordsApply();
@@ -20133,6 +20144,11 @@ _RECORDS_STYLE = _SCROLL_STYLE + """
    sideways inside `.table-scroll`, the shared box's job. Titles and tags
    keep wrapping. */
 #records td[data-col="who"] { white-space: nowrap; }
+/* The header too: "Last modified" broke over two lines at 1200px while every
+   cell under it held one — a two-line label over one-line values reads as a
+   different column. Beats only the UA's `white-space: normal`; nothing else
+   sets the property on a th. */
+#records th[data-col="edited"] { white-space: nowrap; }
 #records td[data-col="edited"] { color: var(--muted); font-size: 12px;
                                  white-space: nowrap;
                                  font-variant-numeric: tabular-nums; }
@@ -20177,9 +20193,7 @@ def _record_row(index: Index, record_id: str) -> dict:
         "prs": read("prs"),
         "project": _project_of(entity, index.records),
         "product": _product_of(entity, index.records),
-        "predicates": [
-            p for p in COMPUTED_PREDICATES if _matches_predicate(index, record_id, p)
-        ],
+        "predicates": predicates_of(index, record_id),
         "search": index.search_blob[record_id],
     }
 

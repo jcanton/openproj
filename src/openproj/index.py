@@ -629,6 +629,20 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
     return False
 
 
+def predicates_of(index: Index, entity_id: str) -> list[str]:
+    """Every computed predicate that holds for this record, in ladder order.
+
+    One spelling for the three payloads that carry a record's flags — this
+    module's `query_fields`, the table's `_row` and the landing's
+    `_record_row` — because the browser's `matches()` and the server's
+    `apply_filters` answer `predicate:` from these lists, and a site that
+    filtered `COMPUTED_PREDICATES` its own way would disagree silently.
+    """
+    return [
+        name for name in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, name)
+    ]
+
+
 def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
     """One record's values per field, lowered — what `query.evaluate` asks about.
 
@@ -644,9 +658,7 @@ def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
     fields["id"] = [entity.id.lower()]
     fields["title"] = [entity.title.lower()]
     fields["prs"] = [pr.lower() for pr in entity.prs]
-    fields["predicate"] = [
-        name for name in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, name)
-    ]
+    fields["predicate"] = predicates_of(index, entity_id)
     return fields
 
 

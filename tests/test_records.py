@@ -409,6 +409,42 @@ def test_a_search_that_matches_nothing_says_so_in_the_views_own_words(tmp_path: 
         assert answer["value"] == f"No {word} matches this search.", word
 
 
+def test_a_state_only_the_script_reaches_is_announced_and_only_once(tmp_path: Path):
+    """Filtering to nothing was silent for a screen-reader user: the nothing-row
+    is a `tr` and must not be a live region (`role="status"` there would
+    overwrite the table's row semantics), so `recordsApply` speaks through the
+    shell's `announce` into the sr-only #announce region — this page has no
+    #state for it to prefer. The parse-error state must NOT go there:
+    #query-error is `role="status"` itself and already announces, and a second
+    sentence would double-speak. And a cleared filter empties the region, so
+    filtering to nothing a second time is a change the region announces rather
+    than a repeat it may swallow."""
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        page = client.get("/").text
+    answer = run_js(
+        page,
+        "(() => { const region = document.getElementById('announce');"
+        " const heard = [];"
+        " params.set('q', 'zzyzzx'); recordsApply(); heard.push(region.textContent);"
+        " params.set('q', ''); recordsApply(); heard.push(region.textContent);"
+        " params.set('q', 'zzyzzx'); recordsApply(); heard.push(region.textContent);"
+        " params.set('q', 'kind:'); sayQueryError(); recordsApply();"
+        " heard.push(region.textContent);"
+        " return heard; })()",
+        page=True,
+    )
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    said, cleared, again, on_error = answer["value"]
+    assert said == "No record matches this search."
+    assert cleared == "", "rows showing again must empty the region, not leave it stale"
+    assert again == "No record matches this search.", (
+        "the second no-match must be announced, not swallowed as a repeat"
+    )
+    assert on_error == "", "#query-error speaks the parse error itself; this would double-speak"
+
+
 def test_a_lost_payload_degrades_to_an_unfiltered_list_and_says_so(tmp_path: Path):
     """The rows are server-rendered, so a payload that did not survive the trip
     must NOT empty the page — the table's fourth emptiness inverted. Driven, not
@@ -510,7 +546,7 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
                # pitch, the task AND the issue — the field crosses the
                # plan/inbox line. `assignee:` and `reviewer:` are the aliases,
                # so the alias map is in the claim too.
-               "status:ready", "status:done", "owner:ann", "priority:medium",
+               "status:ready", "owner:ann", "priority:medium",
                "cycle:1", "assignee:cara", "reviewer:dan", "prs:1223",
                "project:proj-a10000", "product:prod-e00001",
                "predicate:untracked", "predicate:has_blocker"]
