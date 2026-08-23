@@ -412,6 +412,34 @@ class CoEditor(Person):
     # here rather than reimplementing the join. Default is exactly what it was.
     TYPIST = Typist
 
+    def plant_at(self, body: str) -> int:
+        """Where in the document this person starts, as a code-point index.
+
+        The end of the document by default, which is what this always did and
+        what every scenario written before this hook existed still measures.
+        `tests/load/adversarial.py` overrides it to put people under a heading in
+        the MIDDLE of a shaping document, because where they sit decides what
+        they collide with: a room whose every line is the last line of the file
+        conflicts with any append anybody makes, and that would make one merge
+        shape look like the whole merge story.
+        """
+        return len(body)
+
+    def planted(self) -> str:
+        """What this person writes into the document the moment they arrive.
+
+        A hook and not a literal, because `tests/load/adversarial.py` needs two
+        people typing on either side of ONE character: the left-hand person
+        plants the emoji and both anchors in a single insert, and the right-hand
+        person plants nothing and waits for its anchor to arrive. Two anchors
+        appended independently would be ordered by whichever broadcast landed
+        first, which is the harness deciding the thing being measured.
+
+        Returning "" means "plant nothing". Everything else is unchanged: the
+        default is exactly the newline-and-anchor this always wrote.
+        """
+        return "\n" + self.anchor
+
     def __init__(
         self,
         *args,
@@ -453,10 +481,13 @@ class CoEditor(Person):
         self.note(kind="WS join", ms=(time.monotonic() - begun) * 1000, status="joined",
                   entity=self.entity)
         self.result.joined = True
+        planting = self.planted()
+        if not planting:
+            return
         with self.member._lock:
             body = str(self.member.text)
             before = self.member.doc.get_state()
-            self.member.text.insert(coedit.byte_offset(body, len(body)), "\n" + self.anchor)
+            self.member.text.insert(coedit.byte_offset(body, self.plant_at(body)), planting)
             update = self.member.doc.get_update(before)
         self.member.client.send_json(
             {"t": "update", "u": base64.b64encode(update).decode()}
