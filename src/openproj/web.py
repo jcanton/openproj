@@ -1292,8 +1292,9 @@ def create_app(
     def page(html: str) -> HTMLResponse:
         return HTMLResponse(html)
 
-    @app.get("/", response_class=HTMLResponse)
-    def records() -> HTMLResponse:
+    def record_list(only: str | None) -> HTMLResponse:
+        """The landing and its two inbox views: one renderer, one page, the
+        population decided by the route."""
         commit, index = index_now()
         # The map may be one commit ahead of `commit` if a write lands between
         # the two reads. The times are display; the rows are the index's; the
@@ -1306,8 +1307,21 @@ def create_app(
                 base_commit=commit,
                 edited=edited_by_id(stamps),
                 now=int(time.time()),
+                only=only,
             )
         )
+
+    @app.get("/", response_class=HTMLResponse)
+    def records() -> HTMLResponse:
+        return record_list(None)
+
+    @app.get("/issues", response_class=HTMLResponse)
+    def issues() -> HTMLResponse:
+        return record_list("issue")
+
+    @app.get("/notes", response_class=HTMLResponse)
+    def notes() -> HTMLResponse:
+        return record_list("note")
 
     @app.get("/table", response_class=HTMLResponse)
     def table() -> HTMLResponse:
@@ -1359,22 +1373,16 @@ def create_app(
         asked = request.query_params.get("editor", "")
         return asked if asked in (render.ACE, render.PLAIN) else ""
 
-    # The inbox routes, kept as addresses and nothing else. Bookmarks, commit
-    # messages and chat scrollback are full of these URLs; a URL that answered
-    # 200 last week and 404 this week reads as a deleted record, not a moved
-    # page. 301 because the move is permanent, and the ids are percent-encoded
-    # on the way through: a path segment out of the wire is not a thing to
-    # write into a Location header verbatim. The `new` routes are declared
-    # before the `{id}` routes because the router matches in order and `new`
-    # would otherwise be a record id.
-    @app.get("/issues")
-    def issues_moved() -> RedirectResponse:
-        return RedirectResponse("/", status_code=301)
-
-    @app.get("/notes")
-    def notes_moved() -> RedirectResponse:
-        return RedirectResponse("/", status_code=301)
-
+    # The retired per-record routes, kept as addresses and nothing else.
+    # Bookmarks, commit messages and chat scrollback are full of these URLs; a
+    # URL that answered 200 last week and 404 this week reads as a deleted
+    # record, not a moved page. 301 because the move is permanent, and the ids
+    # are percent-encoded on the way through: a path segment out of the wire
+    # is not a thing to write into a Location header verbatim. The `new`
+    # routes are declared before the `{id}` routes because the router matches
+    # in order and `new` would otherwise be a record id. (`/issues` and
+    # `/notes` are not here: they briefly 301ed to `/` and render again now,
+    # as the filtered views above.)
     @app.get("/issue/new")
     def new_issue_moved() -> RedirectResponse:
         return RedirectResponse("/new?kind=issue", status_code=301)

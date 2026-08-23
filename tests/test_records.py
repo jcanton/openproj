@@ -1,11 +1,13 @@
-"""The landing list: every record, sorted by when a commit last touched it.
+"""The landing list: every record, sorted by when a commit last touched it —
+and, held to one kind each, the inbox views `/issues` and `/notes`, which are
+the same page over a smaller population.
 
 The time comes from a history walk (`Store.last_edited`), never from a field or
 an mtime; the search box is the shared control bar over the shared `matches()`;
 and there are FOUR ways for the list to be empty, each with its own sentence,
-because a filter matching nothing, a plan with nothing in it, a query that
+because a filter matching nothing, a view with nothing in it, a query that
 cannot be read and a payload that never arrived are four different things to do
-next. The export renders the same page, minus the time column when the
+next. The export renders the same three pages, minus the time column when the
 directory it reads has no history to ask.
 """
 
@@ -24,7 +26,7 @@ from test_store import commit_directly
 
 from openproj.index import apply_filters, build_index
 from openproj.model import edited_by_id, load_repo
-from openproj.render import _ago, render_records, render_static
+from openproj.render import ROUTES, _ago, render_records, render_static
 from openproj.web import create_app
 
 # The task's path is the one the tests edit, so it gets a name. Every filename
@@ -36,20 +38,32 @@ TASK_PATH = "tasks/task-c00001--downgrade-numpy.md"
 
 PLAN = {
     "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
+    # The corpus holds at least one value for EVERY field the landing row can
+    # be asked about — product and project through the holder walk, cycle,
+    # assignees, reviewers, owner, priority (the model's default), status,
+    # tags, prs — because the parity test below compares the box against the
+    # server field by field, and a field no record holds is a field whose
+    # parity check passes vacuously. That shape is what broke last time: a
+    # sweep seeded `depends_on` but not `parent`, and the twin hazard sat
+    # green behind it.
+    "products/prod-e00001--icon4py.md": (
+        "---\nid: prod-e00001\nkind: product\ntitle: icon4py\n---\n\nThe codebase.\n"
+    ),
     "projects/proj-a10000--tracer-engine.md": (
         "---\nid: proj-a10000\nkind: project\ntitle: Tracer engine\n"
-        "status: in_progress\nowner: ann\n---\n\nThe project.\n"
+        "status: in_progress\nowner: ann\nparent: prod-e00001\n---\n\nThe project.\n"
     ),
     # A non-ASCII title and tag, because blob drift between the shared search
     # helper and its JS twin is exactly the kind of defect ASCII cannot see.
     "pitches/pitch-b20000--tracage.md": (
         "---\nid: pitch-b20000\nkind: pitch\ntitle: \"Traçage à l'équateur\"\n"
         "status: ready\nowner: ann\ntags: [gpu, 平流]\nparent: proj-a10000\n"
-        "person_weeks: 2\n---\n\nA pitch.\n"
+        "cycle: 1\nperson_weeks: 2\n---\n\nA pitch.\n"
     ),
     TASK_PATH: (
         "---\nid: task-c00001\nkind: task\ntitle: Downgrade numpy\nstatus: ready\n"
-        "owner: bo\nprs: ['C2SM/icon4py#1223']\nparent: pitch-b20000\n"
+        "owner: bo\nassignees: [cara]\nreviewers: [dan]\n"
+        "prs: ['C2SM/icon4py#1223']\nparent: pitch-b20000\n"
         "person_weeks: 1\n---\n\nA task.\n"
     ),
     # An issue and a note, in the file format that never changed: no `kind:`
@@ -110,7 +124,7 @@ def test_the_landing_lists_every_record_newest_edit_first(tmp_path: Path):
 
     entities, config, _ = load_repo_from_git(path)
     index = build_index(entities, config, date(2026, 8, 17))
-    rows = re.findall(r'<li data-id="([\w-]+)"', page)
+    rows = re.findall(r'<tr data-id="([\w-]+)"', page)
     # Derived from `index.records`, not written out — which is how this page and
     # this expectation widened together on the flip commit, with no edit here.
     # The membership pin below is what keeps the derivation honest.
@@ -122,7 +136,7 @@ def test_the_landing_lists_every_record_newest_edit_first(tmp_path: Path):
     assert rows[0] == "task-c00001", "the record edited last is the record listed first"
     assert 'href="/detail/task-c00001"' in page
     assert '<span class="chip kind-task">' in page
-    assert '<span class="when">' in page
+    assert '<td data-col="edited">' in page
 
 
 def test_the_nav_says_records_at_the_root_and_table_at_table(tmp_path: Path):
@@ -133,12 +147,87 @@ def test_the_nav_says_records_at_the_root_and_table_at_table(tmp_path: Path):
         table = client.get("/table").text
     assert lit(landing) == ["Records"]
     assert lit(table) == ["Table"]
-    assert [label for label, _, _ in nav_of(landing)][:2] == ["Records", "Table"]
+    labels = [label for label, _, _ in nav_of(landing)]
+    assert labels[:2] == ["Records", "Table"]
+    assert labels[-2:] == ["Issues", "Notes"], (
+        "the inbox views are back in the nav: quick access to what would "
+        "otherwise be a click on a filter"
+    )
 
 
-def test_every_row_carries_an_empty_predicates_array(tmp_path: Path):
-    """`matches()` dereferences `row.predicates` without a guard, so an omitted
-    array plus a `?predicate=` in the URL is a TypeError and a blank page."""
+def test_the_inbox_routes_render_the_landing_held_to_one_kind(tmp_path: Path):
+    """`/issues` and `/notes` are the landing page over a smaller population —
+    not a redirect (which is what they briefly were) and not pages of their
+    own (which is what they were before that). A row of the wrong kind on
+    either is the filter leaking; a 301 is the route regressing to the flip
+    commit's stopgap."""
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        issues = client.get("/issues")
+        notes = client.get("/notes")
+    assert issues.status_code == 200 and notes.status_code == 200
+    assert re.findall(r'<tr data-id="([\w-]+)"', issues.text) == ["issue-ab12cd"]
+    assert re.findall(r'<tr data-id="([\w-]+)"', notes.text) == ["note-ef34ab"]
+    assert lit(issues.text) == ["Issues"]
+    assert lit(notes.text) == ["Notes"]
+    # One page: the same header row, the same search box, the same payload
+    # script — and none of the old pages' second vocabulary: no state dropdown
+    # (the query box says `status:shelved`) and no facet dropdowns at all.
+    for view in (issues.text, notes.text):
+        assert '<th data-col="kind">' in view and '<th data-col="who">' in view
+        assert 'id="q"' in view and 'id="landing"' in view
+        assert 'state-filter' not in view
+        assert 'class="facet"' not in view and "data-field=" not in view
+
+
+def test_each_view_offers_its_own_create_button(tmp_path: Path):
+    """Create record / Create issue / Create note, kind pre-filled — and on
+    `/` the picker's default, which is what a bare `/new` opens on. The label
+    and the href move together: a button saying one kind and opening another
+    is the control lying about what will happen."""
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        wanted = {
+            "/": ('href="/new"', "Create record"),
+            "/issues": ('href="/new?kind=issue"', "Create issue"),
+            "/notes": ('href="/new?kind=note"', "Create note"),
+        }
+        for route, (href, label) in wanted.items():
+            page = client.get(route).text
+            assert f'<a class="button" {href}>{label}</a>' in page, route
+
+
+def test_the_who_column_reads_the_field_the_rung_says(tmp_path: Path):
+    """Per rung, off the ladder: an issue's Who is `reported_by`, a note's is
+    `written_by`, work's is `owner` — and the header is Who, not "Created by",
+    because `owner` is who HOLDS a record, not who typed it. Asserted on the
+    cells so the wrong field per rung fails here, not just the label."""
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        page = client.get("/").text
+    assert '<th data-col="who">Who</th>' in page
+    cells = dict(re.findall(
+        r'<tr data-id="([\w-]+)">.*?<td data-col="who">([^<]*)</td>', page, re.S
+    ))
+    assert cells["issue-ab12cd"] == "ann", "an issue's Who is its reporter"
+    assert cells["note-ef34ab"] == "bo", "a note's Who is its writer"
+    assert cells["task-c00001"] == "bo", "work's Who is its owner"
+    # A product does not read `owner` (it is not work), so a stray value in its
+    # file must not surface: Who is the em dash every unset field wears.
+    assert cells["prod-e00001"] == "—"
+
+
+def test_every_row_carries_the_predicates_the_server_computes(tmp_path: Path):
+    """The row's `predicates` are real now, and exactly the server's own:
+    `matches()` dereferences `row.predicates` without a guard (an omitted array
+    plus a `?predicate=` in the URL is a TypeError and a blank page), and the
+    shipped `[]` it used to carry made `predicate:blocked` answer nothing in
+    the box while the server answered rows — the disagreement this branch
+    closes. Field-identical to `query_fields`, not merely present, so a row
+    computing its flags a second, different way fails here."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
@@ -148,26 +237,55 @@ def test_every_row_carries_an_empty_predicates_array(tmp_path: Path):
     ).group(1)
     data = json.loads(block)
     assert data["rows"], "an empty payload proves nothing"
-    assert all(row["predicates"] == [] for row in data["rows"].values())
+
+    from openproj.index import query_fields
+
+    entities, config, _ = load_repo_from_git(path)
+    index = build_index(entities, config, date(2026, 8, 17))
+    for record_id, row in data["rows"].items():
+        assert row["predicates"] == query_fields(index, record_id)["predicate"], record_id
+    assert any(row["predicates"] for row in data["rows"].values()), (
+        "a corpus where no predicate holds anywhere proves only that [] == []"
+    )
 
 
-def test_a_predicate_in_the_url_is_a_sentence_and_not_a_blank_page(tmp_path: Path):
+def test_a_predicate_in_the_url_filters_rows_and_an_unmatched_one_is_a_sentence(
+    tmp_path: Path,
+):
+    """Both directions, because each catches what the other cannot: a row
+    payload regressing to `predicates: []` makes `untracked` show zero rows
+    (the first half fails), and a broken empty state makes the unmatched
+    predicate a blank page rather than a sentence (the second half fails).
+    `review_waived` is the unmatched one by construction — nothing in the
+    corpus waives review."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
+
+    entities, config, _ = load_repo_from_git(path)
+    index = build_index(entities, config, date(2026, 8, 17))
+    untracked = sorted(apply_filters(index, {}, "predicate:untracked", over=index.records))
+    assert untracked, "the corpus must hold untracked work or this test asks nothing"
+
     answer = run_js(
         page,
-        "(() => { params.set('predicate', 'has_blocker'); recordsApply();"
-        " return [document.getElementById('records-empty').hidden,"
+        "(() => { params.set('predicate', 'untracked'); recordsApply();"
+        " const shown = [...document.querySelectorAll('#records tbody tr[data-id]')]"
+        "   .filter(tr => !tr.hidden).map(tr => tr.dataset.id).sort();"
+        " params.delete('predicate');"
+        " params.set('predicate', 'review_waived'); recordsApply();"
+        " return [shown,"
+        "  document.getElementById('records-empty').hidden,"
         "  document.querySelector('#records-empty .headline').textContent,"
-        "  [...document.querySelectorAll('#records li[data-id]')]"
-        "    .filter(li => !li.hidden).length]; })()",
+        "  [...document.querySelectorAll('#records tbody tr[data-id]')]"
+        "    .filter(tr => !tr.hidden).length]; })()",
         page=True,
     )
     assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
-    hidden, headline, shown = answer["value"]
-    assert shown == 0
+    shown, hidden, headline, none_shown = answer["value"]
+    assert shown == untracked, "the box and the server disagree about ?predicate="
+    assert none_shown == 0
     assert hidden is False
     assert headline == "No record matches this search."
 
@@ -184,9 +302,53 @@ def test_a_plan_with_no_records_says_so_from_the_server(tmp_path: Path):
         "schema_version: 1\nnominal_availability: 1.0\n", encoding="utf-8"
     )
     entities, config, unreadable = load_repo(root)
-    page = render_records(build_index(entities, config, date(2026, 8, 17)), edited={}, now=0)
+    index = build_index(entities, config, date(2026, 8, 17))
+
+    page = render_records(index, edited={}, now=0)
     assert "This plan has no records yet." in page
-    assert "Nothing has been written down." in page
+    assert '<tr class="nothing"' in page, (
+        "inside the table body, under the header row, like every other empty "
+        "record table — not a sentence floating beside a void"
+    )
+    # No server behind the page (`base_commit=None`, the export): no create
+    # control, so the state must not point at one.
+    assert "Create record" not in page
+
+    # With a server the empty state carries the way out of it.
+    served = render_records(index, ROUTES, base_commit="abc", edited={}, now=0)
+    assert "This plan has no records yet." in served
+    assert '<a class="button primary" href="/new">Create record</a>' in served
+
+
+def test_an_empty_view_and_an_empty_plan_are_different_sentences(tmp_path: Path):
+    """The corpus HAS records; `/issues` without issues must say "no issues
+    are open", not claim the plan is empty — and each view's empty state
+    invites the create control for its own kind. One shared sentence across
+    the three views is the regression this pins out."""
+    without_inbox = {
+        name: text for name, text in PLAN.items()
+        if not name.startswith(("issues/", "notes/"))
+    }
+    path = plan_repo(tmp_path)
+    commit_directly(path, without_inbox, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        issues = client.get("/issues").text
+        notes = client.get("/notes").text
+        landing = client.get("/").text
+
+    assert "No issues are open." in issues
+    assert '<a class="button primary" href="/new?kind=issue">Create issue</a>' in issues
+    assert "no records yet" not in issues
+
+    assert "Nothing has been written down yet." in notes
+    assert '<a class="button primary" href="/new?kind=note">Create note</a>' in notes
+
+    # The landing still has rows, so its nothing-row is hidden and empty —
+    # the sentence rides only the SAID payload, for the states the browser
+    # can still reach.
+    assert 'id="records-empty" hidden' in landing
+    nothing = re.search(r'<tr class="nothing".*?</tr>', landing, re.S).group(0)
+    assert "This plan has no records yet." not in nothing
 
 
 def test_an_unreadable_query_goes_to_the_error_region_not_to_a_row(tmp_path: Path):
@@ -212,28 +374,39 @@ def test_an_unreadable_query_goes_to_the_error_region_not_to_a_row(tmp_path: Pat
 def test_a_filtered_out_row_is_display_none_and_not_merely_marked(tmp_path: Path):
     """Pinned at source because the driver above has no layout and cannot tell
     painted from unpainted: it said 0 shown while every row stayed on screen,
-    because `#records li`'s `display: flex` is (1,0,1) and the browser's own
+    because `#records li`'s `display: flex` was (1,0,1) and the browser's own
     `[hidden] { display: none }` is (0,1,0). Found on a screenshot, the same
-    way `.commitbar[hidden]` was."""
+    way `.commitbar[hidden]` was. The rows are `<tr>`s now and no author rule
+    gives them a display, so the UA rule would win today — the pin holds the
+    guard that keeps a future `#records tr { display: … }` from putting every
+    hidden row back."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
-    assert "#records li[hidden] { display: none; }" in page
+    assert "#records tbody tr[hidden] { display: none; }" in page
 
 
-def test_a_search_that_matches_nothing_says_so(tmp_path: Path):
+def test_a_search_that_matches_nothing_says_so_in_the_views_own_words(tmp_path: Path):
+    """"No record", "no issue", "no note" — the population the sentence is
+    about is the view's, and one shared sentence would claim more than the
+    page shows on the two filtered views."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
-        page = client.get("/").text
-    answer = run_js(
-        page,
-        "(() => { params.set('q', 'zzyzzx'); recordsApply();"
-        " return document.querySelector('#records-empty .headline').textContent; })()",
-        page=True,
-    )
-    assert answer["value"] == "No record matches this search."
+        pages = {
+            "record": client.get("/").text,
+            "issue": client.get("/issues").text,
+            "note": client.get("/notes").text,
+        }
+    for word, page in pages.items():
+        answer = run_js(
+            page,
+            "(() => { params.set('q', 'zzyzzx'); recordsApply();"
+            " return document.querySelector('#records-empty .headline').textContent; })()",
+            page=True,
+        )
+        assert answer["value"] == f"No {word} matches this search.", word
 
 
 def test_a_lost_payload_degrades_to_an_unfiltered_list_and_says_so(tmp_path: Path):
@@ -247,7 +420,7 @@ def test_a_lost_payload_degrades_to_an_unfiltered_list_and_says_so(tmp_path: Pat
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
-    total = len(re.findall(r'<li data-id="', page))
+    total = len(re.findall(r'<tr data-id="', page))
     broken = page.replace(
         '<script id="landing" type="application/json">',
         '<script id="landing" type="application/json">not json ', 1,
@@ -256,8 +429,8 @@ def test_a_lost_payload_degrades_to_an_unfiltered_list_and_says_so(tmp_path: Pat
         broken,
         "(() => [document.querySelector('#records-empty .headline').textContent,"
         " document.querySelector('#records-empty .hint').textContent,"
-        " [...document.querySelectorAll('#records li[data-id]')]"
-        "   .filter(li => !li.hidden).length])()",
+        " [...document.querySelectorAll('#records tbody tr[data-id]')]"
+        "   .filter(tr => !tr.hidden).length])()",
         page=True,
     )
     assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
@@ -306,24 +479,17 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     parity is asked about the very records where `records` is more than
     `entities`.
 
-    HONEST ABOUT ITS REACH: a landing row is only `{id, kind, title, tags,
-    search, predicates: []}`, so of everything `QUERY_FIELDS` names this box
-    can answer `id:`, `title:`, `kind:` and `tag:` and no other. For
-    `status:`, `owner:`, `cycle:`, `priority:`, `project:`, `product:`,
-    `assignees:`, `reviewers:` and `prs:` the row has no value, `queryFields`
-    resolves them to `[]`, and the box hides every row — while the server
-    answers every one of them (`status:ready` finds records in this very
-    corpus). `predicates: []` is the same disagreement in its own key: the
-    server computes real predicates over records, the row ships an empty
-    list, so `predicate:blocked` matches nothing here and something there.
-    The needles below therefore stay on the fields the row does carry; this
-    test is parity over that narrow payload, NOT proof that the two sides
-    agree field by field — on every field the row lacks they measurably
-    disagree. The row is this narrow deliberately (the landing is the
-    finding surface, not the filtering one), and the gap closes in the
-    follow-up branch that redesigns the landing row wholesale (kind, title,
-    who, tags, last modified) — widening it here first would be the same
-    work twice, per the re-ruling in the SDD ledger."""
+    The row now carries every field `QUERY_FIELDS` names — status, owner,
+    priority, cycle, assignees, reviewers, prs, project, product and real
+    predicates beside the id/kind/title/tags it always had — so the needles
+    ask about all of them, each with at least one holder in the corpus (a
+    field nobody holds is a parity check that passes vacuously). Before this,
+    `status:done` in the box or `/?owner=ann` pasted from a table URL hid
+    every row and said "no match" while the server answered rows.
+
+    What the two sides still agree NOT to answer: bodies. Neither the blob
+    nor any field carries prose, per the `SEARCH_FIELDS` ruling in index.py —
+    a population-wide fact, not a box-versus-server disagreement."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
@@ -338,7 +504,16 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
                # and their kinds by name, which only exist as facet values on
                # the records side.
                "renormalisation", "数值", "idée", "issue-ab12cd", "note-ef34ab",
-               "kind:issue", "kind:note"]
+               "kind:issue", "kind:note",
+               # One needle per field the row could not answer before the
+               # widening, each finding something. `status:ready` lands on the
+               # pitch, the task AND the issue — the field crosses the
+               # plan/inbox line. `assignee:` and `reviewer:` are the aliases,
+               # so the alias map is in the claim too.
+               "status:ready", "status:done", "owner:ann", "priority:medium",
+               "cycle:1", "assignee:cara", "reviewer:dan", "prs:1223",
+               "project:proj-a10000", "product:prod-e00001",
+               "predicate:untracked", "predicate:has_blocker"]
     disagreed = {}
     for needle in needles:
         # Membership is the claim; the two sides answer in different orders
@@ -359,6 +534,41 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
         if here != answer["value"]:
             disagreed[needle] = (here, answer["value"])
     assert not disagreed, f"the landing box and the server disagree: {disagreed}"
+    # The vacuity guard for the widened fields: every field-needle must FIND
+    # something on the server side, or its parity above proved [] == [].
+    for needle in ("status:ready", "owner:ann", "priority:medium", "cycle:1",
+                   "assignee:cara", "reviewer:dan", "prs:1223",
+                   "project:proj-a10000", "product:prod-e00001",
+                   "predicate:untracked", "predicate:has_blocker"):
+        assert apply_filters(index, {}, needle, over=index.records), needle
+
+
+def test_the_issues_view_box_searches_issues_and_nothing_else(tmp_path: Path):
+    """The filtered view's payload is its population: a query on `/issues`
+    that names a pitch's word must find nothing there while finding the pitch
+    on `/` — a payload that quietly carried the whole plan would answer both
+    the same and the view would "match" rows it cannot show."""
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        issues = client.get("/issues").text
+
+    answer = run_js(
+        issues,
+        "(() => {"
+        " const over = q => { params.set('q', q);"
+        "   return Object.keys(RECORDS.rows)"
+        "     .filter(id => matches(RECORDS.rows[id])).sort(); };"
+        " return [over('renormalisation'), over('traçage'), over('status:ready')]; })()",
+        page=True,
+    )
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    the_issue, the_pitch, ready = answer["value"]
+    assert the_issue == ["issue-ab12cd"]
+    assert the_pitch == [], "a plan record's word found something on the issues view"
+    assert ready == ["issue-ab12cd"], (
+        "status: crosses the plan/inbox line, held to this view's population"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -382,8 +592,17 @@ def test_an_export_without_git_omits_the_time_column(tmp_path: Path):
     written = render_static(build_index(entities, config, date(2026, 8, 17)), out)
     assert written[:2] == ("index.html", "table.html")
     landing = (out / "index.html").read_text(encoding="utf-8")
-    assert '<span class="when">' not in landing
-    assert '<li data-id="task-c00001">' in landing
+    assert '<th data-col="edited">' not in landing, "omitted, not blank: the header too"
+    assert '<td data-col="edited">' not in landing
+    assert '<tr data-id="task-c00001">' in landing
+
+    # The two inbox views ride the export too — every page's nav names them,
+    # and a nav link into a file nobody wrote is a dead link on all the others.
+    assert {"issues.html", "notes.html"} <= set(written)
+    issues = (out / "issues.html").read_text(encoding="utf-8")
+    assert re.findall(r'<tr data-id="([\w-]+)"', issues) == ["issue-ab12cd"]
+    assert '<td data-col="edited">' not in issues
+    assert "Create issue" not in issues, "a rendered file has nowhere to post"
 
 
 def test_an_export_of_a_repository_carries_the_times(tmp_path: Path):
@@ -410,6 +629,60 @@ def test_an_export_of_a_repository_carries_the_times(tmp_path: Path):
         edited=edited_by_id(stamps), now=2_000_000 + 3600,
     )
     landing = (out / "index.html").read_text(encoding="utf-8")
-    assert '<span class="when">an hour ago</span>' in landing
-    rows = re.findall(r'<li data-id="([\w-]+)"', landing)
+    assert '<td data-col="edited">an hour ago</td>' in landing
+    rows = re.findall(r'<tr data-id="([\w-]+)"', landing)
     assert rows[0] == "task-c00001", "sorted by last edit in the export too"
+
+
+# --------------------------------------------------------------------------- #
+# The scroll mechanism
+# --------------------------------------------------------------------------- #
+
+
+def test_the_header_row_is_sticky_and_nothing_on_this_page_outranks_it(tmp_path: Path):
+    """Resolved through the real cascade, not grepped: the documented hazard on
+    this mechanism is a qualifier added to win one fight silently outranking
+    the rules that correct it — `dd, td.edit { position: relative }` once stole
+    `position: sticky` from the entity table's title column, and the
+    `.table-scroll [data-col]` fix for THAT dropped the frozen headers behind
+    their own rows. A rule being in the stylesheet says nothing about whether
+    it wins, so this asks which rule wins, by name."""
+    from cascade import el, sheet_of
+
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        page = client.get("/").text
+    sheet = sheet_of(page)
+
+    header = [el("div", "table-scroll"), el("table", id="records"),
+              el("thead"), el("tr"), el("th", data_col="title")]
+    assert sheet.value(header, "position") == "sticky", (
+        sheet.selectors_reaching(header, "position")
+    )
+    assert sheet.value(header, "top") == "0"
+    # Over the rows that pass beneath it, on its own ground: translucent, the
+    # frozen row would still be "sticky" and unreadable.
+    assert sheet.value(header, "background") == "var(--surface)"
+    # The container sticky holds against: `overflow: auto` plus a bounded
+    # height is what makes `top: 0` mean the top of the BOX, not of the page.
+    box = [el("div", "table-scroll")]
+    assert sheet.value(box, "overflow") == "auto"
+    assert sheet.value(box, "max-height") == "var(--room)"
+
+
+def test_the_page_furniture_stands_outside_the_scroll_box(tmp_path: Path):
+    """jcanton: "when scrolling scroll just the body of the table, leave the
+    rest of the page static (nav, description, search box, table title row)".
+    The title row holds by being sticky INSIDE the box (above); the rest holds
+    by not being in it — an element inside the scroll container scrolls,
+    whatever its rules say."""
+    path = plan_repo(tmp_path)
+    commit_directly(path, PLAN, "seed", when=1_000_000)
+    with TestClient(create_app(path, auth="dev")) as client:
+        page = client.get("/").text
+    box = page.index('<div class="table-scroll"')
+    for furniture in ('<p class="hint">', 'class="editbar"', 'id="q"', "</nav>"):
+        assert page.index(furniture) < box, furniture
+    # And the box is measured by the shell into `--room`, like the table's.
+    assert '<div class="table-scroll" data-fills>' in page

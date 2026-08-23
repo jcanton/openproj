@@ -229,8 +229,10 @@ def test_the_retired_note_routes_redirect_to_the_shared_ones(
 ):
     note_id = written(client, "x", git_head(repo_path))
 
+    # `/notes` is deliberately not in this list any more: it 301ed to `/` for
+    # exactly one release and renders again now, as the landing held to
+    # `kind:note` — test_records.py owns that page.
     for old, new in (
-        ("/notes", "/"),
         ("/note/new", "/new?kind=note"),
         (f"/note/{note_id}", f"/detail/{note_id}"),
     ):
