@@ -11,8 +11,10 @@ answer:*
 | [32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097) | + changes 1 and 2 | 711.04s | 12m08s |
 | [32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905) | + changes 3 to 8, five shards | 181.15s | **3m33s** |
 | [32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278) | + change 9 | 156.04s | **3m02s** |
+| [32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118) | + this document | 161.12s | **3m18s** |
 
-**Twenty-three minutes is three.** 1688 tests, zero skipped, five machines.
+**Twenty-three minutes is three.** 1688 tests, zero skipped, five machines, three
+green sharded runs at 3m02s, 3m18s and 3m33s.
 
 *Raw tables in `docs/probes/ci-durations.txt` and
 `docs/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
@@ -534,35 +536,52 @@ the runner queue is counted. Queue time is not ours and should not be promised.
 headline number was right. The reasoning under it was wrong in two ways, and
 both matter more than the headline.**
 
-| shard | tests | predicted | run 566905 | run 764278 |
-|---|---:|---:|---:|---:|
-| `editor` | 120 | **151.3s** | **181.15s** | 133.05s |
-| `views` | 340 | 138.9s | 155.03s | **156.04s** |
-| `graph` | 78 | 131.2s | 106.38s | 134.67s |
-| `rest` | 1032 | 128.8s | 136.66s | 147.63s |
-| `coedit` | 118 | 125.6s | 125.86s | 118.56s |
-| | 1688 | 675.8s | 705.08s | 689.95s |
+| shard | tests | predicted | 566905 | 764278 | 323118 | spread |
+|---|---:|---:|---:|---:|---:|---:|
+| `editor` | 120 | **151.3s** | **181.15s** | 133.05s | 152.38s | **36%** |
+| `views` | 340 | 138.9s | 155.03s | **156.04s** | 158.59s | 2% |
+| `graph` | 78 | 131.2s | 106.38s | 134.67s | 107.21s | 27% |
+| `rest` | 1032 | 128.8s | 136.66s | 147.63s | **161.12s** | 18% |
+| `coedit` | 118 | 125.6s | 125.86s | 118.56s | 123.62s | 6% |
+| | 1688 | 675.8s | 705.08s | 689.95s | 702.92s | |
+
+Bold is the critical path. **It is a different shard in all three runs.**
 
 **Wrong the first way: `test_editor.py` is not the floor, and there is no floor.**
 The whole five-and-only-five argument rested on that one file being 151.3s that
-nothing could get under. It ran at 181.15s once and 133.05s the next time, on the
-same code, twenty minutes apart. The **run-to-run spread on a single leg is up to
-36%** (`editor` 133→181, `graph` 106→135), which is four times the 8% the lists
-were balanced to. So the shard cut is tuned to a precision the hardware does not
-have, the bolded number in that table is a different shard in each run, and
-re-cutting the lists to chase 8% of balance is chasing noise. Re-cut them when a
-leg is *consistently* over, across several runs — never off one table.
+nothing could get under. It ran at 181.15s, then 133.05s, then 152.38s on
+identical code within twenty minutes. The **run-to-run spread on a single leg
+reaches 36%** — four times the 8% the lists were balanced to, and wider than the
+gap between the largest shard and the smallest. The critical path was `editor`,
+then `views`, then `rest`: three runs, three different answers to the one
+question the cut was made to settle. So the lists are tuned to a precision this
+hardware does not have, and re-cutting them to chase 8% of balance is chasing
+noise. Re-cut when a leg is *consistently* over, across several runs — never off
+one table.
+
+Note *which* legs are noisy. `views` varied by 2% and `coedit` by 6%; `editor`
+and `graph` varied by 36% and 27%, and they are the two legs with the highest
+proportion of one-Chrome-per-assertion tests. **The jitter is in headless Chrome
+process startup on a shared 2-core box, not in the tests.** That is the same
+1.93s per `measured_in` call that section 4's deferred item is about, now visible
+as variance as well as as cost — which makes that item worth more than its 330
+seconds, because it would also make the gate predictable.
 
 **Wrong the second way: the 35s the durations table never attributed does not
 spread evenly, and it lands on the shards with many small tests.** The post-cache
 table summed 675.79s of a 711.04s run, and the cut quietly assumed the missing
 5% was uniform. It is not: the probe ran with `--durations-min=0.05`, which drops
 every row under 50 ms, and `rest` and `views` hold 1372 of the suite's 1688 tests
-between them. Both came in over their prediction in both runs (`rest` +8s and
-+19s, `views` +16s and +17s) while `editor` and `coedit` — 238 tests between
-them — came in at or under. **A per-file duration table under-counts a shard in
+between them. **Both came in over their prediction in all three runs** — `rest`
+by 8s, 19s and 32s, `views` by 16s, 17s and 20s — while `coedit`, 118 tests, came
+in under in all three. **A per-file duration table under-counts a shard in
 proportion to how many tests it holds**, so add a few seconds per hundred tests
 to any leg cut from one.
+
+`rest` also rose across all three runs (136.66 → 147.63 → 161.12). Three points
+is not a trend and this document will not claim one, but it is the leg to watch:
+it holds 31 of the 47 test files, and by the rule written at the top of
+`.github/shards/rest` every new test file lands in it by default.
 
 Neither mistake cost anything here, because five legs land within 60s of each
 other however the noise falls and the gate is three minutes either way. Both
@@ -838,11 +857,15 @@ Not a prediction any more. Every row is a run you can open.
 | + changes 1 and 2 ([32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097)) | 711.04s | 12m08s | 13 min |
 | + changes 3 to 8 ([32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905)) | 181.15s | 3m33s | 18 min |
 | + change 9 ([32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278)) | 156.04s | **3m02s** | 17 min |
+| + this document ([32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118)) | 161.12s | 3m18s | 16 min |
 
-**22m50s → 3m02s. A gate that was longer than a coffee break is shorter than
-reading the diff it is gating.** 1688 tests, 1688 run, zero skipped, zero failed.
+**22m50s → about 3m15s. A gate that was longer than a coffee break is shorter
+than reading the diff it is gating.** 1688 tests, 1688 run, zero skipped, zero
+failed, three green sharded runs. Quote the range — **3m02s to 3m33s** — rather
+than any single number: the spread between runs is larger than anything left to
+optimise, and the reason is measured in change 6.
 
-Per job in the last run, and this is the whole gate:
+Per job in run 32634764278, the fastest of the three, and this is the whole gate:
 
 | job | wall | setup | pytest | tests |
 |---|---:|---:|---:|---:|
@@ -857,36 +880,41 @@ Per job in the last run, and this is the whole gate:
 
 ### How much of three minutes is not testing
 
-Of the 182 seconds, **156 are pytest running tests and 26 are not**: 4s from run
-creation to the first runner picking the job up, 10s of setup on the critical-path
-leg (2s job init, 2s checkout, 3s `setup-uv`, 3s `setup-node`, <1s
+Of that run's 182 seconds, **156 are pytest running tests and 26 are not**: 4s
+from run creation to the first runner picking the job up, 10s of setup on the
+critical-path leg (2s job init, 2s checkout, 3s `setup-uv`, 3s `setup-node`, <1s
 `uv sync --locked`), ~1s of interpreter start and collection, 4s of job teardown,
-and 7s for the `check` fan-in to schedule, run and finalise.
+and 7s for the `check` fan-in to schedule, run and finalise. In run 32635323118
+the same accounting is 37 of 198 seconds, and **the whole difference is runner
+pickup** — 16s to hand out the critical-path job instead of 4s. Job setup itself
+was 8s against 10s.
 
-**So overhead is 14% of the gate, against 1.2% before.** That is the real reason
-five is the ceiling and the break-even formula in change 6 is not: the formula
-says setup cost allows ten shards, and it is right, but it is measuring the wrong
-thing. Halving the critical path again from here would put overhead near a
-quarter of a two-minute gate, and every second of it is spent on nothing.
+**So overhead is 14–19% of the gate, against 1.2% before, and the part that
+varies is queueing, which is not ours.** That is the real reason five shards is
+the ceiling, and it is not the reason change 6 gave: the break-even formula there
+says setup cost allows ten, and the formula is right and is measuring the wrong
+thing. Halving the critical path again would put overhead near a third of a
+two-minute gate, every second of it spent on nothing.
 
 ### Billed machine time — the prediction that missed by five minutes
 
-**Predicted "about 12 minutes billed". It is 17.** The arithmetic was right and
-the units were wrong: 12m52s is the actual machine *time* (10 + 131 + 145 + 149 +
-163 + 171 + 3 seconds), down 43% from the baseline's 22m43s. But **GitHub bills
-each job rounded up to the whole minute**, and five legs of 2m11s–2m51s each round
-up to 3. Seven jobs pay seven roundings. 23 → 17 is still a real saving and the
-sharded gate is genuinely cheaper than the serial one was — but anyone budgeting
-from this document should use 17, and should know that a sixth shard costs a full
-billed minute before it saves a second.
+**Predicted "about 12 minutes billed". It is 16 to 18.** The arithmetic was right
+and the units were wrong: 12m52s is the actual machine *time* in run 32634764278
+(10 + 131 + 145 + 149 + 163 + 171 + 3 seconds), down 43% from the baseline's
+22m43s. But **GitHub bills each job rounded up to the whole minute**, and five
+legs of 2m00s–3m00s each round up to 3. Seven jobs pay seven roundings, and a leg
+that creeps over a minute boundary costs a whole minute for one second of work.
+23 → 17 is still a real saving and the sharded gate is genuinely cheaper than the
+serial one was — but budget from 17, not 12, and note that **a sixth shard costs
+a full billed minute before it saves a second.**
 
 ### What actually got faster, in order
 
 1. **One `@cache` on template compilation: 682 seconds.** Half the gate, from a
    change with no concurrency in it, that also makes the deployed server draw
    every page faster. This remains the headline and it is not a CI change at all.
-2. **Five machines instead of one: 546 seconds.** Second, and only because the
-   first one shrank what had to be split.
+2. **Five machines instead of one: about 540 seconds.** Second, and only because
+   the first one shrank what had to be split.
 3. Everything else, together: inside the noise.
 
 That order is the answer to *"should we parallelise?"* — **parallelise second.**
@@ -906,12 +934,14 @@ survived intact.
 
 Three things nevertheless got worse, and they should be written down:
 
-* **Per-leg wall clock varies by up to 36% run to run.** `editor` was 181.15s and
-  then 133.05s on identical code twenty minutes apart; `graph` 106.38s then
-  134.67s. The critical path is a different shard in each run. Nothing fails
-  because of it — no test in the suite asserts on total elapsed time — but it
-  means the shard lists cannot be tuned finer than the hardware, and a leg that
-  looks 20% over on one run has told you nothing.
+* **Per-leg wall clock varies by up to 36% run to run**, and the critical path
+  was a different shard in each of the three runs. Nothing fails because of it —
+  no test in this suite asserts on total elapsed time — but the shard lists
+  cannot be tuned finer than the hardware, a leg that looks 20% over on one run
+  has told you nothing, and **the honest thing to quote for this gate is a range,
+  3m02s–3m33s, not a number.** The jitter concentrates in the two most
+  Chrome-heavy legs, which points at the same process-startup cost as the
+  deferred item below.
 * **Five runners is five chances of an infrastructure hiccup**, where there was
   one. The compensation is that a re-run now costs three minutes rather than
   twenty-three, so the rational response to an odd red has changed from
