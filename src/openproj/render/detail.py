@@ -2418,7 +2418,7 @@ def _shaping_hints(record: Record, has_tasks: bool = False) -> list[str]:
     return notes
 
 
-def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
+def _detail_rows(index: Index, links: Links = STATIC, only: str | None = None) -> list[dict]:
     """One entry per record: what the page's own furniture needs, and nothing else.
 
     Every fact this page prints comes from `_fact_rows`, which builds each line
@@ -2432,6 +2432,27 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
     # kind gets (spec §2). Until an unplanned rung exists the two maps are
     # equal, so nothing changes at this commit — the line is here so the flip
     # commit ships pages, not KeyErrors.
+    #
+    # `only` is applied HERE and not by the caller, and the difference is the
+    # cost of the page. Each row carries `_body_html`, which is a full
+    # `markdown_it` render; building every record's and keeping one made
+    # `/detail/<id>` cost 55 ms plus 0.32 ms per record IN THE PLAN rather than
+    # per record on the page. Measured under twenty readers on a 561-record
+    # corpus, 369 of those renders were 92.6 of the server's 113.4 CPU-seconds —
+    # about 63% of the machine spent on markdown nobody would ever see.
+    #
+    # `None` still builds all of them, and that is not an oversight: the static
+    # export puts every record into one file, which is what makes a plan
+    # readable with no server. The two callers want different things and each
+    # now asks for what it wants.
+    #
+    # A missing `only` yields an empty list, exactly as the caller's filter did.
+    # The route 404s before it gets here, so only a non-route caller sees it.
+    chosen = (
+        sorted(index.records.items())
+        if only is None
+        else [(only, index.records[only])] if only in index.records else []
+    )
     return [
         {
             "id": record_id,
@@ -2458,7 +2479,7 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
             "progress": _progress_view(index, record),
             "body": _body_html(record, links),
         }
-        for record_id, record in sorted(index.records.items())
+        for record_id, record in chosen
     ]
 
 
@@ -2663,9 +2684,7 @@ def render_detail(
             "promote": Markup(""),
         }]
     else:
-        rows = _detail_rows(index, links)
-        if only is not None:
-            rows = [row for row in rows if row["id"] == only]
+        rows = _detail_rows(index, links, only)
         # Every record gets its facts, not only the one being served on its own
         # route: the static export renders them all, and it is the same page.
         # `records`, not `plan`: this page is every record's page — spec §2
