@@ -194,9 +194,16 @@ def corpus() -> list[Record]:
 
 
 def plan_of(number: int = 37) -> Cycle:
+    # The goal in the FIELD, and notes in the body, because they are two
+    # documents — `Cycle.goal` exists so the goal is not "whatever happened to be
+    # at the top of a growing document". This fixture used to carry the sentence
+    # as `body="## Goal\n\n..."` and the deck read the body, so the two agreed by
+    # accident and the deck's bug was invisible for as long as no cycle record
+    # anywhere had a real `goal:` and a real body.
     return Cycle(cycle=number, starts_on=date(2026, 8, 17), reviews_on=date(2026, 9, 28),
                  availability={"ann": 0.5, "bo": 1.0, "cy": 0.6},
-                 body="## Goal\n\nThe bed port is the one that cannot slip.\n")
+                 goal="The bed port is the one that cannot slip.",
+                 body="## Notes\n\nWhat the room said while betting.\n")
 
 
 @pytest.fixture
