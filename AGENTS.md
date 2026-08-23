@@ -283,11 +283,12 @@ which rolls between its stops when a status changes; its duration is a `--roll` 
 can switch the roll off without writing a second `transition:` into the stylesheet. CSS cannot reach a canvas:
 cytoscape's layout runs at `animate: false` and has to stay there, or the graph moves for a reader
 who asked it not to. The floor covers the reader who is not looking at the screen as well. Every
-control carries a name that reader can find — a real `<label for>` or an `aria-label`, never a
-placeholder (gone the moment anything is typed, and never in the accessibility tree), and a
-`<dt>`/`<dd>` pair is not a label. Every editable surface has a keyboard path as well as a pointer
-one, and what the app announces goes into a live region: a save announced only visually has not
-announced itself.
+control carries a name that reader can find — a real `<label for>` or an `aria-label`, and a
+`<dt>`/`<dd>` pair is not one. A `placeholder` is not one either: it is the last thing the name
+computation falls back to, and it is gone the moment anything is typed. Every editable surface has a
+keyboard path as well as a pointer one, and what the app announces goes into a live region: a save
+announced only visually has not announced itself. One audit found five of these at once — no control
+named anywhere, the table dblclick-only, and not one live region in the rendered output.
 
 **One save model per page, and it is visible.** The cycle page autosaved some fields while its
 setup fields waited on a Save button parked off-screen at the top, and nothing said which was

@@ -186,7 +186,11 @@ margin of its own table.
 nobody will review is a bet that should not be made. `review_waived` is not an empty list — it is a
 deliberate act, for work with nothing to review (a paper, a spike), and it is a facet and a count, so
 a team that waives everything sees itself doing it. Without it the honest answer for a reading task
-is a fake reviewer, and the field becomes noise.
+is a fake reviewer, and the field becomes noise. **A reviewer is not a worker**: `_workers` is the
+owner and the assignees, so review is never charged against capacity or a cycle's load. Modelling it
+in the scheduler would double the model for a small correction, so `reviewers` is a facet and a
+column and never weeks — the people page says so in its own words, that a half-hour review added to
+a six-week build is not a workload.
 
 **Parse permissively, validate strictly.** Every field is optional at the type level and `status` and
 `priority` are plain `str`, so a hand-edited file with a missing field or a retired word still loads

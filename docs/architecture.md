@@ -7,8 +7,9 @@ last edited where there is git history to ask and by id in an export of a plain 
 search box above it. `table.html` is the filterable, searchable table and the page PM work lives
 in. `graph.html` is the dependency DAG, grouped by project and pitch. `timeline.html` is the
 derived Gantt. `cycles.html` and `people.html` are the cycle records with their betting tables, and
-who is on what and who is full. A capacity number and a date are drawn beside each other or neither
-is trusted, so each person's row carries their scheduled end date next to the capacity bar: a green
+who is on what and who is full. On a cycle's roster a capacity number and a date are drawn beside
+each other or neither is trusted, so each person's row carries their scheduled end date next to
+their capacity bar — the two come from different subsystems and cannot quietly disagree, and a green
 bar against a timeline running into November is what stops a room trusting the tool. `detail.html`
 is one record on its own page — any of the six kinds — and under the server it is also where a
 record is edited.
@@ -172,7 +173,9 @@ infrastructure** is its own project, and Slack exists. **User-defined custom fie
 the model and running a migration — the honest cost of a field every page has to know about. **A
 PR-based editing workflow** is what git already is, and the premise of this tool is that a pull
 request is the wrong default for a plan. **Time tracking, burndown charts and per-project
-permissions** were asked for by nobody here, and each needs a second source of truth to answer.
+permissions** were out of scope in the first requirements list and nobody here has asked since — no
+argument was ever recorded for them, and each would need a second source of truth before there
+could be one.
 **Inline comments and resolved threads on a record** would be the first piece of plan state that is
 not a file — a second store, a second permission model and a second notification path — while the
 review channel this team already uses is the pull request, which every pitch names in `prs:`.
