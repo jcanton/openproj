@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 from browser import chrome, measured_in
 
-from openproj.index import Index, apply_filters, build_index
-from openproj.model import load_repo
+from openproj.index import NO_VALUE, Index, apply_filters, build_index
+from openproj.model import load_repo, unread_fields
 from openproj.render import render_table
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -46,7 +46,18 @@ _TWO_VALUES = """
 const facet = document.querySelector('.facet[data-field="status"]');
 const opener = facet.querySelector('.facetopen');
 opener.click();
-const boxes = [...facet.querySelectorAll('input[type=checkbox]')];
+// Two VALUES, so `(none)` is skipped. It sits first in every menu it appears in
+// (`_facet_order` in `index.py` puts it there on purpose) and Status grew one on
+// 2026-08-23, when the corpus gained a product — a rung that reads no status at
+// all. It is not a value of the field: it is the question "which of these has
+// nothing in it", which `test_the_empty_option_asks_about_the_list_and_not_
+// inside_it` below asks on its own terms. The oracle underneath is `row.status
+// is one of these two` and it stays exactly that literal, because an oracle
+// taught the sentinel's branch is a copy of `matches` agreeing with itself.
+//
+// `NO_VALUE` is the page's own constant, not a fourth spelling of `(none)`.
+const boxes = [...facet.querySelectorAll('input[type=checkbox]')]
+  .filter(box => box.value !== NO_VALUE);
 const wanted = [boxes[0].value, boxes[1].value];
 boxes[0].click();
 boxes[1].click();
@@ -75,6 +86,77 @@ def test_two_values_of_one_field_mean_either(page: str, tmp_path: Path):
     assert len(got["kept"]) > 0
 
 
+# The one option that is not a value. Tick it alone and report what the bar
+# keeps, beside what the rows themselves say is empty.
+_THE_EMPTY_OPTION = """
+const facet = document.querySelector('.facet[data-field="status"]');
+facet.querySelector('.facetopen').click();
+const box = [...facet.querySelectorAll('input[type=checkbox]')]
+  .find(one => one.value === NO_VALUE);
+if (!box) return {offered: false};
+box.click();
+return {
+  offered: true,
+  said: facet.querySelector('.facetsaid').textContent,
+  url: params.getAll('status'),
+  kept: Object.keys(DATA.rows).filter(id => matches(DATA.rows[id])).sort(),
+  // The same question asked of the row rather than through `matches`: which
+  // rows carry no status at all. `?? []` and not `|| []`, because a status of
+  // `''` is a status somebody wrote and `0` is not a thing this field holds.
+  blank: Object.keys(DATA.rows).filter(id =>
+    [].concat(DATA.rows[id].status ?? []).filter(v => v !== '').length === 0).sort(),
+};
+"""
+
+
+def test_the_empty_option_asks_about_the_list_and_not_inside_it(
+    index: Index, page: str, tmp_path: Path
+):
+    """`(none)` selects the records with no status, and a record has no status
+    when its rung does not read one.
+
+    This could not be asked of Status until 2026-08-23. `build_index` offers the
+    option only where something is actually missing — "a menu never carries an
+    option that can select nothing" — and every planned record had a status, so
+    the branch that adds it was reached on Cycle and Owner and never here. Then
+    the corpus grew a product, which reads no status at all (`statuses=()` on its
+    rung, so `unread_fields("product")` names it and `_row` nulls it), and the
+    option appeared.
+
+    What it caught on the way in: `test_two_values_of_one_field_mean_either` was
+    ticking the first two boxes in the menu, which had silently become `(none)`
+    and `shaping`, and comparing them against an oracle that only knew how to
+    read a status off a row. The bar was right, the server agreed with it, and
+    the oracle was the one thing that did not know the sentinel existed.
+    """
+    got = measured_in(chrome(), page, tmp_path / "empty.html", 1460, _THE_EMPTY_OPTION)
+
+    assert got["offered"], (
+        "the Status menu offers no way to ask for the records that have not got one, "
+        "although this corpus holds records of a kind that reads no status"
+    )
+    assert got["url"] == [NO_VALUE], "the sentinel did not reach the query string"
+    # It asks about the list, so what comes back is what has nothing in it — and
+    # not, for instance, everything, which is how a filter that fails open reads.
+    assert got["kept"] == got["blank"]
+    # And which records those are is the ladder's answer, not this test's list.
+    unstatused = sorted(
+        record_id
+        for record_id, record in index.plan.items()
+        if "status" in unread_fields(record.kind)
+    )
+    assert got["kept"] == unstatused, (
+        f"the bar kept {got['kept']} and the ladder says the records with no status "
+        f"are {unstatused}"
+    )
+    assert unstatused, "no planned record reads no status, so this asks nothing"
+    # The server answers the same question the same way. The sentinel is spelled
+    # once, in `index.NO_VALUE`, and both halves reach it from there.
+    assert apply_filters(index, {"status": [NO_VALUE]}, "") == got["kept"], (
+        "the server and the bar disagree about which records have no status"
+    )
+
+
 def test_the_closed_control_says_what_is_set(page: str, tmp_path: Path):
     """A filter you cannot see is a filter you forget you set, and this bar
     spends most of its life closed. One value is named; two are counted, because
@@ -91,7 +173,14 @@ def test_the_closed_control_says_what_is_set(page: str, tmp_path: Path):
 _ONE_VALUE = """
 const facet = document.querySelector('.facet[data-field="status"]');
 facet.querySelector('.facetopen').click();
-const box = facet.querySelector('input[type=checkbox]');
+// A VALUE, so `(none)` is skipped — this asks how a value the server holds under
+// a machine name is spelled to a reader, and the sentinel is not one of those:
+// it is spelled `(none)` on both sides and would make both claims below true by
+// saying nothing. That is what it silently did on 2026-08-23, when the corpus
+// grew a product and `(none)` arrived at the head of the Status menu; this probe
+// took the first checkbox, so the test went on passing and stopped asking.
+const box = [...facet.querySelectorAll('input[type=checkbox]')]
+  .find(one => one.value !== NO_VALUE);
 box.click();
 const said = facet.querySelector('.facetsaid').textContent;
 box.click();
@@ -106,6 +195,9 @@ def test_one_value_is_named_and_unticking_it_puts_the_field_back(page: str, tmp_
     the vocabulary in this script."""
     got = measured_in(chrome(), page, tmp_path / "one.html", 1460, _ONE_VALUE)
 
+    assert got["value"] != NO_VALUE, (
+        "the sentinel is spelled the same on both sides, so naming it proves nothing"
+    )
     assert got["said"] != got["value"] or "_" not in got["value"]
     assert " " in got["said"] or got["said"].istitle() or got["said"] == got["value"]
     assert got["emptied"] == "all"

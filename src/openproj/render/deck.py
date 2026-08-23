@@ -510,7 +510,25 @@ def _deck_view(
         "number": number,
         "reviews_on": proposed.reviews_on.isoformat() if proposed.reviews_on else "",
         "assumed_review": proposed.assumed_review,
-        "goal": _markdown(without_comments(plan.body), links, assets) if plan else Markup(""),
+        # The FIELD, not the body — the same as the cycle page reads
+        # (`cycles.py`, `"goal": plan.goal`), and as text rather than markdown
+        # for the reason written there: a sentence the room agreed on does not
+        # want a heading level.
+        #
+        # This drew `plan.body` and called it the goal. `Cycle.goal` exists
+        # precisely so the two are different documents — `model.py` on the
+        # field: "What the cycle is FOR ... a field rather than the first line
+        # of the body ... Sharing one box meant the goal was whatever happened
+        # to be at the top of a growing document." The deck was the one page
+        # that never got the field.
+        #
+        # It was invisible because the corpus hid it: the seed's cycle record had
+        # no `goal:` key and a 26-word body that WAS the goal, so reading the
+        # body returned the right sentence. The moment the corpus grew a real
+        # `goal:` and a body of betting-table notes, the title slide carried 477
+        # words against the ~206-word cliff `_to_fit` measures, and an
+        # eleven-slide deck printed on twelve sheets.
+        "goal": plan.goal if plan else "",
         "slides": slides,
     }
 

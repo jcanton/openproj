@@ -576,6 +576,49 @@ def test_the_shipped_demo_carries_notes_that_load(demo_root: Path):
     assert promoted.id in became.body, "the trail is drawn at both ends in the demo too"
 
 
+def test_a_became_that_opens_nothing_leaves_the_note_thinking_and_says_so(
+    seed_root: Path,
+):
+    """`promoted` is derived, so the cheap way to derive it is `bool(became)` —
+    and on a corpus where every link resolves that is indistinguishable from the
+    right answer. Both corpora were that corpus until `note-b14d6a` was written.
+
+    A promotion that cannot be opened is exactly the case the field is a warning
+    rather than a blocker for: the record it names was legitimately never
+    written, or was written and deleted, and the honest reading is that nobody
+    has acted on the idea yet. Reporting it as a promotion would put a note in
+    the one state a person cannot get it out of — `promoted` is not a word
+    anybody may write into the file.
+
+    Beside it, the note that really did graduate, into TWO records one of which
+    is a project. Both of those are shapes nothing else in the repository has:
+    `PROMOTABLE["note"]` offers three destinations and `project` had no
+    committed example, and `became` is a list precisely so that one idea can
+    split.
+    """
+    records, config, _ = load_repo(seed_root)
+    by_id = {r.id: r for r in records}
+
+    broken = by_id["note-b14d6a"]
+    assert broken.became == ["pitch-000000"] and "pitch-000000" not in by_id
+    assert broken.state(by_id) == "thinking", "an id nobody wrote is not a promotion"
+
+    split = by_id["note-a03c59"]
+    assert [by_id[i].kind for i in split.became] == ["pitch", "project"]
+    assert "project" in PROMOTABLE["note"]
+    assert split.state(by_id) == "promoted", "either target is enough, and one is a project"
+
+    said = [
+        p for p in validate_all(records, config)
+        if p.record_id == "note-b14d6a" and p.field == "became"
+    ]
+    assert [p.severity for p in said] == ["warning"]
+    assert "pitch-000000" in said[0].message, "the check has to name the id it could not open"
+    # And nothing is said about the note whose links resolve, so the rule is
+    # about the link and not about the field being set.
+    assert not [p for p in validate_all(records, config) if p.record_id == "note-a03c59"]
+
+
 def test_the_static_export_carries_every_note(demo_root: Path, tmp_path: Path):
     """A note reaches the export three times over — the Records landing, the
     notes view, and detail.html — with no way to write one there, because a

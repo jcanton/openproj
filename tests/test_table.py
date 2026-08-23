@@ -138,24 +138,39 @@ def page(client: TestClient) -> str:
 
 @pytest.fixture
 def demo_page(demo_root: Path) -> str:
-    """The shipped demo, rendered: a seventeen-row plan, with more than one name
-    in a list on almost every row.
+    """The shipped demo, rendered: a whole plan, with more than one name in a list
+    on almost every row.
 
     The corpus above is four records and answers everything about markup, but a
     control that expands a whole column has almost nothing to say on a plan where
     a single cell hides anything — and the height this deliberately costs is a
-    fact about seventeen rows. It is also the corpus `MEASURED` was read from, so
-    the widths these tests squeeze the header to are the widths the fit works
-    with.
+    fact about a plan of that size. It is also the corpus `MEASURED` was read
+    from, so the widths these tests squeeze the header to are the widths the fit
+    works with.
 
     Nothing here assumes what is in it: the counts and the words are read back off
-    the cells. `seed/` is the demo and is free to be rewritten, unlike the frozen
-    corpus the schedulers' goldens are derived from.
+    the cells, and the one test that needs the row count takes `demo_plan_size`
+    rather than writing the number down. It said "seventeen" for as long as the
+    demo had seventeen rows in it, which was until somebody grew the demo.
+    `seed/` is free to be rewritten, unlike the frozen corpus the scheduler's
+    goldens are derived from.
     """
     from openproj.render import render_table
 
     records, config, _ = load_repo(demo_root)
     return render_table(build_index(records, config, date(2026, 8, 17)))
+
+
+@pytest.fixture
+def demo_plan_size(demo_root: Path) -> int:
+    """How many rows the demo's table draws — read off the plan, never typed.
+
+    The table body draws one row per record in `index.plan`, which is every rung
+    the plan schedules and not `index.records` (issues and notes are off the
+    plan and get their own pages).
+    """
+    records, config, _ = load_repo(demo_root)
+    return len(build_index(records, config, date(2026, 8, 17)).plan)
 
 
 # --------------------------------------------------------------------------- #
@@ -1695,9 +1710,9 @@ return {
 
 
 def test_the_header_and_the_frozen_pair_hold_when_the_rows_are_tall(
-    demo_page: str, tmp_path: Path
+    demo_page: str, demo_plan_size: int, tmp_path: Path
 ):
-    """What expanding a column deliberately costs: seventeen rows of lists at full
+    """What expanding a column deliberately costs: every row of lists at full
     length, and a plan that no longer fits on one screen. That is the whole point
     of it being asked for rather than being the default — but it is also the state
     in which the two things that keep a scrolled table readable have the most work
@@ -1707,10 +1722,14 @@ def test_the_header_and_the_frozen_pair_hold_when_the_rows_are_tall(
     the frozen pair, and what is *painted* at four points is what is asked. A
     frozen cell that has lost its layer resolves to every value a stylesheet test
     asserts and is drawn under the rows passing beneath it.
+
+    The row count is read off the plan rather than written down. It was `== 17`,
+    which was the demo's size on the day it was typed, and growing the demo made
+    it wrong — silently, in a test whose subject is scrolling and not counting.
     """
     got = measured_in(chrome(), demo_page, tmp_path / "tall.html", 700, _TALL, height=600)
 
-    assert got["rows"] == 17
+    assert got["rows"] == demo_plan_size
     assert got["open"], "no column opened, so nothing here is about tall rows"
     assert got["tallest"] > got["shortest"], "the rows did not grow"
     assert got["scrolls"]["down"] and got["scrolls"]["sideways"], (

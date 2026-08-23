@@ -105,7 +105,9 @@ def test_the_shipped_demo_corpus_validates_clean(demo_root: Path, capsys):
     teaches people the check is noise.
 
     Distinct from the golden corpus in tests/fixtures/, which deliberately carries
-    nine blockers because migrated data is messy and the validator has to say so.
+    ten blockers because migrated data is messy and the validator has to say so.
+    The exact set is pinned in `test_the_seed_corpus_reports_exactly_this_problem_set`;
+    this test only cares that the DEMO carries none.
     """
     assert main(["check", str(demo_root)]) == 0
     # Added by the commit that made a note a rung: issues and notes acquired
@@ -314,8 +316,19 @@ def test_demo_builds_a_repository_the_server_can_actually_serve(monkeypatch, cap
     assert seen["records"].status_code == 200
     assert seen["table"].status_code == 200
     assert seen["people"].status_code == 200
+    # Every rung the plan is made of, read off `RUNG` rather than written down.
+    # This was `{"project", "pitch", "task"}`, which was the whole ladder when it
+    # was typed; adding `product` as a rung and shipping two of them in the demo
+    # made it fail, and the honest reading of that failure is that the literal was
+    # a copy of the ladder rather than a statement about the demo. `planned` is
+    # the flag that decides what reaches the table, graph, timeline and people
+    # pages, so a rung added later is covered here on the commit that adds it.
+    from openproj.model import RUNG
+
     kinds = {record["kind"] for record in seen["index"]["plan"].values()}
-    assert kinds == {"project", "pitch", "task"}, "a plan the reader would find empty"
+    assert kinds == {name for name, rung in RUNG.items() if rung.planned}, (
+        "a plan the reader would find empty"
+    )
     assert "http://127.0.0.1:" in capsys.readouterr().out, "nothing told anybody where to look"
 
 

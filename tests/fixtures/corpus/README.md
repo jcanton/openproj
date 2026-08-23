@@ -26,6 +26,39 @@ than inventing one.
 The four `done` records still have no size. That is deliberate: they exercise the grandfathering
 path, where a record created before a rule existed produces a warning rather than a blocker.
 
+## It grew once, and what the second half is for
+
+Everything above describes the seventeen records this corpus started as. On 2026-08-23 it grew to
+thirty, and the thirteen added are a second, deliberately separate island: two **products**
+(`prod-6d1a70`, `prod-7c2b81`), the project `proj-9a4c25` under one of them, two pitches, four
+tasks, two issues, two notes and the cycle records `0037.md` and `0038.md`. It was grown because
+four of the six rungs had no file at all here — no products, no issues, no notes, no cycles — so
+the promotion graph that `docs/data-model.md` is built around was untested.
+
+**The island shares no worker and no ancestor with the original seventeen**, and that is not a
+stylistic choice. `GOLDEN_SPANS` in `tests/test_schedule.py` is derived by hand against the spec's
+algorithm and is the only thing in the repository asserting that the scheduler computes the *right*
+dates rather than merely agreeing with itself. The scheduler property
+`test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_moves_that_items_span` is
+exactly as narrow as it needs to be to let a corpus grow without moving an existing span — so a new
+planned record introduces new people (`redpollard`, `chiffchaffy`, `Whimbrelson`, `stonechatty`) and
+hangs under a new ancestor. Issues and notes never reach the scheduler and are free.
+
+If you add to this corpus, do the same thing, and derive any new span by hand *before* comparing it
+with a run. The working for the seven island spans is written out under `THE HEARTH ISLAND` in
+`tests/test_schedule.py`.
+
+Three files here are wrong **on purpose** and are asserted to be, so do not tidy them:
+
+| File | What is wrong | Why |
+|---|---|---|
+| `products/prod-7c2b81--hearth.md` | `person_weeks`, `depends_on`, `owner` | The only document in either corpus the three `unread_fields` rules fire on. Two blockers and a warning. |
+| `notes/note-b14d6a.md` | `became: [pitch-000000]` | A promotion link that opens nothing, so `state()` falls back to `thinking` instead of claiming a promotion. |
+| `cycles/0037.md` | no `reviews_on` | The resolver assumes a four-week build and says so — what a half-filled cycle record looks like. |
+
+`cycles/0038.md` is the one record that has to know about Christmas: eight calendar weeks holding
+7.2 build weeks, because four weekday holidays fall inside it.
+
 ## The shape it exercises
 
 The invented edges form a **diamond** in the distributed-driver group —

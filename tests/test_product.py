@@ -205,6 +205,39 @@ def test_a_product_draws_no_bar_on_the_timeline(plan: Path):
     assert 'data-id="prod-000001"' not in render_timeline(index, ROUTES)
 
 
+def test_a_product_adds_no_indent_to_the_work_beneath_it(seed_root: Path):
+    """A rung the timeline never draws must not be a level it indents by either.
+
+    `_containment_rows` walks the chain and counts, and the product rung was put
+    above `project` after that arithmetic was written. Nothing has run it against
+    a chain four rungs long: the synthetic plans in `test_render` stop at
+    project, and every project in every committed file had `parent: null` until
+    the frozen corpus grew a product over both of its projects. An off-by-one
+    here is silent — every row on the page shifts one level, the page renders,
+    nothing raises, and the drawing reads as a plan with a different shape.
+
+    Asked of the frozen corpus rather than of a plan built for the question,
+    because the two projects under two different products are what make it a
+    walk rather than a subtraction of one.
+    """
+    from openproj.render import _containment_rows
+
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    depth = dict(_containment_rows(index, set(index.spans)))
+
+    assert index.plan["proj-9a4c25"].parent == "prod-7c2b81"
+    assert "prod-7c2b81" not in index.spans, "a product with a span would be a row of its own"
+    assert depth["proj-9a4c25"] == 0, "the product above it is not a level"
+    assert depth["pitch-6f2d18"] == 1
+    assert depth["task-6a5c02"] == 2
+
+    # And the older half of the corpus, which gained a product without moving.
+    assert index.plan["proj-7e57a0"].parent == "prod-6d1a70"
+    assert (depth["proj-7e57a0"], depth["task-0e4b7a"]) == (0, 1)
+    assert not {"prod-6d1a70", "prod-7c2b81"} & set(depth), "no product is a row"
+
+
 def test_a_product_is_drawn_differently_and_shows_no_card(plan: Path):
     """jcanton asked for both: a shape of its own, and no hover card.
 
