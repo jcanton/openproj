@@ -125,31 +125,76 @@ PRIORITY_GLYPH = {
 # Chosen to be different SHAPES, not different weights of one shape: a small dot
 # and a large dot are two glyphs a reader has to compare, which is the failure
 # the ladder was already meant to fix.
-# Five shapes, one per status, and the only place any of them is written.
+# Six shapes, one per status, and the only place any of them is written.
 #
 # Text glyphs and not emoji, and that is a constraint rather than a taste: an
 # emoji is drawn by the platform's colour font, so it ignores `currentColor` and
 # arrives at a different weight on every machine — and these sit inside a 14px
-# timeline bar in the bar's own ink. It is also why a drawing cannot replace them:
-# the same five characters go inside `<option>` elements, in the table's inline
-# status editor and in every facet menu, and an option is a string.
+# timeline bar in the bar's own ink.
+#
+# The argument that used to run on from there — that a drawing cannot replace
+# them, because "the same characters go inside `<option>` elements" — is no
+# longer true of status and was left standing when it stopped being. Status left
+# the native `<select>` when it became the hill (`_control_html` in
+# `controls.py` says so), and the facet menus carry no glyph at all; every site
+# left is a chip, a legend swatch, an SVG `<text>` or a data-URI image, and each
+# of those is somewhere an SVG could go. The constraint still binds
+# `PRIORITY_GLYPH`, whose blocks really are in menus, and it is written out
+# again there. These stay characters because a character is what they should be,
+# not because nothing else would fit.
 #
 # **They say what the hill says.** Since the detail page draws a status as a ball
 # on a hill, a mark that means something unrelated is a second vocabulary for one
-# fact — so these are the hill in one character: climbing, over the top, coming
-# down. jcanton, 2026-08-22, choosing between four mocked options. `done` and
-# `shelved` keep their marks: they are the two the hill draws on flat ground, and
-# a tick and a cross are already what they mean.
+# fact — so these are the hill in one character: standing at the foot of it,
+# climbing, over the top, coming down. jcanton, 2026-08-22, choosing between four
+# mocked options. `done` and `shelved` keep their marks: they are the two the
+# hill draws on flat ground, and a tick and a cross are already what they mean.
 #
-# **Not all five are in the vendored face's latin subset**, and the line that used
-# to claim they were was measured and wrong: it holds 230 codepoints and has never
-# held U+2713 or U+2715. It does not matter, and here is why it does not. In HTML
-# the stack falls back — `--font-sans` names four faces after Inter. On the graph
-# the mark is drawn into an SVG data URI, which is an isolated document that
-# resolves against the system's own fonts and not the page's `@font-face` at all,
-# which is exactly how the tick has been drawing correctly all along. The cost of
-# a character no machine has is one 14px mark drawn as a box, not a broken page.
+# **`thinking` is a ring, and it is the one mark with nothing inside it.** The
+# other five are strokes that go somewhere; a record nobody has started is the
+# one state with no direction to draw, so it gets the shape that has none —
+# jcanton, 2026-08-24: "a simple circle centered vertically and horizontally,
+# like a dot product but empty". Empty is the whole of it, and it is what rules
+# out the one candidate that would have cost nothing: `•` U+2022 IS in the
+# vendored face, measured, where none of these six is — and it is a filled dot,
+# which says "here is a thing" where this has to say "here is a place for one".
+#
+# U+25CB and not the five rounder-looking alternatives, chosen by measuring
+# rather than by eye — ink extents from the font's own metrics, in Chrome, in
+# the page's real stacks. At 11px/700 in `--font-sans` the five shipped marks
+# put their ink 3.80-3.88 above the baseline and `○` lands at 3.878, which is
+# the top of that band and just under a capital M's 4.00; horizontally it is
+# 0.03px off the centre of its own advance, inside the -0.09..0.00 the others
+# already spread over. `◦`, `⊙` and `•` all sit LOW — 3.13, 3.16, 3.19 — and
+# shrink to about 4px of ink at the legend's 9px; `◯` and `◌` sit 0.30 high and
+# fill the whole em. `⌒` has always been the outlier at 7.94 and is meant to be:
+# it is an arc, and an arc is drawn at the top of the line.
+#
+# The chip draws its mark in `--font-mono` rather than `--font-sans`, and that
+# was measured too because it is a different question: on a monospace cell every
+# mark sits on one 6.6px advance and is centred horizontally by construction
+# (0.000 for all six), while the vertical spread is much wider than the sans
+# stack's — the arrows sit at 2.29-2.35 and the tick at 3.60. `○` lands at 2.86,
+# between them. So it is level with its word in the legend, the timeline and the
+# graph, and mid-pack in a chip set that was already loose. There is no nudge
+# here on purpose: a per-glyph offset would be an offset no other mark has, and
+# the fallback that draws these differs by machine.
+#
+# **None of the six is in the vendored face's latin subset**, and the line that
+# used to say "not all five" understated it. Measured by advance: each character
+# rendered as `"Inter var", X` for three very different fallbacks — if the face
+# had the glyph the advance would not move, and for all six it does. U+2191 and
+# U+2193 are the only arrows it holds; `•`, `—` and `€` are in it, which is how
+# the method was checked. It does not matter, and here is why it does not. In
+# HTML the stack falls back — `--font-sans` names four faces after Inter. On the
+# graph the mark is drawn into an SVG data URI, which is an isolated document
+# that resolves against the system's own fonts and not the page's `@font-face`
+# at all, which is exactly how the tick has been drawing correctly all along.
+# The cost of a character no machine has is one 14px mark drawn as a box, not a
+# broken page — the same bargain `docs/QUEUE.md` §7.2 struck for the priority
+# blocks, and a sixth character costs nothing the five already shipped do not.
 STATUS_GLYPH = {
+    "thinking": "○",        # a place for one: nothing has started
     "shaping": "↗",         # the climb: figuring out what to do
     "ready": "⌒",           # over the top, and knowing
     "in_progress": "↘",     # the descent: getting it done

@@ -161,12 +161,17 @@ def test_a_record_cannot_stand_where_only_a_note_can() -> None:
     """And a note cannot stand where only a record can.
 
     The stop sets are per record kind, so this is not a rule enforced at the
-    moment of a drag — there is no stop there to drag to. `thinking` is a word a
+    moment of a drag — there is no stop there to drag to. `dropped` is a word a
     record's file could hold after a hand edit, and on a pitch's hill it is as
     unrecognisable as `banana`.
+
+    The word here used to be `thinking`, which stopped being note-only on
+    2026-08-24 — jcanton asked for it on every kind but an issue, so a record can
+    now stand at the foot of the hill and a pitch's ladder offers it. `dropped`
+    is what is left that only a note can hold, and it is the same question.
     """
-    assert 'value="thinking"' not in str(_hill_html("shaping", live=True))
-    assert "hill-ball" not in str(_hill_html("thinking"))
+    assert 'value="dropped"' not in str(_hill_html("shaping", live=True))
+    assert "hill-ball" not in str(_hill_html("dropped"))
     for word in ("ready", "in_progress", "done"):
         assert f'value="{word}"' not in str(_hill_html("thinking", "note", live=True))
 
@@ -310,6 +315,15 @@ def test_the_ball_is_painted_where_the_geometry_says(index: Index, tmp_path: Pat
     browser = chrome()
     first: dict[str, str] = {}
     for record_id, record in sorted(index.plan.items()):
+        # Only a kind that HAS a ladder. A product's rung declares `statuses=()`
+        # — jcanton, 2026-08-20, "a codebase is not `in_progress`" — so its page
+        # draws no hill at all and `querySelector('.hill-ball')` finds nothing to
+        # measure. It still carries `Record.status`, which is how it turned up
+        # here: when `thinking` reached every kind but an issue on 2026-08-24 it
+        # became the model default, no PLANNED record in the corpus held it, and
+        # the representative for that word fell to a product with no hill on it.
+        if not RUNG[record.kind].statuses:
+            continue
         first.setdefault(record.status, record_id)
     assert len(first) > 1, "the corpus holds one status, so this proves nothing"
 

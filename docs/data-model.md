@@ -169,13 +169,17 @@ containment already requires a child before its parent, so a dependency along it
 before and after itself.
 
 Requiredness is **status-gated**, lives in `validate_all`, and is enforced in the create form,
-`openproj check` and the index gate. The five statuses a project, pitch or task moves through are
-`shaping`, `ready`, `in_progress`, `done`, `shelved`, in that order; priority is one of `very_high`,
-`high`, `medium`, `low`, `very_low` — five rungs, because three left the team writing `High+` in the
-margin of its own table.
+`openproj check` and the index gate. The six statuses a project, pitch or task moves through are
+`thinking`, `shaping`, `ready`, `in_progress`, `done`, `shelved`, in that order; priority is one of
+`very_high`, `high`, `medium`, `low`, `very_low` — five rungs, because three left the team writing
+`High+` in the margin of its own table.
+
+A record opens on `thinking`, and an issue never holds it: an issue is *reported*, so by the time it
+exists somebody has already thought about it, which is why its own ladder starts at `ready`.
 
 | status | additionally required |
 |---|---|
+| `thinking` | nothing — nobody has looked at this yet, and it is where a new record starts |
 | `shaping` | nothing — an idea nobody has bet on has no owner and no size by definition |
 | `ready` | `owner`; a reviewer or `review_waived`; a size; `shaped_by` on a pitch |
 | `in_progress` | `assigned_on`; a reviewer who is not the owner |

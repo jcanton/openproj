@@ -4,6 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from openproj.model import (
+    ISSUE_STATUS,
+    KINDS,
+    Issue,
     Pitch,
     Project,
     Record,
@@ -24,7 +27,7 @@ def test_a_record_needs_only_id_kind_and_title():
     """Parse permissively: everything else must be optional, or one hand-edited
     file with a missing field would make the whole repository unloadable."""
     record = Record(id="task-abc123", kind="task", title="Something")
-    assert record.status == "shaping"
+    assert record.status == "thinking"
     assert record.owner is None
     assert record.assignees == []
     assert record.reviewers == []
@@ -32,6 +35,52 @@ def test_a_record_needs_only_id_kind_and_title():
     assert record.depends_on == []
     assert record.priority == "medium"
     assert record.created_schema_version == 1
+
+
+def test_a_record_opens_at_the_foot_of_its_own_ladder():
+    """The opening status is written once per ladder, and it is that ladder's
+    first word.
+
+    It used to be written five times: three model defaults, an `opens` column in
+    `web.INBOXES`, and two `|| 'shaping'` fallbacks in the form scripts. They all
+    agreed, and they agreed right up until the planned ladder gained a rung below
+    `shaping` — at which point four of the five would have gone on naming a word
+    that is no longer where anything starts, in silence, because nothing ever
+    compares them. The rule that replaced them is the one asserted here.
+
+    Derived AND written out. The derivation is what stops the default drifting
+    out of the vocabulary it has to be a member of; the literal list is what says
+    which order was meant, since a ladder reordered by accident satisfies the
+    derivation perfectly.
+    """
+    for rung in KINDS:
+        # A product reads no status at all — `statuses=()` — so it has no foot to
+        # open at. It still INHERITS `Record.status`, which is the line below.
+        if not rung.statuses:
+            continue
+        opens = rung.model.model_fields["status"].default
+        assert opens == rung.statuses[0], rung.name
+
+    assert {rung.name: rung.model.model_fields["status"].default for rung in KINDS} == {
+        # Nobody has looked at it yet: the three planned rungs that read the plan
+        # ladder open at its foot.
+        "project": "thinking",
+        "pitch": "thinking",
+        "task": "thinking",
+        # Inherited and unread. A product carries the word in memory and no page
+        # ever asks it for one, because `status` is on `unread_fields("product")`
+        # — pinned here so that moving the base default is a line somebody sees.
+        "product": "thinking",
+        # Reported, therefore already thought about: an issue's ladder starts a
+        # rung higher and deliberately has no `thinking` on it at all.
+        "issue": "ready",
+        # Where the word came from. A note has been `thinking` since notes
+        # existed, and `STATUS_ORDER` borrowed it rather than inventing one.
+        "note": "thinking",
+    }
+    assert "thinking" not in ISSUE_STATUS
+    assert Task(id="task-abc123", kind="task", title="T").status == "thinking"
+    assert Issue(id="issue-abc123", kind="issue", title="I").status == "ready"
 
 
 def test_sizes_are_optional_on_both_subclasses():

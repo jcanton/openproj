@@ -613,6 +613,28 @@ def _config_on_disk(root: Path) -> tuple[list[str], Callable[[str], str]]:
     return paths, lambda path: (root / path).read_text(encoding="utf-8")
 
 
+# Statuses in the order work moves through them, and the vocabulary a project, a
+# pitch and a task read — `Rung.statuses` below hands this same tuple to those
+# three rungs, so a word added here reaches all three at once.
+#
+# `thinking` is the foot of the hill: nobody has looked at this yet. It demands
+# nothing, for the same reason `shaping` demands nothing and rather more so, and
+# it is where a new record opens. It is not new — it was already a note's opening
+# word, already had a stop on the hill at t=0.0 and already had a human label —
+# what changed on 2026-08-24 is that a planned record may stand there too, so
+# "written down, not thought about" stops having to be spelled `shaping`, which
+# claims somebody is already shaping it. jcanton: "all records should be able to
+# have this status, except for issues".
+#
+# Deliberately absent from `ISSUE_STATUS` — the argument is written beside that
+# tuple, where the omission is.
+#
+# Above `Record` rather than beside `PRIORITY_RANK`, and above the ladder rather
+# than inside it, because both of them read it: the ladder carries it to three
+# rungs, and `Record.status` opens on its first word.
+STATUS_ORDER = ("thinking", "shaping", "ready", "in_progress", "done", "shelved")
+
+
 class Record(BaseModel):
     """One record of any rung: project, pitch, task, product, issue or note.
 
@@ -646,7 +668,20 @@ class Record(BaseModel):
     # be reported, because the alternative is what actually happened: one file
     # written before a vocabulary change took every page down with a 500 instead
     # of showing a problem next to the record that caused it.
-    status: str = "shaping"
+    #
+    # THE opening status: the one place a new record's first word is written, and
+    # `STATUS_ORDER[0]` rather than the word itself because a record opens at the
+    # foot of its own ladder — `Issue.status` and `Note.status` say the same about
+    # theirs. Widening a ladder at the foot therefore moves its default with it,
+    # which is exactly what putting `thinking` in front of `shaping` is.
+    #
+    # Everything that needs the value reads it from here: the create form builds a
+    # blank through this model, the table's draft row reads this field's default,
+    # the two form scripts are handed it, and `POST /api/record` writes no status
+    # key at all for a planned kind — so the record opens here on the way back in.
+    # `POST /api/promote` is the one place that deliberately says otherwise, and
+    # says why on the line that does it.
+    status: str = STATUS_ORDER[0]
 
     owner: str | None = None
     assignees: list[str] = []
@@ -752,6 +787,23 @@ class Product(Record):
     """
 
 
+# An issue's own ladder, which starts one rung further up than a planned
+# record's and is not derived from it. Two words are deliberately missing, for
+# two different reasons, and both are refusals rather than omissions —
+# `_vocabulary_problems` and `_reject_bad_status` (`web.py`) read the vocabulary
+# off the rung, so a word that is not here is a blocker on a file and a 422 on
+# the door with no code of their own.
+#
+# No `shaping`: see the docstring below — shaping happens in the record an issue
+# is promoted into, never in the issue.
+#
+# No `thinking`: an issue is *reported*. Somebody hit the thing, worked out what
+# was wrong and wrote it down, so it has already been thought about — that is
+# what filing it was — and this ladder starts at `ready` for exactly that
+# reason. `thinking` on an issue would be the tool claiming nobody has looked at
+# something somebody had just finished looking at. jcanton, 2026-08-24, widening
+# `thinking` to the planned rungs: "all records should be able to have this
+# status, except for issues".
 ISSUE_STATUS = ("ready", "in_progress", "done", "shelved")
 
 
@@ -785,7 +837,11 @@ class Issue(Record):
     legal, which closes a hole the old bespoke validator left open.
     """
 
-    status: str = "ready"
+    # The foot of this rung's own ladder, exactly as `Record.status` is the foot
+    # of the planned one's. Written as `[0]` and not as the word so that the
+    # default cannot come to disagree with the vocabulary it has to be a member
+    # of — which is the whole of what widening `STATUS_ORDER` had to move.
+    status: str = ISSUE_STATUS[0]
     reported_by: str | None = None
     opened_on: date | None = None
     # The pitches and tasks this was pitched into. One direction only: a record
@@ -866,7 +922,10 @@ class Note(Record):
     by hand.
     """
 
-    status: str = "thinking"
+    # The same rule as the other two ladders: a record opens on the first word of
+    # its own. This one has held the word `thinking` since notes existed — it is
+    # where the word came from — and `STATUS_ORDER` has now borrowed it.
+    status: str = NOTE_STATUS[0]
     written_by: str | None = None
     written_on: date | None = None
     # The records this note graduated into. On the NOTE and not on the planned
@@ -892,16 +951,6 @@ class Note(Record):
         if any(target in records for target in self.became):
             return "promoted"
         return self.status
-
-
-# Statuses in the order work moves through them. `shaping` is an idea nobody has
-# committed to yet, so it demands nothing — the same reason `shelved` does not.
-# The gates are cumulative from `ready` onwards.
-#
-# Above the ladder rather than with `PRIORITY_RANK`, because the ladder now
-# reads it: a rung carries the status vocabulary its kind reads, and three of
-# the four rungs carry this one.
-STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
 
 
 # THE LADDER. Every other map about kinds is derived from this one, in this
@@ -1843,11 +1892,22 @@ def _status_problems(
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """One gate per status, not a cumulative stack.
 
-    `shaping` is exempt because an idea nobody has bet on yet has no owner and no
-    size by definition, and demanding them is how a tracker stops being somewhere
-    people put half-formed things. `done` is exempt from the earlier gates for a
-    duller reason: migrated history often cannot say who owned something in 2025,
-    and a validator that blocks on unknowable facts gets switched off.
+    `thinking` and `shaping` are exempt because an idea nobody has bet on yet has
+    no owner and no size by definition, and demanding them is how a tracker stops
+    being somewhere people put half-formed things. `thinking` the more so: it is
+    the word for "nobody has looked at this yet", so it can only ever demand less
+    than the rung above it, and it demands nothing.
+
+    `thinking` is *named* in that tuple rather than left to the `elif` chain,
+    which would give it the same silence by accident — no branch matches it, so
+    nothing is yielded and `required_at` lists it against no field. The behaviour
+    is identical either way; what the tuple buys is that the exemption is a
+    sentence somebody wrote, in the place a reader looks to ask what a status
+    demands, rather than a gap that lasts until the chain grows an `else`.
+
+    `done` is exempt from the earlier gates for a duller reason: migrated history
+    often cannot say who owned something in 2025, and a validator that blocks on
+    unknowable facts gets switched off.
 
     Every message names its field the way the reader's screen names it, never the
     way the file spells it. A message is a sentence somebody reads, and it used to
@@ -1866,7 +1926,7 @@ def _status_problems(
     # ladder says the record does not read.
     if record.kind in RUNG and not RUNG[record.kind].schedules:
         return
-    if record.status in ("shaping", "shelved"):
+    if record.status in ("thinking", "shaping", "shelved"):
         return
     if record.status == "ready":
         if record.owner is None:
@@ -2301,12 +2361,13 @@ def shaping_document(template: str, provenance: str, body: str) -> str:
     holes and No-gos the moment somebody moves this to `ready`, which is the
     moment it claims to be shaped.
 
-    Nothing is copied into a *field*. The promoted record is created in `shaping`,
-    which is the one status that requires nothing at all — "an idea nobody has bet
-    on has no owner and no size by definition" — so a promotion always produces a
-    record that validates, without inventing an owner, an appetite or a cycle
-    that nobody agreed to. That is not a convenience; it is the same claim the
-    note makes, carried across intact.
+    Nothing is copied into a *field*. The promoted record is created in `shaping`
+    — not in `thinking`, which is where a record opens when nobody has looked at
+    it, and somebody has just pressed Promote on this one. Both gates are empty,
+    so "the status that requires nothing" no longer tells the two apart and the
+    meaning does: a promotion always produces a record that validates, without
+    inventing an owner, an appetite or a cycle that nobody agreed to. That is not
+    a convenience; it is the same claim the note makes, carried across intact.
 
     `provenance` is one line of visible prose above everything, and it is the
     answer to "where did this pitch come from" asked of the record itself. Prose

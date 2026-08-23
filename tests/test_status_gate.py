@@ -162,3 +162,11 @@ def test_the_gate_the_table_asks_from_is_the_gate_the_server_enforces(page: str)
     # of a project at `ready`, and a project has no such field.
     assert "in_progress" in payload["required"]["task"]["assigned_on"]
     assert "person_weeks" not in payload["required"]["project"]
+    # And the foot of the ladder demands nothing, on the page as well as in the
+    # gate. `thinking` is where a record opens, so this is the map every row
+    # created from this table is judged against first: one field marked required
+    # here and the editor asks for something before it will let a half-formed
+    # record exist at all, which is the one thing the word is for.
+    for kind in ("project", "pitch", "task"):
+        asked = [field for field, at in payload["required"][kind].items() if "thinking" in at]
+        assert asked == [], kind

@@ -25,6 +25,7 @@ from openproj.model import load_repo
 from openproj.render import (
     ROUTES,
     STATUS_SLOTS,
+    STATUSES,
     _chosen,
     _scheme_css,
     render_graph,
@@ -173,9 +174,16 @@ def test_every_scheme_is_readable_where_the_page_paints_it(tmp_path: Path):
     """
     page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD)
     keys = ["", *(family.key for family in FAMILIES)]
+    # Both lists interpolated, and the second one used not to be: it was the
+    # status ladder retyped as a JavaScript literal in a test file, which is the
+    # "corpus that does not contain the one string that matters" failure with the
+    # corpus written by hand. This is the ONE harness that measures what
+    # `color-mix` actually paints per scheme, so a rung it does not know about is
+    # a rung nobody has ever measured — and it stayed green through the commit
+    # that added one, still reporting 190 ratios about five statuses.
     script = (
         f"const SCHEMES = {keys!r};\n"
-        "const STATUSES = ['shaping','ready','in_progress','done','shelved'];\n"
+        f"const STATUSES = {list(STATUSES)!r};\n"
         + _CONTRAST
     ).replace("'", '"')
     got = measured_in(chrome(), page, tmp_path / "contrast.html", 1200, script,

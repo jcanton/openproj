@@ -38,7 +38,7 @@ from openproj.model import (
     unread_fields,
     validate_all,
 )
-from openproj.render import PROMOTABLE
+from openproj.render import PROMOTABLE, STATUSES
 from openproj.web import SESSION_COOKIE, create_app
 
 
@@ -118,7 +118,10 @@ def test_a_promoted_note_does_not_track_what_it_became():
     would be a second copy of the pitch's status, drawn on the one page with no
     reason to carry one — and the two disagree the first time somebody edits
     either end."""
-    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+    # Every status the target can hold, read off the ladder: the point of the test
+    # is that NONE of them reaches the note, so a word missing from the list is a
+    # word the claim was never made about.
+    for status in STATUSES:
         world = records(**{"pitch-aa0001": status})
         note = Note(id="note-000001", kind="note", title="x", became=["pitch-aa0001"])
 

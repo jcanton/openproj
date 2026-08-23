@@ -41,7 +41,7 @@ from openproj.model import (
     without_checklist,
     without_sections,
 )
-from openproj.render import ROUTES, STATIC, render_cycle, render_deck
+from openproj.render import ROUTES, STATIC, STATUSES, render_cycle, render_deck
 
 TODAY = date(2026, 8, 17)
 
@@ -997,7 +997,7 @@ def test_a_heading_inside_the_notes_is_not_drawn_at_the_size_of_the_slides_own(d
 
 
 def test_a_status_on_a_slide_is_a_word_and_not_the_ladder(deck: str):
-    """The five status fills are a luminance ladder measured against the PAGE, so
+    """The status fills are a luminance ladder measured against the PAGE, so
     on a white slide under the dark theme the chip came out a solid dark pill
     among hairlines — the app's own device drawn against a ground it was never
     measured on. The ladder exists because a graph node and a timeline bar have
@@ -1005,10 +1005,13 @@ def test_a_status_on_a_slide_is_a_word_and_not_the_ladder(deck: str):
 
     `.slide .who .chip` is (0,3,0) against the shell's `.chip.st-ready` at
     (0,2,0), so it wins on specificity and not on the order two stylesheets
-    happen to be inlined in — and one rule beats all five rungs."""
+    happen to be inlined in — and one rule beats every rung at once, which is the
+    property worth asserting: the override is status-agnostic by design, so it is
+    asked about the whole ladder rather than about the words that were on it the
+    day it was written."""
     sheet = sheet_of(deck)
 
-    for status in ("ready", "in_progress", "done", "shelved", "shaping"):
+    for status in STATUSES:
         chip = SLIDE + [el("p", "who"), el("span", f"chip st-{status}")]
         assert sheet.value(chip, "background") == "transparent", (
             status, sheet.selectors_reaching(chip, "background")

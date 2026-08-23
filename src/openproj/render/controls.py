@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from markupsafe import Markup
 
 from ..index import Index
-from ..model import MAX_BODY_BYTES
+from ..model import MAX_BODY_BYTES, Record
 from .env import _fragment
 from .hill import _hill_html
 from .tokens import HISTORY_MARKS, PEOPLE_FIELDS, PRIORITIES, _human
@@ -2464,6 +2466,19 @@ _CONTROL = """
 # page and the detail page ask the same question of the same controls, and two
 # copies of a validation courtesy is one copy that quietly stops matching.
 _REQUIRED_JS = Markup("""
+// The status a form with no status control is read as. Handed over from the
+// model rather than typed here: `Record.status`'s default is the one place a new
+// record's opening word is written, and this was a second copy of it — with
+// `createRecord` on the create page a third — that would have gone on saying
+// `shaping` after the ladder grew a rung below it, in silence, because the two
+// scripts that read it only ever ask which labels to mark.
+//
+// A form has no status control when its kind does not read one (a product), and
+// the gates at the opening status are empty either way, so nothing visible turns
+// on the value. What turns on it is that a wrong word here is a word no
+// `data-required-at` list contains, which marks nothing and says nothing.
+const OPENS = """ + json.dumps(Record.model_fields["status"].default) + """;
+
 // The word printed beside a control, which is the word somebody is looking at.
 // The `<dt>` holds the label and then the mark, so its first node is the name.
 function labelOf(control) {
@@ -2497,7 +2512,7 @@ function refusals(answer, status) {
 // status demands is the thing you need before you fill the form in, and the
 // rules change under you the moment the status select does.
 function markRequired(form) {
-  const status = form.querySelector('[name=status]')?.value || 'shaping';
+  const status = form.querySelector('[name=status]')?.value || OPENS;
   const waived = form.querySelector('[name=review_waived]')?.checked;
   for (const control of form.querySelectorAll('[data-required-at]')) {
     // review_waived is the escape hatch from the reviewer rule, so honouring it

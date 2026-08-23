@@ -240,29 +240,29 @@ const token = name => {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return raw && raw.includes('(') ? inSRGB(raw) : raw;
 };
-const COLOUR = () => ({
-  shaping: token('--st-shaping'), ready: token('--st-ready'),
-  in_progress: token('--st-in_progress'), done: token('--st-done'),
-  shelved: token('--st-shelved'),
-});
+// The ladder itself, handed over rather than retyped — and it was retyped, three
+// times, in the three maps below. They were five-key object literals written out
+// by hand, and the day the ladder gained `thinking` all three answered
+// `undefined` for it: cytoscape took `background-color: undefined`, logged it and
+// drew its own #999, which is close enough to `shelved` to be read as it, on the
+// one surface where the fill is the whole status channel. It did not throw and it
+// did not look broken. `GLYPH` and `LEVELS` on this page were already derived
+// from the same vocabulary; these three are now too, so a rung arrives on the
+// canvas on the commit that adds it.
+const STATUS_LADDER = {{ statuses|tojson }};
+const byStatus = suffix => Object.fromEntries(
+  STATUS_LADDER.map(status => [status, token(`--st-${status}${suffix}`)]));
+const COLOUR = () => byStatus('');
 // A label's colour belongs to the fill it sits on, not to the page. In dark mode
 // these fills are light shapes carrying dark ink, so the text on a node flips
 // with its own background rather than with the theme's foreground — white on
 // them would be exactly the failure the light theme avoids.
-const INK = () => ({
-  shaping: token('--st-shaping-ink'), ready: token('--st-ready-ink'),
-  in_progress: token('--st-in_progress-ink'), done: token('--st-done-ink'),
-  shelved: token('--st-shelved-ink'),
-});
+const INK = () => byStatus('-ink');
 // The edge of a status shape, the same token the timeline strokes its bars with
 // and the same one the legend below draws round its keys. Read through token()
 // and re-read on themechange like the other two: a border resolved once at build
 // time is a light theme's border still on the boxes after the toggle.
-const LINE = () => ({
-  shaping: token('--st-shaping-line'), ready: token('--st-ready-line'),
-  in_progress: token('--st-in_progress-line'), done: token('--st-done-line'),
-  shelved: token('--st-shelved-line'),
-});
+const LINE = () => byStatus('-line');
 // The fill is the only status channel on this canvas, and five fills on a
 // luminance ladder are separable without being nameable: you can see that one
 // box is darker than the next and still not know which state that is. So a
