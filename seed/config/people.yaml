@@ -23,3 +23,14 @@ known_people:
   - avocetline
   - kittiwaker
   - turnstonegru
+  # The backend side, added with the scan-operator work in cycle 37. They are on
+  # the roster and NOT on cycle 37's availability list, which is a different
+  # thing and says so on the cycle page: being known to the plan is not being bet
+  # into a cycle.
+  #
+  # `dabchickly`, who wrote note-55cc66, is still deliberately absent — one name
+  # off the roster is what gives the check's roster rule a real document to fire
+  # on. Eighteen of them was an unmaintained file rather than a demonstration.
+  - firecresta
+  - siskinbury
+  - Ptarmigant

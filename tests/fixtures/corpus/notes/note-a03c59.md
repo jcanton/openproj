@@ -7,6 +7,7 @@ written_by: Whimbrelson
 written_on: 2026-07-08
 tags: [hearth, backend]
 became: [pitch-6f2d18, proj-9a4c25]
+created_schema_version: 2
 ---
 
 Every hearth operator that has been taught to run on the GPU has grown a second implementation

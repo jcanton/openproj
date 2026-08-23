@@ -3248,7 +3248,8 @@ def test_a_bar_at_the_end_of_time_does_not_make_a_page_nobody_can_open(seed_root
     """
     from openproj.render import render_timeline
 
-    html = render_timeline(_index_reaching_the_end_of_the_calendar(seed_root))
+    index = _index_reaching_the_end_of_the_calendar(seed_root)
+    html = render_timeline(index)
     width = float(re.search(r'<svg width="([\d.]+)"', html).group(1))
     ticks = re.findall(r'<text class="month-label"', html)
 
@@ -3257,7 +3258,15 @@ def test_a_bar_at_the_end_of_time_does_not_make_a_page_nobody_can_open(seed_root
     assert len(html) < 1_000_000, f"{len(html)} bytes"
     # And it is still a drawing of the plan, not an empty frame: the bars that
     # fit the window are all there, and the page says what it is not showing.
-    assert len(re.findall(r'<rect data-id="', html)) == 11, "every bar the plan had"
+    #
+    # Named rather than counted. This was `== 11`, which was the number of spans
+    # the corpus happened to have when it was written, and growing the corpus
+    # from 17 records to 30 made it wrong — a literal that has to be re-derived
+    # every time the fixture moves is one somebody eventually re-derives by
+    # pasting what the run printed. The claim is "everything except the absurd
+    # one", so that is what it says, and it cannot go stale.
+    drawn = set(re.findall(r'<rect data-id="([^"]+)"', html))
+    assert drawn == index.spans.keys() - {"task-3e07b2"}, "every bar but the one at date.max"
 
 
 def test_a_window_typed_into_the_url_cannot_run_off_the_calendar(seed_index: Index):

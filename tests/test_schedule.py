@@ -496,6 +496,30 @@ def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_mov
 
 GOLDEN_TODAY = date(2026, 8, 17)
 
+# EVERY DATE BELOW WAS DERIVED BY HAND. DO NOT REGENERATE THEM.
+#
+# Read this before growing the corpus. These eighteen spans are the only place in
+# the repository that asserts "the scheduler computes the RIGHT dates" rather than
+# "the scheduler agrees with itself". Recompute them by running `schedule` and
+# pasting the answer and the assertion becomes a tautology that passes under every
+# possible bug — a size divided by the wrong rate, a holiday skipped, an inherited
+# edge dropped, the `begun` break inverted. There would then be nothing left in the
+# suite that could tell. Everything else in this corpus can be rebuilt; this cannot.
+#
+# So the procedure, when a new record adds a key here:
+#   1. Confirm the existing spans did NOT move. A new PLANNED record must share no
+#      worker and no ancestor with an existing one — that is exactly as narrow as
+#      the property in `test_property_adding_an_item_that_shares_no_worker_and_
+#      no_ancestor_never_moves_that_items_span`, and the looser claim is false
+#      under a capacity-1 model. Unplanned rungs (issues, notes) never reach the
+#      scheduler and are free.
+#   2. Derive the new span from the algorithm — `_duration_weeks` (size / sum of
+#      rates), `_availability_of` (rates come from the cycle of the BET, i.e. the
+#      parent pitch), `blockers_of`'s ancestor loop, `_place`'s `begun` branch,
+#      `working_days_after` and the holiday list — and WRITE THE ARITHMETIC DOWN.
+#   3. Only then run it. If the two disagree, stop: it is either the derivation or
+#      the scheduler, and which one it is matters more than the branch.
+#
 # Re-derived 2026-08-16 for D-C4: a size is person-weeks and the people on it
 # divide it. Every record with more than one worker moved; the single-worker ones
 # did not, which is the check that the change did what it says. Two were verified
@@ -508,6 +532,13 @@ GOLDEN_TODAY = date(2026, 8, 17)
 # is its parent and rolls up to it; `pitch-1b3f9a` is `ready` with no
 # `assigned_on` and moves earlier only because a worker comes free sooner. Each
 # was re-derived by hand against the new rule, not copied out of a failure.
+#
+# The seven hearth-island keys were added 2026-08-23. Every one of the eleven
+# above was measured unmoved first, then each new one was derived by hand against
+# the algorithm and only afterwards compared with the run; the two agreed on all
+# seven. The working is in `THE HEARTH ISLAND` below, and the four mechanisms it
+# turns on are named there. Cycles 37 and 38 are dated by `cycles/*.md` records
+# and not by `config/cycles.yaml`, so `Config.with_plans` is in the derivation too.
 GOLDEN_SPANS = {
     "proj-7e57a0": (date(2026, 8, 24), date(2026, 8, 28)),
     "pitch-1b3f9a": (date(2026, 8, 27), date(2026, 9, 2)),
@@ -520,10 +551,105 @@ GOLDEN_SPANS = {
     "task-5a4e39": (date(2026, 8, 17), date(2026, 8, 17)),
     "task-5c1d84": (date(2026, 8, 18), date(2026, 9, 14)),
     "task-5f062b": (date(2026, 8, 18), date(2026, 8, 24)),
+    # --- the hearth island, under prod-7c2b81 -> proj-9a4c25 ----------------
+    "proj-9a4c25": (date(2026, 8, 13), date(2027, 1, 21)),
+    "pitch-6f2d18": (date(2026, 8, 13), date(2026, 8, 28)),
+    "pitch-7b3e94": (date(2026, 8, 31), date(2027, 1, 21)),
+    "task-6a5c02": (date(2026, 8, 17), date(2026, 8, 28)),
+    "task-6b7d31": (date(2026, 8, 13), date(2026, 8, 19)),
+    "task-7c8e40": (date(2026, 8, 31), date(2026, 9, 11)),
+    "task-7d9f52": (date(2026, 12, 21), date(2027, 1, 21)),
 }
 
+# THE HEARTH ISLAND — the arithmetic behind the seven keys above.
+#
+# The calendar. 2026-08-17 is a Monday (pinned by `pitch-48ea9e`, five working
+# days 08-17..08-21). 08-13 Thu, 08-28 Fri, 08-31 Mon, 09-11 Fri, 09-14 Mon,
+# 11-30 Mon, 12-21 Mon, 2027-01-21 Thu, 2027-01-22 Fri, 2027-01-25 Mon.
+#
+# The two cycle records, resolved by `Config._resolve`:
+#   37  starts 2026-08-17, NO `reviews_on` -> assumed_review True;
+#       reviews_on = starts + _DEFAULT_BUILD_DAYS(28) = 09-14;
+#       builds_until = previous working day = 2026-09-11;
+#       cycle 38 exists and starts later, so assumed_end False (the `after`
+#       branch, which nothing else in either corpus takes) and ends_on = 11-29;
+#       build_weeks = 20 working days / 5 = 4.0.
+#       rates: redpollard 0.5, chiffchaffy 0.25, Whimbrelson 1.0.
+#   38  starts 2026-11-30, reviews_on 2027-01-25 -> assumed_review False;
+#       builds_until = previous working day = 2027-01-22;
+#       no later cycle, so assumed_end True and
+#       ends_on = reviews + (round(2.0*7) - 1) = 2027-02-07;
+#       build_weeks = 40 working days MINUS the four WEEKDAY holidays inside it
+#       (12-24 Thu, 12-25 Fri, 12-31 Thu, 01-01 Fri; 12-26 is a Saturday and
+#       costs nothing) = 36 / 5 = 7.2, not 8.0. That subtraction is the one
+#       number in the repository that has to know about Christmas.
+#       rates: Whimbrelson 0.5, stonechatty 0.5.
+#
+# The four leaves. `_availability_of` reads the cycle of the BET, so a task takes
+# its parent pitch's roster and carries no `cycle:` of its own.
+#
+#   task-6a5c02  size 1.5; workers dedup to [redpollard, chiffchaffy] (redpoll is
+#                owner AND assignee and counts once); cycle 37 rates 0.5 + 0.25
+#                = 0.75; 1.5 / 0.75 = 2.0 weeks = 10 working days. No blockers.
+#                `in_progress` with an `assigned_on`, so `begun`: starts on
+#                2026-08-17 and today does not move it.
+#                08-17,18,19,20,21,24,25,26,27,28          -> 08-17 .. 08-28
+#
+#   task-6b7d31  size 0.5; one worker [redpollard] at 0.5; 0.5 / 0.5 = 1.0 week
+#                = 5 working days. `begun`, assigned 2026-08-13 — FOUR DAYS
+#                BEFORE GOLDEN_TODAY, so the floor does not apply.
+#                08-13,14,17,18,19                          -> 08-13 .. 08-19
+#                redpollard is already booked 08-17..08-28 by task-6a5c02 and
+#                this span OVERLAPS it. It does not move, because `_place`
+#                breaks out of the contention loop when `begun`. That is the
+#                only thing holding this date: turn either record to `ready` and
+#                this one lands 08-31..09-04 instead.
+#
+#   task-7c8e40  size 1.0; one worker [Whimbrelson] at 0.5 (cycle 38, read
+#                although the span lands in September — the rate belongs to the
+#                bet, not to the calendar); 1.0 / 0.5 = 2.0 weeks = 10 days.
+#                It has NO `depends_on` and NO `assigned_on`. Its start comes
+#                entirely from `pitch-7b3e94`'s `depends_on: [pitch-6f2d18]`,
+#                INHERITED through `blockers_of`'s ancestor loop: pitch-6f2d18
+#                ends 08-28, next working day 08-31.
+#                08-31,09-01,02,03,04,07,08,09,10,11        -> 08-31 .. 09-11
+#                Delete the ancestor loop and this drops ten working days to the
+#                floor. It is the only inherited edge in GOLDEN_SPANS.
+#
+#   task-7d9f52  size 2.0; one worker [stonechatty] at 0.5; 4.0 weeks = 20 days.
+#                Blockers in `blockers_of` order: task-7c8e40 (ends 09-11 ->
+#                ready 09-14); issue-9f2b48, which is an ISSUE and therefore not
+#                in `live`, not in `spans`, and skipped by the `target in spans`
+#                guard — it contributes NOTHING, which is the whole of the
+#                `off_plan_deps` claim; and pitch-6f2d18, which loses at 08-28.
+#                Then `assigned_on: 2026-12-21` beats all of it: start 12-21.
+#                Twenty working days stepping over 12-24, 12-25, 12-31 and
+#                01-01 (12-26 is a Saturday and costs nothing):
+#                  12-21,22,23 | 12-28,29,30 | 01-04,05,06,07,08 |
+#                  01-11,12,13,14,15 | 01-18,19,20,21
+#                                                           -> 12-21 .. 2027-01-21
+#                Remove those four holidays and the twentieth day is 01-15 —
+#                four working days earlier. This is the only span in either
+#                corpus that straddles the shutdown.
+#
+# The three rollups are min(start)/max(end) over children and book nobody:
+#   pitch-6f2d18  over 6a5c02 (08-17..08-28) and 6b7d31 (08-13..08-19)
+#   pitch-7b3e94  over 7c8e40 (08-31..09-11) and 7d9f52 (12-21..2027-01-21)
+#   proj-9a4c25   over both pitches
+#
+# No island record adds an overrun: every span ends at or before its cycle's
+# `build_end`, and task-7d9f52 ends 2027-01-21 against cycle 38's 2027-01-22 —
+# ONE WORKING DAY INSIDE, which is a deliberate boundary test of `_overrun`'s
+# `<=`. proj-9a4c25 is measured against nothing, because `bet_of` finds its
+# parent product absent from `live` and hands back the project, whose own
+# `cycle` is null.
+
 # Every done record in the corpus has a null assigned_on, and the shelved one is
-# out of the graph, so none of them appear on the timeline at all.
+# out of the graph, so none of them appear on the timeline at all. The hearth
+# island adds nothing here: none of its records is `done`, and its two PRODUCTS
+# never enter `live` at all, because `RUNG["product"].schedules` is False. This
+# set is what asserts that a product draws no bar — a rectangle behind every real
+# bar, saying nothing the bars do not.
 GOLDEN_ABSENT = {
     "pitch-2a7f3e",
     "pitch-3c9a41",
@@ -531,11 +657,23 @@ GOLDEN_ABSENT = {
     "task-3a52d8",
     "task-3d84e9",
     "task-3e07b2",
+    # The two products, named here rather than left to the dict equality above.
+    # `GOLDEN_SPANS` not holding a key is the absence of an assertion; this set
+    # is the assertion, and the sentence over it was written about records that
+    # were not in it.
+    "prod-6d1a70",
+    "prod-7c2b81",
 }
 
 # Measured against the end of BUILD rather than the end of the window, so every
 # one of these grew by the two cool-down weeks — except where the span itself
 # also moved. Cool-down is not build time.
+#
+# The hearth island adds no entry and changes no number. Every island span ends
+# at or before its cycle's `build_end`, and `task-7d9f52` ends 2027-01-21 against
+# cycle 38's 2027-01-22 — inside by one working day, on purpose, so that the `<=`
+# in `_overrun` is a boundary somebody chose rather than a comparison nothing
+# stands on.
 GOLDEN_OVERRUNS = {
     "pitch-48ea9e": 15.0,
     "pitch-5e7b1c": 52 / 7,
@@ -564,6 +702,56 @@ def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
     assert overruns == pytest.approx(GOLDEN_OVERRUNS)
     assert not [s for s in spans.values() if s.estimated or s.unowned]
     assert not [s for s in spans.values() if s.unscheduled or s.historical]
+
+
+def test_the_cycle_records_the_goldens_are_derived_against(seed_root: Path):
+    """The inputs to half of GOLDEN_SPANS, pinned where they can be read.
+
+    Cycles 37 and 38 are dated by `cycles/0037.md` and `cycles/0038.md` and by
+    nothing in `config/cycles.yaml`, so `Config.with_plans` creating a window is
+    itself part of the derivation — and every per-person rate in the island spans
+    is read off these two records. If one of them moves, seven spans above are
+    wrong and the failure should say which number moved rather than only which
+    dates did.
+    """
+    _, config, _ = model.load_repo(seed_root)
+
+    assert 37 not in _cycles_yaml(seed_root) and 38 not in _cycles_yaml(seed_root)
+    assert config.cycles[37] == (date(2026, 8, 17), date(2026, 11, 29))
+    assert config.cycles[38] == (date(2026, 11, 30), date(2027, 2, 7))
+    # The four YAML-dated cycles are untouched by the two records beside them.
+    assert config.cycles[36] == (date(2026, 6, 22), date(2026, 8, 14))
+
+    thirty_seven = config.plans[37]
+    assert thirty_seven.builds_until == date(2026, 9, 11)
+    assert thirty_seven.build_weeks == 4.0
+    # No `reviews_on` in the file, so the four-week build is assumed and said so;
+    # a later cycle exists, so the END is read rather than assumed. Nothing else
+    # in either corpus takes that second branch.
+    assert thirty_seven.assumed_review and not thirty_seven.assumed_end
+    assert thirty_seven.availability == {
+        "redpollard": 0.5, "chiffchaffy": 0.25, "Whimbrelson": 1.0
+    }
+
+    thirty_eight = config.plans[38]
+    assert thirty_eight.builds_until == date(2027, 1, 22)
+    assert not thirty_eight.assumed_review and thirty_eight.assumed_end
+    # 7.2 and not 8.0: eight whole Mon-Fri weeks is 40 working days, less the FOUR
+    # weekday holidays inside the shutdown — 12-24, 12-25, 12-31, 01-01. 12-26 is
+    # a Saturday and costs nothing, which is why it is four and not five. This is
+    # the one number in the repository that has to know about Christmas.
+    assert thirty_eight.build_weeks == 7.2
+    shutdown = [d for d in config.holidays if date(2026, 12, 1) <= d <= date(2027, 1, 31)]
+    assert [d for d in shutdown if d.weekday() < 5] == [
+        date(2026, 12, 24), date(2026, 12, 25), date(2026, 12, 31), date(2027, 1, 1)
+    ]
+    assert [d for d in shutdown if d.weekday() >= 5] == [date(2026, 12, 26)]
+
+
+def _cycles_yaml(root: Path) -> dict:
+    import yaml
+
+    return yaml.safe_load((root / "config" / "cycles.yaml").read_text())["cycles"]
 
 
 def test_a_cool_down_longer_than_the_window_does_not_invert_the_build():

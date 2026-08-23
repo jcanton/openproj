@@ -7,6 +7,7 @@ written_by: yellowhammer7
 written_on: 2026-02-19
 tags: [throughflow]
 became: [pitch-000000]
+created_schema_version: 2
 ---
 
 Step 4 of the bindings pitch was the interface — "expose the interface for use in `kiln4py`, port

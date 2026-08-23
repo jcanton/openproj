@@ -401,6 +401,44 @@ def test_the_seed_corpus_issues_load_as_records_off_the_plan(demo_root: Path):
     assert {r.state(index.plan) for r in issues.values()} <= set(ISSUE_STATUS)
 
 
+def test_an_issue_closes_only_when_every_piece_it_was_pitched_into_is_finished(
+    seed_root: Path, demo_root: Path
+):
+    """`all`, and `shelved` counts as finished. Two words, and until the corpus
+    grew neither had a committed file it could fail on.
+
+    `any` in place of `all` reads identically on an issue folded into one place,
+    and every linked issue in either corpus was folded into exactly one — so the
+    quantifier could have been either word and no test would have said which.
+    `issue-9f2b48`, pitched into one task that is done and one that is not, is
+    the first record anywhere that tells them apart.
+
+    The `shelved` half is the same shape from the other side: work that was
+    dropped is over, and an issue folded into it is over with it. `issue-e6f7a8`
+    in the demo is the only record in the repository that says so.
+
+    Asked of parsed files rather than of `Issue(...)` built in memory, because
+    what these two words decide is the word a page draws for a record somebody
+    wrote, and the state is derived precisely so that nobody has to write it
+    twice.
+    """
+    corpus = {r.id: r for r in load_repo(seed_root)[0]}
+    demo = {r.id: r for r in load_repo(demo_root)[0]}
+
+    # Both finished, and the file still says `ready`: the link carries the state.
+    assert corpus["issue-8e1a37"].status == "ready"
+    assert [corpus[i].status for i in corpus["issue-8e1a37"].pitched_into] == ["done", "done"]
+    assert corpus["issue-8e1a37"].state(corpus) == "done"
+
+    # One of the two is not finished, so the issue is not: `all`, never `any`.
+    assert {corpus[i].status for i in corpus["issue-9f2b48"].pitched_into} == {"done", "ready"}
+    assert corpus["issue-9f2b48"].state(corpus) == "in_progress"
+
+    # And finished includes shelved, however the work ended.
+    assert {demo[i].status for i in demo["issue-e6f7a8"].pitched_into} == {"done", "shelved"}
+    assert demo["issue-e6f7a8"].state(demo) == "done"
+
+
 def test_check_covers_issues_for_the_first_time(tmp_path: Path):
     """`openproj check` runs `validate_all(records, config)` and nothing else,
     so `issue_problems` was dead to it from the day it was written: an issue

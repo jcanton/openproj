@@ -172,7 +172,11 @@ def test_ancestors_of_a_seed_task_reach_its_pitch(seed_root: Path):
     records, _, _ = load_repo(seed_root)
     by_id = {record.id: record for record in records}
     assert ancestors("task-2b6c94", by_id) == ["pitch-2a7f3e"]
-    assert ancestors("task-0e4b7a", by_id) == ["proj-7e57a0"]
+    # Three rungs, not two: `proj-7e57a0` hangs from a product now, and the chain
+    # is walked as far as it is named. This is the only assertion in the suite
+    # that would notice a walk stopping at the project.
+    assert ancestors("task-0e4b7a", by_id) == ["proj-7e57a0", "prod-6d1a70"]
+    assert ancestors("task-6a5c02", by_id) == ["pitch-6f2d18", "proj-9a4c25", "prod-7c2b81"]
 
 
 def test_ancestors_stops_on_a_parent_cycle():
@@ -211,13 +215,49 @@ def test_size_weeks_keeps_a_stated_zero():
 
 def test_load_repo_loads_the_whole_seed_corpus(seed_root: Path):
     records, config, _ = load_repo(seed_root)
-    assert len(records) == 17
+    assert len(records) == 30
     kinds = [record.kind for record in records]
-    assert kinds.count("project") == 1
-    assert kinds.count("pitch") == 5
-    assert kinds.count("task") == 11
+    assert kinds.count("product") == 2
+    assert kinds.count("project") == 2
+    assert kinds.count("pitch") == 7
+    assert kinds.count("task") == 15
+    # `load_repo` returns every rung, planned or not. The four below are why
+    # `Index.records` and `Index.plan` are different sizes on this corpus — see
+    # `test_the_seed_index_has_the_shape_of_the_corpus`.
+    assert kinds.count("issue") == 2
+    assert kinds.count("note") == 2
     assert config.schema_version == 2
     assert all(isinstance(record, Record) for record in records)
+
+
+def test_a_template_quoted_inside_a_fence_is_not_this_records_own_plan(seed_root: Path):
+    """The fence rule, asked of a document somebody wrote rather than of a body
+    a test built two lines above the assertion.
+
+    `task-7c8e40` is asked to write an API document and quotes the shape of it:
+    a `## <symbol>` heading and a `- [ ] one line on what it is for`, inside a
+    fence, in the middle of its Solution. It is the first file in either corpus
+    that quotes markdown at all.
+
+    What the fence protects is counted rather than displayed, which is why this
+    is worth a test on a file: a broken toggle invents a section nobody wrote
+    and reports three items of work as three of four. Both are numbers on a page
+    that look like numbers, and neither raises anything.
+    """
+    from openproj.index import build_index
+    from openproj.model import sections
+
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    body = index.plan["task-7c8e40"].body
+    done, total = index.progress["task-7c8e40"].done, index.progress["task-7c8e40"].total
+
+    assert "## <symbol>" in body and "- [ ] one line on what it is for" in body
+    assert "<symbol>" not in sections(body), "a heading in a fence is somebody else's document"
+    assert set(sections(body)) == {
+        "freeze the backend api before the shutdown", "problem", "solution", "progress",
+    }
+    assert (done, total) == (0, 3), "the quoted point is not a fourth thing to do"
 
 
 def test_load_repo_of_an_empty_directory_is_empty(tmp_path: Path):
