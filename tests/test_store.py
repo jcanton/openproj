@@ -34,7 +34,7 @@ import pygit2
 import pytest
 
 from openproj.model import parse_person_text, parse_text
-from openproj.store import Store, StoreLocked, WriteResult
+from openproj.store import Store, StoreLocked, WriteResult, _merge_body
 
 PATH = "tasks/task-c00001.md"
 OTHER = "tasks/task-c00002.md"
@@ -339,6 +339,153 @@ def test_two_edits_to_different_parts_of_the_body_are_merged(store: Store):
     body = store.read(mine.commit, PATH)
     assert "Their first line." in body
     assert "My third line." in body
+
+
+def test_an_insertion_and_a_replacement_on_one_line_are_refused_not_half_kept(store: Store):
+    """The drop that answered `merged`.
+
+    `SequenceMatcher` reports an insertion before line 2 as the EMPTY span
+    `(1, 1)`, and a replacement of line 2 as `(1, 2)`. They begin at the same
+    line and they do not overlap — `other_span[0] < span[1]` is `1 < 1` — so the
+    old test called them independent and merged them. The assembly could only
+    keep one: `{*ours, *yours}` is a set, both spans start at 1, and whichever
+    came out first moved `cursor` past the other, which the `cursor > span[0]`
+    guard then skipped.
+
+    Measured on 4,000 generated same-start pairs before the fix: **48% lost a
+    line.** Half of those were the line already in git, so a save was answered
+    with a commit sha while reverting somebody's committed sentence, and nothing
+    anywhere said so. Across all merges it is 2.8%, which is why it survived.
+
+    A refusal is announced and a drop is not, so this asks for the refusal.
+    """
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(body="alpha\nbeta\ngamma\n"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: three lines to collide over",
+    )
+    settled = store.head()
+
+    store.write(
+        path=PATH,
+        content=record(body="alpha\nbo squeezed a line in\nbeta\ngamma\n"),
+        base_commit=settled,
+        author="bo",
+        message="task-c00001: insert before beta",
+    )
+
+    mine = store.write(
+        path=PATH,
+        content=record(body="alpha\nann rewrote beta\ngamma\n"),
+        base_commit=settled,
+        author="ann",
+        message="task-c00001: replace beta",
+    )
+
+    assert mine.outcome == "conflict", (
+        "an insertion and a replacement beginning on one line merged, and a "
+        "merge here can only keep one of them"
+    )
+    assert mine.commit is None
+    # The refusal names both sides, so the person refused can see what they are
+    # up against rather than only that they lost.
+    assert "bo squeezed a line in" in mine.conflict
+    assert "ann rewrote beta" in mine.conflict
+
+    # And nothing was written: bo's line is still there, exactly as bo left it.
+    body = store.read(store.head(), PATH)
+    assert "bo squeezed a line in" in body
+    assert "ann rewrote beta" not in body
+
+
+def test_a_refusal_over_an_insertion_says_before_which_line():
+    """Asked of `_merge_body` directly, because the wording only appears when the
+    SAVE being made is the insertion — the message is built from the caller's own
+    span, and through `Store.write` that is whichever side arrives second.
+
+    An insertion's span is empty, and rendering `(1, 1)` as a range printed
+    `lines 2-1`: a span that reads backwards, in the one sentence somebody gets
+    when their work is refused.
+    """
+    merged, conflicts = _merge_body(
+        "alpha\nbeta\ngamma\n",
+        "alpha\nmine, squeezed in\nbeta\ngamma\n",   # insertion: span (1, 1)
+        "alpha\ntheirs, replacing\ngamma\n",          # replacement: span (1, 2)
+    )
+
+    assert merged is None
+    assert conflicts and "before line 2" in conflicts[0], conflicts
+    assert "-" not in conflicts[0].split(":")[0], conflicts[0]
+
+
+def test_two_people_inserting_at_different_places_still_merge(store: Store):
+    """The shape the widened test must NOT catch, and the common one.
+
+    Twelve people writing under twelve different headings is the case the audit
+    measured at 116 merges and zero conflicts. Those are insertions at different
+    indices, so they do not begin at the same line and nothing here touches them.
+    """
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(body="alpha\nbeta\ngamma\n"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: three lines",
+    )
+    settled = store.head()
+
+    store.write(
+        path=PATH,
+        content=record(body="alpha\nbo wrote here\nbeta\ngamma\n"),
+        base_commit=settled,
+        author="bo",
+        message="task-c00001: insert after alpha",
+    )
+
+    mine = store.write(
+        path=PATH,
+        content=record(body="alpha\nbeta\ngamma\nann wrote at the end\n"),
+        base_commit=settled,
+        author="ann",
+        message="task-c00001: insert after gamma",
+    )
+
+    assert mine.outcome == "merged", mine.conflict
+    body = store.read(mine.commit, PATH)
+    assert "bo wrote here" in body
+    assert "ann wrote at the end" in body
+
+
+def test_the_same_edit_made_twice_is_not_a_collision(store: Store):
+    """Two people typing the same correction is not a disagreement. The widened
+    test still gates on `replacement != other_replacement`, so identical edits at
+    one line merge to themselves rather than refusing."""
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(body="alpha\nbeta\ngamma\n"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: three lines",
+    )
+    settled = store.head()
+
+    both = "alpha\nBETA\ngamma\n"
+    store.write(
+        path=PATH, content=record(body=both), base_commit=settled,
+        author="bo", message="task-c00001: shout beta",
+    )
+    mine = store.write(
+        path=PATH, content=record(body=both), base_commit=settled,
+        author="ann", message="task-c00001: shout beta too",
+    )
+
+    assert mine.outcome in ("merged", "retried"), mine.conflict
+    assert "BETA" in store.read(store.head(), PATH)
 
 
 def test_both_changing_one_key_differently_is_a_conflict_that_writes_nothing(store: Store):
