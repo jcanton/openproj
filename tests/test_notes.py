@@ -498,11 +498,28 @@ def test_the_promote_control_is_not_offered_where_it_cannot_work(
     ):
         picker = re.search(r'<select id="into">.*?</select>', client.get(page).text, re.S).group(0)
         assert expected == re.findall(r'value="(\w+)"', picker), page
+
     assert ["pitch", "task", "project"] == list(PROMOTABLE["note"])
     assert ["pitch", "task"] == list(PROMOTABLE["issue"]), (
         "a project is not on offer from an issue: a milestone is a container for "
         "bets, and \"we found something broken\" is not one"
     )
+
+    # And never for a reader. Reads are public, so most served page loads are
+    # readers, and `base_commit` alone only says "there is a server" — Promote
+    # asks `may_write` like Delete and the view switcher, or its one answer
+    # for this person is a 401 dressed as a control. It escaped that sweep
+    # because it lived on the two deleted inbox pages when the sweep ran.
+    from openproj.render import ROUTES, render_detail
+
+    thought = Note(id="note-0cc000", kind="note", title="A thought", status="thinking")
+    index = build_index([thought], Config(), date(2026, 8, 17))
+    reader = render_detail(index, ROUTES, only=thought.id,
+                           base_commit="deadbee", may_write=False)
+    writer = render_detail(index, ROUTES, only=thought.id,
+                           base_commit="deadbee", may_write=True)
+    assert 'id="promote-go"' not in reader, "a reader was offered a promote they cannot make"
+    assert 'id="promote-go"' in writer
 
 
 # --------------------------------------------------------------------------- #

@@ -1940,10 +1940,17 @@ def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str,
     # turn every stale note into an ungrandfatherable blocker the day notes
     # become records, and it makes `shaping` silently legal on an issue.
     if statuses and entity.status not in statuses:
+        # "for an issue", because the vocabulary is the rung's, not the tool's:
+        # a word this rung refuses can be a real status on a planned rung —
+        # `shaping` on a pitch — and a sentence that denies the word outright
+        # argues with the page the reader just came from. The API refusal in
+        # `web.py` already says "for {_an(kind)}"; two spellings of one
+        # sentence rule is how one of them comes to drift.
         yield (
             "blocker",
             "status",
-            f"{entity.status!r} is not a status: expected one of {', '.join(statuses)}",
+            f"{entity.status!r} is not a status for {_an(entity.kind)}: "
+            f"expected one of {', '.join(statuses)}",
             1,
         )
     if entity.priority not in PRIORITY_RANK:
@@ -2056,11 +2063,13 @@ def _containment_problems(
         return
     allowed = PARENT_KINDS.get(entity.kind, ())
     if parent.kind not in allowed:
-        belongs = " or ".join(f"a {kind}" for kind in allowed) or "nothing"
+        # `_an`, because `by_id` is every record: a task hand-filed under an
+        # issue reaches this sentence, and `f"a {kind}"` reads "a issue".
+        belongs = " or ".join(_an(kind) for kind in allowed) or "nothing"
         yield (
             "blocker",
             "parent",
-            f"a {entity.kind} belongs to {belongs}, not to a {parent.kind}",
+            f"{_an(entity.kind)} belongs to {belongs}, not to {_an(parent.kind)}",
             4,
         )
 

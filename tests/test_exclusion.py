@@ -26,16 +26,23 @@ commit it seeds one issue and one note and asserts each is absent from /table,
 and the suggestions blob's entity completions, present on / and its own
 /detail page, and refused by the Index validator. (The suggestions blob's
 people and tag lists deliberately DO carry unplanned records — the entity
-completions are the plan-only part.) The served corpus also carries one
-planned task whose hand-written `depends_on` names the seeded issue: that is
-the edge `blocked_by` keeps because it is total over records, and the one that
-500ed /table and leaked into /graph before the plan pages learned to read the
-total map and to draw only plan edges.
+completions are the plan-only part — and every seed carries a tag so that
+exemption is asserted rather than only documented.) The served corpus also
+carries one planned task whose hand-written `depends_on` names the seeded
+issue: that is the edge `blocked_by` keeps because it is total over records,
+and the one that 500ed /table and leaked into /graph before the plan pages
+learned to read the total map and to draw only plan edges. And a second whose
+hand-written `parent` names the same issue — the containment twin of that
+edge, which rode `_row` onto every plan payload and onto the table's move bar
+("Take task-… out of issue-…") until `parent` learned the same resolve-or-null
+rule. The corpus holding one of the two edge kinds is exactly how the second
+went unseen.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pygit2
@@ -54,6 +61,11 @@ from openproj.web import create_app
 # A word no fixture, template or chrome string contains, so "absent from the
 # rendered page" is a claim about this record and nothing else.
 NEEDLE = "xsweepneedle"
+# A tag with the same property, on every seed, asked the OTHER way round: the
+# suggestion blob is records-wide on purpose (`_suggestions` in render.py), so
+# this one must be PRESENT where tags are edited. Not a substring of NEEDLE,
+# or the absence assertions would ban it too.
+TAG = "xsweeptag"
 
 UNPLANNED = tuple(rung for rung in KINDS if not rung.planned)
 
@@ -92,12 +104,17 @@ def _seed_for(rung: Rung) -> tuple[str, str, str]:
     feeds no suggestion blob; the sweep asserts the warning exists on the
     record's own page, so if a future unplanned rung starts reading it, the
     non-vacuity check fails loudly rather than this going quiet.
+
+    And one tag, `TAG`, which DOES feed a suggestion blob: the blob is
+    records-wide by design, and the seed is what lets a test hold the
+    exemption open instead of a tightening closing it in silence.
     """
     eid = f"{rung.prefix}-0faded"
     front = [f"id: {eid}", f"kind: {rung.name}", f"title: {NEEDLE} {rung.name}"]
     if rung.statuses:
         front.append(f"status: {rung.statuses[0]}")
     front.append("review_waived: true")
+    front.append(f"tags: [{TAG}]")
     text = "---\n" + "\n".join(front) + "\n---\n\nSeeded by the exclusion sweep.\n"
     return eid, f"{rung.directory}/{eid}.md", text
 
@@ -225,13 +242,18 @@ def test_no_plan_control_offers_an_unplanned_kind():
 @pytest.fixture
 def sweep_client(tmp_path: Path):
     """The SEED corpus plus one record of every unplanned kind, served — and
-    one planned task whose hand-written `depends_on` names an unplanned seed.
+    one planned task per stored edge kind whose hand-written edge names an
+    unplanned seed: `depends_on` on one, `parent` on the other.
 
-    That task is the armed hazard: `blocked_by` is total over records, so the
-    edge survives into the plan pages' derivations, where a plan-only lookup
-    was a KeyError (a 500 on /table) and an unfiltered edge list put the
-    issue's id into /graph. Without it, the sweep goes green with both one
-    hand-written edge away from a 500.
+    The first is the armed hazard this fixture began with: `blocked_by` is
+    total over records, so the edge survives into the plan pages' derivations,
+    where a plan-only lookup was a KeyError (a 500 on /table) and an
+    unfiltered edge list put the issue's id into /graph. The second is its
+    containment twin, added after review: `_row` shipped the stored `parent`
+    raw, which put the issue's id into every plan payload and onto the table's
+    move bar — the corpus carrying one edge kind of two is the whole reason
+    that one went unseen. Without both, the sweep goes green with a page one
+    hand-written line away from leaking or 500ing.
     """
     unplanned = _armed()
     path = tmp_path / "plan.git"
@@ -246,15 +268,27 @@ def sweep_client(tmp_path: Path):
         "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
         f"person_weeks: 1\ndepends_on: [{blocker_id}]\n---\n\nHand-written edge.\n"
     )
+    seeded["tasks/task-0b10c1.md"] = (
+        "---\nid: task-0b10c1\nkind: task\ntitle: filed under an unplanned record\n"
+        "status: ready\nowner: ann\nassignees: [ann]\nreviewers: [bo]\n"
+        f"person_weeks: 1\nparent: {blocker_id}\n---\n\nHand-written parent.\n"
+    )
     commit_directly(path, seeded, "seed the exclusion sweep corpus")
     with TestClient(create_app(path, auth="dev", secret="a-sweep-signing-secret")) as client:
         yield client
 
 
-# Every PM page the spec names. The whole document is one response — rows,
-# embedded payload, facet bar, suggestions datalist — so absence of the id and
-# the title needle from the text is absence from all of them at once.
-PLAN_PAGES = ("/table", "/graph", "/timeline", "/people")
+# Every PM page the spec names as an `entities` reader. The whole document is
+# one response — rows, embedded payload, facet bar, suggestions datalist — so
+# absence of the id and the title needle from the text is absence from all of
+# them at once. The cycle pages and the deck render whatever number they are
+# asked for, corpus or no corpus, so a bare `1` exercises the same readers;
+# /api/table.json is the table's payload served without the page around it,
+# and it leaks or it does not exactly as /table does.
+PLAN_PAGES = (
+    "/table", "/graph", "/timeline", "/people",
+    "/cycles", "/cycle/1", "/deck/1", "/api/table.json",
+)
 
 
 def test_an_unplanned_record_is_on_its_own_page_and_the_landing_and_nowhere_else(
@@ -290,3 +324,77 @@ def test_an_unplanned_record_is_on_its_own_page_and_the_landing_and_nowhere_else
             f"the {rung.name} seed lost its warning, so the problems assertion "
             "above is checking an empty list"
         )
+
+
+def test_an_inbox_tag_is_offered_where_tags_are_edited_and_its_id_is_not(
+    sweep_client: TestClient,
+):
+    """The one exemption the sweep's docstring names, held open by a tooth.
+
+    `_suggestions` (render.py) reads `index.records` on purpose: an inbox
+    record's tags — and its reporter's and writer's names — belong in the
+    pickers on the pages where those fields are typed, or `reported_by` could
+    never complete a name that only ever appears on issues. Nothing asserted
+    that, so a tightening of the blob back to the plan would have narrowed
+    every picker in silence while all the absence tests above stayed green.
+    The entity completions in the SAME blob stay plan-only — offering an issue
+    to `parent` or `depends_on` is offering an edge the model refuses — so
+    both halves of the one decision are read off one page.
+    """
+    unplanned = _armed()
+    for route in ("/table", "/cycle/1"):
+        page = sweep_client.get(route)
+        blob = re.search(
+            r'<script id="suggest" type="application/json">(.*?)</script>',
+            page.text, re.S,
+        )
+        assert blob, f"{route} lost its suggestion blob, so this asserts nothing"
+        suggest = json.loads(blob.group(1))
+        assert TAG in [t["value"] for t in suggest["tags"]], (
+            f"the inbox tag fell out of {route}'s tag picker"
+        )
+        offered = [e["value"] for e in suggest["entities"]]
+        for rung in unplanned:
+            eid, _, _ = _seed_for(rung)
+            assert eid not in offered, f"{eid} is offered where edges are typed"
+
+
+def test_a_row_filed_under_an_unplanned_record_refuses_the_move_and_says_where(
+    sweep_client: TestClient,
+):
+    """The gesture half of the `parent` hazard, driven in the page's own script.
+
+    The byte half is the sweep above: the payload nulls a parent the plan
+    cannot resolve, so the id is not in the page. This half asks what the
+    move gesture does with the flag that travels instead. It must refuse the
+    way the graph's `off_plan_deps` twin refuses — at pick-up time, nothing
+    attempted — because a drop or the unparent bar would PATCH `parent` over
+    a hand-written line the table never drew, and the server cannot tell that
+    from the record page legitimately refiling it. No grip, `movable` false,
+    and the sentence says the two things the graph's refusal says: what this
+    page cannot show, and where it is edited.
+    """
+    from test_injection import run_js
+
+    # No `_armed()` of its own: `sweep_client` is the gate, and it skips this
+    # test with the fixture's stated reason while no unplanned rung exists.
+    page = sweep_client.get("/table").text
+    answer = run_js(
+        page,
+        "(() => {"
+        "  const row = DATA.rows['task-0b10c1'];"
+        "  return {parent: row.parent, off: row.off_plan_parent,"
+        "          can: movable(row), tip: moveTip(row),"
+        "          grip: !!tbody.querySelector('tr[data-id=\"task-0b10c1\"] .rowgrip')};"
+        "})()",
+        page=True,
+    )
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["parent"] is None, "the raw parent id reached the payload"
+    assert got["off"] is True, "the payload lost the flag the refusal turns on"
+    assert got["can"] is False and got["grip"] is False, "the move is still offered"
+    assert got["tip"] == (
+        "task-0b10c1 is filed under something this table cannot show — "
+        "where it belongs is edited on its own page"
+    )

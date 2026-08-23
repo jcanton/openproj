@@ -1065,7 +1065,21 @@ def _row(index: Index, entity_id: str) -> dict:
         # drop another one onto. Without it the page cannot tell a move from a
         # gesture that changes nothing, and cannot offer to take a row out of
         # something it is not in.
-        "parent": entity.parent,
+        #
+        # Only when the plan can resolve it, exactly as `depends_on` below:
+        # a hand-written `parent: issue-…` carried the inbox id into every
+        # payload this row feeds — /table, /graph, /timeline, /api/table.json —
+        # and the move bar drew "Take task-… out of issue-…" over a record no
+        # plan page can show. A parent this page cannot resolve (unplanned, or
+        # dangling) is nulled here and flagged below, and the flag is a boolean
+        # and never the id, because the exclusion sweep forbids an inbox id in
+        # these pages' bytes.
+        "parent": entity.parent if entity.parent in index.entities else None,
+        # Whether the stored field holds a parent the line above could not
+        # carry — `off_plan_deps`' twin, and read the same way: it is what lets
+        # the table refuse the move gesture that would overwrite a line it
+        # never drew (see `movable`/`moveTip` in the table script).
+        "off_plan_parent": bool(entity.parent) and entity.parent not in index.entities,
         "status": read("status", entity.status),
         "owner": read("owner", entity.owner),
         "assignees": read("assignees", entity.assignees),
@@ -1300,8 +1314,10 @@ def _elements(index: Index) -> list[dict]:
                 b not in index.entities for b in index.blocked_by[entity_id]
             ),
         }
-        if entity.parent in index.entities:
-            data["parent"] = entity.parent
+        # No parent guard of its own: `_row` already resolves `parent` against
+        # the plan and nulls what it cannot draw, and a second spelling of that
+        # rule here is the drift this file keeps paying for. Cytoscape treats a
+        # null parent as a top-level node.
         elements.append({"data": data})
     for entity_id in index.entities:
         for blocker in index.blocked_by[entity_id]:
@@ -4848,13 +4864,25 @@ const PARENT_KINDS = DATA.parent_kinds || {};
 // refused. Which kind that is comes off `PARENT_KINDS` and is not written here:
 // it was `project` until a `product` was added above it, and a rule that names
 // the top rung is a rule that is wrong the day the ladder grows.
-const movable = row => (PARENT_KINDS[row.kind] || []).length > 0;
+//
+// And never while the stored `parent` names a record this table cannot show —
+// `off_plan_parent`, the move gesture's `off_plan_deps`. The payload nulls the
+// value (an inbox id may not reach this page's bytes), so a drop or the
+// unparent bar would overwrite a line the table never drew, and the server
+// could not tell that from the record page legitimately refiling it. Refused
+// here, before anything is attempted, exactly as the graph refuses its edge
+// gestures at tap time.
+const movable = row =>
+  !row.off_plan_parent && (PARENT_KINDS[row.kind] || []).length > 0;
 // What a kind may be filed under, in the validator's own words. `a pitch or a
 // project`, `nothing` — the sentence `_containment_problems` builds when it has
 // already happened, said here before it can.
 const holders = kind =>
   (PARENT_KINDS[kind] || []).map(one => 'a ' + one).join(' or ') || 'nothing';
-const moveTip = row => movable(row)
+const moveTip = row => row.off_plan_parent
+  ? `${row.id} is filed under something this table cannot show — `
+    + 'where it belongs is edited on its own page'
+  : movable(row)
   ? `Drag by the grip, or press Enter, to file this under ${holders(row.kind)}`
   : `A ${row.kind} belongs to nothing, so there is nothing to file it under`;
 // The handle itself. Two dotted rules drawn by the stylesheet and not a glyph:
@@ -6315,7 +6343,10 @@ function sayMoveOut() {
 
 function startMoving(id) {
   const row = DATA.rows[id];
-  if (!row) return;
+  // `movable` asked here as well as where the grip is drawn and where Enter
+  // refuses, so no third entry point can pick up a row those two gates hold —
+  // the same question, asked of the same function, not a second spelling.
+  if (!row || !movable(row)) return;
   MOVING = id;
   // On the table and not on each row: the stylesheet needs one switch to change
   // what the last row offers, and the marks below are per row.
@@ -13667,10 +13698,14 @@ for (const article of document.querySelectorAll('article.entity')) {
       return;
     }
     if (answer.ok) {
-      // To the table, because the page you are on is about a record that no
+      // To the landing, because the page you are on is about a record that no
       // longer exists: staying here would show a 404 on the next reload, and
-      // reloading it is what the shell does when it hears the commit.
-      location.href = {{ links.table|tojson }};
+      // reloading it is what the shell does when it hears the commit. The
+      // landing and not the table — this page belongs to every record, and a
+      // deleted issue's or note's reader sent to the table lands on a plan
+      // view that never showed the record they came from. Same retarget as
+      // the back link at the top of the page.
+      location.href = {{ links.records|tojson }};
       return;
     }
     // Refused, and the reason is the useful part: "pitch-b20000 cannot be
@@ -16124,11 +16159,6 @@ HISTORY_MARKS = {
 }
 
 
-# Fields only one kind has, so the create form can hide the rest.
-# A project is a container and has no size of its own; `shaped_by` is asked of
-# the kind that gets shaped. `person_weeks` is on both of the others, so it is
-# not kind-only any more.
-KIND_ONLY = {"shaped_by": "pitch"}
 # Off the ladder. This was the third hand-written copy of it in this file.
 PREFIX = {rung.name: rung.prefix for rung in KIND_LADDER}
 # The validator's own gate, asked rather than copied — and asked through the front
@@ -16763,7 +16793,7 @@ def _shaping_hints(entity: Entity, has_tasks: bool = False) -> list[str]:
 
 
 def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
-    """One entry per entity: what the page's own furniture needs, and nothing else.
+    """One entry per record: what the page's own furniture needs, and nothing else.
 
     Every fact this page prints comes from `_fact_rows`, which builds each line
     with its value AND its control so the read view and the edit view cannot show
@@ -16781,7 +16811,14 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
             "id": entity_id,
             "title": entity.title,
             "kind": entity.kind,
-            "status": entity.status,
+            # `state()`, never the stored word: this key's one reader is
+            # `_by_status`, whose ladder (`_TOC_LADDER`) is built from
+            # `NOTE_STATES` precisely so `promoted` gets a heading — and fed
+            # the stored status it filed every promoted note under "Thinking"
+            # and left that rung unreachable. Statuses are what may be
+            # written; what a page draws and sorts by is the state, the same
+            # rule the hill in `_fact_rows` already follows.
+            "status": entity.state(index.records),
             # `parent` decides whether the meta line says "in" at all; the link is
             # what it says. Both, because an id that is not in this plan still
             # names a parent and `_links` renders it as itself.
@@ -19541,7 +19578,7 @@ def render_detail(
     creating: str | None = None,
     signed_in: str = "",
 ) -> str:
-    """Every entity, exactly one — or one that does not exist yet.
+    """Every record, exactly one — or one that does not exist yet.
 
     The server serves one per route; the static build serves them all in a page
     that hides everything but the hash. Same markup, so the two cannot drift.
@@ -19600,12 +19637,17 @@ def render_detail(
             # there is no server to post to. Never on the creating article:
             # there is nothing to promote yet, and a control whose only answer
             # is a refusal is a dead end a person can only find by pressing it.
+            # And never for a reader the server would refuse — `may_write`,
+            # the question the Delete control and the view switcher already
+            # ask (see the render kwargs below): reads here are public, and a
+            # Promote whose one answer for this person is a 401 is a dead end
+            # of the same shape.
             row["promote"] = (
                 _promote_html(
                     row["id"], PROMOTABLE[entity.kind], _PROMOTE_HINTS[entity.kind],
                     base_commit or "", links,
                 )
-                if base_commit is not None and entity.kind in PROMOTABLE
+                if base_commit is not None and may_write and entity.kind in PROMOTABLE
                 else Markup("")
             )
     body = _ENV.from_string(_DETAIL).render(

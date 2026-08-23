@@ -1384,16 +1384,28 @@ def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Pa
 def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):
     """shaping first, dropped last. Alphabetical put `done` at the top, which is
     the one group nobody opens the index looking for — and, once notes arrived,
-    put a note's terminal state above its live one."""
+    put a note's terminal state above its live one.
+
+    Grouped by `state()`, never the stored status: `_TOC_LADDER` is built from
+    `NOTE_STATES` precisely so `promoted` has a heading, and grouping by the
+    stored word filed every promoted note under "Thinking" and left that rung
+    unreachable — this test pinned the wrong grouping for as long as it read
+    `r.status` too. The seed corpus keeps one promoted note and one pitched
+    issue so both derivations are visible on the page, and the ladder's rung
+    is asserted by name so the corpus cannot quietly stop carrying the case.
+    """
     from openproj.render import _TOC_LADDER, _human
 
     body = read(rendered, "detail.html")
     headings = re.findall(r'<h2 class="tocgroup">\s*([^<]+?)\s*<span', body)
-    shown = {r.status for r in seed_index.records.values()}
-    present = [s for s in _TOC_LADDER if s in shown]
+    states = {r.state(seed_index.records) for r in seed_index.records.values()}
+    present = [s for s in _TOC_LADDER if s in states]
 
     assert headings == [_human(s) for s in present]
-    assert set(headings) == {_human(r.status) for r in seed_index.records.values()}
+    assert set(headings) == {_human(s) for s in states}
+    assert _human("promoted") in headings, (
+        "no promoted note in the seed corpus, so the derived-state rung is untested"
+    )
     # The heading was the last place a status was still spelled the way the file
     # spells it, two lines above a kind that already read as a word.
     assert not [h for h in headings if "_" in h]

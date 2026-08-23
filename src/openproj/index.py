@@ -387,13 +387,32 @@ NO_VALUE = "(none)"
 # cannot see why a row was kept. The document is read on the detail page, which
 # is where a document is read.
 #
-# These seven and not every field: they are what a person names a record BY — its
+# These and not every field: they are what a person names a record BY — its
 # id, what it is called, the labels somebody put on it, the pull requests it is
-# argued in, and the people whose names are on it. `status`, `kind`, `priority`
-# and `cycle` are deliberately absent: each has a dropdown that says which values
-# exist, and sweeping them in means typing `ready` matches half the plan through
-# a box that cannot say which field it matched.
-SEARCH_FIELDS = ("id", "title", "tags", "prs", "owner", "assignees", "reviewers")
+# argued in, and the people whose names are on it. `reported_by` and `written_by`
+# are people fields like `owner`: the two inbox list pages this blob replaced
+# matched an issue by its reporter and a note by its writer, and "the issue
+# halungge reported" is how those records get asked for. On a kind without the
+# field, `searchable`'s `getattr` answers None and the blob is unchanged.
+# `status`, `kind`, `priority` and `cycle` are deliberately absent: each has a
+# dropdown that says which values exist, and sweeping them in means typing
+# `ready` matches half the plan through a box that cannot say which field it
+# matched.
+#
+# What those inbox pages matched that this deliberately does NOT yet: the BODY.
+# Their blobs were `id + title + tags + author + body`, so a word that appears
+# only in an issue's prose found the issue there and finds nothing anywhere now
+# — a known capability regression, not an oversight. It is not restored here
+# because this blob rides every row of /table and the landing, and "Fields, not
+# bodies" above is the standing ruling for exactly that cost: putting `body` in
+# would inline every shaping document into every table page load. Whether the
+# inbox kinds' bodies earn an exception is decided in the follow-up branch that
+# redesigns the landing row payload, with that payload on the table in front of
+# whoever decides.
+SEARCH_FIELDS = (
+    "id", "title", "tags", "prs", "owner", "assignees", "reviewers",
+    "reported_by", "written_by",
+)
 
 
 def searchable(entity: Entity) -> str:

@@ -337,6 +337,32 @@ def test_the_searchable_text_holds_the_names_a_record_is_known_by():
     assert "task-c00001" in blob
 
 
+def test_the_searchable_text_holds_an_inbox_records_author():
+    """`reported_by` and `written_by` are names a record is known by too.
+
+    The two inbox list pages matched an issue by its reporter and a note by
+    its writer; when they folded into the shared blob, both names fell out of
+    it — "the issue halungge reported" found the issue on the old page and
+    nothing on the landing that replaced it. The fields ride `SEARCH_FIELDS`
+    like `owner` does, and on a kind without them `getattr` answers None, so
+    the plan rows above are untouched.
+    """
+    issue = parse_text(
+        "---\nid: issue-0aa000\nkind: issue\ntitle: The halo drops a rank\n"
+        "status: ready\nreported_by: halungge\n---\n\nSeen on 2 nodes.\n",
+        "issues/issue-0aa000.md",
+    )
+    note = parse_text(
+        "---\nid: note-0bb000\nkind: note\ntitle: Radiation thought\n"
+        "status: thinking\nwritten_by: dastrm\n---\n\nHalf a thought.\n",
+        "notes/note-0bb000.md",
+    )
+    blobs = build_index([issue, note], CONFIG, TODAY).search_blob
+
+    assert "halungge" in blobs["issue-0aa000"]
+    assert "dastrm" in blobs["note-0bb000"]
+
+
 # --- apply_filters ---------------------------------------------------------
 
 

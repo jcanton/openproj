@@ -331,6 +331,21 @@ def test_a_parent_of_the_wrong_kind_is_named_as_such():
         "blocker", "parent", "a task belongs to a pitch or a project, not to a task", 4
     )
 
+    # And with its article right when the wrong parent's kind starts with a
+    # vowel — reachable since `by_id` is every record, so a task hand-filed
+    # under an issue reaches this sentence and used to read "a issue".
+    filed = [
+        parse_text(
+            "---\nid: issue-000001\nkind: issue\ntitle: Broken\nstatus: ready\n"
+            "---\n\nx\n",
+            "issues/issue-000001.md",
+        ),
+        Task(id="task-000003", kind="task", title="V", parent="issue-000001",
+             created_schema_version=4),
+    ]
+    problem = only(validate_all(filed, Config()), "task-000003", field="parent")
+    assert problem.message == "a task belongs to a pitch or a project, not to an issue"
+
 
 def test_a_task_may_hang_straight_off_a_project():
     """Work nobody pitched still belongs somewhere. The first real cycle imported
@@ -610,12 +625,19 @@ def test_each_rung_accepts_exactly_its_own_status_words():
             said = check(blank.model_copy(update={"status": word}))
             assert not [p for p in said if p.field == "status"], (rung.name, word)
         if rung.statuses:
+            # The article restated rather than imported: `_an` is what builds
+            # the message, and a test that asks `_an` what `_an` said cannot
+            # notice it breaking. "for an issue", because the same word can be
+            # a status two rungs up and a sentence that denies it outright
+            # argues with the page the reader just came from.
+            article = "an" if rung.name[:1] in "aeiou" else "a"
             vocab = only(check(blank.model_copy(update={"status": "wip"})), blank.id,
                          field="status")
             assert summary(vocab) == (
                 "blocker",
                 "status",
-                f"'wip' is not a status: expected one of {', '.join(rung.statuses)}",
+                f"'wip' is not a status for {article} {rung.name}: "
+                f"expected one of {', '.join(rung.statuses)}",
                 1,
             ), rung.name
 

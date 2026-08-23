@@ -304,7 +304,26 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     place the search blob travels — so both halves are asked the same
     questions, non-ASCII included. The corpus carries an issue and a note, so
     parity is asked about the very records where `records` is more than
-    `entities`."""
+    `entities`.
+
+    HONEST ABOUT ITS REACH: a landing row is only `{id, kind, title, tags,
+    search, predicates: []}`, so of everything `QUERY_FIELDS` names this box
+    can answer `id:`, `title:`, `kind:` and `tag:` and no other. For
+    `status:`, `owner:`, `cycle:`, `priority:`, `project:`, `product:`,
+    `assignees:`, `reviewers:` and `prs:` the row has no value, `queryFields`
+    resolves them to `[]`, and the box hides every row — while the server
+    answers every one of them (`status:ready` finds records in this very
+    corpus). `predicates: []` is the same disagreement in its own key: the
+    server computes real predicates over records, the row ships an empty
+    list, so `predicate:blocked` matches nothing here and something there.
+    The needles below therefore stay on the fields the row does carry; this
+    test is parity over that narrow payload, NOT proof that the two sides
+    agree field by field — on every field the row lacks they measurably
+    disagree. The row is this narrow deliberately (the landing is the
+    finding surface, not the filtering one), and the gap closes in the
+    follow-up branch that redesigns the landing row wholesale (kind, title,
+    who, tags, last modified) — widening it here first would be the same
+    work twice, per the re-ruling in the SDD ledger."""
     path = plan_repo(tmp_path)
     commit_directly(path, PLAN, "seed", when=1_000_000)
     with TestClient(create_app(path, auth="dev")) as client:
