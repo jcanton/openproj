@@ -1,7 +1,8 @@
 # Probe log — the write path under twenty people
 
 A lab notebook for `tests/load/`, not a design document. It records what was
-measured, on what, and the command that measures it again. **Nothing under
+measured, on what, and the command that measures it again. The report these
+numbers were taken for is `concurrency-audit.md`, beside this file. **Nothing under
 `src/openproj/` was changed to take any of these numbers**: the only shim is
 `tests/load/server.py:shim`, which charges `pygit2.Remote.push`/`.fetch` a
 sleep so a `file://` remote on the same SSD can stand in for GitHub over HTTPS.
