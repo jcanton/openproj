@@ -25,7 +25,17 @@ from openproj.index import (
     apply_filters,
     build_index,
 )
-from openproj.model import Config, Pitch, Project, Record, Task, load_repo, parse_text, validate_all
+from openproj.model import (
+    Config,
+    Pitch,
+    Product,
+    Project,
+    Record,
+    Task,
+    load_repo,
+    parse_text,
+    validate_all,
+)
 from openproj.schedule import schedule
 
 TODAY = date(2026, 8, 13)
@@ -36,6 +46,10 @@ CONFIG = Config(
     default_task_effort=0.5,
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14))},
 )
+
+
+def a_product(id: str, title: str = "A product", **fields) -> Product:
+    return Product(id=id, kind="product", title=title, **fields)
 
 
 def a_project(id: str, title: str = "A project", **fields) -> Project:
@@ -966,6 +980,88 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
     assert (counted.done, counted.total, counted.unit) == (4.0, 6.0, "weeks")
     assert counted.text == "4/6 wk"
     assert counted.of == ["task-c00001", "task-c00002"]
+
+
+def test_a_container_is_weighed_by_what_is_under_it_and_not_by_half_a_week():
+    """`size_weeks` says a container "has no size of its own" and then returns
+    `config.default_task_effort` anyway, because that fallback was written for an
+    unsized TASK. Nothing noticed until a product existed: `Rung.under` lets
+    nothing but a product nest a container, so a container could not be somebody's
+    child.
+
+    The moment one could, a product holding a project worth five weeks reported
+    `0/0.5 wk` on the record page, under a meter reading "0 per cent of this bet
+    is done" — a denominator nobody typed.
+    """
+    records = [
+        a_product("prod-a00001"),
+        a_project("proj-b00001", parent="prod-a00001"),
+        a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=3.0),
+        a_pitch("pitch-c00002", parent="proj-b00001", person_weeks=2.0),
+    ]
+    index = build_index(records, CONFIG, TODAY)
+
+    assert index.progress["proj-b00001"].text == "0/5 wk"
+    assert index.progress["prod-a00001"].text == "0/5 wk", (
+        "the product was charged the default task effort for a project"
+    )
+    assert index.progress["prod-a00001"].of == ["proj-b00001"]
+
+
+def test_a_container_is_as_far_along_as_the_work_beneath_it():
+    """The done half rolls up too — jcanton, 2026-08-23, choosing between this and
+    a container counting only once every descendant is finished. `Progress` says
+    a record is "as far along as its tasks are, weighted by their sizes", and a
+    container has no completion of its own to fall back on.
+
+    Weighed as leaves, a project whose two pitches stood at 4/7.5 and 3/7.5 read
+    **0/31**: both pitches were `sized`, so each was taken at its appetite and
+    credited nothing, and everything finished underneath them was invisible one
+    rung up.
+    """
+    records = [
+        a_product("prod-a00001"),
+        a_project("proj-b00001", parent="prod-a00001"),
+        a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=6.0),
+        a_task("task-d00001", parent="pitch-c00001", person_weeks=4.0, status="done",
+               prs=["kilnlab/kiln4py#1"]),
+        a_task("task-d00002", parent="pitch-c00001", person_weeks=2.0),
+        a_pitch("pitch-c00002", parent="proj-b00001", person_weeks=4.0, status="done"),
+    ]
+    index = build_index(records, CONFIG, TODAY)
+
+    # The pitch from its tasks; the project from the pitch's finished weeks plus
+    # the whole of the one that is done; the product straight through.
+    assert index.progress["pitch-c00001"].text == "4/6 wk"
+    assert index.progress["proj-b00001"].text == "8/10 wk"
+    assert index.progress["prod-a00001"].text == "8/10 wk"
+
+
+def test_a_child_that_is_done_counts_for_all_of_it_even_with_work_left_under_it():
+    """`status: done` is the only completion this model stores, so it wins over
+    what its children say. The alternative — believing the tasks — would mean a
+    pitch somebody closed on purpose reads unfinished for ever because one task
+    was never ticked."""
+    records = [
+        a_project("proj-b00001"),
+        a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=6.0, status="done"),
+        a_task("task-d00001", parent="pitch-c00001", person_weeks=4.0),
+    ]
+    index = build_index(records, CONFIG, TODAY)
+
+    assert index.progress["pitch-c00001"].text == "0/4 wk"  # its own tasks, untouched
+    assert index.progress["proj-b00001"].text == "6/6 wk", "a done child is done"
+
+
+def test_a_container_with_nothing_under_it_shows_no_fraction_at_all():
+    """Rather than half a week. An empty project contributes no weeks because
+    there are no weeks under it, and inventing some puts the same made-up number
+    back in a smaller place."""
+    records = [a_product("prod-a00001"), a_project("proj-b00001", parent="prod-a00001")]
+    index = build_index(records, CONFIG, TODAY)
+
+    assert "proj-b00001" not in index.progress
+    assert "prod-a00001" not in index.progress
 
 
 def test_a_shelved_task_is_in_neither_half_of_its_pitchs_progress():
