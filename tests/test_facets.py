@@ -355,7 +355,7 @@ def every_page(index: Index) -> dict[str, str]:
     return {
         # The landing shares the whole control bar's scope with a script of its
         # own, so it is in the sweep from the commit that adds it.
-        "records": render_records(index, base_commit=HEAD, edited={}, now=0),
+        "records": render_records(index, base_commit=HEAD, edited={}, now=0, may_write=True),
         "table": render_table(index, base_commit=HEAD),
         "graph": render_graph(index, base_commit=HEAD),
         "timeline": render_timeline(index),
