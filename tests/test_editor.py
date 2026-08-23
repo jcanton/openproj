@@ -1407,8 +1407,8 @@ def test_the_goal_is_above_the_bet_and_the_notes_are_below_it(client: TestClient
         json={
             "base_commit": git_head(repo_path),
             "fields": {"starts_on": "2027-06-07", "reviews_on": "2027-07-05",
-                       "goal": "Ship the dycore port"},
-            "body": "Turbulence was left out: no reviewer free.\n",
+                       "goal": "Ship the core solver port"},
+            "body": "Throughflow was left out: no reviewer free.\n",
         },
     )
     page = client.get("/cycle/51").text
@@ -1416,8 +1416,8 @@ def test_the_goal_is_above_the_bet_and_the_notes_are_below_it(client: TestClient
     goal, bet, notes = (page.index(f"<h2>{h}</h2>") for h in ("Goal", "The bet", "Notes"))
     assert goal < bet < notes
     assert 'id="goal"' in page and 'id="notes"' in page
-    assert "Ship the dycore port" in page
-    assert "Turbulence was left out" in page
+    assert "Ship the core solver port" in page
+    assert "Throughflow was left out" in page
     # An untouched box must not be sent: `patch_text` leaves a field alone only
     # if it is absent, so a roster save would otherwise rewrite the goal too.
     assert "if (GOAL_DIRTY) fields.goal = GOAL.value.trim();" in page

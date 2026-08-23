@@ -838,7 +838,7 @@ def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
     """A login has no comma in it.
 
     An early version of the table wrote a whole comma-separated string into a list
-    field, and the picker then offered `jcanton, halungge` as though it were one
+    field, and the picker then offered `jackdawrie, hoopoegrove` as though it were one
     person — so garbage already in the corpus became garbage suggested to whoever
     edited next. The write path is fixed; this stops the spread either way.
     """
@@ -850,7 +850,7 @@ def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
     # and the assertion below would pass with the filter deleted.
     polluted = dict(seed_index.records)
     polluted["task-ffffff"] = Task(
-        id="task-ffffff", kind="task", title="Bad", reviewers=["jcanton, halungge"]
+        id="task-ffffff", kind="task", title="Bad", reviewers=["jackdawrie, hoopoegrove"]
     )
     suggestions = _suggestions(seed_index.model_copy(update={"records": polluted}))
 
@@ -1497,9 +1497,9 @@ def test_an_unknown_status_still_reaches_the_index(seed_index: Index):
 
 
 def test_a_pr_reference_completes_in_two_halves(demo_rendered: tuple[Path, Index]):
-    """`C2SM/icon4py#` and whole references, from what the plan already cites.
+    """`kilnlab/kiln4py#` and whole references, from what the plan already cites.
 
-    Nobody remembers whether it is icon4py or icon4pygen, or which org owns it,
+    Nobody remembers whether it is kiln4py or kiln4pygen, or which org owns it,
     and that half of the reference is the same on almost every row — so it is
     offered on its own, with the number left to type.
     """
@@ -1510,9 +1510,9 @@ def test_a_pr_reference_completes_in_two_halves(demo_rendered: tuple[Path, Index
     values = [item["value"] for item in offered]
     cited = {ref for e in index.plan.values() for ref in e.prs}
 
-    assert "C2SM/icon4py#" in values
+    assert "kilnlab/kiln4py#" in values
     assert cited <= set(values)
-    assert values.index("C2SM/icon4py#") < min(values.index(c) for c in cited)
+    assert values.index("kilnlab/kiln4py#") < min(values.index(c) for c in cited)
 
 
 def test_pull_requests_are_offered_newest_first(demo_rendered: tuple[Path, Index]):
@@ -2617,9 +2617,11 @@ def test_the_leading_heading_is_matched_on_words_and_not_on_bytes():
     same word is not."""
     from openproj.render import _drop_repeated_title
 
-    assert _drop_repeated_title("# Port  ecRad\n\nBody.\n", "Port ecRad") == "Body.\n"
-    assert _drop_repeated_title("## port ecrad ##\n\nBody.\n", "Port ecRad") == "Body.\n"
-    assert _drop_repeated_title("# Port ecRad shortwave\n\nB.\n", "Port ecRad").startswith("#")
+    assert _drop_repeated_title("# Port  the burner\n\nBody.\n", "Port the burner") == "Body.\n"
+    assert _drop_repeated_title("## port the burner ##\n\nBody.\n", "Port the burner") == "Body.\n"
+    assert _drop_repeated_title(
+        "# Port the burner near-IR\n\nB.\n", "Port the burner"
+    ).startswith("#")
     assert _drop_repeated_title("Plain prose.\n", "Plain prose") == "Plain prose.\n"
 
 
@@ -4074,7 +4076,7 @@ def test_a_ready_pitch_missing_a_no_gos_section_is_told_so_on_its_own_page(rende
     fails CI and never blocks a save.
 
     Only live bets are told. Three corpus pitches are ready or in progress, one of
-    which was shaped with both sections and two of which are migration stubs with
+    which was shaped with both sections and two of which are thin, with
     neither — so the page carries exactly two of each note, and the two finished
     pitches are left alone."""
     page = read(rendered, "detail.html")

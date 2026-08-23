@@ -167,10 +167,10 @@ def test_the_reporter_is_a_default_and_the_date_is_not(
     not when somebody files what a colleague mentioned in a corridor, so the
     form can say otherwise. `opened_on` stays the server's: when the record was
     made is not an opinion."""
-    theirs = opened(client, "y", git_head(repo_path), reported_by="halungge")
+    theirs = opened(client, "y", git_head(repo_path), reported_by="hoopoegrove")
     stamped = opened(client, "z", git_head(repo_path), opened_on="1999-01-01")
 
-    assert "reported_by: halungge" in file_at(
+    assert "reported_by: hoopoegrove" in file_at(
         repo_path, git_head(repo_path), f"issues/{theirs}.md"
     )
     dated = file_at(repo_path, git_head(repo_path), f"issues/{stamped}.md")

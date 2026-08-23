@@ -53,7 +53,7 @@ def a_task(id: str, title: str = "A task", **fields) -> Task:
 def a_family() -> list[Record]:
     """One project, one pitch under it, two tasks under the pitch, one dependency."""
     return [
-        a_project("proj-a00001", "Greenline", owner="alice", reviewers=["bob"]),
+        a_project("proj-a00001", "Griddle", owner="alice", reviewers=["bob"]),
         a_pitch("pitch-b00001", "Halo exchange", parent="proj-a00001", person_weeks=2.0,
                 status="ready"),
         a_task("task-c00001", "First", parent="pitch-b00001", owner="alice", person_weeks=1.0),
@@ -170,7 +170,7 @@ def test_a_parent_chain_that_ends_outside_the_plan_still_finds_the_project_it_na
     """The half of the same walk that must keep working: a chain that reaches a
     real project reports it, even though a later link is missing."""
     records = [
-        a_project("proj-a00001", "Greenline"),
+        a_project("proj-a00001", "Griddle"),
         a_pitch("pitch-b00001", parent="proj-a00001"),
         a_task("task-c00001", parent="pitch-b00001"),
         a_task("task-c00002", parent="pitch-ffffff"),
@@ -309,16 +309,16 @@ def test_the_searchable_text_is_the_fields_and_not_the_document():
     """
     record = a_task(
         "task-c00001",
-        "Reproduce the 2-GPU Equator Artefact",
+        "Reproduce the 2-GPU Seam Artefact",
         tags=["GPU", "ci"],
-        body="Only on Daint.\n",
+        body="Only on Firebrick.\n",
     )
     blob = build_index([record], CONFIG, TODAY).search_blob["task-c00001"]
 
-    assert "reproduce the 2-gpu equator artefact" in blob
+    assert "reproduce the 2-gpu seam artefact" in blob
     assert "gpu" in blob
     assert "ci" in blob
-    assert "daint" not in blob
+    assert "firebrick" not in blob
     assert blob == blob.lower()
 
 
@@ -344,25 +344,25 @@ def test_the_searchable_text_holds_an_inbox_records_author():
 
     The two inbox list pages matched an issue by its reporter and a note by
     its writer; when they folded into the shared blob, both names fell out of
-    it — "the issue halungge reported" found the issue on the old page and
+    it — "the issue hoopoegrove reported" found the issue on the old page and
     nothing on the landing that replaced it. The fields ride `SEARCH_FIELDS`
     like `owner` does, and on a kind without them `getattr` answers None, so
     the plan rows above are untouched.
     """
     issue = parse_text(
         "---\nid: issue-0aa000\nkind: issue\ntitle: The halo drops a rank\n"
-        "status: ready\nreported_by: halungge\n---\n\nSeen on 2 nodes.\n",
+        "status: ready\nreported_by: hoopoegrove\n---\n\nSeen on 2 nodes.\n",
         "issues/issue-0aa000.md",
     )
     note = parse_text(
-        "---\nid: note-0bb000\nkind: note\ntitle: Radiation thought\n"
-        "status: thinking\nwritten_by: dastrm\n---\n\nHalf a thought.\n",
+        "---\nid: note-0bb000\nkind: note\ntitle: Burner thought\n"
+        "status: thinking\nwritten_by: dabchickly\n---\n\nHalf a thought.\n",
         "notes/note-0bb000.md",
     )
     blobs = build_index([issue, note], CONFIG, TODAY).search_blob
 
-    assert "halungge" in blobs["issue-0aa000"]
-    assert "dastrm" in blobs["note-0bb000"]
+    assert "hoopoegrove" in blobs["issue-0aa000"]
+    assert "dabchickly" in blobs["note-0bb000"]
 
 
 # --- apply_filters ---------------------------------------------------------
@@ -538,13 +538,14 @@ def test_predicates_are_ored_within_the_field():
 
 def test_search_is_a_case_insensitive_substring_match():
     records = [
-        a_task("task-c00001", "Reproduce the 2-GPU equator artefact"),
+        a_task("task-c00001", "Reproduce the 2-GPU seam artefact"),
         a_task("task-c00002", "Downgrade numpy", tags=["reductions"]),
-        a_task("task-c00003", "Read the paper", body="Anurag's IPDPS 2014 paper on REDUCTIONS."),
+        a_task("task-c00003", "Read the paper",
+               body="The 2014 stable-summation paper on REDUCTIONS."),
     ]
     index = build_index(records, CONFIG, TODAY)
 
-    assert apply_filters(index, {}, "EQUATOR") == ["task-c00001"]
+    assert apply_filters(index, {}, "SEAM") == ["task-c00001"]
     # And the third one, whose only `reductions` is in its shaping document, is
     # not a match any more: the case-insensitivity is the claim here, and the
     # corpus quietly carried the body rule as well.
@@ -623,32 +624,32 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
     assert seed_index.facets["project"] == ["(none)", "proj-7e57a0"]
     assert seed_index.facets["owner"] == [
         "(none)",
-        "OngChia",
-        "egparedes",
-        "halungge",
-        "jcanton",
-        "msimberg",
-        "nfarabullini",
-        "samkellerhals",
+        "Oxpeckerly",
+        "eveningtern",
+        "hoopoegrove",
+        "jackdawrie",
+        "merganserly",
+        "nightjarelli",
+        "sanderlingly",
     ]
     assert seed_index.facets["assignees"] == [
         "(none)",
-        "DropD",
-        "OngChia",
-        "jcanton",
-        "msimberg",
-        "nfarabullini",
-        "yiluchen1066",
+        "Dunnocksen",
+        "Oxpeckerly",
+        "jackdawrie",
+        "merganserly",
+        "nightjarelli",
+        "yellowhammer7",
     ]
     assert seed_index.facets["reviewers"] == [
         "(none)",
-        "abishekg7",
-        "edopao",
-        "havogt",
-        "iomaganaris",
-        "jcanton",
-        "msimberg",
-        "muellch",
+        "accentor9",
+        "eiderdowny",
+        "hornbillow",
+        "ibisbillie",
+        "jackdawrie",
+        "merganserly",
+        "mudlarkish",
     ]
     assert seed_index.facets["tags"] == [
         "bitwise-reproducibility",
@@ -656,23 +657,23 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "ci",
         "distributed",
         "f2py",
-        "fortran-granule",
+        "fortran-module",
         "gpu",
-        "greenline",
+        "griddle",
         "halo-exchange",
-        "icon4py",
+        "kiln4py",
         "mpi",
         "numpy",
         "reading",
         "reductions",
         "standalone-driver",
         "synthetic",
-        "tracer-advection",
-        "turbulence",
+        "throughflow",
+        "transport",
         "unit-tests",
         "validation",
         "verification",
-        "warm-bubble",
+        "whole-roast",
     ]
 
 
@@ -705,8 +706,8 @@ def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Pa
 
 
 def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index):
-    assert apply_filters(seed_index, {}, "geo2cart") == ["task-0e4b7a"]
-    assert apply_filters(seed_index, {"owner": ["msimberg"], "kind": ["task"]}, "equator") == [
+    assert apply_filters(seed_index, {}, "bed2drum") == ["task-0e4b7a"]
+    assert apply_filters(seed_index, {"owner": ["merganserly"], "kind": ["task"]}, "seam") == [
         "task-53a9f0"
     ]
 
@@ -767,7 +768,7 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
 def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
     records = [
         a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="done",
-               prs=["C2SM/icon4py#1"], assigned_on=date(2026, 7, 1)),
+               prs=["kilnlab/kiln4py#1"], assigned_on=date(2026, 7, 1)),
     ]
     index = build_index(records, _two_cycles(), TODAY)
     assert index.load(37) == {}
@@ -818,7 +819,7 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
     records = [
         a_pitch("pitch-b00001", person_weeks=6.0),
         a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
-               prs=["C2SM/icon4py#1"]),
+               prs=["kilnlab/kiln4py#1"]),
         a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0),
     ]
     counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]
@@ -834,7 +835,7 @@ def test_a_shelved_task_is_in_neither_half_of_its_pitchs_progress():
     records = [
         a_pitch("pitch-b00001", person_weeks=6.0),
         a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
-               prs=["C2SM/icon4py#1"]),
+               prs=["kilnlab/kiln4py#1"]),
         a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0, status="shelved"),
     ]
     counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]

@@ -1,23 +1,24 @@
 # Seed corpus
 
-Converted from the six shortest self-contained rows of the icon4py HackMD task table
-(`hackmd.io/HvHaFPQrRP-8d9UzMA_Gkg`), spanning `done` / `wip` / `todo` / `shelved` across five
-subsystems. This is the Phase 1 test fixture and the working example set — **not the team's real
-plan.**
+Converted from six rows of the Griddle programme's open-projects board, spanning `done` / `wip` /
+`todo` / `shelved` across five subsystems. This is the Phase 1 test fixture and the working
+example set — **not anybody's real plan.**
 
-## What is real
+## Everything here is invented
 
-Titles, statuses, subsystem grouping, PR references, and the body text of every record. Bodies were
-taken from the linked shaping documents where one existed; where none did, the body says so plainly
-rather than inventing one.
+The domain, the people, the pull requests and the calendar are all made up. What is meant to be
+real is the *shape*: titles, statuses, subsystem grouping, PR references and body text hang
+together the way they would on a live plan, because a fixture that does not is a fixture that
+proves nothing. Where a record had no shaping document behind it, the body says so plainly rather
+than inventing one.
 
-## What is synthetic — do not read this as the plan
+## What is synthetic — do not read this as a plan
 
 | Field | Status |
 |---|---|
-| `person_weeks` | Supplied by jcanton, 2026-08-12. Real intent, not measured. |
-| `owner` / `reviewers` on `pitch-1b3f9a`, `task-53a9f0`, `task-5a4e39` | Chosen by jcanton. |
-| `owner` / `reviewers` on the other five | **Drawn at random from `C2SM/icon4py` contributors.** Nobody has agreed to any of this. |
+| `person_weeks` | Typed to exercise the roll-up. Plausible, never measured. |
+| `owner` / `reviewers` on `pitch-1b3f9a`, `task-53a9f0`, `task-5a4e39` | Chosen to give the scheduler somebody to serialise. |
+| `owner` / `reviewers` on the other five | Drawn from the same invented roster. Nobody has agreed to any of this, because nobody here exists. |
 | `depends_on` marked `# synthetic` | **Invented** to exercise the scheduler. |
 | `parent: proj-7e57a0` | Placeholder. See `projects/proj-7e57a0--testing.md`. |
 | `proj-7e57a0` itself | Entirely fabricated. |
@@ -29,8 +30,8 @@ path, where a record created before a rule existed produces a warning rather tha
 
 The invented edges form a **diamond** in the distributed-driver group —
 `task-5a4e39` → {`task-5c1d84`, `task-5f062b`} → `task-58d7c6` — which the validator flagged as the
-structure the real data lacked. `task-2b6c94` depends on `task-31f6c4`, which is `done`, so the
-corpus also covers a live item blocked by completed work. That edge originally pointed at
+structure the corpus otherwise lacked. `task-2b6c94` depends on `task-31f6c4`, which is `done`, so
+the corpus also covers a live item blocked by completed work. That edge originally pointed at
 `pitch-2a7f3e` — `task-2b6c94`'s own parent — which is circular by construction and is now a
 validation rule in its own right (spec §5.1).
 
