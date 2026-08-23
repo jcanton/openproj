@@ -6,13 +6,13 @@
 title: Überprüfung der Randbedingungen — αβγ
 kind: task
 status: in_progress
-person_weeks: 1.5      # jcanton's guess; nobody measured it
+person_weeks: 1.5      # jackdawrie's guess; nobody measured it
 
 # Key order below is the human's business, not the tool's.
 id: task-f0e1d2
 parent: pitch-5e7b1c
-owner: "müller"        # quoted on purpose — the quotes must survive
-reviewers: [nfarabullini, DropD]
+owner: "grünfink"      # quoted on purpose — the quotes must survive
+reviewers: [nightjarelli, Dunnocksen]
 assignees: []
 assigned_on: 2026-08-13
 cycle: 36
@@ -20,7 +20,7 @@ priority: high
 depends_on:
   - task-5a4e39        # a comment on a sequence item
 tags:
-  - grünlinie
+  - röstlinie
   - "quoted-tag"
 prs: []
 ---

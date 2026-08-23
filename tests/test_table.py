@@ -884,7 +884,7 @@ def test_a_create_that_waives_review_is_accepted(client: TestClient):
         client,
         {
             "kind": "task",
-            "title": "Read the IPDPS 2014 paper",
+            "title": "Read the 2014 stable-summation paper",
             "parent": PITCH,
             "status": "ready",
             "owner": "cy",
@@ -1018,7 +1018,7 @@ def test_the_fit_is_measured_again_once_the_real_typeface_has_landed(page: str):
 #
 # Re-read once the clamped columns stopped being able to overflow their badge:
 # `assignees` and `reviewers` are one login and a `+N` now, not a whole list, and
-# `prs` is `#1223` rather than `C2SM/icon4py#1223` — three columns that were
+# `prs` is `#2211` rather than `kilnlab/kiln4py#2211` — three columns that were
 # written down here at 198, 161 and 172 and had not needed that much for two
 # rounds.
 #
@@ -2250,9 +2250,9 @@ def test_a_title_somebody_typed_never_becomes_markup():
     from openproj.model import Config, Task
     from openproj.render import render_table
 
-    hostile = 'Fix <b>&"the" </script><img src=x> equator'
+    hostile = 'Fix <b>&"the" </script><img src=x> seam'
     record = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
-                  person_weeks=1, tags=["<i>one", "two&three"], prs=["C2SM/icon4py#1"])
+                  person_weeks=1, tags=["<i>one", "two&three"], prs=["kilnlab/kiln4py#1"])
     index = build_index([record], Config(), date(2026, 8, 17))
     page = render_table(index, base_commit="0" * 40)      # the editor is a way in too
 
@@ -2603,13 +2603,13 @@ def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(pag
     """
     one, two, none = _tips(
         page,
-        [{"id": "task-000001", "assignees": ["msimberg", "nfarabullini"]},
-         {"id": "task-000002", "assignees": ["OngChia", "nfarabullini", "jcanton"]},
-         {"id": "task-000003", "assignees": ["samkellerhals"]}],
+        [{"id": "task-000001", "assignees": ["merganserly", "nightjarelli"]},
+         {"id": "task-000002", "assignees": ["Oxpeckerly", "nightjarelli", "jackdawrie"]},
+         {"id": "task-000003", "assignees": ["sanderlingly"]}],
         "assignees",
     )
-    assert one == "+1 more: nfarabullini\nDouble-click to edit assignees"
-    assert two == "+2 more: nfarabullini, jcanton\nDouble-click to edit assignees"
+    assert one == "+1 more: nightjarelli\nDouble-click to edit assignees"
+    assert two == "+2 more: nightjarelli, jackdawrie\nDouble-click to edit assignees"
     assert none == "Double-click to edit assignees", "nothing is hidden, so nothing is revealed"
 
     # A `title` takes newlines and this is two lines, not a run-on sentence: the
@@ -2617,20 +2617,21 @@ def test_a_clamped_cell_says_what_it_is_hiding_before_it_says_how_to_edit_it(pag
     assert one.count("\n") == 1
 
     # Every clamped column, not the one it was reported on. `prs` reveals the whole
-    # reference and not the `#1223` the cell draws — the cell drops the repository
+    # reference and not the `#2211` the cell draws — the cell drops the repository
     # because it never varies, and a tooltip has room to say which one it is.
     tags, prs, reviewers = (
-        _tips(page, [{"id": "task-000001", "tags": ["ci", "gt4py", "port"]}], "tags")[0],
-        _tips(page, [{"id": "task-000001", "prs": ["C2SM/icon4py#1", "C2SM/icon4py#2"]}], "prs")[0],
+        _tips(page, [{"id": "task-000001", "tags": ["ci", "hearth", "port"]}], "tags")[0],
+        _tips(page, [{"id": "task-000001", "prs": ["kilnlab/kiln4py#1", "kilnlab/kiln4py#2"]}],
+         "prs")[0],
         _tips(page, [{"id": "task-000001", "reviewers": ["a", "b"]}], "reviewers")[0],
     )
-    assert tags.startswith("+2 more: gt4py, port\n")
-    assert prs.startswith("+1 more: C2SM/icon4py#2\n")
+    assert tags.startswith("+2 more: hearth, port\n")
+    assert prs.startswith("+1 more: kilnlab/kiln4py#2\n")
     assert reviewers.startswith("+1 more: b\n")
 
     # And a column that clamps nothing is untouched, or the change is not "reveal
     # what is hidden", it is "put a sentence on every cell".
-    plain = _tips(page, [{"id": "task-000001", "owner": "jcanton"}], "owner")[0]
+    plain = _tips(page, [{"id": "task-000001", "owner": "jackdawrie"}], "owner")[0]
     assert plain == "Double-click to edit owner"
 
 
@@ -3893,7 +3894,7 @@ def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
     assert got["refused"] == {"said": "", "hidden": True}, (
         "a task holds nothing, so it is not named as anywhere this could land"
     )
-    assert got["out"]["said"] == "→ out of Verify the tracer advection port"
+    assert got["out"]["said"] == "→ out of Verify the aroma transport port"
     assert got["after"] is True, "and the label goes when the move does"
     assert "#into {" in page and "position: fixed" in page
     assert "table.moving tr.over > td {\n  background: var(--drop);" in page, (
@@ -3935,13 +3936,13 @@ def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
 # NOT the last one in the plan — which is the only arrangement that can tell a
 # connector computed from the rows apart from one computed from the records.
 TREE = [
-    Project(id="proj-a10000", kind="project", title="Porting land", owner="ann"),
-    Pitch(id="pitch-b90000", kind="pitch", title="Tracer advection", parent="proj-a10000",
+    Project(id="proj-a10000", kind="project", title="Porting the bed", owner="ann"),
+    Pitch(id="pitch-b90000", kind="pitch", title="Aroma transport", parent="proj-a10000",
           owner="bo", person_weeks=3),
-    Task(id="task-c10000", kind="task", title="Least squares", parent="pitch-b90000", owner="ann"),
-    Task(id="task-c20000", kind="task", title="Serialbox reference", parent="pitch-b90000",
+    Task(id="task-c10000", kind="task", title="Blend weights", parent="pitch-b90000", owner="ann"),
+    Task(id="task-c20000", kind="task", title="Tap-point reference", parent="pitch-b90000",
          owner="ann"),
-    Task(id="task-c30000", kind="task", title="Equator artefact", parent="pitch-b90000",
+    Task(id="task-c30000", kind="task", title="Seam artefact", parent="pitch-b90000",
          owner="bo"),
     Project(id="proj-a90000", kind="project", title="Distributed driver", owner="bo"),
     Pitch(id="pitch-b10000", kind="pitch", title="Halo exchange", parent="proj-a90000",

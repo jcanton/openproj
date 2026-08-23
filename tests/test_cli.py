@@ -28,8 +28,8 @@ def test_check_exits_zero_when_only_warnings_remain(tmp_path: Path):
             "kind: task",
             "title: Fine",
             "status: ready",
-            "owner: jcanton",
-            "reviewers: [msimberg]",
+            "owner: jackdawrie",
+            "reviewers: [merganserly]",
             "person_weeks: 1.0",
             "---",
             "",
@@ -52,8 +52,8 @@ def test_check_reports_warnings_without_failing(tmp_path: Path, capsys):
             "kind: task",
             "title: Orphan",
             "status: ready",
-            "owner: jcanton",
-            "reviewers: [msimberg]",
+            "owner: jackdawrie",
+            "reviewers: [merganserly]",
             "person_weeks: 1.0",
             "---",
             "",
@@ -112,7 +112,7 @@ def test_the_shipped_demo_corpus_validates_clean(demo_root: Path, capsys):
     # `openproj check` coverage they never had, and this warning is the
     # coverage arriving — the web banner said it all along.
     assert (
-        "warning: note-55cc66: written_by: dastrm is not in config/people.yaml"
+        "warning: note-55cc66: written_by: dabchickly is not in config/people.yaml"
         in capsys.readouterr().out
     )
 
@@ -166,8 +166,8 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
         (tmp_path / directory).mkdir()
     (tmp_path / "tasks" / "task-000001--done.md").write_text(
         "---\nid: task-000001\nkind: task\ntitle: Long done\nstatus: done\n"
-        "owner: jcanton\nreviewers: [msimberg]\nassigned_on: 9999-12-31\n"
-        "prs: [\"C2SM/icon4py#1\"]\nperson_weeks: 1.0\n---\n\nBody.\n",
+        "owner: jackdawrie\nreviewers: [merganserly]\nassigned_on: 9999-12-31\n"
+        "prs: [\"kilnlab/kiln4py#1\"]\nperson_weeks: 1.0\n---\n\nBody.\n",
         encoding="utf-8",
     )
     (tmp_path / "cycles" / "0038.md").write_text(

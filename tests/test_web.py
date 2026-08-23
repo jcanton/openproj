@@ -98,15 +98,15 @@ PATH = f"tasks/{TASK}.md"
 # --------------------------------------------------------------------------- #
 
 HAND_FORMATTED = """---
-# Two GPUs, and only on the equator. The note at the bottom belongs with the file.
-title: Reproduce the 2-GPU equator artefact
+# Two GPUs, and only at the seam. The note at the bottom belongs with the file.
+title: Reproduce the 2-GPU seam artefact
 kind: task
 status: in_progress
-person_weeks: 1.5          # measured on daint, not guessed
+person_weeks: 1.5          # measured on firebrick, not guessed
 
 id: task-c00001
 parent: pitch-b20000
-owner: ann                 # ann has the DWD contacts
+owner: ann                 # ann has the upstream contacts
 reviewers: [bo, cy]
 assigned_on: 2026-07-06
 priority: medium
@@ -114,8 +114,8 @@ tags: [gpu, verification]
 prs: []
 ---
 
-The artefact shows up on the equator only, and only with two ranks.
-It is not visible in the serialbox reference data.
+The artefact shows up at the drum seam only, and only with two ranks.
+It is not visible in the tapdeck reference data.
 """
 
 SEED = {
@@ -142,7 +142,7 @@ SEED = {
         "---\n"
         "id: pitch-b20000\n"
         "kind: pitch\n"
-        "title: Verify the tracer advection port\n"
+        "title: Verify the aroma transport port\n"
         "parent: proj-a10000\n"
         "status: ready\n"
         "owner: ann\n"
@@ -150,7 +150,7 @@ SEED = {
         "person_weeks: 3\n"
         "priority: high\n"
         "---\n"
-        "\nPort the least-squares coefficients and check them against serialbox.\n"
+        "\nPort the blend-weight coefficients and check them against tapdeck.\n"
     ),
     PATH: HAND_FORMATTED,
     f"tasks/{OTHER}.md": (
@@ -172,14 +172,14 @@ SEED = {
         "---\n"
         "id: task-c00003\n"
         "kind: task\n"
-        "title: Read the IPDPS 2014 paper\n"
+        "title: Read the 2014 stable-summation paper\n"
         "parent: pitch-b20000\n"
         "status: done\n"
         "owner: cy\n"
         "review_waived: true\n"
         "person_weeks: 0.5\n"
         "---\n"
-        "\nAnurag's paper on halo exchange.\n"
+        "\nA 2014 paper on halo exchange.\n"
     ),
 }
 
@@ -320,7 +320,7 @@ def test_the_table_renders_the_repository_as_it_is_right_now(client: TestClient)
     yesterday: the one blocker in the corpus has to be counted here."""
     body = client.get("/table").text
 
-    assert "Reproduce the 2-GPU equator artefact" in body
+    assert "Reproduce the 2-GPU seam artefact" in body
     assert "Downgrade numpy for global sums" in body
     assert '<table id="rows"' in body
     assert 'id="blocker-count">1<' in body  # task-c00003 is done with no PRs
@@ -385,8 +385,8 @@ def test_a_detail_route_serves_one_record_and_not_the_whole_corpus(client: TestC
     static build, and it is what this route replaces."""
     body = client.get(f"/detail/{TASK}").text
 
-    assert "Reproduce the 2-GPU equator artefact" in body
-    assert "the serialbox reference data" in body  # the shaping doc, rendered
+    assert "Reproduce the 2-GPU seam artefact" in body
+    assert "the tapdeck reference data" in body  # the shaping doc, rendered
     # Scoped to the article: other records legitimately appear elsewhere on the
     # page now, in the autocomplete list for parent and depends_on. What must not
     # happen is a second record being *served*.
@@ -578,7 +578,7 @@ def test_the_index_json_carries_the_plan_the_spans_and_the_problems(client: Test
     payload = index_of(client)
 
     assert set(payload["plan"]) == {PROJECT, PITCH, TASK, OTHER, DONE}
-    assert payload["plan"][TASK]["title"] == "Reproduce the 2-GPU equator artefact"
+    assert payload["plan"][TASK]["title"] == "Reproduce the 2-GPU seam artefact"
     assert payload["plan"][TASK]["status"] == "in_progress"
 
     span = payload["spans"][TASK]
@@ -732,11 +732,11 @@ def test_the_author_can_never_be_supplied_by_the_client(client: TestClient, repo
 
 
 def test_a_saved_body_replaces_the_body_and_nothing_else(client: TestClient, repo_path: Path):
-    response = save(client, TASK, {}, body="Reproduced on daint with two ranks.\n")
+    response = save(client, TASK, {}, body="Reproduced on firebrick with two ranks.\n")
 
     assert response.json()["outcome"] == "committed"
     stored = file_at(repo_path, response.json()["commit"], PATH)
-    assert stored.endswith("Reproduced on daint with two ranks.\n")
+    assert stored.endswith("Reproduced on firebrick with two ranks.\n")
     assert "priority: medium" in stored  # the frontmatter is untouched by a body edit
 
 
@@ -867,7 +867,7 @@ def test_a_save_onto_a_record_deleted_in_git_never_writes_it_back(
     # A person with a terminal, taking the task out of the pitch and leaving it
     # unowned — the state a row is in when somebody reaches for its grip.
     loose = HAND_FORMATTED.replace("parent: pitch-b20000\n", "").replace(
-        "owner: ann                 # ann has the DWD contacts\n", ""
+        "owner: ann                 # ann has the upstream contacts\n", ""
     )
     commit_directly(repo_path, {**SEED, PATH: loose}, "take the task out of the pitch")
     base = head(client)
@@ -935,11 +935,12 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
     """Only the touched fields travel, which is what makes field-level merge
     possible at all. A client that round-trips the whole record turns every save
     into a whole-file compare-and-swap and every concurrent edit into a conflict."""
-    commit = save(client, TASK, {"status": "done", "prs": ["C2SM/icon4py#412"]}).json()["commit"]
+    done = save(client, TASK, {"status": "done", "prs": ["kilnlab/kiln4py#2412"]})
+    commit = done.json()["commit"]
     stored = file_at(repo_path, commit, PATH)
 
-    assert "person_weeks: 1.5          # measured on daint, not guessed" in stored
-    assert "owner: ann                 # ann has the DWD contacts" in stored
+    assert "person_weeks: 1.5          # measured on firebrick, not guessed" in stored
+    assert "owner: ann                 # ann has the upstream contacts" in stored
     assert "reviewers: [bo, cy]" in stored  # still one line, still flow style
     assert "assignees" not in stored  # an untouched default is not materialised
 
@@ -1042,7 +1043,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
         client,
         {
             "kind": "pitch",
-            "title": "Turbulence on one node",
+            "title": "Throughflow on one node",
             "status": "ready",
             "owner": "ann",
             "reviewers": ["bo"],
@@ -2265,7 +2266,7 @@ def test_the_preview_shows_what_the_page_will_show(client: TestClient):
     place somebody checks it before saving. PR references were missing there too.
     """
     path = upload(client, PNG).json()["path"]
-    body = f"![a]({path})\n\n![b](https://example.com/b.png)\n\nSee C2SM/icon4py#1364.\n"
+    body = f"![a]({path})\n\n![b](https://example.com/b.png)\n\nSee kilnlab/kiln4py#2318.\n"
 
     save(client, TASK, {}, body=body)
     previewed = client.post("/api/preview", json={"body": body}).json()["html"]
@@ -2274,7 +2275,7 @@ def test_the_preview_shows_what_the_page_will_show(client: TestClient):
     assert f'<img src="/{path}"' in previewed
     assert f'<img src="/{path}"' in stored
     assert '<a href="https://example.com/b.png">b (external image)</a>' in previewed
-    assert "https://github.com/C2SM/icon4py/pull/1364" in previewed
+    assert "https://github.com/kilnlab/kiln4py/pull/2318" in previewed
 
 
 # A reference in prose, the same reference already inside a link, and one inside
@@ -2284,7 +2285,7 @@ def test_the_preview_shows_what_the_page_will_show(client: TestClient):
 # tokeniser turns into one anchor wearing junk valueless attributes. The third is
 # the same blindness the other way: backticks mean "do not interpret this".
 PR_CONTEXTS = (
-    "Bare: C2SM/icon4py#1364.\n\n"
+    "Bare: kilnlab/kiln4py#2318.\n\n"
     "[a pr link](https://github.com/org/repo#12)\n\n"
     "In code: `org/repo#9`.\n"
 )
@@ -2299,7 +2300,10 @@ def test_a_pr_reference_is_linked_in_prose_and_left_alone_everywhere_else(client
     stored = client.get(f"/detail/{TASK}").text
 
     for where, html in (("preview", previewed), ("detail", stored)):
-        assert '<a href="https://github.com/C2SM/icon4py/pull/1364">C2SM/icon4py#1364</a>' in html
+        assert (
+            '<a href="https://github.com/kilnlab/kiln4py/pull/2318">'
+            "kilnlab/kiln4py#2318</a>" in html
+        )
         # Byte for byte: this anchor exists in one piece only if nothing linked
         # the reference sitting inside its own href.
         assert '<a href="https://github.com/org/repo#12">a pr link</a>' in html, where
@@ -2993,14 +2997,14 @@ def test_a_sentence_somebody_wrote_about_themselves_survives_a_pick(
     than by making it again."""
     commit_directly(
         repo_path,
-        {**SEED, ANN_RECORD: "---\nicon: fox\n---\n\nAnn, who works on the dycore.\n"},
+        {**SEED, ANN_RECORD: "---\nicon: fox\n---\n\nAnn, who works on the core solver.\n"},
         "ann writes herself down",
     )
 
     assert client.put("/api/icon", json={"icon": "owl"}).status_code == 200
 
     assert record_of(repo_path, "ann") == (
-        "---\nicon: owl\n---\n\nAnn, who works on the dycore.\n"
+        "---\nicon: owl\n---\n\nAnn, who works on the core solver.\n"
     )
 
 

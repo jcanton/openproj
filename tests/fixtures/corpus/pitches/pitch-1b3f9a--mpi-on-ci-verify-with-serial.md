@@ -4,8 +4,8 @@ kind: pitch
 title: MPI on CI verify with serial
 parent: null
 status: ready
-owner: msimberg
-reviewers: [jcanton]
+owner: merganserly
+reviewers: [jackdawrie]
 person_weeks: 1
 shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees: []
@@ -14,7 +14,7 @@ cycle: null
 priority: low
 depends_on: []
 tags:
-  - greenline
+  - griddle
   - mpi
   - ci
 prs: []
@@ -22,59 +22,52 @@ prs: []
 
 # MPI on CI verify with serial
 
-**Shaping doc not located during migration.** This record is a stub built from the task-table row alone.
+**No shaping document yet.** What is written here is everything the board row said, and no more.
 
-## What the source says
+## What we know
 
-The only source is row `9b` of the `[Greenline] Open projects TABLE`
-(https://hackmd.io/HvHaFPQrRP-8d9UzMA_Gkg), verbatim:
+The distributed job runs the throughflow and transport suites at two and four ranks, comparing each
+against reference data recorded at that rank count. Nobody has run them against the single-rank
+reference. If the multi-rank runs are bit-identical to the serial one — which the reproducibility
+work is trying to make true — then the serial set is the one to compare against and the rest is
+storage paid for a distinction we claim does not exist.
 
-> | 9b | MPI on CI verify with serial | Low | | | | | | Get the tests to verify with mpitask1 instead of mpitask2/4 |
+## Scope
 
-Every other cell of the row is empty: no Status, no Who, no Depends-on, no PR, no Shape doc.
-The blank Status cell reads as not started, hence `status: ready`. Priority cell reads `Low`.
+`mpitask{1,2,4}` are the recorded reference directories the kiln4py datatests read; the layout is
+`kiln4py/testdata/tapdata/mpitask{1,2,4}/drum_hex_50mm/tap_data`, and the loader that picks one by
+rank count is
+[`testing/tapdata.py`](https://github.com/kilnlab/kiln4py/blob/main/src/kiln4py/testing/tapdata.py).
+`mpitask1` is the single-rank set. The ask is one line: make the MPI tests verify against
+`mpitask1` instead of the rank-matched set. That is the whole of the stated scope — no interface
+moves, no new fixtures — so nothing here was split into sub-tasks.
 
-## Scope, as far as the source defines it
+## What has been ruled out
 
-`mpitask{1,2,4}` are the serialized-reference-data directories used by the icon4py datatests;
-the corpus documents the layout as
-`icon4py/testdata/ser_icondata/mpitask{1,2,4}/mch_ch_r04b09_dsl/ser_data`
-(from `[Greenline] CI for datatests`, https://hackmd.io/@gridtools/SJkkX2wzp).
-`mpitask1` is therefore the single-rank (serial) reference dataset, `mpitask2`/`mpitask4` the
-2- and 4-rank ones. The row asks for the MPI tests to verify against the serial reference data
-instead of the rank-count-matched data.
+Three things that look like this row and are not.
 
-That one sentence is the entire specified scope. No sub-tasks are enumerated anywhere, so no task
-records were created.
+It is not the distributed-tests job itself. That one is about *which* tests run under MPI at all —
+rank counts, which suites are enabled, whether the pipeline has GPU nodes to run them on — and it
+keeps its own open list. Changing the reference data those tests compare against is orthogonal to
+it, and either piece of work can land first without waiting on the other.
 
-## Search performed (negative result)
+It is not the standalone driver's single-versus-multi-rank disagreement. The driver runs a whole
+roast and drifts in the last bits of a global sum; these are per-tap-point field comparisons at a
+fixed tolerance. Same symptom stated abstractly, different code, different fix, different people.
 
-Searched all 730 notes listed for the GridTools HackMD team plus the three notes known to be
-reachable only by direct URL. The string `mpitask` appears in exactly three corpus bodies: this
-task table, a copy of it, and the `CI for datatests` note quoted above — none of which is a shaping
-document for this row. No note title or body describes verifying MPI tests against serial data.
+And it is not a tolerance change wearing a disguise. Nobody is proposing to loosen `atol` until the
+serial data passes. If a suite fails against `mpitask1` and passes against `mpitask4`, that failure
+is the finding: it goes back to the reproducibility work as a bug report, not into this row as a
+number to be adjusted.
 
-Related but distinct notes found (recorded here as context, **not** as this row's shaping doc):
+## What is not decided
 
-- `[Greenline] Distributed tests in CI` — https://hackmd.io/O4Fymu1dTxqTZSC8rdiVVw — the table's
-  `[MPI CI project]` link, attached to row **9**, not 9b. Its open-task list covers rank counts
-  ("run with 2 ranks and 4 ranks (currently only 4 ranks)") and "enable testing with weisman klemp
-  experiment (distributed and single-rank)", but never the mpitask1-as-reference idea. Its
-  `## Appetite` section is empty.
-- `[ICON4Py] Standalone driver single- vs multi-rank debugging` (cycle 36) —
-  https://hackmd.io/@gridtools/SyAIH-7lzl — an unfilled template whose Problem statement is
-  "Single- and multi-rank runs don't agree fully." Concerns the standalone driver, not CI test
-  verification data.
+Whether `mpitask2` and `mpitask4` get deleted afterwards, or kept as a second comparison so that a
+regression in rank-dependence still has something to show up against. Keeping them costs test-data
+storage and a slower checkout; deleting them means the only evidence of a rank-dependent bug is a
+failure against serial data with nothing to diff it to.
 
-## Fields left null and why
-
-- `person_weeks`: no appetite is stated for this row anywhere — not in the table, not in any
-  note. Left null rather than guessed.
-- `assignees` / `assigned_on`: the Who cell is empty; no date is stated anywhere.
-- `cycle`: no shaping doc, therefore no cycle tag to read.
-- `depends_on`: the Depends-on cell is empty. Note that row 9b is printed immediately beneath row 9
-  (`MPI on CI`, Done) inside the MPI block of the table, but the source declares no dependency and
-  none was invented; no other row depends on 9b either.
-- `prs`: the PR cell is empty.
-- `hackmd`: no shaping doc exists to point at.
-
+Also open: whether the same switch applies to the transport suites, whose halo exchange is the part
+most likely to be genuinely rank-dependent, or only to the throughflow ones this row was written
+about. Nobody has argued either question yet, and neither needs settling before the first
+experiment.
