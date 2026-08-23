@@ -65,23 +65,14 @@ jobs:
       # is red on arrival — and a gate that is red on arrival teaches everybody
       # to read past red. One `uv run ruff format .`, as its own commit touching
       # nothing else, is what makes this line safe to add.
-
-      # The shard lists below are hand-written, and a hand-written list of files
-      # fails OPEN: add `tests/test_new_thing.py`, forget the list, and it runs
-      # on no machine at all while CI stays green. Green-for-the-wrong-reason is
-      # the one failure a gate must never have, so the lists are held against the
-      # directory rather than trusted. Both sides are sorted, so this one `diff`
-      # catches all three ways of getting it wrong at once: a file in no shard
-      # (right side only), a file named in two shards (left side twice), and a
-      # shard naming a file that no longer exists (left side only).
       #
-      # This belongs in `tests/` beside `test_every_html_get_route_is_in_the_census`
-      # and `tests/test_harness.py:46`, which are the same shape and which also
-      # answer on a laptop before the push. It is here because the commit that
-      # split CI could not touch `tests/`. When that test lands, delete this step
-      # rather than keeping both — an invariant written twice gets guarded once.
-      - name: Every test file is in exactly one shard
-        run: diff <(sort .github/shards/*) <(ls tests/test_*.py | sort)
+      # Nothing here checks the shard lists, on purpose. They are hand-written
+      # and a hand-written list of files fails OPEN — add `tests/test_new.py`,
+      # forget the list, and it runs on no machine at all while every job stays
+      # green — but that is already held, once, by
+      # `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py`,
+      # which reads the same files and answers on a laptop as well as here. An
+      # invariant written twice gets guarded once.
 
   # The suite, cut five ways across five machines.
   #
@@ -160,11 +151,17 @@ jobs:
       # that has quietly stopped checking pixels says so in the log instead of
       # just looking green.
       #
-      # `$(cat …)` is unquoted on purpose: the shard file is one path per line
-      # and the words are meant to split into separate pytest arguments. It is a
+      # `$files` is unquoted on purpose: the shard file is one path per line and
+      # the words are meant to split into separate pytest arguments. `sed` strips
+      # the `#` commentary the lists carry, matching what the census test in
+      # `tests/test_harness.py` accepts — a shard file the test reads and this
+      # line cannot is a trap set for whoever adds the next comment. It is a
       # command substitution rather than `xargs` because `xargs` is allowed to
       # split a long list into two invocations, and two pytest runs in one step
-      # would report two summary lines and one exit code.
+      # would report two summary lines and one exit code. The emptiness check is
+      # what makes a missing or all-comment list red here: bare `pytest` with no
+      # paths falls back to `testpaths` and runs the WHOLE suite in every shard,
+      # which is slow rather than wrong, and therefore invisible.
       #
       # `--durations=25` stays after the measurement flags came out. The probe
       # was `--durations=0 --durations-min=0.05`, which is 732 rows and is what
@@ -174,7 +171,10 @@ jobs:
       # rows per leg is enough to see which file grew and re-cut the lists,
       # without anybody having to re-run a measurement workflow to find out. It
       # is display-only: pytest times every phase whether or not it prints them.
-      - run: uv run pytest -q --durations=25 $(cat .github/shards/${{ matrix.shard }})
+      - run: |
+          files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
+          [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
+          uv run pytest -q --durations=25 $files
 
   # The one required status check, and the reason it is a separate job.
   #

@@ -1,3 +1,12 @@
+# coedit — 125.6s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
+# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
+# somewhere else entirely, because caching template compilation moved the file
+# costs by far more than the shard sizes.
+#
+# Real sockets, a real uvicorn on a real port, and literal `sleep(0.5)` budgets.
+# This leg exists so those stay serial, in file order, in one process, on a
+# machine nothing else is using — which is the condition every one of those
+# margins was measured under. Do not fold it into another shard to save a runner.
 tests/test_coedit.py
 tests/test_socket_offer.py
 tests/test_search.py

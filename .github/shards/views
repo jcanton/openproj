@@ -1,2 +1,8 @@
+# views — 138.9s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
+# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
+# somewhere else entirely, because caching template compilation moved the file
+# costs by far more than the shard sizes.
+#
+# The two files that draw a whole page and then measure it.
 tests/test_render.py
 tests/test_table.py

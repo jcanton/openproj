@@ -1,3 +1,12 @@
+# rest — 128.8s. Measured seconds are from docs/probes/ci-durations-after-cache.txt
+# — the POST-template-cache table. Cutting from the pre-cache one puts the
+# boundaries somewhere else entirely, because caching template compilation moved
+# the file costs by far more than the shard sizes.
+#
+# Everything else, and the only leg whose membership is not a judgement: a new
+# test file belongs here unless it is slow enough to be worth naming. Thirty-one
+# files for 128.8s against one file for 151.3s in `editor` — cost here has
+# nothing to do with test count.
 tests/test_auth.py
 tests/test_cascade.py
 tests/test_cli.py

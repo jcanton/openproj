@@ -1,3 +1,11 @@
+# graph — 131.2s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
+# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
+# somewhere else entirely, because caching template compilation moved the file
+# costs by far more than the shard sizes.
+#
+# Canvas, card and hill layout: four files that start a fresh headless Chrome
+# per assertion, and the four that barely moved when template compilation was
+# cached, because none of their cost was rendering.
 tests/test_graph_layout.py
 tests/test_card.py
 tests/test_facets.py
