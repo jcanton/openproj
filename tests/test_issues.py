@@ -1,7 +1,7 @@
 """The issue rung: off the plan by data, not by type.
 
 An issue used to be kept off the table, the graph, the timeline and the people
-page by being a separate type. It is now an `Entity` on a rung with
+page by being a separate type. It is now a `Record` on a rung with
 `planned=False`, and the exclusion is enforced once — in `build_index`, backed
 by the Index validator and the KINDS-derived exclusion sweep, which stops being
 vacuous in the commit that adds this rung. What is left for this file is what
@@ -27,8 +27,8 @@ from openproj.model import (
     ISSUE_STATUS,
     RUNG,
     Config,
-    Entity,
     Issue,
+    Record,
     Task,
     load_repo,
     unread_fields,
@@ -55,7 +55,7 @@ def client(repo_path: Path):
 def opened(client: TestClient, title: str, base: str, body: str = "", **fields) -> str:
     """An issue through the one door every record uses now."""
     response = client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": base, "body": body,
               "fields": {"kind": "issue", "title": title, **fields}},
     )
@@ -63,7 +63,7 @@ def opened(client: TestClient, title: str, base: str, body: str = "", **fields) 
     return response.json()["id"]
 
 
-def entities(**by_id: str) -> dict[str, Task]:
+def records(**by_id: str) -> dict[str, Task]:
     return {
         i: Task(id=i, kind="task", title=i, status=status) for i, status in by_id.items()
     }
@@ -79,7 +79,7 @@ def test_an_issue_is_a_rung_of_the_ladder():
     one ladder every derivation reads."""
     rung = RUNG["issue"]
 
-    assert issubclass(Issue, Entity)
+    assert issubclass(Issue, Record)
     assert rung.model is Issue
     assert (rung.prefix, rung.directory) == ("issue", "issues")
     assert rung.planned is False, "off every plan view, enforced in build_index"
@@ -106,7 +106,7 @@ def test_pitching_an_issue_is_what_closes_it():
     """Derived, never copied. Writing the state into the file as well would be
     a second copy of a fact the link already carries, and the two disagree the
     moment somebody closes the pitch."""
-    world = entities(**{"task-aa0001": "done", "task-bb0001": "in_progress"})
+    world = records(**{"task-aa0001": "done", "task-bb0001": "in_progress"})
     unlinked = Issue(id="issue-000001", kind="issue", title="x")
     picked = Issue(id="issue-000002", kind="issue", title="x", pitched_into=["task-bb0001"])
     finished = Issue(id="issue-000003", kind="issue", title="x", pitched_into=["task-aa0001"])
@@ -120,7 +120,7 @@ def test_pitching_an_issue_is_what_closes_it():
 
 
 def test_shelved_is_a_decision_a_link_does_not_reverse():
-    world = entities(**{"task-aa0001": "done"})
+    world = records(**{"task-aa0001": "done"})
     wont_fix = Issue(id="issue-000001", kind="issue", title="x", status="shelved",
                      pitched_into=["task-aa0001"])
 
@@ -181,7 +181,7 @@ def test_the_reporter_is_a_default_and_the_date_is_not(
 def test_an_issue_still_needs_a_title(client: TestClient, repo_path: Path):
     before = git_head(repo_path)
     refused = client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": before, "fields": {"kind": "issue", "title": "  "}},
     )
 
@@ -199,12 +199,12 @@ def test_a_word_off_the_issue_ladder_is_refused_at_both_doors(
     before = git_head(repo_path)
 
     created = client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": before,
               "fields": {"kind": "issue", "title": "y", "status": "shaping"}},
     )
     saved = client.patch(
-        f"/api/entity/{issue_id}",
+        f"/api/record/{issue_id}",
         json={"base_commit": before, "fields": {"status": "shaping"}, "body": None},
     )
 
@@ -214,14 +214,14 @@ def test_a_word_off_the_issue_ladder_is_refused_at_both_doors(
     assert git_head(repo_path) == before, "a refusal writes nothing"
 
 
-def test_an_issue_id_is_an_entity_id_now(client: TestClient, repo_path: Path):
+def test_an_issue_id_is_a_record_id_now(client: TestClient, repo_path: Path):
     """The pattern is derived from KINDS, so the rung brought its prefix on the
-    commit that added it — and the whole entity write surface with it."""
+    commit that added it — and the whole record write surface with it."""
     issue_id = opened(client, "x", git_head(repo_path))
 
     assert ID_PATTERN.match(issue_id)
     saved = client.patch(
-        f"/api/entity/{issue_id}",
+        f"/api/record/{issue_id}",
         json={"base_commit": git_head(repo_path), "fields": {"tags": ["halo"]},
               "body": None},
     )
@@ -291,7 +291,7 @@ def test_deleting_what_a_hand_written_issue_waits_on_edits_the_issue(
     with TestClient(create_app(path, auth="dev", secret=SECRET)) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
         removed = client.request(
-            "DELETE", "/api/entity/task-c00002",
+            "DELETE", "/api/record/task-c00002",
             json={"base_commit": git_head(path), "also": ["issue-8c8c8c"]},
         )
 
@@ -371,7 +371,7 @@ def test_a_derived_state_reads_on_the_page_and_locks_the_control(
     that says why it is off."""
     issue_id = opened(client, "x", git_head(repo_path))
     saved = client.patch(
-        f"/api/entity/{issue_id}",
+        f"/api/record/{issue_id}",
         json={"base_commit": git_head(repo_path),
               "fields": {"pitched_into": ["task-c00001"]}, "body": None},
     )
@@ -386,23 +386,23 @@ def test_a_derived_state_reads_on_the_page_and_locks_the_control(
 
 
 def test_the_seed_corpus_issues_load_as_records_off_the_plan(demo_root: Path):
-    entities_now, config, unreadable = load_repo(demo_root)
+    records_now, config, unreadable = load_repo(demo_root)
     assert not unreadable
 
-    index = build_index(entities_now, config, date(2026, 8, 17))
+    index = build_index(records_now, config, date(2026, 8, 17))
     issues = {i: r for i, r in index.records.items() if r.kind == "issue"}
 
     assert issues, "the demo corpus has issues"
-    assert not set(issues) & set(index.entities), "and none of them is in the plan"
+    assert not set(issues) & set(index.plan), "and none of them is in the plan"
     assert not [
         p for p in index.problems
-        if p.severity == "blocker" and p.entity_id in issues
+        if p.severity == "blocker" and p.record_id in issues
     ]
-    assert {r.state(index.entities) for r in issues.values()} <= set(ISSUE_STATUS)
+    assert {r.state(index.plan) for r in issues.values()} <= set(ISSUE_STATUS)
 
 
 def test_check_covers_issues_for_the_first_time(tmp_path: Path):
-    """`openproj check` runs `validate_all(entities, config)` and nothing else,
+    """`openproj check` runs `validate_all(records, config)` and nothing else,
     so `issue_problems` was dead to it from the day it was written: an issue
     with a status nobody defined passed check clean while the web banner
     reported it. One reader now — the same walk, the same rules."""
@@ -412,10 +412,10 @@ def test_check_covers_issues_for_the_first_time(tmp_path: Path):
         encoding="utf-8",
     )
 
-    entities_now, config, unreadable = load_repo(tmp_path)
+    records_now, config, unreadable = load_repo(tmp_path)
 
     assert not unreadable
-    assert [e.kind for e in entities_now] == ["issue"], "load_repo walks issues/ itself"
-    assert [(p.severity, p.field) for p in validate_all(entities_now, config)] == [
+    assert [e.kind for e in records_now] == ["issue"], "load_repo walks issues/ itself"
+    assert [(p.severity, p.field) for p in validate_all(records_now, config)] == [
         ("blocker", "status")
     ]

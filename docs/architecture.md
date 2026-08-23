@@ -11,11 +11,11 @@ who is on what and who is full; `detail.html` is one record on its own page — 
 — and under the server it is also where a record is edited.
 
 Issues and notes are records whose rung says `planned=False`: they are on Records and on their own
-pages, and never in the plan views. The exclusion is not a filter on each page — `Index.entities`
-holds planned kinds only, a validator on `Index` refuses anything else, and a page that wants every
-kind reaches for `Index.records` by name, a word that looks wrong in a function about the timeline.
-`POST /api/promote` is the door out of both inboxes: it writes the entity and marks the source in
-one commit.
+pages, and never in the plan views. The exclusion is not a filter on each page — `Index.plan`
+holds planned kinds only, a validator on `Index` refuses anything else, and each name states its
+population, so a timeline function that reaches for `records` announces the widened view on the
+line that takes it. `POST /api/promote` is the door out of both inboxes: it writes the record and
+marks the source in one commit.
 
 They render from one in-memory index, share one filter model, and keep their state in the query
 string — so every view is a shareable URL, the back button works, and there are no saved views to
@@ -43,7 +43,7 @@ The tool and the plan are separate repositories, and stay separate in production
 
 ```
 C2SM/openproj        this repo — code, tests, and fixtures. No real plan data.
-C2SM/<name>-plan     the data — markdown entities and config. No code.
+C2SM/<name>-plan     the data — markdown records and config. No code.
 ```
 
 `seed/` and `tests/fixtures/corpus/` live here only because they are a demo and a
@@ -92,7 +92,7 @@ src/openproj/schedule.py   the scheduler — a pure function, the product
 src/openproj/index.py      the snapshot every view renders from
 src/openproj/render.py     the pages
 src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
-src/openproj/coedit.py     the co-editing rooms — one Y.Text per entity, in memory
+src/openproj/coedit.py     the co-editing rooms — one Y.Text per record, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
 src/openproj/cli.py        check / render / schedule / serve / demo
 src/openproj/themes.py     the colour schemes — sixteen numbers a row, nothing else
@@ -142,7 +142,7 @@ every family in both polarities.
 ## Co-editing one document
 
 Several people can type in one shaping document at once. `src/openproj/coedit.py` holds the rooms —
-one `Y.Text` of the markdown body per entity, and nothing else; the frontmatter stays on the form,
+one `Y.Text` of the markdown body per record, and nothing else; the frontmatter stays on the form,
 where the fields are typed and `validate_all` decides requiredness in one place. `WSS
 /api/coedit/<id>` carries it, which `connect-src 'self'` already permits.
 
@@ -168,7 +168,7 @@ above; `docs/superpowers/specs/2026-08-12-appetite-design.md` excluded it on the
 compare-and-swap *is* the design, and that argument still holds for everything except the body of one
 document that two people are writing at the same time.
 
-Nothing may make the CI bot write entity frontmatter. The bot owns `derived/` and nothing else;
+Nothing may make the CI bot write record frontmatter. The bot owns `derived/` and nothing else;
 if it starts patching frontmatter, bot and humans fight over the same files forever.
 
 ## The design records

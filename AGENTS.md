@@ -41,10 +41,10 @@ Each is load-bearing and each has one place that enforces it. Break one and the 
 
 **Only `depends_on` is stored, on the dependent.** `blocks` is the reverse, built in `build_index`
 (`index.py`) and never read from a file. A stored copy is stale by construction and lets one record
-contradict the graph. Edges to entities that do not exist are dropped from both maps at once, so
+contradict the graph. Edges to records that do not exist are dropped from both maps at once, so
 the forward and reverse views always agree.
 
-**Derived data never reaches frontmatter.** No computed date in an entity file, ever — rescheduling
+**Derived data never reaches frontmatter.** No computed date in a record file, ever — rescheduling
 one blocker would rewrite fifty files. `serialise` and `patch_text` (`model.py`) round-trip rather
 than re-serialise: only keys whose value actually changed are rewritten, and comments, key order,
 blank lines and list style survive a save. "Edit it in git if you prefer" stops being true the
@@ -79,8 +79,8 @@ login that already had one, drawn on every served page, invisible to `openproj c
 between by which of the two paths sorted last. Nested files are named rather than skipped, for the
 same reason the fifteen above are.
 
-**A rule blocks only entities created after it existed.** Each rule carries the `schema_version`
-that introduced it, and `validate_all` demotes a rule newer than the entity it is judging to a
+**A rule blocks only records created after it existed.** Each rule carries the `schema_version`
+that introduced it, and `validate_all` demotes a rule newer than the record it is judging to a
 warning. Without grandfathering, adding one required field invalidates the whole corpus at once and
 the rule gets reverted rather than adopted. `shaped_by` is the live example.
 
@@ -130,7 +130,7 @@ the static export, where there is no origin to appeal to. `_image` (`render.py`)
 only if it matches an asset this tool stored. There is no denylist of URL spellings that is ever
 finished.
 
-**A write the model cannot read back must be refused.** `PATCH /api/entity` committed `title: 5`,
+**A write the model cannot read back must be refused.** `PATCH /api/record` committed `title: 5`,
 and eleven bodies like it, and every page then answered 500 forever — on a protected branch, so the
 commit cannot be force-pushed away and the 500ing pages will not hand over the sha to craft a repair
 against. `web.py` parses the patched text before writing and answers 422 naming the field and why.
@@ -148,7 +148,7 @@ refused a body the policy would have taken, in silence. One is derived from the 
 comment says which kind of bound each is.
 
 **Empty must not look like broken, and neither must a failure.** A filter matching nothing, a plan
-that failed to load, and a plan with no entities are three different sentences, drawn inside the
+that failed to load, and a plan with no records are three different sentences, drawn inside the
 table body with the control that gets you out of it. This is finding F1, and it keeps coming back
 through new mechanisms.
 
@@ -301,7 +301,7 @@ claim is about pixels, look at the pixels.
   `test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was` are there as the controls
   that passed with the defect in place.
 - **Derive fixtures from the code where the code is what varies.** `markers()` reads `render.py`;
-  `required_at()` runs the gate over a blank entity rather than restating it, so it cannot drift
+  `required_at()` runs the gate over a blank record rather than restating it, so it cannot drift
   from the rule it mirrors — it *is* the rule.
 - **Report skips.** `addopts = "-ra"`, deliberately not `-q`: a `-q` there turned the documented
   `pytest -q` into `-qq`, which suppresses the summary line entirely, and thirty-four JS tests
@@ -500,7 +500,7 @@ rule this file argues for.
 requiredness lives in one function, so nothing reading a signature can know that a gate already ran.
 `build_end` is `date | None` where `_matches_predicate` (`index.py`) compares it against `span.end`,
 although that function returned already if the cycle's window was missing — the guard is real, it
-just lives in a different expression than the call, and no checker connects the two. `Entity` has no
+just lives in a different expression than the call, and no checker connects the two. `Record` has no
 `shaped_by` at all, because `kind == "pitch"` is a runtime discriminator rather than a tagged union.
 Going green on this heap means an `assert` or a `cast` at each site, which takes the guarantee out
 of the one place this file says it lives and scatters copies of it across the callers. That is the

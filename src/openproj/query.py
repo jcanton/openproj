@@ -1,8 +1,8 @@
 """The search box's language: parsed here, and parsed again in the browser.
 
 `tag:gpu and tag:distributed` is the query the dropdowns cannot express, because
-a menu means OR within a field — two cycles selected means either, since an
-entity has one cycle and "both" is empty by construction. For `tags`,
+a menu means OR within a field — two cycles selected means either, since a
+record has one cycle and "both" is empty by construction. For `tags`,
 `assignees` and `reviewers` "both" is a real question, and this is where it is
 asked.
 

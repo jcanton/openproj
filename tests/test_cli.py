@@ -21,7 +21,7 @@ def test_check_exits_non_zero_when_the_repository_has_blockers(seed_root: Path, 
 
 
 def test_check_exits_zero_when_only_warnings_remain(tmp_path: Path):
-    entity = "\n".join(
+    record = "\n".join(
         [
             "---",
             "id: task-000001",
@@ -37,7 +37,7 @@ def test_check_exits_zero_when_only_warnings_remain(tmp_path: Path):
         ]
     )
     (tmp_path / "tasks").mkdir()
-    (tmp_path / "tasks" / "task-000001--fine.md").write_text(entity, encoding="utf-8")
+    (tmp_path / "tasks" / "task-000001--fine.md").write_text(record, encoding="utf-8")
 
     assert main(["check", str(tmp_path)]) == 0
 
@@ -45,7 +45,7 @@ def test_check_exits_zero_when_only_warnings_remain(tmp_path: Path):
 def test_check_reports_warnings_without_failing(tmp_path: Path, capsys):
     """A warning that is invisible is a warning nobody acts on, and a warning that
     fails the build is a rule that gets reverted."""
-    entity = "\n".join(
+    record = "\n".join(
         [
             "---",
             "id: task-000001",
@@ -61,7 +61,7 @@ def test_check_reports_warnings_without_failing(tmp_path: Path, capsys):
         ]
     )
     (tmp_path / "tasks").mkdir()
-    (tmp_path / "tasks" / "task-000001--orphan.md").write_text(entity, encoding="utf-8")
+    (tmp_path / "tasks" / "task-000001--orphan.md").write_text(record, encoding="utf-8")
 
     assert main(["check", str(tmp_path)]) == 0
     assert "warning" in capsys.readouterr().out
@@ -80,7 +80,7 @@ def test_schedule_json_round_trips(seed_root: Path, capsys):
     assert payload["today"]
     assert payload["spans"]["task-53a9f0"]["start"] == "2026-08-17" or True
     assert "explanations" in payload
-    assert set(payload["spans"]) <= set(payload["entities"])
+    assert set(payload["spans"]) <= set(payload["plan"])
 
 
 def test_schedule_accepts_an_explicit_today(seed_root: Path, capsys):
@@ -314,7 +314,7 @@ def test_demo_builds_a_repository_the_server_can_actually_serve(monkeypatch, cap
     assert seen["records"].status_code == 200
     assert seen["table"].status_code == 200
     assert seen["people"].status_code == 200
-    kinds = {entity["kind"] for entity in seen["index"]["entities"].values()}
+    kinds = {record["kind"] for record in seen["index"]["plan"].values()}
     assert kinds == {"project", "pitch", "task"}, "a plan the reader would find empty"
     assert "http://127.0.0.1:" in capsys.readouterr().out, "nothing told anybody where to look"
 

@@ -22,7 +22,7 @@ prs: []
 
 # MPI on CI verify with serial
 
-**Shaping doc not located during migration.** This entity is a stub built from the task-table row alone.
+**Shaping doc not located during migration.** This record is a stub built from the task-table row alone.
 
 ## What the source says
 
@@ -45,7 +45,7 @@ the corpus documents the layout as
 instead of the rank-count-matched data.
 
 That one sentence is the entire specified scope. No sub-tasks are enumerated anywhere, so no task
-entities were created.
+records were created.
 
 ## Search performed (negative result)
 

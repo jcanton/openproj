@@ -3,7 +3,7 @@
 #
 # 34 -> 35 and 36 -> 37 run back to back. The month between 2026-05-22 and
 # 2026-06-22 is deliberate and unnumbered: it is the summer conference and
-# release window, and no entity may be scheduled into it.
+# release window, and no record may be scheduled into it.
 #
 # "Today" for this demo corpus is 2026-08-17, the first working day of cycle 37.
 cycles:

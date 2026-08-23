@@ -35,9 +35,9 @@ def test_the_ladder_is_the_only_place_the_kinds_are_written_down():
     """Every map about kinds is derived from `KINDS`, in order, coarsest first.
 
     Adding `product` had to find and edit five hand-written copies of the same
-    list — `_ENTITY_DIRS` in `model.py`, `DIRECTORY` in `web.py`, `PREFIX`,
+    list — `_RECORD_DIRS` in `model.py`, `DIRECTORY` in `web.py`, `PREFIX`,
     `_KIND_MODELS` and `KINDS` in `render.py` — and the one that failed silently
-    was `_ENTITY_DIRS`: a plan holding two products loaded thirty-three records,
+    was `_RECORD_DIRS`: a plan holding two products loaded thirty-three records,
     none of them a product, with nothing reported, because a directory nobody
     walks is a directory whose files do not exist.
 
@@ -57,7 +57,7 @@ def test_the_ladder_is_the_only_place_the_kinds_are_written_down():
     assert render.KINDS == KIND_NAMES
     assert render._KIND_MODELS == {rung.name: rung.model for rung in KINDS}
     # The write path's two, which this test did not name when it was written —
-    # and which were therefore still spelled out by hand. `POST /api/entity` with
+    # and which were therefore still spelled out by hand. `POST /api/record` with
     # `kind: product` raised KeyError twice over and answered 500 on the only
     # route that can create one, on a branch whose whole subject was the ladder.
     assert web.MODELS == {rung.name: rung.model for rung in KINDS}
@@ -65,7 +65,7 @@ def test_the_ladder_is_the_only_place_the_kinds_are_written_down():
     # Every field of every kind, so a rung that declares one is writable through
     # the API on the commit that adds it.
     for rung in KINDS:
-        assert set(rung.model.model_fields) <= set(web.ENTITY_FIELDS), rung.name
+        assert set(rung.model.model_fields) <= set(web.RECORD_FIELDS), rung.name
 
 
 def test_a_product_is_the_top_and_a_project_sits_under_one():
@@ -133,10 +133,10 @@ def test_an_unknown_kind_is_still_refused():
     unknown kind has no directory, no prefix, no parent rule and no model."""
     from pydantic import ValidationError
 
-    from openproj.model import Entity
+    from openproj.model import Record
 
     with pytest.raises(ValidationError):
-        Entity(id="task-abc123", kind="epic", title="T")
+        Record(id="task-abc123", kind="epic", title="T")
 
 
 @pytest.fixture
@@ -171,23 +171,23 @@ def plan(tmp_path: Path) -> Path:
 def test_work_in_one_product_can_wait_on_work_in_another(plan: Path):
     """The whole reason for the kind. Four separate plans cannot express this at
     all; one plan expresses it as an ordinary dependency."""
-    entities, config, unreadable = load_repo(plan)
+    records, config, unreadable = load_repo(plan)
     assert not unreadable, unreadable
-    assert sorted(e.id for e in entities if e.kind == "product") == [
+    assert sorted(e.id for e in records if e.kind == "product") == [
         "prod-000001", "prod-000002",
     ]
 
-    index = build_index(entities, config, date(2026, 8, 20))
+    index = build_index(records, config, date(2026, 8, 20))
     assert index.blocked_by["pitch-000001"] == ["pitch-000002"]
 
     # And each side knows which product it is in, walking past its project.
-    assert _product_of(index.entities["pitch-000001"], index.entities) == "prod-000001"
-    assert _product_of(index.entities["pitch-000002"], index.entities) == "prod-000002"
+    assert _product_of(index.plan["pitch-000001"], index.plan) == "prod-000001"
+    assert _product_of(index.plan["pitch-000002"], index.plan) == "prod-000002"
     # `project` still means project, not "the top of the tree".
-    assert _project_of(index.entities["pitch-000001"], index.entities) == "proj-000001"
+    assert _project_of(index.plan["pitch-000001"], index.plan) == "proj-000001"
 
-    blockers = [p for p in validate_all(entities, config) if p.severity == "blocker"]
-    assert not blockers, [(p.entity_id, p.message) for p in blockers]
+    blockers = [p for p in validate_all(records, config) if p.severity == "blocker"]
+    assert not blockers, [(p.record_id, p.message) for p in blockers]
 
 
 def test_a_product_draws_no_bar_on_the_timeline(plan: Path):
@@ -196,8 +196,8 @@ def test_a_product_draws_no_bar_on_the_timeline(plan: Path):
     saying nothing the bars do not."""
     from openproj.render import ROUTES, render_timeline
 
-    entities, config, _ = load_repo(plan)
-    index = build_index(entities, config, date(2026, 8, 20))
+    records, config, _ = load_repo(plan)
+    index = build_index(records, config, date(2026, 8, 20))
 
     assert "prod-000001" not in index.spans
     assert "pitch-000001" in index.spans, "the rest of the plan stopped being scheduled"
@@ -214,8 +214,8 @@ def test_a_product_is_drawn_differently_and_shows_no_card(plan: Path):
     """
     from openproj.render import ROUTES, render_graph
 
-    entities, config, _ = load_repo(plan)
-    index = build_index(entities, config, date(2026, 8, 20))
+    records, config, _ = load_repo(plan)
+    index = build_index(records, config, date(2026, 8, 20))
     page = render_graph(index, ROUTES, base_commit="0" * 40)
 
     assert 'node[kind = "product"]' in page, "a product is drawn like everything else"
@@ -306,7 +306,7 @@ def test_a_product_can_be_made_through_the_api(tmp_path: Path):
         base = re.search(r'name="base_commit" value="([0-9a-f]{40})"', page).group(1)
 
         made = client.post(
-            "/api/entity",
+            "/api/record",
             json={"base_commit": base,
                   "fields": {"kind": "product", "title": "gt4py"},
                   "body": "The DSL under icon4py.\n"},
@@ -318,14 +318,14 @@ def test_a_product_can_be_made_through_the_api(tmp_path: Path):
 
         # And a project files under it, which is the whole point of the rung.
         index = client.get("/api/index.json").json()
-        assert index["entities"][product]["kind"] == "product"
-        project = next(i for i, e in index["entities"].items() if e["kind"] == "project")
+        assert index["plan"][product]["kind"] == "product"
+        project = next(i for i, e in index["plan"].items() if e["kind"] == "project")
         filed = client.patch(
-            f"/api/entity/{project}",
+            f"/api/record/{project}",
             json={"base_commit": index["head"], "fields": {"parent": product}, "body": None},
         )
         assert filed.status_code == 200, filed.json()
-        after = client.get("/api/index.json").json()["entities"]
+        after = client.get("/api/index.json").json()["plan"]
         assert after[project]["parent"] == product
 
 
@@ -352,7 +352,7 @@ def test_a_status_on_a_product_still_warns_rather_than_refuses(tmp_path: Path):
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
         head = client.get("/healthz").json()["head"]
         made = client.post(
-            "/api/entity",
+            "/api/record",
             json={"base_commit": head,
                   "fields": {"kind": "product", "title": "gt4py", "status": "ready"},
                   "body": "The DSL under icon4py.\n"},
@@ -362,14 +362,14 @@ def test_a_status_on_a_product_still_warns_rather_than_refuses(tmp_path: Path):
         said = [
             (p["severity"], p["field"])
             for p in client.get("/api/index.json").json()["problems"]
-            if p["entity_id"] == product
+            if p["record_id"] == product
         ]
         assert said == [("warning", "status")], said
 
 
 def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
     """`ID_PATTERN` was hand-written as three kinds while `PREFIX` three lines
-    under it was derived, so `POST /api/entity` minted `prod-` ids that
+    under it was derived, so `POST /api/record` minted `prod-` ids that
     `_directory_for` then answered 400 to: a product could be created and never
     edited or removed again. The pattern is derived from `KINDS` now; this
     drives both doors that opens.
@@ -389,7 +389,7 @@ def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
         head = client.get("/healthz").json()["head"]
         made = client.post(
-            "/api/entity",
+            "/api/record",
             json={"base_commit": head,
                   "fields": {"kind": "product", "title": "gt4py"},
                   "body": "The DSL under icon4py.\n"},
@@ -398,16 +398,16 @@ def test_a_product_can_be_patched_and_deleted(tmp_path: Path):
         product = made.json()["id"]
 
         renamed = client.patch(
-            f"/api/entity/{product}",
+            f"/api/record/{product}",
             json={"base_commit": made.json()["commit"],
                   "fields": {"title": "gt4py-next"}, "body": None},
         )
         assert renamed.status_code == 200, renamed.json()
-        entities = client.get("/api/index.json").json()["entities"]
-        assert entities[product]["title"] == "gt4py-next"
+        records = client.get("/api/index.json").json()["plan"]
+        assert records[product]["title"] == "gt4py-next"
 
         gone = client.request(
-            "DELETE", f"/api/entity/{product}",
+            "DELETE", f"/api/record/{product}",
             json={"base_commit": renamed.json()["commit"]},
         )
         assert gone.status_code == 200, gone.json()

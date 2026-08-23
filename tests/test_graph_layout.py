@@ -42,8 +42,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 # One pass over the finished drawing. Boxes and leaves are taken as arrays
@@ -264,8 +264,8 @@ def big(tmp_path: Path) -> Index:
 
     root = tmp_path / "big"
     build(root, 4, 3, 3)
-    entities, config, _ = load_repo(root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 def test_the_grouping_holds_on_a_plan_larger_than_the_real_one(big: Index, tmp_path: Path):
@@ -570,12 +570,12 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     # constraint on the same ranking than it asked for.
     build(root, 4, 3, 3, box_deps=False)
 
-    entities, config, _ = load_repo(root)
-    index = build_index(entities, config, date(2026, 8, 17))
-    projects = sorted(e for e, one in index.entities.items() if one.kind == "project")
+    records, config, _ = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 17))
+    projects = sorted(e for e, one in index.plan.items() if one.kind == "project")
     under = {
         project: sorted(
-            e for e, one in index.entities.items()
+            e for e, one in index.plan.items()
             if one.kind == "pitch" and one.parent == project
         )
         for project in projects
@@ -584,9 +584,9 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     right = under[projects[1]]
     assert len(left) >= 2 and len(right) >= 2, "the corpus is not the shape this needs"
 
-    def waits(entity_id: str, on: str) -> None:
+    def waits(record_id: str, on: str) -> None:
         """Add one dependency, keeping whatever the generator already wrote."""
-        path = next(root.glob(f"*/{entity_id}.md"))
+        path = next(root.glob(f"*/{record_id}.md"))
         text = path.read_text()
         if "depends_on:" in text:
             text = text.replace("depends_on: [", f"depends_on: [{on}, ", 1)
@@ -600,8 +600,8 @@ def test_two_boxes_that_wait_on_each_other_are_ranked_by_the_majority(tmp_path: 
     waits(right[1], left[1])
     waits(left[0], right[0])
 
-    entities, config, _ = load_repo(root)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 17))
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "mutual.html", 1900, _GEOMETRY,
                       height=820, patience=3500)

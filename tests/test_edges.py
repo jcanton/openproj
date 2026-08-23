@@ -4,7 +4,7 @@ Edit mode could only add. "What waits for what is wrong on this diagram" is one
 job, and a mode that could only do half of it was a mode you had to leave — and
 open a record — to finish the thought.
 
-Both halves are grouped by the entity that WAITS, because that is the record
+Both halves are grouped by the record that WAITS, because that is the record
 `depends_on` is stored on: an edge removed is a line taken out of the dependent's
 own file, exactly as an edge added is one put in.
 """
@@ -27,8 +27,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 @pytest.fixture
@@ -38,9 +38,9 @@ def page(index: Index) -> str:
 
 def a_dependency(index: Index) -> tuple[str, str]:
     """One edge the plan already has, as (waits, first)."""
-    for entity_id, blockers in sorted(index.blocked_by.items()):
+    for record_id, blockers in sorted(index.blocked_by.items()):
         if blockers:
-            return entity_id, blockers[0]
+            return record_id, blockers[0]
     raise AssertionError("the corpus has no dependency to remove")
 
 
@@ -80,7 +80,7 @@ def test_an_existing_dependency_can_be_taken_off_the_diagram(
     assert got["marked"], "the arrow was clicked and nothing was marked"
     assert "will be removed" in got["said"]
     assert got["canSave"], "a diagram with a removal on it could not be saved"
-    assert [call["url"] for call in got["wrote"]] == [f"/api/entity/{waits}"]
+    assert [call["url"] for call in got["wrote"]] == [f"/api/record/{waits}"]
 
     sent = got["wrote"][0]["body"]["fields"]["depends_on"]
     assert first not in sent, f"{first} is still in what was sent"
