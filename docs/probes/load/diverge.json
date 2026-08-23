@@ -1,0 +1,350 @@
+{
+  "by_phase": {
+    "1 remote reachable": {
+      "200": 10
+    },
+    "2 remote unwritable (commits stay local)": {
+      "200": 10
+    },
+    "3 after somebody else pushed": {
+      "500": 16
+    }
+  },
+  "config": {
+    "gap": 1.5,
+    "reachable_at": 15.9,
+    "seconds": 30.0,
+    "unreachable_at": 8.1,
+    "writers": 2
+  },
+  "final": {
+    "instance_head": "2a18af996f",
+    "markers_on_the_instance_only": [
+      "LMwriter0.0006",
+      "LMwriter0.0007",
+      "LMwriter0.0008",
+      "LMwriter0.0009",
+      "LMwriter0.0010",
+      "LMwriter1.0006",
+      "LMwriter1.0007",
+      "LMwriter1.0008",
+      "LMwriter1.0009",
+      "LMwriter1.0010"
+    ],
+    "origin_head": "4abf79c8bf"
+  },
+  "measured": {
+    "errors": {
+      "PATCH -> 500": 16
+    },
+    "latency_ms": {
+      "GET /": {
+        "max": 117.6,
+        "mean": 47.1,
+        "n": 10,
+        "p50": 39.0,
+        "p90": 117.6,
+        "p99": 117.6
+      },
+      "GET /api/health": {
+        "max": 65.4,
+        "mean": 7.5,
+        "n": 36,
+        "p50": 3.8,
+        "p90": 12.3,
+        "p99": 65.4
+      },
+      "GET /detail/<id>": {
+        "max": 258.2,
+        "mean": 148.3,
+        "n": 66,
+        "p50": 148.6,
+        "p90": 210.9,
+        "p99": 258.2
+      },
+      "GET /issues": {
+        "max": 136.5,
+        "mean": 58.3,
+        "n": 10,
+        "p50": 40.5,
+        "p90": 136.5,
+        "p99": 136.5
+      },
+      "GET /table": {
+        "max": 176.5,
+        "mean": 76.9,
+        "n": 11,
+        "p50": 57.9,
+        "p90": 158.1,
+        "p99": 176.5
+      },
+      "PATCH": {
+        "max": 33.4,
+        "mean": 21.9,
+        "n": 36,
+        "p50": 21.3,
+        "p90": 28.4,
+        "p99": 33.4
+      }
+    },
+    "pushed": {
+      "false": 0,
+      "true": 0,
+      "unknown": 20
+    },
+    "statuses": {
+      "GET /": {
+        "200": 10
+      },
+      "GET /api/health": {
+        "200": 36
+      },
+      "GET /detail/<id>": {
+        "200": 66
+      },
+      "GET /issues": {
+        "200": 10
+      },
+      "GET /table": {
+        "200": 11
+      },
+      "PATCH": {
+        "200": 20,
+        "500": 16
+      }
+    },
+    "throughput": {
+      "accepted_writes_per_second": 0.65,
+      "pages_per_second": 4.29,
+      "seconds": 31.0
+    },
+    "write_outcomes": {
+      "committed": 10,
+      "retried": 10
+    }
+  },
+  "probe": "diverge",
+  "reads_by_phase": {
+    "1 remote reachable": {
+      "200": 2
+    },
+    "2 remote unwritable (commits stay local)": {
+      "200": 3
+    },
+    "3 after somebody else pushed": {
+      "200": 5
+    }
+  },
+  "seed": 7,
+  "server_log_tail": "                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/fastapi/routing.py\", line 352, in run_endpoint_function\n    return await dependant.call(**values)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/src/openproj/web.py\", line 1891, in save\n    written = await asyncio.to_thread(\n              ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/src/openproj/store.py\", line 732, in write\n    return self.write_all({path: content}, base_commit, author, message)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/src/openproj/store.py\", line 799, in write_all\n    return self._attempt(files, base_commit, author, message, tries=3)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/src/openproj/store.py\", line 894, in _attempt\n    self._absorb_remote()\n  File \"/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/src/openproj/store.py\", line 916, in _absorb_remote\n    raise StoreDiverged(\nopenproj.store.StoreDiverged: local 2a18af9 and remote 4abf79c have both moved; refusing to guess which commits to discard\nINFO:     127.0.0.1:62863 - \"GET /table HTTP/1.1\" 200 OK",
+  "strays": [],
+  "timeline": [
+    {
+      "at": 8.1,
+      "what": "origin made unwritable: every push from here fails while the commit succeeds"
+    },
+    {
+      "at": 15.9,
+      "instance_head": "2a18af996f",
+      "instance_was_ahead_by": 10,
+      "origin_head_before": "124eef9bb8",
+      "pushed_ok": true,
+      "terminal_commit": "4abf79c8bf",
+      "what": "origin writable again, and a person pushed to it"
+    }
+  ],
+  "verification": {
+    "checks": {
+      "authors": {
+        "jcanton": 10,
+        "nfarabullini": 10,
+        "openproj-bot": 1
+      },
+      "coeditors": [],
+      "conflict_markers": {
+        "commits_walked": 21,
+        "found": []
+      },
+      "fields": {
+        "checked": 2,
+        "invented": []
+      },
+      "form_writes": {
+        "ambiguous_absent": 16,
+        "ambiguous_present": 0,
+        "committed": 20,
+        "lost": 0,
+        "refused": 0,
+        "refused_but_present": 0
+      },
+      "fsck": {
+        "origin": {
+          "output": "",
+          "returncode": 0
+        },
+        "plan": {
+          "output": "dangling commit 089060a542f4e38488d7acc31475a105a6a01dda\ndangling commit 08ca923abf618729d60972a93e03333711b467f8\ndangling commit 17cc8c75204c60fa0e4f600ead80c0a8ce9674d6\ndangling commit 51b6d7113bf8b339fc8e90eec6113e5d7f349874\ndangling commit c400cb2d86d68b8929b59e17997dde1204052c0b\ndangling commit cad46b4986fcc443c72a21dc8efa0a4411864ff0\ndangling commit d69acfe9836be5e2029e4839fb1612d91bd4ec37\ndangling commit 00639ed5543529e6ffbf980c20a3d378b8f4cd17\ndangling commit 143b951026bff56e952acbdc629f7bc115a745fe\ndangling commit 2d75d557fcd23688ae403bf37d7cfec5ca21cf9c\ndangling commit 300758ffcc8c94514f5e04d6d3f30a94d21f721e\ndangling commit 5b23215df4ace612d123c22cea8ef242c1d7cf3c\ndangling commit 77abb465ed1bf7d5cf33776f51cf646b0cb19beb\ndangling commit 9de58ad4e91a6fe0292152bdf886f5533e7286cb\ndangling commit b7ddd0d13dd80bde4c2e0b47b81b2901ea273d3b\ndangling commit c965d4af81eb6194d3e67a2ed236d3503cfd3f9e",
+          "returncode": 0
+        }
+      },
+      "head": "2a18af996f",
+      "parses": {
+        "blockers": 9,
+        "blockers_before": 9,
+        "records": 41,
+        "unreadable": [],
+        "unreadable_before": 0,
+        "warnings": 33
+      },
+      "push": {
+        "equal": false,
+        "forked": true,
+        "local": "2a18af996f",
+        "origin": "4abf79c8bf",
+        "unpushed_commits": 10
+      }
+    },
+    "findings": [
+      {
+        "detail": null,
+        "severity": "REPO DIVERGED",
+        "what": "local and origin have both moved and neither contains the other"
+      },
+      {
+        "detail": [
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0011",
+            "outcome": null,
+            "person_weeks": 3.0,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0012",
+            "outcome": null,
+            "person_weeks": 3.5,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0013",
+            "outcome": null,
+            "person_weeks": 4.0,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0014",
+            "outcome": null,
+            "person_weeks": 1.0,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0015",
+            "outcome": null,
+            "person_weeks": 1.5,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0016",
+            "outcome": null,
+            "person_weeks": 2.0,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0017",
+            "outcome": null,
+            "person_weeks": 2.5,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000000",
+            "in_tree": false,
+            "marker": "LMwriter0.0018",
+            "outcome": null,
+            "person_weeks": 3.0,
+            "status": "500",
+            "who": "writer-0"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000001",
+            "in_tree": false,
+            "marker": "LMwriter1.0011",
+            "outcome": null,
+            "person_weeks": 3.0,
+            "status": "500",
+            "who": "writer-1"
+          },
+          {
+            "base": "2a18af996fef9c36ad377b96835b55c5225a9b73",
+            "commit": null,
+            "entity": "task-000001",
+            "in_tree": false,
+            "marker": "LMwriter1.0012",
+            "outcome": null,
+            "person_weeks": 3.5,
+            "status": "500",
+            "who": "writer-1"
+          }
+        ],
+        "severity": "AMBIGUOUS",
+        "what": "16 form saves were answered neither 200 nor 409; 0 of them landed in git anyway"
+      },
+      {
+        "detail": null,
+        "severity": "note",
+        "what": "9 validation blockers, all of them already in the corpus this run started from"
+      }
+    ],
+    "lost_data": true,
+    "ok": false
+  },
+  "world": {
+    "base_commit": "f60c4dd131",
+    "corpus": "corpus",
+    "env": {},
+    "port": 8900,
+    "records": 41,
+    "remote": "file://origin.git",
+    "rtt_ms": 0.0,
+    "size": "small",
+    "startup_seconds": 0.44,
+    "work": "/var/folders/r9/bm7bmxxj1nlfq0w1lzk458lm0000gq/T/openproj-load-4efup5gl"
+  }
+}
