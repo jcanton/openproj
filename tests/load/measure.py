@@ -31,7 +31,7 @@ class Action:
     outcome: str | None = None  # the store's own word: committed/merged/retried/conflict
     commit: str | None = None
     pushed: bool | None = None
-    entity: str | None = None
+    record: str | None = None
     marker: str | None = None
     note: str | None = None
 

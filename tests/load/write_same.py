@@ -132,13 +132,13 @@ def seeded_body(original: str, lanes: int) -> str:
 class Save:
     """One form save. Shaped so `verify.py`'s own checks can read it.
 
-    `who`/`entity`/`marker`/`status`/`outcome`/`commit`/`person_weeks`/`base` are
+    `who`/`record`/`marker`/`status`/`outcome`/`commit`/`person_weeks`/`base` are
     the fields `verify.form_changes` and `verify.fields_are_values_somebody_sent`
     require; `field`/`value`/`lane` are this file's own.
     """
 
     who: str
-    entity: str
+    record: str
     marker: str
     status: str
     outcome: str | None
@@ -184,7 +184,7 @@ class SameRecordWriter(users.FormWriter):
         not cosmetic: `verify.form_changes` decides "committed or LOST" by
         looking for the marker in the final file, so a marker the save never
         wrote reports every one of that writer's saves as lost data. The
-        `depends_on` lane appends a real entity id — an edge to a record that
+        `depends_on` lane appends a real record id — an edge to a record that
         does not exist is dropped from the index — and judging it by `WS04.0007`
         called 13 honest merges a loss on the first run of this file.
         """
@@ -264,7 +264,7 @@ class SameRecordWriter(users.FormWriter):
         begun = time.monotonic()
         status, outcome, commit = "", None, None
         try:
-            answer = self.client.patch(f"/api/entity/{self.entity}", json=payload)
+            answer = self.client.patch(f"/api/record/{self.record}", json=payload)
             status = str(answer.status_code)
             if answer.status_code in (200, 409):
                 got = answer.json()
@@ -272,9 +272,9 @@ class SameRecordWriter(users.FormWriter):
         except Exception as error:  # noqa: BLE001 - a driver thread may not take the run down
             status = type(error).__name__
         self.note(kind="PATCH", ms=(time.monotonic() - begun) * 1000, status=status,
-                  outcome=outcome, commit=commit, entity=self.entity, marker=marker)
+                  outcome=outcome, commit=commit, record=self.record, marker=marker)
         self.saves.append(
-            Save(self.who, self.entity, marker, status, outcome, commit,
+            Save(self.who, self.record, marker, status, outcome, commit,
                  weeks if isinstance(weeks, int | float) else None,
                  base, self.field, value, self.lane)
         )
@@ -508,7 +508,7 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
         keep=False,
         remote=True,
     ) as world:
-        ids = world.entity_ids("task-")
+        ids = world.record_ids("task-")
         target = ids[0]
         head = harness.head_of(world.plan)
         path = harness.record_paths(world.plan, head)[target]
@@ -526,7 +526,7 @@ def run_one(variant: str, args: argparse.Namespace) -> dict:
             person = SameRecordWriter(
                 f"writer-{i}", harness.PEOPLE[i % len(harness.PEOPLE)], world, ledger,
                 args.seed, 0.0, zero,
-                entity=target, gap=args.gap, gap_max=args.gap_max,
+                record=target, gap=args.gap, gap_max=args.gap_max,
                 variant=variant, index=i, path=path,
             )
             person.pool = [x for x in ids if x != target][:400]
@@ -622,7 +622,7 @@ def seed_the_lanes(world: harness.Harness, target: str, path: str, head: str,
     source = harness.read_blob(world.plan, head, path) or ""
     _, body = split_front_matter(source)
     answer = httpx.patch(
-        f"{world.base}/api/entity/{target}",
+        f"{world.base}/api/record/{target}",
         json={"base_commit": head, "fields": {}, "body": seeded_body(body, lanes)},
         headers={"cookie": harness.cookie_for("jcanton")},
         timeout=60.0,

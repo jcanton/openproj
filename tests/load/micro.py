@@ -26,7 +26,7 @@ import corpus  # noqa: E402
 
 from openproj.index import build_index  # noqa: E402
 from openproj.store import Store  # noqa: E402
-from openproj.web import _config_at, _entities_at  # noqa: E402
+from openproj.web import _config_at, _records_at  # noqa: E402
 
 TODAY = date(2026, 8, 17)
 
@@ -58,18 +58,18 @@ def main(scratch: Path):
             count = len(store.blobs(head))
             print(f"\n=== {count} files in the tree ({size}) ===")
             timed("store.head()  (reopens the Repository)", store.head, 200)
-            timed("store.blobs(head)  (whole tree walk)", lambda: store.blobs(head))
-            timed("_entities_at (warm parse cache)", lambda: _entities_at(store, head))
-            entities, unreadable = _entities_at(store, head)
+            timed("store.blobs(head)  (whole tree walk)", lambda s=store, h=head: s.blobs(h))
+            timed("_records_at (warm parse cache)", lambda s=store, h=head: _records_at(s, h))
+            records, unreadable = _records_at(store, head)
             config, _ = _config_at(store, head)
             timed(
-                "build_index(entities, config, today)",
-                lambda: build_index(entities, config, TODAY, unreadable),
+                "build_index(records, config, today)",
+                lambda r=records, c=config, u=unreadable: build_index(r, c, TODAY, u),
             )
 
-            def whole():
-                config2, u1 = _config_at(store, head)
-                ents, u2 = _entities_at(store, head)
+            def whole(s=store, h=head):
+                config2, u1 = _config_at(s, h)
+                ents, u2 = _records_at(s, h)
                 return build_index(ents, config2, TODAY, [*u1, *u2])
 
             timed("full index rebuild (warm parse cache)", whole, 10)

@@ -151,18 +151,18 @@ class Reader(Person):
                 self.fetch(page, f"GET {page}")
                 if not self.more():
                     return
-                entity = self.ids[turn % len(self.ids)]
-                self.fetch(f"/detail/{entity}", "GET /detail/<id>", entity)
+                record = self.ids[turn % len(self.ids)]
+                self.fetch(f"/detail/{record}", "GET /detail/<id>", record)
                 turn += 1
 
-    def fetch(self, path: str, kind: str, entity: str | None = None) -> None:
+    def fetch(self, path: str, kind: str, record: str | None = None) -> None:
         begun = time.monotonic()
         try:
             answer = self.client.get(path)
             status = str(answer.status_code)
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
-        self.note(kind=kind, ms=(time.monotonic() - begun) * 1000, status=status, entity=entity)
+        self.note(kind=kind, ms=(time.monotonic() - begun) * 1000, status=status, record=record)
         time.sleep(self.think)
 
 
@@ -171,7 +171,7 @@ class Sent:
     """One form save, as the harness knows it — the row `verify.py` judges."""
 
     who: str
-    entity: str
+    record: str
     marker: str
     status: str
     outcome: str | None
@@ -204,10 +204,10 @@ class FormWriter(Person):
     # is what a person aims at. Falls back to line 1 on a body that has none.
     ANCHOR = "## Rabbit holes"
 
-    def __init__(self, *args, entity: str, gap: float = 2.0, gap_max: float | None = None,
+    def __init__(self, *args, record: str, gap: float = 2.0, gap_max: float | None = None,
                  stale: bool = False, style: str = "append", **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.entity = entity
+        self.record = record
         self.gap = gap
         # A range, not a constant. Twenty people who all pause for exactly the
         # same number of seconds are twenty people who arrive at the writer lock
@@ -226,7 +226,7 @@ class FormWriter(Person):
 
     def work(self) -> None:
         paths = harness.record_paths(self.world.plan, harness.head_of(self.world.plan))
-        path = paths[self.entity]
+        path = paths[self.record]
         n = 0
         with self.client:
             while self.more():
@@ -239,7 +239,7 @@ class FormWriter(Person):
                     continue
                 body = harness.read_blob(self.world.plan, base, path)
                 if body is None:
-                    self.note(kind="PATCH", ms=0.0, status="no-such-blob", entity=self.entity)
+                    self.note(kind="PATCH", ms=0.0, status="no-such-blob", record=self.record)
                     continue
                 self.save(base, body, n)
                 time.sleep(self.pause())
@@ -257,12 +257,12 @@ class FormWriter(Person):
     def open_page(self) -> None:
         begun = time.monotonic()
         try:
-            answer = self.client.get(f"/detail/{self.entity}")
+            answer = self.client.get(f"/detail/{self.record}")
             status = str(answer.status_code)
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
         self.note(kind="GET /detail/<id>", ms=(time.monotonic() - begun) * 1000,
-                  status=status, entity=self.entity)
+                  status=status, record=self.record)
 
     def base_commit(self) -> str | None:
         if self.stale and self.held:
@@ -297,7 +297,7 @@ class FormWriter(Person):
         begun = time.monotonic()
         status, outcome, commit = "", None, None
         try:
-            answer = self.client.patch(f"/api/entity/{self.entity}", json=payload)
+            answer = self.client.patch(f"/api/record/{self.record}", json=payload)
             status = str(answer.status_code)
             if answer.status_code in (200, 409):
                 got = answer.json()
@@ -305,8 +305,8 @@ class FormWriter(Person):
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
         self.note(kind="PATCH", ms=(time.monotonic() - begun) * 1000, status=status,
-                  outcome=outcome, commit=commit, entity=self.entity, marker=marker)
-        self.sent.append(Sent(self.who, self.entity, marker, status, outcome, commit, weeks, base))
+                  outcome=outcome, commit=commit, record=self.record, marker=marker)
+        self.sent.append(Sent(self.who, self.record, marker, status, outcome, commit, weeks, base))
 
     def marker(self, n: int) -> str:
         return f"LM{self.who.replace('-', '')}.{n:04d}"
@@ -383,7 +383,7 @@ class Typed:
 
     who: str
     login: str
-    entity: str
+    record: str
     anchor: str
     expected: str = ""
     saves: list[dict] = field(default_factory=list)
@@ -443,7 +443,7 @@ class CoEditor(Person):
     def __init__(
         self,
         *args,
-        entity: str,
+        record: str,
         client_id: int,
         seed: int,
         save_every: float = 0.0,
@@ -451,7 +451,7 @@ class CoEditor(Person):
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.entity = entity
+        self.record = record
         self.client_id = client_id
         self.save_every = save_every
         self.save_at_end = save_at_end
@@ -459,7 +459,7 @@ class CoEditor(Person):
         self.stream = ALPHABET[(client_id - 1000) % len(ALPHABET) :] + ALPHABET
         self.typed = 0
         self.member: Typist | None = None
-        self.result = Typed(self.who, self.login, entity, self.anchor)
+        self.result = Typed(self.who, self.login, record, self.anchor)
 
     # -- joining, before the clock starts -----------------------------------
 
@@ -476,10 +476,10 @@ class CoEditor(Person):
         """
         begun = time.monotonic()
         self.member = self.TYPIST(
-            self.world.port, self.login, self.entity, self.client_id, applies=True
+            self.world.port, self.login, self.record, self.client_id, applies=True
         )
         self.note(kind="WS join", ms=(time.monotonic() - begun) * 1000, status="joined",
-                  entity=self.entity)
+                  record=self.record)
         self.result.joined = True
         planting = self.planted()
         if not planting:
@@ -505,7 +505,7 @@ class CoEditor(Person):
             else:
                 self.result.trouble.append(f"{answer} at {self.typed} typed")
             self.note(kind="WS keystroke", ms=(time.monotonic() - begun) * 1000,
-                      status=answer, entity=self.entity)
+                      status=answer, record=self.record)
             if self.member.gone:
                 self.result.trouble.append(f"socket gone: {self.member.gone}")
                 return
@@ -554,7 +554,7 @@ class CoEditor(Person):
             outcome=answer.get("outcome"),
             commit=answer.get("commit"),
             pushed=answer.get("pushed"),
-            entity=self.entity,
+            record=self.record,
             note=answer.get("why"),
         )
         record = {"t": answer.get("t"), "outcome": answer.get("outcome"),

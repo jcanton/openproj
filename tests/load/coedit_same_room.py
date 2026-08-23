@@ -240,7 +240,7 @@ class RoomTypist(users.CoEditor):
             else:
                 self.result.trouble.append(f"{answer} after {self.after} code points")
             self.note(kind="WS keystroke", ms=(wire - pressed) * 1000, status=answer,
-                      entity=self.entity)
+                      record=self.record)
             if self.member.gone:
                 self.result.trouble.append(f"socket gone: {self.member.gone}")
                 return
@@ -524,7 +524,7 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
 
     with harness.Harness(seed=args.seed, rtt_ms=rtt_ms, corpus="corpus",
                          size=args.size, remote=True) as world:
-        ids = world.entity_ids("task-")
+        ids = world.record_ids("task-")
         if not ids:
             raise SystemExit("the corpus has no tasks to aim at")
         target = ids[0]
@@ -542,7 +542,7 @@ def one_run(name: str, *, args, seconds: float, save_after: float | None,
                 RoomTypist(
                     f"coeditor-{i:02d}", LOGINS[i % len(LOGINS)], world, ledger,
                     args.seed, 0.0, zero,
-                    entity=target, client_id=1000 + i, seed=args.seed,
+                    record=target, client_id=1000 + i, seed=args.seed,
                     save_every=0.0, save_at_end=False,
                     pieces=pieces, pings=pings, pings_lock=pings_lock,
                     save_after=save_after if i == 0 else None,

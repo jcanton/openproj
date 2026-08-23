@@ -1,6 +1,6 @@
 """A form Save landing on a record a room is holding, and what happens next.
 
-The room is a cache. `PATCH /api/entity` (`web.py:1812`) knows nothing about it:
+The room is a cache. `PATCH /api/record` (`web.py:1812`) knows nothing about it:
 it reads `original = store.read(base, path)` off git, patches, and writes. So a
 tab whose socket never opened — a proxy that dropped the upgrade, a tab the room
 evicted, `curl`, the CLI, somebody's terminal — writes the whole body against a
@@ -20,7 +20,7 @@ B. **What the room does afterwards.** The room's `base` did not move, so its
    for ever, with the text living only in one process's memory.
 
 C. **Whether a refused room ever gets out of it.** Reloading the page rejoins
-   the same `Room` object (it is keyed on the entity id and lives in a dict), and
+   the same `Room` object (it is keyed on the record id and lives in a dict), and
    the join-time absorb is gated on `not room.pending()` (`web.py:2767`), which
    is false for exactly the room that is stuck. So a reload does not clear it.
 """
@@ -44,11 +44,11 @@ TASK = "task-000000"
 PATH = "tasks/task-000000--task-1.md"
 
 
-def patch(port: int, entity_id: str, login: str, body: str, base: str) -> tuple[int, str]:
+def patch(port: int, record_id: str, login: str, body: str, base: str) -> tuple[int, str]:
     token = sign_session(User(login=login, member=True), SECRET)
     payload = json.dumps({"body": body, "base_commit": base, "fields": {}}).encode()
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/entity/{entity_id}",
+        f"http://127.0.0.1:{port}/api/record/{record_id}",
         data=payload,
         method="PATCH",
         headers={"content-type": "application/json", "cookie": f"{SESSION_COOKIE}={token}"},

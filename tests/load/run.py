@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         keep=args.keep,
         remote=not args.no_remote,
     ) as world:
-        ids = world.entity_ids("task-")
+        ids = world.record_ids("task-")
         if len(ids) < 2:
             raise SystemExit("the corpus has no tasks to aim at")
         # What the plan looked like before anybody touched it. A generated corpus
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         for i in range(editors):
             person = users.CoEditor(
                 f"coeditor-{i}", login(), world, ledger, args.seed, 0.0, zero,
-                entity=room_ids[i],
+                record=room_ids[i],
                 client_id=1000 + i,
                 seed=args.seed,
                 save_every=args.coedit_save_every,
@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
                 style = "insert" if i % 2 == 0 else "replace"
             person = users.FormWriter(
                 f"writer-{i}", login(), world, ledger, args.seed, 0.0, zero,
-                entity=writer_ids[i], gap=args.gap, gap_max=args.gap_max,
+                record=writer_ids[i], gap=args.gap, gap_max=args.gap_max,
                 stale=args.stale, style=style,
             )
             formwriters.append(person)

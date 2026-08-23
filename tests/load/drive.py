@@ -67,7 +67,10 @@ async def reader(client, base, deadline, tally, page="/"):
             r = await client.get(base + page)
             tally.hit(f"GET {page}", (time.monotonic() - begun) * 1000, f"read {r.status_code}")
         except Exception as error:  # noqa: BLE001
-            tally.hit(f"GET {page}", (time.monotonic() - begun) * 1000, f"read {type(error).__name__}")
+            tally.hit(
+                f"GET {page}", (time.monotonic() - begun) * 1000,
+                f"read {type(error).__name__}",
+            )
         await asyncio.sleep(0.2)
 
 
@@ -76,7 +79,7 @@ async def head_commit(client, base):
     return r.json().get("head")
 
 
-async def writer(client, base, deadline, tally, entity_id, gap, stale):
+async def writer(client, base, deadline, tally, record_id, gap, stale):
     """One person saving one record, over and over.
 
     `stale` keeps the base_commit from the FIRST read for the whole run, which
@@ -91,7 +94,7 @@ async def writer(client, base, deadline, tally, entity_id, gap, stale):
         begun = time.monotonic()
         try:
             r = await client.patch(
-                f"{base}/api/entity/{entity_id}",
+                f"{base}/api/record/{record_id}",
                 json={
                     "base_commit": held,
                     "fields": {"person_weeks": 1.0 + (n % 7) * 0.5},
@@ -131,7 +134,7 @@ async def main():
     limits = httpx.Limits(max_connections=200, max_keepalive_connections=200)
     async with httpx.AsyncClient(timeout=60.0, limits=limits) as client:
         index = (await client.get(base + "/api/index.json")).json()
-        ids = sorted(i for i in index["entities"] if i.startswith("task-"))
+        ids = sorted(i for i in index["records"] if i.startswith("task-"))
         deadline = time.monotonic() + seconds
         tally = Tally()
         jobs = []

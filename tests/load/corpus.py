@@ -76,7 +76,7 @@ def files(pitches: int, tasks_each: int, notes: int, issues: int) -> dict[str, s
         out[f"pitches/{pid}--pitch-{p}.md"] = _record(
             pid, "pitch", f"Pitch number {p}", "proj-000001", "todo", p, 4.0
         )
-        for t in range(tasks_each):
+        for _t in range(tasks_each):
             tid = f"task-{n:06x}"
             n += 1
             out[f"tasks/{tid}--task-{n}.md"] = _record(

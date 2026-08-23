@@ -59,12 +59,12 @@ def burst(url, n):
     return wall, good
 
 
-def patch(base, entity_id, head, weeks):
+def patch(base, record_id, head, weeks):
     body = json.dumps(
         {"base_commit": head, "fields": {"person_weeks": weeks}, "body": None}
     ).encode()
     request = urllib.request.Request(
-        f"{base}/api/entity/{entity_id}", data=body, method="PATCH",
+        f"{base}/api/record/{record_id}", data=body, method="PATCH",
         headers={"content-type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=120) as response:
@@ -79,14 +79,14 @@ def main():
 
     with urllib.request.urlopen(url, timeout=120) as response:
         index = json.load(response)
-    entity_id = sorted(i for i in index["entities"] if i.startswith("task-"))[0]
+    record_id = sorted(i for i in index["records"] if i.startswith("task-"))[0]
 
     rounds = []
     for k in range(4):
         get(url, [])  # warm the memo
         warm_wall, warm = burst(url, n)
         head = json.load(urllib.request.urlopen(f"{base}/api/health", timeout=30))["head"]
-        patch(base, entity_id, head, 1.0 + k * 0.5)
+        patch(base, record_id, head, 1.0 + k * 0.5)
         cold_wall, cold = burst(url, n)
         rounds.append(
             {

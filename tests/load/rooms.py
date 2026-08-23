@@ -45,9 +45,9 @@ def health_prober(host, port, deadline, out, stop):
         time.sleep(0.05)
 
 
-def presser(host, port, entity_id, deadline, gap, results, stop):
+def presser(host, port, record_id, deadline, gap, results, stop):
     try:
-        client = Client(host, port, f"/api/coedit/{entity_id}")
+        client = Client(host, port, f"/api/coedit/{record_id}")
     except Exception as error:  # noqa: BLE001
         results.append(("open-failed", str(error)))
         return
@@ -79,7 +79,7 @@ def main():
 
     with urllib.request.urlopen(f"http://{host}:{port}/api/index.json", timeout=30) as r:
         index = json.load(r)
-    ids = sorted(i for i in index["entities"] if i.startswith("task-"))[:n_rooms]
+    ids = sorted(i for i in index["records"] if i.startswith("task-"))[:n_rooms]
 
     stop = threading.Event()
     deadline = time.monotonic() + seconds

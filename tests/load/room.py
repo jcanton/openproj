@@ -173,7 +173,7 @@ class Member:
         self,
         port: int,
         login: str,
-        entity_id: str,
+        record_id: str,
         client_id: int,
         applies: bool = False,
         receive_buffer: int = 0,
@@ -189,7 +189,7 @@ class Member:
         self.client = Client(
             "127.0.0.1",
             port,
-            f"/api/coedit/{entity_id}",
+            f"/api/coedit/{record_id}",
             cookie=f"{SESSION_COOKIE}={token}",
             receive_buffer=receive_buffer,
         )

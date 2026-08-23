@@ -332,10 +332,10 @@ class Harness:
         ).stdout.strip()
         return round(float(out) / 1024, 1) if out else 0.0
 
-    def entity_ids(self, prefix: str = "task-") -> list[str]:
+    def record_ids(self, prefix: str = "task-") -> list[str]:
         """The ids a driver may aim at, sorted so two runs pick the same ones."""
         payload = httpx.get(f"{self.base}/api/index.json", timeout=30.0).json()
-        return sorted(i for i in payload["entities"] if i.startswith(prefix))
+        return sorted(i for i in payload["records"] if i.startswith(prefix))
 
     def describe(self) -> dict:
         return {
@@ -388,7 +388,7 @@ def read_blob(repo: Path, commit: str, path: str) -> str | None:
 
 
 def record_paths(repo: Path, commit: str) -> dict[str, str]:
-    """`{entity id: path}` at a commit.
+    """`{record id: path}` at a commit.
 
     The same rule `web.py:_path_for` uses — a record's file is `<id>.md` or
     `<id>--<slug>.md` inside its kind's directory — asked of `record_paths_in`

@@ -79,9 +79,8 @@ def main(scratch: Path) -> None:
     app.state.warm_edited()
 
     with TestClient(app) as client:
-        head = client.get("/api/health").json()["head"]
         index = client.get("/api/index.json").json()
-        entity_id = sorted(i for i in index["entities"] if i.startswith("task-"))[0]
+        record_id = sorted(i for i in index["records"] if i.startswith("task-"))[0]
 
         def measure(label, call, repeat=5):
             call()  # warm every cache the app has
@@ -98,7 +97,7 @@ def main(scratch: Path) -> None:
         measure("GET /  (the landing list)", lambda: client.get("/"))
         measure("GET /table", lambda: client.get("/table"))
         measure("GET /api/index.json", lambda: client.get("/api/index.json"))
-        measure("GET /detail/<id>", lambda: client.get(f"/detail/{entity_id}"))
+        measure("GET /detail/<id>", lambda: client.get(f"/detail/{record_id}"))
 
         # The write, one at a time, each against a base read fresh. Counted
         # separately because the index cache is COLD for it by construction:
@@ -109,20 +108,20 @@ def main(scratch: Path) -> None:
             state["n"] += 1
             current = client.get("/api/health").json()["head"]
             client.patch(
-                f"/api/entity/{entity_id}",
+                f"/api/record/{record_id}",
                 json={"base_commit": current,
                       "fields": {"person_weeks": 1.0 + state["n"] % 5 * 0.5},
                       "body": None},
             )
 
-        measure("PATCH /api/entity/<id> (+ the /api/health before it)", one_patch)
+        measure("PATCH /api/record/<id> (+ the /api/health before it)", one_patch)
 
         # And the read that follows it, which is the one that pays for the write.
         def patch_then_read():
             state["n"] += 1
             current = client.get("/api/health").json()["head"]
             client.patch(
-                f"/api/entity/{entity_id}",
+                f"/api/record/{record_id}",
                 json={"base_commit": current,
                       "fields": {"person_weeks": 1.0 + state["n"] % 5 * 0.5},
                       "body": None},

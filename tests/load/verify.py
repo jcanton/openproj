@@ -105,7 +105,7 @@ def coedit_characters(verdict: Verdict, plan: Path, head: str, typed: list) -> N
     files, _ = _final_bodies(plan, head)
     rows = []
     for one in typed:
-        text = files.get(one.entity, "")
+        text = files.get(one.record, "")
         expected = one.expected
         anchor = one.anchor
         at = text.find(anchor)
@@ -121,7 +121,7 @@ def coedit_characters(verdict: Verdict, plan: Path, head: str, typed: list) -> N
         rows.append(
             {
                 "who": one.who,
-                "entity": one.entity,
+                "record": one.record,
                 "typed": wanted,
                 "committed": landed,
                 "anchor_in_tree": at >= 0,
@@ -132,7 +132,7 @@ def coedit_characters(verdict: Verdict, plan: Path, head: str, typed: list) -> N
         if wanted and landed < wanted:
             verdict.say(
                 LOST,
-                f"{one.who} typed {wanted} characters into {one.entity} and "
+                f"{one.who} typed {wanted} characters into {one.record} and "
                 f"{wanted - landed} of them are not in the plan",
                 rows[-1],
             )
@@ -147,7 +147,7 @@ def form_changes(verdict: Verdict, plan: Path, head: str, sent: list) -> None:
               "ambiguous_absent": 0, "refused_but_present": 0}
     lost, ambiguous = [], []
     for one in sent:
-        text = files.get(one.entity, "")
+        text = files.get(one.record, "")
         present = one.marker in text
         accepted = one.status == "200" and one.outcome in ("committed", "merged", "retried")
         if accepted:
@@ -296,15 +296,15 @@ def snapshot(plan: Path) -> dict:
             ["git", "clone", "--quiet", str(plan), str(where / "plan")],
             check=True, capture_output=True,
         )
-        entities, config, unreadable = load_repo(where / "plan")
-        problems = validate_all(entities, config)
+        records, config, unreadable = load_repo(where / "plan")
+        problems = validate_all(records, config)
         blockers = [p for p in problems if p.severity == "blocker"]
         return {
-            "records": len(entities),
+            "records": len(records),
             "unreadable": [{"path": u.path, "why": u.why} for u in unreadable],
             "blockers": len(blockers),
             "warnings": len(problems) - len(blockers),
-            "blocker_lines": [f"{p.entity_id}: {p.field}: {p.message}" for p in blockers[:10]],
+            "blocker_lines": [f"{p.record_id}: {p.field}: {p.message}" for p in blockers[:10]],
         }
     finally:
         shutil.rmtree(where, ignore_errors=True)
@@ -387,19 +387,19 @@ def fields_are_values_somebody_sent(verdict: Verdict, plan: Path, head: str, sen
     files, paths = _final_bodies(plan, head)
     wanted: dict[str, set[float]] = {}
     for one in sent:
-        wanted.setdefault(one.entity, set()).add(one.person_weeks)
+        wanted.setdefault(one.record, set()).add(one.person_weeks)
     invented = []
-    for entity, values in wanted.items():
-        text = files.get(entity)
+    for record, values in wanted.items():
+        text = files.get(record)
         if text is None:
             continue
         try:
-            record = parse_text(text, paths[entity])
+            record = parse_text(text, paths[record])
         except ValueError as error:
-            verdict.say(BROKEN, f"{entity} no longer parses: {error}")
+            verdict.say(BROKEN, f"{record} no longer parses: {error}")
             continue
         if record.person_weeks is not None and record.person_weeks not in values:
-            invented.append({"entity": entity, "final": record.person_weeks,
+            invented.append({"record": record, "final": record.person_weeks,
                              "sent": sorted(values)})
     verdict.checks["fields"] = {"checked": len(wanted), "invented": invented}
     if invented:

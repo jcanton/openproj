@@ -22,7 +22,7 @@ push race); does anything DIVERGE; and does anybody's write get lost while
 This is not a contrived shape. `render.py` line 13769 is
 `if (COEDIT.live()) { COEDIT.save(fields); return; }` — the record page routes
 Save through the socket *while the socket is up*, and down the plain
-`PATCH /api/entity` road with `SURFACE.text()` as the body when it is not. Cloud
+`PATCH /api/record` road with `SURFACE.text()` as the body when it is not. Cloud
 Run's `--timeout 300` closes every websocket every five minutes, so "my socket
 is gone and my textarea still holds what I could see" is the ordinary state of
 one tab in the room several times an hour. `saved` frames move that tab's
@@ -125,7 +125,7 @@ class Push:
     """One `git push` made by a person, and what the running service did about it."""
 
     at_second: float
-    entity: str
+    record: str
     marker: str
     sha: str | None
     attempts: int
@@ -178,19 +178,19 @@ class Terminal(threading.Thread):
         try:
             client = httpx.Client(base_url=self.base_url, timeout=60.0)
             with client:
-                for n, (at, entity) in enumerate(self.schedule, start=1):
+                for n, (at, record) in enumerate(self.schedule, start=1):
                     wait = (self.zero + at) - time.monotonic()
                     if wait > 0:
                         time.sleep(wait)
                     marker = f"TM{n:02d}"
-                    record = self._push(at, entity, marker)
+                    record = self._push(at, record, marker)
                     self.pushes.append(record)
                     if record.sha:
                         self._watch(record, client)
         except Exception as error:  # noqa: BLE001 - an injector may not take the run down
             self.failed = f"{type(error).__name__}: {error}"
 
-    def _push(self, at: float, entity: str, marker: str) -> Push:
+    def _push(self, at: float, record: str, marker: str) -> Push:
         """Fetch, edit, commit, push. Retried, because five other writers are
         pushing to the same ref and a person would just run it again."""
         last = ""
@@ -198,7 +198,7 @@ class Terminal(threading.Thread):
             _git("fetch", "--quiet", "origin", "main", cwd=self.clone)
             _git("reset", "--hard", "--quiet", "FETCH_HEAD", cwd=self.clone)
             paths = harness.record_paths(self.origin, harness.head_of(self.origin))
-            where = self.clone / paths[entity]
+            where = self.clone / paths[record]
             text = where.read_text(encoding="utf-8")
             # At the very end of the file, which is where a person adds a
             # checklist item — and which is the same line a form writer's append
@@ -209,19 +209,19 @@ class Terminal(threading.Thread):
                 encoding="utf-8",
             )
             _git("add", "-A", cwd=self.clone)
-            _git("commit", "-q", "-m", f"{entity}: {marker} from a terminal", cwd=self.clone)
+            _git("commit", "-q", "-m", f"{record}: {marker} from a terminal", cwd=self.clone)
             sha = _git("rev-parse", "HEAD", cwd=self.clone).stdout.strip()
             done = _git("push", "--quiet", "origin", "HEAD:main", cwd=self.clone, check=False)
             if done.returncode == 0:
                 return Push(
                     at_second=round(time.monotonic() - self.zero, 2),
-                    entity=entity, marker=marker, sha=sha, attempts=attempt + 1,
+                    record=record, marker=marker, sha=sha, attempts=attempt + 1,
                     pushed_ok=True, origin_head_after=harness.head_of(self.origin)[:10],
                 )
             last = (done.stdout + done.stderr).strip()[:200]
         return Push(
             at_second=round(time.monotonic() - self.zero, 2),
-            entity=entity, marker=marker, sha=None, attempts=4, pushed_ok=False, note=last,
+            record=record, marker=marker, sha=None, attempts=4, pushed_ok=False, note=last,
         )
 
     def _watch(self, record: Push, client: httpx.Client) -> None:
@@ -243,7 +243,7 @@ class Terminal(threading.Thread):
             return
         try:
             record.served_head_when_seen = client.get("/api/health").json().get("head", "")[:10]
-            answer = client.get(f"/detail/{record.entity}")
+            answer = client.get(f"/detail/{record.record}")
             if record.marker in answer.text:
                 record.on_the_page_after_s = round(time.monotonic() - began, 2)
         except Exception as error:  # noqa: BLE001
@@ -363,7 +363,7 @@ class TabSave:
     """One save made outside the room it was made about."""
 
     who: str
-    entity: str
+    record: str
     kind: str  # "body" or "fields-only"
     at_second: float
     base_commit: str | None
@@ -436,7 +436,7 @@ class DroppedTab(Composing):
         else:
             self.result.trouble.append(f"{answer} at {self.typed} typed")
         self.note(kind="WS keystroke", ms=(time.monotonic() - begun) * 1000,
-                  status=answer, entity=self.entity)
+                  status=answer, record=self.record)
         time.sleep(self.rng.uniform(0.9, 1.1) / users.CHARS_PER_SECOND)
         if self.typed and self.typed % users.LINE_LENGTH == 0:
             time.sleep(self.rng.uniform(0.8, 1.6))
@@ -467,7 +467,7 @@ class DroppedTab(Composing):
         begun = time.monotonic()
         status, outcome, commit = "", None, None
         try:
-            answer = self.client.patch(f"/api/entity/{self.entity}", json=payload)
+            answer = self.client.patch(f"/api/record/{self.record}", json=payload)
             status = str(answer.status_code)
             if answer.status_code in (200, 409):
                 got = answer.json()
@@ -475,10 +475,10 @@ class DroppedTab(Composing):
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
         self.note(kind="PATCH (dropped tab)", ms=(time.monotonic() - begun) * 1000,
-                  status=status, outcome=outcome, commit=commit, entity=self.entity)
+                  status=status, outcome=outcome, commit=commit, record=self.record)
         self.client.close()
         self.tab_save = TabSave(
-            who=self.who, entity=self.entity, kind="body",
+            who=self.who, record=self.record, kind="body",
             at_second=round(begun - self.zero, 2),
             base_commit=(self.base_at_drop or "")[:10],
             head_before=(head_before or "")[:10],
@@ -506,9 +506,9 @@ class FieldTab(users.Person):
     at all.
     """
 
-    def __init__(self, *args, entity: str, at: list[float], **kwargs) -> None:
+    def __init__(self, *args, record: str, at: list[float], **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.entity = entity
+        self.record = record
         self.at = at
         self.saves: list[TabSave] = []
         self.client = httpx.Client(
@@ -537,7 +537,7 @@ class FieldTab(users.Person):
         status, outcome, commit = "", None, None
         try:
             answer = self.client.patch(
-                f"/api/entity/{self.entity}",
+                f"/api/record/{self.record}",
                 json={"base_commit": head, "fields": {"person_weeks": weeks}, "body": None},
             )
             status = str(answer.status_code)
@@ -547,9 +547,9 @@ class FieldTab(users.Person):
         except Exception as error:  # noqa: BLE001
             status = type(error).__name__
         self.note(kind="PATCH (fields only)", ms=(time.monotonic() - begun) * 1000,
-                  status=status, outcome=outcome, commit=commit, entity=self.entity)
+                  status=status, outcome=outcome, commit=commit, record=self.record)
         self.saves.append(TabSave(
-            who=self.who, entity=self.entity, kind="fields-only",
+            who=self.who, record=self.record, kind="fields-only",
             at_second=round(begun - self.zero, 2),
             base_commit=(head or "")[:10], head_before=(head or "")[:10],
             status=status, outcome=outcome, commit=commit, person_weeks=weeks,
@@ -660,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         seed=args.seed, rtt_ms=args.rtt_ms, corpus=args.corpus, size=args.size,
         port=args.port, keep=args.keep, remote=True,
     ) as world:
-        ids = world.entity_ids("task-")
+        ids = world.record_ids("task-")
         if len(ids) < 12:
             raise SystemExit("the corpus is too small for this scenario")
         room_a, room_b = ids[0], ids[1]
@@ -687,9 +687,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         # Room A: three people, one of whom presses Save on a clock and one of
         # whom loses their socket and saves through the form afterwards.
         save_every = round(window / 4.0, 1)
-        a0 = person(Composing, "coeditor-a0", entity=room_a, client_id=1000,
+        a0 = person(Composing, "coeditor-a0", record=room_a, client_id=1000,
                     seed=args.seed, save_every=save_every, save_at_end=True)
-        a1 = person(DroppedTab, "coeditor-a1", entity=room_a, client_id=1001,
+        a1 = person(DroppedTab, "coeditor-a1", record=room_a, client_id=1001,
                     seed=args.seed, save_every=0.0, save_at_end=False,
                     # Straddling a room commit on purpose: room A saves every
                     # `window/4`, so the save at the halfway mark lands between
@@ -697,28 +697,28 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
                     # ordering that makes its body genuinely older than the file,
                     # rather than merely older than the room.
                     drop_at=round(window * 0.30, 1), save_at=round(window * 0.55, 1))
-        a2 = person(Composing, "coeditor-a2", entity=room_a, client_id=1002,
+        a2 = person(Composing, "coeditor-a2", record=room_a, client_id=1002,
                     seed=args.seed, save_every=0.0, save_at_end=True)
         a1.watching = [a0, a2]
 
         # Room B: the emoji pair, and one person pressing Save on a clock.
-        b0 = person(EmojiLeft, "coeditor-b0", entity=room_b, client_id=1003,
+        b0 = person(EmojiLeft, "coeditor-b0", record=room_b, client_id=1003,
                     seed=args.seed, save_every=save_every, save_at_end=True,
                     partner_anchor=f"[CM{args.seed}.4]")
-        b1 = person(EmojiRight, "coeditor-b1", entity=room_b, client_id=1004,
+        b1 = person(EmojiRight, "coeditor-b1", record=room_b, client_id=1004,
                     seed=args.seed, save_every=0.0, save_at_end=True)
-        b2 = person(Composing, "coeditor-b2", entity=room_b, client_id=1005,
+        b2 = person(Composing, "coeditor-b2", record=room_b, client_id=1005,
                     seed=args.seed, save_every=0.0, save_at_end=True)
         coeditors = [a0, a1, a2, b0, b1, b2]
         people += coeditors
 
         for i in range(args.writers):
-            one = person(users.FormWriter, f"writer-{i}", entity=writer_ids[i],
+            one = person(users.FormWriter, f"writer-{i}", record=writer_ids[i],
                          gap=args.gap, gap_max=args.gap_max, stale=False, style="append")
             formwriters.append(one)
             people.append(one)
 
-        fields_only = person(FieldTab, "fieldtab", entity=room_b,
+        fields_only = person(FieldTab, "fieldtab", record=room_b,
                              at=[round(window * 0.33, 1), round(window * 0.71, 1)])
         people.append(fields_only)
 
@@ -853,7 +853,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
         ):
             rooms_report.append({
                 "room": name,
-                "entity": path_id,
+                "record": path_id,
                 "path": paths_now[path_id],
                 "members": [
                     {"who": m.who, "login": m.login, "typed": m.typed,
@@ -896,9 +896,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one run, read
             "terminal_pushes": [asdict(p) for p in terminal.pushes] if terminal else [],
             "terminal_markers_in_the_plan": {
                 p.marker: (p.marker in (harness.read_blob(
-                    world.plan, head, paths_now.get(p.entity, "")) or ""))
+                    world.plan, head, paths_now.get(p.record, "")) or ""))
                 for p in (terminal.pushes if terminal else [])
-                if p.entity in paths_now
+                if p.record in paths_now
             },
         }
 
@@ -977,7 +977,7 @@ def _print(blob: dict, report: dict, verdict: dict, out: Path) -> None:
     a = blob["accounting"]
     print("\n-- injection 1: a human with a terminal --")
     for push in a["terminal_pushes"]:
-        print(f"  t+{push['at_second']:>6.1f}s  {push['marker']} -> {push['entity']:<14} "
+        print(f"  t+{push['at_second']:>6.1f}s  {push['marker']} -> {push['record']:<14} "
               f"pushed={push['pushed_ok']} attempts={push['attempts']} "
               f"instance saw it after {push['absorbed_after_s']}s "
               f"(page {push['on_the_page_after_s']}s)")
@@ -993,7 +993,7 @@ def _print(blob: dict, report: dict, verdict: dict, out: Path) -> None:
 
     print("\n-- the rooms --")
     for room in blob["rooms"]:
-        print(f"  {room['room']} ({room['entity']}): typed {room['typed_total']}, "
+        print(f"  {room['room']} ({room['record']}): typed {room['typed_total']}, "
               f"in the plan {room['in_the_plan_total']}")
         for m in room["members"]:
             print(f"    {m['who']:<14} {m['login']:<14} typed {m['typed']:>4}  "

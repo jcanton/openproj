@@ -119,7 +119,7 @@ def outside_write(base_url: str, record: str, repo: Path, path: str, where: str)
         ["git", "--git-dir", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True
     ).stdout.strip()
     answer = httpx.patch(
-        f"{base_url}/api/entity/{record}",
+        f"{base_url}/api/record/{record}",
         json={"base_commit": head, "body": fresh},
         headers={"Cookie": cookie("outsider")},
         timeout=60,

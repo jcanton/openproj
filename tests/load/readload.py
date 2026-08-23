@@ -81,7 +81,7 @@ class Committer(users.FormWriter):
 
     def work(self) -> None:
         paths = harness.record_paths(self.world.plan, harness.head_of(self.world.plan))
-        path = paths[self.entity]
+        path = paths[self.record]
         n = 0
         with self.client:
             while self.more():
@@ -92,7 +92,7 @@ class Committer(users.FormWriter):
                     continue
                 body = harness.read_blob(self.world.plan, base, path)
                 if body is None:
-                    self.note(kind="PATCH", ms=0.0, status="no-such-blob", entity=self.entity)
+                    self.note(kind="PATCH", ms=0.0, status="no-such-blob", record=self.record)
                 else:
                     self.save(base, body, n)
                 nap = due - time.monotonic()
@@ -134,7 +134,7 @@ def driver_cpu() -> float:
 def task_ids(world: harness.Harness) -> list[str]:
     """Record ids read straight out of the bare repository.
 
-    `Harness.entity_ids` asks `/api/index.json`, and that route calls
+    `Harness.record_ids` asks `/api/index.json`, and that route calls
     `index_now()` — which would build and cache the index before the cold
     measurement had been taken. The cold number can only be taken once per
     server, so nothing here may warm it by accident.
@@ -271,7 +271,7 @@ def phase(
     if writer_gap:
         committer = Committer(
             "writer-0", login(), world, ledger, seed, 0.0, zero,
-            entity=ids[0], gap=writer_gap, stale=False, style="append",
+            record=ids[0], gap=writer_gap, stale=False, style="append",
         )
         people.append(committer)
     for i in range(readers):

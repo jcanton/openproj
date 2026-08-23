@@ -15,7 +15,7 @@ already happened once in production:
 and reports `pushed=False` — correctly, because the commit is real and local, and
 refusing the write would mean the tracker stops working whenever GitHub does. But
 `WriteResult.pushed` reaches exactly one caller in the whole application (the
-co-editing socket's `saved` frame). `PATCH /api/entity` drops it, so the browser
+co-editing socket's `saved` frame). `PATCH /api/record` drops it, so the browser
 is answered 200 with a commit sha for a commit that is on an ephemeral disk and
 nowhere else.
 
@@ -74,12 +74,12 @@ def main(argv: list[str] | None = None) -> int:
 
     with harness.Harness(seed=args.seed, corpus="corpus", size="small",
                          port=args.port, remote=True) as world:
-        ids = world.entity_ids("task-")
+        ids = world.record_ids("task-")
         before = verify.snapshot(world.plan)
         zero = time.monotonic()
         writers = [
             users.FormWriter(f"writer-{i}", harness.PEOPLE[i], world, ledger, args.seed,
-                             0.0, zero, entity=ids[i], gap=args.gap, style="append")
+                             0.0, zero, record=ids[i], gap=args.gap, style="append")
             for i in range(args.writers)
         ]
         # One reader, because half of what this probe is about is that nothing
@@ -221,9 +221,9 @@ def _instance_only(world: harness.Harness, sent: list, head: str) -> list[str]:
     for one in sent:
         if one.status != "200":
             continue
-        here = harness.read_blob(world.plan, head, paths_local.get(one.entity, "")) or ""
+        here = harness.read_blob(world.plan, head, paths_local.get(one.record, "")) or ""
         there = harness.read_blob(world.origin, origin_head,
-                                  paths_remote.get(one.entity, "")) or ""
+                                  paths_remote.get(one.record, "")) or ""
         if one.marker in here and one.marker not in there:
             orphaned.append(one.marker)
     return orphaned

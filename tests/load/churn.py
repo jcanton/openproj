@@ -91,10 +91,10 @@ class Peer:
     underneath them, exactly as a browser's is.
     """
 
-    def __init__(self, port: int, login: str, entity: str, client_id: int, anchor: str) -> None:
+    def __init__(self, port: int, login: str, record: str, client_id: int, anchor: str) -> None:
         self.port = port
         self.login = login
-        self.entity = entity
+        self.record = record
         self.anchor = anchor
         self.stream = ALPHABET[client_id % len(ALPHABET) :] + ALPHABET
         self.doc = coedit.Doc(client_id=client_id)
@@ -133,7 +133,7 @@ class Peer:
         token = sign_session(User(login=self.login, member=True), harness.SECRET)
         try:
             client = Client(
-                "127.0.0.1", self.port, f"/api/coedit/{self.entity}",
+                "127.0.0.1", self.port, f"/api/coedit/{self.record}",
                 cookie=f"{SESSION_COOKIE}={token}",
             )
         except Exception as error:  # noqa: BLE001 - a handshake fails in many ways
@@ -146,7 +146,7 @@ class Peer:
                 ledger.record(measure.Action(
                     who=self.login, kind="WS connect", began=began,
                     ms=(time.monotonic() - began) * 1000,
-                    status=f"!{type(error).__name__}", entity=self.entity, note=note))
+                    status=f"!{type(error).__name__}", record=self.record, note=note))
             return "failed"
         with self.lock:
             mine = self.doc.get_state()
@@ -165,7 +165,7 @@ class Peer:
                 ledger.record(measure.Action(
                     who=self.login, kind="WS connect", began=began,
                     ms=(time.monotonic() - began) * 1000, status=outcome,
-                    entity=self.entity, note=note))
+                    record=self.record, note=note))
             return outcome
         self.seed = frame.get("seed")
         self.base = frame.get("base")
@@ -193,7 +193,7 @@ class Peer:
             ledger.record(measure.Action(
                 who=self.login, kind="WS connect", began=began,
                 ms=(time.monotonic() - began) * 1000, status="welcome",
-                entity=self.entity, commit=self.base, note=note))
+                record=self.record, commit=self.base, note=note))
         return "welcome"
 
     def _read(self, client: Client, stop: threading.Event) -> None:
@@ -398,9 +398,9 @@ class Watcher:
         head = str(git.references["refs/heads/main"].target)
         paths = harness.record_paths(self.plan, head)
         out = {}
-        for entity in {p.entity for p in self.peers}:
-            path = paths.get(entity)
-            out[entity] = harness.read_blob(self.plan, head, path) or "" if path else ""
+        for record in {p.record for p in self.peers}:
+            path = paths.get(record)
+            out[record] = harness.read_blob(self.plan, head, path) or "" if path else ""
         return head, out
 
     def sample(self) -> None:
@@ -411,32 +411,32 @@ class Watcher:
         head, files = self._bodies()
         for peer in self.peers:
             doc_run = peer.run_length(docs[peer.login])
-            git_run = peer.run_length(files.get(peer.entity, ""))
+            git_run = peer.run_length(files.get(peer.record, ""))
             was_doc, was_git = self.high_doc[peer.login], self.high_git[peer.login]
             if doc_run >= 0 and doc_run < was_doc:
                 self.events.append(Event(
                     round(time.monotonic() - self.zero, 2), self.phase, "DOC WENT BACK",
                     f"{peer.login}'s own editor lost {was_doc - doc_run} characters it had typed",
-                    {"entity": peer.entity, "was": was_doc, "now": doc_run,
+                    {"record": peer.record, "was": was_doc, "now": doc_run,
                      "git": git_run, "head": head[:10]}))
             if git_run >= 0 and git_run < was_git:
                 self.events.append(Event(
                     round(time.monotonic() - self.zero, 2), self.phase, "GIT WENT BACK",
                     f"{peer.login}'s committed run shrank by {was_git - git_run} characters",
-                    {"entity": peer.entity, "was": was_git, "now": git_run, "head": head[:10]}))
+                    {"record": peer.record, "was": was_git, "now": git_run, "head": head[:10]}))
             if doc_run >= 0 and git_run > doc_run:
                 self.events.append(Event(
                     round(time.monotonic() - self.zero, 2), self.phase, "EDITOR BEHIND GIT",
                     f"{peer.login}'s editor holds {doc_run} of their characters and the "
                     f"plan holds {git_run}",
-                    {"entity": peer.entity, "doc": doc_run, "git": git_run, "head": head[:10]}))
+                    {"record": peer.record, "doc": doc_run, "git": git_run, "head": head[:10]}))
             self.high_doc[peer.login] = max(was_doc, doc_run)
             self.high_git[peer.login] = max(was_git, git_run)
         self.samples.append({
             "at": round(time.monotonic() - self.zero, 2), "phase": self.phase,
             "head": head[:10],
             "doc": sum(max(0, p.run_length(docs[p.login])) for p in self.peers),
-            "git": sum(max(0, p.run_length(files.get(p.entity, ""))) for p in self.peers),
+            "git": sum(max(0, p.run_length(files.get(p.record, ""))) for p in self.peers),
         })
 
     def _loop(self) -> None:
@@ -499,7 +499,7 @@ class Run:
         self.events: list[Event] = []
         self.ledger = measure.Ledger()
         self.phases: dict[str, dict] = {}
-        # entity -> the monotonic instant its room may type again.
+        # record -> the monotonic instant its room may type again.
         self.quiet_until: dict[str, float] = {}
         self.drained: dict[str, int] = {}
         self.browsable: list[str] = []
@@ -519,7 +519,7 @@ class Run:
                     f"{peer.login}'s open document lost {shrink['lost']} characters on a "
                     f"{shrink['why']} frame; their own run is now {shrink['run']} of the "
                     f"{shrink['counted']} they typed",
-                    {"entity": peer.entity, **{k: v for k, v in shrink.items() if k != "at"}}))
+                    {"record": peer.record, **{k: v for k, v in shrink.items() if k != "at"}}))
             self.drained[peer.login] = len(peer.shrinks)
 
     def note(self, phase: str, kind: str, what: str, detail: dict | None = None) -> None:
@@ -546,7 +546,7 @@ class Run:
             # `phase_c`: without it the probe cannot even get to the branch it
             # is aimed at, and a run would report "not reachable" about a gate it
             # never opened.
-            while time.monotonic() < self.quiet_until.get(peer.entity, 0.0):
+            while time.monotonic() < self.quiet_until.get(peer.record, 0.0):
                 time.sleep(0.02)
                 if time.monotonic() >= until:
                     return
@@ -554,7 +554,7 @@ class Run:
             answer = peer.press()
             self.ledger.record(measure.Action(
                 who=peer.login, kind="WS keystroke", began=began - self.zero,
-                ms=(time.monotonic() - began) * 1000, status=answer, entity=peer.entity))
+                ms=(time.monotonic() - began) * 1000, status=answer, record=peer.record))
             if answer in ("anchor-gone", "anchor-short"):
                 # The document moved under this person: their run is shorter than
                 # their own count of it, which is only possible if characters they
@@ -566,7 +566,7 @@ class Run:
                 self.note(phase, "TYPING BLOCKED",
                           f"{peer.login} could not type: {answer}; counted {peer.typed}, "
                           f"the document holds {run}",
-                          {"entity": peer.entity, "counted": peer.typed, "in_document": run})
+                          {"record": peer.record, "counted": peer.typed, "in_document": run})
                 peer.trouble.append(f"{answer}: counted {peer.typed}, document holds {run}")
                 if run >= 0:
                     peer.typed = run
@@ -594,10 +594,10 @@ class Run:
             rng = random.Random(self.args.seed + 900 + n)
             with httpx.Client(timeout=60.0) as http:
                 while time.monotonic() < until:
-                    entity = rng.choice(ids)
+                    record = rng.choice(ids)
                     began = time.monotonic()
                     try:
-                        answer = http.get(f"{self.world.base}/detail/{entity}",
+                        answer = http.get(f"{self.world.base}/detail/{record}",
                                           headers={"Cookie": harness.cookie_for("reader")})
                         status = str(answer.status_code)
                     except Exception as error:  # noqa: BLE001
@@ -605,7 +605,7 @@ class Run:
                     self.ledger.record(measure.Action(
                         who=f"reader-{n}", kind=f"GET /detail [{phase}]",
                         began=began - self.zero, ms=(time.monotonic() - began) * 1000,
-                        status=status, entity=entity))
+                        status=status, record=record))
                     time.sleep(rng.uniform(0.2, 0.6))
 
         threads = [threading.Thread(target=read_pages, args=(n,), daemon=True)
@@ -624,7 +624,7 @@ class Run:
         # gone. Without them the room empties and the question cannot be asked.
         keep = {peers[i].login for i in range(0, len(peers), self.args.per_room)}
         droppable = [p for p in peers if p.login not in keep]
-        watchers = {p.entity: p for p in peers if p.login in keep}
+        watchers = {p.record: p for p in peers if p.login in keep}
         until = time.monotonic() + seconds
         threads = self.typing(phase, peers, until)
         drops: list[dict] = []
@@ -633,14 +633,14 @@ class Run:
             victim = self.rng.choice(droppable)
             if not victim.connected:
                 continue
-            watcher = watchers[victim.entity]
+            watcher = watchers[victim.record]
             before_run = victim.run_length()
             before_frames = len(watcher.told)
             at = time.monotonic()
             victim.drop(rude=True)
             self.ledger.record(measure.Action(
                 who=victim.login, kind="WS drop (RST)", began=at - self.zero, ms=0.0,
-                status="reset", entity=victim.entity))
+                status="reset", record=victim.record))
             # How long the rest of the room went on being told this person was
             # in it. Read off the roster frames the undropped member receives.
             lag = self._presence_lag(watcher, victim.login, before_frames, 6.0)
@@ -648,7 +648,7 @@ class Run:
             time.sleep(max(0.0, away - (time.monotonic() - at)))
             outcome = victim.connect(self.ledger, note="after RST")
             drops.append({
-                "at": round(at - self.zero, 2), "who": victim.login, "entity": victim.entity,
+                "at": round(at - self.zero, 2), "who": victim.login, "record": victim.record,
                 "away_s": round(time.monotonic() - at, 2),
                 "presence_lag_s": lag, "reconnect": outcome,
                 "run_before": before_run, "run_after": victim.run_length(),
@@ -656,7 +656,7 @@ class Run:
             if outcome != "welcome":
                 self.note(phase, "RECONNECT REFUSED",
                           f"{victim.login} was answered {outcome} on reconnection",
-                          {"entity": victim.entity})
+                          {"record": victim.record})
         for one in threads:
             one.join(timeout=20)
         self.phases[phase] = {
@@ -735,10 +735,10 @@ class Run:
         head = str(git.references["refs/heads/main"].target)
         paths = harness.record_paths(self.world.plan, head)
         bodies = {
-            entity: (harness.read_blob(self.world.plan, head, paths[entity]) or "")
-            for entity in {p.entity for p in peers} if entity in paths
+            record: (harness.read_blob(self.world.plan, head, paths[record]) or "")
+            for record in {p.record for p in peers} if record in paths
         }
-        return {p.login: p.run_length(bodies.get(p.entity, "")) for p in peers}
+        return {p.login: p.run_length(bodies.get(p.record, "")) for p in peers}
 
     # -- C: reconnecting into the middle of a commit -------------------------
 
@@ -777,8 +777,8 @@ class Run:
                 # handler is inside `await socket.accept()` when the commit
                 # begins. This is the aim; `--aim-ms` is how far ahead of the
                 # save the socket is opened.
-                self.quiet_until[peer.entity] = time.monotonic() + self.args.quiet_for
-                aims[peer.entity].set()
+                self.quiet_until[peer.record] = time.monotonic() + self.args.quiet_for
+                aims[peer.record].set()
                 time.sleep(self.rng.uniform(0.0, self.args.aim_ms) / 1000.0)
                 began = time.monotonic()
                 answer = peer.save()
@@ -786,9 +786,9 @@ class Run:
                     who=peer.login, kind="WS save", began=began - self.zero,
                     ms=answer.get("ms", 0.0), status=str(answer.get("t")),
                     outcome=answer.get("outcome"), commit=answer.get("commit"),
-                    pushed=answer.get("pushed"), entity=peer.entity))
+                    pushed=answer.get("pushed"), record=peer.record))
                 saves.append({"at": round(began - self.zero, 2), "who": peer.login,
-                              "entity": peer.entity, **{k: answer.get(k) for k in
+                              "record": peer.record, **{k: answer.get(k) for k in
                               ("t", "outcome", "commit", "pushed", "ms")}})
                 stop.wait(self.args.save_every)
 
@@ -797,25 +797,25 @@ class Run:
             threading.Thread(target=presses, args=(peer, n * stagger), daemon=True)
             for n, peer in enumerate(pressers)
         ]
-        bases: dict[str, list[dict]] = {p.entity: [] for p in peers}
-        aims = {entity: threading.Event() for entity in bases}
+        bases: dict[str, list[dict]] = {p.record: [] for p in peers}
+        aims = {record: threading.Event() for record in bases}
         joins = {"aimed": 0, "blind": 0, "other": 0}
 
-        def probes(entity: str) -> None:
+        def probes(record: str) -> None:
             """A tab opening the record, reading the room's base, and closing.
 
             Aimed when the room says a save is about to go out, blind otherwise.
             """
-            login = f"probe-{entity[-2:]}"
+            login = f"probe-{record[-2:]}"
             token = sign_session(User(login=login, member=True), harness.SECRET)
             while not stop.is_set() and time.monotonic() < until:
-                aimed = aims[entity].wait(self.args.probe_every)
+                aimed = aims[record].wait(self.args.probe_every)
                 if aimed:
-                    aims[entity].clear()
+                    aims[record].clear()
                 began = time.monotonic()
                 try:
                     client = Client("127.0.0.1", self.world.port,
-                                    f"/api/coedit/{entity}",
+                                    f"/api/coedit/{record}",
                                     cookie=f"{SESSION_COOKIE}={token}")
                     client.send_json({"t": "hello", "seed": None, "sv": None})
                     frame = client.receive_json()
@@ -824,22 +824,22 @@ class Run:
                     self.ledger.record(measure.Action(
                         who=login, kind="WS probe join", began=began - self.zero,
                         ms=(time.monotonic() - began) * 1000,
-                        status=f"!{type(error).__name__}", entity=entity))
+                        status=f"!{type(error).__name__}", record=record))
                     continue
                 self.ledger.record(measure.Action(
                     who=login, kind=f"WS probe join [{'aimed' if aimed else 'blind'}]",
                     began=began - self.zero, ms=(time.monotonic() - began) * 1000,
-                    status=str(frame.get("t")), entity=entity))
+                    status=str(frame.get("t")), record=record))
                 if frame.get("t") == "welcome":
                     joins["aimed" if aimed else "blind"] += 1
-                    bases[entity].append({"at": round(time.monotonic() - self.zero, 2),
+                    bases[record].append({"at": round(time.monotonic() - self.zero, 2),
                                           "who": login, "aimed": aimed,
                                           "base": frame.get("base")})
                 else:
                     joins["other"] += 1
 
-        probing = [threading.Thread(target=probes, args=(entity,), daemon=True)
-                   for entity in sorted(bases)]
+        probing = [threading.Thread(target=probes, args=(record,), daemon=True)
+                   for record in sorted(bases)]
         for one in pressing + probing:
             one.start()
         # And the ordinary churn from phase A, still running underneath.
@@ -854,7 +854,7 @@ class Run:
             time.sleep(self.rng.uniform(0.05, 0.25))
             if peer.connect(self.ledger, note="mid-commit churn") == "welcome":
                 reconnects += 1
-                bases[peer.entity].append(
+                bases[peer.record].append(
                     {"at": round(time.monotonic() - self.zero, 2), "who": peer.login,
                      "base": peer.base})
         stop.set()
@@ -862,7 +862,7 @@ class Run:
             one.join(timeout=90)
         for one in threads:
             one.join(timeout=20)
-        rewinds = self._rewinds(bases, {p.entity for p in peers})
+        rewinds = self._rewinds(bases, {p.record for p in peers})
         self.phases[phase] = {
             "seconds": seconds, "saves": saves, "reconnects": reconnects,
             "probe_joins": joins,
@@ -876,17 +876,17 @@ class Run:
             # line this phase is about. Without this number "no rewinds" would be
             # a claim about a gate that might never have opened.
             "base_moved_on_join": {
-                entity: {
+                record: {
                     "joins": len(seen),
                     "distinct_bases": len({one["base"] for one in seen if one["base"]}),
                     "own_commits": len({s["commit"] for s in saves
-                                        if s["entity"] == entity and s.get("commit")}),
+                                        if s["record"] == record and s.get("commit")}),
                 }
-                for entity, seen in bases.items()
+                for record, seen in bases.items()
             },
         }
 
-    def _rewinds(self, bases: dict[str, list[dict]], entities: set[str]) -> list[dict]:
+    def _rewinds(self, bases: dict[str, list[dict]], records: set[str]) -> list[dict]:
         """A welcome whose `base` is an ancestor of one an earlier welcome carried.
 
         `room.base` moves forward when the room commits and is never otherwise
@@ -904,7 +904,7 @@ class Run:
         """
         git = pygit2.Repository(str(self.world.plan))
         out = []
-        for entity, seen in bases.items():
+        for record, seen in bases.items():
             paths = None
             best = None
             for one in seen:
@@ -919,20 +919,20 @@ class Run:
                     if older:
                         if paths is None:
                             paths = harness.record_paths(self.world.plan, best)
-                        path = paths.get(entity)
+                        path = paths.get(record)
                         differs = bool(path) and (
                             harness.read_blob(self.world.plan, base, path)
                             != harness.read_blob(self.world.plan, best, path)
                         )
-                        out.append({"entity": entity, "at": one["at"], "who": one["who"],
+                        out.append({"record": record, "at": one["at"], "who": one["who"],
                                     "base_now": base[:10], "base_before": best[:10],
                                     "file_differs": differs})
                         self.note("C-midcommit",
                                   "ROOM BASE REWOUND (this record moved)" if differs
                                   else "room base rewound (another record moved)",
-                                  f"{one['who']} joined {entity} and the room reported base "
+                                  f"{one['who']} joined {record} and the room reported base "
                                   f"{base[:10]}, an ancestor of {best[:10]} which an earlier "
-                                  "join reported", {"entity": entity, "file_differs": differs})
+                                  "join reported", {"record": record, "file_differs": differs})
                         continue
                 if best is None or git.descendant_of(base, best):
                     best = base
@@ -951,7 +951,7 @@ class Run:
           typing this second, which is most seconds of most documents. That is
           the only state in which `elif not room.pending()` is entered at all.
         * The record is being written from OUTSIDE the room — a form save, a
-          second tab, the API. `PATCH /api/entity` runs its `store.write` on a
+          second tab, the API. `PATCH /api/record` runs its `store.write` on a
           worker thread, so it lands whenever it lands and does not block the
           loop the joiners are on.
         * TWO people open the record at once. That is what makes the head one of
@@ -971,19 +971,19 @@ class Run:
         for peer in [peers[i] for i in range(0, len(peers), self.args.per_room)]:
             if peer.connected:
                 peer.save()
-        entities = sorted({p.entity for p in peers})
-        bases: dict[str, list[dict]] = {entity: [] for entity in entities}
+        records = sorted({p.record for p in peers})
+        bases: dict[str, list[dict]] = {record: [] for record in records}
         joins = {"welcome": 0, "other": 0}
         sent: list = []
         lock = threading.Lock()
 
-        def patcher(entity: str, offset: float) -> None:
+        def patcher(record: str, offset: float) -> None:
             """Somebody saving this record through the form, not through the room."""
             from users import Sent  # noqa: PLC0415
 
             from openproj.model import split_front_matter  # noqa: PLC0415
 
-            login = f"form-{entity[-2:]}"
+            login = f"form-{record[-2:]}"
             stop.wait(offset)
             n = 0
             with httpx.Client(base_url=self.world.base, timeout=120.0,
@@ -994,37 +994,37 @@ class Run:
                     try:
                         head = http.get("/api/health").json().get("head")
                         paths = harness.record_paths(self.world.plan, head)
-                        source = harness.read_blob(self.world.plan, head, paths[entity])
-                        marker = f"PD{entity[-2:]}.{n:04d}"
+                        source = harness.read_blob(self.world.plan, head, paths[record])
+                        marker = f"PD{record[-2:]}.{n:04d}"
                         weeks = round(1.0 + (n % 7) * 0.5, 1)
                         body = split_front_matter(source)[1].rstrip("\n")
-                        answer = http.patch(f"/api/entity/{entity}", json={
+                        answer = http.patch(f"/api/record/{record}", json={
                             "base_commit": head, "fields": {"person_weeks": weeks},
                             "body": f"{body}\n- {marker}\n"})
                         status = str(answer.status_code)
                         got = answer.json() if answer.status_code in (200, 409) else {}
                     except Exception as error:  # noqa: BLE001
                         status, got, marker, weeks, head = (
-                            type(error).__name__, {}, f"PD{entity[-2:]}.{n:04d}", None, None)
+                            type(error).__name__, {}, f"PD{record[-2:]}.{n:04d}", None, None)
                     self.ledger.record(measure.Action(
                         who=login, kind="PATCH", began=began - self.zero,
                         ms=(time.monotonic() - began) * 1000, status=status,
                         outcome=got.get("outcome"), commit=got.get("commit"),
-                        entity=entity, marker=marker))
+                        record=record, marker=marker))
                     with lock:
-                        sent.append(Sent(login, entity, marker, status, got.get("outcome"),
+                        sent.append(Sent(login, record, marker, status, got.get("outcome"),
                                          got.get("commit"), weeks, head))
                     stop.wait(self.args.patch_every)
 
-        def opener(entity: str, which: int) -> None:
+        def opener(record: str, which: int) -> None:
             """Somebody opening the record. Several at once, on purpose."""
-            login = f"open-{entity[-2:]}-{which}"
+            login = f"open-{record[-2:]}-{which}"
             token = sign_session(User(login=login, member=True), harness.SECRET)
             rng = random.Random(self.args.seed + which)
             while not stop.is_set() and time.monotonic() < until:
                 began = time.monotonic()
                 try:
-                    client = Client("127.0.0.1", self.world.port, f"/api/coedit/{entity}",
+                    client = Client("127.0.0.1", self.world.port, f"/api/coedit/{record}",
                                     cookie=f"{SESSION_COOKIE}={token}")
                     client.send_json({"t": "hello", "seed": None, "sv": None})
                     frame = client.receive_json()
@@ -1033,33 +1033,33 @@ class Run:
                     self.ledger.record(measure.Action(
                         who=login, kind="WS open", began=began - self.zero,
                         ms=(time.monotonic() - began) * 1000,
-                        status=f"!{type(error).__name__}", entity=entity))
+                        status=f"!{type(error).__name__}", record=record))
                     stop.wait(0.2)
                     continue
                 self.ledger.record(measure.Action(
                     who=login, kind="WS open", began=began - self.zero,
                     ms=(time.monotonic() - began) * 1000, status=str(frame.get("t")),
-                    entity=entity))
+                    record=record))
                 with lock:
                     if frame.get("t") == "welcome":
                         joins["welcome"] += 1
-                        bases[entity].append({"at": round(time.monotonic() - self.zero, 2),
+                        bases[record].append({"at": round(time.monotonic() - self.zero, 2),
                                               "who": login, "base": frame.get("base")})
                     else:
                         joins["other"] += 1
                 stop.wait(rng.uniform(*self.args.open_every))
 
-        workers = [threading.Thread(target=patcher, args=(entity, n * 0.1), daemon=True)
-                   for n, entity in enumerate(entities)]
-        workers += [threading.Thread(target=opener, args=(entity, which), daemon=True)
-                    for entity in entities for which in range(self.args.openers)]
+        workers = [threading.Thread(target=patcher, args=(record, n * 0.1), daemon=True)
+                   for n, record in enumerate(records)]
+        workers += [threading.Thread(target=opener, args=(record, which), daemon=True)
+                    for record in records for which in range(self.args.openers)]
         for one in workers:
             one.start()
         stop.wait(seconds)
         stop.set()
         for one in workers + threads:
             one.join(timeout=90)
-        rewinds = self._rewinds(bases, set(entities))
+        rewinds = self._rewinds(bases, set(records))
         self.sent_forms = sent
         self.phases[phase] = {
             "seconds": seconds, "opens": joins, "patches": len(sent),
@@ -1067,15 +1067,15 @@ class Run:
             "rewound_bases": rewinds,
             "rewinds_that_moved_this_record": [r for r in rewinds if r["file_differs"]],
             "base_moved_on_join": {
-                entity: {"joins": len(seen),
+                record: {"joins": len(seen),
                          "distinct_bases": len({one["base"] for one in seen if one["base"]})}
-                for entity, seen in bases.items()
+                for record, seen in bases.items()
             },
         }
 
     # -- the census, between phases ------------------------------------------
 
-    def census(self, entities: list[str], label: str) -> dict:
+    def census(self, records: list[str], label: str) -> dict:
         """Who the server thinks is in each room when nobody is.
 
         Every peer is disconnected before this runs, so the only honest answer is
@@ -1083,10 +1083,10 @@ class Run:
         the bookkeeping did not let go of.
         """
         out = {}
-        for entity in entities:
+        for record in records:
             login = f"census-{label}"
             token = sign_session(User(login=login, member=True), harness.SECRET)
-            client = Client("127.0.0.1", self.world.port, f"/api/coedit/{entity}",
+            client = Client("127.0.0.1", self.world.port, f"/api/coedit/{record}",
                             cookie=f"{SESSION_COOKIE}={token}")
             try:
                 client.send_json({"t": "hello", "seed": None, "sv": None})
@@ -1097,17 +1097,17 @@ class Run:
                     if frame.get("t") == "who":
                         people, where = frame.get("people"), frame.get("where")
                         break
-                out[entity] = {"people": people, "where": where}
+                out[record] = {"people": people, "where": where}
                 ghosts = [p for p in (people or []) if p != login]
                 if ghosts:
                     self.note("census", "PRESENCE LEAK",
-                              f"{entity} still names {ghosts} with nobody connected",
-                              {"entity": entity, "where": where})
+                              f"{record} still names {ghosts} with nobody connected",
+                              {"record": record, "where": where})
                 seats = [s for s in (where or []) if s.get("login") != login]
                 if seats:
                     self.note("census", "SEAT LEAK",
-                              f"{entity} still draws seats for {[s['login'] for s in seats]}",
-                              {"entity": entity})
+                              f"{record} still draws seats for {[s['login'] for s in seats]}",
+                              {"record": record})
             finally:
                 client.close()
         return out
@@ -1122,16 +1122,16 @@ class Run:
             self.world = world
             self.zero = time.monotonic()
             before = verify.snapshot(world.plan)
-            every_id = world.entity_ids("task-")
-            entities = every_id[: args.rooms]
+            every_id = world.record_ids("task-")
+            records = every_id[: args.rooms]
             # Records nobody in this run is editing, so a page read is a page
             # read and not a second writer.
             self.browsable = every_id[args.rooms : args.rooms + 40] or every_id
-            if len(entities) < args.rooms:
-                raise RuntimeError(f"only {len(entities)} records to put rooms on")
+            if len(records) < args.rooms:
+                raise RuntimeError(f"only {len(records)} records to put rooms on")
             logins = [f"ed{n:02d}" for n in range(1, args.users + 1)]
             peers = [
-                Peer(world.port, logins[n], entities[n // args.per_room], 2000 + n,
+                Peer(world.port, logins[n], records[n // args.per_room], 2000 + n,
                      f"[CH{args.seed}.{n:02d}]")
                 for n in range(args.users)
             ]
@@ -1139,7 +1139,7 @@ class Run:
             print(f"{args.users} co-editors over {args.rooms} rooms "
                   f"({args.per_room} each), push rtt {args.rtt_ms} ms")
             print(f"plan: {world.corpus.records} records ({args.corpus_note}), port {world.port}")
-            print(f"rooms: {', '.join(entities)}\n")
+            print(f"rooms: {', '.join(records)}\n")
 
             self.watcher = Watcher(world.plan, peers, self.events, self.zero)
             self.pulse = Pulse(world.base, self.ledger, self.zero)
@@ -1180,19 +1180,19 @@ class Run:
                         who=peer.login, kind="WS save [final]", began=time.monotonic() - self.zero,
                         ms=answer.get("ms", 0.0), status=str(answer.get("t")),
                         outcome=answer.get("outcome"), commit=answer.get("commit"),
-                        pushed=answer.get("pushed"), entity=peer.entity))
+                        pushed=answer.get("pushed"), record=peer.record))
             self.watcher.sample()
             for peer in peers:
                 peer.drop(rude=False)
             time.sleep(3.0)
             self.watcher.stop()
             self.pulse.stop()
-            census = self.census(entities, "after")
+            census = self.census(records, "after")
             time.sleep(1.0)
 
             cpu, rss = world.cpu_seconds(), world.rss_mb()
             typed = [
-                Typed(who=p.login, login=p.login, entity=p.entity, anchor=p.anchor,
+                Typed(who=p.login, login=p.login, record=p.record, anchor=p.anchor,
                       expected=p.anchor + "".join(p.stream[i % len(p.stream)]
                                                   for i in range(p.typed)),
                       saves=[], joined=True, trouble=p.trouble)
@@ -1200,13 +1200,13 @@ class Run:
             ]
             world.stop()
             simulated = set(logins) | {"census-after", "reader"}
-            simulated |= {f"probe-{entity[-2:]}" for entity in entities}
-            simulated |= {f"form-{entity[-2:]}" for entity in entities}
-            simulated |= {f"open-{entity[-2:]}-{n}" for entity in entities
+            simulated |= {f"probe-{record[-2:]}" for record in records}
+            simulated |= {f"form-{record[-2:]}" for record in records}
+            simulated |= {f"open-{record[-2:]}-{n}" for record in records
                           for n in range(args.openers)}
             verdict = verify.verify(world.plan, world.origin, typed, self.sent_forms,
                                     logins=simulated, before=before)
-            blob = self._blob(world, peers, entities, load_seconds, cpu, rss, census, verdict)
+            blob = self._blob(world, peers, records, load_seconds, cpu, rss, census, verdict)
             self._print(blob, verdict)
             out = Path(args.out)
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -1215,19 +1215,19 @@ class Run:
             return 0 if not verdict["findings"] or not any(
                 f["severity"] in (verify.LOST, verify.DIVERGED) for f in verdict["findings"]) else 1
 
-    def _blob(self, world, peers, entities, load_seconds, cpu, rss, census, verdict) -> dict:
+    def _blob(self, world, peers, records, load_seconds, cpu, rss, census, verdict) -> dict:
         return {
             "scenario": "coedit-churn",
             "args": vars(self.args),
             "world": world.describe(),
-            "rooms": entities,
+            "rooms": records,
             "seconds_of_load": round(load_seconds, 1),
             "server": {"cpu_seconds": cpu, "rss_mb": rss,
                        "cpu_fraction_of_one_core": round(cpu / load_seconds, 2)},
             "report": self.ledger.report(load_seconds),
             "phases": self.phases,
             "peers": [
-                {"login": p.login, "entity": p.entity, "typed": p.typed,
+                {"login": p.login, "record": p.record, "typed": p.typed,
                  "connects": p.connects, "run_in_editor": p.run_length(),
                  "reloads": p.reloads, "trouble": p.trouble, "shrinks": p.shrinks}
                 for p in peers

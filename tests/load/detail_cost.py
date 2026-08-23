@@ -45,7 +45,7 @@ import corpus  # noqa: E402
 from openproj import render  # noqa: E402
 from openproj.index import build_index  # noqa: E402
 from openproj.store import Store  # noqa: E402
-from openproj.web import _config_at, _entities_at  # noqa: E402
+from openproj.web import _config_at, _records_at  # noqa: E402
 
 DRAWN = date(2026, 8, 17)
 
@@ -59,7 +59,7 @@ def index_at(store: Store, commit: str):
     had twice.
     """
     config, unreadable_config = _config_at(store, commit)
-    records, unreadable_records = _entities_at(store, commit)
+    records, unreadable_records = _records_at(store, commit)
     return build_index(
         records,
         config,
