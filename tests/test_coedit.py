@@ -29,6 +29,7 @@ import threading
 import time
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 import pygit2
 import pytest
@@ -1059,6 +1060,69 @@ def test_a_joiner_who_is_told_to_reload_does_not_swallow_a_commit_made_in_git(
     assert "A LINE COMMITTED IN GIT" in stored_body(plan)
 
 
+def test_a_join_folds_a_commit_in_at_the_boundary_where_two_index_spaces_meet(
+    client: TestClient, plan: Path
+):
+    """The other `absorb`, asked on the body a plan is actually written in.
+
+    `Room.absorb` runs on exactly two paths. The save path is driven by
+    `test_a_commit_made_in_git_arrives_whole_in_a_body_written_in_house_style`
+    above; this is the other one — a tab joining a room with nothing pending
+    folds in whatever git has moved to since (`web.py`, the `elif not
+    room.pending()` arm) and broadcasts the update to everybody already there.
+
+    The test above this one drives that path with `A LINE COMMITTED IN GIT` and
+    asks `in`, and measured: with `byte_offset` returning the code point offset
+    it was handed, that test still passes. Both halves are why — the body is
+    ASCII, where every index space is the same number, and `in` cannot see a
+    splice that landed in the wrong place anyway. So the same path is asked again
+    on a line where a code point offset and a byte offset are nearly three times
+    apart, and asked as equality.
+
+    The edit is at the end of the last LINE and not of the document, which is the
+    one thing this case has to get right: an append at the very end cannot fail,
+    because the wrong index lands at the end and the end is where it belonged.
+    """
+    front, _ = split_front_matter(stored(plan))
+    house = "第一週の計画\n第二週の計画\n第三週の計画\n"
+    commit_directly(
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{house}"}, "a plan written in Japanese"
+    )
+
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        assert ann.body() == house, "the room did not open on the file"
+
+        landed = "第一週の計画\n第二週の計画\n第三週の計画は未定\n"
+        commit_directly(
+            plan,
+            {**SEED, PATH: f"---\n{front}\n---\n\n{landed}"},
+            "a person with a terminal",
+            author="cy",
+        )
+
+        # Bo's arrival is what triggers the fold; ann is who it has to reach, and
+        # she is the one who has been reading the wrong document if it does not.
+        #
+        # Bo is asked first and without waiting for anything, because his welcome
+        # is composed from the document the fold just wrote — so it is the fold
+        # itself, and a wrong one fails here rather than in a read that never
+        # returns. `until` would have hung: it waits for a marker that a mangled
+        # fold never produces, and a test that hangs says less than one that fails.
+        with open_room(client, "bo") as two:
+            bo = Session(two, "bo")
+            bo.hello()
+            assert bo.body() == landed, (
+                f"the joiner was welcomed into a document nobody committed: {bo.body()!r}"
+            )
+            ann.take("update")
+
+        assert ann.body() == landed, (
+            f"a commit folded in by somebody else's arrival left ann reading {ann.body()!r}"
+        )
+
+
 def test_a_stranger_is_refused_the_socket(plan: Path):
     """And is therefore handed exactly today's editor. Refusal has to be a
     handshake that does not complete rather than a room that quietly does
@@ -1225,6 +1289,240 @@ def test_absorbing_keeps_the_untouched_half_of_the_document():
 # --------------------------------------------------------------------------- #
 # The two index spaces
 # --------------------------------------------------------------------------- #
+#
+# Three of them, once the browser is counted, and every one of them is an `int`:
+#
+#   * a Python `str` counts CODE POINTS             — `len("a—b")` is 3
+#   * `pycrdt.Text` is addressed in UTF-8 BYTES     — `len(Text("a—b"))` is 5
+#   * a JavaScript string counts UTF-16 CODE UNITS  — an astral emoji is two
+#
+# For ASCII all three are the same number, which is the whole reason 1,160
+# passing tests could not see either half of this defect. So the corpus below is
+# not "bodies with an emoji in them": every case puts a SPLICE BOUNDARY where
+# two of the three spaces disagree, which is a much stronger property than
+# containing a character that makes them disagree somewhere.
+#
+# **Every character a case turns on is written as an escape, and that is not
+# fussiness.** Composing this corpus on macOS silently produced NFD for `café`,
+# which takes it from 17 code points to 19 — a different case, with nothing
+# different to look at. An en dash typed for an em dash is the same accident with
+# no visible tell at all, and neither is caught by the byte counts below, because
+# both dashes are three bytes. So combining marks, joiners, dashes and everything
+# outside the basic plane are spelled out; the CJK lines are left as characters
+# because there is no composition to get wrong in them and their byte offsets are
+# asserted at the boundary, which a substituted character cannot survive.
+
+# What a case comes back as when pycrdt does not come back at all. `del` over a
+# range whose end falls inside a character does not always mangle the document:
+# on an astral body it panics in yrs and pyo3 raises that through whatever task
+# was running, which on the server is the room's.
+PANICKED = "<pycrdt did not return: a pyo3 panic came out of the room's task>"
+
+
+class Case(NamedTuple):
+    """One body, one edit to it, and what mixing the index spaces did to it.
+
+    `cut` is what `Room.absorb`'s prefix/suffix scan finds, in code points, and
+    `in_bytes` is the same splice where the document actually lives. Both are
+    written down because a case earns its place by the two being DIFFERENT: that
+    is the difference the defect was, and a case where they agree tests nothing.
+
+    `mangled` is what the room came back holding when the code-point splice was
+    applied to the byte-addressed document — measured against pycrdt 0.14.2 and
+    yrs 0.27.3, not reasoned about. A case whose `mangled` equals its `now` is a
+    CONTROL: it passes with the defect in place. Keeping those, and knowing which
+    they are, is the only way this suite can say which case caught the bug.
+    """
+
+    name: str
+    was: str
+    now: str
+    cut: tuple[int, int]
+    in_bytes: tuple[int, int]
+    mangled: str
+
+
+CORPUS = (
+    # -- Family A: a splice boundary inside a surrogate pair ------------------
+    #
+    # These are the browser's family — a UTF-16 scan stops between the halves of
+    # a pair — and they are here because the room is the other end of it. On the
+    # server the same bodies exercise the byte confusion instead: an astral
+    # emoji is one code point and four bytes, so the two numbers differ by three
+    # at the first character.
+    Case(
+        "a thumb up becomes a thumb down",
+        "\U0001f44d done\n", "\U0001f44e done\n",
+        (0, 1), (0, 4),
+        "\U0001f44e",
+    ),
+    Case(
+        "backspacing the first of two adjacent emoji",
+        "\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n",
+        (0, 1), (0, 4),
+        # The whole document. `del` ran from byte 0 to byte 1 — inside the first
+        # emoji — and took everything with it.
+        "",
+    ),
+    Case(
+        "a flag, whose second half changes",
+        "\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n",
+        (1, 2), (4, 8),
+        PANICKED,
+    ),
+    # -- Family B: a boundary inside a multi-BYTE, single-code-unit character --
+    #
+    # The discriminators. In each of these the code point count and the UTF-16
+    # count are EQUAL and only the byte count differs, so a surrogate bug cannot
+    # fire here and a failure can only be the byte one. That is the point of the
+    # family and it is why it is not merged with A.
+    Case(
+        "an edit after a run of em dashes",
+        "one \u2014 two \u2014 three \u2014 four \u2014 five\n",
+        "one \u2014 two \u2014 three \u2014 four \u2014 six\n",
+        (27, 31), (35, 39),
+        # Well formed, no replacement character anywhere, one word deleted from
+        # the wrong place and its replacement stranded inside another. This is
+        # the shape `byte_offset`'s docstring records as shipped and committed.
+        "one \u2014 two \u2014 three \u2014 fsix\u2014 five\n",
+    ),
+    Case(
+        "a commit changes a word after an em dash",
+        "Shape it \u2014 then bet on it.\n", "Shape it \u2014 then bet on that.\n",
+        (23, 24), (25, 26),
+        "Shape it \u2014 then bet otha it.\n",
+    ),
+    Case(
+        "CJK, where every character is three bytes and one unit",
+        "週次の計画を書く\n", "週次の計画を読む\n",
+        (6, 8), (18, 24),
+        # Five characters of somebody's sentence gone, and the newline with them.
+        "週次読む",
+    ),
+    # -- Family C: combining sequences ---------------------------------------
+    #
+    # Nothing in `src/` counts graphemes — the finest unit any shipped line
+    # counts is a code point — so these pin what the code DOES and never
+    # one-press-one-glyph.
+    Case(
+        "a decomposed é, and a backspace that takes the accent",
+        "le cafe\u0301 est pre\u0302t\n", "le cafe est pre\u0302t\n",
+        (7, 8), (7, 9),
+        # The rest of the line destroyed: the delete ended inside a two-byte
+        # character, so it ran to the end of the document.
+        "le cafe",
+    ),
+    Case(
+        "a family whose first member changes",
+        "\U0001f469\u200d\U0001f469\u200d\U0001f467 crew\n",
+        "\U0001f468\u200d\U0001f469\u200d\U0001f467 crew\n",
+        (0, 1), (0, 4),
+        "\U0001f468",
+    ),
+    # -- Family D and E: deletion, and a replacement that spans a character ---
+    Case(
+        "an insertion at the end of the last line, not of the document",
+        "第一週の計画\n第二週の計画\n第三週の計画\n",
+        "第一週の計画\n第二週の計画\n第三週の計画は未定\n",
+        (20, 20), (56, 56),
+        # The trap this case exists to avoid: an append at the very end of the
+        # document CANNOT fail, because the wrong index lands at the end anyway
+        # and the end is where it belonged. This one goes after the last line and
+        # before its newline, and the text lands past the newline instead —
+        # exactly the "silently puts the text at the end" the docstring names.
+        "第一週の計画\n第二週の計画\n第三週の計画\nは未定",
+    ),
+    Case(
+        "a selection whose ends are whole but whose length is not",
+        "six weeks \u2014 the appetite\n", "six weeks appetite\n",
+        (10, 16), (10, 18),
+        # A stray `e`: the classic two-bytes-short signature.
+        "six weeks e appetite\n",
+    ),
+    Case(
+        "a replacement spanning an astral emoji",
+        "ship \U0001f680 on friday\n", "ship today\n",
+        (5, 13), (5, 16),
+        "ship tofriday\n",
+    ),
+    # -- Family F: the controls, declared per confusion -----------------------
+    #
+    # A control has to be declared against a named confusion, not against the
+    # corpus, and the robot is the proof. Its three lengths differ, it is the
+    # case this repository's own mandated footer is made of, and it PASSES the
+    # surrogate confusion — the scan stops at a whole character. It fails the
+    # byte one, because the robot sits BEFORE the boundary. So it is a control
+    # over there and a live case here, and only saying which makes either useful.
+    Case(
+        "the mandated footer, edited after the robot",
+        "\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n",
+        (13, 21), (16, 24),
+        "\U0001f916 written somebodyent\n",
+    ),
+    # The two below are the controls FOR THIS CONFUSION: both carry a character
+    # that makes the spaces differ, neither puts a splice boundary after one, and
+    # both come back correct with `byte_offset` broken. They are what lets this
+    # file say "has an emoji in it" and "has an em dash in it" are not the case.
+    Case(
+        "an emoji typed in from the picker, after an ASCII prefix",
+        "a fine result\n", "a fine \U0001f389 result\n",
+        (7, 7), (7, 7),
+        "a fine \U0001f389 result\n",
+    ),
+    Case(
+        "an em dash that sits after both boundaries",
+        "hello \u2014 world\n", "hi \u2014 world\n",
+        (1, 5), (1, 5),
+        "hi \u2014 world\n",
+    ),
+)
+
+# The worked example of the check, kept as the negative rather than proposed:
+# `the plan` to `the plans` is 9/9/9 to 10/10/10, every arm passes, and it tests
+# nothing. `test_every_case_in_the_corpus_makes_two_index_spaces_disagree` runs
+# the check over this pair too, so a check that has stopped discriminating says
+# so instead of quietly waving the corpus through.
+REJECTED = ("the plan\n", "the plans\n")
+
+
+def in_units(text: str) -> int:
+    """How long this is where a browser counts it: UTF-16 code units.
+
+    Written out rather than `len(text.encode('utf-16-le')) // 2` because the
+    number this corpus argues about should be computed the way the sentence
+    above says it, in one line somebody can check by eye.
+    """
+    return sum(2 if ord(letter) > 0xFFFF else 1 for letter in text)
+
+
+# The subset whose splice boundary falls where a UTF-16 scan can stop — the
+# browser's half of the same mistake, and the only part of this corpus worth
+# spending a node run or a browser on.
+#
+# **The byte family is deliberately not here.** In every one of those cases the
+# code point count and the code unit count are EQUAL and only the byte count
+# differs, which is the whole reason they discriminate on the server — and it
+# means a browser cannot fail them. Asking them of Chrome would be seven more
+# browsers proving nothing.
+#
+# Named case by case rather than sliced out by family, so that adding a case to
+# `CORPUS` does not silently add a browser to the suite, and so that renaming one
+# out of this list is not silent either: `test_every_case_in_the_corpus_makes_
+# two_index_spaces_disagree` checks that every name below still resolves.
+_BROWSER_NAMES = (
+    "a thumb up becomes a thumb down",
+    "backspacing the first of two adjacent emoji",
+    "a flag, whose second half changes",
+    "a family whose first member changes",
+    # And the controls FOR THE SURROGATE CONFUSION, which are not the same set as
+    # the controls for the byte one. The footer passes here — its boundary is a
+    # whole character — and fails on the server, because its robot sits before
+    # that boundary; `CORPUS` carries what the byte break does to each of these.
+    "the mandated footer, edited after the robot",
+    "an emoji typed in from the picker, after an ASCII prefix",
+    "an em dash that sits after both boundaries",
+)
+BROWSER_CORPUS = tuple(case for case in CORPUS if case.name in _BROWSER_NAMES)
 
 
 def test_a_string_offset_is_not_a_document_offset():
@@ -1244,6 +1542,19 @@ def test_a_string_offset_is_not_a_document_offset():
     assert coedit.byte_offset("", 0) == 0
     assert coedit.byte_offset("a—b", 99) == 5
     assert coedit.byte_offset("🎉x", 1) == 4
+
+    # And the corpus, as the table it is: every splice boundary `absorb` will
+    # compute, converted at the one place the two spaces meet. These pairs are
+    # the defect written down — `(27, 31)` and `(35, 39)` are the same edit,
+    # to the same line of the same document, and both are `tuple[int, int]`.
+    for case in CORPUS:
+        assert (
+            coedit.byte_offset(case.was, case.cut[0]),
+            coedit.byte_offset(case.was, case.cut[1]),
+        ) == case.in_bytes, (
+            f"{case.name}: the splice this corpus is built on is {case.cut} in code "
+            f"points and {case.in_bytes} in bytes, and the conversion no longer agrees"
+        )
 
 
 def test_a_body_with_an_em_dash_is_absorbed_exactly():
@@ -1298,6 +1609,290 @@ def test_absorbing_holds_for_every_shape_of_edit_in_a_body_that_is_not_ascii():
     ):
         room.absorb(landed)
         assert room.body() == landed, f"absorbing {landed!r} left {room.body()!r}"
+
+
+def _absorbed(was: str, now: str) -> str:
+    """What a room seeded with `was` holds after absorbing `now`.
+
+    A function rather than four lines repeated, because the interesting return
+    value is the one that is not a string at all: `del` over a range whose end
+    falls inside an astral character panics in yrs, and pyo3 raises that as a
+    `PanicException`, which is a `BaseException` and not an `Exception`. A bare
+    `except Exception` here would let the loudest failure in the corpus through
+    as an error in the test rather than as the answer it is.
+    """
+    room = coedit.Room(TASK, PATH, "0" * 40, was)
+    try:
+        room.absorb(now)
+    except BaseException as raised:  # noqa: B036 - a pyo3 panic is not an Exception
+        assert type(raised).__name__ == "PanicException", f"something else raised: {raised!r}"
+        return PANICKED
+    return room.body()
+
+
+def test_every_case_in_the_corpus_makes_two_index_spaces_disagree():
+    """The corpus's own entrance exam, run over the corpus.
+
+    A case that does not put a splice boundary where two spaces disagree passes
+    whatever the code does, and a suite made of those is what 1,160 green tests
+    were. Three checks, and the second is the one that decides:
+
+    * the three lengths of `was` or of `now` are not all one number. Necessary
+      and *not* sufficient — the footer case is the proof: all three of its
+      lengths differ and it still passes the surrogate confusion, because its
+      robot is not where the boundary is.
+    * the splice lands on different numbers in the two spaces — or the case is
+      declared a control, by coming back correct when they are mixed. There is no
+      third kind of case, and a case that is neither is a case that tests nothing.
+    * there is at least one control and at least one that is not, because a
+      corpus with no controls cannot say which case caught the bug, and one with
+      nothing but controls catches nothing.
+
+    Run over `REJECTED` as well, which is the ASCII pair every arm passes: a check
+    that has stopped discriminating fails here instead of waving the corpus
+    through, which is the mutation test this file asks of every other harness.
+    """
+
+    def spaces(text: str) -> tuple[int, int, int]:
+        return len(text), len(text.encode("utf-8")), in_units(text)
+
+    for case in CORPUS:
+        assert len(set(spaces(case.was))) > 1 or len(set(spaces(case.now))) > 1, (
+            f"{case.name}: {spaces(case.was)} and {spaces(case.now)} — code points, bytes "
+            "and code units are one number on both sides, so every arm of this passes"
+        )
+        assert case.cut != case.in_bytes or case.mangled == case.now, (
+            f"{case.name}: the splice is {case.cut} in both spaces and the case is not "
+            "declared a control, so it cannot tell them apart and cannot fail"
+        )
+        # The second absorb below edits the end of the last LINE. An append at
+        # the end of the document cannot fail — the wrong index lands at the end
+        # anyway, and the end is where it belonged — which is the trap the CJK
+        # case exists to avoid and the one this keeps every case out of.
+        assert case.now.endswith("\n"), f"{case.name}: the compounding edit needs a last line"
+
+    controls = [case.name for case in CORPUS if case.mangled == case.now]
+    assert controls, "no control: nothing here can say which case caught the bug"
+    assert len(controls) < len(CORPUS), "every case is a control, so the corpus catches nothing"
+
+    assert len(set(spaces(REJECTED[0]))) == 1 and len(set(spaces(REJECTED[1]))) == 1, (
+        "the ASCII pair no longer looks like ASCII to this check, so the check above "
+        "is no longer the check that rejected it"
+    )
+
+    missing = set(_BROWSER_NAMES) - {case.name for case in CORPUS}
+    assert not missing, f"renamed out of the browser corpus and silently dropped: {missing}"
+
+    # And every test that takes a `case` takes the WHOLE of one of these two
+    # lists. Read off the marks rather than out of the source, because the thing
+    # that has to be true is what pytest will collect and a text match cannot see
+    # the difference between `BROWSER_CORPUS` and `BROWSER_CORPUS[:5]` — measured,
+    # it waved that slice straight through.
+    #
+    # The failure this guards has already happened in this file. Two of the three
+    # tests that drive a browser were folded onto `BROWSER_CORPUS` and grew to
+    # seven while the third — the ACE one, which is the surface `AGENTS.md`
+    # names — stayed a hand-copied five under a comment saying it was "the same
+    # five bodies". Nothing went red, because a shorter list is not an error: the
+    # second surface was simply asked a smaller question than the other two, in
+    # silence, and the two cases it was missing were the ZWJ family, whose
+    # boundary falls inside a surrogate pair, and the em dash control.
+    taken: dict[str, tuple[str, ...]] = {}
+    for name, obj in sorted(globals().items()):
+        if not name.startswith("test_") or not callable(obj):
+            continue
+        for mark in getattr(obj, "pytestmark", ()):
+            if mark.name == "parametrize" and mark.args[0] == "case":
+                taken[name] = tuple(one.name for one in mark.args[1])
+    whole = {"CORPUS": tuple(one.name for one in CORPUS),
+             "BROWSER_CORPUS": tuple(one.name for one in BROWSER_CORPUS)}
+    assert taken, "nothing is parametrised over a case any more, so this checks nothing"
+    for name, names in taken.items():
+        assert names in whole.values(), (
+            f"{name} takes {len(names)} of these cases and not the whole of either list — "
+            f"CORPUS is {len(CORPUS)} and BROWSER_CORPUS is {len(BROWSER_CORPUS)}. A "
+            f"subset asks one surface a smaller question than the others: {names}"
+        )
+    drives = sum(1 for names in taken.values() if names == whole["BROWSER_CORPUS"])
+    assert drives == 3, (
+        f"{drives} tests drive a browser from BROWSER_CORPUS and there are three of them "
+        "— the shim, the adapter and Ace. A fourth belongs in this count; a third that "
+        "has gone back to a list of its own is the drift this line exists to catch"
+    )
+
+
+@pytest.mark.parametrize("case", CORPUS, ids=[case.name for case in CORPUS])
+def test_absorbing_holds_for_every_body_the_index_spaces_disagree_about(case: Case):
+    """`Room.absorb`, over every body where a code point offset is not a byte one.
+
+    This is the path no test that drives an editor can reach. An edit made in a
+    browser arrives as a CRDT update and is applied by `pycrdt`, which converts
+    nothing; `absorb` is the one place a *Python string index* meets a document
+    addressed in bytes, and it runs when a commit made in git is folded into an
+    open room and when a tab rejoins one.
+
+    Equality, never a substring: every wrong answer in this corpus still contains
+    every marker a substring test would look for. `contraction-off run.` came back
+    as `contraction-oun.` with a stray `un.` at the bottom of the file, and `in`
+    would have passed on it.
+    """
+    landed = _absorbed(case.was, case.now)
+    assert landed == case.now, (
+        f"{case.name}: absorbing {case.now!r} left the room holding {landed!r}"
+    )
+
+    # And it compounds, which is the second half of the defect: the absorb a
+    # reconnection makes starts from whatever the last one left. So the same room
+    # takes a second edit, at the end of the last line — where the two spaces are
+    # furthest apart on a body like these.
+    #
+    # **The controls are not controls for this second edit, and that is the
+    # sharpest thing in the corpus.** `hello — world` survives having its first
+    # word replaced, because the em dash is after the boundary; type three more
+    # characters at the end of the same line and the dash is before it, and the
+    # room comes back holding `hi — wor okld`. A control is a control for ONE
+    # edit to one body, never for a document. Which is why the control census
+    # lives in `test_the_corpus_says_what_a_mixed_index_space_does_to_each_body`,
+    # against each case's own edit, and not here.
+    room = coedit.Room(TASK, PATH, "0" * 40, case.was)
+    room.absorb(case.now)
+    again = case.now[:-1] + " ok\n"
+    room.absorb(again)
+    assert room.body() == again, (
+        f"{case.name}: the second absorb mangled what the first left: {room.body()!r}"
+    )
+
+
+@pytest.mark.parametrize("case", CORPUS, ids=[case.name for case in CORPUS])
+def test_the_corpus_says_what_a_mixed_index_space_does_to_each_body(
+    case: Case, monkeypatch: pytest.MonkeyPatch
+):
+    """Delete the fix, watch the test fail, put the fix back — as a test.
+
+    "A test that would not have caught the defect it is written for is not a
+    test", and the way that rule is usually followed is by hand, once, by
+    whoever wrote the test. Done here instead, so it cannot rot: `byte_offset` is
+    replaced with the code this repository actually shipped — the code point
+    offset, handed straight to a document addressed in bytes — and every case has
+    to come back as the exact document that break produces.
+
+    Which makes the file say two things it could not otherwise say. That each
+    case *can* fail, so none of them is decoration. And which of them cannot:
+    a case whose mangled document equals its intended one is a control, it is
+    written down as such in `CORPUS`, and this is where that claim is checked
+    rather than asserted in a comment.
+    """
+    monkeypatch.setattr(coedit, "byte_offset", lambda text, at: at)
+    answer = _absorbed(case.was, case.now)
+    if case.mangled == case.now:
+        assert answer == case.now, (
+            f"{case.name} is written down as a control for this confusion and it is not "
+            f"one any more: it came back {answer!r}"
+        )
+    else:
+        assert answer != case.now, (
+            f"{case.name} survives a code point offset applied to a byte-addressed "
+            "document, so it is a control and is not marked as one"
+        )
+    assert answer == case.mangled, (
+        f"{case.name}: a code point splice on a byte-addressed document used to leave "
+        f"{case.mangled!r} and now leaves {answer!r}"
+    )
+
+
+def test_an_index_inside_a_character_is_not_an_error_and_that_is_the_defect():
+    """The two sentences `byte_offset`'s docstring makes, pinned as behaviour.
+
+    "Nothing raises when the two are mixed", and "an index that falls inside a
+    character is not an error either". Both are why this shipped: there was no
+    exception, no log line, no replacement character and no diff to look at —
+    just somebody's sentence at the bottom of the file instead of in it. **"Does
+    not raise" is how the defect stayed invisible**, so it is pinned here, where a
+    pycrdt that changes its mind about any of it fails one small test whose name
+    says what happened rather than a room in front of somebody.
+
+    It is worse than the docstring says, and the difference decides what the
+    corpus above may assert: `insert` at an index inside a character appends, as
+    documented, but `del` over a range whose END is inside one destroys the rest
+    of the document — and on an astral body it does not return at all.
+    """
+    # 1. An offset inside a character, handed to `insert`. Byte 2 of `a—b` is the
+    #    second of the em dash's three bytes.
+    inside = coedit.seeded("a\u2014b")[coedit.BODY]
+    inside.insert(2, "X")
+    assert str(inside) == "a\u2014bX", (
+        "an index inside a character is not an error: `insert` put the text at the "
+        "end of the document instead, which is how a word ends up stranded there"
+    )
+
+    # Two offsets inside one astral character, both landing at the end. This is
+    # what a code point offset does to a body that opens with an emoji — and the
+    # end is not where any of them belonged.
+    for at in (1, 2, 3):
+        astral = coedit.seeded("\U0001f44d done\n")[coedit.BODY]
+        astral.insert(at, "X")
+        assert str(astral) == "\U0001f44d done\nX", f"insert at byte {at} did something new"
+
+    # And it is worse than "at the end", which is as far as the docstring goes:
+    # the text is in the room's own string and NOT in the update the room hands
+    # out. Measured on every boundary of `a\u2014b` — the two whole-character ones
+    # agree, the one inside the em dash does not — so a room that made this
+    # mistake would commit to git a document no client has ever been sent, which
+    # is the same shape as the observer that overwrote a restored draft: two
+    # copies, no disagreement anybody can see, and the wrong one saved.
+    stranded = coedit.seeded("a\u2014b")
+    stranded[coedit.BODY].insert(2, "X")
+    joiner = coedit.Doc()
+    joiner[coedit.BODY] = coedit.Text()
+    joiner.apply_update(stranded.get_update())
+    assert str(stranded[coedit.BODY]) == "a\u2014bX", "the room's own copy has it"
+    assert str(joiner[coedit.BODY]) == "a\u2014b", (
+        "and a client seeded from the room's update does not — if this has started "
+        "agreeing, the two copies converge and the failure is one degree less bad"
+    )
+
+    # 2. A delete whose end is inside a character. Not documented anywhere, and
+    #    strictly worse than the insert: it takes the rest of the document.
+    two_byte = coedit.seeded("a\u2014b")[coedit.BODY]
+    del two_byte[1:2]
+    assert str(two_byte) == "a", "a delete ending inside a character used to take the rest"
+
+    four_byte = coedit.seeded("\U0001f44d done\n")[coedit.BODY]
+    del four_byte[0:1]
+    assert str(four_byte) == "", "and on an astral character it took the whole document"
+
+    # And the loudest one, which is not a mangled document at all: a delete whose
+    # BOTH ends are inside astral characters panics in yrs, and pyo3 raises that
+    # through whatever was running — on the server, the room's own task.
+    flag = coedit.seeded("\U0001f1e9\U0001f1ea\n")[coedit.BODY]
+    panicked = ""
+    try:
+        del flag[1:2]
+    except BaseException as raised:  # noqa: B036 - a pyo3 panic is not an Exception
+        panicked = type(raised).__name__
+    assert panicked == "PanicException", (
+        f"deleting across a surrogate pair in byte space answered {panicked or 'nothing'}: "
+        "this used to be a Rust panic through the room's task, which is a room that "
+        "stops committing rather than a document that comes back wrong"
+    )
+
+    # 3. And the whole shape, by hand: a splice measured on the string and applied
+    #    to the document. This is the defect, with `absorb` taken out of it.
+    body = "Shape it \u2014 then bet on it.\n"
+    text = coedit.seeded(body)[coedit.BODY]
+    # The splice `absorb` computes for this pair, in code points: cut `[23, 24)`
+    # and put `tha`. In bytes it is `[25, 26)`, because of the em dash at 9.
+    assert body[23:24] == "i" and body.replace("on it.", "on that.")[23:26] == "tha"
+    del text[23:24]
+    text.insert(23, "tha")
+    assert str(text) == "Shape it \u2014 then bet otha it.\n", (
+        "the splice that shipped, reproduced: nothing raised and the document is "
+        "not the text"
+    )
+    assert "\ufffd" not in str(text), (
+        "well formed, no replacement character anywhere — which is why the browser's "
+        "half of this defect can be caught by looking for one and the server's cannot"
+    )
 
 
 def test_every_index_into_the_document_is_converted():
@@ -1426,32 +2021,15 @@ def typed_in_the_page(client: TestClient, shown: str, edits: list[str]) -> coedi
     return room
 
 
-@pytest.mark.parametrize(
-    ("was", "now"),
-    [
-        # Replacing one emoji with another: they share a leading half, so the
-        # common prefix ends *between* the two halves of the pair.
-        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
-        # Backspacing the first of two adjacent emoji: both boundaries land
-        # inside a pair at once.
-        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
-        # A flag is two regional indicators, so it is two pairs and the boundary
-        # falls inside the second one.
-        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
-        # The two below are the controls, and they are here to say what the case
-        # actually is: both have an emoji in them, neither puts a splice boundary
-        # inside one, and both passed with the defect in place. A corpus that
-        # merely contains an emoji proves nothing — this repository's own
-        # mandated footer, edited after the robot rather than through it, is the
-        # shape that always worked.
-        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
-        # And an emoji typed in from the picker, which lands whole between two
-        # characters that are not halves of anything.
-        ("a fine result\n", "a fine \U0001f389 result\n"),
-    ],
-)
+# Four live cases and three controls, and which is which is written down beside
+# each one in `BROWSER_CORPUS` rather than here. The controls are the point: all
+# three carry a character that makes the index spaces disagree, none of them puts
+# a splice boundary inside one, and all three passed with the defect in place. A
+# corpus that merely contains an emoji proves nothing, and neither does one that
+# merely contains an em dash — which is what the third control is for.
+@pytest.mark.parametrize("case", BROWSER_CORPUS, ids=[case.name for case in BROWSER_CORPUS])
 def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
-    client: TestClient, plan: Path, was: str, now: str
+    client: TestClient, plan: Path, case: Case
 ):
     """The splice the browser makes, asked of the browser and of the room at once.
 
@@ -1471,14 +2049,15 @@ def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
     """
     front, _ = split_front_matter(stored(plan))
     commit_directly(
-        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{case.was}"}, "a body with an emoji in it"
     )
     shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
-    assert shown == was, "the page is not showing the body this test is about"
+    assert shown == case.was, "the page is not showing the body this test is about"
 
-    room = typed_in_the_page(client, shown, [now])
-    assert room.body() == now, (
-        f"the browser typed {now!r} and the room ended up holding {room.body()!r}"
+    room = typed_in_the_page(client, shown, [case.now])
+    assert room.body() == case.now, (
+        f"the browser typed {case.now!r} and the room ended up holding "
+        f"{room.body()!r}"
     )
 
 
@@ -1588,22 +2167,14 @@ return {errors: window.__errors, sent: window.__sent, opened, box: area.value};
 """
 
 
-@pytest.mark.parametrize(
-    ("was", "now"),
-    [
-        # The same five bodies `test_an_edit_across_an_emoji_reaches_the_room_as_
-        # the_character_it_was` uses, asked again through the adapter and of a
-        # real browser rather than the shim. Two of them are controls that passed
-        # with the defect in place, and they are here for the same reason.
-        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
-        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
-        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
-        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
-        ("a fine result\n", "a fine \U0001f389 result\n"),
-    ],
-)
+# The same corpus as the shim test above, asked again through the adapter and of
+# a real browser. One list rather than two copies of one: they used to be spelled
+# out twice with a comment saying they were the same five bodies, and a comment is
+# not a mechanism — the moment one grew a case the other did not, the browser
+# would have been asked a smaller question than the shim, in silence.
+@pytest.mark.parametrize("case", BROWSER_CORPUS, ids=[case.name for case in BROWSER_CORPUS])
 def test_an_edit_across_an_emoji_reaches_the_room_through_the_adapter(
-    client: TestClient, plan: Path, tmp_path: Path, was: str, now: str
+    client: TestClient, plan: Path, tmp_path: Path, case: Case
 ):
     """S6's claim, in one sentence: the same convergence, through the boundary.
 
@@ -1620,21 +2191,22 @@ def test_an_edit_across_an_emoji_reaches_the_room_through_the_adapter(
     """
     front, _ = split_front_matter(stored(plan))
     commit_directly(
-        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{case.was}"}, "a body with an emoji in it"
     )
     shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
-    assert shown == was, "the page is not showing the body this test is about"
+    assert shown == case.was, "the page is not showing the body this test is about"
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
         client, tmp_path / "emoji.html", room, _welcome(room),
-        _TYPED_IN_CHROME.replace("NEXT", json.dumps(now)),
+        _TYPED_IN_CHROME.replace("NEXT", json.dumps(case.now)),
     )
-    assert answer["opened"] == was, (
+    assert answer["opened"] == case.was, (
         "the welcome did not reach the editing surface, so nothing below was driven"
     )
-    assert room.body() == now, (
-        f"the browser typed {now!r} and the room ended up holding {room.body()!r}"
+    assert room.body() == case.now, (
+        f"the browser typed {case.now!r} and the room ended up holding "
+        f"{room.body()!r}"
     )
 
 
@@ -3161,23 +3733,31 @@ return {errors: window.__errors, sent: window.__sent, opened, box: SURFACE.text(
 """
 
 
-@pytest.mark.parametrize(
-    ("was", "now"),
-    [
-        # The same five bodies, a third time: once under the shim, once through
-        # the adapter in Chrome over a textarea, and now through Ace. Two of them
-        # are controls that passed with the original defect in place and they are
-        # here for exactly that reason — a corpus without the one string that
-        # matters proves nothing, and "has an emoji in it" is not that string.
-        ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
-        ("\U0001f600\U0001f601 ok\n", "\U0001f601 ok\n"),
-        ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
-        ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
-        ("a fine result\n", "a fine \U0001f389 result\n"),
-    ],
-)
+# The same corpus a third time — once under the shim, once through the adapter
+# over a textarea, and now through Ace — and from the same list, which is the
+# whole point rather than a tidy-up. This was the one of the three that stayed a
+# hand-copied five while the other two were folded onto `BROWSER_CORPUS` and
+# grew to seven, and its comment went on saying "the same five bodies" for both
+# of them. It drifted in exactly the direction that costs the most: the two cases
+# it lost were the ZWJ family, whose boundary falls inside a pair, and the em
+# dash control — so the surface `AGENTS.md` names was the one being asked the
+# smaller question, in silence, in the commit that was written to stop that
+# happening. A comment is not a mechanism, and `test_every_case_in_the_corpus_
+# makes_two_index_spaces_disagree` now reads these marks and refuses a subset
+# rather than trusting one.
+#
+# What the two recovered cases are worth HERE, measured rather than assumed:
+# neither discriminates on this path. With `run.from` broken to count code
+# points, this test catches the flag and the footer and passes the other five,
+# the family among them — its edit starts at index 0, where all three spaces
+# agree. They are carried because the corpus is one list and not three, and
+# because the family's boundary DOES fall inside a pair on the path
+# `tests/test_editor.py` drives, which is `reflect()`. A case that is a control
+# on one path and live on another belongs in both corpora, or the two surfaces
+# stop being asked the same question and nobody finds out from a green run.
+@pytest.mark.parametrize("case", BROWSER_CORPUS, ids=[case.name for case in BROWSER_CORPUS])
 def test_an_edit_in_the_second_surface_reaches_the_room_as_the_character_it_was(
-    client: TestClient, plan: Path, tmp_path: Path, was: str, now: str
+    client: TestClient, plan: Path, tmp_path: Path, case: Case
 ):
     """The gating case for the second editor, and it is the case this repository
     already knows catches the defect rather than the one that sounds like it.
@@ -3192,23 +3772,23 @@ def test_an_edit_in_the_second_surface_reaches_the_room_as_the_character_it_was(
     """
     front, _ = split_front_matter(stored(plan))
     commit_directly(
-        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
+        plan, {**SEED, PATH: f"---\n{front}\n---\n\n{case.was}"}, "a body with an emoji in it"
     )
     shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
-    assert shown == was, "the page is not showing the body this test is about"
+    assert shown == case.was, "the page is not showing the body this test is about"
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
         client, tmp_path / "ace-emoji.html", room, _welcome(room),
-        _ACE_RETYPED.replace("NEXT", json.dumps(now)), editor="ace",
+        _ACE_RETYPED.replace("NEXT", json.dumps(case.now)), editor="ace",
     )
     assert answer["surface"] == "ace", "the page mounted the box, so nothing here was driven"
-    assert answer["opened"] == was, (
+    assert answer["opened"] == case.was, (
         "the welcome did not reach the second surface, so nothing below was driven"
     )
-    assert answer["box"] == now, f"Ace ended up holding {answer['box']!r}"
-    assert room.body() == now, (
-        f"Ace typed {now!r} and the room ended up holding {room.body()!r}"
+    assert answer["box"] == case.now, f"Ace ended up holding {answer['box']!r}"
+    assert room.body() == case.now, (
+        f"Ace typed {case.now!r} and the room ended up holding {room.body()!r}"
     )
 
 
@@ -3232,9 +3812,16 @@ return {errors: window.__errors, sent: window.__sent, opened, box: SURFACE.text(
     [
         # An astral emoji: one character, two UTF-16 code units.
         "one \U0001f600\n",
-        # A ZWJ sequence: a family, seven code points and eleven code units, which
-        # a person sees and deletes as one glyph.
-        "one \U0001f469‍\U0001f469‍\U0001f467\n",
+        # A ZWJ sequence: a family, five code points and eight code units, which a
+        # person sees and deletes as one glyph.
+        #
+        # Seven and eleven is what this said, and those are the numbers for a
+        # four-person family — 👩‍👩‍👧‍👦, four emoji and three joiners. A member was
+        # lost in an edit and the count stayed, in a file where the counts in the
+        # comments are the argument. The joiners are escapes now for the same
+        # reason: a zero-width character typed into a literal is one nobody can
+        # see go missing.
+        "one \U0001f469\u200d\U0001f469\u200d\U0001f467\n",
         # A flag: two regional indicators, four code units, and the case where
         # taking half is a DIFFERENT flag rather than a broken character.
         "one \U0001f1e9\U0001f1ea\n",
