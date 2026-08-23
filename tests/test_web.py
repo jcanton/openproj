@@ -17,7 +17,7 @@ decisions:
   as the guarantee that the author string was not client-supplied. Hence a header
   and a query parameter that both try to be somebody else.
 * **The writable surface is a closed set by construction.** The path is derived
-  from an id that has to match `^(proj|pitch|task)-[0-9a-f]{6}$` first, and the
+  from an id that has to match the one KINDS-derived pattern first, and the
   kind comes from the id prefix — not from the body, and never from string
   concatenation. Branch protection (spec §13) means a bad write cannot be
   force-pushed away, so the bound has to be at the door.
@@ -305,7 +305,7 @@ def bet_rows(page: str) -> list[tuple[str, str, str]]:
 
 
 @pytest.mark.parametrize(
-    "route", ["/", f"/detail/{TASK}", "/detail", "/graph", "/timeline"]
+    "route", ["/", "/table", f"/detail/{TASK}", "/detail", "/graph", "/timeline"]
 )
 def test_every_view_is_served_as_a_page(client: TestClient, route: str):
     response = client.get(route)
@@ -318,7 +318,7 @@ def test_every_view_is_served_as_a_page(client: TestClient, route: str):
 def test_the_table_renders_the_repository_as_it_is_right_now(client: TestClient):
     """Served from the live index, not from a `derived/` directory checked in
     yesterday: the one blocker in the corpus has to be counted here."""
-    body = client.get("/").text
+    body = client.get("/table").text
 
     assert "Reproduce the 2-GPU equator artefact" in body
     assert "Downgrade numpy for global sums" in body
@@ -351,13 +351,14 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
     them dark, which is the state every page on this app was in before this round.
 
     `/new` marks nothing, on purpose: it is not one of them, and pressing Table
-    from it abandons the form rather than staying put. `render_new`'s docstring is
-    where that is argued; this is where it is held.
+    from it abandons the form rather than staying put. `render_detail`'s creating
+    branch is where that is argued; this is where it is held.
     """
     from pages import lit
 
     for route, item in (
-        ("/", "Table"),
+        ("/", "Records"),
+        ("/table", "Table"),
         ("/graph", "Graph"),
         ("/timeline", "Timeline"),
         ("/cycles", "Cycles"),
@@ -443,7 +444,10 @@ def test_no_page_declares_one_name_twice(client: TestClient, route: str):
 
 
 @pytest.mark.parametrize(
-    "route", ["/", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"]
+    # The write-making pages. Not the landing: it offers no writes at all, and
+    # `assert fetches` below exists precisely to keep a page with nothing to
+    # announce from satisfying the count vacuously.
+    "route", ["/table", f"/detail/{TASK}", "/graph", "/cycles", "/cycle/1", "/new?kind=task"]
 )
 def test_every_write_a_page_makes_is_announced_before_and_after_it(
     client: TestClient, route: str
@@ -663,8 +667,9 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     is not decoration: `git shortlog --group=trailer:co-authored-by` counts the
     name, and GitHub puts their avatar on the commit. Measured on this route and
     on the cycle route beside it, both of which shipped it; the issue and note
-    routes happened to be closed already, by gates that refuse a field name no
-    model declares.
+    routes happened to be closed already, by gates that refused a field name no
+    model declares. The issue and note routes went through this same gate when
+    they were folded into /api/entity.
 
     That matters more here than it would anywhere else, because live co-editing
     is what makes `Co-authored-by:` the record of who wrote a shaping document. A
@@ -693,25 +698,6 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     )
     assert cycle.status_code == 200, cycle.text
     assert trailers_of(repo_path, cycle.json()["commit"]) == {}
-
-    # The two that were already closed, held closed. Refused at the gate rather
-    # than committed with a sanitised message, which is the stronger answer and
-    # the one this pins.
-    opened = client.post("/api/issue", json={"title": "a thing somebody noticed"})
-    assert opened.status_code == 200, opened.text
-    refused = client.patch(
-        f"/api/issue/{opened.json()['id']}",
-        json={"base_commit": head(client), "fields": {FORGED: "hi"}},
-    )
-    assert refused.status_code == 422, refused.text
-
-    written = client.post("/api/note", json={"title": "an idea nobody has shaped"})
-    assert written.status_code == 200, written.text
-    refused = client.patch(
-        f"/api/note/{written.json()['id']}",
-        json={"base_commit": head(client), "fields": {FORGED: "hi"}},
-    )
-    assert refused.status_code == 422, refused.text
 
 
 def test_a_commit_message_still_names_the_fields_a_save_moved(
@@ -1069,6 +1055,33 @@ def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path
     assert git_head(repo_path) == base
 
 
+def test_a_status_nobody_defined_is_refused_at_both_doors(
+    client: TestClient, repo_path: Path
+):
+    """POST refused it sideways, as a `problems` list out of `validate_all`;
+    PATCH did not refuse it at all. `parse_text` deliberately takes any word so
+    that a file which arrived in git with one still loads, and the PATCH route
+    never asked the vocabulary — so `status: banana` committed, and the plan
+    woke up with a blocker about it on a branch where the commit cannot be
+    force-pushed away. One gate now, read off the rung, on every door, and its
+    answer is one sentence naming the field.
+    """
+    base = git_head(repo_path)
+
+    made = create(client, {**VALID_TASK, "status": "banana"})
+    assert made.status_code == 422
+    assert "status" in made.json()["detail"]
+    assert "'banana'" in made.json()["detail"]
+    assert "expected one of" in made.json()["detail"]
+
+    saved = save(client, TASK, {"status": "banana"})
+    assert saved.status_code == 422
+    assert "status" in saved.json()["detail"]
+    assert "'banana'" in saved.json()["detail"]
+
+    assert git_head(repo_path) == base, "a refusal writes nothing"
+
+
 def test_a_create_records_its_author_like_any_other_write(client: TestClient, repo_path: Path):
     response = create(client, VALID_TASK)
 
@@ -1411,8 +1424,8 @@ def test_an_id_that_is_not_an_id_never_becomes_a_path(
 
 
 def test_a_create_cannot_choose_its_own_kind_of_directory(client: TestClient, repo_path: Path):
-    """`kind` is a closed set of three, and it is the only thing that picks the
-    directory. Anything else is a 422 before a path is built."""
+    """`kind` is a closed set read off the ladder, and it is the only thing that
+    picks the directory. Anything else is a 422 before a path is built."""
     base = git_head(repo_path)
     response = create(client, {**VALID_TASK, "kind": "../config"})
 
@@ -1855,7 +1868,7 @@ def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
 
     assert 'class="table-scroll"' not in page
     # The class still exists, on the one table with a sticky header to hold up.
-    assert 'class="table-scroll"' in client.get("/").text
+    assert 'class="table-scroll"' in client.get("/table").text
     assert re.search(r'<input class="live wide" data-field="assignees"[^>]*data-suggest', page), (
         "and this is the reason: the popups live inside the cells"
     )
@@ -3214,10 +3227,10 @@ def test_a_deleted_record_is_gone_from_every_page_that_drew_it(
     """A 200 from the API and a row still on the table is the failure worth
     testing for: the index is rebuilt per request from the tree, so this is
     really asking whether the delete reached the tree rather than some cache."""
-    assert DONE in client.get("/").text
+    assert DONE in client.get("/table").text
     assert remove(client, DONE).status_code == 200
 
-    assert DONE not in client.get("/").text
+    assert DONE not in client.get("/table").text
     assert DONE not in client.get("/api/index.json").text
     assert client.get(f"/detail/{DONE}").status_code == 404
 
@@ -3516,10 +3529,10 @@ def test_a_write_is_seen_by_the_very_next_read(client: TestClient):
     from this route, from a co-editing room's timer, or from a fetch that brought
     somebody else's work in — is a different key and a different answer."""
     assert save(client, TASK, {"title": "a new name for it"}).status_code == 200
-    assert "a new name for it" in client.get("/").text
+    assert "a new name for it" in client.get("/table").text
 
     assert save(client, TASK, {"title": "and another"}).status_code == 200
-    page = client.get("/").text
+    page = client.get("/table").text
     assert "and another" in page
     assert "a new name for it" not in page, "the table is showing the previous commit"
 
@@ -3588,10 +3601,10 @@ def test_an_edited_record_is_read_again_rather_than_remembered(client: TestClien
     # Distinctive, because a page this size contains most short English words
     # somewhere — the first attempt used "first" and "second" and found both.
     assert save(client, TASK, {"title": "zzarple"}).status_code == 200
-    assert "zzarple" in client.get("/").text
+    assert "zzarple" in client.get("/table").text
 
     assert save(client, TASK, {"title": "qqundle"}).status_code == 200
-    page = client.get("/").text
+    page = client.get("/table").text
     assert "qqundle" in page
     assert "zzarple" not in page, "the table is showing the version before the edit"
 
@@ -3756,14 +3769,16 @@ def test_nothing_edits_a_record_after_it_has_been_parsed(client: TestClient):
 
 
 def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
-    """Entities, cycles, issues, notes and people, each parsed once per
-    (blob, path).
+    """Entities (issues and notes now among them), cycles and people, each
+    parsed once per (blob, path).
 
-    It was written for entities alone and the other four went on doing a full
+    It was written for entities alone and the others went on doing a full
     walk plus a read and a parse of every file on EVERY request, warm or cold —
     which does not decay, and notes and issues are exactly what a betting table
-    accumulates. Measured on a plan with 300 of each: `/` 52 ms to 19 ms,
-    `/notes` 54 to 15, `/issues` 40 to 15.
+    accumulates. Measured on a plan with 300 of each, back when the inboxes had
+    routes of their own: `/` 52 ms to 19 ms, `/notes` 54 to 15, `/issues` 40 to
+    15. The landing now reads every kind, so `/` alone proves issues and notes
+    come through the shared blob cache.
 
     What this asserts is that all five actually go through it, which is the thing
     that silently stops being true when somebody adds a sixth kind or writes a
@@ -3802,7 +3817,7 @@ def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
     app = create_app(repo_path, auth="dev", secret=SECRET)
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
-        for route in ("/", "/notes", "/issues", "/cycles", "/people"):
+        for route in ("/", "/cycles", "/people"):
             assert client.get(route).status_code == 200, route
 
         held = {key[1].split("/")[0] for key in web._PARSED}

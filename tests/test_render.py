@@ -1,4 +1,4 @@
-"""The three static pages.
+"""The static pages.
 
 These assert structure and payload, not pixels. A page is correct here if it is
 self-contained, carries the data its JavaScript needs, and encodes the things a
@@ -26,8 +26,8 @@ from openproj.render import (
     render_static,
 )
 
-PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
-         "issues.html", "notes.html", "graph.html", "timeline.html")
+PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
+         "graph.html", "timeline.html")
 
 
 @pytest.fixture
@@ -109,7 +109,7 @@ def test_render_static_writes_every_page_and_says_which(rendered: Path, seed_ind
 def fetches_nothing(body: str, where: str) -> None:
     """Every way a page can ask the network for a file, in one place.
 
-    Written out inside the test that reads the eight exported files, this rule had
+    Written out inside the test that reads the exported files, this rule had
     never once been applied to an editing surface: `render_static` calls
     `render_detail` with no `base_commit`, so the exported `detail.html` carries
     no textarea, no toolbar, no Yjs bundle and no room script at all. The rule was
@@ -198,7 +198,7 @@ def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, se
     payload = json.loads(
         re.search(
             r'<script id="payload" type="application/json">(.*?)</script>',
-            read(rendered, "index.html"),
+            read(rendered, "table.html"),
             re.S,
         ).group(1)
     )
@@ -219,7 +219,7 @@ def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, se
 def test_the_table_shows_a_persistent_blocker_count(rendered: Path, seed_index: Index):
     blockers = sum(1 for p in seed_index.problems if p.severity == "blocker")
     assert blockers > 0
-    assert f'id="blocker-count">{blockers}<' in read(rendered, "index.html")
+    assert f'id="blocker-count">{blockers}<' in read(rendered, "table.html")
 
 
 def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Path):
@@ -231,7 +231,7 @@ def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Pat
     The chips, the severity marks and the empty states are all drawn from data
     the export carries, so all of them have to survive the loss of the editor.
     """
-    index = read(rendered, "index.html")
+    index = read(rendered, "table.html")
 
     assert "base_commit" not in index, "this is the read-only build"
     assert "CLAMPED.has(key) ? 'clamp' : ''" in index, (
@@ -248,7 +248,7 @@ def test_a_rendered_file_dresses_its_cells_the_way_the_server_does(rendered: Pat
 def test_filter_state_lives_in_query_parameters(rendered: Path):
     """Every view is a shareable URL, and the back button has to work. This is
     also what deletes the entire saved-views feature request."""
-    body = read(rendered, "index.html")
+    body = read(rendered, "table.html")
     assert "URLSearchParams" in body
     assert "history.replaceState" in body or "history.pushState" in body
 
@@ -307,7 +307,7 @@ def test_the_graph_filters_the_plan_the_way_the_table_does(rendered: Path):
     """One control bar over one `matches()`. While the filter model lived inside
     the table's script, "three views share one filter" was true of one view, and a
     second copy of the predicate is how a facet acquires a second meaning."""
-    table = read(rendered, "index.html")
+    table = read(rendered, "table.html")
     graph = read(rendered, "graph.html")
     model = re.search(r"function matches\(row\) \{.*?\n\}", table, re.S).group(0)
 
@@ -397,7 +397,7 @@ def test_the_graph_commits_in_the_same_place_every_other_page_does(
     # second answer to which edge a commit bar sticks to is asked where it can be
     # asked properly — `tests/test_cascade.py::test_every_commit_bar_sticks_to_
     # the_same_edge_and_one_rule_decides_it`, which resolves the cascade by name
-    # over all four pages. A substring search here cannot tell a rule from the
+    # over all four pages that draw one. A substring search here cannot tell a rule from the
     # comment above it, and this one was written and deleted for saying that a
     # paragraph explaining the old override was the old override.
     assert re.search(r"\.commitbar \{[^}]*position: sticky; top: 0; bottom: auto", live, re.S)
@@ -736,7 +736,7 @@ def test_a_span_less_entity_is_listed_but_not_drawn(rendered: Path, seed_index: 
     payload = json.loads(
         re.search(
             r'<script id="payload" type="application/json">(.*?)</script>',
-            read(rendered, "index.html"),
+            read(rendered, "table.html"),
             re.S,
         ).group(1)
     )
@@ -810,7 +810,7 @@ def test_pr_references_become_links_that_resolve(demo_rendered: tuple[Path, Inde
 
 
 def test_every_view_links_to_the_detail_page(rendered: Path):
-    assert 'detail.html#' in read(rendered, "index.html")
+    assert 'detail.html#' in read(rendered, "table.html")
     for name in ("graph.html", "timeline.html"):
         assert "detail.html#" in read(rendered, name), name
 
@@ -1099,10 +1099,10 @@ def test_every_person_links_to_the_table_filtered_by_them(rendered: Path):
             # not exist.
             assert f'<span class="who">{login}</span>' in group, login
             continue
-        assert f'<a class="who" href="index.html?{_ROLE_FILTER[opens][0]}={login}"' in group, login
+        assert f'<a class="who" href="table.html?{_ROLE_FILTER[opens][0]}={login}"' in group, login
         # And each count is the way into the rows it counted.
         for role in roles & set(_ROLE_FILTER):
-            assert f'href="index.html?{_ROLE_FILTER[role][0]}={login}">' in group, (login, role)
+            assert f'href="table.html?{_ROLE_FILTER[role][0]}={login}">' in group, (login, role)
     # The keys are the table's own, or the link opens a table that filters nothing.
     for field, _ in _ROLE_FILTER.values():
         assert f"'{field}'" in _FILTER_JS, field
@@ -1149,7 +1149,7 @@ def test_every_filter_offers_a_way_back_to_everything(rendered: Path):
     the regex read the next real dropdown's options as that comment's contents —
     the failure `tests/pages.py` was written for, arriving through a new door.
     """
-    for page in ("index.html", "people.html", "graph.html"):
+    for page in ("table.html", "people.html", "graph.html"):
         for options in selects(read(rendered, page)):
             assert options[:1] == [("", "all")], options[:3]
 
@@ -1381,19 +1381,88 @@ def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Pa
     )
 
 
-def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):
-    """shaping first, done last. Alphabetical put `done` at the top, which is the
-    one group nobody opens the index looking for."""
-    from openproj.render import STATUSES, _human
+def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
+    """shaping first, dropped last. Alphabetical put `done` at the top, which is
+    the one group nobody opens the index looking for — and, once notes arrived,
+    put a note's terminal state above its live one.
 
-    body = read(rendered, "detail.html")
+    Grouped by `state()`, never the stored status: `_TOC_LADDER` is built from
+    `NOTE_STATES` precisely so `promoted` has a heading, and grouping by the
+    stored word filed every promoted note under "Thinking" and left that rung
+    unreachable — this test pinned the wrong grouping for as long as it read
+    `r.status` too.
+
+    Its own corpus, not `seed_root`: the frozen golden corpus deliberately
+    holds no inbox records (its docstring in conftest.py forbids it moving),
+    so rendering it can never show a derived state — which is exactly how the
+    first version of this test asserted "Promoted" over a page that could not
+    contain it. This corpus is the smallest one whose states cover EVERY rung
+    of `_TOC_LADDER`, and it reaches two of them only by derivation: no file
+    stores `promoted` (`NOTE_STATUS` cannot) or `in_progress`, so those two
+    headings exist on this page only if the TOC asks `state()` — the note's
+    through `became`, the issue's through `pitched_into`.
+    """
+    from openproj.model import parse_text
+    from openproj.render import _TOC_LADDER, _human
+
+    files = {
+        "projects/proj-f00001.md": (
+            "---\nid: proj-f00001\nkind: project\ntitle: Ladder project\n"
+            "status: shaping\n---\n\nx\n"),
+        "pitches/pitch-f00001.md": (
+            "---\nid: pitch-f00001\nkind: pitch\ntitle: Ready pitch\n"
+            "parent: proj-f00001\nstatus: ready\nowner: ann\nreviewers: [bo]\n"
+            "person_weeks: 1\n---\n\nx\n"),
+        "pitches/pitch-f00002.md": (
+            "---\nid: pitch-f00002\nkind: pitch\ntitle: Shelved pitch\n"
+            "parent: proj-f00001\nstatus: shelved\nperson_weeks: 1\n---\n\nx\n"),
+        "tasks/task-f00001.md": (
+            "---\nid: task-f00001\nkind: task\ntitle: Done task\n"
+            "parent: pitch-f00001\nstatus: done\nowner: ann\nreview_waived: true\n"
+            "person_weeks: 1\n---\n\nx\n"),
+        "notes/note-f00001.md": (
+            "---\nid: note-f00001\nkind: note\ntitle: Live thought\n"
+            "status: thinking\n---\n\nx\n"),
+        "notes/note-f00002.md": (
+            "---\nid: note-f00002\nkind: note\ntitle: Dropped thought\n"
+            "status: dropped\n---\n\nx\n"),
+        "notes/note-f00003.md": (
+            "---\nid: note-f00003\nkind: note\ntitle: Grown thought\n"
+            "status: thinking\nbecame: [pitch-f00001]\n---\n\nx\n"),
+        "issues/issue-f00001.md": (
+            "---\nid: issue-f00001\nkind: issue\ntitle: Picked-up breakage\n"
+            "status: ready\npitched_into: [pitch-f00001]\n---\n\nx\n"),
+    }
+    entities = [parse_text(text, path) for path, text in files.items()]
+    index = build_index(entities, Config(known_people=["ann", "bo"]), date(2026, 8, 17))
+    render_static(index, tmp_path)
+
+    body = read(tmp_path, "detail.html")
     headings = re.findall(r'<h2 class="tocgroup">\s*([^<]+?)\s*<span', body)
-    present = [s for s in STATUSES if any(e.status == s for e in seed_index.entities.values())]
+    states = {r.state(index.records) for r in index.records.values()}
+    stored = {r.status for r in index.records.values()}
+    present = [s for s in _TOC_LADDER if s in states]
 
     assert headings == [_human(s) for s in present]
-    assert set(headings) == {_human(e.status) for e in seed_index.entities.values()}
-    # The heading was the last place a status was still spelled the way the file spells it,
-    # two lines above a kind that already read as a word.
+    assert set(headings) == {_human(s) for s in states}
+    # The whole ladder, derived from the ladder: a rung added later fails here
+    # asking for a record that stands on it, instead of silently never being
+    # asked about — how the promoted gap survived the first time.
+    assert set(states) == set(_TOC_LADDER), (
+        "this corpus no longer covers every rung of _TOC_LADDER"
+    )
+    assert {"promoted", "in_progress"} & stored == set(), (
+        "a stored word reached a derived-only rung, so the two guards below "
+        "would pass without state() being asked"
+    )
+    assert _human("promoted") in headings, (
+        "no promoted note in this corpus, so the derived-state rung is untested"
+    )
+    assert _human("in_progress") in headings, (
+        "no pitched issue in this corpus, so the issue derivation is untested"
+    )
+    # The heading was the last place a status was still spelled the way the file
+    # spells it, two lines above a kind that already read as a word.
     assert not [h for h in headings if "_" in h]
 
 
@@ -1467,7 +1536,7 @@ def test_the_theme_is_chosen_before_the_first_paint(rendered: Path):
     """A stored choice applied from the bottom of the page renders light first and
     then turns dark in front of whoever chose dark, which is worse than not
     offering the choice."""
-    body = read(rendered, "index.html")
+    body = read(rendered, "table.html")
     head = body[: body.index("</head>")]
 
     assert "remembered.get('openproj:theme')" in head
@@ -1529,7 +1598,7 @@ def test_no_colour_is_defined_only_in_the_dark_block(rendered: Path):
     theme from the other. A token whose only definition sits behind
     `[data-theme]` never applies in that state, and the page renders one theme's
     text on the other theme's ground."""
-    style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
+    style = re.search(r"<style>(.*?)</style>", read(rendered, "table.html"), re.S).group(1)
     light = re.search(r":root \{(.*?)\}", style, re.S).group(1)
     dark = re.search(r':root\[data-theme="dark"\] \{(.*?)\}', style, re.S).group(1)
 
@@ -1709,7 +1778,7 @@ def test_the_font_licence_travels_with_the_font(rendered: Path):
 
 def test_the_page_names_its_fonts_once(rendered: Path):
     """Two font stacks written out by hand drift the first time one is changed."""
-    body = read(rendered, "index.html")
+    body = read(rendered, "table.html")
     style = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
 
     assert "font-family: var(--font-sans)" in style
@@ -1735,7 +1804,7 @@ def test_the_furniture_every_page_shares_is_written_once(rendered: Path):
         assert len(re.findall(r"(?m)^#state \{", style)) == 1, name
         assert "#shown {" not in style, name
 
-    for name in ("index.html", "graph.html", "timeline.html", "people.html"):
+    for name in ("table.html", "graph.html", "timeline.html", "people.html"):
         assert '<span id="shown" class="num">' in read(rendered, name), name
 
 
@@ -1749,7 +1818,7 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
     `role` is only ever offered here: which hat somebody is wearing is not a field
     of an entity, it is which field their name is in.
     """
-    people, index = read(rendered, "people.html"), read(rendered, "index.html")
+    people, index = read(rendered, "people.html"), read(rendered, "table.html")
     shape = (r'<div id="controls">\s*<div class="searching">\s*'
              r'<input id="q" type="search" aria-label="([^"]+)" placeholder="\1">')
 
@@ -1828,7 +1897,7 @@ def test_the_renderer_asks_the_model_rather_than_reaching_into_it():
 def test_a_status_carries_a_chip_palette_as_well_as_a_fill(rendered: Path):
     """Fill and ink draw shapes — a graph node, a timeline bar. Soft and text draw
     a chip, which has to sit inside a row of running text without shouting."""
-    style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
+    style = re.search(r"<style>(.*?)</style>", read(rendered, "table.html"), re.S).group(1)
     light = re.search(r":root \{(.*?)\}", style, re.S).group(1)
 
     for status in ("shaping", "ready", "in_progress", "done", "shelved"):
@@ -1846,8 +1915,8 @@ def test_the_ink_on_a_shape_stays_a_per_status_token(rendered: Path):
     needs an exception and a collapsed token has nowhere to put it. The exception
     is measured here rather than asserted: `shelved` keeps white ink for exactly
     as long as #101416 fails 4.5:1 on the fill under it."""
-    style = re.search(r"<style>(.*?)</style>", read(rendered, "index.html"), re.S).group(1)
-    themes = tokens(read(rendered, "index.html"))
+    style = re.search(r"<style>(.*?)</style>", read(rendered, "table.html"), re.S).group(1)
+    themes = tokens(read(rendered, "table.html"))
 
     assert "--on-status" not in style, "one ink for five fills is the assumption that broke"
     assert "--hatch:" not in style
@@ -1894,7 +1963,7 @@ def test_every_status_fill_carries_ink_that_reads_on_it(rendered: Path):
     every fill, and white ink is what dragged every fill down the luminance scale
     to carry it — which is how the amber came out brown and the green nearly
     black."""
-    themes = tokens(read(rendered, "index.html"))
+    themes = tokens(read(rendered, "table.html"))
 
     for name, wanted in PALETTE.items():
         for status, (fill, ink, _) in wanted.items():
@@ -1919,7 +1988,7 @@ def test_a_status_shape_is_bounded_against_the_page_it_sits_on(rendered: Path):
       box is a width nobody can read. Each one is the contrast midpoint between
       its fill and the page: the same ratio either side.
     """
-    themes = tokens(read(rendered, "index.html"))
+    themes = tokens(read(rendered, "table.html"))
     page = {name: themes[name]["--bg"] for name in PALETTE}
 
     for name, wanted in PALETTE.items():
@@ -1954,7 +2023,7 @@ def test_the_five_fills_are_separated_by_lightness_and_not_only_by_hue(rendered:
     1.313 and 1.416 — the closest pair being `shelved` to `shaping` — and this
     floor sits just under the worst of them rather than at a round number that
     would have let two more rungs drift together before anything failed."""
-    themes = tokens(read(rendered, "index.html"))
+    themes = tokens(read(rendered, "table.html"))
 
     for name in ("light", "dark"):
         rungs = sorted(_luminance(themes[name][f"--st-{s}"]) for s in STATUSES)
@@ -1966,7 +2035,7 @@ def test_the_five_fills_are_separated_by_lightness_and_not_only_by_hue(rendered:
 def test_a_chip_pair_is_readable_in_both_themes(rendered: Path):
     """A chip carries its word, so it does not need the ladder — but the word is
     text on a tinted ground, and text owes 4.5:1 wherever it is."""
-    themes = tokens(read(rendered, "index.html"))
+    themes = tokens(read(rendered, "table.html"))
 
     for name in ("light", "dark"):
         for status in STATUSES:
@@ -1987,7 +2056,7 @@ def test_a_boundary_and_an_absent_value_are_both_visible(rendered: Path):
     passed 3:1 on the page while landing at 2.95 and 2.97 on the tint. A ratio
     against the wrong ground is a measurement of something nobody is looking at.
     """
-    themes = tokens(read(rendered, "index.html"))
+    themes = tokens(read(rendered, "table.html"))
 
     for name in ("light", "dark"):
         page = themes[name]["--bg"]
@@ -1997,14 +2066,14 @@ def test_a_boundary_and_an_absent_value_are_both_visible(rendered: Path):
         assert contrast(themes[name]["--empty"], page) >= 4.5, name
     # One value, referenced rather than copied: the kind chip's hairline is the
     # same boundary an input has, and a copy is how one of them gets fixed.
-    assert "--kind-line: var(--line-strong)" in read(rendered, "index.html")
+    assert "--kind-line: var(--line-strong)" in read(rendered, "table.html")
 
 
 def test_the_three_theme_blocks_agree_about_every_colour(rendered: Path):
     """A reader who has never touched the toggle matches only the media query. A
     token that is right under [data-theme="dark"] and stale in the media block is
     stale for most of the people who will ever see the page."""
-    themes = tokens(read(rendered, "index.html"))
+    themes = tokens(read(rendered, "table.html"))
 
     assert themes["dark"] == themes["dark-by-system"]
     assert set(themes["dark"]) <= set(themes["light"]), "no colour defined only in the dark"
@@ -2164,7 +2233,7 @@ def test_every_page_can_draw_a_problem_and_a_focus_ring(rendered: Path):
         assert ":focus-visible {" in body, page
         assert "outline: 2px solid var(--focus)" in body, page
         assert ".sev-row-blocker { border-left: 3px solid var(--sev-blocker); }" in body, page
-    assert "outline: none" not in read(rendered, "index.html")
+    assert "outline: none" not in read(rendered, "table.html")
 
 
 def test_the_dash_that_means_no_value_is_readable(rendered: Path):
@@ -2203,7 +2272,7 @@ def test_one_quantity_is_called_appetite_wherever_it_is_read(rendered: Path):
 
     assert LABELS["person_weeks"] == "Appetite (person-weeks)"
     assert "Effort" not in read(rendered, "detail.html")
-    index = read(rendered, "index.html")
+    index = read(rendered, "table.html")
     header = re.search(r'<th data-col="size"[^>]*>(.*?)</th>', index, re.S).group(1)
     # The header is now the label map's own word rather than a literal beside it,
     # so this is the same assertion made of one source instead of two.
@@ -2418,7 +2487,7 @@ def test_a_rendered_block_carries_the_source_line_it_came_from(seed_index: Index
 def test_an_editable_page_reaches_the_network_no_more_than_a_read_only_one(seed_index: Index):
     """The hole under both network assertions, and it is older than any editor.
 
-    `PAGES` is the eight static-export files; `render_static` calls
+    `PAGES` is the static-export files; `render_static` calls
     `render_detail` with no `base_commit`, so `editable` is False and the
     exported `detail.html` carries no textarea, no toolbar, no Yjs bundle and no
     room script. Neither rule had ever inspected an editing surface — the one
@@ -2684,7 +2753,7 @@ def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[
     the index left out, because it iterated the records."""
     out, index = demo_rendered
     body = read(out, "cycles.html")
-    # Named, not linked: a rendered plan is six files and none of them is a
+    # Named, not linked: a rendered plan is a handful of files and none of them is a
     # cycle, so the card says which cycle it is and stops there. The server's
     # copy of this page does link — `test_a_rendered_plan_offers_no_dead_control`
     # is what pins the difference.
@@ -2785,7 +2854,8 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
 # twice. The detail page is not here: it is a bundle of documents rather than one
 # page, and `test_the_detail_page_names_each_document_it_holds` covers it.
 PAGE_NAMES = {
-    "index.html": "Table",
+    "index.html": "Records",
+    "table.html": "Table",
     "graph.html": "Graph",
     "timeline.html": "Timeline",
     "cycles.html": "Cycles",
@@ -2824,7 +2894,7 @@ def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index
     and only ever one of them is displayed."""
     body = read(rendered, "detail.html")
 
-    assert "<h1>Every entity in this plan except for issues</h1>" in body
+    assert "<h1>Every record in this plan</h1>" in body
     for entity in seed_index.entities.values():
         article = re.search(rf'<article id="{entity.id}".*?</article>', body, re.S).group(0)
         named = escape(entity.title)
@@ -2860,7 +2930,7 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
         assert "sr-only" in classes, f"{page}: the nav says this already, twice over"
 
     seen = {text: classes for classes, text in headings(read(rendered, "detail.html"))}
-    listing = "Every entity in this plan except for issues"
+    listing = "Every record in this plan"
     assert "sr-only" not in seen[listing], "the listing is what is on the screen, not a route"
     for entity in seed_index.entities.values():
         assert entity.title in seen, entity.id
@@ -2871,31 +2941,34 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
 
 @pytest.fixture
 def server_pages(seed_index: Index) -> dict[str, str]:
-    """The three pages `render_static` never writes, rendered at the routes.
+    """Three of the four pages `render_static` never writes — the cycle page,
+    the create form and the served record page — rendered at the routes. The
+    fourth, the deck, has a suite of its own in `tests/test_deck.py`.
 
     Rendered here rather than fetched, because what is under test is the page and
     not the plumbing; `test_web.test_every_route_says_which_nav_item_it_is` asks
     the real URLs, which is the half this cannot see.
     """
-    from openproj.render import ROUTES, render_cycle, render_detail, render_new
+    from openproj.render import ROUTES, render_cycle, render_detail
 
     one = next(iter(seed_index.entities))
     return {
         "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),
-        "new": render_new("task", "deadbee", ROUTES, seed_index),
+        "new": render_detail(seed_index, ROUTES, base_commit="deadbee", creating="task"),
         "entity": render_detail(seed_index, ROUTES, only=one, base_commit="deadbee"),
     }
 
 
 def test_the_headings_a_server_draws_are_the_same_two_kinds(server_pages: dict[str, str]):
-    """The three pages `render_static` does not write, decided the same way.
+    """The same three unexported pages, decided the same way.
 
     A cycle page and an entity page name what you are looking at and stay visible;
     the create form is the odd one, and it is visible for the opposite reason to
-    the other two — it is the only page whose nav item does not exist, so with
-    nothing lit above it the heading is all that says what the form will make.
+    the other two — its nav item does not exist (the record page's does not
+    either), so with nothing lit above it the heading is all that says what the
+    form will make.
     """
-    for route, name in (("cycle", "Cycle 37"), ("new", "New entity")):
+    for route, name in (("cycle", "Cycle 37"), ("new", "New record")):
         found = headings(server_pages[route])
         assert [text for _, text in found] == [name], route
         assert "sr-only" not in found[0][0], f"{route}: nothing else on the page says this"
@@ -2974,7 +3047,7 @@ def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
     # And the table's own place for a message is a live region on the rendered
     # file too, where the refusal a derived column gives is the only thing that
     # ever writes to it.
-    assert '<span id="state" role="status"></span>' in read(rendered, "index.html")
+    assert '<span id="state" role="status"></span>' in read(rendered, "table.html")
 
 
 def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Index):
@@ -2985,10 +3058,10 @@ def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Inde
     editor with no server to save to; and every cycle card linked to a per-cycle
     page that `render_static` does not write.
     """
-    table = read(rendered, "index.html")
+    table = read(rendered, "table.html")
     cycles = read(rendered, "cycles.html")
 
-    assert "New entity" not in table
+    assert "New record" not in table
     assert "double-click a cell" not in table
     assert '<a class="button" href="">' not in table
     for number in sorted(set(seed_index.plans) | set(seed_index.cycles)):
@@ -3388,7 +3461,7 @@ def test_a_sentence_about_the_view_never_costs_the_view_a_row(
 
     The table keeps its instruction where it is, and that is the pattern rather
     than an exception to it: the rule is about rows, and "double-click a cell to
-    edit it" is already inline beside New entity — the control it shares a subject
+    edit it" is already inline beside New record — the control it shares a subject
     with — so it costs no row to move and no row to leave.
 
     The heading is still first in the list and is now `.sr-only` — the seventh of
@@ -3798,8 +3871,9 @@ def test_the_motion_floor_is_the_shell_s_and_not_one_page_s(rendered: Path):
     """Where the block lives, which is the half the browser test cannot see.
 
     It measures `detail.html`, the only page with a transition on it. Written into
-    `_DETAIL_STYLE` that test would pass unchanged and the other five pages would
-    have no floor at all the day one of them grew an animation — which is the same
+    `_DETAIL_STYLE` that test would pass unchanged and every other exported
+    page would have no floor at all the day one of them grew an animation —
+    which is the same
     shape as the capacity meter's `.bar` rule reaching the timeline: a rule's page
     is a fact about the rule, and nobody notices it from inside one page.
     """
@@ -4166,7 +4240,7 @@ def test_the_page_is_allowed_to_talk_to_its_own_server(rendered: Path):
     # `'self'`, not a host: the same string has to be right on localhost and
     # behind the service URL.
     assert "connect-src http" not in CSP
-    assert "connect-src 'self'" in read(rendered, "index.html")
+    assert "connect-src 'self'" in read(rendered, "table.html")
 
 
 def test_a_remembered_width_of_nothing_is_thrown_away(rendered: Path):
@@ -4176,7 +4250,7 @@ def test_a_remembered_width_of_nothing_is_thrown_away(rendered: Path):
     instead, it measures the squeeze it is already in and stays there. A stored
     `"progress":0` made the header and the first six rows up to five times their
     height, at every window width, until the entry was deleted by hand."""
-    page = read(rendered, "index.html")
+    page = read(rendered, "table.html")
     guard = re.search(r"function trustworthy\(stored\) \{.*?\n\}", page, re.S).group(0)
 
     assert "some(width => !(width > 0))" in guard

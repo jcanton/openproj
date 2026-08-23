@@ -24,8 +24,6 @@ from ruamel.yaml.error import MarkedYAMLError
 
 CONFIG_FILES = ("defaults.yaml", "cycles.yaml", "holidays.yaml", "people.yaml")
 _CYCLE_DIR = "cycles"
-_ISSUE_DIR = "issues"
-_NOTE_DIR = "notes"
 PEOPLE_DIR = "people"
 _WORKING_DAYS_PER_WEEK = 5
 # Calendar days from a betting table to the review meeting when a record does not
@@ -149,201 +147,6 @@ class Problem(BaseModel):
     field: str | None
     message: str
     rule_version: int
-
-
-ISSUE_STATUS = ("ready", "in_progress", "done", "shelved")
-
-
-class Issue(BaseModel):
-    """Something somebody noticed, before anybody has decided to do it.
-
-    Stored as `issues/<id>.md`, and deliberately NOT an Entity. An entity is a
-    bet: it carries an appetite, takes a place on the timeline and charges
-    somebody's cycle. An issue is the opposite — most of them will never be
-    worked on, which is the point of having somewhere to put them. Making it a
-    separate type is what keeps it off the table, the graph, the people page and
-    the timeline by construction, rather than by an exclusion in each of them
-    that somebody later forgets.
-
-    There is no `shaping`: shaping happens in the record an issue is promoted
-    into and never in the issue itself, so a status for it here would be a second
-    place to say what `pitched_into` already says. What it is promoted into is a
-    pitch when the fix is worth a bet and a task when it is only worth doing —
-    see `render.PROMOTABLE`, which offered pitch alone until a one-line fix had
-    to be written up as a bet to get out of this inbox.
-    """
-
-    id: str
-    title: str
-    status: str = "ready"
-    reported_by: str | None = None
-    opened_on: date | None = None
-    tags: list[str] = []
-    # The pitches and tasks this was pitched into. One direction only: an entity
-    # does not list its issues, because two directions for one edge disagree the
-    # first time somebody edits the wrong end.
-    pitched_into: list[str] = []
-    body: str = ""
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _as_written(cls, value: object) -> object:
-        """Parse permissively, validate strictly — the same bargain entities make.
-        A word nobody defined is a validation problem, not a page that 500s."""
-        return value if value is None else str(value)
-
-    def state(self, entities: dict[str, Entity]) -> str:
-        """What this issue actually is, given what it was pitched into.
-
-        Derived rather than copied. An issue that has been pitched has been picked
-        up, and one whose work is finished is finished — writing that into the
-        file as well would be a second copy of a fact the link already carries,
-        and the two disagree the moment somebody closes the pitch.
-
-        Deriving is right HERE and was wrong for pull requests, on the same test:
-        a link is local, typed by a person, and readable without a credential or a
-        network call, and an issue carries no appetite, no capacity and no place
-        on the timeline — so being wrong costs one row on one page rather than
-        every date for twenty people.
-
-        `shelved` is never overridden. "We are not doing this" is a decision, and
-        a link somebody adds afterwards does not reverse it.
-        """
-        if self.status == "shelved":
-            return "shelved"
-        linked = [entities[i] for i in self.pitched_into if i in entities]
-        if not linked:
-            return self.status
-        if all(entity.status in ("done", "shelved") for entity in linked):
-            return "done"
-        return "in_progress"
-
-
-# Two, and the count is the design.
-#
-# An issue has four because an issue is a piece of work waiting to be scheduled:
-# somebody picks it up, somebody finishes it. A note is not work and never
-# becomes work — it becomes a *record* that is work, and then the note is over.
-# So the only thing a person decides about a note is whether they are still
-# thinking about it, and the only two answers are the two below.
-#
-# What is deliberately absent:
-#
-# * No `in_progress`. There is no such thing as working on a note. The moment
-#   there is work there is a pitch, a task or a project, and this note points at
-#   it — which is `promoted`, and `promoted` is DERIVED from `became` rather than
-#   stored, for the same reason an issue's `done` is derived from `pitched_into`:
-#   a status stored beside the link that already says it disagrees with the link
-#   the first time somebody edits one of them.
-# * No `ready`. "This is ready to be shaped" is a promise about a document
-#   nobody has written; the button that writes it is one press away, and a status
-#   that means "I am about to press that" is a status that goes stale in the
-#   minute after somebody sets it.
-# * No `done`. A note is not finished, it is answered — by a record somewhere
-#   else, or by a decision to stop thinking about it. Both of those are below.
-NOTE_STATUS = ("thinking", "dropped")
-# Every state a note can be IN, in the order it moves through them: the two above
-# that a person sets, plus the one only a promotion can give it. `NOTE_STATUS` is
-# what may be written to a file; this is what a page may draw and sort by.
-NOTE_STATES = ("thinking", "promoted", "dropped")
-
-
-class Note(BaseModel):
-    """An idea before anybody knows what it is.
-
-    Stored as `notes/<id>.md`, and — like an issue and for the same reason — not
-    an Entity. The distinction between the two inboxes is the whole point of
-    having two:
-
-        an issue is "we found something existing that is broken";
-        a note is "we are thinking of creating something that does not exist and
-        our ideas are confused".
-
-    A note is therefore not a pitch in `shaping`, which is the thing it most looks
-    like from a distance. A pitch presupposes that you know what you are shaping:
-    it has a problem, a solution and an appetite, and it sits on the betting table
-    as a bet somebody could take. A note precedes all three. Putting one in the
-    table as a `shaping` pitch would make the plan look like it holds bets nobody
-    has made, and the appetite column would be empty on a record that has no
-    appetite to be missing.
-
-    So it is not an entity: no size, no cycle, no owner, no dates it is placed
-    against, no dependencies, no place in the containment tree. It appears on the
-    notes page and nowhere else — by construction, because nothing on the table,
-    the graph, the timeline or the people page ever sees one, rather than by an
-    exclusion in each of them that somebody later forgets.
-
-    The fields it does have are the ones a confused idea can honestly carry:
-
-    * `title` — the best one line anybody has for it yet, and expected to be
-      wrong. It is what the promotion carries into the pitch, where it can be
-      rewritten by somebody who now knows.
-    * `written_by` — who to ask, not who owns it. A note has no owner: an owner
-      is a commitment, and the whole claim of this record is that nobody has
-      committed to anything. One name and not a list, because "who is thinking
-      about this" invites a roster of people who have not agreed to anything,
-      which is an assignment wearing a different word.
-    * `tags` — how three notes about one subject find each other at the next
-      brainstorm. Free text, validated by nothing, and the cheapest useful field
-      here.
-    * `became` — the records this turned into. See `state`.
-    """
-
-    id: str
-    title: str
-    status: str = "thinking"
-    written_by: str | None = None
-    written_on: date | None = None
-    tags: list[str] = []
-    # The entities this note graduated into. One direction only, on the note,
-    # exactly as `Issue.pitched_into` is: two directions for one edge disagree the
-    # first time somebody edits the wrong end.
-    #
-    # And it is on the NOTE rather than on the entity for a second reason the
-    # issue does not have. A `from_note` field on `Entity` would put a note id
-    # into the type every view of the plan is built from, and then the table's
-    # facets, the detail page's fact rows and the graph would each have to decide
-    # what to do with it — which is precisely the coupling "a note is not an
-    # entity" exists to prevent. What the promoted record says about where it came
-    # from, it says in its own shaping document, in prose. See `shaping_document`.
-    became: list[str] = []
-    body: str = ""
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _as_written(cls, value: object) -> object:
-        """Parse permissively, validate strictly, the same bargain every record
-        here makes. A word nobody defined is a validation problem, not a 500."""
-        return value if value is None else str(value)
-
-    def state(self, entities: dict[str, Entity]) -> str:
-        """What this note actually is, given what it became.
-
-        Derived from the link rather than stored beside it — `NOTE_STATUS` has the
-        argument. Three answers:
-
-        `dropped` first and unconditionally. "We thought about this and we are not
-        doing it" was said by a person, and somebody linking a record to it
-        afterwards does not un-say it. The same rule `Issue.state` gives `shelved`.
-
-        `promoted` when at least one thing it became is a record that exists. Not
-        "all of them": a brainstorm that splits into two pitches is promoted the
-        moment either exists, because the only question this page asks is whether
-        the idea was acted on. And a link whose target is gone falls back to
-        `thinking` rather than claiming a promotion nobody can open — the missing
-        id is a warning from `note_problems`, beside the note, where it can be
-        fixed.
-
-        Nothing here reads the *status* of what it became. Whether that pitch
-        ships is the pitch's business; a note reporting on it would be a second
-        copy of the pitch's status, drawn on the one page that has no reason to
-        care.
-        """
-        if self.status == "dropped":
-            return "dropped"
-        if any(target in entities for target in self.became):
-            return "promoted"
-        return self.status
 
 
 class Unreadable(BaseModel):
@@ -572,7 +375,7 @@ class Person(BaseModel):
     killed the first attempt does not get handled here; it stops existing.
 
     **The login is in the path and nowhere else**, which is a deliberate break
-    with the other three record types. They carry their id in the frontmatter too,
+    with every other record here. They carry their id in the frontmatter too,
     and they have to: an id there is minted, opaque and the join key other records
     point at — `parent`, `depends_on`, `pitched_into` — while the filename carries
     a slug that drifts as titles are edited. Nothing points at a person record. It
@@ -642,8 +445,6 @@ class Config(BaseModel):
     known_people: list[str] = []
     # Keyed by cycle number. Loaded from `cycles/*.md`, not from a config file.
     plans: dict[int, Cycle] = {}
-    issues: dict[str, Issue] = {}
-    notes: dict[str, Note] = {}
     # Keyed by login. Loaded from `people/*.md`, and deliberately not from the
     # roster above: this is what each person chose for themselves, and the roster
     # is who the team says is on it. Neither answers the other's question, and a
@@ -651,23 +452,11 @@ class Config(BaseModel):
     people: dict[str, Person] = {}
 
     def with_people(self, people: list[Person]) -> Config:
-        """Carried on the config for the same reason cycles and issues are:
-        nothing iterates people records, one page looks them up, and threading a
+        """Carried on the config for the same reason cycles are: nothing
+        iterates people records, one page looks them up, and threading a
         fourth value through every caller to be dropped by all but one of them is
         the shape this already rejected twice."""
         return self.model_copy(update={"people": {person.login: person for person in people}})
-
-    def with_issues(self, issues: list[Issue]) -> Config:
-        """Carried on the config for the same reason cycles are: nothing iterates
-        issues except the one page that is about them, and every other caller
-        would have had to thread a third value through and then drop it."""
-        return self.model_copy(update={"issues": {i.id: i for i in issues}})
-
-    def with_notes(self, notes: list[Note]) -> Config:
-        """Carried on the config for the reason issues are, one page and no
-        iteration — and it earns it twice over here, because a note is the record
-        the rest of this module has the least business knowing about."""
-        return self.model_copy(update={"notes": {n.id: n for n in notes}})
 
     def with_plans(self, plans: list[Cycle]) -> Config:
         """A cycle record supersedes `config/cycles.yaml` for its own number.
@@ -905,6 +694,17 @@ class Entity(BaseModel):
         """
         return value if value is None else str(value)
 
+    def state(self, entities: dict[str, Entity]) -> str:
+        """What this record actually is — for a plan record, its written status.
+
+        The base of the derivation `Issue.state` and `Note.state` already do:
+        one method any page can call on any record, so a read display never has
+        to know which kinds derive their state from links and which just have
+        one. The argument goes unused here because the derivations need it — a
+        state read off a link needs the link's targets to look at.
+        """
+        return self.status
+
 
 class Project(Entity):
     pass
@@ -952,6 +752,158 @@ class Product(Entity):
     """
 
 
+ISSUE_STATUS = ("ready", "in_progress", "done", "shelved")
+
+
+class Issue(Entity):
+    """Something somebody noticed, before anybody has decided to do it.
+
+    Stored as `issues/<id>.md`, and — since the sixth rung landed — an Entity,
+    on a rung with `planned=False`. It used to be a separate type, and the
+    argument for that was real: a separate type kept an issue off the table, the
+    graph, the people page and the timeline *by construction*, rather than by an
+    exclusion in each of them that somebody later forgets. What replaced the
+    type is a stronger construction, not a repeal of it. `build_index` filters
+    `Index.entities` down to planned rungs in one comprehension; a
+    model_validator on `Index` refuses any index holding an unplanned kind
+    there; and the KINDS-derived sweep in the tests seeds one record of every
+    unplanned rung and asserts its absence from every plan view. The type
+    boundary lived in sixty read sites' annotations with no compiler behind
+    them and failed OPEN — forget one filter and an issue appears on the
+    timeline. A forgotten consumer of the filtered map now fails CLOSED: it
+    sees fewer records, never more.
+
+    What the type cost while it lasted was a second copy of every page, and #67
+    measured the drift that buys: the note page got the status hill and the
+    issue page did not, in one commit, by the same author.
+
+    Its own fields survive the move unchanged. There is no `shaping` in
+    `ISSUE_STATUS`: shaping happens in the record an issue is promoted into and
+    never in the issue itself, so a status for it here would be a second place
+    to say what `pitched_into` already says — and now that the vocabulary is
+    read off the rung, `shaping` is *refused* on an issue rather than silently
+    legal, which closes a hole the old bespoke validator left open.
+    """
+
+    status: str = "ready"
+    reported_by: str | None = None
+    opened_on: date | None = None
+    # The pitches and tasks this was pitched into. One direction only: an entity
+    # does not list its issues, because two directions for one edge disagree the
+    # first time somebody edits the wrong end.
+    pitched_into: list[str] = []
+
+    def state(self, entities: dict[str, Entity]) -> str:
+        """What this issue actually is, given what it was pitched into.
+
+        Derived rather than copied. An issue that has been pitched has been
+        picked up, and one whose work is finished is finished — writing that
+        into the file as well would be a second copy of a fact the link already
+        carries, and the two disagree the moment somebody closes the pitch.
+
+        `shelved` is never overridden. "We are not doing this" is a decision,
+        and a link somebody adds afterwards does not reverse it.
+        """
+        if self.status == "shelved":
+            return "shelved"
+        linked = [entities[i] for i in self.pitched_into if i in entities]
+        if not linked:
+            return self.status
+        if all(entity.status in ("done", "shelved") for entity in linked):
+            return "done"
+        return "in_progress"
+
+
+# Two, and the count is the design.
+#
+# An issue has four because an issue is a piece of work waiting to be scheduled:
+# somebody picks it up, somebody finishes it. A note is not work and never
+# becomes work — it becomes a *record* that is work, and then the note is over.
+# So the only thing a person decides about a note is whether they are still
+# thinking about it, and the only two answers are the two below.
+#
+# What is deliberately absent: no `in_progress` (there is no such thing as
+# working on a note — the moment there is work there is a record, which is
+# `promoted`, DERIVED from `became` rather than stored); no `ready` ("ready to
+# be shaped" is a promise the Promote button keeps in one press); no `done` (a
+# note is not finished, it is answered — by a record somewhere else, or by
+# `dropped`).
+NOTE_STATUS = ("thinking", "dropped")
+# Every state a note can be IN, in the order it moves through them: the two
+# above that a person sets, plus the one only a promotion can give it.
+# `NOTE_STATUS` is what may be written to a file; this is what a page may draw
+# and sort by.
+NOTE_STATES = ("thinking", "promoted", "dropped")
+
+
+class Note(Entity):
+    """An idea before anybody knows what it is.
+
+    Stored as `notes/<id>.md`. Like the issue above it is an Entity on an
+    unplanned rung, and the docstring there carries the argument for the new
+    boundary; what this one keeps is the distinction between the two inboxes,
+    which the model change did not touch:
+
+        an issue is "we found something existing that is broken";
+        a note is "we are thinking of creating something that does not exist
+        and our ideas are confused".
+
+    A note is therefore not a pitch in `shaping`, which is the thing it most
+    looks like from a distance. A pitch presupposes that you know what you are
+    shaping: it has a problem, a solution and an appetite, and it sits on the
+    betting table as a bet somebody could take. A note precedes all three, and
+    `planned=False` on its rung is what keeps the plan from looking like it
+    holds bets nobody has made — enforced in `build_index`, guarded by the
+    Index validator, swept by the KINDS-derived test.
+
+    The fields it declares are the ones a confused idea can honestly carry:
+    `written_by` is who to ask, not who owns it (an owner is a commitment, and
+    the whole claim of this record is that nobody has committed to anything);
+    `became` is the records it graduated into, one direction only, exactly as
+    `Issue.pitched_into` is. Every work field it inherits from Entity —
+    owner, cycle, priority, the lot — is on `unread_fields("note")`, so the
+    editors never offer one and the validator reports one that is written in
+    by hand.
+    """
+
+    status: str = "thinking"
+    written_by: str | None = None
+    written_on: date | None = None
+    # The entities this note graduated into. On the NOTE and not on the entity:
+    # a `from_note` field on `Entity` would put a note id into the type every
+    # view of the plan is built from. What the promoted record says about where
+    # it came from, it says in its own shaping document, in prose. See
+    # `shaping_document`.
+    became: list[str] = []
+
+    def state(self, entities: dict[str, Entity]) -> str:
+        """`dropped` first and unconditionally — "we are not doing this" was
+        said by a person, and somebody linking a record afterwards does not
+        un-say it (the same rule `Issue.state` gives `shelved`). `promoted`
+        when at least one thing it became exists — not all of them, because a
+        brainstorm that splits into two pitches is promoted the moment either
+        exists. A link whose target is gone falls back to `thinking` rather
+        than claiming a promotion nobody can open; the missing id is a warning
+        beside the note, where it can be fixed. Nothing here reads the STATUS
+        of what it became: whether that pitch ships is the pitch's business.
+        """
+        if self.status == "dropped":
+            return "dropped"
+        if any(target in entities for target in self.became):
+            return "promoted"
+        return self.status
+
+
+# Statuses in the order work moves through them. `shaping` is an idea nobody has
+# committed to yet, so it demands nothing — the same reason `shelved` does not.
+# The gates are cumulative from `ready` onwards.
+#
+# Above the ladder rather than with `PRIORITY_RANK`, because the ladder now
+# reads it: a rung carries the status vocabulary its kind reads, and three of
+# the four rungs carry this one.
+STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
+
+
 # THE LADDER. Every other map about kinds is derived from this one, in this
 # order, coarsest first — which is what makes "the top of the tree" a fact about
 # the list rather than the word `project` written down in twenty places.
@@ -974,21 +926,34 @@ class Rung(NamedTuple):
     depends: bool          # may it wait on anything
     sized: bool            # may it carry person_weeks
     carded: bool           # does a hover show its shaping document
+    planned: bool          # does it appear in the plan: table, graph, timeline, people, scheduler
+    statuses: tuple[str, ...]  # the status vocabulary this kind reads; () means status is not read
 
 
 KINDS: tuple[Rung, ...] = (
+    # `statuses=()` — status is one of the nine fields a product does not read
+    # (jcanton, 2026-08-20: a codebase is not `in_progress`), and () is how the
+    # ladder says so now that the vocabulary is a per-rung fact.
     Rung("product", "prod", "products", Product, under=(),
-         schedules=False, depends=False, sized=False, carded=False),
+         schedules=False, depends=False, sized=False, carded=False,
+         planned=True, statuses=()),
     Rung("project", "proj", "projects", Project, under=("product",),
-         schedules=True, depends=True, sized=False, carded=True),
+         schedules=True, depends=True, sized=False, carded=True,
+         planned=True, statuses=STATUS_ORDER),
     Rung("pitch", "pitch", "pitches", Pitch, under=("project",),
-         schedules=True, depends=True, sized=True, carded=True),
+         schedules=True, depends=True, sized=True, carded=True,
+         planned=True, statuses=STATUS_ORDER),
     # A task may skip the pitch — work that nobody shaped still belongs to a
     # project — which is why `under` is written out per rung rather than derived
     # as "everything coarser". Derived, a task could be filed straight under a
     # product, three rungs up, which is not a thing anybody means.
     Rung("task", "task", "tasks", Task, under=("pitch", "project"),
-         schedules=True, depends=True, sized=True, carded=True),
+         schedules=True, depends=True, sized=True, carded=True,
+         planned=True, statuses=STATUS_ORDER),
+    Rung("issue", "issue", "issues", Issue, under=(), schedules=False, depends=False,
+         sized=False, carded=False, planned=False, statuses=ISSUE_STATUS),
+    Rung("note",  "note",  "notes",  Note,  under=(), schedules=False, depends=False,
+         sized=False, carded=False, planned=False, statuses=NOTE_STATUS),
 )
 
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
@@ -996,13 +961,14 @@ KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)
 
 # The fields that describe work being done, or evidence that it was: a rung the
 # scheduler never sees reads none of them. Nobody is assigned to a codebase, a
-# codebase is not in a cycle, and — jcanton, 2026-08-20 — a codebase is not
-# `in_progress` and does not have a pull request either. `status` and `prs` are
-# here for the same reason as the rest: a product is a container, and the state
-# of the work is the state of the work inside it.
+# codebase is not in a cycle, and — jcanton, 2026-08-20 — a codebase does not
+# have a pull request either. `status` is not in this tuple any more: whether a
+# kind reads a status is its own axis (`Rung.statuses`), because a kind can
+# read one without ever being scheduled — gated here, giving it a status would
+# have dragged in the eight fields that come with being work.
 _WORK_FIELDS = (
     "owner", "assignees", "reviewers", "review_waived", "assigned_on",
-    "cycle", "priority", "status", "prs",
+    "cycle", "priority", "prs",
 )
 
 
@@ -1023,6 +989,13 @@ def unread_fields(kind: str) -> tuple[str, ...]:
         fields.append("person_weeks")
     if not rung.schedules:
         fields.extend(_WORK_FIELDS)
+    # `status` on its own gate: a kind with an empty vocabulary reads no status.
+    # Today that is only `product`, whose behaviour this preserves exactly —
+    # `statuses=()` keeps status unread — but gating on the vocabulary rather
+    # than on `schedules` is what lets a rung read a status without inheriting
+    # the eight scheduling fields above.
+    if not rung.statuses:
+        fields.append("status")
     return tuple(fields)
 RUNG: dict[str, Rung] = {rung.name: rung for rung in KINDS}
 _MODELS: dict[str, type[Entity]] = {rung.name: rung.model for rung in KINDS}
@@ -1034,6 +1007,31 @@ _ID_PREFIXES = {rung.prefix: rung.name for rung in KINDS}
 # product, with nothing reported, because a directory nobody walks is a
 # directory whose files do not exist.
 _ENTITY_DIRS = tuple(rung.directory for rung in KINDS)
+
+
+def edited_by_id(stamps: dict[str, int]) -> dict[str, int]:
+    """Per-record last-edited epochs, joined from `Store.last_edited`'s per-path
+    map.
+
+    Here rather than in `web.py` or `cli.py` because the layout facts it reads —
+    which directories hold records, `<id>--<slug>.md` with a slug that drifts —
+    are this module's (`record_paths_in`, `_path_for`'s stem rule), and both the
+    server and the export need the join. Two copies is the drift this file bans.
+
+    Two files claiming one id is a blocker the pages already draw; for a time
+    column the newest claim wins, because the row exists either way and a wrong
+    recency beats a missing row.
+    """
+    record_paths, _ = record_paths_in(_ENTITY_DIRS, stamps)
+    found: dict[str, int] = {}
+    for path in record_paths:
+        stem = path.rpartition("/")[2].removesuffix(".md")
+        record_id = stem.partition("--")[0]
+        if stamps[path] > found.get(record_id, 0):
+            found[record_id] = stamps[path]
+    return found
+
+
 _SPLITTER = YAMLHandler()
 
 
@@ -1127,35 +1125,6 @@ def parse_cycle_text(text: str, source: str) -> Cycle:
 
 def parse_cycle_file(path: Path) -> Cycle:
     return parse_cycle_text(path.read_text(encoding="utf-8"), str(path))
-
-
-def parse_issue_text(text: str, source: str) -> Issue:
-    frontmatter, body = _split(text, source)
-    data = _round_trip_yaml().load(frontmatter) or {}
-    fields = {k: v for k, v in data.items() if k in Issue.model_fields}
-    return Issue.model_validate({"id": "", "title": "", **fields, "body": body})
-
-
-def parse_issue_file(path: Path) -> Issue:
-    return parse_issue_text(path.read_text(encoding="utf-8"), str(path))
-
-
-def parse_note_text(text: str, source: str) -> Note:
-    frontmatter, body = _split(text, source)
-    data = _round_trip_yaml().load(frontmatter) or {}
-    # The same guard the cycle parser carries and the issue parser does not: a
-    # frontmatter written as a list is `data.items()` on a CommentedSeq, which is
-    # an AttributeError rather than a ValueError — caught by `readable`, but named
-    # to the reader as "AttributeError: 'CommentedSeq' object has no attribute
-    # 'items'" instead of as the thing that is actually wrong with their file.
-    if not isinstance(data, dict):
-        raise ValueError(f"{source}: the frontmatter has to be a map of fields, and this is not")
-    fields = {k: v for k, v in data.items() if k in Note.model_fields}
-    return Note.model_validate({"id": "", "title": "", **fields, "body": body})
-
-
-def parse_note_file(path: Path) -> Note:
-    return parse_note_text(path.read_text(encoding="utf-8"), str(path))
 
 
 # A GitHub login: 1 to 39 characters of `[A-Za-z0-9-]`, never opening or closing
@@ -1333,25 +1302,7 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
             (root / relative).read_text(encoding="utf-8"), relative
         ),
     )
-    # Issues through the same door: a file somebody hand-edited in git is how
-    # every one of these fails, and an issue file is no different from a cycle
-    # file in that respect.
-    issue_paths, nested_issues = _plan_files(root, _ISSUE_DIR)
-    issues, unreadable_issues = readable(
-        issue_paths,
-        lambda relative: parse_issue_text(
-            (root / relative).read_text(encoding="utf-8"), relative
-        ),
-    )
-    # And the notes, through the same door for the third time.
-    note_paths, nested_notes = _plan_files(root, _NOTE_DIR)
-    notes, unreadable_notes = readable(
-        note_paths,
-        lambda relative: parse_note_text(
-            (root / relative).read_text(encoding="utf-8"), relative
-        ),
-    )
-    # And the person records, through the same door again. One file per person is
+    # The person records, through the same door. One file per person is
     # what makes a bad one cost one person's icon instead of the whole page — the
     # arrangement this replaced put every icon and the roster in one file, where a
     # single hand edit took all of them at once.
@@ -1365,24 +1316,20 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     config, unreadable_config = read_config(*_config_on_disk(root))
     return (
         entities,
-        config.with_plans(plans).with_issues(issues).with_notes(notes).with_people(people),
+        config.with_plans(plans).with_people(people),
         # Sorted by path, so the banner and `openproj check` list them in the
-        # order somebody would open them rather than in the order five separate
+        # order somebody would open them rather than in the order the separate
         # walks happened to finish.
         sorted(
             [
                 *unreadable,
                 *unreadable_plans,
-                *unreadable_issues,
-                *unreadable_notes,
                 *unreadable_people,
                 *unreadable_config,
                 # A record filed one directory too deep is a file that is not a
                 # record, and lands in the same list for the same reason.
                 *nested_entities,
                 *nested_plans,
-                *nested_issues,
-                *nested_notes,
                 *nested_people,
             ],
             key=lambda one: one.path,
@@ -1682,36 +1629,48 @@ def only_sections(body: str, names: Iterable[str]) -> str:
 # rather than adopted.
 # --------------------------------------------------------------------------- #
 
-_ID_PATTERN = re.compile(
-    r"^(" + "|".join(rung.prefix for rung in KINDS) + r")-[0-9a-f]{6}$"
+# One pattern for every rung, issues and notes included — where there were
+# three. The comments that stood here argued the opposite: the entity pattern
+# was what kept `projects|pitches|tasks/<id>.md` the whole writable surface,
+# so admitting an inbox id would have widened that surface "by degrees", and
+# each inbox therefore kept a pattern of its own. Both halves of that argument
+# moved when the ladder did. The writable surface is now DERIVED from `KINDS`
+# (`web.ID_PATTERN`, `web.DIRECTORY`), so it widens exactly when a rung is
+# added and never otherwise — there is no "by degrees" left to lose. And what
+# keeps an issue out of the PLAN is no longer which pattern its id matches but
+# `planned=False` on its rung, enforced once in `build_index`, asserted by the
+# Index model_validator, and swept by the KINDS-derived exclusion test. A
+# pattern was the wrong home for that rule anyway: it could only refuse ids,
+# and the leak it guarded against — an issue on the timeline — never travelled
+# through an id.
+#
+# Public and the ONLY copy: `web.py` imports this rather than deriving the same
+# regex a second time, because it is both what the validator judges an id by and
+# what closes `<directory>/<id>.md` as a writable path — the arrangement the old
+# note pattern's own comment argued for, now applied to the one pattern there
+# is. `\A` and `\Z`, not `^` and `$`, for the reason `LOGIN_PATTERN` gives
+# below: in Python `$` also matches immediately before a trailing newline, so
+# `^…$` admits `task-a1b2c3\n` — an id that passes the guard and would then
+# become the path `tasks/task-a1b2c3\n.md`. Each prefix through `re.escape`,
+# because nothing else stops a future rung's prefix carrying a regex
+# metacharacter into an alternation.
+ID_PATTERN = re.compile(
+    r"\A(" + "|".join(re.escape(rung.prefix) for rung in KINDS) + r")-[0-9a-f]{6}\Z"
 )
-# Its own pattern, not a fourth alternative in the one above: that regex is what
-# keeps `projects|pitches|tasks/<id>.md` the whole writable surface for entities,
-# and widening it to admit a record that is not an entity is how that property
-# gets lost by degrees.
-_ISSUE_ID_PATTERN = re.compile(r"^issue-[0-9a-f]{6}$")
-# A third shape for the third kind of record, and not an alternative inside
-# either of the two above, for the reason the comment above gives.
-#
-# Public, and the ONLY copy: `web.py` imports this one rather than writing the
-# same regex a second time, because the pattern is both what the validator judges
-# an id by and what closes `notes/<id>.md` as a writable path — and two spellings
-# of one rule is how the surface that regex keeps closed gets opened by degrees.
-# The issue pattern beside it is written out twice, once here and once in
-# `web.py`; that is the arrangement this one deliberately does not copy.
-#
-# `\A` and `\Z`, not `^` and `$`, for the reason `LOGIN_PATTERN` gives below: in
-# Python `$` also matches immediately before a trailing newline, so `^…$` admits
-# `note-a1b2c3\n` — an id that passes the guard and then becomes the path
-# `notes/note-a1b2c3\n.md`.
-NOTE_ID_PATTERN = re.compile(r"\Anote-[0-9a-f]{6}\Z")
 _PREFIX_FOR_KIND = {rung.name: rung.prefix for rung in KINDS}
 _SIZE_FIELD = {"pitch": "person_weeks", "task": "person_weeks"}
 
-# Statuses in the order work moves through them. `shaping` is an idea nobody has
-# committed to yet, so it demands nothing — the same reason `shelved` does not.
-# The gates are cumulative from `ready` onwards.
-STATUS_ORDER = ("shaping", "ready", "in_progress", "done", "shelved")
+
+def _an(kind: str) -> str:
+    """`a task`, `an issue` — the article this module's own prose uses.
+
+    A problem message is a sentence somebody reads, and `f"a {kind}"` read
+    "a issue" the day issues joined the ladder. One helper, imported by
+    `web.py` for its refusals, because two spellings of one sentence rule is
+    how one of them comes to say "a issue" again.
+    """
+    return f"an {kind}" if kind[:1] in "aeiou" else f"a {kind}"
+
 # Five levels, because three were not enough to say the thing the team was already
 # writing: the HackMD table escalates past its top value as `High+`. A scale whose
 # top is used for everything urgent stops ordering anything.
@@ -1972,11 +1931,26 @@ def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
 
 def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
     """A word nobody defined, named where it is rather than as a stack trace."""
-    if entity.status not in STATUS_ORDER:
+    statuses = RUNG[entity.kind].statuses
+    # An empty vocabulary means the kind reads no status, so there is no word to
+    # judge: `unread_fields` already reports a status written on such a file as
+    # "not read", and a blocker on top of that would hold a product to a ladder
+    # it was just told it does not have. Judging against `STATUS_ORDER` here is
+    # what this replaced, and it was wrong in both directions at once: it would
+    # turn every stale note into an ungrandfatherable blocker the day notes
+    # become records, and it makes `shaping` silently legal on an issue.
+    if statuses and entity.status not in statuses:
+        # "for an issue", because the vocabulary is the rung's, not the tool's:
+        # a word this rung refuses can be a real status on a planned rung —
+        # `shaping` on a pitch — and a sentence that denies the word outright
+        # argues with the page the reader just came from. The API refusal in
+        # `web.py` already says "for {_an(kind)}"; two spellings of one
+        # sentence rule is how one of them comes to drift.
         yield (
             "blocker",
             "status",
-            f"{entity.status!r} is not a status: expected one of {', '.join(STATUS_ORDER)}",
+            f"{entity.status!r} is not a status for {_an(entity.kind)}: "
+            f"expected one of {', '.join(statuses)}",
             1,
         )
     if entity.priority not in PRIORITY_RANK:
@@ -1999,7 +1973,7 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
     """
     if not config.known_people:
         return
-    for field in ("owner", "shaped_by", "assignees", "reviewers"):
+    for field in ("owner", "shaped_by", "assignees", "reviewers", "reported_by", "written_by"):
         value = getattr(entity, field, None)
         for login in value if isinstance(value, list) else [value] if value else []:
             if login not in config.known_people:
@@ -2089,11 +2063,13 @@ def _containment_problems(
         return
     allowed = PARENT_KINDS.get(entity.kind, ())
     if parent.kind not in allowed:
-        belongs = " or ".join(f"a {kind}" for kind in allowed) or "nothing"
+        # `_an`, because `by_id` is every record: a task hand-filed under an
+        # issue reaches this sentence, and `f"a {kind}"` reads "a issue".
+        belongs = " or ".join(_an(kind) for kind in allowed) or "nothing"
         yield (
             "blocker",
             "parent",
-            f"a {entity.kind} belongs to {belongs}, not to a {parent.kind}",
+            f"{_an(entity.kind)} belongs to {belongs}, not to {_an(parent.kind)}",
             4,
         )
 
@@ -2189,6 +2165,16 @@ def _carries(entity: Entity, field: str) -> bool:
     )
 
 
+# The links a promotion writes on its source, and the phrase each is reported
+# with. One direction only — the promoted record does not list its sources — so
+# the only thing that can rot is the target going away, and that is a warning,
+# not a blocker: an issue outlives the pitch it fed, and a shelved pitch deleted
+# later should not turn the record that pointed at it red. `state()` already
+# shows the consequence (the claim quietly drops back to the stored status);
+# this names WHICH id went, which is the part a person needs to repair it.
+_PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
+
+
 def _problems_for(
     entity: Entity,
     config: Config,
@@ -2200,8 +2186,8 @@ def _problems_for(
     """Yield (severity_before_grandfathering, field, message, rule_version)."""
     if not entity.title.strip():
         yield "blocker", "title", "title must not be empty", 1
-    if not _ID_PATTERN.match(entity.id):
-        yield "blocker", "id", f"id must match {_ID_PATTERN.pattern}", 1
+    if not ID_PATTERN.match(entity.id):
+        yield "blocker", "id", f"id must match {ID_PATTERN.pattern}", 1
     elif not entity.id.startswith(_PREFIX_FOR_KIND[entity.kind] + "-"):
         yield "blocker", "id", f"id prefix must match kind {entity.kind}", 1
 
@@ -2224,23 +2210,27 @@ def _problems_for(
             if not _carries(entity, field):
                 continue
             if field == "depends_on":
-                yield (
-                    "blocker", "depends_on",
-                    f"a {name} waits on nothing: its projects, pitches and tasks do",
-                    1,
-                )
+                # The clause about projects, pitches and tasks belongs to the
+                # container it was written for; an inbox record simply is not
+                # work that waits.
+                said = f"{_an(name)} waits on nothing"
+                if RUNG[name].planned:
+                    said += ": its projects, pitches and tasks do"
+                yield "blocker", "depends_on", said, 1
             elif field == "person_weeks":
-                yield "blocker", "person_weeks", f"a {name} carries no appetite", 1
+                yield "blocker", "person_weeks", f"{_an(name)} carries no appetite", 1
             else:
                 # A warning and not a blocker: an owner on a container is ignored
                 # rather than wrong, and refusing the file over it would be
-                # refusing to load the plan over a word nobody reads.
-                yield (
-                    "warning", field,
-                    f"a {name} is a grouping and is never scheduled, "
-                    f"so its {field} is not read",
-                    1,
+                # refusing to load the plan over a word nobody reads. A planned
+                # kind here is a grouping (today, a product); an unplanned one
+                # is an inbox record, which is not a grouping of anything.
+                what = (
+                    f"{_an(name)} is a grouping and is never scheduled"
+                    if RUNG[name].planned
+                    else f"{_an(name)} is never scheduled"
                 )
+                yield "warning", field, f"{what}, so its {field} is not read", 1
 
     if entity.id in parent_cycles:
         yield "blocker", "parent", "part of a parent cycle", 1
@@ -2269,6 +2259,10 @@ def _problems_for(
         )
 
     yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
+    for field, phrase in _PROMOTION_LINKS.items():
+        for target in getattr(entity, field, []):
+            if target not in by_id:
+                yield "warning", field, f"{phrase} {target}, which is missing", 1
     yield from _vocabulary_problems(entity)
     # The reviewers of the work under this record count as its own. A pitch whose
     # tasks each name a reviewer is reviewed; asking it to name one as well is
@@ -2278,98 +2272,6 @@ def _problems_for(
         entity, list(dict.fromkeys([*entity.reviewers, *reviewers_under(entity.id, children)]))
     )
     yield from _people_problems(entity, config)
-
-
-def issue_problems(config: Config, entities: list[Entity]) -> list[Problem]:
-    """The rules an issue is held to, which are few on purpose.
-
-    An issue is somewhere to put a half-formed thing. A tracker that argues with
-    you while you are writing down what you just noticed is a tracker people stop
-    writing things down in — so an issue needs a title and a status that is a
-    word, and everything else is a warning at most.
-    """
-    by_id = {entity.id: entity for entity in entities}
-    problems: list[Problem] = []
-
-    def note(issue: Issue, severity: str, field: str | None, message: str) -> None:
-        problems.append(
-            Problem(
-                severity=severity,
-                entity_id=issue.id,
-                field=field,
-                message=message,
-                rule_version=1,
-            )
-        )
-
-    for issue in config.issues.values():
-        if not _ISSUE_ID_PATTERN.match(issue.id):
-            note(issue, "blocker", "id", "id must match ^issue-[0-9a-f]{6}$")
-        if not issue.title.strip():
-            note(issue, "blocker", "title", "title must not be empty")
-        if issue.status not in ISSUE_STATUS:
-            note(
-                issue,
-                "blocker",
-                "status",
-                f"{issue.status!r} is not a status for an issue: expected one of "
-                f"{', '.join(ISSUE_STATUS)}",
-            )
-        for target in issue.pitched_into:
-            if target not in by_id:
-                # A warning, not a blocker: an issue outlives the pitch it fed,
-                # and a shelved pitch deleted later should not break the page the
-                # issue is read on.
-                note(issue, "warning", "pitched_into", f"pitched into {target}, which is missing")
-        if issue.reported_by and config.known_people:
-            if issue.reported_by not in config.known_people:
-                note(issue, "warning", "reported_by", f"{issue.reported_by} is not in the roster")
-    return problems
-
-
-def note_problems(config: Config, entities: list[Entity]) -> list[Problem]:
-    """The rules a note is held to, which are fewer than an issue's on purpose.
-
-    An issue at least claims something is broken. A note claims nothing at all —
-    it is where a half-formed idea goes so that it is written down somewhere
-    instead of nowhere — so a validator with opinions about one is a validator
-    that makes people stop writing them. A title and a status that is a word, and
-    everything else is a warning.
-    """
-    by_id = {entity.id: entity for entity in entities}
-    problems: list[Problem] = []
-
-    def flag(note: Note, severity: str, field: str | None, message: str) -> None:
-        problems.append(
-            Problem(
-                severity=severity, entity_id=note.id, field=field,
-                message=message, rule_version=1,
-            )
-        )
-
-    for note in config.notes.values():
-        if not NOTE_ID_PATTERN.match(note.id):
-            flag(note, "blocker", "id", "id must match ^note-[0-9a-f]{6}$")
-        if not note.title.strip():
-            flag(note, "blocker", "title", "title must not be empty")
-        if note.status not in NOTE_STATUS:
-            flag(
-                note, "blocker", "status",
-                f"{note.status!r} is not a status for a note: expected one of "
-                f"{', '.join(NOTE_STATUS)}",
-            )
-        for target in note.became:
-            if target not in by_id:
-                # A warning, and the reason is the same as the issue's, plus one.
-                # A note outlives what it became; and because `state` reads this
-                # link, a missing target is already visible as the note dropping
-                # back to "thinking" — this names which id went, which is the part
-                # a person needs to repair it.
-                flag(note, "warning", "became", f"became {target}, which is missing")
-        if note.written_by and config.known_people:
-            if note.written_by not in config.known_people:
-                flag(note, "warning", "written_by", f"{note.written_by} is not in the roster")
-    return problems
 
 
 def shaping_document(template: str, provenance: str, body: str) -> str:
@@ -2518,10 +2420,26 @@ def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
             )
 
 
+def _parked(entity: Entity) -> bool:
+    """Exempt from every rule: parked work is not broken work.
+
+    Structural rather than the word `shelved`: every status ladder ends in its
+    kind's terminal state — `STATUS_ORDER` and `ISSUE_STATUS` in `shelved`,
+    `NOTE_STATUS` in `dropped` — so "the last word of this rung's own ladder" is
+    the rule, and a rung added later is exempt in its own vocabulary with no
+    edit here. A kind with no vocabulary is never parked: a product claiming
+    `status: shelved` used to buy itself a silent skip with a word it does not
+    even read, and now its written-but-unread status is reported instead.
+    """
+    statuses = RUNG[entity.kind].statuses
+    return bool(statuses) and entity.status == statuses[-1]
+
+
 def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     """Check every entity against every rule it is old enough to be held to.
 
-    Shelved entities are exempt from all of them: parked work is not broken work,
+    Parked entities — those at their own ladder's terminal status, see
+    `_parked` — are exempt from all of them: parked work is not broken work,
     and a validator that nags about it teaches people to ignore the validator.
     """
     by_id = {entity.id: entity for entity in entities}
@@ -2529,12 +2447,12 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in entities})
     children: dict[str, list[Entity]] = {}
     for entity in entities:
-        if entity.parent in by_id and entity.status != "shelved":
+        if entity.parent in by_id and not _parked(entity):
             children.setdefault(entity.parent, []).append(entity)
 
     problems: list[Problem] = []
     for entity in entities:
-        if entity.status == "shelved":
+        if _parked(entity):
             continue
         for severity, field, message, rule_version in _problems_for(
             entity, config, by_id, children, parent_cycles, dep_cycles
@@ -2549,8 +2467,8 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
                     rule_version=rule_version,
                 )
             )
-    # Outside the loop above, and outside `shelved`'s exemption with it. Parked
-    # work is not broken work — but a shelved record can still be the one whose id
+    # Outside the loop above, and outside `_parked`'s exemption with it. Parked
+    # work is not broken work — but a parked record can still be the one whose id
     # a second file has taken, and the save that lands on the wrong file does not
     # care that one of the two is parked.
     problems.extend(_identity_problems(entities))

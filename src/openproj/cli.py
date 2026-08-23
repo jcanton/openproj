@@ -25,11 +25,12 @@ import secrets
 import socket
 import sys
 import tempfile
+import time
 from datetime import date
 from pathlib import Path
 
 from .index import build_index
-from .model import Config, load_repo, validate_all
+from .model import Config, edited_by_id, load_repo, validate_all
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -103,10 +104,19 @@ def _check(repo: Path) -> int:
 
 def _render(repo: Path, out_dir: Path, today: date | None) -> int:
     from .render import render_static
+    from .store import last_edited_in
 
     entities, config, unreadable = load_repo(repo)
+    # Walk when the directory is a repository; otherwise the landing renders
+    # WITHOUT the time column — omitted, not blank, because blank looks broken
+    # and file mtimes lie after a fresh clone.
+    stamps = last_edited_in(repo)
     written = render_static(
-        build_index(entities, config, today or date.today(), unreadable), out_dir, repo
+        build_index(entities, config, today or date.today(), unreadable),
+        out_dir,
+        repo,
+        edited=edited_by_id(stamps) if stamps is not None else None,
+        now=int(time.time()),
     )
     print(f"wrote {', '.join(written)} to {out_dir}")
     # Said here as well as drawn on the pages: a build log is where somebody
@@ -258,6 +268,9 @@ def _demo(args) -> int:
             dev_login=signed_in,
             today=when,
         )
+        # Same rule as `_serve`: startup owns the first walk. On a demo corpus
+        # it is microseconds, so it earns no log line of its own.
+        app.state.warm_edited()
         # One write and flushed, because stdout is a pipe as often as it is a
         # terminal and Python buffers it when it is. uvicorn logs to stderr, which
         # is not buffered — so unflushed, the four lines that say what this is
@@ -298,6 +311,17 @@ def _serve(args) -> int:
         # development run needs neither and a deployment sets both or is refused.
         remote=os.environ.get("OPENPROJ_REMOTE", ""),
         credentials=GitHubApp.from_environment(dict(os.environ)),
+    )
+    # The first walk runs before uvicorn binds, so it can never ride a request.
+    # Logged so the drift is visible long before it hurts: the cost grows with
+    # history length (~0.5 ms per commit measured), not with the plan.
+    begun = time.perf_counter()
+    walked, stamps = app.state.warm_edited()
+    print(
+        f"walked the plan's history: {len(stamps)} paths at {walked[:7]} "
+        f"in {time.perf_counter() - begun:.2f}s",
+        file=sys.stderr,
+        flush=True,
     )
     return _exit_aware_server(app, args.host, args.port).run() or 0
 

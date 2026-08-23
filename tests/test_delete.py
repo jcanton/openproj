@@ -101,7 +101,7 @@ def test_delete_stands_beside_edit_and_wears_what_edit_wears(index: Index):
 
     bar = page[page.index('<p class="editbar">') :]
     bar = bar[: bar.index("</p>")]
-    assert 'id="toggle"' in bar and "class=\"delete\"" in bar, bar
+    assert "class=\"delete\"" in bar and 'id="views"' in bar, bar
 
     # No size or face of its own anywhere in the stylesheet — only the hover.
     for rule in re.findall(r"\.editbar button\.delete[^{]*\{([^}]*)\}", page):
@@ -304,7 +304,7 @@ def test_a_refusal_is_shown_where_the_question_was_asked(index: Index, tmp_path:
 _QUIET_BAR = """
 const bar = document.getElementById('commitbar');
 const before = {shown: bar.offsetParent !== null, said: bar.textContent.trim()};
-document.getElementById('toggle').click();
+flipEditing();
 const editing = {shown: bar.offsetParent !== null};
 document.getElementById('cancel').click();
 return {before, editing, after: {shown: bar.offsetParent !== null}};
@@ -340,7 +340,7 @@ _WHILE_EDITING = """
 const one = document.querySelector('article.entity');
 const remove = one.querySelector('.editbar button.delete');
 const before = !remove.hidden;
-document.getElementById('toggle').click();
+flipEditing();
 const editing = !remove.hidden;
 document.getElementById('cancel').click();
 return {before, editing, after: !remove.hidden};

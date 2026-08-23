@@ -1,14 +1,15 @@
 # The data model
 
-One markdown file per entity: YAML frontmatter, then the shaping document as the body. Four kinds —
-`product`, `project`, `pitch`, `task` — with ids like `pitch-a3f81c`, where the prefix must agree
-with the kind (`prod`, `proj`, `pitch`, `task`).
+One markdown file per record: YAML frontmatter, then the shaping document as the body. Six kinds —
+`product`, `project`, `pitch`, `task`, `issue`, `note` — with ids like `pitch-a3f81c`, where the
+prefix must agree with the kind (`prod`, `proj`, `pitch`, `task`, `issue`, `note`).
 
 They are one list, in one place: `KINDS` in `model.py`, coarsest first. Each rung says what its ids
-start with, where its files live, what it may be filed under, and whether it is scheduled, may
-depend on anything, carries an appetite, or has a shaping document to show. Everything else — the
-directories the loader walks, the id pattern, the parent rules, the filter menus, the create form —
-is derived from that table, so a fifth kind is an entry in it rather than a search for the places
+start with, where its files live, what it may be filed under, whether it is scheduled, may depend
+on anything, carries an appetite, or has a shaping document to show — and whether it appears in the
+plan at all, and which words its `status` may take. Everything else — the directories the loader
+walks, the id pattern, the parent rules, the filter menus, the create form, the plan's views — is
+derived from that table, so a seventh kind is an entry in it rather than a search for the places
 `project` was written down.
 
 **A plan directory is flat.** `products/`, `projects/`, `pitches/`, `tasks/`, `cycles/`, `issues/`, `notes/` and
@@ -51,14 +52,16 @@ blocker for anything written since the rule existed, and a warning for everythin
 still name a project directly — a chore that belongs to a milestone and no pitch — but nothing may
 be filed straight under a product except a project.
 
-An **issue** is stored beside these and is deliberately not one of them. An entity is a bet: it
-carries an appetite, takes a place on the timeline and charges somebody's cycle. An issue is the
-opposite — most of them will never be worked on, which is the point of having somewhere to put them.
-Keeping it a separate type is what holds it off the table, the graph, the people page and the
-timeline by construction, rather than by an exclusion in each of them that somebody later forgets.
-It has no `shaping` status, because a shaped issue is a pitch, and that is its whole lifecycle:
-somebody reads the open issues at the betting table and writes a pitch for what matters. What it was
-pitched into is stored on the issue and in that direction only.
+An **issue** is the fifth rung, and `planned=False` is the whole of what makes it different in
+kind. A planned record is a bet: it carries an appetite, takes a place on the timeline and charges
+somebody's cycle. An issue is the opposite — most of them will never be worked on, which is the
+point of having somewhere to put them. What holds it off the table, the graph, the people page and
+the timeline is no longer a type of its own: `Index.entities` holds planned kinds only, filtered
+once in `build_index` and asserted by a validator on `Index`, so a view that is forgotten sees
+fewer records, never more — it fails closed. A view that wants every kind reaches for
+`Index.records` by name. An issue has no `shaping` status, because a shaped issue is a pitch, and
+that is its whole lifecycle: somebody reads the open issues at the betting table and writes a pitch
+for what matters. What it was pitched into is stored on the issue and in that direction only.
 
 A **note** is the second inbox, and the distinction that pays for having two is one sentence:
 
@@ -70,9 +73,10 @@ pitch presupposes that you know what you are shaping — it has a problem, a sol
 and it sits on the betting table as something a room could take. A note precedes all three. Putting
 one in the table as a `shaping` pitch would make the plan look like it holds bets nobody has made.
 
-So a note has **no appetite, no owner, no size, no cycle and no dependencies**, and it is on the
-notes page and nowhere else. It carries a title, a body, `written_by` — who to ask, not who owns it
-— `written_on`, `tags`, and `became`.
+So a note has **no appetite, no owner, no size, no cycle and no dependencies**, and — `planned=False`,
+the same exclusion an issue gets — it is on Records and its own page, and nowhere in the plan. It
+carries a title, a body, `written_by` — who to ask, not who owns it — `written_on`, `tags`, and
+`became`.
 
 **Two statuses, and the count is the design.** `thinking` and `dropped` are the only two things a
 person decides about a note; `promoted` is a third *state* and is derived from `became`, never
@@ -92,11 +96,11 @@ already describes.
   `became` (or `pitched_into` on an issue) — one direction, on the record where the decision was
   made, the same rule `depends_on` follows.
 - **The new record says where it came from in its own shaping document**, in prose, above
-  everything. Not a field: a `from_note` on `Entity` would put a note id into the type every view
-  of the plan is built from, and the table, the graph and the detail page would each have to decide
-  what to do with it — which is the coupling that keeping notes out of `Entity` exists to prevent.
-  So "where did this pitch come from" is answerable from the pitch alone, in `git show`, with no
-  index and no server.
+  everything. Not a field: a `from_note` on every planned kind would put a note id into the rows
+  the table, the graph and the timeline are built from, and each would have to decide what to do
+  with it — which is the coupling that keeping notes out of the plan exists to prevent. So "where
+  did this pitch come from" is answerable from the pitch alone, in `git show`, with no index and no
+  server.
 - **One commit**, because it is one decision. Two files go into it through `Store.write_all`, each
   compared-and-swapped on its own path; written as two commits, the second can fail after the first
   has landed and leave a pitch nothing points at.

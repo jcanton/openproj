@@ -4,12 +4,12 @@ The plan is at <https://openproj-392761827400.europe-west1.run.app>. Sign in wit
 in C2SM you can write. There is no database behind it — every page is drawn from markdown files in
 `github.com/jcanton/icon4py-plan`, and every save is a commit there with your name on it.
 
-The tabs are the same records seen several ways. **Table** is every record, filterable and
-searchable, and is where most people live. **Graph** is the dependency diagram. **Timeline** is the
-Gantt. **Cycles** is one page per cycle, with what was bet in it and who has room. **People** is who
-is on what. **Issues** is the pile of things somebody noticed. **Notes** is the pile of things
-somebody is still thinking about. Clicking any record opens its own page, which is where you edit
-it.
+The landing page is **Records**: every record in the plan, one line each, newest edit first, with
+the search box above it — it is how you get back to the thing you were writing. The tabs are the
+plan seen several ways. **Table** is the plan's records, filterable and searchable, and is where
+most people live. **Graph** is the dependency diagram. **Timeline** is the Gantt. **Cycles** is one
+page per cycle, with what was bet in it and who has room. **People** is who is on what. Clicking
+any record opens its own page, which is where you edit it.
 
 Filters live in the URL, so the view in front of you is a link, and there are no saved views to
 manage.
@@ -40,12 +40,13 @@ is a pitch.
 
 And one that is none of those. A **note** is an idea before anybody knows what it is: an issue is
 "we found something existing that is broken", a note is "we are thinking of creating something that
-does not exist and our ideas are confused". It has no appetite, no owner and no size, and it is on
-no view of the plan — which is the point, because a plan showing bets nobody has made is a plan you
-cannot read. When it turns out to be work, **Promote** turns it into a project, a pitch or a task in
-one commit: the new record starts in Shaping carrying the note's title, tags and text, and says in
-its own shaping document where it came from. The note stays, and points at what it became. The same
-button on an issue writes the pitch for it.
+does not exist and our ideas are confused". It has no appetite, no owner and no size, and it lives
+on **Records** and its own page, on no view of the plan — which is the point, because a plan
+showing bets nobody has made is a plan you cannot read. When it turns out to be work, **Promote**
+turns it into a project, a pitch or a task in one commit: the new record starts in Shaping carrying
+the note's title, tags and text, and says in its own shaping document where it came from. The note
+stays, and points at what it became. The same button on an issue writes the pitch — or the task —
+for it.
 
 ## Appetite is person-weeks
 
@@ -79,7 +80,7 @@ inside it waits for.
 
 ## Writing one
 
-**New entity**, then choose the kind. The body starts as the team's own template, with its guidance
+**New record**, then choose the kind. The body starts as the team's own template, with its guidance
 in comments that never render: Problem, Appetite, Solution, Rabbit holes, No-gos, For later. It is
 the HackMD template you already write, so a pitch drafted in either place is the same document.
 

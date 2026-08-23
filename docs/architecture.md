@@ -2,19 +2,20 @@
 
 ## The pages
 
-`index.html` is a filterable, searchable table and the one people live in. `graph.html` is the
-dependency DAG, grouped by project and pitch. `timeline.html` is the derived Gantt. `cycles.html`,
-`people.html`, `issues.html` and `notes.html` are the cycle records with their betting tables, who
-is on what and who is full, the pile of things somebody noticed and the pile of things somebody is
-still thinking about; `detail.html` is one record on its own page, and under the server it is also
-where a record is edited.
+`index.html` is **Records**, the landing page — every record in the plan, one line each, sorted by
+last edited where there is git history to ask and by id in an export of a plain directory, with the
+search box above it. `table.html` is the filterable, searchable table and the page PM work lives
+in. `graph.html` is the dependency DAG, grouped by project and pitch. `timeline.html` is the
+derived Gantt. `cycles.html` and `people.html` are the cycle records with their betting tables, and
+who is on what and who is full; `detail.html` is one record on its own page — any of the six kinds
+— and under the server it is also where a record is edited.
 
-The last two are inboxes rather than views of the plan. Neither an issue nor a note is an entity, so
-neither reaches the table, the graph, the timeline or the people page — by construction, because
-nothing there ever sees one. They share a stylesheet and one `attachRecordTable`, because they are
-the same table over two kinds of record; they do not share a template, because the records differ
-and are meant to. `POST /api/promote` is the door out of both: it writes the entity and marks the
-source in one commit.
+Issues and notes are records whose rung says `planned=False`: they are on Records and on their own
+pages, and never in the plan views. The exclusion is not a filter on each page — `Index.entities`
+holds planned kinds only, a validator on `Index` refuses anything else, and a page that wants every
+kind reaches for `Index.records` by name, a word that looks wrong in a function about the timeline.
+`POST /api/promote` is the door out of both inboxes: it writes the entity and marks the source in
+one commit.
 
 They render from one in-memory index, share one filter model, and keep their state in the query
 string — so every view is a shareable URL, the back button works, and there are no saved views to

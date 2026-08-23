@@ -84,6 +84,7 @@ from openproj.index import build_index
 from openproj.model import (
     KIND_NAMES,
     PARENT_KINDS,
+    RUNG,
     Config,
     Pitch,
     Project,
@@ -132,7 +133,7 @@ def client(repo_path: Path):
 
 @pytest.fixture
 def page(client: TestClient) -> str:
-    return client.get("/").text
+    return client.get("/table").text
 
 
 @pytest.fixture
@@ -366,6 +367,64 @@ def test_the_create_form_offers_the_three_kinds_and_nothing_else(client: TestCli
     assert client.get("/new?kind=milestone").status_code == 422
 
 
+def test_the_kind_picker_offers_every_rung_and_only_rungs(new_page: str):
+    """Derived on both sides: `KINDS` draws the options and the route refuses
+    the rest, so a rung added to the ladder is creatable the day it lands
+    rather than the day somebody remembers this select."""
+    pick = re.search(r'<select id="kind">.*?</select>', new_page, re.S)
+    assert pick, "the create page must carry the kind picker"
+    assert options(pick.group(0)) == set(KIND_NAMES)
+
+
+def test_the_create_page_is_the_record_page_in_a_mode(client: TestClient):
+    """One template, one script, two verbs. The create form was forked markup
+    once (`_NEW`), and a fork is what the issue and note pages proved a fork
+    does — the note got the hill and the issue did not, in one commit. Which
+    verb runs is data (`CREATING`), never a second page."""
+    import openproj.render as render
+
+    new = client.get("/new?kind=task").text
+    detail = client.get(f"/detail/{TASK}").text
+
+    assert not hasattr(render, "_NEW"), "the forked template is gone"
+    assert not hasattr(render, "render_new"), "and so is its renderer"
+    for html in (new, detail):
+        assert "if (CREATING) { await createRecord(); return; }" in html
+        assert "async function createRecord()" in html
+    assert 'const CREATING = "task";' in new
+    assert "const CREATING = null;" in detail, "a stored record's page creates nothing"
+
+
+@pytest.mark.parametrize("kind", KIND_NAMES)
+def test_a_record_created_from_the_merged_page_round_trips(client: TestClient, kind: str):
+    """The whole create flow per kind, through the page's own base commit: the
+    page renders, the POST lands, and the record comes back as a page. The
+    read-back is the record's own page, never /api/index.json — that map is
+    plan-only by design and cannot answer for an unplanned rung. Parametrized
+    over the ladder, so the rungs Task 8 adds walk through this door on the
+    day they exist — if their server stamping is missing, this is the test
+    that says so."""
+    page = client.get(f"/new?kind={kind}")
+    assert page.status_code == 200
+    base = re.search(r'name="base_commit" value="([0-9a-f]{40})"', page.text).group(1)
+
+    made = client.post(
+        "/api/entity",
+        json={"base_commit": base,
+              "fields": {"kind": kind, "title": f"Round trip {kind}"},
+              "body": "A record made from the merged page.\n"},
+    )
+    assert made.status_code == 201, made.json()
+    new_id = made.json()["id"]
+    own = client.get(f"/detail/{new_id}")
+    assert own.status_code == 200
+    assert f"Round trip {kind}" in own.text, (
+        "the record's own page is the read-back for every kind — "
+        "/api/index.json is plan-only by design and cannot answer for an "
+        "unplanned rung"
+    )
+
+
 def test_a_dropdown_on_either_form_offers_words_and_stores_identifiers(
     new_page: str, client: TestClient
 ):
@@ -478,7 +537,7 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     and a task blocked on a missing `shaped_by` would be nonsense — while a size
     belongs to a pitch and a task alike and a project has none, being a container.
 
-    The page carries all three kinds and hides what does not apply, so that
+    The page carries every kind and hides what does not apply, so that
     switching kind does not throw away a title somebody just typed. Each row says
     which kinds own it, and the server refuses the rest — the guarantee is on the
     side that writes the file, not in whichever controls a script left visible."""
@@ -488,14 +547,21 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
 
     assert owners["person_weeks"] == ["pitch", "task"]
     assert owners["shaped_by"] == ["pitch"]
-    # Every kind that does work, in ladder order and off the ladder: `status` is
-    # a work state, so the container rung does not carry it and the other three
-    # do. Derived rather than listed, or this is one more copy of the ladder that
-    # goes stale the day a rung is added.
+    # Every kind that reads a status AND is offered one here, in ladder order
+    # and off the ladder. The container rung reads no status at all; the two
+    # inbox kinds read one and are deliberately NOT offered it on this form —
+    # the single status control is the plan ladder, `shaping` on an issue is a
+    # word the server refuses, and a fresh inbox record opens at the server's
+    # stamp (`web.INBOXES`) instead. That absence is pinned from the other side
+    # by `test_the_create_form_offers_an_issue_no_plan_status`. Derived rather
+    # than listed, or this is one more copy of the ladder that goes stale the
+    # day a rung is added — and spelled out once beneath, so the derivation
+    # cannot drift along with the code it derives from.
     assert owners["status"] == [
-        kind for kind in KIND_NAMES if "status" not in unread_fields(kind)
+        kind for kind in KIND_NAMES
+        if "status" not in unread_fields(kind) and RUNG[kind].planned
     ]
-    assert len(owners["status"]) == len(KIND_NAMES) - 1
+    assert owners["status"] == ["project", "pitch", "task"]
     # And a field the top rung does not read is not offered on it: a product has
     # no owner and — since jcanton asked, 2026-08-20 — no status and no PRs
     # either, so each of those rows names the other three kinds.
@@ -536,7 +602,7 @@ def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: P
     """
     entities, config, _ = load_repo(seed_root)
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
-    exported = (tmp_path / "index.html").read_text(encoding="utf-8")
+    exported = (tmp_path / "table.html").read_text(encoding="utf-8")
 
     assert not controls(exported)
     assert "base_commit" not in exported
@@ -2871,7 +2937,7 @@ def test_every_control_on_the_create_form_has_a_name(new_page: str):
     assert re.search(r'<textarea name="body"[^>]*aria-label="Shaping document"', new_page, re.S)
     # And the page says what it is, which it did not: its `<h1>` was an empty
     # input.
-    assert "<h1>New entity</h1>" in new_page
+    assert "<h1>New record</h1>" in new_page
 
 
 # --------------------------------------------------------------------------- #
@@ -2976,7 +3042,7 @@ def test_a_rendered_file_offers_no_row_to_type_into(seed_root: Path, tmp_path: P
     """
     entities, config, _ = load_repo(seed_root)
     render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
-    exported = script((tmp_path / "index.html").read_text(encoding="utf-8"))
+    exported = script((tmp_path / "table.html").read_text(encoding="utf-8"))
 
     assert "function adderHtml" not in exported
     assert "+ New row" not in exported
@@ -3386,10 +3452,16 @@ def test_a_row_that_belongs_to_nothing_is_never_offered_a_move(page: str):
     carries one for the reader who asks, because an absence explains nothing on
     its own.
 
-    Which kind is the top is asked of the page's own `PARENT_KINDS` rather than
-    named here. It was `project` until a `product` was added above it, and this
-    test passed for the wrong reason the whole way: a project now has somewhere
-    to go, and the row with nowhere to go is a kind this corpus does not contain.
+    Which kinds belong to nothing is asked of the page's own `PARENT_KINDS`
+    rather than named here. It was `project` until a `product` was added above
+    it, and this test passed for the wrong reason the whole way: a project now
+    has somewhere to go, and the row with nowhere to go is a kind this corpus
+    does not contain. Since the flip the set holds three — the product because
+    it is the top of the tree, the two inbox kinds because an issue belongs to
+    nothing (`under=()` on their rungs) — and the page's `movable` must refuse
+    all of them, the inbox pair even though, being unplanned, they never have
+    a row on this table to grow a grip in the first place: the payload ships
+    every kind, and a gesture must refuse even a row that should not exist.
     """
     answer = drive_table(
         page,
@@ -3404,8 +3476,12 @@ def test_a_row_that_belongs_to_nothing_is_never_offered_a_move(page: str):
     )
     got = answer["value"]
 
-    assert got["top"] == ["product"], got["top"]
-    assert got["movable"] == [False]
+    tops = [kind for kind in KIND_NAMES if not PARENT_KINDS[kind]]
+    assert got["top"] == tops, got["top"]
+    assert set(tops) == {"product", "issue", "note"}, (
+        "spelled out once so the derivation above cannot drift with the code"
+    )
+    assert got["movable"] == [False] * len(tops)
     assert got["said"] == "A product belongs to nothing, so there is nothing to file it under"
     # And the two kinds this corpus does hold both have somewhere to go now.
     assert got["project"] is True and got["task"] is True
@@ -4433,7 +4509,7 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
     def blockers_of(entity_id: str) -> int:
         # Off the table's own payload, which is what the column is drawn from —
         # `/api/index.json` is the flat index and answers a different question.
-        page = client.get("/").text
+        page = client.get("/table").text
         rows = json.loads(
             re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S)
             .group(1)

@@ -16,23 +16,20 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date, timedelta
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .model import (
     PRIORITY_RANK,
+    RUNG,
     STATUS_ORDER,
     Config,
     Cycle,
     Entity,
-    Issue,
-    Note,
     Problem,
     Unreadable,
     ancestors,
     checklist,
     cycle_of,
-    issue_problems,
-    note_problems,
     sections,
     size_weeks,
     under,
@@ -143,7 +140,30 @@ def _progress_of(
 
 
 class Index(BaseModel):
+    # THE PLAN, and only the plan: kinds whose rung says `planned`. Narrowed on
+    # purpose rather than superseded — every PM surface (table, graph, timeline,
+    # people, scheduler, facets, /api/index.json) reads this field, so a consumer
+    # nobody edits stays correct, and one that is forgotten fails closed: it sees
+    # fewer records, never an unplanned one on the timeline.
     entities: dict[str, Entity]
+    # Every record that parsed, whatever its kind. Reaching for this is a
+    # deliberate act — the word looks wrong in a function about the timeline,
+    # which is the point. The landing list, the detail lookup and the delete
+    # cascade are its readers.
+    #
+    # Where the two inboxes went. `issues` and `notes` were separate maps here,
+    # with a comment forbidding the rest of the index from reaching for them —
+    # "a note that appears in a second view is a note that has become a bet
+    # nobody made". That rule is now structural rather than admonitory: an
+    # issue is an Entity on an unplanned rung, so it lives in `records`, is
+    # filtered out of `entities` by the one comprehension in `build_index`,
+    # and the model_validator below refuses any Index built otherwise. A PM
+    # view that is forgotten reads `entities` and fails CLOSED — fewer
+    # records, never more — where the old type boundary failed open the day
+    # somebody passed the wrong dict. What survives of the admonition is one
+    # word: reaching for `records` in a function about the plan is a
+    # deliberate, greppable act, and the word looks wrong there on purpose.
+    records: dict[str, Entity]
     children: dict[str, list[str]]
     blocked_by: dict[str, list[str]]
     blocks: dict[str, list[str]]
@@ -163,15 +183,6 @@ class Index(BaseModel):
     today: date
     default_task_effort: float
     nominal_availability: float = 1.0
-    # Issues, and the problems they have. Carried here so the one page that shows
-    # them needs nothing but the index, the same way every other page does.
-    issues: dict[str, Issue] = {}
-    issue_problems: list[Problem] = []
-    # And the notes, carried here for the same reason and drawn on one page for
-    # the same reason. Nothing else on the index may reach for them: a note that
-    # appears in a second view is a note that has become a bet nobody made.
-    notes: dict[str, Note] = {}
-    note_problems: list[Problem] = []
     # Carried for the same reason the windows are: the timeline has to draw where
     # a cycle stops building, and it is handed no Config to ask.
     cooldown_weeks: float = 2.0
@@ -196,6 +207,23 @@ class Index(BaseModel):
     # Ids whose body keeps a "for later" list — deferred scope, which is the only
     # record the plan has of a bet being trimmed to fit.
     for_later: list[str] = []
+
+    @model_validator(mode="after")
+    def _the_plan_holds_only_planned_kinds(self) -> Index:
+        """The guarantee the type system gave up when every kind became an Entity.
+
+        `model.py` used to argue that an issue being a separate *type* is what
+        kept it off the table by construction. This is that argument's
+        replacement: one assertion at the single place an Index is made, instead
+        of an exclusion in each of sixty read sites that somebody later forgets.
+        """
+        for entity in self.entities.values():
+            if not RUNG[entity.kind].planned:
+                raise ValueError(
+                    f"{entity.id} is a {entity.kind}, and no {entity.kind} belongs in "
+                    "the plan: .entities holds planned kinds only — put it in .records"
+                )
+        return self
 
     def counts_in(self, entity: Entity, cycle: int) -> bool:
         """Whether this entity's work lands inside this cycle's window.
@@ -359,13 +387,32 @@ NO_VALUE = "(none)"
 # cannot see why a row was kept. The document is read on the detail page, which
 # is where a document is read.
 #
-# These seven and not every field: they are what a person names a record BY — its
+# These and not every field: they are what a person names a record BY — its
 # id, what it is called, the labels somebody put on it, the pull requests it is
-# argued in, and the people whose names are on it. `status`, `kind`, `priority`
-# and `cycle` are deliberately absent: each has a dropdown that says which values
-# exist, and sweeping them in means typing `ready` matches half the plan through
-# a box that cannot say which field it matched.
-SEARCH_FIELDS = ("id", "title", "tags", "prs", "owner", "assignees", "reviewers")
+# argued in, and the people whose names are on it. `reported_by` and `written_by`
+# are people fields like `owner`: the two inbox list pages this blob replaced
+# matched an issue by its reporter and a note by its writer, and "the issue
+# halungge reported" is how those records get asked for. On a kind without the
+# field, `searchable`'s `getattr` answers None and the blob is unchanged.
+# `status`, `kind`, `priority` and `cycle` are deliberately absent: each has a
+# dropdown that says which values exist, and sweeping them in means typing
+# `ready` matches half the plan through a box that cannot say which field it
+# matched.
+#
+# What those inbox pages matched that this deliberately does NOT yet: the BODY.
+# Their blobs were `id + title + tags + author + body`, so a word that appears
+# only in an issue's prose found the issue there and finds nothing anywhere now
+# — a known capability regression, not an oversight. It is not restored here
+# because this blob rides every row of /table and the landing, and "Fields, not
+# bodies" above is the standing ruling for exactly that cost: putting `body` in
+# would inline every shaping document into every table page load. Whether the
+# inbox kinds' bodies earn an exception is decided in the follow-up branch that
+# redesigns the landing row payload, with that payload on the table in front of
+# whoever decides.
+SEARCH_FIELDS = (
+    "id", "title", "tags", "prs", "owner", "assignees", "reviewers",
+    "reported_by", "written_by",
+)
 
 
 def searchable(entity: Entity) -> str:
@@ -439,15 +486,22 @@ def build_index(
     today: date,
     unreadable: Iterable[Unreadable] = (),
 ) -> Index:
-    by_id = {entity.id: entity for entity in entities}
-    children: dict[str, list[str]] = {entity_id: [] for entity_id in by_id}
+    records = {entity.id: entity for entity in entities}
+    # THE INVERSION (spec §2). Filtered here, once, and nowhere else: the plan
+    # keeps the old name so its sixty-odd consumers need no edit, and the
+    # superset takes the new one so reading it is visible in review.
+    plan = {eid: entity for eid, entity in records.items() if RUNG[entity.kind].planned}
+    children: dict[str, list[str]] = {entity_id: [] for entity_id in records}
     blocked_by: dict[str, list[str]] = {}
-    blocks: dict[str, list[str]] = {entity_id: [] for entity_id in by_id}
+    # Total over records, not over the plan: the record page draws fact rows for
+    # every kind, and a map missing a key there is a KeyError on a page, not a
+    # smaller answer.
+    blocks: dict[str, list[str]] = {entity_id: [] for entity_id in records}
 
     for entity in entities:
         if entity.parent in children:
             children[entity.parent].append(entity.id)
-        blocked_by[entity.id] = [target for target in entity.depends_on if target in by_id]
+        blocked_by[entity.id] = [target for target in entity.depends_on if target in records]
         for target in blocked_by[entity.id]:
             blocks[target].append(entity.id)
 
@@ -457,23 +511,30 @@ def build_index(
     search_blob: dict[str, str] = {}
     progress: dict[str, Progress] = {}
     for_later: list[str] = []
-    for entity in entities:
+    # The blob is total: the landing list searches every record, and a record
+    # missing from it is one its own page cannot find. PR references included —
+    # "which entity is #1364?" is asked in front of a screen, and the answer was
+    # only findable if the number also appeared in the prose. What goes in is
+    # `SEARCH_FIELDS`, which is also what a row carries to the browser.
+    for entity in records.values():
+        search_blob[entity.id] = searchable(entity)
+    # Facets, progress and deferred scope are PLAN facts: an unplanned kind in a
+    # facet menu is a dead option on the table.
+    for entity in plan.values():
         for field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS):
-            values = _facet_values(entity, field, by_id)
+            values = _facet_values(entity, field, records)
             # `NO_VALUE` is offered only where something is actually missing, so
             # a menu never carries an option that can select nothing. Every
             # status has a value, so Status never grows one; Cycle grows one the
             # moment a pitch is written and not yet bet.
             facets[field].update(values or [NO_VALUE])
-        # PR references too. "Which entity is #1364?" is a question people ask
-        # in front of a screen, and the answer was only findable if the number
-        # also happened to appear in the prose. What goes in is `SEARCH_FIELDS`,
-        # which is also what the row carries to the browser.
-        search_blob[entity.id] = searchable(entity)
         # A shelved child is not work anybody is waiting for, so it counts in
         # neither half of the fraction — otherwise parking a task makes a pitch
-        # look less finished than it was the day before.
-        kids = [by_id[k] for k in children[entity.id] if by_id[k].status != "shelved"]
+        # look less finished than it was the day before. Looked up in `plan`,
+        # not `records`: an unplanned record with a hand-written `parent` is
+        # already a containment problem, and counting it into a pitch's progress
+        # would let the bad file move a number on the table.
+        kids = [plan[k] for k in children[entity.id] if k in plan and plan[k].status != "shelved"]
         counted = _progress_of(entity, kids, config)
         if counted is not None:
             progress[entity.id] = counted
@@ -481,7 +542,8 @@ def build_index(
             for_later.append(entity.id)
 
     return Index(
-        entities=by_id,
+        entities=plan,
+        records=records,
         children=children,
         blocked_by=blocked_by,
         blocks=blocks,
@@ -500,10 +562,6 @@ def build_index(
         icons={
             login: person.icon for login, person in config.people.items() if person.icon
         },
-        issues=config.issues,
-        issue_problems=issue_problems(config, entities),
-        notes=config.notes,
-        note_problems=note_problems(config, entities),
         today=today,
         default_task_effort=config.default_task_effort,
         holidays=config.holidays,
@@ -516,14 +574,20 @@ def _is_blocked(index: Index, entity_id: str) -> bool:
     """Blocked means waiting on work that is not over.
 
     Reading a non-empty `depends_on` as "blocked" would park a live task behind
-    something finished months ago.
+    something finished months ago. The blocker is looked up in `records`:
+    `blocked_by` is total over records, so its targets are there by
+    construction, and a hand-written edge to an unplanned kind must not 500 the
+    page that draws it.
     """
     return any(
-        index.entities[blocker].status not in ("done", "shelved")
+        index.records[blocker].status not in ("done", "shelved")
         for blocker in index.blocked_by[entity_id]
     )
 
 
+# Looked up in `records`, never `entities`: predicates run over whichever
+# population `apply_filters` was handed, and the landing search hands it the
+# whole one. `entities` ⊂ `records`, so the total map is always the safe door.
 def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
     if predicate == "blocked":
         return _is_blocked(index, entity_id)
@@ -540,22 +604,22 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
             for problem in index.problems
         )
     if predicate == "review_waived":
-        return index.entities[entity_id].review_waived
+        return index.records[entity_id].review_waived
     if predicate == "past_cycle_build":
-        entity = index.entities[entity_id]
+        entity = index.records[entity_id]
         span = index.spans.get(entity_id)
         window = index.cycles.get(entity.cycle) if entity.cycle is not None else None
         if entity.status != "in_progress" or span is None or window is None:
             return False
         return span.end > index.build_end(entity.cycle)
     if predicate == "in_progress_without_prs":
-        entity = index.entities[entity_id]
+        entity = index.records[entity_id]
         return entity.status == "in_progress" and not entity.prs
     if predicate == "untracked":
         # Live work that says nothing about how far along it is: no tasks under
         # it and no checklist in it. A pitch with tasks is tracked by them.
         return (
-            index.entities[entity_id].status in ("ready", "in_progress")
+            index.records[entity_id].status in ("ready", "in_progress")
             and entity_id not in index.progress
         )
     if predicate == "for_later":
@@ -570,9 +634,9 @@ def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
     in `_FILTER_JS`), so the two parsers are handed identical data and a
     disagreement between them is the language rather than the plan.
     """
-    entity = index.entities[entity_id]
+    entity = index.records[entity_id]
     fields = {
-        field: [value.lower() for value in _facet_values(entity, field, index.entities)]
+        field: [value.lower() for value in _facet_values(entity, field, index.records)]
         for field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS)
     }
     fields["id"] = [entity.id.lower()]
@@ -605,14 +669,23 @@ def cascade_of(index: Index, entity_id: str) -> tuple[list[str], list[str]]:
     going = {entity_id, *doomed}
     edited = sorted(
         other
-        for other, entity in index.entities.items()
+        for other, entity in index.records.items()
         if other not in going and going.intersection(entity.depends_on)
     )
     return sorted(doomed), edited
 
 
-def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> list[str]:
+def apply_filters(
+    index: Index,
+    filters: dict[str, list[str]],
+    query: str,
+    over: dict[str, Entity] | None = None,
+) -> list[str]:
     """AND across fields, OR within a field, then the query language.
+
+    `over` picks the population and defaults to the plan: every caller that
+    existed before the landing page is a PM surface, so a caller that forgets
+    to ask for more fails closed. The landing list passes `index.records`.
 
     An unknown field or predicate matches nothing rather than everything: filter
     state comes from a hand-editable query string, and a typo that silently widens
@@ -630,7 +703,7 @@ def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> li
     except QueryError:
         return []
     matched = []
-    for entity_id, entity in index.entities.items():
+    for entity_id, entity in (index.entities if over is None else over).items():
         fields = query_fields(index, entity_id)
         if not evaluate(asked, fields, index.search_blob[entity_id], NO_VALUE):
             continue
@@ -642,8 +715,11 @@ def apply_filters(index: Index, filters: dict[str, list[str]], query: str) -> li
             elif field in (*_SCALAR_FACETS, *_LIST_FACETS, *_HOLDER_FACETS):
                 # Empty is selectable, and it is the absence of every value
                 # rather than one more of them — so it is asked of the list
-                # itself, not looked up in it.
-                values = _facet_values(entity, field, index.entities)
+                # itself, not looked up in it. Resolved against `records`, like
+                # the menu these values came from and `query_fields` four lines
+                # up — the holder walk starts at the entity itself, so a plan
+                # lookup answers None for any record the plan does not hold.
+                values = _facet_values(entity, field, index.records)
                 found = bool(set(values) & set(wanted)) or (NO_VALUE in wanted and not values)
             else:
                 found = False

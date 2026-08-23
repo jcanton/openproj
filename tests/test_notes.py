@@ -1,14 +1,14 @@
 """Notes, and the promotion that stops them being a second inbox nobody empties.
 
 A note is the record for "we are thinking of creating something that does not
-exist and our ideas are confused", where an issue is "we found something existing
-that is broken". The distinction is the whole design: a note has no appetite, no
-owner and no size, it is not an Entity, and it is not a pitch in `shaping` — a
-pitch presupposes that you know what you are shaping, and a note precedes that.
-
-Most of what is asserted here is that those two claims stay true in the code: a
-note reaches no other view, and a promotion carries across exactly what the note
-could honestly give and nothing more.
+exist and our ideas are confused", where an issue is "we found something
+existing that is broken". A note is now an `Entity` on a rung with
+`planned=False`: what used to be kept true by a separate type — no place on the
+table, the graph, the timeline or the people page — is enforced once in
+`build_index`, guarded by the Index validator, and swept by the KINDS-derived
+exclusion test. This file keeps what is true of notes and of nothing else: the
+two-word vocabulary with its derived third state, the stamping the deleted
+POST /api/note used to do, and the promotion trail.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from pathlib import Path
 import pygit2
 import pytest
 from fastapi.testclient import TestClient
-from pages import lit, nav_of
 from test_store import commit_directly
 from test_web import ANN, SECRET, SEED, file_at, git_head
 
@@ -34,16 +33,13 @@ from openproj.model import (
     Task,
     is_bettable,
     load_repo,
-    note_problems,
     promoted_from,
     shaping_document,
+    unread_fields,
     validate_all,
 )
 from openproj.render import PROMOTABLE
 from openproj.web import SESSION_COOKIE, create_app
-
-# Every view of the plan, plus the other inbox. A note belongs on none of them.
-OTHER_PAGES = ("/", "/graph", "/timeline", "/people", "/detail", "/cycles", "/issues")
 
 
 @pytest.fixture
@@ -62,11 +58,24 @@ def client(repo_path: Path):
 
 
 def written(client: TestClient, title: str, base: str, body: str = "", **fields) -> str:
+    """A note through the one door every record uses now."""
     response = client.post(
-        "/api/note",
-        json={"base_commit": base, "title": title, "fields": fields, "body": body},
+        "/api/entity",
+        json={"base_commit": base, "body": body,
+              "fields": {"kind": "note", "title": title, **fields}},
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+def opened_issue(client: TestClient, title: str, base: str, body: str = "",
+                 **fields) -> str:
+    response = client.post(
+        "/api/entity",
+        json={"base_commit": base, "body": body,
+              "fields": {"kind": "issue", "title": title, **fields}},
+    )
+    assert response.status_code == 201, response.text
     return response.json()["id"]
 
 
@@ -83,55 +92,6 @@ def entities(**by_id: str) -> dict[str, Task]:
 
 
 # --------------------------------------------------------------------------- #
-# Kept out of the plan
-# --------------------------------------------------------------------------- #
-
-
-def test_a_note_appears_on_no_page_but_its_own(client: TestClient, repo_path: Path):
-    """By construction, not by an exclusion in each view that somebody forgets.
-    A note is not an Entity, so nothing on those pages ever sees one — and it is
-    not on the issues page either, because "broken" and "not thought through" are
-    two different questions and one list holding both answers neither."""
-    note_id = written(client, "Maybe the grid cache belongs somewhere else", git_head(repo_path))
-
-    assert note_id in client.get("/notes").text
-    for route in OTHER_PAGES:
-        assert note_id not in client.get(route).text, route
-
-
-def test_a_note_is_not_an_entity_and_cannot_become_one_by_being_saved(
-    client: TestClient, repo_path: Path
-):
-    """The entity id pattern is what keeps `projects|pitches|tasks/<id>.md` the
-    whole writable surface for entities. A note has its own, and the only door
-    from one to the other is a promotion, which mints a new id."""
-    from openproj.model import _ID_PATTERN, NOTE_ID_PATTERN
-
-    note_id = written(client, "Something", git_head(repo_path))
-
-    assert not _ID_PATTERN.match(note_id)
-    assert NOTE_ID_PATTERN.match(note_id)
-    assert client.patch(
-        f"/api/entity/{note_id}",
-        json={"base_commit": git_head(repo_path), "fields": {}, "body": None},
-    ).status_code in (400, 404)
-    entities_in_seed, _, _ = load_repo(Path("seed"))
-    assert all(not e.id.startswith("note-") for e in entities_in_seed)
-
-
-def test_the_notes_page_is_its_own_tab_and_lights_it(client: TestClient):
-    """A seventh tab, where the last round cut the seventh. That one was `detail`,
-    which was the table with none of its controls — the same records, worse. This
-    one is records no other tab can show."""
-    page = client.get("/notes").text
-
-    assert lit(page) == ["Notes"]
-    assert any(label == "Notes" for label, _, _ in nav_of(page))
-    # And it is reached from the nav on every other page, not only from itself.
-    assert any(label == "Notes" for label, _, _ in nav_of(client.get("/").text))
-
-
-# --------------------------------------------------------------------------- #
 # What a note is allowed to be
 # --------------------------------------------------------------------------- #
 
@@ -143,8 +103,8 @@ def test_a_note_has_two_statuses_and_the_third_state_is_derived():
     because a note is not finished, it is answered — by `promoted`, which is read
     off the link rather than typed beside it."""
     world = entities(**{"pitch-aa0001": "shaping"})
-    idea = Note(id="note-000001", title="x")
-    grown = Note(id="note-000002", title="x", became=["pitch-aa0001"])
+    idea = Note(id="note-000001", kind="note", title="x")
+    grown = Note(id="note-000002", kind="note", title="x", became=["pitch-aa0001"])
 
     assert NOTE_STATUS == ("thinking", "dropped")
     assert set(NOTE_STATES) - set(NOTE_STATUS) == {"promoted"}
@@ -160,7 +120,7 @@ def test_a_promoted_note_does_not_track_what_it_became():
     either end."""
     for status in ("shaping", "ready", "in_progress", "done", "shelved"):
         world = entities(**{"pitch-aa0001": status})
-        note = Note(id="note-000001", title="x", became=["pitch-aa0001"])
+        note = Note(id="note-000001", kind="note", title="x", became=["pitch-aa0001"])
 
         assert note.state(world) == "promoted", status
 
@@ -169,52 +129,58 @@ def test_dropped_is_a_decision_that_a_link_does_not_reverse():
     """"We thought about this and we are not doing it" was said by a person.
     Somebody linking a record to it afterwards does not un-say it."""
     world = entities(**{"pitch-aa0001": "shaping"})
-    dropped = Note(id="note-000001", title="x", status="dropped", became=["pitch-aa0001"])
+    dropped = Note(id="note-000001", kind="note", title="x", status="dropped",
+                   became=["pitch-aa0001"])
 
     assert dropped.state(world) == "dropped"
 
 
 def test_a_link_to_something_that_is_gone_is_a_warning_and_not_a_promotion():
-    """A note outlives what it became. With the target deleted it is an idea
-    nobody acted on again, which is what the page should say — and the id that
-    went is named beside it, because that is the part a person needs to repair
-    it."""
-    note = Note(id="note-000001", title="x", became=["pitch-zzzzzz"])
-    config = Config().with_notes([note])
+    """A note outlives what it became. `note_problems` is gone; the rule lives
+    in `_problems_for` beside every other record's rules, and still names the
+    id that went, which is the part a person needs to repair it."""
+    note = Note(id="note-000001", kind="note", title="x", became=["pitch-zzzzzz"])
 
     assert note.state({}) == "thinking"
-    assert [(p.severity, p.field) for p in note_problems(config, [])] == [("warning", "became")]
+    assert [(p.severity, p.field) for p in validate_all([note], Config())] == [
+        ("warning", "became")
+    ]
 
 
-def test_a_note_carries_no_field_that_is_a_commitment(client: TestClient, repo_path: Path):
+def test_a_note_reads_no_field_that_is_a_commitment():
     """An owner, a size, an appetite and a cycle are all things somebody agreed
-    to. The claim a note makes is that nobody has agreed to anything yet, so the
-    record has nowhere to put one — and the write path says so by name rather
-    than accepting it into frontmatter nothing will ever read."""
-    note_id = written(client, "x", git_head(repo_path))
+    to, and the claim a note makes is that nobody has agreed to anything. As an
+    Entity subclass the note now DECLARES those fields — that is what makes one
+    page serve every kind — so the boundary moved from the type to the ladder:
+    every one of them is unread on this rung, the editors decline to offer what
+    is unread, and a hand edit that writes one in is reported, not obeyed."""
+    for field in ("owner", "assignees", "reviewers", "assigned_on", "cycle",
+                  "priority", "prs", "depends_on", "person_weeks"):
+        assert field in unread_fields("note"), field
 
-    for field in ("owner", "person_weeks", "cycle", "assignees", "depends_on", "parent"):
-        assert field not in Note.model_fields, field
-        refused = client.patch(
-            f"/api/note/{note_id}",
-            json={"base_commit": git_head(repo_path), "fields": {field: "ann"}, "body": None},
-        )
-        assert refused.status_code == 422, field
-        assert field in refused.json()["detail"], field
+    carried = Note(id="note-000001", kind="note", title="x", owner="ann")
+    assert any(
+        p.field == "owner" and p.severity == "warning"
+        for p in validate_all([carried], Config())
+    ), "written in by hand, it is reported beside the record"
 
 
 def test_a_status_that_is_not_one_is_refused_and_says_which_are(
     client: TestClient, repo_path: Path
 ):
+    """`promoted` is a state the ball may stand at and no stop may set — it is
+    derived from `became`, and typing it would be a second copy of the link.
+    The refusal is the generic per-rung gate now; the sentence still names the
+    ladder."""
     note_id = written(client, "x", git_head(repo_path))
     before = git_head(repo_path)
     refused = client.patch(
-        f"/api/note/{note_id}",
+        f"/api/entity/{note_id}",
         json={"base_commit": before, "fields": {"status": "promoted"}, "body": None},
     )
 
     assert refused.status_code == 422
-    assert "thinking, dropped" in refused.json()["detail"]
+    assert "thinking" in refused.text and "dropped" in refused.text
     assert git_head(repo_path) == before, "a refusal writes nothing"
 
 
@@ -226,39 +192,22 @@ def test_a_status_that_is_not_one_is_refused_and_says_which_are(
 def test_writing_a_note_down_asks_for_a_title_and_nothing_else(
     client: TestClient, repo_path: Path
 ):
-    """Somebody is in the middle of thinking. Every field this asks for is a
-    reason to close the tab instead."""
+    """Somebody is in the middle of thinking. POST /api/note is deleted; the
+    generic create stamps its defaults from the per-rung table, so a title is
+    still the only thing a person supplies."""
     note_id = written(client, "Is the grid file the thing we cache?", git_head(repo_path))
     stored = file_at(repo_path, git_head(repo_path), f"notes/{note_id}.md")
 
+    assert re.fullmatch(r"note-[0-9a-f]{6}", note_id)
     assert "title: Is the grid file the thing we cache?" in stored
     assert "status: thinking" in stored
     assert f"written_by: {ANN.login}" in stored
     assert re.search(r"written_on: '\d{4}-\d{2}-\d{2}'", stored)
     assert client.post(
-        "/api/note", json={"base_commit": git_head(repo_path), "title": "  "}
+        "/api/entity",
+        json={"base_commit": git_head(repo_path),
+              "fields": {"kind": "note", "title": "  "}},
     ).status_code == 422
-
-
-def test_a_note_id_that_is_not_one_never_becomes_a_path(client: TestClient, repo_path: Path):
-    """One pattern, imported from the model rather than written out here — and it
-    is anchored with `\\A` and `\\Z`, because in Python `$` also matches before a
-    trailing newline and `notes/note-a1b2c3\\n.md` is a file this would otherwise
-    have been happy to create."""
-    from openproj.model import NOTE_ID_PATTERN
-
-    for hostile in ("../config/defaults", "note-../../x", "task-c00001", "note-ZZZZZZ",
-                    "note-a1b2c3%0a"):
-        response = client.patch(
-            f"/api/note/{hostile}",
-            json={"base_commit": git_head(repo_path), "fields": {}, "body": None},
-        )
-        assert response.status_code in (400, 404), hostile
-    # Asserted of the pattern as well as through the route, because httpx refuses
-    # to send a bare newline in a URL and a proxy that does not is the whole point
-    # of the anchors. Written `^...$` this one matches and the path exists.
-    assert not NOTE_ID_PATTERN.match("note-a1b2c3\n")
-    assert file_at(repo_path, git_head(repo_path), "config/defaults.yaml")
 
 
 def test_a_note_the_server_could_not_read_back_is_never_committed(
@@ -267,7 +216,7 @@ def test_a_note_the_server_could_not_read_back_is_never_committed(
     note_id = written(client, "x", git_head(repo_path))
     before = git_head(repo_path)
     refused = client.patch(
-        f"/api/note/{note_id}",
+        f"/api/entity/{note_id}",
         json={"base_commit": before, "fields": {"tags": "not-a-list"}, "body": None},
     )
 
@@ -275,47 +224,19 @@ def test_a_note_the_server_could_not_read_back_is_never_committed(
     assert git_head(repo_path) == before
 
 
-def test_writing_one_down_is_the_same_view_as_editing_one(client: TestClient, repo_path: Path):
-    """One template, one flag — the lesson the issue page already paid for: a
-    second, differently-shaped form for creating is what made the tool feel like
-    two tools."""
-    blank = client.get("/note/new").text
-    note_id = written(client, "Something", git_head(repo_path))
-    existing = client.get(f"/note/{note_id}").text
+def test_the_retired_note_routes_redirect_to_the_shared_ones(
+    client: TestClient, repo_path: Path
+):
+    note_id = written(client, "x", git_head(repo_path))
 
-    for shape in ('<form id="edit"', 'name="title"', 'name="body"', 'id="marks"',
-                  'name="became"', 'id="save"'):
-        assert shape in blank, shape
-        assert shape in existing, shape
-    assert "const CREATING = true;" in blank
-    assert "const CREATING = false;" in existing
-    # On the article and no longer on `<body>`: see
-    # `test_a_new_issue_has_fields_to_type_in` for why the unification goes this
-    # way round rather than the other.
-    assert "ARTICLE.classList.add('editing');" in blank, "creating IS editing"
-    assert re.search(r'id="save"[^>]*>\s*Write it down\s*</button>', blank)
-    assert client.get("/note/nope").status_code == 404
-
-
-def test_an_empty_notes_page_says_what_a_note_is_for(client: TestClient, repo_path: Path):
-    """A plan with no notes is the ordinary case on day one, and a header row over
-    nothing reads as a broken app. The sentence and the control that ends it are
-    inside the table body, where the rows would be."""
-    empty = client.get("/notes").text
-    row = re.search(r'<tr class="nothing".*?</tr>', empty, re.S).group(0)
-
-    assert "Nothing has been written down yet." in row
-    assert "no owner, no size and no cycle" in row
-    assert "Write a note" in row and "/note/new" in row
-    # And the other emptiness, which is a different sentence with a different way
-    # out of it: rows exist and the controls are hiding all of them.
-    written(client, "Something", git_head(repo_path))
-    filled = client.get("/notes").text
-    filtered = re.search(r'<tr class="nothing" id="nomatch".*?</tr>', filled, re.S).group(0)
-
-    assert "No note matches." in filtered
-    assert 'id="clear-search"' in filtered
-    assert "Nothing has been written down yet." not in filled, "one emptiness at a time"
+    for old, new in (
+        ("/notes", "/"),
+        ("/note/new", "/new?kind=note"),
+        (f"/note/{note_id}", f"/detail/{note_id}"),
+    ):
+        moved = client.get(old, follow_redirects=False)
+        assert moved.status_code == 301, old
+        assert moved.headers["location"] == new, old
 
 
 # --------------------------------------------------------------------------- #
@@ -388,18 +309,10 @@ def test_the_note_stays_and_points_at_what_it_became(client: TestClient, repo_pa
     note = file_at(repo_path, git_head(repo_path), f"notes/{note_id}.md")
 
     assert f"- {new_id}" in note
-    assert client.get(f"/note/{note_id}").status_code == 200
-    page = client.get(f"/note/{note_id}").text
-    assert "Promoted" in page
-    # Derived, so it cannot also be typed. The control that would disagree with the
-    # link is the hill, and a derived state gets one with no stops on it at all —
-    # which is the same refusal the issue page's `disabled` select makes, by
-    # construction rather than by an attribute.
-    assert 'data-hill="note"' in page
-    assert 'role="radiogroup"' not in page, "a promoted note offers a status to press"
-    assert "hill-ball hill-promoted" in page, (
-        "and it stands where the record it became does, rather than nowhere"
-    )
+    assert client.get(f"/detail/{note_id}").status_code == 200
+    page = client.get(f"/detail/{note_id}").text
+    assert "hill-ball hill-promoted" in page, "the read display draws the DERIVED state's ball"
+    assert "from what it became" in page, "the lock says why the control is off"
 
 
 def test_a_promotion_is_one_commit(client: TestClient, repo_path: Path):
@@ -439,7 +352,7 @@ def test_the_trail_survives_a_round_trip_through_git(client: TestClient, tmp_pat
     entities_now, config, unreadable = load_repo(clone)
 
     assert not unreadable
-    note = config.notes[note_id]
+    note = next(e for e in entities_now if e.id == note_id)
     pitch = next(e for e in entities_now if e.id == new_id)
     assert note.became == [new_id]
     assert note_id in pitch.body, "and the other end, in the document itself"
@@ -464,11 +377,8 @@ def test_an_issue_promotes_into_a_pitch_or_a_task_and_nothing_else(
     project is a container for bets, and "we found something broken" is not a
     milestone.
     """
-    opened = client.post(
-        "/api/issue",
-        json={"base_commit": git_head(repo_path), "title": "Halo drops a rank",
-              "body": "Reproduced on 12 ranks."},
-    ).json()["id"]
+    opened = opened_issue(client, "Halo drops a rank", git_head(repo_path),
+                          body="Reproduced on 12 ranks.")
 
     refused = promote(client, opened, "project", git_head(repo_path))
     assert refused.status_code == 422
@@ -503,11 +413,8 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     record `openproj check` refuses is a promote path that puts a blocker in the
     plan by pressing a button, on a protected branch.
     """
-    opened = client.post(
-        "/api/issue",
-        json={"base_commit": git_head(repo_path), "title": "Halo drops a rank",
-              "body": "Reproduced on 12 ranks.", "fields": {"tags": ["halo"]}},
-    ).json()["id"]
+    opened = opened_issue(client, "Halo drops a rank", git_head(repo_path),
+                          body="Reproduced on 12 ranks.", tags=["halo"])
 
     new_id = promote(client, opened, "task", git_head(repo_path)).json()["id"]
     stored = file_at(repo_path, git_head(repo_path), f"tasks/{new_id}.md")
@@ -533,7 +440,7 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     ]
     # And the trail back, at both ends: the issue names it, and the record says
     # in its own document where it came from.
-    issue = config.issues[opened]
+    issue = next(e for e in entities_now if e.id == opened)
     assert issue.pitched_into == [new_id]
     assert opened in made.body
     assert issue.state({e.id: e for e in entities_now}) == "in_progress", (
@@ -576,26 +483,43 @@ def test_the_promote_control_is_not_offered_where_it_cannot_work(
     number and refused every Save."""
     note_id = written(client, "x", git_head(repo_path))
 
-    assert 'id="promote-go"' not in client.get("/note/new").text, "nothing to promote yet"
-    assert 'id="promote-go"' in client.get(f"/note/{note_id}").text
+    assert 'id="promote-go"' not in client.get("/new?kind=note").text, (
+        "nothing to promote yet"
+    )
+    assert 'id="promote-go"' in client.get(f"/detail/{note_id}").text
     # Three kinds on a note and two on an issue, each page offering exactly what
     # `PROMOTABLE` says and in its order — the picker used to be a note-only
     # control, because an issue had one destination and a `<select>` holding one
     # option is a control that cannot be used and looks exactly like one that can.
-    opened = client.post(
-        "/api/issue", json={"base_commit": git_head(repo_path), "title": "Something broke"},
-    ).json()["id"]
+    opened = opened_issue(client, "Something broke", git_head(repo_path))
     for page, expected in (
-        (f"/note/{note_id}", list(PROMOTABLE["note"])),
-        (f"/issue/{opened}", list(PROMOTABLE["issue"])),
+        (f"/detail/{note_id}", list(PROMOTABLE["note"])),
+        (f"/detail/{opened}", list(PROMOTABLE["issue"])),
     ):
         picker = re.search(r'<select id="into">.*?</select>', client.get(page).text, re.S).group(0)
         assert expected == re.findall(r'value="(\w+)"', picker), page
+
     assert ["pitch", "task", "project"] == list(PROMOTABLE["note"])
     assert ["pitch", "task"] == list(PROMOTABLE["issue"]), (
         "a project is not on offer from an issue: a milestone is a container for "
         "bets, and \"we found something broken\" is not one"
     )
+
+    # And never for a reader. Reads are public, so most served page loads are
+    # readers, and `base_commit` alone only says "there is a server" — Promote
+    # asks `may_write` like Delete and the view switcher, or its one answer
+    # for this person is a 401 dressed as a control. It escaped that sweep
+    # because it lived on the two deleted inbox pages when the sweep ran.
+    from openproj.render import ROUTES, render_detail
+
+    thought = Note(id="note-0cc000", kind="note", title="A thought", status="thinking")
+    index = build_index([thought], Config(), date(2026, 8, 17))
+    reader = render_detail(index, ROUTES, only=thought.id,
+                           base_commit="deadbee", may_write=False)
+    writer = render_detail(index, ROUTES, only=thought.id,
+                           base_commit="deadbee", may_write=True)
+    assert 'id="promote-go"' not in reader, "a reader was offered a promote they cannot make"
+    assert 'id="promote-go"' in writer
 
 
 # --------------------------------------------------------------------------- #
@@ -631,37 +555,41 @@ def test_the_citation_says_what_it_can_and_no_more():
 
 
 def test_the_shipped_demo_carries_notes_that_load(demo_root: Path):
-    entities_in_seed, config, unreadable = load_repo(demo_root)
-
+    entities_now, config, unreadable = load_repo(demo_root)
     assert not unreadable
-    index = build_index(entities_in_seed, config, date(2026, 8, 17))
 
-    assert index.notes, "the demo corpus has notes"
-    assert not [p for p in index.note_problems if p.severity == "blocker"]
-    assert {n.state(index.entities) for n in index.notes.values()} == set(NOTE_STATES), (
+    index = build_index(entities_now, config, date(2026, 8, 17))
+    notes = {i: r for i, r in index.records.items() if r.kind == "note"}
+
+    assert notes, "the demo corpus has notes"
+    assert not set(notes) & set(index.entities), "and none of them is in the plan"
+    assert not [
+        p for p in index.problems if p.severity == "blocker" and p.entity_id in notes
+    ]
+    assert {n.state(index.entities) for n in notes.values()} == set(NOTE_STATES), (
         "all three states, because a demo that shows one teaches one"
     )
-    promoted = next(n for n in index.notes.values() if n.state(index.entities) == "promoted")
+    promoted = next(n for n in notes.values() if n.state(index.entities) == "promoted")
     became = index.entities[promoted.became[0]]
-    assert promoted.id in became.body, "and the trail is drawn at both ends in the demo too"
+    assert promoted.id in became.body, "the trail is drawn at both ends in the demo too"
 
 
-def test_the_static_export_carries_the_notes_page(demo_root: Path, tmp_path: Path):
-    """A rendered plan is a directory somebody hands over on a memory stick. A
-    view that only exists behind the server is a view that is not in it."""
+def test_the_static_export_carries_every_note(demo_root: Path, tmp_path: Path):
+    """notes.html is gone; the record is in the export twice over — on the
+    Records landing and in detail.html — with no way to write one, because a
+    file has nowhere to post to."""
     from openproj.render import render_static
 
-    entities_in_seed, config, _ = load_repo(demo_root)
+    entities_now, config, _ = load_repo(demo_root)
     written_files = render_static(
-        build_index(entities_in_seed, config, date(2026, 8, 17)), tmp_path
+        build_index(entities_now, config, date(2026, 8, 17)), tmp_path
     )
-    page = (tmp_path / "notes.html").read_text(encoding="utf-8")
+    detail = (tmp_path / "detail.html").read_text(encoding="utf-8")
 
-    assert "notes.html" in written_files
-    assert "note-11aa22" in page
-    # And no way to write one, because a file has nowhere to post to.
-    assert "/api/note" not in page
-    assert "promote-go" not in page
+    assert "notes.html" not in written_files and "issues.html" not in written_files
+    assert "note-11aa22" in detail
+    assert "note-11aa22" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "promote-go" not in detail
 
 
 def load_repo_from(repo_path: Path):

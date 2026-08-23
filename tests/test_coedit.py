@@ -517,6 +517,30 @@ def test_a_save_the_model_could_not_read_back_is_refused_and_writes_nothing(
         assert len(log_of(plan)) == before, "a refusal writes nothing"
 
 
+def test_a_status_the_kind_does_not_speak_is_refused_at_the_socket_too(
+    client: TestClient, plan: Path
+):
+    """The vocabulary gate, at the third door. The room's save frame ran only
+    `_reject_bad_types`, which does not look at `status`, so the one word the
+    PATCH route now refuses could still be committed by whoever had the
+    co-editing page open."""
+    before = len(log_of(plan))
+    with open_room(client, "ann") as one:
+        ann = Session(one, "ann")
+        ann.hello()
+        # Non-ASCII on purpose: the byte-offset splice path is exercised even
+        # here, where the claim is about the field gate — ASCII-only corpora are
+        # how the last three data-loss defects shipped.
+        ann.type(0, "ẞ—")
+        ann.save({"status": "banana"})
+        refused = ann.take("refused")
+        assert "status" in refused["why"]
+        assert "'banana'" in refused["why"]
+        # Inside the room, because leaving it commits the body — which is the
+        # right thing to do with text that is only refused as a *field*.
+        assert len(log_of(plan)) == before, "a refusal writes nothing"
+
+
 def test_a_commit_made_in_git_arrives_in_the_room_as_text(client: TestClient, plan: Path):
     """The existing conflict machinery is not regressed, it is fed.
 
@@ -724,6 +748,7 @@ def test_the_page_stops_saving_when_the_room_says_there_was_nothing_to_save(
     answer = run_js(
         page,
         "(async () => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  if (!COEDIT.live()) return 'the room never came up';"
@@ -1377,6 +1402,7 @@ def typed_in_the_page(client: TestClient, shown: str, edits: list[str]) -> coedi
     answer = run_js(
         page,
         "(() => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  const box = document.querySelector('[name=body]');"
@@ -1538,6 +1564,11 @@ def in_chrome_room(
     )
     answer = measured_in(
         chrome(), seeded, where, 1400,
+        # A session first, or there is no socket to welcome: `connect()` runs at
+        # session start now — a reader holds no seat — so the room this helper
+        # welcomes the page into exists only once a session is open.
+        "if (!document.querySelector('article.entity').classList.contains('editing'))"
+        " flipEditing();\n"
         f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
         patience=6800, query=query,
     )
@@ -1669,11 +1700,11 @@ def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
 
 _REFLECTED = r"""
 const area = document.querySelector('textarea[name=body]');
-// In an editing session and focused, because that is the tab this is about: a
-// reader with the box closed has no caret to lose, and `reflect` deliberately
-// leaves an unfocused box alone rather than calling `setSelectionRange` on it,
-// which would also scroll it.
-document.getElementById('toggle').click();
+// Focused, because that is the tab this is about: a reader with the box closed
+// has no caret to lose, and `reflect` deliberately leaves an unfocused box
+// alone rather than calling `setSelectionRange` on it, which would also scroll
+// it. The session is already open — `in_chrome_room` opens one before the
+// welcome, since the room is only joined at session start.
 area.focus();
 area.setSelectionRange(2, 2);
 const caretWas = area.selectionStart;
@@ -2091,6 +2122,7 @@ def test_a_draft_in_the_box_is_offered_to_a_room_that_has_not_moved(client: Test
     answer = run_js(
         page,
         "(() => {"
+        "  flipEditing();"
         "  const box = document.querySelector('[name=body]');"
         f" box.value = {json.dumps(draft)};"
         "  __socket.opened();"
@@ -2184,7 +2216,7 @@ def test_the_served_detail_page_carries_the_room_and_no_other_page_does(client: 
     assert "const YJS = (() => {" in detail
     assert "const COEDIT = (() => {" in detail
     assert "/api/coedit/" in detail
-    for route in ("/", "/graph", "/timeline", "/cycles", "/people", "/issues", "/detail"):
+    for route in ("/", "/graph", "/timeline", "/cycles", "/people", "/detail"):
         page = client.get(route).text
         assert "const YJS" not in page, route
         assert "/api/coedit/" not in page, route
@@ -2793,7 +2825,7 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
             "(() => {"
             " const one = document.querySelector('article.entity');"
             " if (!one.classList.contains('editing'))"
-            "   document.getElementById('toggle').click();"
+            "   flipEditing();"
             " const who = document.getElementById('together').textContent;"
             " return who"
             "   ? who + ' | ' + document.getElementById('unsaved').textContent : '';"
@@ -3278,7 +3310,13 @@ def test_opening_the_second_surface_changes_no_byte_of_the_document(
     assert answer["opened"] == answer["original"], (
         "the surface holds a different document from the one the page was rendered with"
     )
-    assert answer["dirty"] == "Nothing to save", (
+    # The IN-SESSION spelling of a count of zero. `dirty()` writes one of two
+    # pristine messages off the same `count === 0` — "Nothing to save" outside a
+    # session, "Nothing changed yet" inside one — and `in_chrome_room` now opens
+    # a session before the welcome, because a seat is taken at session start and
+    # a page with no socket has no welcome to hear. The property pinned is the
+    # count: a surface that rewrote a byte on sight reads "1 unsaved change".
+    assert answer["dirty"] == "Nothing changed yet", (
         f"opening the editor made the page think there was a change: {answer['dirty']!r}"
     )
     # Against the room's own normalisation and not against the file: the room
@@ -3516,7 +3554,6 @@ def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
 
 
 _UNDO_IN_A_ROOM = r"""
-document.getElementById('toggle').click();
 const editor = ace.edit(document.querySelector('.acebox'));
 editor.focus();
 // Ann's own edit, made the way a person makes one, at the top of the document.
@@ -3602,7 +3639,6 @@ def test_undo_never_takes_back_something_somebody_else_typed(
 
 
 _UNDO_IN_A_ROOM_ON_THE_BOX = r"""
-document.getElementById('toggle').click();
 const box = document.querySelector('textarea[name=body]');
 const undo = [...document.querySelectorAll('#marks .hist')]
   .find(one => one.title.startsWith('Undo'));
@@ -3727,7 +3763,6 @@ def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
 
 
 _HISTORY_KEYS_IN_A_ROOM = r"""
-document.getElementById('toggle').click();
 const box = document.querySelector('textarea[name=body]');
 const of = word => [...document.querySelectorAll('#marks .hist')]
   .find(one => one.title.startsWith(word));
@@ -3874,6 +3909,7 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     answer = run_js(
         page,
         "(async () => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  if (!COEDIT.live()) return 'the room never came up';"
@@ -3920,6 +3956,7 @@ def test_what_the_room_said_about_a_save_survives_the_reload(
     answer = run_js(
         page,
         "(async () => {"
+        "  flipEditing();"
         "  __socket.opened();"
         f" __socket.hear({json.dumps(welcome)});"
         "  await save();"

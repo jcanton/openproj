@@ -100,7 +100,7 @@ def test_an_unknown_subcommand_fails_rather_than_doing_something(capsys):
     assert main(["frobnicate"]) == 2
 
 
-def test_the_shipped_demo_corpus_validates_clean(demo_root: Path):
+def test_the_shipped_demo_corpus_validates_clean(demo_root: Path, capsys):
     """The demo is the first thing anyone runs. A demo that fails its own check
     teaches people the check is noise.
 
@@ -108,6 +108,13 @@ def test_the_shipped_demo_corpus_validates_clean(demo_root: Path):
     nine blockers because migrated data is messy and the validator has to say so.
     """
     assert main(["check", str(demo_root)]) == 0
+    # Added by the commit that made a note a rung: issues and notes acquired
+    # `openproj check` coverage they never had, and this warning is the
+    # coverage arriving — the web banner said it all along.
+    assert (
+        "warning: note-55cc66: written_by: dastrm is not in config/people.yaml"
+        in capsys.readouterr().out
+    )
 
 
 def test_serve_is_reachable_from_the_command_line():
@@ -173,7 +180,7 @@ def test_a_plan_that_reaches_the_end_of_the_calendar_still_renders(tmp_path: Pat
     assert "0 blockers" in capsys.readouterr().out
     assert main(["render", str(tmp_path), str(out)]) == 0
 
-    for name in ("index.html", "detail.html", "people.html",
+    for name in ("index.html", "table.html", "detail.html", "people.html",
                  "cycles.html", "graph.html", "timeline.html"):
         assert (out / name).is_file(), name
         assert len(read_bytes := (out / name).read_bytes()) > 1000, (name, len(read_bytes))
@@ -297,12 +304,14 @@ def test_demo_builds_a_repository_the_server_can_actually_serve(monkeypatch, cap
 
     def while_it_runs(app):
         with TestClient(app) as client:
-            seen["table"] = client.get("/")
+            seen["records"] = client.get("/")
+            seen["table"] = client.get("/table")
             seen["people"] = client.get("/people")
             seen["index"] = client.get("/api/index.json").json()
 
     assert run_demo(monkeypatch, while_it_runs) == 0
 
+    assert seen["records"].status_code == 200
     assert seen["table"].status_code == 200
     assert seen["people"].status_code == 200
     kinds = {entity["kind"] for entity in seen["index"]["entities"].values()}

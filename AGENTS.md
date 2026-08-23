@@ -1,7 +1,7 @@
 # Working on openproj
 
 Git-backed appetite planning for the icon4py team. `README.md` has the shape of the thing: one
-markdown file per entity, the shaping document *is* the record, every date derived from one typed
+markdown file per record, the shaping document *is* the record, every date derived from one typed
 `assigned_on` and one size, the tool and the plan kept in two repositories on purpose. Read it
 first. This file is the part it does not say — the invariants that fail loudly when you step on
 them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
@@ -269,10 +269,11 @@ motion respected. That last one is true of the code rather than aspirational. Th
 stylesheet is inlined immediately after it and would otherwise take the tie on order. The app has
 two animated rules and `test_the_app_moves_in_two_places` is their inventory — a tripwire rather
 than a ban, and what a third has to pass is that it is inside the shell's reach and not on a canvas.
-The first is `#grip::before`, the detail page's width handle, and it is not the only page that
-carries it: `_DETAIL_STYLE` is inlined by the detail page, the cycles index, the cycle page and the
-create form, so three pages ship a fade with no `#grip` to move. Inert here, and exactly why the
-floor belongs in the shell rather than beside the rule it switches off. The second is `.hill-ball`,
+The first is `#grip::before`, the width handle on the record page and the create form, and those
+are not the only pages that carry the rule: `_DETAIL_STYLE` is inlined by the record page, the
+create form, the cycle page, the cycles index and the deck, so the last three ship a fade with no
+`#grip` to move. Inert there, and exactly why the floor belongs in the shell rather than beside the
+rule it switches off. The second is `.hill-ball`,
 which rolls between its stops when a status changes; its duration is a `--roll` token so that a drag
 can switch the roll off without writing a second `transition:` into the stylesheet. CSS cannot reach a canvas:
 cytoscape's layout runs at `animate: false` and has to stay there, or the graph moves for a reader

@@ -96,12 +96,23 @@ def _write_tree(repo: pygit2.Repository, node: dict) -> pygit2.Oid:
 
 
 def commit_directly(
-    repo_path: Path, files: dict[str, str], message: str, author: str = "a human"
+    repo_path: Path,
+    files: dict[str, str],
+    message: str,
+    author: str = "a human",
+    when: int | None = None,
+    parents: list | None = None,
+    ref: str | None = "refs/heads/main",
 ) -> str:
     """Commit `files` as the whole tree, the way a person with a terminal would.
 
     Used both to seed the corpus and to simulate the human of point five, who
     pushes to the same repository the server is serving.
+
+    `when` pins the committer clock, `parents` overrides the branch tip, and
+    `ref=None` leaves the commit dangling — together they build the side
+    branches and merges the last-edited walk is defined over, with times that
+    mean something instead of three commits inside one wall-clock second.
     """
     repo = pygit2.Repository(str(repo_path))
     root: dict = {}
@@ -112,10 +123,16 @@ def commit_directly(
             node = node.setdefault(directory, {})
         node[name] = content
 
-    signature = pygit2.Signature(author, f"{author.replace(' ', '.')}@example.invalid")
-    parents = [] if repo.head_is_unborn else [repo.head.target]
+    email = f"{author.replace(' ', '.')}@example.invalid"
+    signature = (
+        pygit2.Signature(author, email, when, 0)
+        if when is not None
+        else pygit2.Signature(author, email)
+    )
+    if parents is None:
+        parents = [] if repo.head_is_unborn else [repo.head.target]
     oid = repo.create_commit(
-        "refs/heads/main", signature, signature, message, _write_tree(repo, root), parents
+        ref, signature, signature, message, _write_tree(repo, root), parents
     )
     return str(oid)
 
@@ -854,3 +871,129 @@ def test_a_merge_inside_one_persons_record_still_reads_back_as_a_person(
     landed = store.read(store.head(), ANN_RECORD)
     assert parse_person_text(landed, ANN_RECORD).icon is None
     assert "halo" in landed, "the other side's sentence survived"
+
+
+# --------------------------------------------------------------------------- #
+# 9. last_edited: when a commit last touched each path, in git-log semantics
+# --------------------------------------------------------------------------- #
+
+
+def test_a_side_branch_edit_merged_in_carries_the_side_commits_time(tmp_path: Path):
+    """First-parent diffing is the defect this pins: it would stamp the side
+    branch's edit with the merge's time, because the file differs across the
+    first-parent edge. `git log -- path` says the side commit, and so must this.
+    """
+    path = tmp_path / "plan.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    base = commit_directly(path, SEED, "seed", when=1_000_000)
+
+    on_main = dict(SEED)
+    on_main[OTHER] = entity(id="task-c00002", title="Downgrade numpy differently", owner="bo")
+    tip = commit_directly(path, on_main, "edit the other task on main", when=1_000_100)
+
+    on_side = dict(SEED)
+    on_side[PATH] = entity(title="Reproduce the artefact at the pole")
+    side = commit_directly(
+        path, on_side, "edit on a side branch", when=1_000_200, parents=[base], ref=None
+    )
+
+    merged = dict(SEED)
+    merged[PATH] = on_side[PATH]
+    merged[OTHER] = on_main[OTHER]
+    merge = commit_directly(path, merged, "merge the branch", when=1_000_900,
+                            parents=[tip, side])
+
+    store = Store(path)
+    try:
+        head, stamps = store.last_edited()
+    finally:
+        store.close()
+
+    assert head == merge
+    # The merge's blob for each file equals ONE of its parents', so the merge
+    # stamps neither; the newest commit that really changed each file does.
+    assert stamps[PATH] == 1_000_200, "the side commit's time, never the merge's"
+    assert stamps[OTHER] == 1_000_100
+    assert stamps["config/defaults.yaml"] == 1_000_000
+
+
+def test_an_edit_reverted_inside_one_batch_is_stamped_with_the_revert(tmp_path: Path):
+    """The endpoint-diff shortcut — one diff between the cached commit and head
+    — sees identical blobs at both ends and keeps the stale stamp. The walk
+    visits every commit in the window, so the revert is the touch that wins.
+    """
+    path = tmp_path / "plan.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(path, SEED, "seed", when=1_000_000)
+
+    store = Store(path)
+    try:
+        known = store.last_edited()
+
+        edited = dict(SEED)
+        edited[PATH] = entity(status="in_progress")
+        commit_directly(path, edited, "edit", when=1_000_100)
+        commit_directly(path, SEED, "revert the edit", when=1_000_200)
+
+        head, stamps = store.last_edited(known=known)
+        assert stamps[PATH] == 1_000_200, "the revert is the last edit, not the seed"
+        # And advancing the cache is the same answer as walking from scratch.
+        assert (head, stamps) == store.last_edited()
+    finally:
+        store.close()
+
+
+def test_last_edited_drops_a_deleted_path_and_stamps_an_added_one(tmp_path: Path):
+    path = tmp_path / "plan.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(path, SEED, "seed", when=1_000_000)
+
+    store = Store(path)
+    try:
+        known = store.last_edited()
+        changed = dict(SEED)
+        del changed[OTHER]
+        changed["tasks/task-c00003.md"] = entity(id="task-c00003", title="A third task")
+        commit_directly(path, changed, "add one, delete one", when=1_000_300)
+
+        head, stamps = store.last_edited(known=known)
+        assert OTHER not in stamps, "a deleted path must leave the map"
+        assert stamps["tasks/task-c00003.md"] == 1_000_300
+        assert (head, stamps) == store.last_edited()
+    finally:
+        store.close()
+
+
+def test_a_rewound_ref_discards_the_cache_and_rebuilds(tmp_path: Path):
+    """The lost-race shape from `store.py`'s `_attempt`: a commit is published
+    on the branch ref, the push loses, and the ref is rewound (`set_target`).
+    The cached commit is then not an ancestor of the next head. Rule: discard
+    and re-walk — retract-by-rebuild, because there is no retraction logic to
+    get wrong — so the doomed commit's stamp cannot outlive the commit.
+    """
+    path = tmp_path / "plan.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    base = commit_directly(path, SEED, "seed", when=1_000_000)
+
+    store = Store(path)
+    try:
+        doomed_tree = dict(SEED)
+        doomed_tree[PATH] = entity(title="An edit whose push will lose")
+        doomed = commit_directly(path, doomed_tree, "a doomed publish", when=1_000_100)
+        known = store.last_edited()
+        assert known[0] == doomed
+        assert known[1][PATH] == 1_000_100
+
+        # Rewind the way `_attempt` does, then land somebody else's commit.
+        pygit2.Repository(str(path)).references["refs/heads/main"].set_target(base)
+        winners = dict(SEED)
+        winners[OTHER] = entity(id="task-c00002", title="The write that won", owner="bo")
+        winner = commit_directly(path, winners, "the winning write", when=1_000_150)
+
+        head, stamps = store.last_edited(known=known)
+        assert head == winner
+        assert stamps[PATH] == 1_000_000, "the doomed edit's stamp must not survive"
+        assert stamps[OTHER] == 1_000_150
+        assert 1_000_100 not in stamps.values()
+    finally:
+        store.close()

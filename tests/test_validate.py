@@ -13,8 +13,10 @@ import time
 from datetime import date
 from pathlib import Path
 
+from openproj.cli import main
 from openproj.model import (
-    _ID_PATTERN,
+    ID_PATTERN,
+    KINDS,
     Config,
     Entity,
     Pitch,
@@ -34,7 +36,7 @@ OTHER_PITCH_ID = "pitch-eee555"
 PROJECT_ID = "proj-ccc333"
 
 NEEDS_TITLE = "title must not be empty"
-BAD_ID_PATTERN = "id must match " + _ID_PATTERN.pattern
+BAD_ID_PATTERN = "id must match " + ID_PATTERN.pattern
 NEEDS_OWNER = "a ready entity needs an owner"
 NEEDS_REVIEWER = "a ready entity needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
@@ -169,6 +171,12 @@ def test_an_id_must_match_the_pattern_and_agree_with_the_kind():
     assert summary(malformed) == ("blocker", "id", BAD_ID_PATTERN, 1)
     mismatched = only(check(task(id="pitch-aaa111")), "pitch-aaa111")
     assert summary(mismatched) == ("blocker", "id", bad_id_prefix("task"), 1)
+    # Asked of the pattern directly, because httpx refuses to send a bare
+    # newline in a URL and a proxy that does not is the whole point of the
+    # anchors: written `^…$` this matches, and the id becomes a path with a
+    # newline in it. `BAD_ID_PATTERN` derives from `.pattern` and cannot
+    # catch a revert; this line is the one that can.
+    assert not ID_PATTERN.match(TASK_ID + "\n")
 
 
 def test_every_depends_on_target_must_exist():
@@ -322,6 +330,21 @@ def test_a_parent_of_the_wrong_kind_is_named_as_such():
     assert summary(problem) == (
         "blocker", "parent", "a task belongs to a pitch or a project, not to a task", 4
     )
+
+    # And with its article right when the wrong parent's kind starts with a
+    # vowel — reachable since `by_id` is every record, so a task hand-filed
+    # under an issue reaches this sentence and used to read "a issue".
+    filed = [
+        parse_text(
+            "---\nid: issue-000001\nkind: issue\ntitle: Broken\nstatus: ready\n"
+            "---\n\nx\n",
+            "issues/issue-000001.md",
+        ),
+        Task(id="task-000003", kind="task", title="V", parent="issue-000001",
+             created_schema_version=4),
+    ]
+    problem = only(validate_all(filed, Config()), "task-000003", field="parent")
+    assert problem.message == "a task belongs to a pitch or a project, not to an issue"
 
 
 def test_a_task_may_hang_straight_off_a_project():
@@ -502,6 +525,38 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     }
 
 
+def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(
+    seed_root: Path, capsys
+):
+    """The seed-check pin, CLI half. The snapshot test above pins WHAT
+    `validate_all` says about the real corpus, entry by entry; this pins that
+    `openproj check` relays all of it — every line, the sort, the count, the
+    exit code — and adds nothing. Together they freeze the command's output
+    over `seed/`, which is what has to survive the `unread_fields` re-cut and
+    the per-rung vocabulary unchanged: a problem this pair does not notice
+    appearing or vanishing is a validation change that got past the refactor.
+    """
+    entities, config, unreadable = load_repo(seed_root)
+    problems = sorted(
+        validate_all(entities, config), key=lambda p: (p.severity, p.entity_id, p.field or "")
+    )
+    blockers = [p for p in problems if p.severity == "blocker"]
+
+    assert main(["check", str(seed_root)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+
+    expected = [
+        f"blocker: {one.path}: this file is not a record, so nothing in it is in the plan: "
+        f"{one.why}"
+        for one in unreadable
+    ]
+    expected += [f"{p.severity}: {p.entity_id}: {p.field}: {p.message}" for p in problems]
+    expected.append(
+        f"{len(blockers) + len(unreadable)} blockers, {len(problems) - len(blockers)} warnings"
+    )
+    assert lines == expected
+
+
 # --- the roster -------------------------------------------------------------
 
 
@@ -553,6 +608,56 @@ def test_a_word_nobody_defined_is_a_problem_and_not_a_crash():
     fields = {(p.field, p.severity) for p in check(stale)}
     assert ("status", "blocker") in fields
     assert ("priority", "blocker") in fields
+
+
+def test_each_rung_accepts_exactly_its_own_status_words():
+    """The vocabulary is a per-rung fact now, not one module-level ladder.
+
+    Derived from `KINDS` rather than written out per kind, so a rung added
+    later — an issue, whose ladder has no `shaping` — is held to its own words
+    by this same loop on the day it lands. Only `p.field == "status"` is
+    filtered for, because a valid word can still gate other fields (`ready`
+    demands an owner) and those problems are some other test's business.
+    """
+    for rung in KINDS:
+        blank = rung.model(id=f"{rung.prefix}-000000", kind=rung.name, title="T")
+        for word in rung.statuses:
+            said = check(blank.model_copy(update={"status": word}))
+            assert not [p for p in said if p.field == "status"], (rung.name, word)
+        if rung.statuses:
+            # The article restated rather than imported: `_an` is what builds
+            # the message, and a test that asks `_an` what `_an` said cannot
+            # notice it breaking. "for an issue", because the same word can be
+            # a status two rungs up and a sentence that denies it outright
+            # argues with the page the reader just came from.
+            article = "an" if rung.name[:1] in "aeiou" else "a"
+            vocab = only(check(blank.model_copy(update={"status": "wip"})), blank.id,
+                         field="status")
+            assert summary(vocab) == (
+                "blocker",
+                "status",
+                f"'wip' is not a status for {article} {rung.name}: "
+                f"expected one of {', '.join(rung.statuses)}",
+                1,
+            ), rung.name
+
+
+def test_a_kind_that_reads_no_status_has_no_vocabulary_to_violate():
+    """A product's status is unread, so no word on it is a vocabulary blocker —
+    the "not read" warning from `unread_fields` is the whole report, whether the
+    word is on the work ladder or on no ladder at all. `shelved` is the case
+    that changed: it used to buy the file a silent skip through the parked
+    exemption, using a word a product does not even read, and now the exemption
+    is structural (`_parked`) a product cannot park and the warning appears.
+    """
+    for word in ("shelved", "banana"):
+        written = parse_text(
+            f"---\nid: prod-000001\nkind: product\ntitle: gt4py\nstatus: {word}\n---\n\nx\n",
+            "products/prod-000001.md",
+        )
+        said = validate_all([written], Config())
+        assert [(p.severity, p.field) for p in said] == [("warning", "status")], (word, said)
+        assert "not read" in said[0].message
 
 
 def test_a_stale_vocabulary_still_schedules_and_renders():

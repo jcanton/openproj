@@ -72,7 +72,8 @@ BENIGN = "a perfectly ordinary sentence about the tracer advection port"
 # substring search, because the whole point is to ask the parser.
 FORGED_IMAGES = {"x", "y"}
 
-# The app's own inline handler, written into three templates by hand and into no
+# The app's own inline handler, written into two templates by hand — grep
+# `onsubmit`: the record page's edit form, the cycle page's setup form — and into no
 # value: a form on a page that saves over fetch must not navigate. Named here so
 # that "no event handlers" can stay an absolute rule with one stated exception
 # rather than a rule with a hole in it.
@@ -81,8 +82,8 @@ OURS = ("form", "onsubmit", "return false")
 # What `served()` names an entity's own detail page — the editable one.
 ONE_ENTITY = "one entity"
 
-STATIC_PAGES = ("index.html", "detail.html", "people.html", "cycles.html",
-                "issues.html", "notes.html", "graph.html", "timeline.html")
+STATIC_PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
+                "graph.html", "timeline.html")
 
 
 def ids(text: str) -> tuple[str, str, str]:
@@ -90,6 +91,15 @@ def ids(text: str) -> tuple[str, str, str]:
     return (f"pitch-b2000{id_text(text)}",
             f"task-c0000{id_text(text)}",
             f"task-c0001{id_text(text)}")
+
+
+def inbox_ids(text: str) -> tuple[str, str]:
+    """The issue and the note, each carrying the payload in its id — the same
+    shape the three entity ids take. They were deliberately NOT armed while the
+    inbox routes refused their paths and the census read only the list pages;
+    an issue now renders on /detail/<id> like everything else, so its id is
+    free text to exactly the same renderer."""
+    return (f"issue-d0000{id_text(text)}", f"note-e0000{id_text(text)}")
 
 
 def corpus(text: str) -> dict[str, str]:
@@ -106,17 +116,19 @@ def corpus(text: str) -> dict[str, str]:
     All three are bet into a cycle whose roster names the same hostile login, so
     the cycle page, the people page and the cycles index come with the fixture.
 
-    And one issue and one note, because the two inboxes are pages this app draws
-    and a corpus that does not hold the one string that matters proves nothing
-    about them. They are not entities and they are drawn by different code, and
-    each links at the hostile pitch — so one record's id reaching another
-    record's markup is under test on those pages too.
+    And one issue and one note, because a corpus that does not hold the one
+    string that matters proves nothing about them. They are entities on
+    unplanned rungs now, drawn by the one record template — but through fact
+    rows no planned kind has (`reported_by`, `written_by`, `pitched_into`,
+    `became`), and each links at the hostile pitch — so one record's id
+    reaching another record's markup is under test on those rows too.
 
     The ids are hostile too. A malformed id is a *reported* blocker and not a
     refusal — the entity still loads and every page still draws it — so an id is
     free text as far as the renderer is concerned.
     """
     pitch_id, first_id, second_id = ids(text)
+    issue_id, note_id = inbox_ids(text)
     quoted = text_yaml(text)
     common = (
         f"title: '{quoted}'\n"
@@ -146,16 +158,16 @@ def corpus(text: str) -> dict[str, str]:
             f"parent: '{text_yaml(pitch_id)}'\n"
             f"depends_on: ['{text_yaml(first_id)}']\nperson_weeks: 1\n---\n{body}"
         ),
-        # Neither inbox record carries a well-formed id, for the reason the
-        # entities do not: a malformed one is a reported blocker rather than a
-        # refusal, so the record loads and the page still draws it.
+        # Both inbox records armed like the entities above them: a malformed id
+        # is a reported blocker rather than a refusal, so the record loads, and
+        # /detail/<id> draws it now that an issue is a rung.
         "issues/i.md": (
-            f"---\nid: 'issue-{text_yaml(id_text(text))}'\ntitle: '{quoted}'\n"
+            f"---\nid: '{text_yaml(issue_id)}'\ntitle: '{quoted}'\n"
             f"status: '{quoted}'\nreported_by: '{quoted}'\nopened_on: 2026-08-11\n"
             f"tags: ['{quoted}']\npitched_into: ['{text_yaml(pitch_id)}']\n---\n{body}"
         ),
         "notes/n.md": (
-            f"---\nid: 'note-{text_yaml(id_text(text))}'\ntitle: '{quoted}'\n"
+            f"---\nid: '{text_yaml(note_id)}'\ntitle: '{quoted}'\n"
             f"status: '{quoted}'\nwritten_by: '{quoted}'\nwritten_on: 2026-08-11\n"
             f"tags: ['{quoted}']\nbecame: ['{text_yaml(pitch_id)}']\n---\n{body}"
         ),
@@ -269,6 +281,43 @@ def benign_static(tmp_path: Path) -> dict[str, str]:
     return static_pages(tmp_path / "benign", tmp_path / "benign-out", corpus(BENIGN))
 
 
+# Emptied on the flip commit: /issue/{id} and /note/{id} became 301 redirects,
+# so they are no longer HTML GET routes and the census reaches every page again.
+# The set stays so the completeness test keeps failing closed if a route ever
+# needs an exemption with a reason.
+CENSUS_BLIND: set[str] = set()
+
+
+def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
+    """Every page the census opens, module-level so the completeness test can
+    hold it against `app.routes`. Named rather than keyed by URL: the entity
+    pages have the payload in their path, so the hostile plan and the benign
+    one address different URLs for the same page."""
+    return {
+        "records": "/", "table": "/table", "graph": "/graph", "timeline": "/timeline",
+        "people": "/people", "cycles": "/cycles", "cycle 41": "/cycle/41",
+        # The deck was left out of a census that says it covers every page the
+        # server draws, and it is the page a field is most likely to leave the
+        # building on: a deck is printed and handed to somebody who was not in
+        # the room. Same cycle as the one above, so both read the same plan.
+        "deck 41": "/deck/41",
+        # The retired inbox addresses, censused where they land — the redirect
+        # is followed, so this renders the Records landing under the hostile
+        # plan a second time, which costs nothing and keeps the
+        # census-completeness test honest about the routes existing.
+        "issues": "/issues", "notes": "/notes",
+        "new issue": "/new?kind=issue", "new note": "/new?kind=note",
+        "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
+        # `/detail` is the whole plan and read-only; an entity's own page is the
+        # editable one, and the only one that carries the combobox.
+        "every detail": "/detail",
+        **{
+            f"{ONE_ENTITY} {n}": f"/detail/{quote(entity_id, safe='')}"
+            for n, entity_id in enumerate(entity_ids)
+        },
+    }
+
+
 def served(
     tmp_path: Path, plan: dict[str, str], name: str, entity_ids: tuple[str, ...]
 ) -> dict[str, str]:
@@ -285,30 +334,7 @@ def served(
     path = tmp_path / f"{name}.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
     commit_directly(path, plan, "seed a hostile plan")
-    # Named rather than keyed by URL: the entity pages have the payload in their
-    # path, so the hostile plan and the benign one address different URLs for the
-    # same page and nothing could be compared against anything.
-    routes = {
-        "table": "/", "graph": "/graph", "timeline": "/timeline", "people": "/people",
-        "cycles": "/cycles", "cycle 41": "/cycle/41",
-        # The deck was left out of a census that says it covers every page the
-        # server draws, and it is the page a field is most likely to leave the
-        # building on: a deck is printed and handed to somebody who was not in
-        # the room. Same cycle as the one above, so both read the same plan.
-        "deck 41": "/deck/41",
-        # The two inboxes. Their list pages only: an individual issue or note is
-        # addressed by an id this corpus deliberately malforms, and a route that
-        # refuses the path never renders the page under test.
-        "issues": "/issues", "notes": "/notes",
-        "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
-        # `/detail` is the whole plan and read-only; an entity's own page is the
-        # editable one, and the only one that carries the combobox.
-        "every detail": "/detail",
-        **{
-            f"{ONE_ENTITY} {n}": f"/detail/{quote(entity_id, safe='')}"
-            for n, entity_id in enumerate(entity_ids)
-        },
-    }
+    routes = census_routes(entity_ids)
     pages = {}
     with TestClient(create_app(path, auth="dev", secret="a-signing-secret-for-tests")) as client:
         for name, route in routes.items():
@@ -320,12 +346,14 @@ def served(
 
 @pytest.fixture
 def hostile_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, corpus(PAYLOAD), "hostile", ids(PAYLOAD))
+    return served(tmp_path, corpus(PAYLOAD), "hostile",
+                  (*ids(PAYLOAD), *inbox_ids(PAYLOAD)))
 
 
 @pytest.fixture
 def benign_served(tmp_path: Path) -> dict[str, str]:
-    return served(tmp_path, corpus(BENIGN), "benign", ids(BENIGN))
+    return served(tmp_path, corpus(BENIGN), "benign",
+                  (*ids(BENIGN), *inbox_ids(BENIGN)))
 
 
 # --------------------------------------------------------------------------- #
@@ -343,6 +371,70 @@ def test_no_served_page_lets_a_field_become_markup(hostile_served, benign_served
     for route, html in hostile_served.items():
         assert_clean(html, f"served {route}")
         assert_same_shape(html, benign_served[route], f"served {route}")
+
+
+def test_every_html_get_route_is_in_the_census(tmp_path: Path):
+    """Risk 2 in the design, closed permanently: the census was a hand-written
+    list, and a hand-written list fails OPEN — move the table to /table and the
+    census stays green while covering the wrong URL. Held against `app.routes`
+    it fails CLOSED: an HTML GET route the census does not open is a failure on
+    the commit that adds the route, not a hole found later.
+
+    Filtered on `response_class`: JSON routes, redirects and the asset stream
+    are not pages, and a census of them would be a different test.
+    """
+    from fastapi.responses import HTMLResponse
+    from fastapi.routing import APIRoute
+
+    path = tmp_path / "census.git"
+    pygit2.init_repository(str(path), bare=True, initial_head="main")
+    commit_directly(path, corpus(BENIGN), "seed a plan for the route census")
+    app = create_app(path, auth="dev", secret="a-signing-secret-for-tests")
+    with TestClient(app):
+        def is_page(route) -> bool:
+            drawn = getattr(route, "response_class", None)
+            # FastAPI wraps an undeclared response class in a DefaultPlaceholder.
+            drawn = getattr(drawn, "value", drawn)
+            return isinstance(drawn, type) and issubclass(drawn, HTMLResponse)
+
+        # A list, not a set: `APIRoute` defines `__eq__` and no `__hash__`, so
+        # a set of routes is a TypeError before anything is checked at all.
+        pages = [
+            route
+            for route in app.routes
+            if isinstance(route, APIRoute) and "GET" in route.methods and is_page(route)
+        ]
+        assert pages, "no HTML GET routes at all, so nothing was checked"
+
+        # Each census URL is resolved the way Starlette dispatches it: walk
+        # `app.routes` in registration order and stop at the FIRST GET route
+        # whose regex matches — that route is the one the request reaches.
+        # Matching every page against every URL was subtly generous: Starlette's
+        # compiled `/issue/new` also matched `/issue/{issue_id}`, so a `{id}`
+        # route registered after a literal sibling counted as covered by a URL
+        # that could never reach it, and an exemption set fed by that arithmetic
+        # was dead code.
+        covered: set[str] = set()
+        for url in census_routes((*ids(BENIGN), *inbox_ids(BENIGN))).values():
+            where = url.partition("?")[0]
+            for route in app.routes:
+                if not (isinstance(route, APIRoute) and "GET" in route.methods):
+                    continue
+                if route.path_regex.match(where):
+                    # `is_page` again rather than membership in `pages` — the
+                    # same filter, asked without route equality or hashing.
+                    if is_page(route):
+                        covered.add(route.path)
+                    break
+
+        templates = {route.path for route in pages}
+        missing = templates - covered - CENSUS_BLIND
+        assert not missing, (
+            "HTML GET routes the injection census never opens — add each to "
+            f"census_routes() or, with a reason, to CENSUS_BLIND: {sorted(missing)}"
+        )
+        stale = CENSUS_BLIND - templates
+        assert not stale, f"CENSUS_BLIND names routes that no longer exist: {sorted(stale)}"
 
 
 def test_no_template_marks_a_value_safe():
@@ -390,17 +482,21 @@ def test_the_fixture_really_is_hostile(hostile_static):
 
     Every assertion above passes trivially against a plan whose values were
     dropped on the floor, so this one insists the text is there — escaped, as
-    text — on the page that shows the most of it.
-
-    The two inbox pages are named as well, and not because they show the most:
-    they were added to this corpus in the round that added notes, and a page
-    added to a census that never sees the payload is a page nobody is checking
-    while the count in the fixture's docstring says otherwise.
+    text — on the page that shows the most of it, and on the landing, which is
+    where every record surfaces now that the two inbox list pages are folded
+    into the shared surfaces.
     """
-    for name in ("detail.html", "issues.html", "notes.html"):
+    for name in ("index.html", "detail.html"):
         page = hostile_static[name]
         assert "&lt;img src=x onerror=alert(1)&gt;" in page, name
         assert census(page).tags["img"] == 0, name
+    # The issues.html and notes.html this loop used to name are gone; what
+    # carried their meaning — a census that actually SEES the payload-bearing
+    # inbox records — is the count: five hostile records, five articles on the
+    # shared page, the issue and the note among them. A fold that quietly
+    # dropped the two would pass every substring above off the three entities
+    # alone.
+    assert hostile_static["detail.html"].count("<article") == 5
 
 
 # --------------------------------------------------------------------------- #

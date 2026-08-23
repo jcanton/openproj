@@ -311,6 +311,48 @@ One token — hackmd.io, settings, API, new token — exported as `HACKMD_TOKEN`
 corpus countable in a single read-only pass, with the same greps as the table above and no note
 written to. That is the cheapest thing that finishes S0.
 
+## The third shot: the team overview, which is where a person lands
+
+One screenshot, 2026-08-22, of `hackmd.io/team/gridtools?nav=overview` — the page HackMD opens
+on. It arrives because openproj is replacing the table as its own landing page, and "something
+like it's done in hackmd" needed pixels rather than a memory of them.
+
+**It is a card grid by default, not a list.** Two icons at the top right toggle between them and
+the grid is the one selected in the shot, so the list exists and is not what a person gets
+without asking. jcanton asked for a list; that is a departure from what HackMD does and not a
+copy of it, and it is the right departure — a card is mostly whitespace, and the thing openproj
+has that HackMD has not is a *kind*, which is one short word and wants a column rather than a
+card.
+
+**A card carries four things and no more**: a document icon, a globe when the note is published
+and a pin when it is pinned, the title, and one date. No author, no tags, no excerpt, no size.
+The count of what is absent is the finding — this is the most reduced surface in the product,
+and it is the one people live on.
+
+**The date is relative when it is recent and absolute when it is not.** Read straight off the
+pixels, in one column, top to bottom: `17 hours ago`, `19 hours ago`, `20 hours ago`,
+`A day ago`, `3 days ago`, `10 days ago`, and then `2026-07-08`, `2026-05-26`, `2024-06-21`,
+`2024-02-08`. So there is a threshold somewhere past ten days, and past it the relative form is
+abandoned rather than extended — nobody is shown "2 years ago". The shot does not settle where
+the threshold falls; it settles that there is one, and that the answer to "how long ago" stops
+being useful before the answer to "when" does.
+
+**Sorting and grouping are two controls, not one.** There is a `Sort` dropdown, and separately
+the body is cut into labelled sections — `Pinned 3`, then `cycle 38 09/26 6`, then
+`Untagged 79` — each with its own count. So the grid is grouped by tag with a sort inside the
+groups, which is a different thing from the flat most-recent-first list jcanton asked for. Worth
+knowing that the product this is modelled on found a flat list insufficient at 88 notes; worth
+knowing too that it needed a `Tags` dropdown, a tag list in the sidebar with per-tag counts, and
+folders to get there. openproj has a query language instead, and `tag:gpu and tag:distributed`
+is the thing the sidebar cannot express.
+
+**The search box is in the sidebar, above everything, and it searches keyword or tag** — one box
+for both, which is the shape openproj's own box already has.
+
+What this shot does not settle: where the relative/absolute threshold falls; what the list view
+looks like; whether the date is created or last-modified (HackMD's sort menu has both, and the
+shot does not show which is selected).
+
 ## What this screenshot does not settle
 
 It shows one view of one note, so none of the following is answered and none of it should be

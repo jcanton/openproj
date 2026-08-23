@@ -11,3 +11,7 @@ out/
 # one of these beside the plan it is serving, and a copy of seed/ was carrying a
 # committed one — see the commit that removed it.
 openproj.lock
+
+# The subagent-driven-development workspace: ledger, briefs and review packages for a
+# plan in flight. Scratch by construction — git log is the record once the branch lands.
+.superpowers/

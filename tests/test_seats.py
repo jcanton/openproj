@@ -80,7 +80,7 @@ LINES = "\\n".join(f"line {n}" for n in range(12))
 SEAT = """
 <script>
 addEventListener('load', () => setTimeout(() => {
-  document.getElementById('toggle').click();
+  flipEditing();
   const socket = window.__socket;
   socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
   const body = document.querySelector('textarea[name=body]');
@@ -151,7 +151,7 @@ return {bands: layer.children.length};
 MY_OWN_SEAT = """
 <script>
 addEventListener('load', () => setTimeout(() => {
-  document.getElementById('toggle').click();
+  flipEditing();
   // `you` is how the room tells a tab which of the names is its own — the page
   // does not know until the welcome says so, which is why this frame carries it.
   window.__socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '',
@@ -185,7 +185,7 @@ def test_nobody_is_drawn_a_band_for_themselves(index: Index, tmp_path: Path):
 TWO_PEOPLE = """
 <script>
 addEventListener('load', () => setTimeout(() => {
-  document.getElementById('toggle').click();
+  flipEditing();
   const socket = window.__socket;
   socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '',
                people: ['ann', 'bo', 'cy']});
@@ -293,7 +293,7 @@ _WRAPPING = "\\n".join((
 WRAPPED_SEAT = """
 <script>
 addEventListener('load', () => setTimeout(() => {
-  document.getElementById('toggle').click();
+  flipEditing();
   const socket = window.__socket;
   socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
   const body = document.querySelector('textarea[name=body]');
@@ -529,7 +529,7 @@ def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there
 _ACE_SEAT = """
 <script>
 addEventListener('load', () => setTimeout(() => {
-  document.getElementById('toggle').click();
+  flipEditing();
   const socket = window.__socket;
   socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
   socket.hear({t: 'who', people: ['ann', 'bo'], where: [{login: 'bo', at: 3}]});
@@ -579,4 +579,168 @@ def test_the_second_surface_says_it_cannot_draw_where_anybody_is(index: Index, t
     assert "not drawn in this editor" in got["said"], (
         "somebody else is in the document, no band is drawn, and the page says nothing: "
         f"the live region reads {got['said']!r}"
+    )
+
+
+# The socket, counted rather than merely replaced: the claim is about how many
+# connections a page opens and WHEN, so every construction is kept, and close()
+# behaves like a real socket — readyState moves and onclose fires — so a
+# reconnect after the session ended would be visible as a second entry.
+COUNTING = """
+<script>
+window.__sockets = [];
+class CountingSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  constructor(url) {
+    window.__sockets.push(this);
+    this.url = url;
+    this.readyState = 1;
+    setTimeout(() => this.onopen && this.onopen(), 0);
+  }
+  send(data) {}
+  close() {
+    this.readyState = 3;
+    setTimeout(() => this.onclose && this.onclose({}), 0);
+  }
+  hear(message) { this.onmessage && this.onmessage({data: JSON.stringify(message)}); }
+}
+window.WebSocket = CountingSocket;
+</script>
+"""
+
+READING = """
+<script>
+addEventListener('load', () => setTimeout(() => {
+  window.__atLoad = window.__sockets.length;
+  flipEditing();
+  window.__inSession = window.__sockets.length;
+  document.getElementById('cancel').click();
+  window.__afterCancel = window.__sockets.map(one => one.readyState);
+  // Past the first reconnect backoff (500ms): a machine that reconnects after
+  // the session ended shows up as a second socket here.
+  setTimeout(() => { window.__later = window.__sockets.length; }, 800);
+}, 200));
+</script>
+"""
+
+_HELD = """
+return {atLoad: window.__atLoad, inSession: window.__inSession,
+        afterCancel: window.__afterCancel, later: window.__later,
+        listed: document.getElementById('together').textContent};
+"""
+
+
+def test_a_reader_holds_no_seat(index: Index, tmp_path: Path):
+    """Spec test 5: opening a record is not editing it.
+
+    `connect()` ran at script load, so a signed-in person who merely OPENED a
+    record took a co-editing seat: listed to everyone else as "also editing",
+    and holding a Room, a git watch and an outbox task on the server per
+    record visited, lingering after they left. The seat, the presence entry
+    and the Room task are all downstream of the one socket this counts — no
+    connection at load means none of them exist, and the last-person-out
+    commit never waits on a reader.
+    """
+    entity_id = a_record_with_a_document(index)
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
+    page = page.replace("<head>", "<head>" + COUNTING, 1).replace("</body>", READING + "</body>")
+
+    got = measured_in(
+        chrome(), page, tmp_path / "seatless.html", 1200, _HELD, height=900, patience=2400
+    )
+
+    assert got["atLoad"] == 0, "a reader took a seat by opening the page"
+    assert got["inSession"] == 1, "and opening a session did not take one"
+    assert got["afterCancel"] == [3], "Cancel did not give the seat back"
+    assert got["later"] == 1, "the seat was retaken after the session ended"
+    assert got["listed"] == "", "somebody is listed as editing a page nobody edited"
+
+
+RESEATED = """
+<script>
+addEventListener('load', () => setTimeout(() => {
+  // End a session and start the next one a click apart — before the ended
+  // socket's close event, which is a queued task, has fired.
+  flipEditing();
+  document.getElementById('cancel').click();
+  flipEditing();
+  window.__now = window.__sockets.map(one => one.readyState);
+  const stale = window.__sockets[0];
+  const live = window.__sockets[1];
+  // The live room seats somebody and hands this tab its base.
+  live.hear({t: 'welcome', seed: null, base: '1'.repeat(40), you: 'ann',
+             sv: 'AA==', update: '', people: ['ann', 'bo']});
+  live.hear({t: 'who', people: ['ann', 'bo'], where: []});
+  window.__roster = document.getElementById('together').textContent;
+  // Frames that were in flight when the first session ended deliver as their
+  // own tasks, through the closed socket: a roster and a commit that must not
+  // reach a page that socket no longer speaks for.
+  stale.hear({t: 'who', people: ['ann', 'cy'], where: []});
+  stale.hear({t: 'saved', commit: 'f'.repeat(40), outcome: 'committed', pushed: true});
+  window.__afterStale = {
+    roster: document.getElementById('together').textContent,
+    base: document.querySelector('[name=base_commit]').value,
+  };
+  // Past the stale socket's own close event AND the first reconnect backoff
+  // (500ms), where a reconnect it armed would have landed.
+  setTimeout(() => { window.__later = {
+    states: window.__sockets.map(one => one.readyState),
+    roster: document.getElementById('together').textContent,
+  }; }, 800);
+}, 200));
+</script>
+"""
+
+
+def test_the_next_session_is_one_seat_not_two(index: Index, tmp_path: Path):
+    """A session ended and the next begun before the old socket has gone quiet.
+
+    Every socket event is a queued task and the next Write press is a click
+    away, so the ended session's socket still speaks after the live one is up —
+    its close, and any frame that was in flight when the session ended. None of
+    it may reach the page: the close must not wipe the live room's roster or
+    arm a reconnect BESIDE the live socket (measured without the
+    `opened !== socket` guard in `connect`: a third socket at the backoff, two
+    open at once, one person seated twice), and a stale frame must not be
+    heard — a stale `who` rewrites who is listed as editing, and a stale
+    `saved` moves `base_commit` under a session it does not belong to, which is
+    the silent-overwrite family by wire.
+    """
+    entity_id = a_record_with_a_document(index)
+    page = render_detail(
+        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
+    page = page.replace("<head>", "<head>" + COUNTING, 1).replace("</body>", RESEATED + "</body>")
+
+    got = measured_in(
+        chrome(), page, tmp_path / "reseated.html", 1200,
+        "return {now: window.__now, roster: window.__roster,"
+        "        afterStale: window.__afterStale, later: window.__later};",
+        height=900, patience=2400,
+    )
+
+    assert got["now"] == [3, 1], f"one closed seat and one live one, not {got['now']}"
+    assert got["roster"] == "also editing: bo", (
+        f"the live room never seated bo, so the stale halves below prove nothing: "
+        f"{got['roster']!r}"
+    )
+    assert got["afterStale"]["roster"] == "also editing: bo", (
+        "a frame in flight when the old session ended was heard: the ended socket "
+        f"rewrote the live room's roster to {got['afterStale']['roster']!r}"
+    )
+    assert got["afterStale"]["base"] == "1" * 40, (
+        "a stale `saved` moved base_commit under a session it does not belong to: "
+        f"{got['afterStale']['base']!r}"
+    )
+    assert got["later"]["states"] == [3, 1], (
+        f"the ended session's close re-seated this reader beside the live socket: "
+        f"{got['later']['states']}"
+    )
+    assert got["later"]["roster"] == "also editing: bo", (
+        "the ended session's close wiped the live room's roster"
     )
