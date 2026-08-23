@@ -172,6 +172,7 @@ class Harness:
         self.log = self.work / "server.log"
         self.process: subprocess.Popen | None = None
         self.corpus: Corpus | None = None
+        self.startup_seconds: float | None = None
 
     # -- setup --------------------------------------------------------------
 
@@ -262,8 +263,16 @@ class Harness:
             self.corpus = self._build_plan()
             if self.wants_remote:
                 self._clone_origin()
+            # Timed, because `--min-instances 0` is in the deploy line: the
+            # instance is gone after a few idle minutes and the next person to
+            # open the plan pays a process start, an import, and the history
+            # walk `serve_load.py` does before uvicorn binds. Not the container's
+            # own start — that is Cloud Run's and is not on this laptop — but
+            # everything after it, which is the part this repository owns.
+            begun = time.monotonic()
             self._start()
             self._wait()
+            self.startup_seconds = round(time.monotonic() - begun, 2)
         except BaseException:
             self.__exit__(*sys.exc_info())
             raise
@@ -330,6 +339,7 @@ class Harness:
             "rtt_ms": self.rtt_ms,
             "remote": "file://origin.git" if self.wants_remote else None,
             "port": self.port,
+            "startup_seconds": self.startup_seconds,
             "work": str(self.work),
         }
 

@@ -123,10 +123,20 @@ class Reader(Person):
 
     PAGES = ("/", "/table", "/issues")
 
-    def __init__(self, *args, ids: list[str], think: float = 0.4, **kwargs) -> None:
+    # Every page a person can be sitting on that is drawn from the index. Used by
+    # `tests/load/readload.py`, which is measuring the read path's ceiling and so
+    # may not leave the two most expensive renderers out of the rotation: `/graph`
+    # and `/timeline` are drawn from the same `index_now()` and are the two the
+    # three-route default never touches.
+    ALL_PAGES = ("/", "/issues", "/table", "/graph", "/timeline")
+
+    def __init__(self, *args, ids: list[str], think: float = 0.4,
+                 pages: tuple[str, ...] | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.ids = ids
         self.think = think
+        if pages:
+            self.PAGES = tuple(pages)
         self.client = httpx.Client(
             base_url=self.world.base,
             timeout=30.0,
