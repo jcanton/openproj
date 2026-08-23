@@ -204,11 +204,17 @@ class FormWriter(Person):
     # is what a person aims at. Falls back to line 1 on a body that has none.
     ANCHOR = "## Rabbit holes"
 
-    def __init__(self, *args, entity: str, gap: float = 2.0, stale: bool = False,
-                 style: str = "append", **kwargs) -> None:
+    def __init__(self, *args, entity: str, gap: float = 2.0, gap_max: float | None = None,
+                 stale: bool = False, style: str = "append", **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.entity = entity
         self.gap = gap
+        # A range, not a constant. Twenty people who all pause for exactly the
+        # same number of seconds are twenty people who arrive at the writer lock
+        # in lockstep, and the convoy that produces is the harness's, not the
+        # application's. `gap_max=None` keeps the old fixed pause so that every
+        # scenario measured before this flag existed still means what it did.
+        self.gap_max = gap_max
         self.stale = stale
         self.style = style
         self.sent: list[Sent] = []
@@ -236,7 +242,17 @@ class FormWriter(Person):
                     self.note(kind="PATCH", ms=0.0, status="no-such-blob", entity=self.entity)
                     continue
                 self.save(base, body, n)
-                time.sleep(self.gap)
+                time.sleep(self.pause())
+
+    def pause(self) -> float:
+        """How long this person sits before saving again.
+
+        Drawn from this person's own seeded `Random`, so two runs with the same
+        flags issue the same cadence and can be compared.
+        """
+        if self.gap_max is None or self.gap_max <= self.gap:
+            return self.gap
+        return self.rng.uniform(self.gap, self.gap_max)
 
     def open_page(self) -> None:
         begun = time.monotonic()

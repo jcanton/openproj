@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import resource
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,7 @@ sys.path.insert(0, str(HERE))
 
 import harness  # noqa: E402
 import measure  # noqa: E402
+import queueing  # noqa: E402
 import users  # noqa: E402
 import verify  # noqa: E402
 
@@ -68,6 +70,12 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
         "store.py prices a GitHub round trip at about 600 ms",
     )
     p.add_argument("--gap", type=float, default=2.0, help="seconds between a form writer's saves")
+    p.add_argument("--gap-max", type=float, default=None,
+                   help="with --gap, draw each pause from [gap, gap-max]: a person saving every "
+                        "3-8 seconds rather than twenty metronomes in lockstep")
+    p.add_argument("--watch-remote", action="store_true",
+                   help="sample plan HEAD against origin HEAD throughout, to see how long the "
+                        "instance held a commit the remote did not have")
     p.add_argument("--think", type=float, default=0.4, help="seconds between a reader's pages")
     p.add_argument("--stale", action="store_true",
                    help="form writers keep their first base_commit: a tab left open")
@@ -177,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
                 style = "insert" if i % 2 == 0 else "replace"
             person = users.FormWriter(
                 f"writer-{i}", login(), world, ledger, args.seed, 0.0, zero,
-                entity=writer_ids[i], gap=args.gap, stale=args.stale, style=style,
+                entity=writer_ids[i], gap=args.gap, gap_max=args.gap_max,
+                stale=args.stale, style=style,
             )
             formwriters.append(person)
             people.append(person)
@@ -195,6 +204,10 @@ def main(argv: list[str] | None = None) -> int:
         for person in coeditors:
             person.connect()
 
+        lag = queueing.RemoteLag(world.plan, world.origin if not args.no_remote else None)
+        if args.watch_remote:
+            lag.start()
+
         began = time.monotonic()
         deadline = began + args.seconds
         for person in people:
@@ -203,6 +216,15 @@ def main(argv: list[str] | None = None) -> int:
         for person in people:
             person.join(timeout=args.seconds + 180)
         elapsed = time.monotonic() - began
+        lag_report = lag.stop() if args.watch_remote else {"sampled": False}
+        # The driver's own CPU, so that "the server was saturated" can be told
+        # from "the laptop was". Twenty threads doing pygit2 reads is not free,
+        # and a harness that outweighed the thing it measures is measuring itself.
+        driver_cpu = round(
+            resource.getrusage(resource.RUSAGE_SELF).ru_utime
+            + resource.getrusage(resource.RUSAGE_SELF).ru_stime,
+            2,
+        )
 
         # Typing has stopped everywhere before anybody presses Save, so a save
         # made by one person carries everybody's text and "is every character
@@ -236,19 +258,30 @@ def main(argv: list[str] | None = None) -> int:
                 break
 
     report = ledger.report(elapsed)
+    patch_queue = queueing.concurrency(ledger.actions, "PATCH")
     blob = {
         "scenario": args.scenario,
         "seed": args.seed,
         "config": {
             "readers": readers, "writers": writers, "coeditors": editors,
-            "seconds": args.seconds, "gap": args.gap, "think": args.think,
+            "seconds": args.seconds, "gap": args.gap, "gap_max": args.gap_max,
+            "think": args.think,
             "stale": args.stale, "body_edit": args.body_edit, "overlap": args.overlap,
             "coedit_save_every": args.coedit_save_every,
             "coedit_save_at_end": not args.no_coedit_save,
         },
         "world": described,
         "measured": report,
-        "server": {"cpu_seconds": cpu, "rss_mb": rss},
+        "queueing": {
+            "patch": patch_queue,
+            "littles_law": queueing.littles_law(
+                patch_queue,
+                report["latency_ms"].get("PATCH", {}),
+                len([a for a in ledger.actions if a.kind == "PATCH"]) / elapsed,
+            ),
+            "remote_lag": lag_report,
+        },
+        "server": {"cpu_seconds": cpu, "rss_mb": rss, "driver_cpu_seconds": driver_cpu},
         "commits": {"total": len(commits), "made_by_this_run": len(made),
                     "by_author": _tally(c["author"] for c in made)},
         "verification": verdict,
@@ -298,7 +331,21 @@ def _print(blob: dict, report: dict, verdict: dict, out: Path) -> None:
     print(f"  commits:        {blob['commits']['made_by_this_run']} made by this run, "
           f"by {blob['commits']['by_author']}")
     print(f"  server:         {blob['server']['cpu_seconds']}s CPU, "
-          f"{blob['server']['rss_mb']} MB RSS")
+          f"{blob['server']['rss_mb']} MB RSS "
+          f"(driver {blob['server']['driver_cpu_seconds']}s)")
+    queue = blob["queueing"]["patch"]
+    if queue.get("n"):
+        depth = queue["depth_at_start"]
+        print("\n-- the queue in front of the writer lock --")
+        print(f"  saves in flight when a save began: p50 {depth['p50']:.0f}  p90 "
+              f"{depth['p90']:.0f}  max {depth['max']:.0f}  (peak {queue['peak_in_flight']}, "
+              f"time-weighted mean {queue['mean_in_flight']})")
+        print(f"  little's law: {blob['queueing']['littles_law']}")
+        for row in queue["over_time"]:
+            print(f"    t+{row['from_s']:>5.0f}s  {row['n']:>4} saves  "
+                  f"{row['per_second']:>5.2f}/s  p50 {row['p50_ms']:>8.1f} ms")
+    if blob["queueing"]["remote_lag"].get("sampled"):
+        print(f"  remote lag:     {blob['queueing']['remote_lag']}")
     print("\n-- verification --")
     print(verify.summary(verdict))
     for name in ("coeditors", "form_writes", "push", "parses"):
