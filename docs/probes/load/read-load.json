@@ -1,0 +1,1034 @@
+{
+  "cold_start": {
+    "runs": [
+      {
+        "first_page_ms": 620.8,
+        "records": 561,
+        "rss_mb_idle": 78.9,
+        "rss_mb_with_index": 91.4,
+        "second_page_ms": 33.4,
+        "startup_seconds": 0.46,
+        "status": 200
+      },
+      {
+        "first_page_ms": 621.0,
+        "records": 561,
+        "rss_mb_idle": 78.7,
+        "rss_mb_with_index": 91.3,
+        "second_page_ms": 31.3,
+        "startup_seconds": 0.44,
+        "status": 200
+      },
+      {
+        "first_page_ms": 622.3,
+        "records": 561,
+        "rss_mb_idle": 78.7,
+        "rss_mb_with_index": 91.2,
+        "second_page_ms": 32.2,
+        "startup_seconds": 0.45,
+        "status": 200
+      }
+    ]
+  },
+  "commits": {
+    "head_at_end": "16664fdca3",
+    "head_at_start": "61412a41e6",
+    "made_by_the_writer_phase": 12
+  },
+  "config": {
+    "cold_starts": 3,
+    "corpus": "corpus",
+    "no_serial": false,
+    "out": "/Users/jcanton/projects/openproj/.worktrees/concurrency-audit/docs/probes/load/read-load.json",
+    "readers": 20,
+    "rows": false,
+    "rtt_ms": 0.0,
+    "seconds": 60.0,
+    "seed": 7,
+    "size": "medium",
+    "think": 0.5,
+    "writer_gap": 5.0
+  },
+  "machine": {
+    "cores": 10,
+    "kernel": "Darwin 25.5.0",
+    "memory_gb": 24.0,
+    "model": "Mac16,12"
+  },
+  "note_on_cold_start": "The cold_start block was measured by the same script with --no-serial --no-phases --cold-starts 3 --size medium, on the same laptop minutes after the phases below, and merged into this file. One invocation of readload.py now produces both.",
+  "note_on_serial": "The serial block was re-measured after the phases, by the same script with --cold-starts 0 --no-phases, to pick up the response sizes added to serial(). The latencies agree with the first pass to within 8%.",
+  "phases": [
+    {
+      "driver_cores_used": 0.01,
+      "driver_cpu_seconds": 0.7,
+      "driver_failures": {},
+      "everything": {
+        "errors": {},
+        "latency_ms": {
+          "GET /": {
+            "max": 10356.0,
+            "mean": 2354.8,
+            "n": 36,
+            "p50": 1142.7,
+            "p90": 10352.5,
+            "p99": 10356.0
+          },
+          "GET /detail/<id>": {
+            "max": 5181.3,
+            "mean": 3736.3,
+            "n": 174,
+            "p50": 4112.0,
+            "p90": 5009.9,
+            "p99": 5117.4
+          },
+          "GET /graph": {
+            "max": 10358.2,
+            "mean": 2035.3,
+            "n": 38,
+            "p50": 1204.9,
+            "p90": 10357.1,
+            "p99": 10358.2
+          },
+          "GET /issues": {
+            "max": 10350.9,
+            "mean": 1929.0,
+            "n": 36,
+            "p50": 1112.4,
+            "p90": 3169.6,
+            "p99": 10350.9
+          },
+          "GET /table": {
+            "max": 10355.6,
+            "mean": 2483.7,
+            "n": 37,
+            "p50": 1196.1,
+            "p90": 10353.5,
+            "p99": 10355.6
+          },
+          "GET /timeline": {
+            "max": 10354.9,
+            "mean": 1890.0,
+            "n": 34,
+            "p50": 1034.5,
+            "p90": 3150.3,
+            "p99": 10354.9
+          }
+        },
+        "pushed": {
+          "false": 0,
+          "true": 0,
+          "unknown": 0
+        },
+        "statuses": {
+          "GET /": {
+            "200": 36
+          },
+          "GET /detail/<id>": {
+            "200": 174
+          },
+          "GET /graph": {
+            "200": 38
+          },
+          "GET /issues": {
+            "200": 36
+          },
+          "GET /table": {
+            "200": 37
+          },
+          "GET /timeline": {
+            "200": 34
+          }
+        },
+        "throughput": {
+          "accepted_writes_per_second": 0.0,
+          "pages_per_second": 5.76,
+          "seconds": 61.6
+        },
+        "write_outcomes": {}
+      },
+      "herd": {
+        "max": 10358.2,
+        "mean": 10351.4,
+        "n": 20,
+        "p50": 10353.5,
+        "p90": 10357.6,
+        "p99": 10358.2,
+        "routes": [
+          "GET /",
+          "GET /graph",
+          "GET /issues",
+          "GET /table",
+          "GET /timeline"
+        ]
+      },
+      "loadavg_after": [
+        2.09,
+        1.77,
+        1.67
+      ],
+      "loadavg_before": [
+        1.38,
+        1.53,
+        1.59
+      ],
+      "phase": "warm-1 (index cache empty at t=0)",
+      "readers": 20,
+      "readers_only": {
+        "errors": {},
+        "latency_ms": {
+          "GET /": {
+            "max": 10356.0,
+            "mean": 2354.8,
+            "n": 36,
+            "p50": 1142.7,
+            "p90": 10352.5,
+            "p99": 10356.0
+          },
+          "GET /detail/<id>": {
+            "max": 5181.3,
+            "mean": 3736.3,
+            "n": 174,
+            "p50": 4112.0,
+            "p90": 5009.9,
+            "p99": 5117.4
+          },
+          "GET /graph": {
+            "max": 10358.2,
+            "mean": 2035.3,
+            "n": 38,
+            "p50": 1204.9,
+            "p90": 10357.1,
+            "p99": 10358.2
+          },
+          "GET /issues": {
+            "max": 10350.9,
+            "mean": 1929.0,
+            "n": 36,
+            "p50": 1112.4,
+            "p90": 3169.6,
+            "p99": 10350.9
+          },
+          "GET /table": {
+            "max": 10355.6,
+            "mean": 2483.7,
+            "n": 37,
+            "p50": 1196.1,
+            "p90": 10353.5,
+            "p99": 10355.6
+          },
+          "GET /timeline": {
+            "max": 10354.9,
+            "mean": 1890.0,
+            "n": 34,
+            "p50": 1034.5,
+            "p90": 3150.3,
+            "p99": 10354.9
+          }
+        },
+        "pushed": {
+          "false": 0,
+          "true": 0,
+          "unknown": 0
+        },
+        "statuses": {
+          "GET /": {
+            "200": 36
+          },
+          "GET /detail/<id>": {
+            "200": 174
+          },
+          "GET /graph": {
+            "200": 38
+          },
+          "GET /issues": {
+            "200": 36
+          },
+          "GET /table": {
+            "200": 37
+          },
+          "GET /timeline": {
+            "200": 34
+          }
+        },
+        "throughput": {
+          "accepted_writes_per_second": 0.0,
+          "pages_per_second": 5.76,
+          "seconds": 61.6
+        },
+        "write_outcomes": {}
+      },
+      "seconds": 61.6,
+      "server_cores_used": 1.03,
+      "server_cpu_seconds": 63.6,
+      "server_rss_mb": 325.2,
+      "writer_gap_seconds": null
+    },
+    {
+      "driver_cores_used": 0.01,
+      "driver_cpu_seconds": 0.8,
+      "driver_failures": {},
+      "everything": {
+        "errors": {},
+        "latency_ms": {
+          "GET /": {
+            "max": 2993.7,
+            "mean": 1337.1,
+            "n": 45,
+            "p50": 1262.2,
+            "p90": 2305.7,
+            "p99": 2993.7
+          },
+          "GET /detail/<id>": {
+            "max": 5100.1,
+            "mean": 3361.3,
+            "n": 212,
+            "p50": 3452.5,
+            "p90": 4743.8,
+            "p99": 5034.2
+          },
+          "GET /graph": {
+            "max": 3246.4,
+            "mean": 1528.8,
+            "n": 44,
+            "p50": 1486.6,
+            "p90": 2730.8,
+            "p99": 3246.4
+          },
+          "GET /issues": {
+            "max": 2792.1,
+            "mean": 1255.3,
+            "n": 42,
+            "p50": 1315.7,
+            "p90": 2351.5,
+            "p99": 2792.1
+          },
+          "GET /table": {
+            "max": 3490.5,
+            "mean": 1539.1,
+            "n": 46,
+            "p50": 1434.1,
+            "p90": 2928.9,
+            "p99": 3490.5
+          },
+          "GET /timeline": {
+            "max": 3019.5,
+            "mean": 1509.8,
+            "n": 42,
+            "p50": 1435.8,
+            "p90": 2951.6,
+            "p99": 3019.5
+          }
+        },
+        "pushed": {
+          "false": 0,
+          "true": 0,
+          "unknown": 0
+        },
+        "statuses": {
+          "GET /": {
+            "200": 45
+          },
+          "GET /detail/<id>": {
+            "200": 212
+          },
+          "GET /graph": {
+            "200": 44
+          },
+          "GET /issues": {
+            "200": 42
+          },
+          "GET /table": {
+            "200": 46
+          },
+          "GET /timeline": {
+            "200": 42
+          }
+        },
+        "throughput": {
+          "accepted_writes_per_second": 0.0,
+          "pages_per_second": 6.89,
+          "seconds": 62.6
+        },
+        "write_outcomes": {}
+      },
+      "herd": {
+        "max": 713.5,
+        "mean": 651.9,
+        "n": 20,
+        "p50": 709.7,
+        "p90": 712.9,
+        "p99": 713.5,
+        "routes": [
+          "GET /",
+          "GET /graph",
+          "GET /issues",
+          "GET /table",
+          "GET /timeline"
+        ]
+      },
+      "loadavg_after": [
+        2.2,
+        1.83,
+        1.7
+      ],
+      "loadavg_before": [
+        2.09,
+        1.77,
+        1.67
+      ],
+      "phase": "warm-2 (same commit, cache hot)",
+      "readers": 20,
+      "readers_only": {
+        "errors": {},
+        "latency_ms": {
+          "GET /": {
+            "max": 2993.7,
+            "mean": 1337.1,
+            "n": 45,
+            "p50": 1262.2,
+            "p90": 2305.7,
+            "p99": 2993.7
+          },
+          "GET /detail/<id>": {
+            "max": 5100.1,
+            "mean": 3361.3,
+            "n": 212,
+            "p50": 3452.5,
+            "p90": 4743.8,
+            "p99": 5034.2
+          },
+          "GET /graph": {
+            "max": 3246.4,
+            "mean": 1528.8,
+            "n": 44,
+            "p50": 1486.6,
+            "p90": 2730.8,
+            "p99": 3246.4
+          },
+          "GET /issues": {
+            "max": 2792.1,
+            "mean": 1255.3,
+            "n": 42,
+            "p50": 1315.7,
+            "p90": 2351.5,
+            "p99": 2792.1
+          },
+          "GET /table": {
+            "max": 3490.5,
+            "mean": 1539.1,
+            "n": 46,
+            "p50": 1434.1,
+            "p90": 2928.9,
+            "p99": 3490.5
+          },
+          "GET /timeline": {
+            "max": 3019.5,
+            "mean": 1509.8,
+            "n": 42,
+            "p50": 1435.8,
+            "p90": 2951.6,
+            "p99": 3019.5
+          }
+        },
+        "pushed": {
+          "false": 0,
+          "true": 0,
+          "unknown": 0
+        },
+        "statuses": {
+          "GET /": {
+            "200": 45
+          },
+          "GET /detail/<id>": {
+            "200": 212
+          },
+          "GET /graph": {
+            "200": 44
+          },
+          "GET /issues": {
+            "200": 42
+          },
+          "GET /table": {
+            "200": 46
+          },
+          "GET /timeline": {
+            "200": 42
+          }
+        },
+        "throughput": {
+          "accepted_writes_per_second": 0.0,
+          "pages_per_second": 6.89,
+          "seconds": 62.6
+        },
+        "write_outcomes": {}
+      },
+      "seconds": 62.6,
+      "server_cores_used": 0.98,
+      "server_cpu_seconds": 61.6,
+      "server_rss_mb": 329.5,
+      "writer_gap_seconds": null
+    },
+    {
+      "commits_attempted": 12,
+      "driver_cores_used": 0.01,
+      "driver_cpu_seconds": 0.8,
+      "driver_failures": {},
+      "everything": {
+        "errors": {
+          "GET /api/health -> ReadError": 1
+        },
+        "latency_ms": {
+          "GET /": {
+            "max": 2868.2,
+            "mean": 997.4,
+            "n": 43,
+            "p50": 820.8,
+            "p90": 1745.9,
+            "p99": 2868.2
+          },
+          "GET /api/health": {
+            "max": 3242.5,
+            "mean": 1489.3,
+            "n": 13,
+            "p50": 1231.9,
+            "p90": 2703.4,
+            "p99": 3242.5
+          },
+          "GET /detail/<id>": {
+            "max": 5176.9,
+            "mean": 3708.3,
+            "n": 200,
+            "p50": 4087.0,
+            "p90": 4793.1,
+            "p99": 5169.4
+          },
+          "GET /graph": {
+            "max": 3631.9,
+            "mean": 1414.9,
+            "n": 41,
+            "p50": 1182.4,
+            "p90": 2922.1,
+            "p99": 3631.9
+          },
+          "GET /issues": {
+            "max": 2795.6,
+            "mean": 1125.9,
+            "n": 41,
+            "p50": 1035.0,
+            "p90": 1840.7,
+            "p99": 2795.6
+          },
+          "GET /table": {
+            "max": 3342.0,
+            "mean": 1285.8,
+            "n": 40,
+            "p50": 1172.7,
+            "p90": 2729.4,
+            "p99": 3342.0
+          },
+          "GET /timeline": {
+            "max": 3836.5,
+            "mean": 1288.1,
+            "n": 40,
+            "p50": 1035.5,
+            "p90": 3155.8,
+            "p99": 3836.5
+          },
+          "PATCH": {
+            "max": 3516.0,
+            "mean": 1117.0,
+            "n": 12,
+            "p50": 978.6,
+            "p90": 3229.7,
+            "p99": 3516.0
+          }
+        },
+        "pushed": {
+          "false": 0,
+          "true": 0,
+          "unknown": 12
+        },
+        "statuses": {
+          "GET /": {
+            "200": 43
+          },
+          "GET /api/health": {
+            "200": 12,
+            "ReadError": 1
+          },
+          "GET /detail/<id>": {
+            "200": 200
+          },
+          "GET /graph": {
+            "200": 41
+          },
+          "GET /issues": {
+            "200": 41
+          },
+          "GET /table": {
+            "200": 40
+          },
+          "GET /timeline": {
+            "200": 40
+          },
+          "PATCH": {
+            "200": 12
+          }
+        },
+        "throughput": {
+          "accepted_writes_per_second": 0.19,
+          "pages_per_second": 6.58,
+          "seconds": 63.5
+        },
+        "write_outcomes": {
+          "committed": 12
+        }
+      },
+      "herd": {
+        "max": 682.1,
+        "mean": 608.8,
+        "n": 19,
+        "p50": 673.4,
+        "p90": 681.5,
+        "p99": 682.1,
+        "routes": [
+          "GET /",
+          "GET /graph",
+          "GET /issues",
+          "GET /table",
+          "GET /timeline"
+        ]
+      },
+      "loadavg_after": [
+        2.0,
+        1.86,
+        1.72
+      ],
+      "loadavg_before": [
+        2.2,
+        1.83,
+        1.7
+      ],
+      "phase": "writer (one commit every 5.0s)",
+      "readers": 19,
+      "readers_only": {
+        "errors": {},
+        "latency_ms": {
+          "GET /": {
+            "max": 2868.2,
+            "mean": 997.4,
+            "n": 43,
+            "p50": 820.8,
+            "p90": 1745.9,
+            "p99": 2868.2
+          },
+          "GET /detail/<id>": {
+            "max": 5176.9,
+            "mean": 3708.3,
+            "n": 200,
+            "p50": 4087.0,
+            "p90": 4793.1,
+            "p99": 5169.4
+          },
+          "GET /graph": {
+            "max": 3631.9,
+            "mean": 1414.9,
+            "n": 41,
+            "p50": 1182.4,
+            "p90": 2922.1,
+            "p99": 3631.9
+          },
+          "GET /issues": {
+            "max": 2795.6,
+            "mean": 1125.9,
+            "n": 41,
+            "p50": 1035.0,
+            "p90": 1840.7,
+            "p99": 2795.6
+          },
+          "GET /table": {
+            "max": 3342.0,
+            "mean": 1285.8,
+            "n": 40,
+            "p50": 1172.7,
+            "p90": 2729.4,
+            "p99": 3342.0
+          },
+          "GET /timeline": {
+            "max": 3836.5,
+            "mean": 1288.1,
+            "n": 40,
+            "p50": 1035.5,
+            "p90": 3155.8,
+            "p99": 3836.5
+          }
+        },
+        "pushed": {
+          "false": 0,
+          "true": 0,
+          "unknown": 0
+        },
+        "statuses": {
+          "GET /": {
+            "200": 43
+          },
+          "GET /detail/<id>": {
+            "200": 200
+          },
+          "GET /graph": {
+            "200": 41
+          },
+          "GET /issues": {
+            "200": 41
+          },
+          "GET /table": {
+            "200": 40
+          },
+          "GET /timeline": {
+            "200": 40
+          }
+        },
+        "throughput": {
+          "accepted_writes_per_second": 0.0,
+          "pages_per_second": 6.38,
+          "seconds": 63.5
+        },
+        "write_outcomes": {}
+      },
+      "seconds": 63.5,
+      "seconds_per_commit": 5.3,
+      "sent": [
+        {
+          "base": "61412a41e6e61f06e15fa176fe3ac02e4fe48e67",
+          "commit": "e47d83790c3fa7d3ff34fe97aa162a31677ddb90",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0001",
+          "outcome": "committed",
+          "person_weeks": 1.5,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "e47d83790c3fa7d3ff34fe97aa162a31677ddb90",
+          "commit": "fbd25a0744c2fe1d58b7773b2a8c80536dcc0830",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0002",
+          "outcome": "committed",
+          "person_weeks": 2.0,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "fbd25a0744c2fe1d58b7773b2a8c80536dcc0830",
+          "commit": "789c3a48bad55c4a823df5705af1b8e8f45086c5",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0003",
+          "outcome": "committed",
+          "person_weeks": 2.5,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "789c3a48bad55c4a823df5705af1b8e8f45086c5",
+          "commit": "491e9ea05087d91a7da7de87eae7c934078b79fb",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0004",
+          "outcome": "committed",
+          "person_weeks": 3.0,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "491e9ea05087d91a7da7de87eae7c934078b79fb",
+          "commit": "9f46cc8c192c40ce3278138f27b8452a411c2041",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0005",
+          "outcome": "committed",
+          "person_weeks": 3.5,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "9f46cc8c192c40ce3278138f27b8452a411c2041",
+          "commit": "65768163e69222f0bde7b6c7b54ae587ac3709fc",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0006",
+          "outcome": "committed",
+          "person_weeks": 4.0,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "65768163e69222f0bde7b6c7b54ae587ac3709fc",
+          "commit": "2eec09adb189b2a9296b17d5f48053ad4e55e617",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0008",
+          "outcome": "committed",
+          "person_weeks": 1.5,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "2eec09adb189b2a9296b17d5f48053ad4e55e617",
+          "commit": "acb16d90e3e1dc56dd8b5f26c8df5f4a0910bff6",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0009",
+          "outcome": "committed",
+          "person_weeks": 2.0,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "acb16d90e3e1dc56dd8b5f26c8df5f4a0910bff6",
+          "commit": "b9075620bac0aeb3488525d84ac99033ddad421c",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0010",
+          "outcome": "committed",
+          "person_weeks": 2.5,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "b9075620bac0aeb3488525d84ac99033ddad421c",
+          "commit": "6d249e614521a300d5d50bdfdef7c246a1b58857",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0011",
+          "outcome": "committed",
+          "person_weeks": 3.0,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "6d249e614521a300d5d50bdfdef7c246a1b58857",
+          "commit": "0c18f71e5f426debd16f715d63652d5946b7c8d7",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0012",
+          "outcome": "committed",
+          "person_weeks": 3.5,
+          "status": "200",
+          "who": "writer-0"
+        },
+        {
+          "base": "0c18f71e5f426debd16f715d63652d5946b7c8d7",
+          "commit": "16664fdca38f14890dd7695a084a15d7c836751b",
+          "entity": "task-000000",
+          "marker": "LMwriter0.0013",
+          "outcome": "committed",
+          "person_weeks": 4.0,
+          "status": "200",
+          "who": "writer-0"
+        }
+      ],
+      "server_cores_used": 0.98,
+      "server_cpu_seconds": 62.4,
+      "server_rss_mb": 319.7,
+      "writer_gap_seconds": 5.0
+    }
+  ],
+  "probe": "read-load",
+  "same_commit": {
+    "after_warm1": "61412a41e6",
+    "after_warm2": "61412a41e6",
+    "before_warm1": "61412a41e6",
+    "unchanged": true
+  },
+  "seed": 7,
+  "serial": [
+    {
+      "bad_statuses": {},
+      "bytes": {
+        "/": 664837,
+        "/detail/<id>": 1231562,
+        "/graph": 2687357,
+        "/issues": 268667,
+        "/table": 1025421,
+        "/timeline": 977271
+      },
+      "cold_ms": {
+        "/": 655.6,
+        "/detail/<id>": 247.4,
+        "/graph": 39.4,
+        "/issues": 16.4,
+        "/table": 45.4,
+        "/timeline": 42.0
+      },
+      "every_ms": {
+        "/": [
+          655.6,
+          30.6,
+          31.8
+        ],
+        "/detail/<id>": [
+          247.4,
+          258.5,
+          244.0
+        ],
+        "/graph": [
+          39.4,
+          36.3,
+          36.8
+        ],
+        "/issues": [
+          16.4,
+          16.1,
+          15.9
+        ],
+        "/table": [
+          45.4,
+          45.2,
+          43.7
+        ],
+        "/timeline": [
+          42.0,
+          42.0,
+          41.6
+        ]
+      },
+      "first_request_was": "/",
+      "warm_ms": {
+        "/": 31.2,
+        "/detail/<id>": 251.2,
+        "/graph": 36.5,
+        "/issues": 16.0,
+        "/table": 44.5,
+        "/timeline": 41.8
+      }
+    },
+    {
+      "bad_statuses": {},
+      "bytes": {
+        "/": 664837,
+        "/detail/<id>": 1231562,
+        "/graph": 2687357,
+        "/issues": 268667,
+        "/table": 1025421,
+        "/timeline": 977271
+      },
+      "cold_ms": {
+        "/": 32.3,
+        "/detail/<id>": 843.9,
+        "/graph": 40.3,
+        "/issues": 17.1,
+        "/table": 44.8,
+        "/timeline": 41.5
+      },
+      "every_ms": {
+        "/": [
+          32.3,
+          31.0,
+          31.0
+        ],
+        "/detail/<id>": [
+          843.9,
+          265.8,
+          246.6
+        ],
+        "/graph": [
+          40.3,
+          36.8,
+          35.8
+        ],
+        "/issues": [
+          17.1,
+          16.5,
+          16.3
+        ],
+        "/table": [
+          44.8,
+          44.5,
+          44.2
+        ],
+        "/timeline": [
+          41.5,
+          52.5,
+          42.1
+        ]
+      },
+      "first_request_was": "/detail/<id>",
+      "warm_ms": {
+        "/": 31.0,
+        "/detail/<id>": 256.2,
+        "/graph": 36.3,
+        "/issues": 16.4,
+        "/table": 44.4,
+        "/timeline": 47.3
+      }
+    }
+  ],
+  "server": {
+    "cpu_seconds_total": 187.81,
+    "rss_mb": 319.7
+  },
+  "server_log_tail": "INFO:     127.0.0.1:64678 - \"GET /table HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64681 - \"GET /detail/task-000097 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64671 - \"GET /detail/task-000026 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64677 - \"GET /detail/task-0000fd HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64676 - \"GET /detail/task-0000e3 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64689 - \"GET /detail/task-000073 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64674 - \"GET /detail/task-0000d8 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64679 - \"GET /detail/task-0000b5 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64673 - \"GET /detail/task-000182 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64683 - \"GET /detail/task-000085 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64686 - \"GET /detail/task-000004 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64672 - \"GET /detail/task-00000f HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64685 - \"GET /detail/task-00012c HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64680 - \"GET /detail/task-000125 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:64687 - \"GET /detail/task-00010f HTTP/1.1\" 200 OK",
+  "strays": [],
+  "verification": {
+    "checks": {
+      "authors": {
+        "jcanton": 12,
+        "openproj-bot": 1
+      },
+      "coeditors": [],
+      "conflict_markers": {
+        "commits_walked": 13,
+        "found": []
+      },
+      "fields": {
+        "checked": 1,
+        "invented": []
+      },
+      "form_writes": {
+        "ambiguous_absent": 0,
+        "ambiguous_present": 0,
+        "committed": 12,
+        "lost": 0,
+        "refused": 0,
+        "refused_but_present": 0
+      },
+      "fsck": {
+        "origin": {
+          "output": "",
+          "returncode": 0
+        },
+        "plan": {
+          "output": "",
+          "returncode": 0
+        }
+      },
+      "head": "16664fdca3",
+      "parses": {
+        "blockers": 41,
+        "blockers_before": 41,
+        "records": 561,
+        "unreadable": [],
+        "unreadable_before": 0,
+        "warnings": 441
+      },
+      "push": {
+        "equal": true,
+        "forked": false,
+        "local": "16664fdca3",
+        "origin": "16664fdca3",
+        "unpushed_commits": 0
+      }
+    },
+    "findings": [
+      {
+        "detail": null,
+        "severity": "note",
+        "what": "41 validation blockers, all of them already in the corpus this run started from"
+      }
+    ],
+    "lost_data": false,
+    "ok": true
+  },
+  "world": {
+    "base_commit": "61412a41e6",
+    "corpus": "corpus",
+    "port": 8900,
+    "records": 561,
+    "remote": "file://origin.git",
+    "rtt_ms": 0.0,
+    "size": "medium",
+    "work": "/var/folders/r9/bm7bmxxj1nlfq0w1lzk458lm0000gq/T/openproj-load-tn2i57yc"
+  }
+}

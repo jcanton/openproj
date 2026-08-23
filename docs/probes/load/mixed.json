@@ -1,0 +1,286 @@
+{
+  "commits": {
+    "by_author": {
+      "edopao": 6,
+      "halungge": 6,
+      "iomaganaris": 6,
+      "nfarabullini": 1
+    },
+    "made_by_this_run": 19,
+    "total": 20
+  },
+  "config": {
+    "body_edit": "append",
+    "coedit_save_at_end": true,
+    "coedit_save_every": 0.0,
+    "coeditors": 3,
+    "gap": 2.0,
+    "overlap": false,
+    "readers": 3,
+    "seconds": 20.0,
+    "stale": false,
+    "think": 0.4,
+    "writers": 3
+  },
+  "driver_failures": {},
+  "measured": {
+    "errors": {},
+    "latency_ms": {
+      "GET /": {
+        "max": 142.7,
+        "mean": 118.3,
+        "n": 9,
+        "p50": 117.6,
+        "p90": 142.7,
+        "p99": 142.7
+      },
+      "GET /api/health": {
+        "max": 11.1,
+        "mean": 5.4,
+        "n": 18,
+        "p50": 6.1,
+        "p90": 9.8,
+        "p99": 11.1
+      },
+      "GET /detail/<id>": {
+        "max": 1521.2,
+        "mean": 1058.9,
+        "n": 48,
+        "p50": 875.9,
+        "p90": 1515.4,
+        "p99": 1521.2
+      },
+      "GET /issues": {
+        "max": 763.8,
+        "mean": 694.6,
+        "n": 12,
+        "p50": 696.9,
+        "p90": 762.8,
+        "p99": 763.8
+      },
+      "GET /table": {
+        "max": 267.4,
+        "mean": 260.2,
+        "n": 9,
+        "p50": 263.2,
+        "p90": 267.4,
+        "p99": 267.4
+      },
+      "PATCH": {
+        "max": 107.6,
+        "mean": 102.3,
+        "n": 18,
+        "p50": 103.3,
+        "p90": 106.7,
+        "p99": 107.6
+      },
+      "WS join": {
+        "max": 4.7,
+        "mean": 2.8,
+        "n": 3,
+        "p50": 1.9,
+        "p90": 4.7,
+        "p99": 4.7
+      },
+      "WS keystroke": {
+        "max": 1.5,
+        "mean": 0.1,
+        "n": 256,
+        "p50": 0.1,
+        "p90": 0.2,
+        "p99": 0.6
+      },
+      "WS save": {
+        "max": 60.1,
+        "mean": 57.0,
+        "n": 3,
+        "p50": 60.1,
+        "p90": 60.1,
+        "p99": 60.1
+      }
+    },
+    "pushed": {
+      "false": 0,
+      "true": 1,
+      "unknown": 18
+    },
+    "statuses": {
+      "GET /": {
+        "200": 9
+      },
+      "GET /api/health": {
+        "200": 18
+      },
+      "GET /detail/<id>": {
+        "200": 48
+      },
+      "GET /issues": {
+        "200": 12
+      },
+      "GET /table": {
+        "200": 9
+      },
+      "PATCH": {
+        "200": 18
+      },
+      "WS join": {
+        "joined": 3
+      },
+      "WS keystroke": {
+        "typed": 256
+      },
+      "WS save": {
+        "nothing": 2,
+        "saved": 1
+      }
+    },
+    "throughput": {
+      "accepted_writes_per_second": 0.91,
+      "pages_per_second": 4.6,
+      "seconds": 20.9
+    },
+    "write_outcomes": {
+      "committed": 6,
+      "retried": 13
+    }
+  },
+  "scenario": "mixed",
+  "seed": 7,
+  "server": {
+    "cpu_seconds": 15.32,
+    "rss_mb": 130.9
+  },
+  "server_log_tail": "INFO:     127.0.0.1:63268 - \"GET /table HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63270 - \"GET /table HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63269 - \"GET /table HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63270 - \"GET /detail/task-000181 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63269 - \"GET /detail/task-00000d HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63268 - \"GET /detail/task-000025 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63269 - \"GET /issues HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63270 - \"GET /issues HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63268 - \"GET /issues HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63266 - \"GET /detail/task-000003 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63267 - \"GET /detail/task-000002 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63265 - \"GET /detail/task-000001 HTTP/1.1\" 200 OK",
+  "strays": [],
+  "verification": {
+    "checks": {
+      "authors": {
+        "edopao": 6,
+        "halungge": 6,
+        "iomaganaris": 6,
+        "nfarabullini": 1,
+        "openproj-bot": 1
+      },
+      "coeditors": [
+        {
+          "anchor_in_tree": true,
+          "committed": 85,
+          "entity": "task-000000",
+          "saves": [
+            {
+              "commit": "da0d94c3436635def40a0c9cc17e62aa109879a3",
+              "ms": 50.7,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 85,
+              "why": null
+            }
+          ],
+          "trouble": [],
+          "typed": 85,
+          "who": "coeditor-0"
+        },
+        {
+          "anchor_in_tree": true,
+          "committed": 86,
+          "entity": "task-000000",
+          "saves": [
+            {
+              "commit": null,
+              "ms": 60.1,
+              "outcome": null,
+              "pushed": null,
+              "t": "nothing",
+              "typed_by_then": 86,
+              "why": null
+            }
+          ],
+          "trouble": [],
+          "typed": 86,
+          "who": "coeditor-1"
+        },
+        {
+          "anchor_in_tree": true,
+          "committed": 85,
+          "entity": "task-000000",
+          "saves": [
+            {
+              "commit": null,
+              "ms": 60.1,
+              "outcome": null,
+              "pushed": null,
+              "t": "nothing",
+              "typed_by_then": 85,
+              "why": null
+            }
+          ],
+          "trouble": [],
+          "typed": 85,
+          "who": "coeditor-2"
+        }
+      ],
+      "conflict_markers": {
+        "commits_walked": 20,
+        "found": []
+      },
+      "fields": {
+        "checked": 3,
+        "invented": []
+      },
+      "form_writes": {
+        "ambiguous_absent": 0,
+        "ambiguous_present": 0,
+        "committed": 18,
+        "lost": 0,
+        "refused": 0,
+        "refused_but_present": 0
+      },
+      "fsck": {
+        "origin": {
+          "output": "",
+          "returncode": 0
+        },
+        "plan": {
+          "output": "",
+          "returncode": 0
+        }
+      },
+      "head": "da0d94c343",
+      "parses": {
+        "blockers": 41,
+        "blockers_before": 41,
+        "records": 561,
+        "unreadable": [],
+        "unreadable_before": 0,
+        "warnings": 441
+      },
+      "push": {
+        "equal": true,
+        "forked": false,
+        "local": "da0d94c343",
+        "origin": "da0d94c343",
+        "unpushed_commits": 0
+      }
+    },
+    "findings": [
+      {
+        "detail": null,
+        "severity": "note",
+        "what": "41 validation blockers, all of them already in the corpus this run started from"
+      }
+    ],
+    "lost_data": false,
+    "ok": true
+  },
+  "world": {
+    "base_commit": "67a1502219",
+    "corpus": "corpus",
+    "port": 8900,
+    "records": 561,
+    "remote": "file://origin.git",
+    "rtt_ms": 0.0,
+    "size": "medium",
+    "work": "/var/folders/r9/bm7bmxxj1nlfq0w1lzk458lm0000gq/T/openproj-load-t1jci7yh"
+  }
+}

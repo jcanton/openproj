@@ -1,0 +1,41 @@
+{
+ "probe": "detail-cost",
+ "index_build_ms": 556.7,
+ "record_count": 561,
+ "detail_rows_for_every_record_ms": 182.9,
+ "detail_default_editor": [
+  236.0,
+  1230188
+ ],
+ "detail_ace": [
+  237.6,
+  1230188
+ ],
+ "detail_plain": [
+  238.1,
+  612192
+ ],
+ "detail_read_only": [
+  238.8,
+  441095
+ ],
+ "graph": [
+  29.7,
+  2686356
+ ],
+ "table": [
+  40.9,
+  842306
+ ],
+ "records": [
+  27.2,
+  644406
+ ],
+ "records_count": 561,
+ "small_record_count": 41,
+ "small_detail_ms": [
+  68.0,
+  1208201
+ ],
+ "profile_tottime_top": "         18972141 function calls (18636901 primitive calls) in 3.494 seconds\n\n   Ordered by: internal time\n   List reduced from 492 to 18 due to restriction <18>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n117810/61710    0.127    0.000    0.789    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/list.py:101(list_block)\n     2805    0.125    0.000    0.159    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/state_block.py:15(__init__)\n    47685    0.121    0.000    0.546    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/parser_inline.py:174(tokenize)\n25245/2805    0.117    0.000    1.296    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/parser_block.py:60(tokenize)\n   858330    0.088    0.000    0.126    0.000 /Users/jcanton/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/logging/__init__.py:1517(debug)\n  2279865    0.079    0.000    0.079    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/ruler.py:38(src)\n   137445    0.070    0.000    0.112    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/hr.py:14(hr)\n   182325    0.070    0.000    0.118    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_inline/text.py:8(text)\n   204765    0.068    0.000    0.168    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/state_block.py:119(push)\n    30855    0.068    0.000    0.332    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/paragraph.py:10(paragraph)\n   137085    0.065    0.000    0.065    0.000 {method 'match' of 're.Pattern' objects}\n   252220    0.064    0.000    0.129    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/jinja2/nodes.py:169(iter_child_nodes)\n    81345    0.062    0.000    0.142    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/heading.py:13(heading)\n  1068295    0.062    0.000    0.062    0.000 {method 'append' of 'list' objects}\n   238425    0.061    0.000    0.115    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/common/utils.py:139(escapeHtml)\n   953755    0.054    0.000    0.054    0.000 {method 'replace' of 'str' objects}\n    30855    0.052    0.000    0.209    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/lheading.py:9(lheading)\n   137445    0.051    0.000    0.084    0.000 /Users/jcanton/projects/openproj/.worktrees/concurrency-audit/.venv/lib/python3.12/site-packages/markdown_it/rules_block/fence.py:45(_fence_rule)\n\n\n"
+}
