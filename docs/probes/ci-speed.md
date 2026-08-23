@@ -12,9 +12,15 @@ answer:*
 | [32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905) | + changes 3 to 8, five shards | 181.15s | **3m33s** |
 | [32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278) | + change 9 | 156.04s | **3m02s** |
 | [32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118) | + this document | 161.12s | **3m18s** |
+| [32635606308](https://github.com/jcanton/openproj/actions/runs/32635606308) | + the run above, written up | 168.63s | **3m13s** |
 
-**Twenty-three minutes is three.** 1688 tests, zero skipped, five machines, three
-green sharded runs at 3m02s, 3m18s and 3m33s.
+**Twenty-three minutes is three.** 1688 tests, zero skipped, five machines, four
+green sharded runs at 3m02s, 3m13s, 3m18s and 3m33s.
+
+*A document that tabulates its own CI run is never finished — the commit that
+adds a row starts the run that would be the next one. So the number to quote is
+the **range**, 3m02s–3m33s, and the useful fact is that every run has landed
+inside it.*
 
 *Raw tables in `docs/probes/ci-durations.txt` and
 `docs/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
@@ -536,36 +542,45 @@ the runner queue is counted. Queue time is not ours and should not be promised.
 headline number was right. The reasoning under it was wrong in two ways, and
 both matter more than the headline.**
 
-| shard | tests | predicted | 566905 | 764278 | 323118 | spread |
-|---|---:|---:|---:|---:|---:|---:|
-| `editor` | 120 | **151.3s** | **181.15s** | 133.05s | 152.38s | **36%** |
-| `views` | 340 | 138.9s | 155.03s | **156.04s** | 158.59s | 2% |
-| `graph` | 78 | 131.2s | 106.38s | 134.67s | 107.21s | 27% |
-| `rest` | 1032 | 128.8s | 136.66s | 147.63s | **161.12s** | 18% |
-| `coedit` | 118 | 125.6s | 125.86s | 118.56s | 123.62s | 6% |
-| | 1688 | 675.8s | 705.08s | 689.95s | 702.92s | |
+| shard | tests | predicted | 566905 | 764278 | 323118 | 606308 | spread |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `editor` | 120 | **151.3s** | **181.15s** | 133.05s | 152.38s | **168.63s** | **36%** |
+| `views` | 340 | 138.9s | 155.03s | **156.04s** | 158.59s | 153.83s | 3% |
+| `graph` | 78 | 131.2s | 106.38s | 134.67s | 107.21s | 139.96s | **32%** |
+| `rest` | 1032 | 128.8s | 136.66s | 147.63s | **161.12s** | 164.17s | 20% |
+| `coedit` | 118 | 125.6s | 125.86s | 118.56s | 123.62s | 128.16s | 8% |
+| | 1688 | 675.8s | 705.08s | 689.95s | 702.92s | 754.75s | |
+| **wall clock** | | ~2m45s | 3m33s | **3m02s** | 3m18s | 3m13s | |
 
-Bold is the critical path. **It is a different shard in all three runs.**
+Bold is the critical path. **Three different shards across four runs.**
 
 **Wrong the first way: `test_editor.py` is not the floor, and there is no floor.**
 The whole five-and-only-five argument rested on that one file being 151.3s that
-nothing could get under. It ran at 181.15s, then 133.05s, then 152.38s on
-identical code within twenty minutes. The **run-to-run spread on a single leg
+nothing could get under. It ran at 181.15s, 133.05s, 152.38s and 168.63s on
+identical code within half an hour. The **run-to-run spread on a single leg
 reaches 36%** — four times the 8% the lists were balanced to, and wider than the
 gap between the largest shard and the smallest. The critical path was `editor`,
-then `views`, then `rest`: three runs, three different answers to the one
-question the cut was made to settle. So the lists are tuned to a precision this
-hardware does not have, and re-cutting them to chase 8% of balance is chasing
-noise. Re-cut when a leg is *consistently* over, across several runs — never off
-one table.
+then `views`, then `rest`, then `editor` again: **three different answers across
+four runs** to the one question the cut was made to settle. So the lists are
+tuned to a precision this hardware does not have, and re-cutting them to chase
+8% of balance is chasing noise. Re-cut when a leg is *consistently* over, across
+several runs — never off one table.
 
-Note *which* legs are noisy. `views` varied by 2% and `coedit` by 6%; `editor`
-and `graph` varied by 36% and 27%, and they are the two legs with the highest
+Note *which* legs are noisy. `views` varied by 3% and `coedit` by 8%; `editor`
+and `graph` varied by 36% and 32%, and they are the two legs with the highest
 proportion of one-Chrome-per-assertion tests. **The jitter is in headless Chrome
 process startup on a shared 2-core box, not in the tests.** That is the same
 1.93s per `measured_in` call that section 4's deferred item is about, now visible
 as variance as well as as cost — which makes that item worth more than its 330
-seconds, because it would also make the gate predictable.
+seconds, because it would also make the gate *predictable*, and predictable is
+what lets anyone re-cut these lists again.
+
+`graph`'s four numbers are 106.4, 134.7, 107.2, 140.0 — not scatter but **two
+clusters about 30 seconds apart**, which is the shape of a runner difference (CPU
+model, image, a noisy neighbour) rather than of smooth noise. Four points cannot
+prove that and this document does not claim it. It is written down because
+anybody who re-measures should check for two clusters before averaging four
+numbers into one that describes neither.
 
 **Wrong the second way: the 35s the durations table never attributed does not
 spread evenly, and it lands on the shards with many small tests.** The post-cache
@@ -578,10 +593,11 @@ in under in all three. **A per-file duration table under-counts a shard in
 proportion to how many tests it holds**, so add a few seconds per hundred tests
 to any leg cut from one.
 
-`rest` also rose across all three runs (136.66 → 147.63 → 161.12). Three points
-is not a trend and this document will not claim one, but it is the leg to watch:
-it holds 31 of the 47 test files, and by the rule written at the top of
-`.github/shards/rest` every new test file lands in it by default.
+`rest` also rose in every run so far (136.66 → 147.63 → 161.12 → 164.17). Four
+points is not a trend and this document will not claim one — but it is the leg to
+watch, because it holds 31 of the 47 test files and by the rule written at the
+top of `.github/shards/rest` every new test file lands in it by default. If any
+leg is going to need re-cutting first, it is this one.
 
 Neither mistake cost anything here, because five legs land within 60s of each
 other however the noise falls and the gate is three minutes either way. Both
@@ -858,10 +874,11 @@ Not a prediction any more. Every row is a run you can open.
 | + changes 3 to 8 ([32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905)) | 181.15s | 3m33s | 18 min |
 | + change 9 ([32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278)) | 156.04s | **3m02s** | 17 min |
 | + this document ([32635323118](https://github.com/jcanton/openproj/actions/runs/32635323118)) | 161.12s | 3m18s | 16 min |
+| + that run, written up ([32635606308](https://github.com/jcanton/openproj/actions/runs/32635606308)) | 168.63s | 3m13s | 17 min |
 
 **22m50s → about 3m15s. A gate that was longer than a coffee break is shorter
 than reading the diff it is gating.** 1688 tests, 1688 run, zero skipped, zero
-failed, three green sharded runs. Quote the range — **3m02s to 3m33s** — rather
+failed, four green sharded runs. Quote the range — **3m02s to 3m33s** — rather
 than any single number: the spread between runs is larger than anything left to
 optimise, and the reason is measured in change 6.
 
@@ -934,8 +951,8 @@ survived intact.
 
 Three things nevertheless got worse, and they should be written down:
 
-* **Per-leg wall clock varies by up to 36% run to run**, and the critical path
-  was a different shard in each of the three runs. Nothing fails because of it —
+* **Per-leg wall clock varies by up to 36% run to run**, and three different
+  shards held the critical path across four runs. Nothing fails because of it —
   no test in this suite asserts on total elapsed time — but the shard lists
   cannot be tuned finer than the hardware, a leg that looks 20% over on one run
   has told you nothing, and **the honest thing to quote for this gate is a range,
