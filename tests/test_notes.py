@@ -577,9 +577,9 @@ def test_the_shipped_demo_carries_notes_that_load(demo_root: Path):
 
 
 def test_the_static_export_carries_every_note(demo_root: Path, tmp_path: Path):
-    """notes.html is gone; the record is in the export twice over — on the
-    Records landing and in detail.html — with no way to write one, because a
-    file has nowhere to post to."""
+    """A note reaches the export three times over — the Records landing, the
+    notes view, and detail.html — with no way to write one there, because a
+    static file has nowhere to post to."""
     from openproj.render import render_static
 
     entities_now, config, _ = load_repo(demo_root)
@@ -588,9 +588,10 @@ def test_the_static_export_carries_every_note(demo_root: Path, tmp_path: Path):
     )
     detail = (tmp_path / "detail.html").read_text(encoding="utf-8")
 
-    assert "notes.html" not in written_files and "issues.html" not in written_files
+    assert "notes.html" in written_files
     assert "note-11aa22" in detail
     assert "note-11aa22" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "note-11aa22" in (tmp_path / "notes.html").read_text(encoding="utf-8")
     assert "promote-go" not in detail
 
 
