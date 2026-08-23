@@ -1178,6 +1178,25 @@ def create_app(
     # must never ride a request — a second billed to whichever reader loses
     # the race is exactly the cost this cache exists to hide.
     app.state.warm_edited = edited_now
+    # And the index, for the same reason and against a sharper edge. `index_now`
+    # takes no lock by design — see the comment above it — so N concurrent
+    # readers arriving on a cold key each build their own index rather than
+    # queueing behind one build. Measured on a fresh server: twenty first
+    # requests all completed within 5 ms of each other AT 10.35 SECONDS, which
+    # is twenty parses serialised by the GIL; the first `GET /` costs 621 ms and
+    # the second 32 ms. The affected minute delivered 355 pages against 431 for
+    # the same load warm — 16% of a minute's throughput spent on the first ten
+    # seconds.
+    #
+    # `--min-instances 0` re-arms this on every idle period, every deploy and
+    # every recycle, so on Cloud Run it is not a first-boot curiosity, it is what
+    # the first person after lunch gets.
+    #
+    # A single-flight guard inside `index_now` would also work and is refused:
+    # it puts a lock on a read path that is deliberately lock-free and whose
+    # comment argues for that. The herd is a cold-start artefact, not a steady
+    # state — once warm there is nothing left to collapse.
+    app.state.warm_index = index_now
 
     def viewer(request: Request) -> User | None:
         """Both names are read, prefixed first.
@@ -1806,6 +1825,21 @@ def create_app(
             "commit": written.commit,
             "conflict": written.conflict,
             "head": commit_before,
+            # Whether the commit reached the remote. `Store` has always set this
+            # honestly and exactly one caller in the application read it — the
+            # co-editing socket's `saved` frame — so every HTTP write answered
+            # 200 with a sha and no way to say the sha is only here.
+            #
+            # It matters because Cloud Run's filesystem is in memory and
+            # `--min-instances 0` tears the instance down after a few quiet
+            # minutes. Measured with the remote made unwritable for 8 s: ten
+            # saves answered 200 with a commit sha, and all ten were on the
+            # instance and on no origin.
+            #
+            # This does not stop the loss. It makes it visible, which is the
+            # difference between somebody copying their text out and somebody
+            # closing the tab.
+            "pushed": written.pushed,
         }
         return JSONResponse(payload, status_code=409 if written.outcome == "conflict" else 200)
 
