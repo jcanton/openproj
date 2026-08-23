@@ -58,7 +58,7 @@ Decisions taken during the import, all of them reversible:
 - **`assigned_on: 2026-05-26`** is not stated in the pitch note. It is the cycle-36 **betting
   table** date, stated verbatim in `OVERVIEW - Cycle 36 05/26` ("**Betting table: 26.05.2026**"),
   which is the meeting at which this project was assigned to Jacopo and Mikael; the note itself was
-  created that same day. Null it if the importer wants only dates typed on the entity itself.
+  created that same day. Null it if the importer wants only dates typed on the record itself.
 - **`prs: []`** — the row's PR cell is empty and the shaping note links a branch and a compare
   view, not PRs. Related PRs found elsewhere are named in prose below but were not promoted into
   the field.
@@ -101,7 +101,7 @@ Both sections were left as empty template comments in the source.
 
 ### Progress (as of the note's last edit, 2026-06-03)
 
-The five open items below were extracted into task entities `task-53a9f0`, `task-5c1d84`, `task-5f062b`,
+The five open items below were extracted into task records `task-53a9f0`, `task-5c1d84`, `task-5f062b`,
 `task-5a4e39`, `task-58d7c6`. They are the note's own coarse-grained task list, not an invention of this
 migration.
 
@@ -129,7 +129,7 @@ Related notes, none of which replace the one above:
 - **Superseded duplicate**: *[ICON4Py] Standalone driver single- vs multi-rank debugging*
   <https://hackmd.io/Ms13BCixSwamn2oMr1O8Ig> — created the same day, same developers, but an empty
   template, and its reference in the cycle-36 overview is defined and never used. Not made a
-  separate entity.
+  separate record.
 - **Explicitly NOT this row**: *[Greenline] Distributed tests in CI*
   <https://hackmd.io/O4Fymu1dTxqTZSC8rdiVVw>. An upstream corpus map proposed it for row 5b, but it
   contains no standalone-driver content (it is about distributed unit tests: PR692, PR1012,
@@ -138,5 +138,5 @@ Related notes, none of which replace the one above:
 
 ## Not created
 
-No parent project entity. Row 5b's group is encoded only by blank rows in the source table; there
+No parent project record. Row 5b's group is encoded only by blank rows in the source table; there
 is no group heading text to name a project after.

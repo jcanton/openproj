@@ -29,6 +29,14 @@ and each says why it is still here.
   browser's caret. One rule against four popups with their own keyboard handling
   and their own tests, for a control with one choice in it.
 
+* **Boxing the id strings in the table.** Offered by jcanton himself as the
+  alternative when the kind chips came out of the id cell, and not taken: a box
+  around all seventeen ids is the same noise wearing a different hat. The id is
+  already monospace, and that is what marks it as a token to be cited; the kind
+  is already the id's prefix, which the data model guarantees agrees with `kind`.
+  Kind stays filterable in the KIND facet, which is where "show me only tasks" is
+  actually asked.
+
 * **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
   jcanton used it: a pitch could not be dropped into a project at all, and taking
   one out looked like nothing happening — the project's outline follows the pitch
@@ -106,6 +114,12 @@ and each says why it is still here.
   `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
   fails on a corpus nobody touched, this is the entry to read.
 
+* **Re-betting as a record of its own.** Deferred 2026-08-16, and the symptom is
+  already visible: a standing item like `[GT4Py] Development work` is bet again
+  every cycle, and because `cycle:` records where the bet was first made and is
+  never re-stamped, it reads as a permanent overrun. The fix is not to re-stamp
+  `cycle:` — that is the one thing `docs/data-model.md` forbids — it is a second
+  record of the later bet.
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
   the library shortlist and the list of what must not be lost are in
@@ -127,7 +141,7 @@ server do not search the same thing:
 The table filters in the browser, so a word that appears in a shaping document
 finds nothing in the UI while the same query through `apply_filters` matches it.
 Searching a PR number has the same hole — and `index.py`'s own comment says
-"'Which entity is #1364?' is a question people ask in front of a screen", which
+"'Which record is #1364?' is a question people ask in front of a screen", which
 is exactly where it does not work.
 
 So: one definition of the searchable text, built once and travelling with the
@@ -155,7 +169,7 @@ result set is worse than one that visibly empties it.
 ## 2. Multi-select in the dropdowns
 
 Exposes what `apply_filters` already does — AND across fields, OR within one. Two
-cycles selected means either, because an entity has one cycle and "both" is empty
+cycles selected means either, because a record has one cycle and "both" is empty
 by construction. For list fields (`tags`, `assignees`, `reviewers`) "both" is
 meaningful and is what the query language above is for; the menus stay OR.
 
@@ -269,7 +283,7 @@ product's status and PRs, and the progress column's units — in `polish4`.
 5. **The legend is not vertically aligned, and the priority swatches are wider
    than the status ones.** Third time this has been reported; whatever is done
    here should be a measurement in a test, not an eye.
-6. **Saving a body leaves the stale text on screen.** Edit the body of an entity,
+6. **Saving a body leaves the stale text on screen.** Edit the body of a record,
    save, the editor closes and the *old* text is shown until a refresh. The save
    itself lands. So the view is rendering from something the save did not update.
 
@@ -298,9 +312,11 @@ To look at it: `git checkout themes && uv run openproj serve --plan <plan>`.
 
 ## What is deliberately not here
 
-A `support` field (reviewers carry it), a `from_note` field on `Entity` (the
+A `support` field (reviewers carry it), a `from_note` field on `Record` (the
 provenance is prose in the shaping document, so a note id never enters the type
 every view is built from), HackMD as a backend (tested and refused: a PATCH
 disconnects every live editor, `lastChangedAt` does not move while somebody
-types, 400 API requests a month), and a fourth entity kind for brainstorming
-(that is what a note is).
+types, 400 API requests a month), a `hackmd:` field or any other link back to
+where a document came from (content moves in and nothing links out, because a
+link to the old system is how two sources of truth survive a migration), and a
+record kind of its own for brainstorming (that is what a note is).

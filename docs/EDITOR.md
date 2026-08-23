@@ -8,8 +8,6 @@ is the search, so that the next person inherits it rather than repeating it —
 `AGENTS.md`'s **Look for it before you write it**, which also says the answer is allowed
 to be no, as long as the no is written down.
 
-The plan that builds this is `docs/superpowers/plans/2026-08-20-editor-plan.md`.
-
 ## What was asked for
 
 A body editor as close to HackMD's as we can get, in this order of importance:
@@ -51,7 +49,7 @@ the abstract. It can only make "who pays, for what they asked for".
 
 ### No library at all — the `<textarea name=body>` that is already in the page
 
-Six of the seven asks land on it. Three views is a class on `article.entity` plus the
+Six of the seven asks land on it. Three views is a class on `article.record` plus the
 `/api/preview` round trip that already exists at `render.py:8482`. The full page is CSS.
 The toolbar is more entries in `FORMATS` (`render.py:7386`) — with a fourth `insert:`
 branch in `applyMark` (`render.py:7402`), which today has exactly three: `fence`,
@@ -383,9 +381,9 @@ written down, before anything is vendored for ask 6.
 
 | ask | delivered by |
 |---|---|
-| 1. three views | a tri-state class on `article.entity`, three mutually exclusive buttons in the existing `bodybar` (`render.py:8261`) on Ctrl+Alt+E/B/V — Ctrl+Option on Mac, never Cmd, because the page already claims Cmd+S and Cmd+B/I/E/2/8/. — plus `?edit`/`?both`/`?view` off the existing hash router. The preview stays the `/api/preview` round trip, debounced ~300 ms with an `AbortController`, an unchanged-text skip and a preserved `#body-preview.scrollTop`. |
+| 1. three views | a tri-state class on `article.record`, three mutually exclusive buttons in the existing `bodybar` (`render.py:8261`) on Ctrl+Alt+E/B/V — Ctrl+Option on Mac, never Cmd, because the page already claims Cmd+S and Cmd+B/I/E/2/8/. — plus `?edit`/`?both`/`?view` off the existing hash router. The preview stays the `/api/preview` round trip, debounced ~300 ms with an `AbortController`, an unchanged-text skip and a preserved `#body-preview.scrollTop`. |
 | 2. toolbar | four `FORMATS` entries: check list `- [ ] ` and strikethrough `~~` drop into the existing prefix/wrap shapes; a table template and a horizontal rule need a fourth `insert:` branch in `applyMark`, ~4 lines. Not link and not image, on the corpus counts the toolbar was sized from. Both new marks need the server one-worders in the same commit, or the buttons emit syntax the committed renderer does not honour. |
-| 3. full page | `article.entity` becomes a viewport-filling grid with two independently scrolling panes, and `#grip`/`--measure` gets an explicit rule so the drag handle does not park at the left edge. |
+| 3. full page | `article.record` becomes a viewport-filling grid with two independently scrolling panes, and `#grip`/`--measure` gets an explicit rule so the drag handle does not park at the left edge. |
 | 4. line numbers | one span per logical line in the mirror that already exists for the seat bands, numbers positioned from `offsetTop`, rAF-coalesced, redrawn on `document.fonts.ready` and resize, with a line-count ceiling above which the gutter turns itself off out loud. `drawSeats` is then repointed at the same mirror, which deletes its per-caret `measure()` loop. |
 | 5. tabs to spaces | a Tab/Shift-Tab branch in the `keydown` handler at `render.py:7476`, through `replaceRange` → `execCommand('insertText')` so native undo survives, with list and blockquote nesting reusing `LIST_ITEM`, and an Escape-armed one-shot Tab pass-through announced rather than silently implemented. Tab width is a **typing** setting, never a "convert this document" command. |
 | 6. vim | **not delivered.** It is the only ask that needs a library. Priced at 594,306 B raw / ~165 KB gz (Ace core + vim, markdown mode dropped), plus a second hand-written Yjs binding, and deferred behind the first open question below. |
@@ -638,7 +636,10 @@ scar of a shipped defect.
 * **The preview is the server's markdown** through `/api/preview` (`render.py:8482`,
   `web.py:1602`). A second markdown implementation in JavaScript would eventually disagree
   with the one whose output gets committed. It also governs PR-reference linking, asset src
-  rewriting and HTML suppression, none of which a JS renderer reproduces.
+  rewriting and HTML suppression, none of which a JS renderer reproduces. It is also **read-only
+  by decision rather than by omission**: ticking a checkbox in the rendered pane would write to the
+  source from a copy of it, which fights compare-and-swap. `- [ ]` lists render as real checkboxes,
+  so a reader can see them and cannot press them.
 * **Degradation is the ordinary case** (`render.py:8636-8654`): `file://`, a proxy that
   drops the upgrade, Cloud Run tearing every socket down at 300 s, and a reader the server
   would refuse. Every path ends at a value, a `base_commit`, Save and a 409. Nothing here
@@ -749,6 +750,14 @@ table handled never reaches the page's own listener: measured in Chrome, Tab doe
 and Escape and Cmd+S do. The guard was written, measured, and removed, and the comment where
 it stood says so — a guard whose condition is never true is one no mutation can catch.
 
+**The three-view chord is Ctrl+Shift+1/2/3, not the Ctrl+Alt+E/B/V the decision table above names.**
+Ctrl+Alt *is* AltGr — Chrome delivers the AltGr key as `ctrlKey` and `altKey` together — and on the
+Swiss-German layout half this team types on, AltGr+E is the euro sign, which the chord swallowed.
+Digits and not letters, because Ctrl+Shift+B is Chrome's bookmarks bar and Ctrl+Shift+V is
+paste-as-plain-text; matched on `event.code`, because shift-1 is `!` on one layout and `+` on
+another. Never Cmd still holds, for the reason it was written. The argument in full is at
+`render.py:12870`.
+
 **What is not built, and is the first thing to add:** the seat bands do not draw on the Ace
 path. `coordsAt` answers over Ace's screen rows and `drawSeats` says out loud that they are
 not drawn rather than clearing the layer in silence, but the band's origin is the box's border
@@ -843,7 +852,7 @@ The guard is `test_every_control_on_every_page_is_drawn_the_same` in `tests/test
 which measures every `button` and `select` in Chrome rather than reading the stylesheet — a
 test that reads a stylesheet can only say a rule exists, and what matters is which controls it
 reaches. Two things had to change for it to see this work at all. The editing surface is
-`.field`s inside `article.entity.editing`, so on a served record nobody is editing it has no
+`.field`s inside `article.record.editing`, so on a served record nobody is editing it has no
 client rects and the sweep skipped all twenty controls; the create page is the same markup with
 the mode already on, and is now the seventh page in the parametrize. And `bare()` — the list of
 controls deliberately drawn with nothing — was a list of NAMES, which is the shape the rule
@@ -855,7 +864,7 @@ still lands in the set that has to match and `button#theme` stops being excused 
 Written down because it came back through a new door after being fixed, which is this
 repository's characteristic failure. Press a view, then end the editing session: the surface
 has to come down with it, or the reader is left inside a fixed, opaque, window-filling article
-whose switcher — the documented way back — is drawn only under `.entity.editing` and goes at
+whose switcher — the documented way back — is drawn only under `.record.editing` and goes at
 the same instant. That was found on Cancel and fixed by writing `showView(null)` at the call
 site. Then the same line was written at the issue page's toggle, and again at the note page's.
 

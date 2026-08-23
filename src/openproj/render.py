@@ -26,7 +26,7 @@ from functools import cache, lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
-from jinja2 import Environment
+from jinja2 import Environment, Template
 from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
 from markdown_it.rules_core import StateCore
@@ -53,7 +53,7 @@ from .model import (
     STATUS_ORDER,
     Config,
     Cycle,
-    Entity,
+    Record,
     Unreadable,
     bet_of,
     checklist,
@@ -201,7 +201,7 @@ _LEFT_PX = 250
 _PLOT_PX = 1100
 # The widest window the plot will draw over. Past the day-width floor below the
 # SVG simply gets wider, so a window reaching the end of the calendar — one
-# `done` entity dated 9999-12-31, or a `?to=` anybody can type — came out as
+# `done` record dated 9999-12-31, or a `?to=` anybody can type — came out as
 # 4.7 million pixels of drawing and 95,686 month ticks, fourteen megabytes that
 # is a hung tab rather than a page. Forty years is longer than any plan this
 # tool will hold and still twenty screens of scrolling at the default scale;
@@ -272,7 +272,7 @@ def _library(name: str) -> Markup:
 
     The three graph libraries used to arrive as `@@name@@` markers substituted
     into the *finished* page, which is a substitution over text that by then held
-    every title, tag and login in the plan — so an entity titled
+    every title, tag and login in the plan — so a record titled
     `@@cytoscape.min.js@@` re-inlined 796 KB into the graph's data block and the
     page loaded with no plan at all. A template variable cannot do that: Jinja
     renders a value, it does not rescan it.
@@ -338,7 +338,7 @@ _ACE_SURFACE = Markup(r"""
 /* Full page and the split view, matched to the rules the box already has: the
    pane gives its height and the editor takes all of it, rather than a `60vh`
    minimum pushing the status bar off the bottom of the screen. */
-article.entity.full .acebox, body.fullpage .acebox { height: 100%; min-height: 0; }
+article.record.full .acebox, body.fullpage .acebox { height: 100%; min-height: 0; }
 </style>
 <script>
 // --- Ace, as the same surface ----------------------------------------------
@@ -394,7 +394,7 @@ function aceSurface(area, seeded) {
   // alone does not reintroduce it. What this line answers is the OTHER door:
   // `Document.insert` re-detects when the document is one line
   // (`getLength() <= 1 && this.$detectNewLine(t)`), so pasting Windows text into
-  // a new entity would set `$autoNewLine` and rejoin the whole document with
+  // a new record would set `$autoNewLine` and rejoin the whole document with
   // CRLF. `test_the_second_surface_holds_one_line_ending_whatever_is_pasted_
   // into_it` is that case and it fails without this.
   document_.setNewLineMode('unix');
@@ -904,8 +904,8 @@ _JSON_ESCAPES = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"})
 def _json(data: object) -> str:
     """JSON for a `<script>` block, with the characters that can end one escaped.
 
-    Every page ships its data inlined, and `json.dumps` leaves `<` alone — so an
-    entity titled `</script>...` closed the block it was sitting in and everything
+    Every page ships its data inlined, and `json.dumps` leaves `<` alone — so a
+    record titled `</script>...` closed the block it was sitting in and everything
     after it became live markup on the page. `\\u003c` is ordinary JSON: the parser
     reads back the same string, and the character never reaches the HTML tokeniser.
 
@@ -1016,10 +1016,10 @@ def _icon_uri() -> str:
     return "data:image/svg+xml," + quote(_ICON, safe="")
 
 
-def _reviewers_under(index: Index, entity_id: str) -> list[str]:
+def _reviewers_under(index: Index, record_id: str) -> list[str]:
     """`model.reviewers_under`, over the index's own child map.
 
-    The map the validator walks is built from entities and skips shelved ones;
+    The map the validator walks is built from records and skips shelved ones;
     this one is `index.children`, which is ids. Two shapes of the same fact, so
     the walk is here and the rule is there — and the rule is the one that decides
     whether anything is wrong, which is why this function only draws.
@@ -1030,10 +1030,10 @@ def _reviewers_under(index: Index, entity_id: str) -> list[str]:
     never comes back.
     """
     found: list[str] = []
-    seen: set[str] = {entity_id}
-    stack = list(index.children.get(entity_id, []))
+    seen: set[str] = {record_id}
+    stack = list(index.children.get(record_id, []))
     while stack:
-        child = index.entities.get(stack.pop())
+        child = index.plan.get(stack.pop())
         if child is None or child.status == "shelved" or child.id in seen:
             continue
         seen.add(child.id)
@@ -1042,23 +1042,23 @@ def _reviewers_under(index: Index, entity_id: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def _row(index: Index, entity_id: str) -> dict:
-    entity = index.entities[entity_id]
-    span = index.spans.get(entity_id)
-    size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
-    counted = index.progress.get(entity_id)
+def _row(index: Index, record_id: str) -> dict:
+    record = index.plan[record_id]
+    span = index.spans.get(record_id)
+    size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
+    counted = index.progress.get(record_id)
     # What this rung does not read is not on its row. The model defaults `status`
-    # to `shaping` and `priority` to `medium` for every entity, so a product —
+    # to `shaping` and `priority` to `medium` for every record, so a product —
     # which has neither — arrived at the table as a shaping, medium-priority
     # record and was drawn with both chips. `unread_fields` is the same list the
     # validator reports from and the editors decline to offer.
-    unread = unread_fields(entity.kind)
+    unread = unread_fields(record.kind)
     def read(name, value):
         return None if name in unread else value
     return {
-        "id": entity.id,
-        "title": entity.title,
-        "kind": entity.kind,
+        "id": record.id,
+        "title": record.title,
+        "kind": record.kind,
         # Not a column — the tree is drawn by the graph and the project facet —
         # and the row needs it anyway, because a row is now something you can
         # drop another one onto. Without it the page cannot tell a move from a
@@ -1073,19 +1073,19 @@ def _row(index: Index, entity_id: str) -> dict:
         # dangling) is nulled here and flagged below, and the flag is a boolean
         # and never the id, because the exclusion sweep forbids an inbox id in
         # these pages' bytes.
-        "parent": entity.parent if entity.parent in index.entities else None,
+        "parent": record.parent if record.parent in index.plan else None,
         # Whether the stored field holds a parent the line above could not
         # carry — `off_plan_deps`' twin, and read the same way: it is what lets
         # the table refuse the move gesture that would overwrite a line it
         # never drew (see `movable`/`moveTip` in the table script).
-        "off_plan_parent": bool(entity.parent) and entity.parent not in index.entities,
-        "status": read("status", entity.status),
-        "owner": read("owner", entity.owner),
-        "assignees": read("assignees", entity.assignees),
-        "reviewers": read("reviewers", entity.reviewers),
-        "review_waived": read("review_waived", entity.review_waived),
-        "priority": read("priority", entity.priority),
-        "cycle": read("cycle", entity.cycle),
+        "off_plan_parent": bool(record.parent) and record.parent not in index.plan,
+        "status": read("status", record.status),
+        "owner": read("owner", record.owner),
+        "assignees": read("assignees", record.assignees),
+        "reviewers": read("reviewers", record.reviewers),
+        "review_waived": read("review_waived", record.review_waived),
+        "priority": read("priority", record.priority),
+        "cycle": read("cycle", record.cycle),
         "size": None if defaulted else size,
         "start": span.start.isoformat() if span else None,
         "end": span.end.isoformat() if span else None,
@@ -1106,21 +1106,21 @@ def _row(index: Index, entity_id: str) -> dict:
         # anybody is waiting on. `depends_on` itself is untouched — the fact that
         # this waited for that is history worth keeping, and it is what the graph
         # draws.
-        # Looked up in `records`, never `entities`: `blocked_by` is total over
+        # Looked up in `records`, never `plan`: `blocked_by` is total over
         # records, so a planned task whose hand-written `depends_on` names an
         # unplanned record keeps that edge — and the plan-only lookup was a
         # KeyError that 500ed /table over one hand-edited file.
         "blocked_by": sum(
             1
-            for blocker in index.blocked_by[entity_id]
+            for blocker in index.blocked_by[record_id]
             if index.records[blocker].status not in ("done", "shelved")
         ),
         # Two keys for one fact: the ratio is what a column sorts by, the text is
         # what it prints. Sorting on "7/12" as a string puts 10/12 before 7/12.
         "progress": round(counted.fraction, 4) if counted else None,
         "progress_text": counted.text if counted else "",
-        "prs": read("prs", entity.prs),
-        "tags": entity.tags,
+        "prs": read("prs", record.prs),
+        "tags": record.tags,
         # Who reviews the work filed under this record, when it names nobody
         # itself. A pitch with reviewed tasks under it IS reviewed — the rule in
         # `model.py` says so and stops asking — and this is the same fact drawn
@@ -1129,8 +1129,8 @@ def _row(index: Index, entity_id: str) -> dict:
         # merging the two would make opening the editor an accidental way to
         # write somebody else's name into this record.
         "reviewers_from": (
-            _reviewers_under(index, entity_id)
-            if not entity.reviewers and "reviewers" not in unread
+            _reviewers_under(index, record_id)
+            if not record.reviewers and "reviewers" not in unread
             # A container reads no reviewers, its own or anybody's: a product row
             # was drawing "the people who review the work under this" in a column
             # it has no stake in, which reads as a field it holds.
@@ -1141,14 +1141,14 @@ def _row(index: Index, entity_id: str) -> dict:
         # set demands them, and a row has to be able to answer whether it already
         # holds one — `size` is the appetite *or the default*, so it cannot
         # answer for `person_weeks`, and the other two are on no row at all.
-        "assigned_on": entity.assigned_on.isoformat() if entity.assigned_on else None,
-        "person_weeks": getattr(entity, "person_weeks", None),
-        "shaped_by": getattr(entity, "shaped_by", None) or [],
+        "assigned_on": record.assigned_on.isoformat() if record.assigned_on else None,
+        "person_weeks": getattr(record, "person_weeks", None),
+        "shaped_by": getattr(record, "shaped_by", None) or [],
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
-        "project": _project_of(entity, index.entities),
-        "product": _product_of(entity, index.entities),
-        "predicates": predicates_of(index, entity_id),
+        "project": _project_of(record, index.plan),
+        "product": _product_of(record, index.plan),
+        "predicates": predicates_of(index, record_id),
         # What the box searches, built once by `searchable` (`index.py`) and
         # carried rather than rebuilt: the browser used to search
         # `row.title + ' ' + row.tags` while the server searched four fields and
@@ -1156,7 +1156,7 @@ def _row(index: Index, entity_id: str) -> dict:
         # depending on whether it arrived in a link or through the keyboard.
         # `search` is the key the people rows already use for exactly this,
         # which is why it is spelled that way here.
-        "search": index.search_blob[entity_id],
+        "search": index.search_blob[record_id],
     }
 
 
@@ -1212,7 +1212,7 @@ def _columns_for(index: Index) -> tuple[tuple[str, bool], ...]:
 
 def _payload(index: Index) -> dict:
     return {
-        "rows": {i: _row(index, i) for i in index.entities},
+        "rows": {i: _row(index, i) for i in index.plan},
         # No `facets` and no `predicates`: the control bar is server-rendered from
         # `index.facets` and the script reads its own `<select>`s, so both keys
         # were the whole facet index inlined into every table page and read by
@@ -1227,7 +1227,7 @@ def _payload(index: Index) -> dict:
         # a problem on an issue has no row here to hang on, and an inbox id in a
         # plan page's payload is the leak the exclusion sweep exists to catch.
         "problems": [
-            p.model_dump() for p in index.problems if p.entity_id in index.entities
+            p.model_dump() for p in index.problems if p.record_id in index.plan
         ],
         # One list of what a person may change, shared with the detail page. Two
         # lists drift the first time a field is added, and silently.
@@ -1267,7 +1267,7 @@ def _payload(index: Index) -> dict:
         # between a rule and a 422.
         "parent_kinds": {kind: list(kinds) for kind, kinds in PARENT_KINDS.items()},
         # The same templates `/new` offers — one per planned kind, plus blank.
-        # An entity created from the table is the same document as one created
+        # A record created from the table is the same document as one created
         # from the form — a plan where a pitch has a shaping template only if
         # you happened to make it on the other page is a plan with two kinds of
         # pitch in it.
@@ -1282,16 +1282,16 @@ def _payload(index: Index) -> dict:
 
 def _elements(index: Index) -> list[dict]:
     elements: list[dict] = []
-    for entity_id, entity in index.entities.items():
+    for record_id, record in index.plan.items():
         # The same row the table filters on, not a graph-shaped subset of it. The
         # facet bar is one control bar over one `matches()`, and a node carrying
         # only what cytoscape draws is how a dropdown ends up filtering the table
         # and quietly doing nothing here.
-        data = _row(index, entity_id) | {
+        data = _row(index, record_id) | {
             # The title alone, under the key cytoscape draws. The id is on every
             # other page and in the URL the node opens; on a box 150px wide it
             # cost a line of the only text anybody reads the graph for.
-            "label": entity.title,
+            "label": record.title,
             # Carried so a new edge is added to what is there rather than replacing
             # it: a PATCH sends the whole field, and depends_on is a list.
             #
@@ -1302,7 +1302,7 @@ def _elements(index: Index) -> list[dict]:
             # drops an edge to an id no record has, and an edge the plan cannot
             # draw is the same case; the record page is where the full field is
             # read and edited.
-            "depends_on": [b for b in index.blocked_by[entity_id] if b in index.entities],
+            "depends_on": [b for b in index.blocked_by[record_id] if b in index.plan],
             # Whether the stored field holds MORE than the list above — a
             # hand-written dependency on a record this page cannot draw. A
             # boolean and never the ids (the exclusion sweep forbids an inbox
@@ -1310,7 +1310,7 @@ def _elements(index: Index) -> list[dict]:
             # edge edit that would rebuild `depends_on` from the filtered list
             # and silently delete somebody's line.
             "off_plan_deps": any(
-                b not in index.entities for b in index.blocked_by[entity_id]
+                b not in index.plan for b in index.blocked_by[record_id]
             ),
         }
         # No parent guard of its own: `_row` already resolves `parent` against
@@ -1318,11 +1318,11 @@ def _elements(index: Index) -> list[dict]:
         # rule here is the drift this file keeps paying for. Cytoscape treats a
         # null parent as a top-level node.
         elements.append({"data": data})
-    for entity_id in index.entities:
-        for blocker in index.blocked_by[entity_id]:
-            if blocker in index.entities:
+    for record_id in index.plan:
+        for blocker in index.blocked_by[record_id]:
+            if blocker in index.plan:
                 elements.append(
-                    {"data": {"source": blocker, "target": entity_id, "kind": "depends"}}
+                    {"data": {"source": blocker, "target": record_id, "kind": "depends"}}
                 )
     return elements
 
@@ -1341,30 +1341,30 @@ def _containment_rows(index: Index, drawn: set[str]) -> list[tuple[str, int]]:
     and a task that jumps to the left margin when you narrow the dates reads as a
     task that changed parents.
     """
-    kids: dict[str, list[str]] = {i: [] for i in index.entities}
+    kids: dict[str, list[str]] = {i: [] for i in index.plan}
     roots: list[str] = []
-    for entity_id, entity in index.entities.items():
-        # `parent not in entities` covers both a root and an orphan pointing at an
+    for record_id, record in index.plan.items():
+        # `parent not in plan` covers both a root and an orphan pointing at an
         # id that no longer exists. Dropping the orphan would lose a real bar.
-        if entity.parent in index.entities:
-            kids[entity.parent].append(entity_id)
+        if record.parent in index.plan:
+            kids[record.parent].append(record_id)
         else:
-            roots.append(entity_id)
+            roots.append(record_id)
 
     when: dict[str, date] = {}
 
-    def earliest(entity_id: str, seen: frozenset[str]) -> date:
+    def earliest(record_id: str, seen: frozenset[str]) -> date:
         """When a subtree starts, so a parent sorts with the work inside it."""
-        if entity_id in when:
-            return when[entity_id]
-        if entity_id in seen:               # a parent cycle in the files, not a tree
+        if record_id in when:
+            return when[record_id]
+        if record_id in seen:               # a parent cycle in the files, not a tree
             return date.max
-        seen = seen | {entity_id}
-        span = index.spans.get(entity_id)
-        best = span.start if span and entity_id in drawn else date.max
-        for kid in kids[entity_id]:
+        seen = seen | {record_id}
+        span = index.spans.get(record_id)
+        best = span.start if span and record_id in drawn else date.max
+        for kid in kids[record_id]:
             best = min(best, earliest(kid, seen))
-        when[entity_id] = best
+        when[record_id] = best
         return best
 
     def ordered(ids: list[str]) -> list[str]:
@@ -1372,22 +1372,22 @@ def _containment_rows(index: Index, drawn: set[str]) -> list[tuple[str, int]]:
 
     rows: list[tuple[str, int]] = []
 
-    def walk(entity_id: str, depth: int) -> None:
-        if entity_id in drawn:
-            rows.append((entity_id, depth))
-        for kid in ordered(kids[entity_id]):
+    def walk(record_id: str, depth: int) -> None:
+        if record_id in drawn:
+            rows.append((record_id, depth))
+        for kid in ordered(kids[record_id]):
             # A rung the scheduler never sees indents nothing. The rule above —
             # depth through the whole chain — is about a parent whose span fell
             # outside the *window*, which is a bar that exists and is not drawn
             # today. A product has no span ever, so counting it would push every
             # project inside one a level right against every project outside one,
             # to mark a row that is never on this page.
-            held = index.entities.get(entity_id)
+            held = index.plan.get(record_id)
             deeper = held is None or RUNG[held.kind].schedules
             walk(kid, depth + (1 if deeper else 0))
 
-    for entity_id in ordered(roots):
-        walk(entity_id, 0)
+    for record_id in ordered(roots):
+        walk(record_id, 0)
     # Anything the walk could not reach is in a parent cycle. It still has a span
     # and still belongs on the chart; a row silently missing from a plan is worse
     # than a row drawn at the margin.
@@ -1409,18 +1409,18 @@ def _timeline(
     A bar reaching past the window is clipped to it rather than dropped — a row that
     disappears when you narrow the dates reads as work that went away.
     """
-    total = len(index.entities)
+    total = len(index.plan)
     drawn = {i: s for i, s in index.spans.items() if not s.unscheduled}
     if not drawn:
         # An empty plot and a plot that failed are the same picture, and which one
         # it is decides what to do next. Nothing here is about the filters, so
         # neither copy offers to clear them.
         blank = (
-            {"headline": "This plan has no entities yet.",
+            {"headline": "This plan has no records yet.",
              "detail": "Nothing has been pitched, shaped or scheduled."}
             if not total
             else {"headline": "Nothing in this plan has dates.",
-                  "detail": "Every entity is done, shelved, or waiting on something "
+                  "detail": "Every record is done, shelved, or waiting on something "
                             "that has not been scheduled."}
         )
         return {
@@ -1464,10 +1464,10 @@ def _timeline(
 
     config = Config(default_task_effort=index.default_task_effort)
     bars, rows = [], {}
-    for row, (entity_id, depth) in enumerate(_containment_rows(index, set(drawn))):
-        span = drawn[entity_id]
+    for row, (record_id, depth) in enumerate(_containment_rows(index, set(drawn))):
+        span = drawn[record_id]
         visible_start, visible_end = max(span.start, origin), min(span.end, last)
-        entity = index.entities[entity_id]
+        record = index.plan[record_id]
         # Hatched, not outlined: the outline says "overruns its cycle", and one
         # channel carrying three different facts is a channel that says none of
         # them. A guess and a commitment have to be told apart at a glance. The
@@ -1481,25 +1481,25 @@ def _timeline(
             max(_MIN_BAR_PX, day_px, x(visible_end, 1) - x(visible_start)),
             1,
         )
-        explanation = index.explanations.get(entity_id)
+        explanation = index.explanations.get(record_id)
         why = explanation.text if explanation else "Starts as soon as it can."
         # Everything the drawing says, in words, for the list beside the plot.
         # A fill, a width, a hatch and an outline are four channels a screen
-        # reader has none of, and the dates are the entity's own rather than the
+        # reader has none of, and the dates are the record's own rather than the
         # clipped ones: a window narrower than the plan does not move a deadline.
         notes = [_MARK_WORDS[name] for name in marks]
         if span.overruns_cycle_weeks:
             notes.append("overruns its cycle")
         bars.append(
             {
-                "id": entity_id,
-                "label": _clip(entity.title),
-                "full": f"{entity.title} ({entity_id})",
+                "id": record_id,
+                "label": _clip(record.title),
+                "full": f"{record.title} ({record_id})",
                 "reads": " ".join(
                     part
                     for part in (
-                        f"{entity.title} ({entity_id}).",
-                        f"{_human(entity.status)}.",
+                        f"{record.title} ({record_id}).",
+                        f"{_human(record.status)}.",
                         f"{span.start} to {span.end}.",
                         f"{', '.join(notes).capitalize()}." if notes else "",
                         why,
@@ -1513,18 +1513,18 @@ def _timeline(
                 "x": x(visible_start),
                 "y": row * _ROW_PX + _HEADER_PX + _BAR_TOP,
                 "width": width,
-                "colour": _status_class(entity.status),
+                "colour": _status_class(record.status),
                 # The channel that is not colour. Five fills on a luminance ladder
                 # are separable; they are not nameable, and nothing on a bar says
                 # the word. Empty on a bar too narrow to hold the mark inside it.
-                "glyph": STATUS_GLYPH.get(entity.status, "") if width >= _GLYPH_MIN_PX else "",
+                "glyph": STATUS_GLYPH.get(record.status, "") if width >= _GLYPH_MIN_PX else "",
             }
         )
-        size, _ = size_weeks(entity, config)
+        size, _ = size_weeks(record, config)
         # The table's own row, so the shared `matches()` reads the same fields on
         # this page as on the other two, plus the two things only a bar wants to
         # say: what it is holding, and why it starts when it does.
-        rows[entity_id] = _row(index, entity_id) | {"weeks": round(size, 2), "tip": why}
+        rows[record_id] = _row(index, record_id) | {"weeks": round(size, 2), "tip": why}
     cycles = []
     config = Config(cooldown_weeks=index.cooldown_weeks, plans=index.plans)
     for number, (opens, closes) in sorted(index.cycles.items()):
@@ -1578,11 +1578,11 @@ def _timeline(
         # undo; with none, the dates are what is wrong and clearing a filter would
         # not bring a single one back.
         "blank": {
-            "headline": "No entity matches these filters.",
+            "headline": "No record matches these filters.",
             "detail": "Every bar is filtered out by the controls above.",
         } if bars else {
             "headline": "Nothing is scheduled in this window.",
-            "detail": "Every dated entity in this plan falls outside it.",
+            "detail": "Every dated record in this plan falls outside it.",
         },
     }
 
@@ -1595,7 +1595,7 @@ def _month_ticks(origin: date, last: date, x) -> list[dict]:
 
     December 9999 has no month after it, and building one raised ValueError —
     twelve lines after the `x()` helper that was fixed for this exact failure.
-    `assigned_on: 9999-12-31` on a done entity, typed into the detail page,
+    `assigned_on: 9999-12-31` on a done record, typed into the detail page,
     committed and then answered 500 on `/timeline` for good, with `openproj
     check` reporting nothing wrong and `openproj render` writing no files at
     all, so neither tool you would reach for could tell you why. The walk stops
@@ -1633,12 +1633,15 @@ class Links(BaseModel):
     graph: str = "graph.html"
     timeline: str = "timeline.html"
     people: str = "people.html"
-    entity: str = "detail.html#"  # prefix, then the entity id
+    # One record's page: prefix, then the id. One `s` from `records` above,
+    # which is the list of every record — read the trailing letter before
+    # trusting a grep hit on either.
+    record: str = "detail.html#"
     new: str = ""  # only the server can create; a rendered file has nowhere to post
     cycles: str = "cycles.html"
     cycle: str = "cycles.html#"  # prefix, then the cycle number
     asset: str = "assets/"  # a rendered file sits beside the assets it names
-    # Prefix, then the entity id: where the hover card asks for a shaping
+    # Prefix, then the record id: where the hover card asks for a shaping
     # document. Empty in the static export, where there is no server to ask — the
     # card draws what the row already carries and the title stays what it always
     # was, a link into `detail.html#id` where the whole document is. Same shape as
@@ -1681,7 +1684,7 @@ STATIC = Links()
 ROUTES = Links(
     records="/", issues="/issues", notes="/notes",
     table="/table", detail="/detail", graph="/graph", timeline="/timeline",
-    entity="/detail/", new="/new", people="/people",
+    record="/detail/", new="/new", people="/people",
     cycles="/cycles", cycle="/cycle/",
     asset="/assets/", deck="/deck/", body="/api/body/",
 )
@@ -1711,7 +1714,7 @@ def _pr_link(ref: str) -> Markup:
 
     `Markup(...).format` and not an f-string. Called from `_after_markdown` the
     reference has already been through the markdown escaper and is harmless;
-    called from the facts list it is `entity.prs`, which is free text a member
+    called from the facts list it is `record.prs`, which is free text a member
     types and nothing validates, and an f-string put it straight into an `href`
     and a link text. That is the whole of the difference between a decorative
     field and a script that runs for everybody who opens the page.
@@ -1944,9 +1947,9 @@ def _drop_repeated_title(body: str, title: str) -> str:
     return body[match.end() :].lstrip("\n") if same else body
 
 
-def _body_html(entity: Entity, links: Links = STATIC) -> Markup:
+def _body_html(record: Record, links: Links = STATIC) -> Markup:
     return _markdown(
-        without_comments(_drop_repeated_title(entity.body, entity.title)), links
+        without_comments(_drop_repeated_title(record.body, record.title)), links
     )
 
 
@@ -1986,6 +1989,34 @@ _ENV = Environment(autoescape=True)
 _ENV.filters["tojson"] = _script_json
 
 
+@cache
+def _compiled(source: str) -> Template:
+    """This template, lexed, parsed and compiled to Python exactly once.
+
+    `Environment.from_string` compiles every time it is called — Jinja's own
+    cache hangs off a loader and `get_template`, and there is no loader here
+    because the templates are string constants in this module. So the fourteen
+    of them were being recompiled per call, and the calls are per record: the
+    hill is a fragment, the promote menu is a fragment, and a plan with 479
+    records rendered its pages through 6,739 separate `compile()` calls.
+    Measured on that corpus, one export took 43.6 seconds and 21 of them were
+    inside `jinja2.visitor`; with this cache it takes 0.74. The frozen golden
+    corpus went 0.66s to 0.026s, and one served `/detail` 60ms to 5ms.
+
+    Keyed on the source rather than on a name because that is what the call
+    sites have, and it costs nothing: the keys are the module constants
+    themselves, already resident, and there are fourteen distinct ones. Nothing
+    here builds a template string at run time, so the cache cannot grow.
+
+    A compiled `Template` is stateless and re-renderable by design, and filters
+    are resolved against the environment at render time rather than baked in at
+    compile time — so `_ENV.filters["tojson"]` above still applies. Checked
+    rather than assumed: every page of both corpora, static and served, is
+    byte-identical with the cache and without it.
+    """
+    return _ENV.from_string(source)
+
+
 def _fragment(template: str, **values: object) -> Markup:
     """One rendered piece of a page, typed as the markup it is.
 
@@ -1997,7 +2028,7 @@ def _fragment(template: str, **values: object) -> Markup:
     that is markup renders and a value that is not gets escaped — which is the
     same rule for every page, enforced by the type rather than by remembering.
     """
-    return Markup(_ENV.from_string(template).render(**values))
+    return Markup(_compiled(template).render(**values))
 
 
 _SHELL = """<!doctype html>
@@ -2437,7 +2468,7 @@ h1 { font-size: 1.35rem; margin: .2rem 0 .6rem; }
    this must not undo.
 
    A heading that names what you are looking at rather than which route you are on
-   is not clipped and is not here: an entity's own title, a cycle's number, the
+   is not clipped and is not here: a record's own title, a cycle's number, the
    listing of the whole plan, and the create form, whose nav item does not exist
    and whose heading is therefore the only thing on it that says what it makes.
 
@@ -2697,7 +2728,7 @@ li.task-list-item input { margin-right: .35em; }
    hid, and that note drew two hills at once, one under the other. What an element
    is FOR is not the same question as whether anything on it can be pressed. */
 .hill-control { display: none; }
-.entity.editing .hill-control { display: block; }
+.record.editing .hill-control { display: block; }
 /* A drawing has no text in it and so no baseline of its own, and the record
    pages' facts list aligns its rows on one (`#facts { align-items: baseline }`).
    The label for a hill was therefore hung off the BOTTOM of the picture, a
@@ -3108,7 +3139,7 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
            margin: .4rem 0 1rem; }
 /* A link that is a control. The only rule was `.tl-controls .button`, scoped to
    the timeline's filter bar, so the table's create link — the one way to bring
-   an entity into existence from the UI — rendered as underlined blue text.
+   a record into existence from the UI — rendered as underlined blue text.
    `:visited` as well as the base state, because the shell colours every visited
    link with `a:visited`, which is (0,1,1) and would beat a bare `.button`: the
    button turned back into a link the moment somebody had used it once. Written
@@ -3116,7 +3147,7 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    are supposed to. */
 /* ONE LOOK FOR EVERY CONTROL, and this is the only place it is written.
    jcanton, 2026-08-20: "buttons do not have consistent aesthetic: clear filters,
-   the timeline zoom dropdown, the issues state dropdown, notes state, edit entity
+   the timeline zoom dropdown, the issues state dropdown, notes state, edit record
    are all grey and different from the newer buttons".
 
    They were grey because they were native — a `<button>` and a `<select>` with no
@@ -3290,7 +3321,7 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    a file that is not a record is the most blocking thing this repository can
    hold, and it should read as the same kind of thing as the mark on a row that
    is missing a required field — the same vocabulary, one level up, about the
-   plan instead of about an entity. */
+   plan instead of about a record. */
 .unreadable { border-left: 3px solid var(--sev-blocker); background: var(--sev-blocker-soft);
               padding: .6rem .8rem; margin: 0 0 1rem; font-size: 13px; }
 .unreadable .headline { margin: 0 0 .35rem; font-weight: 600; color: var(--fg); }
@@ -3537,7 +3568,7 @@ const HILL = JSON.parse(document.getElementById('hill')?.textContent || 'null');
 // pointer moves.
 function hillHtml(status) {
   if (!HILL) return '';
-  const ladder = HILL.ladders.entity;
+  const ladder = HILL.ladders.record;
   const place = word => `left: ${100 * HILL.stops[word][0] / HILL.box[0]}%; `
     + `top: ${100 * HILL.stops[word][1] / HILL.box[1]}%; `
     + `--nx: ${HILL.normals[word][0]}; --ny: ${HILL.normals[word][1]}`;
@@ -4138,7 +4169,7 @@ let movedShowing = null;
 function showMoved({commit, changed}) {
   if (movedOurs.has(commit)) return;
   movedShowing = commit;
-  // What this page is looking at. A page showing one entity has it in its URL;
+  // What this page is looking at. A page showing one record has it in its URL;
   // the table shows all of them and has nothing in its URL, so it says so — and
   // said nothing, every write anywhere read as unrelated to what was on screen.
   const here = location.pathname.split('/').pop();
@@ -4515,7 +4546,7 @@ function syncFilters() {
 
 // Whether anything is set at all, asked of the query string rather than of the
 // controls: the query string is the state, and the people page's `role` is a
-// field the entity list below has never heard of.
+// field the record list below has never heard of.
 function showTheWayOut() {
   const out = document.getElementById('unfilter');
   if (!out) return;
@@ -4593,8 +4624,8 @@ function chooseValue(field, value, wanted) {
 }
 
 function clearFilters() {
-  // Every control the page actually draws, and not only the entity fields above:
-  // the people page filters by role, which is not a field of an entity, and a
+  // Every control the page actually draws, and not only the record fields above:
+  // the people page filters by role, which is not a field of a record, and a
   // Clear that left it set is a Clear that did not clear.
   const onPage = [...document.querySelectorAll('.facet[data-field]')]
     .map(facet => facet.dataset.field);
@@ -4693,13 +4724,13 @@ _TABLE = """
      drag a row by the grip beside its id onto another to file it there</span>
    {% endif %}<span id="state" role="status"></span><span id="summary">
   {#- Two numbers, because the count is of problems and the link filters
-      entities: "3 blocking problems" opening a table of 2 rows is the exact way
+      records: "3 blocking problems" opening a table of 2 rows is the exact way
       a count stops being believed. The second number is the one the link keeps
       its promise about. -#}
   <a id="blockers" href="?predicate=has_blocker"><strong id="blocker-count">{{ blockers
     }}</strong> <span id="blocker-word">blocking problem{{
     "" if blockers == 1 else "s" }}{% if blockers %} on {{ blocked }} {{
-    "entity" if blocked == 1 else "entities" }}{% endif %}</span></a> ·
+    "record" if blocked == 1 else "records" }}{% endif %}</span></a> ·
   {# Both numbers are written by the script as well as rendered here. The second
      used to be the template's alone, which was true until the page could add a
      row to the plan without reloading: creating one read "18 of 17 shown", and a
@@ -4785,10 +4816,10 @@ const keys = {{ columns|map(attribute=0)|list|tojson }};
 const MARK_COLUMN = {person_weeks: 'size', depends_on: 'blocked_by'};
 const SEV_CLASS = {blocker: 'blocker', warning: 'warn'};
 
-let MARKS = {};     // entity id -> column -> {severity, messages}
-let TROUBLE = {};   // entity id -> the worst severity found on it
+let MARKS = {};     // record id -> column -> {severity, messages}
+let TROUBLE = {};   // record id -> the worst severity found on it
 let BLOCKERS = 0;   // blocking problems
-let BLOCKED = 0;    // entities carrying at least one of them — what the link opens
+let BLOCKED = 0;    // records carrying at least one of them — what the link opens
 
 // The problems arrive flat, exactly as the validator produced them, and are
 // grouped here rather than on the server: /api/index.json hands back the same
@@ -4799,7 +4830,7 @@ function regroup(problems) {
   TROUBLE = {};
   BLOCKERS = problems.filter(problem => problem.severity === 'blocker').length;
   for (const problem of problems) {
-    const id = problem.entity_id;
+    const id = problem.record_id;
     if (problem.severity === 'blocker' || !TROUBLE[id]) TROUBLE[id] = problem.severity;
     const column = MARK_COLUMN[problem.field]
       || (keys.includes(problem.field) ? problem.field : 'id');
@@ -4829,12 +4860,12 @@ function summarise() {
   // How many rows there are to be shown *of*. It moves when a row is created
   // here, which is the only thing that changes it without a reload.
   document.getElementById('total').textContent = Object.keys(DATA.rows).length;
-  // The count is of problems and the link filters entities. One entity can hold
+  // The count is of problems and the link filters records. One record can hold
   // three of them, so the population the link opens is named as well — a count
   // that opens a table of a different size is a count nobody trusts again.
   document.getElementById('blocker-word').textContent = BLOCKERS
     ? `blocking problem${BLOCKERS === 1 ? '' : 's'} on ${BLOCKED} ` +
-      `${BLOCKED === 1 ? 'entity' : 'entities'}`
+      `${BLOCKED === 1 ? 'record' : 'records'}`
     : 'blocking problems';
   // Danger at zero is danger nobody reads. A plan with nothing wrong with it was
   // shouting in the same colour as one that is on fire.
@@ -4963,7 +4994,7 @@ function shown(row, key) {
   // The title is the way into the shaping doc; the id is the way to cite it.
   // A cell can be a link and still be editable. Making everything editable first
   // is what silently turned the PR column into plain text.
-  if (key === 'title') return `<a href="{{ links.entity }}${esc(row.id)}">${esc(row.title)}</a>`;
+  if (key === 'title') return `<a href="{{ links.record }}${esc(row.id)}">${esc(row.title)}</a>`;
   if (key === 'prs') return clamped((value || []).map(prLink), 'pull request', 'pull requests');
   // No kind chip here. `pitch-0c0001` already says pitch, in a prefix the model
   // guarantees agrees with the kind, so the chip was restating the first word of
@@ -5211,11 +5242,11 @@ function cell(row, key, place) {
   // a gesture half the room does not have.
   const reachable = EDITABLE && (editable || key in WHY || key === 'id');
   // `row.id` is escaped like anything else here. An id that fails its pattern is
-  // a *reported* blocker and not a refusal, so the entity still loads and still
+  // a *reported* blocker and not a refusal, so the record still loads and still
   // draws a row: one shaped `task-000001"><img src=x onerror=…>` put ten
   // elements into the table body while the text beside them read correctly.
   return `<td data-col="${key}"` +
-    `${editable ? ` data-entity="${esc(row.id)}" data-field="${key}"` : ''}` +
+    `${editable ? ` data-record="${esc(row.id)}" data-field="${key}"` : ''}` +
     `${!editable && key in WHY ? ` data-why="${esc(WHY[key])}"` : ''}` +
     `${rungs ? ` data-rungs="${esc(rungs)}"` : ''}` +
     `${reachable ? ' tabindex="-1"' : ''}` +
@@ -5262,7 +5293,7 @@ function rowHtml(place) {
 // row over nothing, which reads as a broken app whichever one it is. Which one
 // it is decides what to do next, so the table says which one it is.
 function emptyRow() {
-  let headline = 'No entity matches these filters.';
+  let headline = 'No record matches these filters.';
   let detail = 'Every row is filtered out by the controls above.';
   let clearable = true;
   if (!LOADED) {
@@ -5270,7 +5301,7 @@ function emptyRow() {
     detail = 'This page arrived without its data, so there is nothing to filter or sort.';
     clearable = false;
   } else if (!Object.keys(DATA.rows).length) {
-    headline = 'This plan has no entities yet.';
+    headline = 'This plan has no records yet.';
     detail = 'Nothing has been pitched, shaped or scheduled.';
     clearable = false;
   } else if (queryError()) {
@@ -5306,7 +5337,7 @@ const TREE_DEPTH = 3;
 
 // Every ancestor of every match, whether or not it matched.
 //
-// An entity that is not an answer to what was asked but *holds* one stays on the
+// A record that is not an answer to what was asked but *holds* one stays on the
 // table, dimmed: filtering to `owner=ann` and getting three tasks with no pitch
 // over them is a list of tasks, not a plan, and the row that says which pitch
 // they are part of is the one a person is about to want. It is a record like any
@@ -5669,7 +5700,7 @@ async function saveCell(cell, value, extra) {
   // write. Asked once — `extra` is what came back from asking, and a second pass
   // through here with it must not ask again.
   if (field === 'status' && !extra) {
-    const wanted = missingFor(DATA.rows[cell.dataset.entity] || {}, coerced);
+    const wanted = missingFor(DATA.rows[cell.dataset.record] || {}, coerced);
     if (wanted.length) { askFor(cell, value, wanted); return; }
   }
   let sending;
@@ -5694,7 +5725,7 @@ async function saveCell(cell, value, extra) {
     // is a *reported* blocker and not a refusal, so an id with a `#` or a `?` in
     // it does reach the page — and raw in a path, the first one truncates it, so
     // the save somebody pressed on one record addresses something else entirely.
-    const response = await fetch(`/api/entity/${encodeURIComponent(cell.dataset.entity)}`, {
+    const response = await fetch(`/api/record/${encodeURIComponent(cell.dataset.record)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: BASE.value, fields: sending, body: null}),
     });
@@ -5712,7 +5743,7 @@ async function saveCell(cell, value, extra) {
     // the commit it just made.
     committed = answer.commit;
     BASE.value = answer.commit;
-    Object.assign(DATA.rows[cell.dataset.entity], sending);
+    Object.assign(DATA.rows[cell.dataset.record], sending);
     // A date the schedule is derived FROM has moved, so every date derived from
     // it on this row is now wrong on screen — and `start` and `end` are two
     // columns away from the one that was edited. Re-read rather than recomputed:
@@ -5770,12 +5801,12 @@ function openEditor(cell) {
   rove(cell);
   const field = cell.dataset.field;
   // The record this cell is part of, or the one that does not exist yet: a cell
-  // with no `data-entity` is a cell of the row being typed, and there is exactly
+  // with no `data-record` is a cell of the row being typed, and there is exactly
   // one of those. One editor for both, because a second one is a second set of
   // rules about what a list separator is and which values get selected on open —
   // and the create form is already proof that a differently-shaped way to write
   // the same fields is how a tool comes to feel like two tools.
-  const was = stored(cell.dataset.entity ? DATA.rows[cell.dataset.entity] : DRAFT.fields, field);
+  const was = stored(cell.dataset.record ? DATA.rows[cell.dataset.record] : DRAFT.fields, field);
   const suggest = SUGGESTS[field];
   const closed = CHOICES[EDITABLE[field]];
   // The name the editor answers to. The cell it replaces carries its column in
@@ -5819,7 +5850,7 @@ function openEditor(cell) {
     // created yet, which is a change to a variable and not to the repository.
     // Same editor, same key handling, one branch at the end of it.
     if (abandoned || input.value === was) draw();
-    else if (cell.dataset.entity) saveCell(cell, input.value);
+    else if (cell.dataset.record) saveCell(cell, input.value);
     else stage(field, input.value);
   };
   input.onkeydown = e => {
@@ -5876,7 +5907,7 @@ const MARK = {{ marks|tojson }};
 // rows can confuse the draft with a record.
 const DRAFT_ID = '+';
 
-// The row that is not an entity yet: null while there is none, otherwise the
+// The row that is not a record yet: null while there is none, otherwise the
 // kind (null until it is chosen), what has been typed so far, and whatever the
 // last refusal said.
 //
@@ -6158,7 +6189,7 @@ async function createDraft() {
   const fields = {kind: DRAFT.kind, ...DRAFT.fields};
   // A title, at minimum. The server refuses a titleless record too, but it
   // refuses it as YAML that will not read back — and the reason a row needs one
-  // is not about YAML: an entity with no title is a row nobody can find again,
+  // is not about YAML: a record with no title is a row nobody can find again,
   // in a table whose first column is a mint-fresh id nobody has seen before.
   // Everything else the status demands is left to `validate_all`, which is the
   // only thing that knows the rules and which of them this record is old enough
@@ -6175,11 +6206,11 @@ async function createDraft() {
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
-    const response = await fetch('/api/entity', {
+    const response = await fetch('/api/record', {
       method: 'POST', headers: {'content-type': 'application/json'},
       // One way in, and it is the one the create form uses: the id, the path and
       // every rule about what a new record must carry are the server's, and two
-      // ways to create an entity is two sets of rules that disagree by Thursday.
+      // ways to create a record is two sets of rules that disagree by Thursday.
       // The body is the kind's own template — the same map `/new` offers — so a
       // pitch made here is the same document as a pitch made there.
       body: JSON.stringify({base_commit: BASE.value, fields,
@@ -6388,7 +6419,7 @@ async function reparent(childId, parentId) {
                     : `taking ${childId} out…`);
   let committed = null;
   try {
-    const response = await fetch(`/api/entity/${encodeURIComponent(childId)}`, {
+    const response = await fetch(`/api/record/${encodeURIComponent(childId)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: BASE.value, fields: {parent: parentId}, body: null}),
     });
@@ -6445,7 +6476,7 @@ async function reparent(childId, parentId) {
 
 // The plan as it is now, in the shape this page was built from.
 //
-// `/api/table.json` and not `/api/index.json`: the second answers with entities
+// `/api/table.json` and not `/api/index.json`: the second answers with the plan
 // and spans, and turning those into rows means writing `_row` a second time in
 // JavaScript — a progress fraction counted out of a body, a blocker count, a
 // project walked up the tree. The route hands back the very payload the page was
@@ -6685,7 +6716,7 @@ document.getElementById('blockers').addEventListener('click', event => {
   update('predicate', 'has_blocker');
 });
 // The banner in the shell has no id in its URL to compare against on this page,
-// because the table shows every entity rather than one. So the table says what
+// because the table shows every record rather than one. So the table says what
 // it is looking at, and "somebody changed the thing in front of you" stays
 // distinguishable from "somebody changed something".
 window.SHOWING = Object.keys(DATA.rows);
@@ -7291,7 +7322,7 @@ frozenEdge();
 """
 
 # The scroll-and-freeze mechanism, shared by the pages that draw one full-width
-# record table under the control bar — the entity table and the records list.
+# record table under the control bar — the plan's table and the records list.
 # One copy because it is one invariant: the body scrolls inside `.table-scroll`
 # while `thead th` holds against it, and a second spelling of that pair is how
 # the two pages would drift the first time either was tuned.
@@ -8762,7 +8793,7 @@ const CLEAR = document.getElementById('clear-filters');
 // plan. Only the filtered one offers a way out: there is nothing to clear when
 // the plan is empty or the payload never arrived.
 function drawNothing() {
-  let headline = 'No entity matches these filters.';
+  let headline = 'No record matches these filters.';
   let detail = 'Every node is filtered out by the controls above.';
   let clearable = true;
   if (!LOADED) {
@@ -8770,7 +8801,7 @@ function drawNothing() {
     detail = 'This page arrived without its data, so there is nothing to draw or filter.';
     clearable = false;
   } else if (!cy.nodes().length) {
-    headline = 'This plan has no entities yet.';
+    headline = 'This plan has no records yet.';
     detail = 'Nothing has been pitched, shaped or scheduled.';
     clearable = false;
   }
@@ -8899,7 +8930,7 @@ function tally(extra) {
 // Opening is on double-click: a single tap is also the first half of drawing an
 // edge, and on a graph you drag around, one stray click should not navigate away.
 cy.on('dbltap', 'node', evt => {
-  if (!connecting) location.href = '{{ links.entity }}' + evt.target.id();
+  if (!connecting) location.href = '{{ links.record }}' + evt.target.id();
 });
 
 // The card, on the view that needs it most: a node carries a title and a status
@@ -9016,14 +9047,14 @@ if (CONNECT) {
     tally('reset');
   };
 
-  // One PATCH per dependent, because depends_on lives on the entity that waits.
+  // One PATCH per dependent, because depends_on lives on the record that waits.
   // Each write moves HEAD, so the base for the next one is the commit this one
   // returned — reusing the page's base would make every write after the first a
   // conflict against a commit this same button just created.
   SAVE.onclick = async () => {
     SAVE.disabled = true;
     const wanted = new Map();
-    // Both halves are grouped by the entity that WAITS, because that is the
+    // Both halves are grouped by the record that WAITS, because that is the
     // record `depends_on` is stored on — an edge removed is a line taken out of
     // the dependent's own file, exactly like an edge added is one put into it.
     const unwanted = new Map();
@@ -9056,7 +9087,7 @@ if (CONNECT) {
       dispatchEvent(new Event('openproj:writing'));
       let committed = null;
       try {
-        const response = await fetch(`/api/entity/${encodeURIComponent(id)}`, {
+        const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
           method: 'PATCH', headers: {'content-type': 'application/json'},
           body: JSON.stringify({base_commit: base.value, fields, body: null}),
         });
@@ -9142,7 +9173,7 @@ cy.on('tap', 'node', evt => {
   blocker = null;
   from.removeClass('picked');
 
-  if (from.id() === node.id()) { tally('an entity cannot wait for itself'); return; }
+  if (from.id() === node.id()) { tally('a record cannot wait for itself'); return; }
   // Same refusal as the edge handler above, for the same record: the new edge
   // would be saved as this waiter's whole `depends_on` rebuilt from the
   // canvas, and the canvas cannot see the hand-written off-plan line it
@@ -9163,7 +9194,7 @@ cy.on('tap', 'node', evt => {
     return;
   }
   if (node.ancestors().some(e => e.id() === from.id())) {
-    tally('an entity cannot wait for what contains it');
+    tally('a record cannot wait for what contains it');
     return;
   }
 
@@ -9321,14 +9352,14 @@ _TIMELINE = """
   {% for bar in t.bars %}
   <div class="row" role="listitem" data-id="{{ bar.id }}" data-depth="{{ bar.depth }}"
        style="padding-left: {{ 8 + bar.indent }}px">
-    <a href="{{ links.entity }}{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a
+    <a href="{{ links.record }}{{ bar.id }}" title="{{ bar.full }}">{{ bar.label }}</a
     ><span class="sr-only">{{ bar.reads }}</span></div>
   {% endfor %}
 </div>
 <div class="scroll">
 <svg width="{{ t.width }}" height="{{ t.height }}"
      viewBox="0 0 {{ t.width }} {{ t.height }}" role="img"
-     aria-label="Every scheduled entity as a bar. The same rows are listed beside it.">
+     aria-label="Every scheduled record as a bar. The same rows are listed beside it.">
   {#- One pair of patterns per status, not one pair in all. A pattern resolves
       its own custom properties against the tree it is declared in, never against
       the shape that references it, so a single --hatch could only ever be right
@@ -9391,7 +9422,7 @@ _TIMELINE = """
       stopped on seventeen links that the accessibility tree had already pruned
       and announced nothing at each one. The mouse keeps the href. -#}
   {% for bar in t.bars %}
-  <a href="{{ links.entity }}{{ bar.id }}" tabindex="-1" aria-label="{{ bar.full }}"
+  <a href="{{ links.record }}{{ bar.id }}" tabindex="-1" aria-label="{{ bar.full }}"
      ><rect data-id="{{ bar.id }}" class="{{ bar.classes }} {{ bar.colour }}"
         x="{{ bar.x }}" y="{{ bar.y }}"
         width="{{ bar.width }}" height="{{ bar_px }}"
@@ -9717,7 +9748,7 @@ def _timeline_css() -> str:
     of the last of them.
     """
     return (
-        _ENV.from_string(_TIMELINE_STYLE).render(row_px=_ROW_PX, foot_px=_PLOT_FOOT_PX)
+        _compiled(_TIMELINE_STYLE).render(row_px=_ROW_PX, foot_px=_PLOT_FOOT_PX)
         + _status_paint_css()
     )
 
@@ -11605,10 +11636,10 @@ function attachSuggest(input) {
       .filter(item => (item.value + ' ' + item.label).toLowerCase().includes(needle))
       .filter(item => !multi || !tokens().slice(0, -1).includes(item.value))
       .slice(0, 8);
-    // Everything but the counter is stored text. For the `entities` source the
-    // value is an id and the label IS an entity title, so before this, opening
+    // Everything but the counter is stored text. For the `records` source the
+    // value is an id and the label IS a record title, so before this, opening
     // the Parent list on the detail page inserted whatever the last person to
-    // rename an entity had typed — as markup, into a page that then offers a
+    // rename a record had typed — as markup, into a page that then offers a
     // Save button. `esc` is the shell's, so this widget uses the same one the
     // table and the timeline do rather than being the one script with none.
     list.innerHTML = matches
@@ -11821,7 +11852,7 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
    wrap never happens: measured in Chrome at 500px on /detail while editing, on
    /new and on the since-deleted /note/new and /issue/new, the Link, Image,
    Table and Horizontal-rule
-   buttons sat 101px past the right edge of `article.entity` — off the surface,
+   buttons sat 101px past the right edge of `article.record` — off the surface,
    reachable only by scrolling the whole document sideways, which is also what
    took that page's `scrollWidth` to 581.
 
@@ -11837,7 +11868,7 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
    rule was proved at eight widths as a media query, in the days when the issue
    and note pages loaded a stylesheet with no `container-type` in it and a
    container query measured byte-identical to no fix at all on /note/new. Those
-   pages are gone and every editor now sits in `article.entity`, which IS a
+   pages are gone and every editor now sits in `article.record`, which IS a
    container — but re-cutting this as a container query is a re-measurement at
    eight widths on the merged page, not an edit.
 
@@ -11898,7 +11929,7 @@ button.mark:disabled, button.mark:disabled:hover {
    A rule under the headings and a hairline between rows: a full grid is a
    spreadsheet, and what a reader needs is to see where a row stops.
    Resolved with `tests/cascade.py` rather than guessed at, because this
-   stylesheet is also loaded by the entity table, whose own sheet carries a bare
+   stylesheet is also loaded by the plan's table, whose own sheet carries a bare
    `th`: `.doc th` is (0,1,1) against that (0,0,1) and wins every property
    declared here, and the table page has no `.doc` on it for the rest of that
    bare rule to reach. */
@@ -11973,7 +12004,7 @@ function labelOf(control) {
 function refusals(answer, status) {
   const problems = answer.problems || [];
   // The shell's `refusal`, which is the one place that knows a 409 answers with
-  // a report rather than with a `detail` — creating an entity against a moved
+  // a report rather than with a `detail` — creating a record against a moved
   // HEAD is a conflict like any other, and this line printed "refused" for it.
   if (!problems.length) return [refusal(answer, status)];
   return problems.map(problem => {
@@ -12147,7 +12178,7 @@ function attachHill(form) {
 def _control_html(
     field: dict,
     *,
-    ladder: str = "entity",
+    ladder: str = "record",
     live: bool = True,
     shown: str | None = None,
     describedby: str = "",
@@ -12171,7 +12202,7 @@ def _control_html(
     # nothing" is a promise this row makes two comments up.
     if field["type"] == "status":
         return Markup(
-            # No `.field`: that class is what `.entity.editing .field { display:
+            # No `.field`: that class is what `.record.editing .field { display:
             # block }` switches on, and a hidden input is the one control that must
             # not gain a box when the form opens. `CONTROLS` reads `[data-type]`,
             # which is the attribute that matters here.
@@ -12188,7 +12219,7 @@ def _control_html(
             # a test can ask the input rather than inferring the lock from an
             # absence of radios.
             Markup(" disabled") if not live else Markup(""),
-            # Grouped by the control's own id. The static export puts every entity
+            # Grouped by the control's own id. The static export puts every record
             # in one file, and one group name would have made four hundred records
             # share a single radio group — pressing a stop on one moves the ball on
             # all of them.
@@ -12230,11 +12261,14 @@ def _control_html(
 # no `.doc.read`, so there is nothing for a sessionless `view` to show.
 _VIEWS = Markup(r"""
 <script>
-const VIEW_ARTICLE = BODY.closest('article.entity');
+const VIEW_ARTICLE = BODY.closest('article.record');
 const VIEW_PANE = document.getElementById('body-preview');
-// The row the switcher is drawn in, and the two page-chrome controls that come
-// to live in it while the surface is up. See `showView`, which does the moving.
+// The row the switcher is drawn in, and the surface's own first row — the one
+// the back link is in, which is the top of the page once the surface is up.
+// The page-chrome controls come to live in the second of these; see `showView`,
+// which does the moving.
 const VIEW_BAR = VIEW_ARTICLE.querySelector('.editbar');
+const VIEW_TOP = VIEW_ARTICLE.querySelector('.back');
 const CORNER = document.querySelector('nav > .corner');
 const CORNER_HOME = CORNER && CORNER.parentElement;
 // The segment ids: the third is `preview`, which is the id the in-place Preview
@@ -12292,9 +12326,21 @@ function showView(mode) {
   //
   // The cause is the loop directly above, and the loop is right: those eight
   // covered focusable elements really were in the tab order behind an opaque
-  // surface. So the nav stays inert and the two controls MOVE, into the editor's
-  // own header row beside the view switcher — where the note this is modelled on
-  // puts them, and where the editor switch beside them now is.
+  // surface. So the nav stays inert and the two controls MOVE, onto the surface.
+  //
+  // **Into the surface's FIRST row, beside the back link — not the switcher's
+  // row.** They landed on the switcher's row first, and jcanton reported it with
+  // a screenshot of `/new`: the create form has no `.doc.read`, so it is full
+  // page from birth, and `.editbar` is its FIFTH row — under the back link, the
+  // kind picker, the heading and the meta line. Sign-in and the two palette
+  // controls sat four hundred pixels down the right-hand side, on a page whose
+  // actual top-right corner was empty. A control that is in the corner of the
+  // window everywhere else in the app is not in the corner here, and the corner
+  // is the only thing about it a reader has learnt.
+  //
+  // `.back` is the surface's first row on both pages and on the create form, so
+  // this is one rule and not a branch on `creating`. The detail page gets the
+  // same move for the same reason — full page is full page.
   //
   // **The same nodes, not a second copy.** `#theme` and `#who` are ids, in a
   // document the detail template can be rendered seventeen times into; a copy
@@ -12303,11 +12349,12 @@ function showView(mode) {
   // `#who` — would leave empty. The move keeps the accessible name, the state,
   // the listeners and the identity by construction, because it is one object.
   //
-  // Appended, so they come after the switcher in the tab order: the controls
-  // that act on the document you are writing before the two that act on the
-  // application. `.corner`'s own `margin-left: auto` puts them at the far end,
-  // which is where they sit in the nav they came from.
-  if (CORNER) (full ? VIEW_BAR : CORNER_HOME).append(CORNER);
+  // Appended to that row, which puts them after the back link and before
+  // everything the document is written with — the same place in the tab order
+  // they hold in the nav they came from, where they follow the nav's links and
+  // precede the page. `.corner`'s own `margin-left: auto` puts them at the far
+  // end, which is likewise where they sit there.
+  if (CORNER) (full ? (VIEW_TOP || VIEW_BAR) : CORNER_HOME).append(CORNER);
   // One mechanism for whether the preview pane is on the page, and it is the
   // `hidden` attribute the pane was drawn with. The landing does not use the
   // pane at all: the server already rendered this document into `.doc.read`
@@ -12901,7 +12948,7 @@ BODY.addEventListener('openproj:escaped', event => {
 // address bar in the observed note reads `?both=`, so `has` is the question and
 // `get` — which answers the empty string — would read as false. Off the search
 // and not the hash, which this page's router already owns and uses to say which
-// entity you are looking at.
+// record you are looking at.
 const VIEW_ASKED = new URLSearchParams(location.search);
 const VIEW_LINKED = VIEWS.find(name => VIEW_ASKED.has(name)) || null;
 
@@ -12958,9 +13005,9 @@ _DETAIL = """
   <h1>Every record in this plan</h1>
   {% for group in groups %}
   <h2 class="tocgroup">{{ group.status|human }}
-    <span class="tally">{{ group.entities|length }}</span></h2>
+    <span class="tally">{{ group.records|length }}</span></h2>
   <ul>
-    {% for e in group.entities %}
+    {% for e in group.records %}
     {#- The kind first, because it is the thing every row in this list has and
         the thing a reader is scanning for; a chip trailing the title arrived
         after the answer and moved with the title's length. The owner is gone
@@ -12968,14 +13015,14 @@ _DETAIL = """
         the record, one click away, next to the four other fields you actually
         came for. -#}
     <li><span class="chip kind-{{ e.kind }}">{{ e.kind|human }}</span
-      ><a href="{{ links.entity }}{{ e.id }}">{{ e.title }}</a></li>
+      ><a href="{{ links.record }}{{ e.id }}">{{ e.title }}</a></li>
     {% endfor %}
   </ul>
   {% endfor %}
 </div>{% endif %}
-{% for e in entities %}
+{% for e in records %}
 <article {% if not creating %}id="{{ e.id }}" {% endif -%}
-  class="entity{% if creating %} editing{% endif %}">
+  class="record{% if creating %} editing{% endif %}">
   {#- Back to Records, which is where you came from and where every record is.
       It pointed at the table once — a list a note or an issue never appears on,
       so for two of the six kinds "back" led somewhere the record just read
@@ -13110,10 +13157,10 @@ _DETAIL = """
   <div class="panes">
     <aside class="facts">
       {#- The id only where there is one of these on the page. This template is
-          rendered once per entity, and the static export puts every entity in
+          rendered once per record, and the static export puts every record in
           one document — so the export carried seventeen elements with the same
           id, which is invalid, and which makes `getElementById('facts')` answer
-          with the first entity's list whatever the hash says. Nothing calls it
+          with the first record's list whatever the hash says. Nothing calls it
           today: the styling is `.panes > .facts dl` and the class beside it, so
           the id is a hook rather than a rule. A hook that answers the wrong
           element is worse than no hook, and `{% if single %}` is what an id
@@ -13184,7 +13231,7 @@ _DETAIL = """
           {% for item in e.progress.tasks %}
           <li class="{{ 'ticked' if item.done else '' }}">
             <span class="box" aria-hidden="true">{{ '☑' if item.done else '☐' }}</span>
-            <a href="{{ links.entity }}{{ item.id }}">{{ item.title }}</a>
+            <a href="{{ links.record }}{{ item.id }}">{{ item.title }}</a>
             <span class="chip {{ item.status_class }}">{{ item.status|human }}</span>
             <span class="tally">{{ item.size }} wk{% if item.people %}
               · {{ item.people }}{% endif %}</span>
@@ -13290,7 +13337,7 @@ _DETAIL = """
 window.SHOWING = {{ showing|tojson }};
 
 // The reader decides how wide prose should be. Remembered per browser rather than
-// per entity: it is a property of the screen it is being read on, not of the plan.
+// per record: it is a property of the screen it is being read on, not of the plan.
 const grip = document.getElementById('grip');
 const root = document.documentElement;
 const saved = remembered.get('openproj:measure');
@@ -13306,7 +13353,7 @@ function place() {
   // full-page article answered "hidden" and the handle would have parked at the
   // left edge again — the same bug, through a second door. A box with no rects
   // is one nothing is drawing, which is the question actually being asked.
-  const article = [...document.querySelectorAll('article.entity')]
+  const article = [...document.querySelectorAll('article.record')]
     .find(candidate => candidate.getClientRects().length > 0);
   // And in full page there is no handle to have. It drags `--measure`, and the
   // full-page surface is the window: a control that changes nothing is worse
@@ -13477,7 +13524,7 @@ function dirty() {
   // not a reason for the counter to stop counting the rest.
   try { fields = changed(); } catch (error) { fields = {}; }
   const count = Object.keys(fields).length + (SURFACE.text() === ORIGINAL_BODY ? 0 : 1);
-  const editing = document.querySelector('article.entity').classList.contains('editing');
+  const editing = document.querySelector('article.record').classList.contains('editing');
   // Gone entirely when there is nothing for it to say. It is a sticky bar, so it
   // was on screen the whole time somebody was READING a record, reporting
   // "Nothing to save" about a form they had not opened — a permanent answer to a
@@ -13576,7 +13623,7 @@ function showEditing(editing) {
   if (CREATING) return;
   // One class on the article. Each fact is a single row whose value swaps for its
   // control, so nothing is shown twice and the page does not jump when you start.
-  document.querySelector('article.entity').classList.toggle('editing', editing);
+  document.querySelector('article.record').classList.toggle('editing', editing);
   document.getElementById('save').hidden = !editing;
   // Save and Cancel are the two ways one editing session ends, and they
   // arrive together at the top of the record. The way IN is the view switcher
@@ -13615,7 +13662,7 @@ function flipEditing() {
   // anyway it would put every field back to its load-time default before
   // `showEditing`'s guard could refuse, so the door is barred here too.
   if (CREATING) return;
-  const editing = !document.querySelector('article.entity').classList.contains('editing');
+  const editing = !document.querySelector('article.record').classList.contains('editing');
   // The fields go back BEFORE the session is ended, and the order is the whole
   // point. `showEditing` dispatches `openproj:session`, and what listens for the
   // end of a session includes the hill, which has to read the status it is going
@@ -13674,9 +13721,9 @@ if (!CREATING) {
 
 // Deleting a record. Two presses and a named record between them, and every
 // element found through the article it belongs to rather than by id — this page
-// can hold more than one entity, and a destructive control resolved by
-// `getElementById` is one that acts on whichever entity happens to be first.
-for (const article of document.querySelectorAll('article.entity')) {
+// can hold more than one record, and a destructive control resolved by
+// `getElementById` is one that acts on whichever record happens to be first.
+for (const article of document.querySelectorAll('article.record')) {
   const open = article.querySelector('.editbar button.delete');
   if (!open) continue;
   const ask = article.querySelector('.confirming');
@@ -13710,7 +13757,7 @@ for (const article of document.querySelectorAll('article.entity')) {
     const also = (ask.dataset.also || '').split(' ').filter(Boolean);
     let answer;
     try {
-      answer = await fetch('/api/entity/' + encodeURIComponent(article.id), {
+      answer = await fetch('/api/record/' + encodeURIComponent(article.id), {
         method: 'DELETE',
         headers: {'content-type': 'application/json'},
         // The ids the panel showed, sent back so the question that was answered
@@ -13782,7 +13829,7 @@ async function save() {
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
-    const response = await fetch(`/api/entity/${encodeURIComponent(FORM.dataset.id)}`, {
+    const response = await fetch(`/api/record/${encodeURIComponent(FORM.dataset.id)}`, {
       method: 'PATCH', headers: {'content-type': 'application/json'},
       body: JSON.stringify({base_commit: BASE.value, fields, body}),
     });
@@ -13872,7 +13919,7 @@ async function createRecord() {
   dispatchEvent(new Event('openproj:writing'));
   let committed = null;
   try {
-    const response = await fetch('/api/entity', {
+    const response = await fetch('/api/record', {
       method: 'POST', headers: {'content-type': 'application/json'},
       body: JSON.stringify({
         base_commit: BASE.value, fields,
@@ -14097,13 +14144,13 @@ if (!CREATING) {
 {% if editable %}<script>{{ yjs }}</script>
 <script>{{ coedit }}</script>{% endif %}
 {% if not single %}<script>
-// One page, hash-routed: a stable shareable link per entity without a file each.
+// One page, hash-routed: a stable shareable link per record without a file each.
 // With no hash you get an index; with a hash you get exactly one document. Never
 // every document at once — that is a wall of text, not a detail view.
 function show() {
   const wanted = location.hash.slice(1);
   let found = false;
-  for (const article of document.querySelectorAll('article.entity')) {
+  for (const article of document.querySelectorAll('article.record')) {
     const match = article.id === wanted;
     article.style.display = match ? '' : 'none';
     found = found || match;
@@ -14814,7 +14861,7 @@ const COEDIT = (() => {
   // on the Write press instead, the draft would be spliced in AFTER binding,
   // leave as ordinary typing, and bypass that refusal — the exact class of
   // silent overwrite this branch has shipped three times.
-  if (FORM.closest('article.entity').classList.contains('editing')) {
+  if (FORM.closest('article.record').classList.contains('editing')) {
     wanted = true;
     connect();
   }
@@ -14843,7 +14890,7 @@ const COEDIT = (() => {
 # preference.** The detail template is rendered once per record and the static
 # export puts every record in ONE document, so "is this being edited" is a
 # property of an article and cannot be a class on `<body>`. This block is
-# written against `.entity.editing` once.
+# written against `.record.editing` once.
 #
 # Concatenated at the END of the stylesheet, and that is load-bearing rather
 # than tidy. `textarea.body-field` and `textarea.field` are both (0,1,1), and
@@ -14857,8 +14904,8 @@ _EDITING_STYLE = """
 /* The second row sits under the first rather than a paragraph's worth away: they
    are two halves of one bar, and the box they belong to is below both. */
 .bodybar.markbar { margin-top: .25rem; }
-.entity.editing .bodybar { display: flex; }
-.entity.editing .field[hidden] { display: none; }
+.record.editing .bodybar { display: flex; }
+.record.editing .field[hidden] { display: none; }
 /* One declaration for the box and for the numbers beside it. Written twice, the
    gutter walks out of step with the lines it names by a pixel a line, which is
    invisible at the top of a document and half a row down at the bottom of one —
@@ -14983,9 +15030,9 @@ button.stat.pick:hover { color: var(--accent); }
    Hidden until the article is editing, like the segments: a choice of editing
    surface is nothing at all when there is no editing surface. */
 .eswitch { display: none; }
-.entity.editing .eswitch { display: inline-flex; align-items: center; gap: .4rem;
+.record.editing .eswitch { display: inline-flex; align-items: center; gap: .4rem;
                            vertical-align: middle; color: var(--muted); }
-.entity.editing .eswitch:hover { color: var(--accent); }
+.record.editing .eswitch:hover { color: var(--accent); }
 /* Every colour here resolves a token already defined in all three blocks, so
    there is no new value that could be right in one and wrong in another — the
    failure that rule exists to prevent. `--line-strong` off, `--accent` on, and
@@ -15011,11 +15058,26 @@ button.stat.pick:hover { color: var(--accent); }
    same thing to a screen reader and `announce` says it in words. */
 .eswitch.waiting .eknob { transform: translateX(6px); }
 .eswitch.waiting { opacity: .55; }
-/* The two page-chrome controls, while they are lodged in this bar rather than in
-   the nav they came from. `.corner` brings its own `margin-left: auto`, which is
-   what puts them at the far end here exactly as it does there; what it does not
-   bring is the room between them and the switcher when the row wraps. */
-.editbar > .corner { margin-left: auto; padding-left: .6rem; }
+/* The three page-chrome controls, while they are lodged on the surface rather
+   than in the nav they came from. `showView` puts them in the surface's first
+   row — the back link's — so that they stay in the top-right corner of the
+   window, which is the only thing about their position anybody has learnt.
+   `.corner` brings its own `margin-left: auto`, which is what pushes them to the
+   far end here exactly as it does in the nav; what it does not bring is a row to
+   be pushed along, because `.back` is a paragraph with one link in it. Hence the
+   flex, and hence `min-width: 0` — a `<select>` is as wide as its longest option
+   and would otherwise refuse to give the link its room back.
+
+   13px and not the 12px `.back` sets, because these are the same three controls
+   as the nav's and the nav is 13px. A control that changes size when it moves
+   reads as a different control.
+
+   `.editbar` keeps the rule as the fallback `showView` falls back to: it appends
+   to `.back` if there is one, and every record page has one today. */
+article.record.full > .back { display: flex; flex-wrap: wrap; align-items: center;
+                              gap: .35rem 1rem; min-width: 0; }
+article.record.full > .back > .corner,
+.editbar > .corner { margin-left: auto; padding-left: .6rem; font-size: 13px; }
 /* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
    panes scroll on their own.
    `position: fixed` rather than a taller box, because the page behind it — the
@@ -15027,7 +15089,7 @@ button.stat.pick:hover { color: var(--accent); }
    the surface that opened them. The width handle is 30 and is hidden here; see
    `place`. */
 body.fullpage { overflow: hidden; }
-article.entity.full {
+article.record.full {
   position: fixed; inset: 0; z-index: 15; overflow: hidden;
   width: auto; max-width: none; margin: 0; padding: .6rem 1.25rem 0;
   background: var(--bg);
@@ -15038,9 +15100,9 @@ article.entity.full {
    `min-height: auto` is its content, and a four-hundred-line textarea's content
    is taller than any window — so without these the box grows past the bottom of
    the screen and takes the commit bar with it. */
-article.entity.full > form { flex: 1 1 auto; min-height: 0;
+article.record.full > form { flex: 1 1 auto; min-height: 0;
                              display: flex; flex-direction: column; }
-article.entity.full > .commitbar { flex: none; }
+article.record.full > .commitbar { flex: none; }
 /* `align-items: stretch`, against the container query that sets `start`: outside
    full page the facts are a short column beside a long document and should not
    be stretched to its height; inside it, a pane that is its content's height is
@@ -15067,11 +15129,11 @@ article.entity.full > .commitbar { flex: none; }
    `auto` track with no space left gives it exactly that. `.panes` is the
    scroller here, so the facts get their whole height one flick below the
    document rather than a scrollbar of their own inside three lines. */
-article.entity.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
+article.record.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
                              align-items: stretch;
                              grid-template-rows: minmax(min(30rem, 100%), 1fr);
                              grid-auto-rows: max-content; }
-article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
+article.record.full .panes > .facts { min-height: 0; overflow-y: auto; }
 /* `order: -1` so the document takes that row and not the facts. It changes
    nothing in the two-column case — the container query places BOTH panes
    explicitly, at `grid-row: 1`, and `order` has no say over an item that is
@@ -15079,21 +15141,21 @@ article.entity.full .panes > .facts { min-height: 0; overflow-y: auto; }
    auto-placed in modified document order. Reordering here rather than reversing
    the markup, because the markup order is the reading order of the page outside
    full page and the facts lead it there on purpose. */
-article.entity.full .panes > .main { min-height: 0; display: flex; flex-direction: column;
+article.record.full .panes > .main { min-height: 0; display: flex; flex-direction: column;
                                      order: -1; }
-article.entity.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
+article.record.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
                                  gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
-article.entity.full .bodywrap { min-height: 0; }
+article.record.full .bodywrap { min-height: 0; }
 /* `max-width: none` guarded the full page against the record pages' 44rem cap
    on this box. No sheet caps the box any more — the measure lives on the
    article, and `.full` overrides it above — but a cap somebody writes tomorrow
    must still lose here, where the pane IS the window. */
-article.entity.full textarea.body-field { height: 100%; min-height: 0; resize: none;
+article.record.full textarea.body-field { height: 100%; min-height: 0; resize: none;
                                           max-width: none; }
 /* The rendered pane is a document, not a field: it loses the rule and the space
    above it that separate a shaping document from the facts, because in this view
    there is nothing above it to be separated from. */
-article.entity.full #body-preview { min-height: 0; overflow-y: auto;
+article.record.full #body-preview { min-height: 0; overflow-y: auto;
                                     border-top: 0; padding-top: 0; }
 /* Two columns in the middle view, and the reader says where the join is —
    jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you make it
@@ -15119,7 +15181,7 @@ article.entity.full #body-preview { min-height: 0; overflow-y: auto;
 
    The middle track is the 1.5rem this grid used to spend on `column-gap`, so the
    handle lands exactly where the space between the panes already was. */
-article.entity.full.view-both .bodysplit {
+article.record.full.view-both .bodysplit {
   grid-template-columns: minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr);
   column-gap: 0;
 }
@@ -15135,7 +15197,7 @@ article.entity.full.view-both .bodysplit {
    at all, which is the one way a captured pointer can still leave a handle stuck
    to the cursor. The script carries the branch for when it happens anyway; this
    is what stops it being asked for. */
-article.entity.full.view-both #splitter {
+article.record.full.view-both #splitter {
   display: block; position: relative; cursor: col-resize; touch-action: none;
 }
 /* The line down the middle, which was `#body-preview`'s `border-left` and its
@@ -15143,7 +15205,7 @@ article.entity.full.view-both #splitter {
    by the handle now, because the affordance has to land on the line that is
    already there and two lines down the middle is worse than none. The rule this
    replaces is in the `width <` block below, where there is no handle to draw it. */
-article.entity.full.view-both #splitter::before {
+article.record.full.view-both #splitter::before {
   content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
   width: 1px; background: var(--line);
 }
@@ -15153,13 +15215,13 @@ article.entity.full.view-both #splitter::before {
    on a rule the reader can already see, and a second animated rule in an app
    whose motion is one rule, one comment and one inventory test would cost all
    three to buy nothing. */
-article.entity.full.view-both #splitter::after {
+article.record.full.view-both #splitter::after {
   content: ""; position: absolute; left: 2px; right: 2px; top: 50%; height: 48px;
   transform: translateY(-50%); border-radius: 2px; background: var(--line-strong);
   opacity: .35;
 }
-article.entity.full.view-both #splitter:hover::after,
-article.entity.full.view-both #splitter.dragging::after {
+article.record.full.view-both #splitter:hover::after,
+article.record.full.view-both #splitter.dragging::after {
   opacity: 1; background: var(--accent);
 }
 /* Below the width where the facts stop being a column on the right there is
@@ -15168,7 +15230,7 @@ article.entity.full.view-both #splitter.dragging::after {
    existed.
 
    58.5rem is arithmetic rather than taste. `.panes` hands the facts their own
-   track at a CONTAINER width of 56rem; the container is `article.entity.full`,
+   track at a CONTAINER width of 56rem; the container is `article.record.full`,
    which is `position: fixed; inset: 0` with `1.25rem` of padding a side. So the
    two agree at 56 + 2 × 1.25, and there is no room below it either: the panes
    have `window - 424px` between them on that page, which is 512 here against a
@@ -15182,11 +15244,11 @@ article.entity.full.view-both #splitter.dragging::after {
    Same selectors as above, so this takes the ties on order and not on weight.
    `cascade.py` skips at-rules by construction, so that half is asked of Chrome. */
 @media (width < 58.5rem) {
-  article.entity.full.view-both .bodysplit {
+  article.record.full.view-both .bodysplit {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1.5rem;
   }
-  article.entity.full.view-both #splitter { display: none; }
-  article.entity.full.view-both #body-preview {
+  article.record.full.view-both #splitter { display: none; }
+  article.record.full.view-both #body-preview {
     border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
   }
 }
@@ -15195,7 +15257,7 @@ article.entity.full.view-both #splitter.dragging::after {
    still theirs. Capped per block rather than on the pane, because the pane is
    the scroll container and a narrow scroll container puts its scrollbar down the
    middle of the window. */
-article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
+article.record.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
 /* Preview only: the box goes, and the two bars of CONTROLS go with it. A toolbar
    over no box is sixteen buttons that write into nothing, and a status bar over
    no box is a caret position for a caret nobody can see.
@@ -15211,9 +15273,9 @@ article.entity.full.view-view #body-preview > * { max-width: var(--measure, 64re
    and a reader watching a preview change under them with nothing on the page to
    say why is the worse of the two silences. It costs no space when nobody else
    is here, which is most of the time, because `#seatbar` carries no margin. */
-article.entity.full.view-view .bodywrap,
-article.entity.full.view-view .statusbar,
-article.entity.full.view-view .markbar { display: none; }
+article.record.full.view-view .bodywrap,
+article.record.full.view-view .statusbar,
+article.record.full.view-view .markbar { display: none; }
 """
 
 
@@ -15244,7 +15306,7 @@ _DETAIL_STYLE = """
    actually is. It sat flush left with a full-height rule down its right edge,
    which on a wide screen is not a document — it is the left half of a two-pane
    layout whose right half failed to load. */
-article.entity {
+article.record {
   width: var(--measure, 64rem); max-width: 100%; margin: 0 auto 3rem; position: relative;
   container-type: inline-size;
 }
@@ -15255,7 +15317,7 @@ article.entity {
    which the reader sets with the grip — not the window's. */
 .panes { display: grid; gap: 0 2.5rem; }
 @container (min-width: 56rem) {
-  /* 20rem and not less: these are the controls the entity is edited through, and
+  /* 20rem and not less: these are the controls the record is edited through, and
      a reviewers box too narrow to show three logins is a sidebar that looks
      tidier than the page it replaced and is worse to use. */
   .panes { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; }
@@ -15280,7 +15342,7 @@ article.entity {
   opacity: .35; transition: opacity .15s, background .15s;
 }
 #grip:hover::before, #grip.dragging::before { opacity: 1; background: var(--accent); }
-article.entity h1 { font-size: 1.5rem; margin: .2rem 0; }
+article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
 .meta { color: var(--muted); margin-top: 0; display: flex; flex-wrap: wrap;
         gap: .4rem; align-items: baseline; }
 .meta code { font-family: var(--font-mono); font-size: 12px; }
@@ -15309,7 +15371,7 @@ dt.derived, dd.derived { font-style: italic; }
 /* The marks belong to the form, so they are not on the page when there is no
    form on it — in read mode a row saying REQUIRED beside a filled-in value is
    an instruction with nothing to do. */
-article.entity:not(.editing) .req { display: none; }
+article.record:not(.editing) .req { display: none; }
 .problems { color: var(--warn); padding-left: 1.1rem; }
 /* Not a problem, and it must not read as one: a note about the shaping document
    sits at the weight of the muted text around it, below anything the validator
@@ -15331,7 +15393,7 @@ article.entity:not(.editing) .req { display: none; }
 /* The two modes of the same rows. Controls are hidden until the article is
    editing, and the values they replace are hidden once it is. */
 .field { display: none; }
-.entity.editing .field { display: block; }
+.record.editing .field { display: block; }
 /* Where the other people in the room are. One band per person on the line their
    caret is in, translucent so the text keeps its own contrast, with the login on
    the right — a colour on its own is a colour a reader has to be told the
@@ -15352,9 +15414,9 @@ article.entity:not(.editing) .req { display: none; }
 .together { color: var(--accent); font-weight: 600; }
 .together:empty { display: none; }
 .editing-only { display: none; }
-.entity.editing .editing-only { display: block; }
-.entity.editing .read { display: none; }
-.entity.editing dd .field[type=checkbox] { display: inline-block; }
+.record.editing .editing-only { display: block; }
+.record.editing .read { display: none; }
+.record.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
 /* Except in a fact list, where the label is one word in a line that also carries
    the REQUIRED mark. Block, the mark dropped onto a line of its own beside every
@@ -15436,7 +15498,7 @@ textarea.body-field { min-height: 60vh; resize: vertical; }
    through is offering to promote a document they cannot see. */
 #promote { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
-.entity.editing #promote { display: none; }
+.record.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }
 #promote .hint { margin: 0; }
 """ + _EDITING_STYLE
@@ -15550,25 +15612,27 @@ _HILL_NORMALS = {word: _hill_normal(t) for word, t in _HILL_ALONG.items()} | {
 }
 # Which stops a record of each kind may stand on, in ladder order. Derived from
 # the vocabularies rather than written out beside them: a status added to one of
-# them tomorrow fails `test_every_issue_word_stands_on_the_hill` (or its entity
-# and note twins) instead of quietly having nowhere to stand, which on a hill
-# means no ball at all.
+# them tomorrow fails `test_every_issue_word_stands_on_the_hill` (or
+# `test_every_status_a_record_can_hold_has_a_stop`, which holds the other two
+# ladders) instead of quietly having nowhere to stand, which on a hill means no
+# ball at all.
 HILL_LADDERS = {
-    "entity": tuple(word for word in STATUSES if word in _HILL_STOPS),
+    "record": tuple(word for word in STATUSES if word in _HILL_STOPS),
     "issue": tuple(word for word in ISSUE_STATUS if word in _HILL_STOPS),
     "note": tuple(word for word in NOTE_STATUS if word in _HILL_STOPS),
 }
 
 # Which ladder each kind's status stands on. Only the two unplanned kinds have
-# ladders of their own; every planned kind shares the entity's, and product is
-# not here because `statuses=()` keeps status in its `unread_fields` — no status
-# row is ever built for it.
+# ladders of their own; every planned kind stands on the `record` ladder, whose
+# key promises more than it holds — issues and notes are records too and keep
+# their own. Product is not here because `statuses=()` keeps status in its
+# `unread_fields` — no status row is ever built for it.
 _LADDER_OF = {"issue": "issue", "note": "note"}
 
 # Why a status control is locked, per kind — the sentence beside it when the
 # state is derived from a link rather than typed. Verbatim from the two pages
 # this replaced, because the people reading it already learned these words. No
-# planned kind appears: `Entity.state` answers `status`, so a planned kind can
+# planned kind appears: `Record.state` answers `status`, so a planned kind can
 # never satisfy the lock condition and never needs a sentence.
 _STATE_HINT = {
     "issue": "from the work it was pitched into",
@@ -15656,7 +15720,7 @@ _HILL_HANDED_ON = {"promoted": "shaping"}
 # `hill-<word>` and not `st-<word>`: the invariant is that a status out of a FILE
 # reaches a class attribute only through `_status_class`, and no word here comes
 # out of a file. These come from `HILL_LADDERS`, which is built from the two
-# vocabularies in this module — the entity's own `status` is used to compare
+# vocabularies in this module — the record's own `status` is used to compare
 # against them and never to build an attribute. A `thinking` note has no rung on
 # the status ladder to borrow a colour from, which is the other half of the
 # reason: `_status_class` would have called it `st-ready` and put it on a summit.
@@ -15710,7 +15774,7 @@ _HILL = """
 
 def _hill_html(
     status: str,
-    ladder: str = "entity",
+    ladder: str = "record",
     *,
     live: bool = False,
     control: bool = False,
@@ -15741,8 +15805,8 @@ def _hill_html(
                 "checked": word == status,
             }
         )
-    # This ladder's own words and not `_HILL_STOPS`: `thinking` has a stop, and an
-    # entity whose file says `thinking` is as unrecognisable to a pitch's hill as
+    # This ladder's own words and not `_HILL_STOPS`: `thinking` has a stop, and a
+    # record whose file says `thinking` is as unrecognisable to a pitch's hill as
     # `banana` is. Both get the same answer — no ball, and the word said in full.
     known = status in words
     stands_at = status if known else _HILL_HANDED_ON.get(status)
@@ -16225,7 +16289,7 @@ LABELS = {
     "progress": "Progress",
     "start": "Start", "end": "End", "id": "Id", "predicate": "Flags",
     # The people page's own facet. Which hat somebody is wearing is not stored on
-    # an entity at all — it is which field their name is in — but it is read in
+    # a record at all — it is which field their name is in — but it is read in
     # the same control bar as the rest, so it takes its word from the same map.
     "role": "Role",
 }
@@ -16384,27 +16448,27 @@ PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by", "reported_by", 
 # — otherwise the suggestions are useless the moment there is more than one name.
 SUGGESTS = {
     "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
-    "parent": "entities", "depends_on": "entities", "tags": "tags", "prs": "prs",
+    "parent": "records", "depends_on": "records", "tags": "tags", "prs": "prs",
     "reported_by": "people", "written_by": "people",
-    "pitched_into": "entities", "became": "entities",
+    "pitched_into": "records", "became": "records",
     # A cycle number is a reference too. Typed from memory it is off by one as
-    # often as it is right, and an entity bet into a cycle nobody has named is
+    # often as it is right, and a record bet into a cycle nobody has named is
     # weeks that never appear on anybody's capacity.
     "cycle": "cycles",
 }
 
 
 # The two fields whose empty box says who the server will write. The placeholder
-# is the signed-in login because that is the value `POST /api/entity` stamps when
+# is the signed-in login because that is the value `POST /api/record` stamps when
 # the box is left empty — a hint that tells the truth about what will happen.
 _LOGIN_PLACEHOLDER = ("reported_by", "written_by")
 
 
-def _editable_for(entity: Entity, prefix: str = "field", signed_in: str = "") -> list[dict]:
+def _editable_for(record: Record, prefix: str = "field", signed_in: str = "") -> list[dict]:
     """The fields this kind actually has, with the type a form must coerce back to.
 
     The prefix is what makes a control's id unique on the page it lands on: the
-    static detail export holds every entity in one file, so `owner` alone would
+    static detail export holds every record in one file, so `owner` alone would
     be the same id sixteen times over and every `<label for>` on the page would
     point at the first of them.
     """
@@ -16413,49 +16477,49 @@ def _editable_for(entity: Entity, prefix: str = "field", signed_in: str = "") ->
             "name": name,
             "id": f"{prefix}-{name}",
             "type": kind,
-            "value": getattr(entity, name),
+            "value": getattr(record, name),
             "gates": REQUIRED_AT.get(name, ()),
             "list": SUGGESTS.get(name),
             "placeholder": signed_in if name in _LOGIN_PLACEHOLDER else "",
-            "text": ", ".join(str(v) for v in getattr(entity, name))
+            "text": ", ".join(str(v) for v in getattr(record, name))
             if kind == "list"
-            else ("" if getattr(entity, name) is None else getattr(entity, name)),
+            else ("" if getattr(record, name) is None else getattr(record, name)),
         }
         for name, kind in EDITABLE.items()
         # What the kind has, minus what its rung does not read. A product
-        # inherits every field an entity has and is a container: offering a box
+        # inherits every field a record has and is a container: offering a box
         # for an owner it will then be warned about is the form and the validator
         # disagreeing in the most annoying possible order.
-        if name in type(entity).model_fields
-        and name not in unread_fields(entity.kind)
+        if name in type(record).model_fields
+        and name not in unread_fields(record.kind)
         # And nothing to file the top rung under. Not routed through
         # `unread_fields`: a parent written on a product is already reported, by
         # the containment rule that knows what it may be filed under, and two
         # warnings about one field is one of them being noise.
-        and not (name == "parent" and not PARENT_KINDS[entity.kind])
+        and not (name == "parent" and not PARENT_KINDS[record.kind])
     ]
 
 
 def _links(ids: list[str], index: Index, links: Links = STATIC) -> Markup:
     """Ids as titles, linked. Every one of the three values in here is free text.
 
-    A title arrives through `PATCH /api/entity`, which does not police it, and an
+    A title arrives through `PATCH /api/record`, which does not police it, and an
     id that fails its pattern is a reported problem and not a refusal — so both
     reach this line as whatever somebody typed. Built with an f-string, a title
-    holding a `<script>` ran on the parent link of every child of that entity,
+    holding a `<script>` ran on the parent link of every child of that record,
     on the page that then offers the reader a Save button. `Markup(...).format`
     escapes each value as it goes in, which is the only version of this that
     stays correct when a fourth value is added to it.
     """
     return Markup(", ").join(
         Markup('<a href="{}{}">{}</a>').format(
-            links.entity, i, index.entities[i].title if i in index.entities else i
+            links.record, i, index.plan[i].title if i in index.plan else i
         )
         for i in ids
     )
 
 
-def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") -> list[dict]:
+def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") -> list[dict]:
     """The rows of the facts list, each carrying both how it reads and how it edits.
 
     One row per fact, not two lists: the edit view is the read view with the values
@@ -16470,14 +16534,14 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
     somebody's free text and one of those was `status`, which arrived straight
     out of a file and into a class attribute.
     """
-    span = index.spans.get(entity.id)
-    why = index.explanations.get(entity.id)
+    span = index.spans.get(record.id)
+    why = index.explanations.get(record.id)
     rows = []
     # One mark for "there is nothing here", everywhere. Spelled-out words —
     # `nothing`, `none`, `no` — sit at the same weight as a real value and have
     # to be read before you know the row is empty; a dash is empty at a glance.
     empty = Markup('<span class="empty">—</span>')
-    for field in _editable_for(entity, entity.id, signed_in):
+    for field in _editable_for(record, record.id, signed_in):
         name = field["name"]
         if name == "title":
             continue
@@ -16485,21 +16549,21 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
         hint = ""
         hint_id = ""
         if name == "depends_on":
-            display = _links(index.blocked_by[entity.id], index, links) or empty
+            display = _links(index.blocked_by[record.id], index, links) or empty
         elif name == "parent":
             # By title and linked, the way blockers already read. An id is what
             # the field stores; it is not what anybody is looking for when they
             # ask what this belongs to.
-            display = _links([entity.parent], index, links) if entity.parent else empty
+            display = _links([record.parent], index, links) if record.parent else empty
         elif name in ("pitched_into", "became"):
             # Links, not the bare ids the two old pages' edit boxes held: the
             # question a reader asks of this row is "what did it become", and an
             # id is not an answer anybody can press.
-            display = _links(getattr(entity, name), index, links) or empty
+            display = _links(getattr(record, name), index, links) or empty
         elif name == "prs":
-            display = Markup(", ").join(_pr_link(ref) for ref in entity.prs) or empty
+            display = Markup(", ").join(_pr_link(ref) for ref in record.prs) or empty
         elif name == "review_waived":
-            display = Markup("waived") if entity.review_waived else empty
+            display = Markup("waived") if record.review_waived else empty
         elif name == "status":
             # The ball on the hill, and not the chip the table wears. The chip says
             # the word; the hill says the shape the word means — `shaping` and
@@ -16511,10 +16575,10 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
             # The word is `state()`, never `status`: an issue whose pitch has
             # shipped would otherwise read "ready" on its own page. Over `records`
             # because a derived state may follow a link to any kind. For every
-            # planned kind `Entity.state` answers `status`, so only the two
+            # planned kind `Record.state` answers `status`, so only the two
             # inbox kinds ever read differently here.
-            ladder = _LADDER_OF.get(entity.kind, "entity")
-            said = entity.state(index.records)
+            ladder = _LADDER_OF.get(record.kind, "record")
+            said = record.state(index.records)
             display = _hill_html(said, ladder)
             # The lock, expressed once. A derived state cannot also be set by
             # hand — two ways to say one thing disagree the moment one is used —
@@ -16523,13 +16587,13 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
             # the old pages' `bool(pitched_into)`: a link whose targets are all
             # dangling derives nothing and should stay fixable, and a stored
             # word that equals the derived one is harmless to retype.
-            if said != entity.status:
-                hint = _STATE_HINT.get(entity.kind, "")
+            if said != record.status:
+                hint = _STATE_HINT.get(record.kind, "")
                 hint_id = f"hint-{field['id']}" if hint else ""
             control = _control_html(
                 field,
                 ladder=ladder,
-                live=said == entity.status,
+                live=said == record.status,
                 shown=said,
                 describedby=hint_id,
             )
@@ -16542,11 +16606,11 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
                 '<span class="chipmark" aria-hidden="true">{}</span>'
                 '<span class="chipword">{}</span></span>'
             ).format(
-                entity.priority,
-                PRIORITY_GLYPH.get(str(entity.priority), ""),
-                _human(entity.priority),
+                record.priority,
+                PRIORITY_GLYPH.get(str(record.priority), ""),
+                _human(record.priority),
             )
-        elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, entity) is not None:
+        elif name == _SIZE_FIELD_NAME and _tasks_add_up_to(index, record) is not None:
             # The bet, and what its tasks propose to put inside it. Two numbers on
             # one line because they are one question: an appetite read on its own
             # says nothing about whether the work still fits, and the answer was
@@ -16556,7 +16620,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
             # no appetite yet is not over it, and `_rollup_problems` says nothing
             # about that case either — a page that shouts where the validator is
             # silent teaches people that one of the two is lying.
-            total = _tasks_add_up_to(index, entity)
+            total = _tasks_add_up_to(index, record)
             stated = field["text"]
             over = bool(stated) and total > float(stated)
             display = Markup('{} · <span class="{}">{} in tasks</span>').format(
@@ -16596,17 +16660,17 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
                 # "Review waived: no" is a line that says nothing. The row still
                 # exists while editing, because turning the waiver on is the whole
                 # point of having it; it just does not clutter the read view.
-                "editing_only": name == "review_waived" and not entity.review_waived,
+                "editing_only": name == "review_waived" and not record.review_waived,
             }
         )
     # The server's two creation stamps, shown and never offered. `opened_on` and
-    # `written_on` are set by `POST /api/entity` when the record is made; a box
+    # `written_on` are set by `POST /api/record` when the record is made; a box
     # for one would invite a hand-typed lie about the file's own history. Guarded
     # on the model rather than the rung, so only the kinds that carry them ever
     # grow the row.
     for stamped in ("opened_on", "written_on"):
-        if stamped in type(entity).model_fields:
-            written = getattr(entity, stamped)
+        if stamped in type(record).model_fields:
+            written = getattr(record, stamped)
             rows.append(
                 {
                     "label": LABELS[stamped],
@@ -16627,14 +16691,14 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
         Markup(
             ' · <span class="overrun"><span class="sev-mark sev-mark-warn"'
             ' aria-hidden="true">▲</span> overruns cycle {} by {} weeks</span>'
-        ).format(entity.cycle, f"{span.overruns_cycle_weeks:.1f}")
+        ).format(record.cycle, f"{span.overruns_cycle_weeks:.1f}")
         if span and span.overruns_cycle_weeks
         else Markup("")
     )
     # Only for kinds the scheduler dates. On an issue or a product the em-dash
     # would mean "cannot exist" while everywhere else on this page it means
     # "not set yet" — empty must not look like broken, and this dash was both.
-    if RUNG[entity.kind].schedules:
+    if RUNG[record.kind].schedules:
         rows.append(
             {
                 "label": "Scheduled",
@@ -16655,7 +16719,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
             {
                 "label": "Why then",
                 "for": "",
-                # An explanation names the person who is busy and the entity that
+                # An explanation names the person who is busy and the record that
                 # finishes first — a login and an id, both free text, both
                 # concatenated into the sentence by the scheduler. The one row on
                 # this page that reads as prose is still two stored values.
@@ -16671,12 +16735,12 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
     # name an issue, and on that issue's page a populated Blocks row is true
     # and useful (the delete cascade even edits it). What goes for the kinds
     # that cannot depend is only the permanent em-dash.
-    if RUNG[entity.kind].depends or index.blocks[entity.id]:
+    if RUNG[record.kind].depends or index.blocks[record.id]:
         rows.append(
             {
                 "label": "Blocks",
                 "for": "",
-                "display": _links(index.blocks[entity.id], index, links) or empty,
+                "display": _links(index.blocks[record.id], index, links) or empty,
                 "control": "",
                 "gates": (),
                 "derived": True,
@@ -16686,8 +16750,8 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
     # Derived, never written: from the tasks under it where there are any, and
     # from the body's own checklist where there are none. The full list is a panel
     # of its own beside the document (`_progress_view`); this line is the number,
-    # in the column of facts where every other number about this entity is.
-    counted = index.progress.get(entity.id)
+    # in the column of facts where every other number about this record is.
+    counted = index.progress.get(record.id)
     if counted is not None:
         rows.append(
             {
@@ -16709,7 +16773,7 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
                 "editing_only": False,
             }
         )
-    later = sections(entity.body).get(_FOR_LATER_HEADING, "")
+    later = sections(record.body).get(_FOR_LATER_HEADING, "")
     if later:
         # Deferred scope is the only record the plan keeps of a bet being trimmed
         # to fit its appetite, and it was invisible on every page. Named here and
@@ -16735,18 +16799,18 @@ def _fact_rows(index: Index, entity: Entity, links: Links, signed_in: str = "") 
 _SIZE_FIELD_NAME = "person_weeks"
 
 
-def _tasks_add_up_to(index: Index, entity: Entity) -> float | None:
+def _tasks_add_up_to(index: Index, record: Record) -> float | None:
     """What the tasks under this one propose to spend, or None if it has none.
 
     The same number `_rollup_problems` compares against the appetite, read from
     the same place, so the sentence on the page and the sentence in `check`
     cannot disagree about the arithmetic.
     """
-    counted = index.progress.get(entity.id)
+    counted = index.progress.get(record.id)
     return counted.total if counted is not None and counted.unit == "weeks" else None
 
 
-def _progress_view(index: Index, entity: Entity) -> dict | None:
+def _progress_view(index: Index, record: Record) -> dict | None:
     """The tasks a pitch is made of, and how much of it they have finished.
 
     Only where there are tasks. A leaf's checklist is already in its body, drawn
@@ -16757,13 +16821,13 @@ def _progress_view(index: Index, entity: Entity) -> dict | None:
     `status`, so closing one from the table moves this the next time the index is
     built, and there is no checkbox here for the two to disagree about.
     """
-    counted = index.progress.get(entity.id)
+    counted = index.progress.get(record.id)
     if counted is None or not counted.of:
         return None
     config = Config(default_task_effort=index.default_task_effort)
     items = []
     for child_id in counted.of:
-        child = index.entities[child_id]
+        child = index.plan[child_id]
         size, defaulted = size_weeks(child, config)
         items.append(
             {
@@ -16782,7 +16846,7 @@ def _progress_view(index: Index, entity: Entity) -> dict | None:
         # `tasks` and not `items`: a Jinja lookup finds `dict.items` first, so
         # `progress.items` was the built-in method and the template raised
         # `'builtin_function_or_method' object is not iterable` on every page
-        # that draws an entity.
+        # that draws a record.
         "tasks": items,
     }
 
@@ -16796,7 +16860,7 @@ _WANTED_SECTIONS = {
 }
 
 
-def _shaping_hints(entity: Entity, has_tasks: bool = False) -> list[str]:
+def _shaping_hints(record: Record, has_tasks: bool = False) -> list[str]:
     """Sections the pitch template asks for that this body does not have.
 
     A printed note on one page, deliberately not a `Problem`: it never reaches
@@ -16807,9 +16871,9 @@ def _shaping_hints(entity: Entity, has_tasks: bool = False) -> list[str]:
     # Only while it is a live bet. An idea nobody has bet on owes nothing yet, and
     # nagging finished work about a section it will never gain is how a note stops
     # being read at all.
-    if entity.kind != "pitch" or entity.status not in ("ready", "in_progress"):
+    if record.kind != "pitch" or record.status not in ("ready", "in_progress"):
         return []
-    written = sections(entity.body)
+    written = sections(record.body)
     notes = [
         f"No {label} section. The pitch template asks for one — it is what keeps "
         f"the appetite honest."
@@ -16819,7 +16883,7 @@ def _shaping_hints(entity: Entity, has_tasks: bool = False) -> list[str]:
     # Said rather than silently resolved. A pitch with tasks is measured by them,
     # so a checklist in its body counts for nothing — and a list somebody is
     # ticking that moves no number on the page is worse than no list at all.
-    if has_tasks and checklist(entity.body)[1]:
+    if has_tasks and checklist(record.body)[1]:
         notes.append(
             "This pitch keeps a checklist in its body and has tasks under it. The "
             "tasks are what its progress is counted from; the checklist is not."
@@ -16837,15 +16901,15 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
     reached no template and no test after `_fact_rows` superseded them. A field
     formatted in two places is a field that will be formatted two ways.
     """
-    # Over `records`, not `entities`: the record page is the one page every
+    # Over `records`, not `plan`: the record page is the one page every
     # kind gets (spec §2). Until an unplanned rung exists the two maps are
     # equal, so nothing changes at this commit — the line is here so the flip
     # commit ships pages, not KeyErrors.
     return [
         {
-            "id": entity_id,
-            "title": entity.title,
-            "kind": entity.kind,
+            "id": record_id,
+            "title": record.title,
+            "kind": record.kind,
             # `state()`, never the stored word: this key's one reader is
             # `_by_status`, whose ladder (`_TOC_LADDER`) is built from
             # `NOTE_STATES` precisely so `promoted` gets a heading — and fed
@@ -16853,21 +16917,21 @@ def _detail_rows(index: Index, links: Links = STATIC) -> list[dict]:
             # and left that rung unreachable. Statuses are what may be
             # written; what a page draws and sorts by is the state, the same
             # rule the hill in `_fact_rows` already follows.
-            "status": entity.state(index.records),
+            "status": record.state(index.records),
             # `parent` decides whether the meta line says "in" at all; the link is
             # what it says. Both, because an id that is not in this plan still
             # names a parent and `_links` renders it as itself.
-            "parent": entity.parent,
-            "parent_link": _links([entity.parent], index, links) if entity.parent else "",
-            "problems": [p.message for p in index.problems if p.entity_id == entity_id],
+            "parent": record.parent,
+            "parent_link": _links([record.parent], index, links) if record.parent else "",
+            "problems": [p.message for p in index.problems if p.record_id == record_id],
             # Not problems: notes about the shaping document, printed here and
             # nowhere else. See `_shaping_hints`.
-            "hints": _shaping_hints(entity, bool(index.children.get(entity_id))),
+            "hints": _shaping_hints(record, bool(index.children.get(record_id))),
             # The tasks this pitch is made of, ticked from their own statuses.
-            "progress": _progress_view(index, entity),
-            "body": _body_html(entity, links),
+            "progress": _progress_view(index, record),
+            "body": _body_html(record, links),
         }
-        for entity_id, entity in sorted(index.records.items())
+        for record_id, record in sorted(index.records.items())
     ]
 
 
@@ -16885,9 +16949,9 @@ KINDS = tuple(rung.name for rung in KIND_LADDER)
 # and is now asked two more questions — which fields a kind has, for the create
 # form and for the row a person types straight into the table — and three copies
 # of "these are the three kinds" is three places to forget a fourth.
-_KIND_MODELS: dict[str, type[Entity]] = {rung.name: rung.model for rung in KIND_LADDER}
+_KIND_MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KIND_LADDER}
 
-# The body a new entity starts from, per kind.
+# The body a new record starts from, per kind.
 #
 # The pitch one is the team's own shaping template, copied from the note they
 # already write pitches against, minus its three header lines: `Shaped by`,
@@ -16983,7 +17047,7 @@ def _new_rows() -> list[dict]:
             # somebody leaves empty. This is a blank; nothing is overwritten.
             assigned_on=date.today(),
         )
-        # One form on the page, so one prefix. The detail page's is the entity's
+        # One form on the page, so one prefix. The detail page's is the record's
         # id, because that page can hold sixteen of them at once.
         for field in _editable_for(blank, "new"):
             if field["name"] == "title":
@@ -17068,11 +17132,11 @@ def _suggestions(index: Index) -> dict:
     tags: set[str] = set()
     # Records, not the plan: `reported_by` and `written_by` names and an inbox
     # record's tags belong in the datalists like anybody else's.
-    for entity in index.records.values():
+    for record in index.records.values():
         for name in PEOPLE_FIELDS:
-            value = getattr(entity, name, None)
+            value = getattr(record, name, None)
             people.update(value if isinstance(value, list) else [value] if value else [])
-        tags.update(entity.tags)
+        tags.update(record.tags)
     # A login has no comma and no space in it. An early version of the table wrote
     # a whole comma-separated string into a list field, and the picker then offered
     # "jcanton, halungge" as if it were one person — garbage in the corpus became
@@ -17087,7 +17151,7 @@ def _suggestions(index: Index) -> dict:
     # remembers — which org, and whether it is icon4py or icon4pygen — and leaves
     # the number to be typed. Everything here comes from the corpus, so it costs
     # no network and cannot be stale in a way the plan is not already stale.
-    refs = {ref for entity in index.records.values() for ref in entity.prs}
+    refs = {ref for record in index.records.values() for ref in record.prs}
     repos = {ref.split("#")[0] + "#" for ref in refs if "#" in ref}
     return {
         "prs": (
@@ -17098,11 +17162,11 @@ def _suggestions(index: Index) -> dict:
             ]
         ),
         "people": [{"value": p, "label": ""} for p in sorted(people)],
-        # Still the PLAN, deliberately: these complete `parent` and
-        # `depends_on`, and offering an issue or a note there would offer an
-        # edge the model refuses.
-        "entities": [
-            {"value": i, "label": e.title} for i, e in sorted(index.entities.items())
+        # Named `records`, filled from the PLAN, deliberately: these complete
+        # `parent` and `depends_on`, and offering an issue or a note there
+        # would offer an edge the model refuses.
+        "records": [
+            {"value": i, "label": e.title} for i, e in sorted(index.plan.items())
         ],
         "tags": [{"value": t, "label": ""} for t in sorted(tags)],
         # Newest first: the cycle being bet into is nearly always the highest
@@ -17246,7 +17310,7 @@ _CYCLE = """
     that cycle's number so its overrun keeps accusing, which also means the load
     column cannot show where it came from. -#}
 <p class="hint" id="carried">Counted above, and carried in from an earlier cycle:
-  {% for row in c.carried %}<a href="{{ links.entity }}{{ row.id }}">{{ row.title
+  {% for row in c.carried %}<a href="{{ links.record }}{{ row.id }}">{{ row.title
   }}</a> (bet in {{ row.cycle }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
 {% endif %}
 
@@ -17288,7 +17352,7 @@ _CYCLE = """
                aria-label="Bet {{ row.title }} into cycle {{ c.number }}"
                {{ 'checked' if row.in_cycle else '' }}
                {{ 'disabled' if row.carried else '' }}></td>
-    <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
+    <td><a href="{{ links.record }}{{ row.id }}">{{ row.title }}</a></td>
     <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
     <td><span class="chip {{ status_class(row.status) }}">{{ row.status|human }}</span></td>
     <td><input class="live" data-field="{{ row.size_field }}" data-type="number"
@@ -17340,7 +17404,7 @@ const NUMBER = {{ c.number }};
 // answer, shipped rather than recomputed. See the input listener below.
 const BUILD_WEEKS = {{ c.build_weeks }};
 // What is on this page, so the shell's banner can tell a write that lands here
-// from one that lands somewhere else. The cycle record and every entity that can
+// from one that lands somewhere else. The cycle record and every record that can
 // be bet into it: those are the ids the server announces.
 window.SHOWING = ['cycle-' + NUMBER].concat(
   [...document.querySelectorAll('#bets tbody tr')].map(tr => tr.dataset.id));
@@ -17450,7 +17514,7 @@ if (GOAL) GOAL.oninput = () => {
   mark();
 };
 
-// Ticking is a write to the ENTITY, not to the cycle: `cycle` lives on the thing
+// Ticking is a write to the RECORD, not to the cycle: `cycle` lives on the thing
 // being bet, and one row is one commit so a half-finished betting table is still
 // a readable history rather than one commit nobody can unpick.
 for (const box of document.querySelectorAll('input.bet')) {
@@ -17465,7 +17529,7 @@ for (const box of document.querySelectorAll('input.bet')) {
 // staffed, argued about and restaffed inside a minute — and one commit per
 // keystroke turns that into a git history nobody can read and a plan that is
 // briefly wrong in public between two halves of one decision.
-const PENDING = new Map();   // entity id -> {field: value}
+const PENDING = new Map();   // record id -> {field: value}
 
 function pend(id, field, value) {
   PENDING.set(id, {...(PENDING.get(id) || {}), [field]: value});
@@ -17514,14 +17578,14 @@ async function flush(quiet) {
     if (!(await saveSetup())) { mark(); return false; }
     saved += edits;
   }
-  // One entity per commit, each against the commit the last one returned: a
+  // One record per commit, each against the commit the last one returned: a
   // batch that fails half way is still a readable history rather than one commit
   // nobody can unpick.
   for (const [id, fields] of [...PENDING]) {
     dispatchEvent(new Event('openproj:writing'));
     let committed = null;
     try {
-      const response = await fetch(`/api/entity/${encodeURIComponent(id)}`, {
+      const response = await fetch(`/api/record/${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: {'content-type': 'application/json'},
         body: JSON.stringify({base_commit: BASE.value, fields, body: null}),
       });
@@ -17994,7 +18058,7 @@ _PEOPLE = """
     read down. The person is a group row inside it instead of a heading above a
     table of their own. -#}
 <table id="roles">
-  <thead><tr><th scope="col">role</th><th scope="col">entity</th><th scope="col">kind</th>
+  <thead><tr><th scope="col">role</th><th scope="col">record</th><th scope="col">kind</th>
     <th scope="col">status</th><th scope="col">scheduled</th></tr></thead>
   {% for person in people %}
   <tbody class="person" data-login="{{ person.login }}">
@@ -18099,7 +18163,7 @@ _PEOPLE = """
     <tr data-role="{{ row.role }}" data-kind="{{ row.kind }}" data-status="{{ row.status }}"
         data-text="{{ row.search }}">
       <td class="role">{{ row.role }}</td>
-      <td><a href="{{ links.entity }}{{ row.id }}">{{ row.title }}</a></td>
+      <td><a href="{{ links.record }}{{ row.id }}">{{ row.title }}</a></td>
       <td><span class="chip kind-{{ row.kind }}">{{ row.kind|human }}</span></td>
       <td><span class="chip {{ status_class(row.status) }}">{{ row.status|human }}</span></td>
       <td class="derived">{{ row.span }}</td>
@@ -18452,8 +18516,8 @@ button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-r
 _ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"),
           ("shaped_by", "shaper"))
 
-# Most answerable first. Grouped by entity — which is what building the rows one
-# entity at a time gave you — a person with twenty rows had their four ownerships
+# Most answerable first. Grouped by record — which is what building the rows one
+# record at a time gave you — a person with twenty rows had their four ownerships
 # scattered through it, and ownership is the thing being on the page is for.
 _ROLE_ORDER = ("owner", "assignee", "shaper", "reviewer")
 
@@ -18553,7 +18617,7 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # left out the work actually filling the person's weeks.
         mine = [
             index.spans[i].end
-            for i, e in index.entities.items()
+            for i, e in index.plan.items()
             if index.counts_in(e, number)
             and login in (e.assignees + ([e.owner] if e.owner else []))
             and i in index.spans
@@ -18581,21 +18645,21 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
     # cycle's weeks, and it is counted above. Named here so the number can be
     # argued with rather than wondered about.
     carried = [
-        {"id": i, "title": index.entities[i].title, "cycle": index.entities[i].cycle}
+        {"id": i, "title": index.plan[i].title, "cycle": index.plan[i].cycle}
         for i in index.carried_into(number)
         # The same two exclusions `load` makes, so this list explains that number
         # and not a different one: a parent is a rollup and charges nothing, and
         # work with nobody on it charges nobody.
         if not index.children.get(i)
-        and (index.entities[i].owner or index.entities[i].assignees)
+        and (index.plan[i].owner or index.plan[i].assignees)
     ]
 
     candidates = []
     # Ready first, then in progress, and by id inside each: the question at a
     # betting table is what to pick up, and what is already running is context.
     order = ("ready", "in_progress")
-    for entity_id, entity in sorted(
-        index.entities.items(), key=lambda kv: (order.index(kv[1].status)
+    for record_id, record in sorted(
+        index.plan.items(), key=lambda kv: (order.index(kv[1].status)
                                                 if kv[1].status in order else len(order),
                                                 kv[0])
     ):
@@ -18604,30 +18668,30 @@ def _cycle_view(index: Index, number: int, links: Links = ROUTES) -> dict:
         # for bets and is not one. Listing all three put a milestone and eleven
         # of its own tasks on the table beside the five pitches they belong to,
         # and ticking any of them stamped a second cycle onto one decision.
-        if entity.status not in order or not is_bettable(entity):
+        if record.status not in order or not is_bettable(record):
             continue
         size, defaulted = size_weeks(
-            entity, Config(default_task_effort=index.default_task_effort)
+            record, Config(default_task_effort=index.default_task_effort)
         )
         candidates.append(
             {
-                "id": entity_id,
-                "title": entity.title,
-                "kind": entity.kind,
-                "status": entity.status,
+                "id": record_id,
+                "title": record.title,
+                "kind": record.kind,
+                "status": record.status,
                 "size": "" if defaulted else f"{size:g}",
                 "size_field": "person_weeks",
                 "size_hint": f"{size:g} assumed" if defaulted else "",
-                "assignees": ", ".join(entity.assignees),
-                "reviewers": ", ".join(entity.reviewers),
-                "cycle": entity.cycle if entity.cycle is not None else "—",
-                "in_cycle": entity.cycle == number,
+                "assignees": ", ".join(record.assignees),
+                "reviewers": ", ".join(record.reviewers),
+                "cycle": record.cycle if record.cycle is not None else "—",
+                "in_cycle": record.cycle == number,
                 # Bet in an earlier cycle and still running: shown, counted, and
                 # not re-stampable. Overwriting its cycle would move the deadline
                 # its overrun is measured against and forgive the slip.
-                "carried": entity.status == "in_progress"
-                and entity.cycle is not None
-                and entity.cycle < number,
+                "carried": record.status == "in_progress"
+                and record.cycle is not None
+                and record.cycle < number,
             }
         )
 
@@ -18669,7 +18733,7 @@ def render_cycle(
     index: Index, number: int, links: Links = ROUTES, base_commit: str | None = None
 ) -> str:
     view = _cycle_view(index, number, links)
-    body = _ENV.from_string(_CYCLE).render(
+    body = _compiled(_CYCLE).render(
         c=view,
         links=links,
         editable=base_commit is not None,
@@ -18754,7 +18818,7 @@ _DECK = """
     {#- The record, because the slide deliberately does not carry the shaping
         argument and somebody in the room will ask. Printed as well as linked:
         on a handout the id is what tells you which file to go and read. -#}
-    <a class="record" href="{{ links.entity }}{{ s.id }}">{{ s.id }}</a>
+    <a class="record" href="{{ links.record }}{{ s.id }}">{{ s.id }}</a>
   </p>
 
   {% if s.points %}
@@ -19016,7 +19080,7 @@ def _to_fit(text: str, budget: int) -> tuple[str, bool]:
     return "\n\n".join(kept), spent < sum(len(block.split()) for block in blocks)
 
 
-def _review(entity: Entity, links: Links, assets: dict[str, str]) -> tuple[Markup, str]:
+def _review(record: Record, links: Links, assets: dict[str, str]) -> tuple[Markup, str]:
     """What the slide says under its points: what happened, and never nothing.
 
     The team stands up and says how the work went, so the slide is built out of
@@ -19054,7 +19118,7 @@ def _review(entity: Entity, links: Links, assets: dict[str, str]) -> tuple[Marku
     exactly like a slide that is finished — and the person holding the sheet is
     the one person who cannot go and check.
     """
-    said = without_checklist(without_comments(_drop_repeated_title(entity.body, entity.title)))
+    said = without_checklist(without_comments(_drop_repeated_title(record.body, record.title)))
     # Comments are stripped BEFORE the emptied-heading prune inside
     # `without_checklist`, or a `## Solution` holding nothing but the template's
     # own guidance survives as a heading over a blank — which is the same defect
@@ -19076,12 +19140,12 @@ def _review(entity: Entity, links: Links, assets: dict[str, str]) -> tuple[Marku
     # cannot disagree about whether anything up there has words on it. A box with
     # nothing beside it is what the empty template ships and is not something a
     # person can stand up and read out.
-    if any(text for _, text in checklist_items(entity.body)):
+    if any(text for _, text in checklist_items(record.body)):
         return Markup(""), ""
     return Markup(""), _NOTHING_SAID
 
 
-def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -> dict:
+def _slide(index: Index, record: Record, links: Links, assets: dict[str, str]) -> dict:
     """One record, as the slide somebody would have typed out of it.
 
     Every number is read from where the site already keeps it: the tick and the
@@ -19089,20 +19153,20 @@ def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -
     detail page and this; the links from `_pr_link`, which is what makes a
     reference in a fact row a link somebody can follow.
     """
-    counted = index.progress.get(entity.id)
-    size, defaulted = size_weeks(entity, Config(default_task_effort=index.default_task_effort))
-    bet = bet_of(entity, index.entities)
-    body, note = _review(entity, links, assets)
+    counted = index.progress.get(record.id)
+    size, defaulted = size_weeks(record, Config(default_task_effort=index.default_task_effort))
+    bet = bet_of(record, index.plan)
+    body, note = _review(record, links, assets)
     return {
-        "id": entity.id,
-        "title": entity.title,
+        "id": record.id,
+        "title": record.title,
         # The `[GT4Py]` of the real deck. Blank where this record IS the bet —
         # an orphan chore, or a pitch nobody has broken into tasks — because a
         # bracket repeating the heading under it is furniture.
-        "under": bet.title if bet is not None and bet.id != entity.id else "",
-        "status": entity.status,
-        "status_class": _status_class(entity.status),
-        "people": ", ".join(_people_on(entity)),
+        "under": bet.title if bet is not None and bet.id != record.id else "",
+        "status": record.status,
+        "status_class": _status_class(record.status),
+        "people": ", ".join(_people_on(record)),
         "size": f"{size:g}" + ("*" if defaulted else ""),
         # `counted.text` and `counted.fraction`, not a division written here: the
         # panel on the detail page and the meter in the table read the same two,
@@ -19111,9 +19175,9 @@ def _slide(index: Index, entity: Entity, links: Links, assets: dict[str, str]) -
         "percent": round(100 * counted.fraction) if counted is not None else 0,
         "points": [
             {"done": done, "text": _markdown_line(said, links, assets)}
-            for done, said in checklist_items(entity.body)
+            for done, said in checklist_items(record.body)
         ],
-        "prs": [_pr_link(ref) for ref in entity.prs],
+        "prs": [_pr_link(ref) for ref in record.prs],
         "body": body,
         "note": note,
     }
@@ -19150,22 +19214,22 @@ def _deck_view(
     # the cycle page disagrees with is the same fact in two places again.
     proposed = plan or _proposed(index, number, index.cycles.get(number))
 
-    def order(pair: tuple[str, Entity]) -> tuple[str, str, str]:
-        entity_id, entity = pair
-        bet = bet_of(entity, index.entities)
-        return (bet.title.casefold(), bet.id, entity_id) if bet else ("", "", entity_id)
+    def order(pair: tuple[str, Record]) -> tuple[str, str, str]:
+        record_id, record = pair
+        bet = bet_of(record, index.plan)
+        return (bet.title.casefold(), bet.id, record_id) if bet else ("", "", record_id)
 
     chosen = [
-        entity
-        for entity_id, entity in sorted(index.entities.items(), key=order)
-        if cycle_of(entity, index.entities) == number and not index.children.get(entity_id)
+        record
+        for record_id, record in sorted(index.plan.items(), key=order)
+        if cycle_of(record, index.plan) == number and not index.children.get(record_id)
     ]
     # Only the documents this deck actually draws. Reading every asset in the plan
     # would put a screenshot from cycle 30 inside a deck for cycle 37, and a deck
     # is already the heaviest page here.
-    bodies = [entity.body for entity in chosen] + ([plan.body] if plan else [])
+    bodies = [record.body for record in chosen] + ([plan.body] if plan else [])
     assets = _inlined_assets(bodies, asset) if asset else {}
-    slides = [_slide(index, entity, links, assets) for entity in chosen]
+    slides = [_slide(index, record, links, assets) for record in chosen]
     return {
         "number": number,
         "reviews_on": proposed.reviews_on.isoformat() if proposed.reviews_on else "",
@@ -19199,7 +19263,7 @@ def render_deck(
     view = _deck_view(index, number, links, asset)
     return _page(
         f"openproj — cycle {number} review",
-        _ENV.from_string(_DECK).render(d=view, links=links),
+        _compiled(_DECK).render(d=view, links=links),
         _DETAIL_STYLE + _DECK_STYLE,
         links,
         # A deck is of a cycle, and the Cycles listing is the listing of cycles.
@@ -19213,14 +19277,14 @@ def _cycle_numbers(index: Index) -> set[int]:
     """Every cycle the plan names.
 
     Three sets that are not the same set: the cycles with a record, the cycles
-    config/cycles.yaml dates, and the cycles entities point at. A page that asks
+    config/cycles.yaml dates, and the cycles records point at. A page that asks
     only one of them loses exactly the cycle somebody is looking for — the one
     holding work with nothing written down behind it.
     """
     return (
         set(index.plans)
         | set(index.cycles)
-        | {e.cycle for e in index.entities.values() if e.cycle is not None}
+        | {e.cycle for e in index.plan.values() if e.cycle is not None}
     )
 
 
@@ -19353,7 +19417,7 @@ def _promote_html(
         only=kinds[0],
         hint=hint,
         base_commit=base_commit,
-        entity=links.entity,
+        record=links.record,
     )
 
 
@@ -19361,25 +19425,25 @@ def render_cycles(
     index: Index, links: Links = STATIC, base_commit: str | None = None
 ) -> str:
     # Every cycle the plan names, not only the ones with a file. A cycle dated in
-    # config, or one that entities point at with nothing behind it, is exactly
+    # config, or one that records point at with nothing behind it, is exactly
     # the cycle somebody needs to find: it holds work and holds no record.
     numbers = _cycle_numbers(index)
     rows = [_cycle_totals(index, number) for number in sorted(numbers, reverse=True)]
     last = index.plans[max(index.plans)] if index.plans else None
     # The number to propose comes from the cycles the plan has *decided* — the
     # ones with a record and the ones config/cycles.yaml dates — and not from
-    # every number an entity happens to mention. A plan whose cycles live only in
+    # every number a record happens to mention. A plan whose cycles live only in
     # config would otherwise be offered cycle 1 while it is running cycle 37; but
-    # unioning `entity.cycle` in overshoots the other way, and worse. One bet into
+    # unioning `record.cycle` in overshoots the other way, and worse. One bet into
     # a cycle nobody has written down — which the listing above actively invites —
     # made the form propose the number after *that*, with no dates behind it, so
     # the real last cycle's end date was thrown away and the proposal started
-    # today. Entity-referenced numbers belong to the listing; they are not a
+    # today. Record-referenced numbers belong to the listing; they are not a
     # decision about when the next cycle begins.
     decided = set(index.plans) | set(index.cycles)
     top = max(decided) if decided else 0
     ends = index.cycles.get(top)
-    body = _ENV.from_string(_CYCLES).render(
+    body = _compiled(_CYCLES).render(
         cycles=rows,
         links=links,
         editable=base_commit is not None,
@@ -19484,20 +19548,20 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
     only answer 403 is a dead end you find by pressing it.
     """
     held: dict[str, list[dict]] = {}
-    for entity_id, entity in sorted(index.entities.items()):
-        span = index.spans.get(entity_id)
+    for record_id, record in sorted(index.plan.items()):
+        span = index.spans.get(record_id)
         for field, role in _ROLES:
-            value = getattr(entity, field, None)
+            value = getattr(record, field, None)
             for login in value if isinstance(value, list) else [value] if value else []:
                 held.setdefault(login, []).append(
                     {
                         "role": role,
-                        "id": entity_id,
-                        "title": entity.title,
-                        "kind": entity.kind,
-                        "status": entity.status,
+                        "id": record_id,
+                        "title": record.title,
+                        "kind": record.kind,
+                        "status": record.status,
                         "span": f"{span.start} → {span.end}" if span else "—",
-                        "search": f"{entity_id} {entity.title}".lower(),
+                        "search": f"{record_id} {record.title}".lower(),
                     }
                 )
 
@@ -19553,7 +19617,7 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
         key: sorted({row[key] for rows in held.values() for row in rows})
         for key in ("role", "kind", "status")
     }
-    body = _ENV.from_string(_PEOPLE).render(
+    body = _compiled(_PEOPLE).render(
         people=people,
         links=links,
         # Every icon, drawn once, for the picker. In `ICONS` order, which is the
@@ -19562,9 +19626,9 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
         icons=[{"name": name, "art": icon_svg(name)} for name in ICONS],
         editable=editable,
         # The same bar the plan's three views draw, over this page's own three
-        # fields. Which hat somebody is wearing is not a field of an entity, so
+        # fields. Which hat somebody is wearing is not a field of a record, so
         # `role` is only ever offered here.
-        facets=_facets_html(facets, ("role", "kind", "status"), "Search person, entity, id"),
+        facets=_facets_html(facets, ("role", "kind", "status"), "Search person, record, id"),
         load=load,
         filters=_FILTER_JS,
     )
@@ -19598,7 +19662,7 @@ def _by_status(rows: list[dict]) -> list[dict]:
     seen = sorted({row["status"] for row in rows}, key=lambda s: (s not in known, s))
     order = [s for s in known if s in seen] + [s for s in seen if s not in known]
     return [
-        {"status": status, "entities": [r for r in rows if r["status"] == status]}
+        {"status": status, "records": [r for r in rows if r["status"] == status]}
         for status in order
     ]
 
@@ -19651,15 +19715,15 @@ def render_detail(
         rows = _detail_rows(index, links)
         if only is not None:
             rows = [row for row in rows if row["id"] == only]
-        # Every entity gets its facts, not only the one being served on its own
+        # Every record gets its facts, not only the one being served on its own
         # route: the static export renders them all, and it is the same page.
-        # `records`, not `entities`: this page is every record's page — spec §2
+        # `records`, not `plan`: this page is every record's page — spec §2
         # puts it on the total side of the inversion, and the day an unplanned
         # rung lands its records get their pages through this line unchanged.
         for row in rows:
-            entity = index.records[row["id"]]
-            row["rows"] = _fact_rows(index, entity, links, signed_in)
-            row["raw_body"] = entity.body
+            record = index.records[row["id"]]
+            row["rows"] = _fact_rows(index, record, links, signed_in)
+            row["raw_body"] = record.body
             # What deleting it would take with it, drawn into the confirmation
             # before anybody presses anything. From `cascade_of`, which is what
             # the route itself asks — a panel that listed the consequences from
@@ -19679,16 +19743,16 @@ def render_detail(
             # of the same shape.
             row["promote"] = (
                 _promote_html(
-                    row["id"], PROMOTABLE[entity.kind], _PROMOTE_HINTS[entity.kind],
+                    row["id"], PROMOTABLE[record.kind], _PROMOTE_HINTS[record.kind],
                     base_commit or "", links,
                 )
-                if base_commit is not None and may_write and entity.kind in PROMOTABLE
+                if base_commit is not None and may_write and record.kind in PROMOTABLE
                 else Markup("")
             )
-    body = _ENV.from_string(_DETAIL).render(
-        entities=rows,
+    body = _compiled(_DETAIL).render(
+        records=rows,
         groups=[] if creating else _by_status(rows),
-        # Every entity this page holds, not the one in the URL: the static export
+        # Every record this page holds, not the one in the URL: the static export
         # is all of them in one file, and the shell's banner has no other way to
         # tell "somebody changed what you are reading" from "somebody changed
         # something".
@@ -19767,13 +19831,13 @@ _NO_ASIDE = Markup("")
 
 
 def _titles(index: Index) -> dict[str, str]:
-    """What each entity is called, for the menus whose values are ids.
+    """What each record is called, for the menus whose values are ids.
 
-    Only the Project facet has any today. It is the whole index rather than the
+    Only the Project facet has any today. It is the whole plan rather than the
     projects alone because a value in a menu is a value in a menu — the day
     something else is filtered by id, this already knows its name.
     """
-    return {entity_id: entity.title for entity_id, entity in index.entities.items()}
+    return {record_id: record.title for record_id, record in index.plan.items()}
 
 
 def _facets_html(
@@ -19792,7 +19856,7 @@ def _facets_html(
     drifted — same markup, a different search box.
 
     `titles` is what a value is called where the value itself is not a word: the
-    Project menu's values are entity ids, because that is what the filter matches
+    Project menu's values are record ids, because that is what the filter matches
     and what the URL has to carry, and a menu of `proj-370001` asks a reader to
     know the plan by heart. Given per page rather than looked up here, because
     this function is handed facets and not an index — the people page's three
@@ -19814,7 +19878,7 @@ def _combobox_html(index: Index | None) -> Markup:
     data = (
         _suggestions(index)
         if index
-        else {"people": [], "entities": [], "tags": [], "prs": [], "cycles": []}
+        else {"people": [], "records": [], "tags": [], "prs": [], "cycles": []}
     )
     return _fragment(
         _COMBOBOX, suggest=data, max_body_bytes=MAX_BODY_BYTES, history_art=HISTORY_MARKS
@@ -19864,7 +19928,7 @@ _PROMOTE = """
       SAID.textContent = refusal(answer, response.status);
       return;
     }
-    location.href = {{ entity|tojson }} + answer.id;
+    location.href = {{ record|tojson }} + answer.id;
   };
 })();
 </script>
@@ -19907,7 +19971,7 @@ def _page(
     current: str = "",
     unreadable: Sequence[Unreadable] = (),
 ) -> str:
-    """Autoescaping protects entity titles inside the inner templates; the already
+    """Autoescaping protects record titles inside the inner templates; the already
     rendered body and stylesheet are marked safe here so the shell does not escape
     them a second time.
 
@@ -19935,7 +19999,7 @@ def _page(
     """
     if current and current not in _PAGE_KEYS:
         raise ValueError(f"{current!r} is not a page: {sorted(_PAGE_KEYS)}")
-    return _ENV.from_string(_SHELL).render(
+    return _compiled(_SHELL).render(
         title=title,
         content=Markup(content),
         style=Markup(style),
@@ -20025,7 +20089,7 @@ _RECORDS = """
 {%- for r in rows %}
   <tr data-id="{{ r.id }}">
     <td data-col="kind"><span class="chip kind-{{ r.kind }}">{{ r.kind }}</span></td>
-    <td data-col="title"><a href="{{ links.entity }}{{ r.id }}">{{ r.title or r.id }}</a></td>
+    <td data-col="title"><a href="{{ links.record }}{{ r.id }}">{{ r.title or r.id }}</a></td>
     <td data-col="who">{{ r.who or '—' }}</td>
     <td data-col="tags">{{ r.tags|join(', ') or '—' }}</td>
     {%- if timed %}<td data-col="edited">{{ r.ago }}</td>{% endif %}
@@ -20122,10 +20186,10 @@ _RECORDS_STYLE = _SCROLL_STYLE + """
 /* One row per record: chip, title, who, tags, time. The chips come from the
    shell (`.chip.kind-…`), so a kind added to the ladder arrives here already
    drawn; the scroll box and the frozen header row are `_SCROLL_STYLE`, the
-   same mechanism the entity table stands on. Every rule below is resolved
+   same mechanism the plan's table stands on. Every rule below is resolved
    against that block by name: each is (1,1,1) against its bare (0,0,2)
    elements, wins exactly its own properties, and none of them positions a
-   cell — the move that once stole `position: sticky` from the entity table's
+   cell — the move that once stole `position: sticky` from the plan table's
    title column. */
 /* Against the browser's own `[hidden]` at (0,1,0) — which already hides an
    unmatched row today, since no author rule gives these rows a display.
@@ -20173,17 +20237,17 @@ def _record_row(index: Index, record_id: str) -> dict:
     this page lists records the plan does not hold, and `query_fields` — the
     contract this map is held to — walks the total map too.
     """
-    entity = index.records[record_id]
-    unread = unread_fields(entity.kind)
+    record = index.records[record_id]
+    unread = unread_fields(record.kind)
 
     def read(name):
-        return None if name in unread else getattr(entity, name)
+        return None if name in unread else getattr(record, name)
 
     return {
-        "id": entity.id,
-        "kind": entity.kind,
-        "title": entity.title,
-        "tags": entity.tags,
+        "id": record.id,
+        "kind": record.kind,
+        "title": record.title,
+        "tags": record.tags,
         "status": read("status"),
         "owner": read("owner"),
         "assignees": read("assignees"),
@@ -20191,8 +20255,8 @@ def _record_row(index: Index, record_id: str) -> dict:
         "priority": read("priority"),
         "cycle": read("cycle"),
         "prs": read("prs"),
-        "project": _project_of(entity, index.records),
-        "product": _product_of(entity, index.records),
+        "project": _project_of(record, index.records),
+        "product": _product_of(record, index.records),
         "predicates": predicates_of(index, record_id),
         "search": index.search_blob[record_id],
     }
@@ -20305,7 +20369,7 @@ def render_records(
                  "it turns out to be work, promote it and it becomes a "
                  "project, a pitch or a task.",
     }[key]
-    body = _ENV.from_string(_RECORDS).render(
+    body = _compiled(_RECORDS).render(
         rows=rows,
         timed=timed,
         editable=editable,
@@ -20335,15 +20399,15 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
     # page was already fixed for once.
     blocking = [
         p for p in index.problems
-        if p.severity == "blocker" and p.entity_id in index.entities
+        if p.severity == "blocker" and p.record_id in index.plan
     ]
-    body = _ENV.from_string(_TABLE).render(
+    body = _compiled(_TABLE).render(
         payload=payload,
         blockers=len(blocking),
-        # The population `?predicate=has_blocker` matches. One entity can carry
+        # The population `?predicate=has_blocker` matches. One record can carry
         # three problems, so the count and the filter it links to were counting
         # different things and the table opened shorter than the number promised.
-        blocked=len({p.entity_id for p in blocking}),
+        blocked=len({p.record_id for p in blocking}),
         editable=base_commit is not None,
         base_commit=base_commit or "",
         links=links,
@@ -20378,7 +20442,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     ends both failures for the same reason: Jinja substitutes into the template,
     never into what a value expanded to.
     """
-    body = _ENV.from_string(_GRAPH).render(
+    body = _compiled(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         facets=_facets_html(index.facets, aside=_GRAPH_HINT, titles=_titles(index)),
@@ -20392,7 +20456,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         priglyphs=PRIORITY_GLYPH,
         levels=PRIORITY_LEVEL,
         carded={rung.name: rung.carded for rung in KIND_LADDER},
-        total=len(index.entities),
+        total=len(index.plan),
         links=links,
         elements=_elements(index),
         cytoscape=_library("cytoscape.min.js"),
@@ -20411,7 +20475,7 @@ def render_timeline(
     zoom: float | None = None,
 ) -> str:
     timeline = _timeline(index, window, zoom)
-    body = _ENV.from_string(_TIMELINE).render(
+    body = _compiled(_TIMELINE).render(
         t=timeline,
         links=links,
         zooms=_ZOOMS,

@@ -10,15 +10,110 @@ on:
     branches: [main]
 
 # A PR's third push makes the first two runs' answers worthless, and they go on
-# holding a runner while the answer that matters queues behind them.
+# holding a runner while the answer that matters queues behind them. With six
+# jobs per run instead of one this matters six times as much.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Three job kinds, and the reason there are three is measured in
+# `docs/probes/ci-speed.md`: a job on this repository costs NINE seconds of
+# setup, not the ninety everybody assumes, so buying a whole extra machine is
+# cheaper than any arrangement of processes on one machine. The runner was
+# probed in run 32633361097 and it is a 2-core / 8 GB box — `ubuntu-latest` is
+# 4-core only for public repositories and this one is private — so `-n auto`
+# under pytest-xdist would mean `-n 2` and would put two headless Chromes on two
+# vCPU that the suite's wall-clock assertions are already measured against.
+# Five machines beat that, and they beat it without touching a line of test code.
 jobs:
-  check:
+  # Ruff alone, on its own machine, finishing in about twenty-five seconds.
+  #
+  # Worth ZERO seconds of wall clock on a green run, and that is worth saying
+  # plainly because the theory it looks like it comes from — "ruff runs serially
+  # in front of a twenty-minute suite" — was measured at 0s and is false. What it
+  # buys is how fast a RED run answers: a misplaced import is reported in
+  # twenty-five seconds instead of after the whole suite. The shards deliberately
+  # do NOT `needs: [lint]`; a lint error and a test failure are different
+  # questions and you want both answers from one push.
+  lint:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to an exact release rather than a major, and alone in that: astral
+      # stopped publishing moving major tags after v7, so `@v10` is a 404 and not
+      # a pin. Bump this deliberately; the other two follow their major.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          # 3.12 because that is what the Dockerfile ships and what ruff targets.
+          # A gate that is green on a version the deploy never runs is not a gate.
+          python-version: "3.12"
+          enable-cache: true
+
+      # `--locked`, as in the Dockerfile: it fails on a `pyproject.toml` edited
+      # without relocking, instead of quietly testing a resolution that will
+      # never be the one deployed. Doing it here as well as in the shards is not
+      # duplication for its own sake — this is the job that reaches the sync step
+      # first, so a bump-without-relock is red in twenty-five seconds instead of
+      # in whatever the slowest shard costs.
+      - run: uv sync --locked --group dev
+
+      - run: uv run ruff check .
+
+      # No `ruff format --check` yet, on purpose: 32 of the 103 files predate any
+      # formatter and would fail it today, so adding it now commits a gate that
+      # is red on arrival — and a gate that is red on arrival teaches everybody
+      # to read past red. One `uv run ruff format .`, as its own commit touching
+      # nothing else, is what makes this line safe to add.
+      #
+      # Nothing here checks the shard lists, on purpose. They are hand-written
+      # and a hand-written list of files fails OPEN — add `tests/test_new.py`,
+      # forget the list, and it runs on no machine at all while every job stays
+      # green — but that is already held, once, by
+      # `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py`,
+      # which reads the same files and answers on a laptop as well as here. An
+      # invariant written twice gets guarded once.
+
+  # The suite, cut five ways across five machines.
+  #
+  # The cut is in `.github/shards/<name>`, one path per line, and it is made from
+  # `docs/probes/ci-durations-after-cache.txt` — the post-template-cache table,
+  # not the pre-cache one, because caching template compilation moved the file
+  # boundaries by far more than the shard sizes. Measured seconds per leg:
+  # editor 151.3, views 138.9, graph 131.2, rest 128.8, coedit 125.6, summing to
+  # the 675.8s of attributed rows in a 711.04s run. That balances to within 8%.
+  #
+  # FIVE, and five is the ceiling. The break-even for a shard is `T/(K·(K−1)) >
+  # 9s`, which at T≈700s would allow ten; balance stops it long before setup cost
+  # does. `tests/test_editor.py` is 151.3s on its own — 115 tests, 151.04s of it
+  # `call`, 53 of the suite's 135 real-Chrome call sites, every one laying out a
+  # page carrying 594 KB of inlined Ace — and no file-level scheme goes below
+  # that floor. A sixth shard would split one of the four ~130s legs and change
+  # the critical path by nothing at all. Going below 151s means splitting that
+  # one file, and its natural seam is `?editor=ace` against `?editor=plain`.
+  #
+  # `coedit` is a shard for the opposite reason to `editor`: it is the only leg
+  # with real sockets, a real uvicorn on a real port, and literal `sleep(0.5)`
+  # budgets. It must not be reordered or internally parallelised, and its own
+  # machine is how that stays true for free.
+  suite:
+    strategy:
+      # One red shard must not cancel the other four. The whole point of a
+      # three-minute gate is getting every piece of bad news from one push.
+      fail-fast: false
+      matrix:
+        # Longest first: legs start roughly in this order, and `editor` is the
+        # critical path, so it should never be the one waiting for a runner.
+        shard: [editor, views, graph, coedit, rest]
+    runs-on: ubuntu-latest
+    steps:
+      # Full checkout, never sparse — the obvious optimisation here is wrong. 27
+      # of the 47 files in `tests/` import from another file in `tests/`
+      # (`test_editor.py` alone imports `test_web`, `test_store`,
+      # `test_injection`, `pages` and `browser`), and `tests/test_remote.py:375`
+      # asks for a fixture defined in `test_store` by name. A shard missing an
+      # import hub fails at COLLECTION, which is a shard reporting nothing rather
+      # than a shard reporting a failure. The whole tree is one second.
       - uses: actions/checkout@v7
 
       # Pinned to an exact release rather than a major, and alone in that: astral
@@ -35,7 +130,11 @@ jobs:
       # and skip themselves when node is missing, so without this step the suite
       # goes green by not running them — green for the wrong reason, which is the
       # one failure a gate must never have. node is needed to test, never to
-      # build or run: nothing here is a build step, and there is no npm.
+      # build or run: nothing here is a build step, and there is no npm. Every
+      # shard installs it, including the ones nobody thinks need it: a shard that
+      # silently stops driving JS is exactly the failure this step exists to
+      # prevent, and eight seconds of cached tarball is not worth reasoning about
+      # per leg.
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -45,18 +144,63 @@ jobs:
       # never be the one deployed.
       - run: uv sync --locked --group dev
 
-      - run: uv run ruff check .
-
-      # No `ruff format --check` yet, on purpose: 32 of the 103 files predate any
-      # formatter and would fail it today, so adding it now commits a gate that
-      # is red on arrival — and a gate that is red on arrival teaches everybody
-      # to read past red. One `uv run ruff format .`, as its own commit touching
-      # nothing else, is what makes this line safe to add.
-
       # The pixel tests look for `google-chrome` on PATH and ubuntu-latest ships
       # one, so headless Chrome needs no step of its own here. If that stops
       # being true they skip with a stated reason rather than fail, and `-ra`
       # (set in pyproject, deliberately not `-q`) prints every skip — so a suite
       # that has quietly stopped checking pixels says so in the log instead of
       # just looking green.
-      - run: uv run pytest -q
+      #
+      # `$files` is unquoted on purpose: the shard file is one path per line and
+      # the words are meant to split into separate pytest arguments. `sed` strips
+      # the `#` commentary the lists carry, matching what the census test in
+      # `tests/test_harness.py` accepts — a shard file the test reads and this
+      # line cannot is a trap set for whoever adds the next comment. It is a
+      # command substitution rather than `xargs` because `xargs` is allowed to
+      # split a long list into two invocations, and two pytest runs in one step
+      # would report two summary lines and one exit code. The emptiness check is
+      # what makes a missing or all-comment list red here: bare `pytest` with no
+      # paths falls back to `testpaths` and runs the WHOLE suite in every shard,
+      # which is slow rather than wrong, and therefore invisible.
+      #
+      # `--durations=25` stays after the measurement flags came out. The probe
+      # was `--durations=0 --durations-min=0.05`, which is 732 rows and is what
+      # `docs/probes/ci-durations*.txt` hold; 25 is the number that keeps this
+      # line useful without keeping the probe. What decides the critical path is
+      # shard BALANCE, and balance drifts every time a test file is added — 25
+      # rows per leg is enough to see which file grew and re-cut the lists,
+      # without anybody having to re-run a measurement workflow to find out. It
+      # is display-only: pytest times every phase whether or not it prints them.
+      - run: |
+          files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
+          [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
+          uv run pytest -q --durations=25 $files
+
+  # The one required status check, and the reason it is a separate job.
+  #
+  # Branch protection on `main` requires exactly one context, literally `check`,
+  # with `enforce_admins: true`. A `strategy.matrix` on a job named `check`
+  # renames the contexts to `check (editor)`, `check (views)` and so on, and
+  # separate jobs remove the name entirely. GitHub does not fail a PR for a
+  # required context that stopped existing in the way people expect: the PR sits
+  # pending for ever, or — if the old name is dropped from the required list
+  # without the new ones being added — every shard is red and the merge button is
+  # green. That is the sharding failure mode that ships a bug instead of blocking
+  # one, so the name does not move. The shards are called `suite`, and this job
+  # keeps the name the protection rule already knows.
+  check:
+    needs: [suite, lint]
+    # `!cancelled()` and NOT `always()`. `always()` runs this gate even while the
+    # run is being torn down, which is precisely what `cancel-in-progress` above
+    # does on every second push — reporting a red required check on a run nobody
+    # was waiting for. `!cancelled()` still runs when a shard FAILS, which is the
+    # case that has to be caught.
+    if: '!cancelled()'
+    runs-on: ubuntu-latest
+    steps:
+      # `needs.suite.result` on a matrix job is the aggregate: `success` only if
+      # every leg succeeded. Skipped and cancelled are not `success`, so both
+      # `[ … ]` tests fail closed on anything that is not a clean green.
+      - run: |
+          [ "${{ needs.suite.result }}" = success ] || exit 1
+          [ "${{ needs.lint.result }}" = success ] || exit 1

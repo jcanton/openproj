@@ -78,8 +78,8 @@ from .model import (
     RUNG,
     Config,
     Cycle,
-    Entity,
     Person,
+    Record,
     Unreadable,
     _an,
     edited_by_id,
@@ -145,7 +145,7 @@ STATE_COOKIE = "op_state"
 DIRECTORY = {rung.name: rung.directory for rung in KINDS}
 # What a new id starts with, per kind — off the ladder, like `DIRECTORY` beside
 # it. The SEVENTH copy, written out three lines under a map that was already
-# derived: `POST /api/entity` with `kind: product` got past the models and fell
+# derived: `POST /api/record` with `kind: product` got past the models and fell
 # over here instead.
 PREFIX = {rung.name: rung.prefix for rung in KINDS}
 # And back again: the rung an id names, read off its prefix. The inverse of
@@ -283,7 +283,7 @@ _DEV_SECRETS = {"", "dev-secret", "change-me", "secret"}
 CYCLE_DIR = "cycles"
 # A cycle file is named by its number alone, zero-padded so that the order the
 # store lists paths in is also the order a person means. Kept separate from
-# ID_PATTERN rather than folded into it: the entity id pattern is what keeps the
+# ID_PATTERN rather than folded into it: the record id pattern is what keeps the
 # writable surface closed by construction, and widening it to admit a fourth
 # shape is how that property gets lost by degrees.
 CYCLE_PATTERN = re.compile(r"^[0-9]{1,4}$")
@@ -391,14 +391,14 @@ def _config_at(store: Store, commit: str) -> tuple[Config, list[Unreadable]]:
 # 502 ms of a 941 ms PATCH at 518 records.
 #
 # Keyed on the blob AND the path, and the path is not decoration. `parse_text`
-# stamps `entity._source` with the file it came from, and `_source` is what
+# stamps `record._source` with the file it came from, and `_source` is what
 # `_identity_problems` reads to report the two blockers that matter most here:
 # "another file claims this id too" and "its file is named for something else".
 #
 # Keyed on the blob alone — which is how this shipped, on the argument that a
 # renamed file keeps its bytes and keeps its answer — two files with IDENTICAL
 # bytes are one cached object carrying the first path's `_source`, and both
-# blockers stop firing. Reproduced: two entities, one object, no blockers, on a
+# blockers stop firing. Reproduced: two records, one object, no blockers, on a
 # plan where the same record is committed under two names. The docstring of the
 # check that stopped firing says a save otherwise "lands on the wrong file" and
 # answers 200 with no warning, which is the failure a cache must never buy.
@@ -415,13 +415,13 @@ _PARSED: dict[tuple[str, str], object] = {}
 def _read_records(store: Store, commit: str, where, parse):
     """Every record under `where` at this commit, parsed once per (blob, path).
 
-    One function for every walk. It was written for entities alone, and the
-    others — cycles, people, and the then-separate issue and note readers —
+    One function for every walk. It was written for the planned kinds alone, and
+    the others — cycles, people, and the then-separate issue and note readers —
     went on doing a full tree walk plus a read and a parse of every file on
     EVERY request, warm or cold. That does not decay, and notes and issues are
     exactly what a betting table accumulates (measured on a plan with 300 of
     each, back when they had pages of their own: `/` 52 ms to 19 ms, `/notes`
-    54 to 15, `/issues` 40 to 15 — they ride the entity walk now).
+    54 to 15, `/issues` 40 to 15 — they ride the record walk now).
 
     Every walk already funnelled through `readable`, so this is one shape
     rather than one per kind.
@@ -448,7 +448,7 @@ def _read_records(store: Store, commit: str, where, parse):
     # banner to go on saying so.
     # Both numbers against the WHOLE tree, not the kind being read. Several
     # walks share this dict: a keep-set built from `paths` alone means reading
-    # entities evicts every person, and a threshold measured against `paths` means reading
+    # records evicts every person, and a threshold measured against `paths` means reading
     # cycles — of which a plan has two — prunes a six-hundred-entry cache on every
     # request. Measured with the threshold wrong, every page came out SLOWER than
     # with no cache at all: `/issues` 40 ms uncached, 91 ms with the bug, 15 ms
@@ -467,7 +467,7 @@ def _read_records(store: Store, commit: str, where, parse):
     return records, [*refused, *too_deep]
 
 
-def _entities_at(store: Store, commit: str) -> tuple[list[Entity], list[Unreadable]]:
+def _records_at(store: Store, commit: str) -> tuple[list[Record], list[Unreadable]]:
     return _read_records(store, commit, DIRECTORY.values(), parse_text)
 
 
@@ -570,14 +570,14 @@ _LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by",
           "pitched_into", "became")
 
 
-def _deletion_message(entity_id: str, doomed: list[str], edited: list[str]) -> str:
+def _deletion_message(record_id: str, doomed: list[str], edited: list[str]) -> str:
     """One commit, one line, and the line says how far it reached.
 
     `git log --oneline` on a plan is the team's record of decisions, and "deleted"
     over a commit that removed five files and edited two is the wrong record of
     this one.
     """
-    said = f"{entity_id}: deleted"
+    said = f"{record_id}: deleted"
     if doomed:
         said += f", with {len(doomed)} filed under it"
     if edited:
@@ -665,7 +665,7 @@ def _base_in(store: Store, payload: dict) -> str:
 
     Missing, not a string, and a sha this repository never had are one situation
     from the route's side: there is nothing to compare the save against. The
-    entity save learned it when a restored draft began carrying the commit it
+    record save learned it when a restored draft began carrying the commit it
     was drafted against — older than HEAD by design, and gone entirely after a
     re-clone of the plan. The cycle save beside it had the same four ways to
     fault and none of the guard, so the same stale tab was a 500 there.
@@ -723,7 +723,7 @@ def _schema_names(*models: type[BaseModel]) -> tuple[str, ...]:
 # a rung added later brings whatever it declares with it, on the commit that adds
 # it. (A `Product` has no field of its own today, so this list is unchanged by
 # it — which is exactly why writing the kinds out here would have gone unnoticed.)
-ENTITY_FIELDS = _schema_names(*(rung.model for rung in KINDS))
+RECORD_FIELDS = _schema_names(*(rung.model for rung in KINDS))
 CYCLE_FIELDS = _schema_names(Cycle)
 
 
@@ -739,7 +739,7 @@ def _named(fields: dict, known: tuple[str, ...]) -> str:
     parser reads it, `git shortlog --group=trailer:co-authored-by` counts Mallory
     for it, and GitHub puts their avatar on the commit. This branch is what makes
     `Co-authored-by:` the record of who wrote a document, so a forgeable one is
-    worse than none. Measured on the entity PATCH and the cycle PUT, which are
+    worse than none. Measured on the record PATCH and the cycle PUT, which are
     both on `main` today; the issue and note routes happened to be closed already
     because their own gates refuse a field name no model declares.
 
@@ -785,28 +785,28 @@ def _patched(original: str, fields: dict, body: str | None, path: str) -> str:
         ) from None
 
 
-def _kind_for(entity_id: str) -> str:
+def _kind_for(record_id: str) -> str:
     """The rung an id names, or a refusal. With `_directory_for` under it, the
     one place a bare id is trusted to mean anything."""
-    if not ID_PATTERN.match(entity_id):
-        raise HTTPException(400, f"{entity_id!r} is not an entity id")
-    return KIND_OF_PREFIX[entity_id.split("-")[0]]
+    if not ID_PATTERN.match(record_id):
+        raise HTTPException(400, f"{record_id!r} is not a record id")
+    return KIND_OF_PREFIX[record_id.split("-")[0]]
 
 
-def _directory_for(entity_id: str) -> str:
+def _directory_for(record_id: str) -> str:
     """The directory an id belongs in, or a refusal. The one place an id becomes
     part of a path — everything else must come through here."""
-    return DIRECTORY[_kind_for(entity_id)]
+    return DIRECTORY[_kind_for(record_id)]
 
 
-def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
-    """Where this entity's file actually is, at this commit.
+def _path_for(store: Store, commit: str, record_id: str) -> str | None:
+    """Where this record's file actually is, at this commit.
 
     Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
     the path cannot be reconstructed from the id — it has to be found. Guessing
     `<id>.md` works on a corpus nobody has renamed and fails on every real one.
     """
-    directory = _directory_for(entity_id)
+    directory = _directory_for(record_id)
     # Through `record_paths_in`, like every other reader of the tree, so the
     # candidates are the files this directory actually keeps records in. Walking
     # it recursively made `tasks/task-a00001--notes/notes.md` a candidate for
@@ -817,7 +817,7 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     found = []
     for path in candidates:
         stem = path[len(directory) + 1 : -len(".md")]
-        if stem == entity_id or stem.startswith(f"{entity_id}--"):
+        if stem == record_id or stem.startswith(f"{record_id}--"):
             found.append(path)
     # Refuse rather than pick. This returned the first match, and "first match
     # wins" is a coin toss about which record a save destroys — the index resolves
@@ -827,7 +827,7 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
     if len(found) > 1:
         raise HTTPException(
             409,
-            f"{', '.join(sorted(found))} both claim {entity_id}. "
+            f"{', '.join(sorted(found))} both claim {record_id}. "
             "Rename or remove one in git, then reload — until then a save here "
             "cannot tell which record you meant.",
         )
@@ -836,7 +836,7 @@ def _path_for(store: Store, commit: str, entity_id: str) -> str | None:
 
 # The models by kind, off the ladder. Written out, this was the SIXTH copy of
 # `KINDS` — the one the test that asserts the derivation did not name — so
-# `POST /api/entity` with `kind: product` raised KeyError and answered 500 on the
+# `POST /api/record` with `kind: product` raised KeyError and answered 500 on the
 # only route that can create one.
 MODELS = {rung.name: rung.model for rung in KINDS}
 
@@ -1057,7 +1057,7 @@ def create_app(
 
         `X-Content-Type-Options` because an asset is bytes somebody uploaded and
         the only thing standing between `image/png` and a document is that nobody
-        sniffed it. `Referrer-Policy` because an entity id in a path is the name of
+        sniffed it. `Referrer-Policy` because a record id in a path is the name of
         a piece of internal planning and there is no reason to hand it to whatever
         a body links out to. `frame-ancestors 'none'` here rather than in the page,
         because a `<meta>` ignores it — and `X-Frame-Options` beside it for the
@@ -1129,9 +1129,9 @@ def create_app(
 
     def _build_index_at(commit: str, drawn: date):
         config, unreadable_config = _config_at(store, commit)
-        entities, unreadable_entities = _entities_at(store, commit)
+        records, unreadable_records = _records_at(store, commit)
         return commit, build_index(
-            entities,
+            records,
             config,
             # Pinned only where somebody pinned it, which today is `openproj
             # demo`: the seed corpus is written around one day as "now", and
@@ -1143,7 +1143,7 @@ def create_app(
             # Sorted by path, because a reader works through the list by opening
             # files and two walks finishing in whatever order is not that order.
             unreadable=sorted(
-                [*unreadable_config, *unreadable_entities], key=lambda one: one.path
+                [*unreadable_config, *unreadable_records], key=lambda one: one.path
             ),
         )
 
@@ -1421,10 +1421,10 @@ def create_app(
         end, on the record where the decision was made — one direction only, the
         same rule `depends_on` follows. The new record says where it came from in
         its own shaping document, in prose. That is deliberately not a field: a
-        `from_note` on `Entity` would put a note id into every PLANNED record's
+        `from_note` on `Record` would put a note id into every PLANNED record's
         frontmatter, and the table, the graph and the detail page would each
         have to decide what to do with it — the coupling that used to be
-        prevented by notes not being entities, and is prevented now by the
+        prevented by notes not being records, and is prevented now by the
         field living on the unplanned side of the edge only. Prose cannot
         drift out of step with anything, because nothing reads it but a person.
 
@@ -1443,7 +1443,7 @@ def create_app(
         is the same claim the note was already making, carried across.
 
         The request carries two values and both are closed vocabularies: a source
-        id matched against the one entity pattern and required to name an inbox
+        id matched against the one record pattern and required to name an inbox
         rung, and a kind out of `DIRECTORY`. No path, no directory, no file
         name, no field, no body.
         """
@@ -1453,7 +1453,7 @@ def create_app(
         kind = payload.get("kind")
 
         # The id decides which inbox this is, off the ladder, through the same
-        # pattern every entity write uses — the bespoke patterns went with the
+        # pattern every record write uses — the bespoke patterns went with the
         # bespoke routes. A kind that is not an inbox is a 400 like a garbage
         # id, because "promote a task" is not a request this route has ever
         # taken and the tell is the same either way: the source is not a note
@@ -1474,7 +1474,7 @@ def create_app(
             )
 
         base = _base_in(store, payload) if payload.get("base_commit") else store.head()
-        # The finder every entity write uses: inbox files may carry `--slug`
+        # The finder every record write uses: inbox files may carry `--slug`
         # names like any other record, so the path cannot be reconstructed
         # from the id — it has to be found.
         path = _path_for(store, base, source_id)
@@ -1491,13 +1491,13 @@ def create_app(
         who = getattr(source, stamp.author, None)
         when = getattr(source, stamp.dated, None)
 
-        entity_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        record_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
         commit = store.head()
         config, _ = _config_at(store, commit)
         content = patch_text(
             "---\n---\n",
             {
-                "id": entity_id,
+                "id": record_id,
                 "kind": kind,
                 "title": source.title,
                 # The one status that requires nothing, which is the honest state
@@ -1513,15 +1513,15 @@ def create_app(
             ),
         )
         try:
-            candidate = parse_text(content, entity_id)
+            candidate = parse_text(content, record_id)
         except ValueError as error:
             raise HTTPException(
-                422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
+                422, f"that would not read back as a record: {why_it_will_not_read(error)}"
             ) from None
         blockers = [
             problem
-            for problem in validate_all([*_entities_at(store, commit)[0], candidate], config)
-            if problem.entity_id == entity_id and problem.severity == "blocker"
+            for problem in validate_all([*_records_at(store, commit)[0], candidate], config)
+            if problem.record_id == record_id and problem.severity == "blocker"
         ]
         if blockers:
             return JSONResponse(
@@ -1531,7 +1531,7 @@ def create_app(
         # Appended, not replaced: a note that split into two pitches is the normal
         # case, and it is the reason both fields are lists.
         marked = _patched(
-            original, {stamp.link: [*getattr(source, stamp.link, []), entity_id]}, None, path
+            original, {stamp.link: [*getattr(source, stamp.link, []), record_id]}, None, path
         )
         # Read back before it is written, the refusal every write path here makes.
         # This one has the least to go wrong — the file parsed four lines up and
@@ -1546,17 +1546,17 @@ def create_app(
             ) from None
         written = await asyncio.to_thread(
             store.write_all,
-            {f"{DIRECTORY[kind]}/{entity_id}.md": content, path: marked},
+            {f"{DIRECTORY[kind]}/{record_id}.md": content, path: marked},
             base_commit=base,
             author=user.login,
-            message=f"{entity_id}: promoted from {source_id}",
+            message=f"{record_id}: promoted from {source_id}",
         )
         if written.outcome == "conflict":
             return _result(written, base)
         if written.commit:
-            await announce(written.commit, [entity_id, source_id])
+            await announce(written.commit, [record_id, source_id])
         return JSONResponse(
-            {"id": entity_id, "outcome": written.outcome, "commit": written.commit},
+            {"id": record_id, "outcome": written.outcome, "commit": written.commit},
             status_code=201,
         )
 
@@ -1639,11 +1639,11 @@ def create_app(
     def detail_index() -> HTMLResponse:
         return page(render.render_detail(index_now()[1], render.ROUTES))
 
-    @app.get("/detail/{entity_id}", response_class=HTMLResponse)
-    def detail(entity_id: str, request: Request) -> HTMLResponse:
+    @app.get("/detail/{record_id}", response_class=HTMLResponse)
+    def detail(record_id: str, request: Request) -> HTMLResponse:
         commit, index = index_now()
-        if entity_id not in index.records:
-            raise HTTPException(404, f"no record {entity_id!r}")
+        if record_id not in index.records:
+            raise HTTPException(404, f"no record {record_id!r}")
         # The page carries the commit it was rendered at, so a save is compared
         # against what the person actually saw rather than against whatever HEAD
         # has become while the tab sat open.
@@ -1659,7 +1659,7 @@ def create_app(
             render.render_detail(
                 index,
                 render.ROUTES,
-                only=entity_id,
+                only=record_id,
                 base_commit=commit,
                 may_write=may_write(request),
                 editor=which_editor(request),
@@ -1693,8 +1693,8 @@ def create_app(
             }
         )
 
-    @app.get("/api/body/{entity_id}")
-    def body(entity_id: str) -> JSONResponse:
+    @app.get("/api/body/{record_id}")
+    def body(record_id: str) -> JSONResponse:
         """One record's shaping document, rendered, for the hover card.
 
         Fetched on hover rather than shipped with the rows. The table's payload
@@ -1713,10 +1713,10 @@ def create_app(
         document is a card that cannot say which it is. An empty document is a
         200 with an empty string, and the card says so in words.
         """
-        entity = index_now()[1].records.get(entity_id)
-        if entity is None:
-            raise HTTPException(status_code=404, detail="no such entity")
-        return JSONResponse({"html": str(render._body_html(entity, render.ROUTES))})
+        record = index_now()[1].records.get(record_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such record")
+        return JSONResponse({"html": str(render._body_html(record, render.ROUTES))})
 
     # Two paths, one answer, because `/healthz` is not ours on Cloud Run.
     #
@@ -1754,18 +1754,18 @@ def create_app(
             what_json_can_carry(
                 {
                     "head": commit,
-                    "entities": {i: e.model_dump(mode="json") for i, e in index.entities.items()},
+                    "plan": {i: e.model_dump(mode="json") for i, e in index.plan.items()},
                     "spans": {i: s.model_dump(mode="json") for i, s in index.spans.items()},
                     "explanations": {i: e.text for i, e in index.explanations.items()},
                     # The PLAN's problems only, now that `validate_all` covers
-                    # every record: this payload's `entities` map is plan-only,
-                    # so a problem keyed by an inbox id would be keyed by an id
-                    # the payload's own map cannot resolve — the count-versus-
-                    # filter mismatch the table was already fixed for.
+                    # every record: `plan` is the only record map this payload
+                    # ships, so a problem keyed by an inbox id would be keyed by
+                    # an id the payload's own map cannot resolve — the count-
+                    # versus-filter mismatch the table was already fixed for.
                     "problems": [
                         p.model_dump(mode="json")
                         for p in index.problems
-                        if p.entity_id in index.entities
+                        if p.record_id in index.plan
                     ],
                     # A script reading this has to be able to tell "the plan
                     # holds sixteen tasks" from "the plan holds sixteen tasks
@@ -1788,7 +1788,7 @@ def create_app(
         have looked at again.
 
         Not folded into `/api/index.json` beside it: that route answers with
-        entities and spans, which is the index, and a view of the index shaped
+        records and spans, which is the index, and a view of the index shaped
         for one page does not belong inside it. `what_json_can_carry` for the
         same reason the route above uses it — a `person_weeks` somebody
         hand-edited to `.inf` is a 500 in plain text on a route whose only
@@ -1809,8 +1809,8 @@ def create_app(
         }
         return JSONResponse(payload, status_code=409 if written.outcome == "conflict" else 200)
 
-    @app.patch("/api/entity/{entity_id}")
-    async def save(entity_id: str, request: Request) -> JSONResponse:
+    @app.patch("/api/record/{record_id}")
+    async def save(record_id: str, request: Request) -> JSONResponse:
         user = writer(request)
         payload = await _sent(request)
         body = _body_in(payload)
@@ -1820,9 +1820,9 @@ def create_app(
         # that has sat in a browser through a re-clone of the plan arrives with a
         # sha `store.paths` throws on.
         base = _base_in(store, payload)
-        path = _path_for(store, base, entity_id)
+        path = _path_for(store, base, record_id)
         if path is None:
-            raise HTTPException(404, f"no entity {entity_id!r}")
+            raise HTTPException(404, f"no record {record_id!r}")
         original = store.read(base, path)
         # An id two files claim is an id this route cannot write to, and the check
         # is a question to the index rather than a second derivation of it.
@@ -1838,7 +1838,7 @@ def create_app(
         contested = [
             problem
             for problem in index_now()[1].problems
-            if problem.entity_id == entity_id
+            if problem.record_id == record_id
             and problem.field == "id"
             and problem.severity == "blocker"
         ]
@@ -1856,7 +1856,7 @@ def create_app(
         # committed a status nobody defined, and the plan woke up with a
         # blocker about it on a branch where the commit cannot be force-pushed
         # away.
-        _reject_bad_status(_kind_for(entity_id), fields)
+        _reject_bad_status(_kind_for(record_id), fields)
         content = _patched(original, fields, body, path)
         # Parse before writing, the same refusal the cycle route beside this one
         # makes, and for a worse reason: a record that fails to load takes `/`,
@@ -1871,7 +1871,7 @@ def create_app(
             candidate = parse_text(content, path)
         except ValueError as error:
             raise HTTPException(
-                422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
+                422, f"that would not read back as a record: {why_it_will_not_read(error)}"
             ) from None
         # A record cannot be its own ancestor, and cannot wait for itself.
         # `validate_all` reports both as blockers, which is the right answer for a
@@ -1881,7 +1881,7 @@ def create_app(
         # after the commit, on a protected branch, about a shape nobody can see
         # the cause of. Asked of the same function the validator asks, so the
         # refusal and the report cannot disagree.
-        # `records`, not `entities`: an issue or a note handed to `loop_made`
+        # `records`, not `plan`: an issue or a note handed to `loop_made`
         # must be checked against the population it actually lives in — a
         # candidate absent from the checked set is a question asked of the
         # wrong world.
@@ -1894,14 +1894,14 @@ def create_app(
             content=content,
             base_commit=base,
             author=user.login,
-            message=f"{entity_id}: {_named(fields, ENTITY_FIELDS) or 'body'}",
+            message=f"{record_id}: {_named(fields, RECORD_FIELDS) or 'body'}",
         )
         if written.commit:
-            await announce(written.commit, [entity_id])
+            await announce(written.commit, [record_id])
         return _result(written, base)
 
-    @app.delete("/api/entity/{entity_id}")
-    async def remove(entity_id: str, request: Request) -> JSONResponse:
+    @app.delete("/api/record/{record_id}")
+    async def remove(record_id: str, request: Request) -> JSONResponse:
         """Take one record out of the plan.
 
         Out of the *plan*, not out of the repository: the commit removes the file
@@ -1934,18 +1934,18 @@ def create_app(
         user = writer(request)
         payload = await _sent(request)
         base = _base_in(store, payload)
-        path = _path_for(store, base, entity_id)
+        path = _path_for(store, base, record_id)
         if path is None:
-            raise HTTPException(404, f"no entity {entity_id!r}")
+            raise HTTPException(404, f"no record {record_id!r}")
         _, index = index_now()
-        doomed, edited = cascade_of(index, entity_id)
+        doomed, edited = cascade_of(index, record_id)
 
         shown = payload.get("also")
         if shown is not None and sorted(shown) != sorted(doomed + edited):
             raise HTTPException(
                 409,
                 "the plan changed while that was open: deleting "
-                f"{entity_id} now affects {_and_then(doomed + edited) or 'nothing else'}. "
+                f"{record_id} now affects {_and_then(doomed + edited) or 'nothing else'}. "
                 "Nothing was deleted — read it again and decide.",
             )
 
@@ -1959,14 +1959,14 @@ def create_app(
             where = _path_for(store, base, other)
             if where is None:
                 raise HTTPException(409, f"{other} depends on this and could not be found")
-            # `records`, not `entities`: `cascade_of` iterates the total map,
+            # `records`, not `plan`: `cascade_of` iterates the total map,
             # so `edited` can name an unplanned record carrying a hand-written
             # `depends_on` — the plan-only lookup KeyErrored and the DELETE
             # 500ed, which is exactly the failure totality exists to prevent.
             kept = [
                 target
                 for target in index.records[other].depends_on
-                if target != entity_id and target not in doomed
+                if target != record_id and target not in doomed
             ]
             files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
 
@@ -1975,10 +1975,10 @@ def create_app(
             files,
             base_commit=base,
             author=user.login,
-            message=_deletion_message(entity_id, doomed, edited),
+            message=_deletion_message(record_id, doomed, edited),
         )
         if written.commit:
-            await announce(written.commit, [entity_id, *doomed, *edited])
+            await announce(written.commit, [record_id, *doomed, *edited])
         return _result(written, base)
 
     @app.put("/api/cycle/{number}")
@@ -1987,7 +1987,7 @@ def create_app(
 
         PUT rather than PATCH because a cycle is set up in one sitting: the whole
         roster is written at once, and a missing name means somebody was removed
-        rather than left alone. That is the opposite of an entity's per-field
+        rather than left alone. That is the opposite of a record's per-field
         merge, and conflating the two would make removing a person impossible.
         """
         user = writer(request)
@@ -2038,7 +2038,7 @@ def create_app(
         or a file name in the body, is the version where the bound stops being a
         property of the shape and becomes a check inside a handler that somebody
         can be talked out of, forget on the second door, or relax by one case.
-        `POST /api/entity` had no type check at all for as long as its sibling
+        `POST /api/record` had no type check at all for as long as its sibling
         did, because the closed surface was closed on one of two ways in.
 
         So four things are not parameters here:
@@ -2146,7 +2146,7 @@ def create_app(
 
         # Only the one field travels, over a file that may have a body somebody
         # wrote in git: `patch_text` rewrites the frontmatter alone and hands the
-        # prose back byte for byte. Through `_patched`, the same helper the entity
+        # prose back byte for byte. Through `_patched`, the same helper the record
         # and cycle saves use, because a file in git can be anything and an
         # unguarded `patch_text` over one is a ruamel error under the router — a
         # 500 whose body is plain text, which is the one answer the picker cannot
@@ -2232,7 +2232,7 @@ def create_app(
             headers={"cache-control": "public, max-age=31536000, immutable"},
         )
 
-    @app.post("/api/entity")
+    @app.post("/api/record")
     async def create(request: Request) -> JSONResponse:
         user = writer(request)
         payload = await _sent(request)
@@ -2263,10 +2263,10 @@ def create_app(
 
         # Minted here, never accepted from the client: an id supplied by a browser
         # is a path supplied by a browser once it becomes `tasks/<id>.md`.
-        entity_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
+        record_id = f"{PREFIX[kind]}-{secrets.token_hex(3)}"
         commit = store.head()
         config, _ = _config_at(store, commit)
-        fields["id"] = entity_id
+        fields["id"] = record_id
         # The defaults the deleted inbox routes used to supply. `author` is a
         # default and not a fact — somebody files what a colleague mentioned in
         # a corridor, so the form can say otherwise — but the date is written
@@ -2278,7 +2278,7 @@ def create_app(
             fields.setdefault(inbox.author, user.login)
             fields.setdefault("status", inbox.opens)
             fields[inbox.dated] = date.today().isoformat()
-        # Grandfathering protects the corpus that already exists, not the entity
+        # Grandfathering protects the corpus that already exists, not the record
         # being written right now: something created today is held to today's rules.
         fields.setdefault("created_schema_version", config.schema_version)
         content = patch_text("---\n---\n", fields, body)
@@ -2290,19 +2290,19 @@ def create_app(
         # wrong. Nothing was committed either way, so what this changes is whether the
         # person is told which field it was.
         try:
-            candidate = parse_text(content, entity_id)
+            candidate = parse_text(content, record_id)
         except ValueError as error:
             raise HTTPException(
-                422, f"that would not read back as an entity: {why_it_will_not_read(error)}"
+                422, f"that would not read back as a record: {why_it_will_not_read(error)}"
             ) from None
         problems = [
             p
-            # A file already in the plan that will not parse is not this entity's
+            # A file already in the plan that will not parse is not this record's
             # problem and must not stop it being created: the validator only
             # needs the neighbours it can read, and the banner is what says the
             # rest are missing.
-            for p in validate_all([*_entities_at(store, commit)[0], candidate], config)
-            if p.entity_id == entity_id and p.severity == "blocker"
+            for p in validate_all([*_records_at(store, commit)[0], candidate], config)
+            if p.record_id == record_id and p.severity == "blocker"
         ]
         if problems:
             return JSONResponse(
@@ -2311,7 +2311,7 @@ def create_app(
 
         written = await asyncio.to_thread(
             store.write,
-            path=f"{DIRECTORY[kind]}/{entity_id}.md",
+            path=f"{DIRECTORY[kind]}/{record_id}.md",
             content=content,
             # A base is optional here — a create has nothing to be stale against
             # — but one that was sent has to be real, because `store.write` reads
@@ -2319,14 +2319,14 @@ def create_app(
             # with an old tab open presses New.
             base_commit=_base_in(store, payload) if payload.get("base_commit") else commit,
             author=user.login,
-            message=f"{entity_id}: create",
+            message=f"{record_id}: create",
         )
         if written.commit:
-            await announce(written.commit, [entity_id])
+            await announce(written.commit, [record_id])
         if written.outcome == "conflict":
             return _result(written, commit)
         return JSONResponse(
-            {"id": entity_id, "outcome": written.outcome, "commit": written.commit},
+            {"id": record_id, "outcome": written.outcome, "commit": written.commit},
             status_code=201,
         )
 
@@ -2497,7 +2497,7 @@ def create_app(
         `Room.credits`.
 
         The path is the room's, resolved once when it opened, and is deliberately
-        not re-derived here. `PATCH /api/entity` refuses when two files claim one
+        not re-derived here. `PATCH /api/record` refuses when two files claim one
         id because it cannot know which record the page had shown; a room does
         know — it is holding that record's text — so a second claimant appearing
         in git mid-session is a blocker the pages draw, not a reason to strand
@@ -2575,7 +2575,7 @@ def create_app(
             # everybody, on a branch where the commit cannot be force-pushed away.
             parse_text(content, room.path)
 
-            message = f"{room.entity_id}: {_named(fields, ENTITY_FIELDS) or 'body'}"
+            message = f"{room.record_id}: {_named(fields, RECORD_FIELDS) or 'body'}"
             if others:
                 # The trailer git itself reads. `store._commit` puts the author
                 # in the author field, so `git log --format='%an'` is unchanged
@@ -2654,7 +2654,7 @@ def create_app(
                     "update": _b64(update) if update else None,
                 },
             )
-            await announce(written.commit, [room.entity_id])
+            await announce(written.commit, [room.record_id])
         except WRITE_FAILURES as error:
             # Everything a write is documented to fail with, said in its own
             # words — see `WRITE_FAILURES`. The arm below catches the rest; this
@@ -2734,21 +2734,21 @@ def create_app(
             if room.pending():
                 await _commit_room(room)
 
-    @app.websocket("/api/coedit/{entity_id}")
-    async def coedit_socket(socket: WebSocket, entity_id: str) -> None:
+    @app.websocket("/api/coedit/{record_id}")
+    async def coedit_socket(socket: WebSocket, record_id: str) -> None:
         nonlocal connections
         # `writer` and not a second reading of the session. It reads one thing
         # off what it is handed — the cookies — and a WebSocket has them under
         # the same name, so it is handed the socket. Two spellings of "who may
         # write" is how a page comes to offer a control whose only answer is a
         # refusal, and this is the control that has to agree with `PATCH
-        # /api/entity` exactly: the room writes through the same gate.
+        # /api/record` exactly: the room writes through the same gate.
         try:
             user = writer(socket)  # type: ignore[arg-type]
             head = store.head()
-            path = _path_for(store, head, entity_id)
+            path = _path_for(store, head, record_id)
         except HTTPException:
-            # Not signed in, not a member, no such entity, or two files claiming
+            # Not signed in, not a member, no such record, or two files claiming
             # one id. Refused before the handshake, which the browser sees as a
             # socket that would not open — and a socket that would not open is
             # the case this whole feature is designed to degrade into, so a
@@ -2761,9 +2761,9 @@ def create_app(
         await socket.accept()
         connections += 1
         connection = connections
-        room = rooms.get(entity_id)
+        room = rooms.get(record_id)
         if room is None:
-            room = rooms.add(coedit.Room(entity_id, path, head, _body_at(head, path)))
+            room = rooms.add(coedit.Room(record_id, path, head, _body_at(head, path)))
         elif not room.pending():
             # A room kept warm through a disconnection can have been overtaken by
             # a commit made in git or through the API. Folded in here while there
@@ -2849,8 +2849,8 @@ def create_app(
             if room.refusal:
                 _to(connection, {"t": "refused", "why": room.refusal})
 
-            if watching.get(entity_id) is None or watching[entity_id].done():
-                watching[entity_id] = asyncio.create_task(_watch(room))
+            if watching.get(record_id) is None or watching[record_id].done():
+                watching[record_id] = asyncio.create_task(_watch(room))
 
             checked = time.monotonic()
             while True:
@@ -2951,7 +2951,7 @@ def create_app(
                         # The room writes through the same gate as PATCH — the
                         # comment on `writer` above says exactly that — so the
                         # vocabulary stands here too.
-                        _reject_bad_status(_kind_for(entity_id), fields)
+                        _reject_bad_status(_kind_for(record_id), fields)
                     except HTTPException as refused:
                         _to(connection, {"t": "refused", "why": refused.detail})
                         continue
@@ -2977,7 +2977,7 @@ def create_app(
                 # Cancelled rather than left to notice on its next tick: a timer
                 # outliving the last socket is a task still pending when the loop
                 # closes, which is a warning in every test that opens one.
-                task = watching.pop(entity_id, None)
+                task = watching.pop(record_id, None)
                 if task is not None:
                     task.cancel()
             else:

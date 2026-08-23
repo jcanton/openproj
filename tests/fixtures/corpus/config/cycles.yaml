@@ -1,6 +1,6 @@
 # Cycle boundaries, inclusive: <cycle number>: [first day, last day].
 # Six-week build plus two weeks cool-down, per Shape Up. Cycle 28 predates the
-# 2026 numbering and is recorded only so the four turbulence entities that
+# 2026 numbering and is recorded only so the four turbulence records that
 # reference it can be placed on the timeline.
 cycles:
   28: [2024-12-09, 2025-01-31]

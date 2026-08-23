@@ -104,8 +104,8 @@ def test_the_stylesheet_answers_all_three_states_of_the_switch():
 
 
 def _seed():
-    entities, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
-    return entities, config
+    records, config, _ = load_repo(Path(__file__).resolve().parents[1] / "seed")
+    return records, config
 
 
 # Every scheme, both polarities, in one page load: set the attributes, read what

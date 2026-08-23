@@ -56,7 +56,7 @@ def pages(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
         head = client.get("/healthz").json()["head"]
         bet = client.patch(
-            f"/api/entity/{TASK}",
+            f"/api/record/{TASK}",
             json={"base_commit": head, "fields": {"cycle": 41, "assignees": ["ann"]},
                   "body": None},
         )
@@ -199,7 +199,7 @@ BET_ON_SOMETHING = f"""
 
 
 def test_a_conflict_on_a_bet_says_what_moved(pages):
-    """The bets table writes one entity per commit through its own fetch, and it
+    """The bets table writes one record per commit through its own fetch, and it
     read `answer.detail` too."""
     answer = drive(pages["cycle"], BET_ON_SOMETHING, [{"status": 409, "json": CONFLICT}])
 
@@ -208,7 +208,7 @@ def test_a_conflict_on_a_bet_says_what_moved(pages):
     assert answer["value"]["disabled"] is False, "the edit is still unsaved, so Save is still live"
 
 
-def test_a_conflict_creating_an_entity_is_not_printed_as_refused(pages):
+def test_a_conflict_creating_a_record_is_not_printed_as_refused(pages):
     """The create form lists what the server said under the fields it names. A
     conflict has no `problems` and no `detail`, so the list said "refused"."""
     answer = drive(
@@ -399,12 +399,12 @@ def test_the_same_refusal_twice_is_still_read_out(pages):
 # --------------------------------------------------------------------------- #
 
 # An id the pattern does not match is a *reported* blocker and not a refusal —
-# the entity loads, every page draws it, and the table offers to edit it — so an
+# the record loads, every page draws it, and the table offers to edit it — so an
 # id with a `#` in it does reach the browser. Raw in a path, the `#` starts a
 # fragment and the `?` a query, so the save somebody pressed on this row went to
-# `/api/entity/task-c0` and wrote to a different record or to none.
+# `/api/record/task-c0` and wrote to a different record or to none.
 BROKEN_ID = "task-c0#001?x"
-BROKEN_ID_URL = "/api/entity/task-c0%23001%3Fx"
+BROKEN_ID_URL = "/api/record/task-c0%23001%3Fx"
 
 BROKEN_ID_PLAN = {
     "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
@@ -420,7 +420,7 @@ SAVE_A_CELL = """
   const id = Object.keys(DATA.rows)[0];
   const cell = document.createElement('td');
   cell.className = 'edit';
-  cell.dataset.entity = id;
+  cell.dataset.record = id;
   cell.dataset.field = 'owner';
   await saveCell(cell, 'bo');
   return id;
@@ -443,7 +443,7 @@ def broken_id_table(tmp_path_factory: pytest.TempPathFactory) -> str:
 def test_a_save_addresses_the_row_it_was_pressed_on(broken_id_table):
     """Encoded, the whole id reaches the endpoint and the endpoint refuses it —
     an id that is not an id never becomes a path, which `test_web` holds it to.
-    Raw, the URL was `/api/entity/task-c0` and the save landed on whatever record
+    Raw, the URL was `/api/record/task-c0` and the save landed on whatever record
     that turned out to be, with a 200 and a receipt saying it had worked."""
     # Two answers: the save, and the re-read of the problems the save triggers.
     answer = drive(

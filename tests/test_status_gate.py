@@ -36,7 +36,7 @@ WITH = "task-000002"
 
 @pytest.fixture
 def index() -> Index:
-    entities = [
+    records = [
         Task(
             id=WITHOUT, kind="task", title="No date on it", status="ready",
             owner="ann", assignees=["ann"], reviewers=["bo"], person_weeks=2,
@@ -47,7 +47,7 @@ def index() -> Index:
             assigned_on=date(2026, 8, 10),
         ),
     ]
-    return build_index(entities, Config(), date(2026, 8, 17))
+    return build_index(records, Config(), date(2026, 8, 17))
 
 
 @pytest.fixture
@@ -79,10 +79,10 @@ def test_a_status_that_needs_a_date_asks_for_it(index: Index, page: str, tmp_pat
     """One question, one write. The date is prefilled with today because that is
     what "I have started this" means nine times in ten, and it is a real date
     input rather than a text box, so the answer cannot be `next tuesday`."""
-    entity_id = WITHOUT
+    record_id = WITHOUT
     got = measured_in(
         chrome(), page, tmp_path / "asks.html", 1400,
-        _ASKS % json.dumps(entity_id), height=900,
+        _ASKS % json.dumps(record_id), height=900,
     )
 
     assert got["asked"]["shown"], "the status was changed and nothing was asked"
@@ -91,7 +91,7 @@ def test_a_status_that_needs_a_date_asks_for_it(index: Index, page: str, tmp_pat
     assert got["asked"]["type"] == "date"
     assert got["asked"]["prefilled"], "the date was not prefilled"
 
-    assert [call["url"] for call in got["wrote"]] == [f"/api/entity/{entity_id}"]
+    assert [call["url"] for call in got["wrote"]] == [f"/api/record/{record_id}"]
     sent = got["wrote"][0]["body"]["fields"]
     assert sent["status"] == "in_progress"
     assert sent["assigned_on"] == got["asked"]["prefilled"], (
@@ -118,10 +118,10 @@ return {wrote: window.__wrote, hidden: document.getElementById('askfor').hidden,
 def test_giving_up_on_the_question_changes_nothing(index: Index, page: str, tmp_path: Path):
     """Cancel is not "save it without the date": the status is what was refused,
     so leaving the question unanswered leaves the row where it was."""
-    entity_id = WITHOUT
+    record_id = WITHOUT
     got = measured_in(
         chrome(), page, tmp_path / "cancels.html", 1400,
-        _CANCELS % (json.dumps(entity_id), json.dumps(entity_id)), height=900,
+        _CANCELS % (json.dumps(record_id), json.dumps(record_id)), height=900,
     )
 
     assert got["wrote"] == []
@@ -133,7 +133,7 @@ _NO_QUESTION = """
 const row = [...document.querySelectorAll('tbody tr[data-id]')]
   .find(one => one.dataset.id === %s);
 const cell = row.querySelector('td[data-col="status"]');
-return {missing: missingFor(DATA.rows[cell.dataset.entity], 'in_progress')};
+return {missing: missingFor(DATA.rows[cell.dataset.record], 'in_progress')};
 """
 
 

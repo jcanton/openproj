@@ -6,6 +6,11 @@ markdown file per record, the shaping document *is* the record, every date deriv
 first. This file is the part it does not say — the invariants that fail loudly when you step on
 them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
 
+**Keep this file specific.** A rule earns its place here by naming the failure it prevents, and
+there is a real one for nearly every rule below. Every generic sentence added makes the specific
+ones cheaper to skip: six hundred words that could only be about this repository beat three
+thousand that could be about any.
+
 ## Work in a worktree, never at the root
 
 `git worktree add .worktrees/<branch> -b <branch> origin/main`, and do everything there. **The
@@ -41,10 +46,10 @@ Each is load-bearing and each has one place that enforces it. Break one and the 
 
 **Only `depends_on` is stored, on the dependent.** `blocks` is the reverse, built in `build_index`
 (`index.py`) and never read from a file. A stored copy is stale by construction and lets one record
-contradict the graph. Edges to entities that do not exist are dropped from both maps at once, so
+contradict the graph. Edges to records that do not exist are dropped from both maps at once, so
 the forward and reverse views always agree.
 
-**Derived data never reaches frontmatter.** No computed date in an entity file, ever — rescheduling
+**Derived data never reaches frontmatter.** No computed date in a record file, ever — rescheduling
 one blocker would rewrite fifty files. `serialise` and `patch_text` (`model.py`) round-trip rather
 than re-serialise: only keys whose value actually changed are rewritten, and comments, key order,
 blank lines and list style survive a save. "Edit it in git if you prefer" stops being true the
@@ -79,8 +84,8 @@ login that already had one, drawn on every served page, invisible to `openproj c
 between by which of the two paths sorted last. Nested files are named rather than skipped, for the
 same reason the fifteen above are.
 
-**A rule blocks only entities created after it existed.** Each rule carries the `schema_version`
-that introduced it, and `validate_all` demotes a rule newer than the entity it is judging to a
+**A rule blocks only records created after it existed.** Each rule carries the `schema_version`
+that introduced it, and `validate_all` demotes a rule newer than the record it is judging to a
 warning. Without grandfathering, adding one required field invalidates the whole corpus at once and
 the rule gets reverted rather than adopted. `shaped_by` is the live example.
 
@@ -130,7 +135,7 @@ the static export, where there is no origin to appeal to. `_image` (`render.py`)
 only if it matches an asset this tool stored. There is no denylist of URL spellings that is ever
 finished.
 
-**A write the model cannot read back must be refused.** `PATCH /api/entity` committed `title: 5`,
+**A write the model cannot read back must be refused.** `PATCH /api/record` committed `title: 5`,
 and eleven bodies like it, and every page then answered 500 forever — on a protected branch, so the
 commit cannot be force-pushed away and the 500ing pages will not hand over the sha to craft a repair
 against. `web.py` parses the patched text before writing and answers 422 naming the field and why.
@@ -148,7 +153,7 @@ refused a body the policy would have taken, in silence. One is derived from the 
 comment says which kind of bound each is.
 
 **Empty must not look like broken, and neither must a failure.** A filter matching nothing, a plan
-that failed to load, and a plan with no entities are three different sentences, drawn inside the
+that failed to load, and a plan with no records are three different sentences, drawn inside the
 table body with the control that gets you out of it. This is finding F1, and it keeps coming back
 through new mechanisms.
 
@@ -277,7 +282,19 @@ rule it switches off. The second is `.hill-ball`,
 which rolls between its stops when a status changes; its duration is a `--roll` token so that a drag
 can switch the roll off without writing a second `transition:` into the stylesheet. CSS cannot reach a canvas:
 cytoscape's layout runs at `animate: false` and has to stay there, or the graph moves for a reader
-who asked it not to.
+who asked it not to. The floor covers the reader who is not looking at the screen as well. Every
+control carries a name that reader can find — a real `<label for>` or an `aria-label`, and a
+`<dt>`/`<dd>` pair is not one. A `placeholder` is not one either: it is the last thing the name
+computation falls back to, and it is gone the moment anything is typed. Every editable surface has a
+keyboard path as well as a pointer one, and what the app announces goes into a live region: a save
+announced only visually has not announced itself. One audit found five of these at once — no control
+named anywhere, the table dblclick-only, and not one live region in the rendered output.
+
+**One save model per page, and it is visible.** The cycle page autosaved some fields while its
+setup fields waited on a Save button parked off-screen at the top, and nothing said which was
+which — so an edit you thought you had made was gone, and one you thought you still had to commit
+was already committed. Nothing silently autosaves beside something that does not: a page picks one
+model and shows it, in a bar that carries the dirty state and confirms the save landed.
 
 **Take a screenshot.** The defects that survived longest are the ones no agent could see. The frozen
 column's edge resolved to exactly the value every test asserted, on exactly the element they
@@ -301,8 +318,12 @@ claim is about pixels, look at the pixels.
   `test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was` are there as the controls
   that passed with the defect in place.
 - **Derive fixtures from the code where the code is what varies.** `markers()` reads `render.py`;
-  `required_at()` runs the gate over a blank entity rather than restating it, so it cannot drift
+  `required_at()` runs the gate over a blank record rather than restating it, so it cannot drift
   from the rule it mirrors — it *is* the rule.
+- **State a property as narrowly as it is true.** The scheduler's third property is narrow on
+  purpose: adding an item that shares no worker and no ancestor with an existing item never moves
+  that item's span. The looser "adding an unrelated item never moves anything" is false under a
+  capacity-1 resource model, and a test asserting it flakes and gets deleted by whoever meets it.
 - **Report skips.** `addopts = "-ra"`, deliberately not `-q`: a `-q` there turned the documented
   `pytest -q` into `-qq`, which suppresses the summary line entirely, and thirty-four JS tests
   skipped silently when node was absent.
@@ -319,11 +340,12 @@ uv sync
 uv run ruff check .
 ```
 
-Then push and open the PR. `uv run pytest -q` over everything is CI's line, in
-`.github/workflows/ci.yml`, and it is the one that gates the merge. See *The tests run in CI, not
-on the laptop* below for why, and do not talk yourself back into a local run because you
-are nearly finished, or because the suite you have in mind is a small one — that is exactly when it
-costs the most and tells you the least.
+Then push and open the PR. The whole suite is CI's, in `.github/workflows/ci.yml`, and it is what
+gates the merge. See *The tests run in CI, not on the laptop* below for why, and do not talk
+yourself back into a local run because you are nearly finished, or because the suite you have in
+mind is a small one — that is exactly when it costs the most and tells you the least. **It answers
+in about three minutes**, which is less time than reading the diff it is gating, so there is
+nothing a local run buys you but a hot laptop.
 
 The one thing this does not forbid: running **a single test function** (`-k one_exact_name`) to
 reproduce a failure CI has already reported. That is debugging, and it is a few seconds. Two of
@@ -333,9 +355,25 @@ ruff: line length 100, target py312, `E,F,I,UP,B`.
 
 ## The tests run in CI, not on the laptop
 
-`ruff check .`, then open the PR. Every test is CI's job — `.github/workflows/ci.yml` runs
-`uv run pytest -q` on every pull request, with real Chrome and real node, on hardware that is not
-somebody's working machine.
+`ruff check .`, then open the PR. Every test is CI's job — `.github/workflows/ci.yml` runs the
+suite on every pull request, with real Chrome and real node, on hardware that is not somebody's
+working machine.
+
+**It is six jobs, not one, and the shape is load-bearing.** `lint` is ruff alone and answers in ten
+seconds, deliberately not depended on by anything: a lint error and a test failure are different
+news and you should get both in one run rather than the first one twice. Then five `suite` shards
+run the tests in parallel on five machines, cut by `.github/shards/<name>` — one test path per
+line, hand-written, because the cut is decided by Chrome and by two module fixtures rather than by
+file size and no heuristic finds that. Then `check` fans them in, and **`check` is the name branch
+protection requires, so it must not move**: a `strategy.matrix` on a job named `check` reports six
+differently-named checks, none of them called `check`, and the merge button goes green while every
+shard is red.
+
+Two things follow for anybody adding tests. A new test FILE has to be named in exactly one shard
+file — `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py` holds that, and
+it is the reason a file cannot quietly fall out of the gate. And the shard lists drift out of
+balance every time a file grows; rebalancing them is a five-minute job with `--durations` and
+`docs/probes/ci-speed.md` says how.
 
 This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
 several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been
@@ -349,11 +387,17 @@ to prevent, several times in one night. So the line is drawn where it cannot be 
 nothing, not even the one file you just edited.
 
 A red CI is a normal thing to fix on a branch rather than a failure of process. It costs about
-thirteen minutes of somebody else's hardware and none of jcanton's.
+three minutes of somebody else's hardware and none of jcanton's.
+
+**A pull request GitHub cannot merge gets no CI run at all.** The workflow triggers on
+`pull_request`, which checks out `refs/pull/<n>/merge`, and that ref does not exist while GitHub
+reports the PR `mergeable: CONFLICTING` — so the branch sits with nothing running and nothing red,
+which is indistinguishable from a run that has not finished yet. If the answer has not arrived in
+five minutes, ask `gh pr view <n> --json mergeable` before you ask anything else.
 
 Two habits that follow from it. Push before you are certain rather than after, since the answer
-costs you nothing and arrives in about thirteen minutes — and while it runs, keep working on the
-next thing rather than watching it. And if you ever do have a process to stop, look at what you are
+costs you nothing and arrives in about three minutes — and while it runs, keep working on the next
+thing rather than watching it. And if you ever do have a process to stop, look at what you are
 stopping first: `pkill -f pytest` on this machine kills the OTHER session's suite too, and leaves
 its headless Chrome orphaned.
 
@@ -410,6 +454,13 @@ away: `cytoscape-elk` applies positions to the non-parent nodes and never reads 
 `sections`, so every edge on the graph is cytoscape's own `round-taxi`. Audit what a library
 gives you, and then audit whether the adapter in between is passing it on — the second question
 is the one nobody asks.
+
+The same question was asked of a whole plugin and answered no. `frontend-design` was read and not
+installed: it is written for greenfield work with an open visual brief, where the risk is looking
+templated, and this is a dense internal tool with an identity already. Four of its points survived
+the translation and are in *Design* above — what a qualified selector now beats, structure is
+information, copy is design material, the quality floor — each kept because it named something
+this repository had already got wrong or nearly did. The rest answered a question we do not have.
 
 The audit is three questions: does something already do this; can it be vendored under the rules
 above; and what does it cost against what it replaces. A "no" to any of them is a fine answer —
@@ -500,7 +551,7 @@ rule this file argues for.
 requiredness lives in one function, so nothing reading a signature can know that a gate already ran.
 `build_end` is `date | None` where `_matches_predicate` (`index.py`) compares it against `span.end`,
 although that function returned already if the cycle's window was missing — the guard is real, it
-just lives in a different expression than the call, and no checker connects the two. `Entity` has no
+just lives in a different expression than the call, and no checker connects the two. `Record` has no
 `shaped_by` at all, because `kind == "pitch"` is a runtime discriminator rather than a tagged union.
 Going green on this heap means an `assert` or a `cast` at each site, which takes the guarantee out
 of the one place this file says it lives and scatters copies of it across the callers. That is the

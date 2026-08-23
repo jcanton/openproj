@@ -250,15 +250,15 @@ def commit_at(repo_path: Path, commit: str) -> pygit2.Commit:
     return pygit2.Repository(str(repo_path))[commit]
 
 
-def save(client: httpx.Client, entity_id: str, fields: dict, *, base=None, body=None):
+def save(client: httpx.Client, record_id: str, fields: dict, *, base=None, body=None):
     """One Save is one PATCH is one commit. Only the touched fields travel."""
     return client.patch(
-        f"/api/entity/{entity_id}",
+        f"/api/record/{record_id}",
         json={"base_commit": base or head(client), "fields": fields, "body": body},
     )
 
 
-def remove(client: httpx.Client, entity_id: str, *, base=None, also=None):
+def remove(client: httpx.Client, record_id: str, *, base=None, also=None):
     """A DELETE carries a body, which is unusual and deliberate.
 
     Two things are in it. The base commit, because that is what makes every other
@@ -270,12 +270,12 @@ def remove(client: httpx.Client, entity_id: str, *, base=None, also=None):
     payload: dict = {"base_commit": base or head(client)}
     if also is not None:
         payload["also"] = also
-    return client.request("DELETE", f"/api/entity/{entity_id}", json=payload)
+    return client.request("DELETE", f"/api/record/{record_id}", json=payload)
 
 
 def create(client: httpx.Client, fields: dict, *, base=None, body=None):
     return client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": base or head(client), "fields": fields, "body": body},
     )
 
@@ -379,23 +379,23 @@ def test_every_route_says_which_nav_item_it_is(client: TestClient):
         assert lit(client.get(route).text) == [], route
 
 
-def test_a_detail_route_serves_one_entity_and_not_the_whole_corpus(client: TestClient):
-    """A shareable per-entity URL is the point of the route existing at all; a
-    page that ships every entity and hides all but one with JavaScript is the
+def test_a_detail_route_serves_one_record_and_not_the_whole_corpus(client: TestClient):
+    """A shareable per-record URL is the point of the route existing at all; a
+    page that ships every record and hides all but one with JavaScript is the
     static build, and it is what this route replaces."""
     body = client.get(f"/detail/{TASK}").text
 
     assert "Reproduce the 2-GPU equator artefact" in body
     assert "the serialbox reference data" in body  # the shaping doc, rendered
-    # Scoped to the article: other entities legitimately appear elsewhere on the
+    # Scoped to the article: other records legitimately appear elsewhere on the
     # page now, in the autocomplete list for parent and depends_on. What must not
-    # happen is a second entity being *served*.
+    # happen is a second record being *served*.
     article = body.split("<article", 1)[1].split("</article>")[0]
     assert "Downgrade numpy for global sums" not in article
     assert body.count("<article") == 1
 
 
-def test_an_entity_that_does_not_exist_is_a_404_and_not_an_empty_page(client: TestClient):
+def test_a_record_that_does_not_exist_is_a_404_and_not_an_empty_page(client: TestClient):
     assert client.get("/detail/task-ffffff").status_code == 404
 
 
@@ -501,10 +501,10 @@ def test_every_write_a_page_makes_is_announced_before_and_after_it(
         assert "socket.onclose" in scripts and "settle(null)" in scripts, route
 
 
-def test_the_detail_page_says_which_entity_it_is_looking_at(client: TestClient):
+def test_the_detail_page_says_which_record_it_is_looking_at(client: TestClient):
     """The shell falls back to the last segment of the URL. That is the id on
     /detail/<id> and the word "detail" on the index view and on the static export,
-    which holds every entity in one file — so a write to any of them read as a
+    which holds every record in one file — so a write to any of them read as a
     write to nothing and the banner said "The plan changed" about the very page
     in front of you."""
     one = client.get(f"/detail/{TASK}").text
@@ -568,7 +568,7 @@ def test_the_health_check_is_reachable_at_a_path_that_is_ours(client: TestClient
     assert ours.json() == client.get("/healthz").json()
 
 
-def test_the_index_json_carries_the_entities_the_spans_and_the_problems(client: TestClient):
+def test_the_index_json_carries_the_plan_the_spans_and_the_problems(client: TestClient):
     """The whole snapshot, so a client can render a view without a second request.
 
     Spans and problems are both derived and neither is stored, so this is also the
@@ -577,39 +577,39 @@ def test_the_index_json_carries_the_entities_the_spans_and_the_problems(client: 
     """
     payload = index_of(client)
 
-    assert set(payload["entities"]) == {PROJECT, PITCH, TASK, OTHER, DONE}
-    assert payload["entities"][TASK]["title"] == "Reproduce the 2-GPU equator artefact"
-    assert payload["entities"][TASK]["status"] == "in_progress"
+    assert set(payload["plan"]) == {PROJECT, PITCH, TASK, OTHER, DONE}
+    assert payload["plan"][TASK]["title"] == "Reproduce the 2-GPU equator artefact"
+    assert payload["plan"][TASK]["status"] == "in_progress"
 
     span = payload["spans"][TASK]
     assert span["start"] <= span["end"]
 
     problems = payload["problems"]
-    assert {"severity": "blocker", "entity_id": DONE, "field": "prs"} in [
-        {k: p[k] for k in ("severity", "entity_id", "field")} for p in problems
+    assert {"severity": "blocker", "record_id": DONE, "field": "prs"} in [
+        {k: p[k] for k in ("severity", "record_id", "field")} for p in problems
     ]
 
 
 def test_the_index_json_keeps_the_fields_only_a_pitch_or_a_task_has(client: TestClient):
     """A size that is `null` on every row is the whole timeline, silently gone.
 
-    `Index.entities` is annotated `dict[str, Entity]`, and pydantic serialises by
+    `Index.plan` is annotated `dict[str, Record]`, and pydantic serialises by
     the declared type, so a plain `model_dump` drops `person_weeks` and
     `person_weeks` — it warns rather than raises, which is the worst of both. The
     payload has to carry the subclasses as they actually are.
     """
-    entities = index_of(client)["entities"]
+    plan = index_of(client)["plan"]
 
-    assert entities[TASK]["person_weeks"] == 1.5
-    assert entities[PITCH]["person_weeks"] == 3
+    assert plan[TASK]["person_weeks"] == 1.5
+    assert plan[PITCH]["person_weeks"] == 3
 
 
-def test_a_rule_newer_than_the_entity_reaches_the_client_as_a_warning(client: TestClient):
+def test_a_rule_newer_than_the_record_reaches_the_client_as_a_warning(client: TestClient):
     """Grandfathering has to survive the trip through JSON, or the web view
     re-invents the rule that made adding a required field invalidate the whole
     repository at once. The pitch predates the `shaped_by` rule, so it warns."""
     problems = index_of(client)["problems"]
-    shaped_by = [p for p in problems if p["entity_id"] == PITCH and p["field"] == "shaped_by"]
+    shaped_by = [p for p in problems if p["record_id"] == PITCH and p["field"] == "shaped_by"]
 
     assert [p["severity"] for p in shaped_by] == ["warning"]
 
@@ -630,13 +630,13 @@ def test_a_save_against_the_current_head_is_committed(client: TestClient, repo_p
     commit = response.json()["commit"]
     assert git_head(repo_path) == commit
     assert str(commit_at(repo_path, commit).parents[0].id) == base
-    assert index_of(client)["entities"][TASK]["priority"] == "high"
+    assert index_of(client)["plan"][TASK]["priority"] == "high"
 
 
 def test_the_commit_author_is_the_signed_in_user(client: TestClient, repo_path: Path):
     """`git log --format='%an'` is the audit trail, and the author/committer split
     is what keeps a future push credential a bot no human's departure invalidates.
-    The message names the entity so the log reads as a plan, not as a diff."""
+    The message names the record so the log reads as a plan, not as a diff."""
     commit = save(client, TASK, {"priority": "high"}).json()["commit"]
 
     written = commit_at(repo_path, commit)
@@ -669,7 +669,7 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     on the cycle route beside it, both of which shipped it; the issue and note
     routes happened to be closed already, by gates that refused a field name no
     model declares. The issue and note routes went through this same gate when
-    they were folded into /api/entity.
+    they were folded into /api/record.
 
     That matters more here than it would anywhere else, because live co-editing
     is what makes `Co-authored-by:` the record of who wrote a shaping document. A
@@ -680,12 +680,12 @@ def test_a_field_name_cannot_write_its_own_commit_trailer(client: TestClient, re
     four and a fix in one is a fix that drifts.
     """
     before = git_head(repo_path)
-    entity = client.patch(
-        f"/api/entity/{TASK}",
+    record = client.patch(
+        f"/api/record/{TASK}",
         json={"base_commit": before, "fields": {FORGED: "hi"}, "body": None},
     )
-    assert entity.status_code == 200, entity.text
-    assert trailers_of(repo_path, entity.json()["commit"]) == {}, (
+    assert record.status_code == 200, record.text
+    assert trailers_of(repo_path, record.json()["commit"]) == {}, (
         "a field name off the wire wrote a Co-authored-by: trailer git reads"
     )
 
@@ -711,7 +711,7 @@ def test_a_commit_message_still_names_the_fields_a_save_moved(
     assert commit_at(repo_path, moved).message == f"{TASK}: owner, priority"
 
     both = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": head(client), "fields": {"status": "in_progress", FORGED: "x"}},
     )
     assert commit_at(repo_path, both.json()["commit"]).message == f"{TASK}: status, 1 more"
@@ -722,7 +722,7 @@ def test_the_author_can_never_be_supplied_by_the_client(client: TestClient, repo
     parameter or a body field claiming to be somebody else has to change nothing
     at all — the session is the only source of the name."""
     response = client.patch(
-        f"/api/entity/{TASK}?author=mallory",
+        f"/api/record/{TASK}?author=mallory",
         json={"base_commit": head(client), "fields": {"priority": "high"}, "body": None},
         headers={"X-Author": "mallory"},
     )
@@ -743,7 +743,7 @@ def test_a_saved_body_replaces_the_body_and_nothing_else(client: TestClient, rep
 def test_a_stale_base_whose_file_nobody_touched_is_retried_silently(
     client: TestClient, repo_path: Path
 ):
-    """Two people editing two different entities is ~95% of collisions, and it is
+    """Two people editing two different records is ~95% of collisions, and it is
     the case that has to be invisible. A person who held a tab open while somebody
     else saved a different task must not be shown anything at all."""
     stale = head(client)
@@ -755,8 +755,8 @@ def test_a_stale_base_whose_file_nobody_touched_is_retried_silently(
     assert response.json()["outcome"] == "retried"
     assert response.json()["conflict"] is None
     assert str(commit_at(repo_path, response.json()["commit"]).parents[0].id) == theirs
-    assert index_of(client)["entities"][OTHER]["priority"] == "high"  # not clobbered
-    assert index_of(client)["entities"][TASK]["priority"] == "high"
+    assert index_of(client)["plan"][OTHER]["priority"] == "high"  # not clobbered
+    assert index_of(client)["plan"][TASK]["priority"] == "high"
 
 
 @pytest.mark.parametrize("base", ["0" * 40, "not-a-sha", ""])
@@ -778,7 +778,7 @@ def test_a_base_this_repository_never_had_is_refused_rather_than_raised(
     was = git_head(repo_path)
 
     response = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": base, "fields": {"priority": "high"}, "body": None},
     )
 
@@ -787,7 +787,7 @@ def test_a_base_this_repository_never_had_is_refused_rather_than_raised(
     assert git_head(repo_path) == was
 
 
-def test_two_people_changing_different_fields_of_one_entity_are_merged(client: TestClient):
+def test_two_people_changing_different_fields_of_one_record_are_merged(client: TestClient):
     """Field-level, not file-level: they set the status while I set the priority is
     not a disagreement, and refusing it teaches people to keep their editors shut."""
     stale = head(client)
@@ -797,8 +797,8 @@ def test_two_people_changing_different_fields_of_one_entity_are_merged(client: T
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "merged"
-    entity = index_of(client)["entities"][TASK]
-    assert (entity["owner"], entity["priority"]) == ("bo", "high")
+    record = index_of(client)["plan"][TASK]
+    assert (record["owner"], record["priority"]) == ("bo", "high")
 
 
 def test_a_genuine_collision_is_a_409_that_writes_nothing(client: TestClient, repo_path: Path):
@@ -823,7 +823,7 @@ def test_a_genuine_collision_is_a_409_that_writes_nothing(client: TestClient, re
     conflict = response.json()["conflict"]
     assert "bo" in conflict and "cy" in conflict
     assert git_head(repo_path) == theirs
-    assert index_of(client)["entities"][TASK]["owner"] == "bo"
+    assert index_of(client)["plan"][TASK]["owner"] == "bo"
 
 
 def test_no_conflict_marker_ever_reaches_the_browser(client: TestClient):
@@ -886,9 +886,9 @@ def test_a_save_onto_a_record_deleted_in_git_never_writes_it_back(
     )
 
 
-def test_saving_an_entity_that_does_not_exist_is_a_404(client: TestClient, repo_path: Path):
+def test_saving_a_record_that_does_not_exist_is_a_404(client: TestClient, repo_path: Path):
     """A well-formed id for a file that is not there. `PATCH` edits; it does not
-    quietly create, or a typo in a URL becomes an entity nobody meant to make."""
+    quietly create, or a typo in a URL becomes a record nobody meant to make."""
     base = git_head(repo_path)
     response = save(client, "task-ffffff", {"priority": "high"}, base=base)
 
@@ -933,7 +933,7 @@ def test_a_partial_save_changes_only_the_lines_it_was_asked_to(
 
 def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, repo_path: Path):
     """Only the touched fields travel, which is what makes field-level merge
-    possible at all. A client that round-trips the whole entity turns every save
+    possible at all. A client that round-trips the whole record turns every save
     into a whole-file compare-and-swap and every concurrent edit into a conflict."""
     commit = save(client, TASK, {"status": "done", "prs": ["C2SM/icon4py#412"]}).json()["commit"]
     stored = file_at(repo_path, commit, PATH)
@@ -947,7 +947,7 @@ def test_a_field_the_client_did_not_send_is_not_rewritten(client: TestClient, re
 # --------------------------------------------------------------------------- #
 # 4. Creation, where the required fields actually bite
 #
-# Roughly every entity is born here, so this is the enforcement point that
+# Roughly every record is born here, so this is the enforcement point that
 # decides whether the corpus is worth reading. CI and the index gate catch what
 # gets past it; nothing catches what this lets through.
 # --------------------------------------------------------------------------- #
@@ -987,7 +987,7 @@ def test_a_create_mints_the_id_and_files_it_by_kind(client: TestClient, repo_pat
     stored = file_at(repo_path, response.json()["commit"], f"tasks/{new_id}.md")
     assert f"id: {new_id}" in stored
     assert stored.endswith("Compare per field, not per file.\n")
-    assert index_of(client)["entities"][new_id]["title"] == "Per-field delta tolerances"
+    assert index_of(client)["plan"][new_id]["title"] == "Per-field delta tolerances"
 
 
 def test_a_create_missing_its_status_gated_fields_is_refused(
@@ -1025,12 +1025,12 @@ def test_a_create_is_not_refused_over_a_warning(client: TestClient):
 
     assert response.status_code == 201
     new_id = response.json()["id"]
-    warnings = [p for p in index_of(client)["problems"] if p["entity_id"] == new_id]
+    warnings = [p for p in index_of(client)["problems"] if p["record_id"] == new_id]
     assert [(p["severity"], p["field"]) for p in warnings] == [("warning", "parent")]
 
 
-def test_a_new_entity_is_held_to_the_current_rules(client: TestClient, repo_path: Path):
-    """Grandfathering protects the corpus that already exists, not the entity being
+def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path: Path):
+    """Grandfathering protects the corpus that already exists, not the record being
     created right now. The seeded pitch only warns about `shaped_by` and about
     having nobody on it; a pitch created today is created at the repository's
     `schema_version` and is blocked without either. This is the mechanism working
@@ -1387,7 +1387,7 @@ def test_a_sign_in_somebody_cancelled_says_so(secure_client: TestClient):
 
 
 @pytest.mark.parametrize(
-    "entity_id",
+    "record_id",
     [
         "../config/defaults",
         "..%2F..%2Fconfig%2Fdefaults",
@@ -1400,7 +1400,7 @@ def test_a_sign_in_somebody_cancelled_says_so(secure_client: TestClient):
     ],
 )
 def test_an_id_that_is_not_an_id_never_becomes_a_path(
-    client: TestClient, repo_path: Path, entity_id: str
+    client: TestClient, repo_path: Path, record_id: str
 ):
     """The id is admitted against `^(proj|pitch|task)-[0-9a-f]{6}$` before anything
     is concatenated, and the kind comes from its prefix rather than from the body.
@@ -1414,7 +1414,7 @@ def test_an_id_that_is_not_an_id_never_becomes_a_path(
 
     response = client.request(
         "PATCH",
-        f"/api/entity/{entity_id}",
+        f"/api/record/{record_id}",
         json={"base_commit": base, "fields": {"owner": "mallory"}, "body": "pwned\n"},
     )
 
@@ -1527,7 +1527,7 @@ def test_a_write_is_broadcast_to_everybody_watching(live_server: str):
     assert event["changed"] == [TASK]
 
 
-def test_an_entity_whose_filename_carries_a_slug_is_still_found(
+def test_a_record_whose_filename_carries_a_slug_is_still_found(
     client: TestClient, repo_path: Path
 ):
     """Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
@@ -1539,7 +1539,7 @@ def test_an_entity_whose_filename_carries_a_slug_is_still_found(
     commit_directly(
         repo_path,
         {**SEED, slugged: SEED[PATH].replace(TASK, "task-d40000")},
-        "add an entity filed under its slug",
+        "add a record filed under its slug",
     )
 
     response = save(client, "task-d40000", {"priority": "high"})
@@ -1733,7 +1733,7 @@ def test_a_cycle_field_the_record_cannot_hold_is_refused_not_raised(
         ("created_schema_version", "x"),
     ],
 )
-def test_an_entity_the_server_could_not_read_back_is_never_committed(
+def test_a_record_the_server_could_not_read_back_is_never_committed(
     client: TestClient, repo_path: Path, field: str, value: object
 ):
     """Parsed before writing, like the cycle beside it, and the pages prove it.
@@ -1745,7 +1745,7 @@ def test_an_entity_the_server_could_not_read_back_is_never_committed(
     """
     before = git_head(repo_path)
     refused = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": before, "fields": {field: value}, "body": None},
     )
 
@@ -1761,7 +1761,7 @@ def test_an_entity_the_server_could_not_read_back_is_never_committed(
         assert client.get(route).status_code == 200, route
 
 
-def test_an_entity_field_the_record_can_hold_is_still_written(
+def test_a_field_the_record_can_hold_is_still_written(
     client: TestClient, repo_path: Path
 ):
     """The other half: the check must refuse what cannot be read back and nothing
@@ -1769,7 +1769,7 @@ def test_an_entity_field_the_record_can_hold_is_still_written(
     saved = save(client, TASK, {"title": "A title", "assigned_on": "2026-09-01", "tags": ["gpu"]})
 
     assert saved.status_code == 200, saved.text
-    assert index_of(client)["entities"][TASK]["assigned_on"] == "2026-09-01"
+    assert index_of(client)["plan"][TASK]["assigned_on"] == "2026-09-01"
 
 
 def test_a_date_the_record_can_hold_is_written_in_the_spelling_the_corpus_uses(
@@ -1848,8 +1848,8 @@ def test_a_carried_item_cannot_be_re_stamped_from_the_cycle_page(
     carried = [(i, attrs) for i, cls, attrs in rows if "carried" in cls]
 
     assert carried, "the fixture has in-progress work from an earlier cycle"
-    for entity_id, attrs in carried:
-        assert "disabled" in attrs, entity_id
+    for record_id, attrs in carried:
+        assert "disabled" in attrs, record_id
 
 
 def test_the_bet_table_wears_no_class_the_page_cannot_draw(client: TestClient):
@@ -1942,9 +1942,9 @@ def test_the_bet_table_names_a_status_in_the_colour_every_other_page_uses(
     rows = bet_rows(page)
 
     assert rows
-    for entity_id, kind, status in rows:
-        assert f'<span class="chip st-{status}">' in page, entity_id
-        assert f'<span class="chip kind-{kind}">' in page, entity_id
+    for record_id, kind, status in rows:
+        assert f'<span class="chip st-{status}">' in page, record_id
+        assert f'<span class="chip kind-{kind}">' in page, record_id
     assert "In progress" in page or "in_progress" not in [s for _, _, s in rows]
     assert ">in_progress<" not in page, "the identifier is the class, never the word"
 
@@ -2008,14 +2008,14 @@ def test_the_create_form_is_not_another_cycle_in_the_list(client: TestClient):
         "F15: the button follows the fields it commits"
 
 
-def test_the_proposal_ignores_a_cycle_that_only_an_entity_mentions(
+def test_the_proposal_ignores_a_cycle_that_only_a_record_mentions(
     client: TestClient, repo_path: Path
 ):
-    """A cycle number on an entity is not a decision about when the next cycle
+    """A cycle number on a record is not a decision about when the next cycle
     starts, and the listing above this form actively invites betting into one that
     has no record.
 
-    Unioning `entity.cycle` into the proposal made one such bet push the number
+    Unioning `record.cycle` into the proposal made one such bet push the number
     past the last real cycle — and the number it landed on has no dates behind it,
     so the last cycle's end date was thrown away and the form offered "starts
     today". The listing still shows the bet cycle; only the proposal ignores it.
@@ -2443,7 +2443,7 @@ def test_a_committed_parent_that_names_nothing_leaves_every_page_readable(
     head = client.get("/healthz").json()["head"]
 
     saved = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": head, "fields": {"parent": "proj-ffffff"}},
     )
     assert saved.status_code == 200, saved.text
@@ -2470,7 +2470,7 @@ def test_a_committed_size_larger_than_the_calendar_leaves_every_page_readable(
     head = client.get("/healthz").json()["head"]
 
     saved = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": head, "fields": {"person_weeks": 1_000_000.0}},
     )
     assert saved.status_code == 200, saved.text
@@ -2545,7 +2545,7 @@ def test_a_done_date_at_the_end_of_the_calendar_leaves_a_timeline_you_can_open(
     base = head(client)
 
     saved = client.patch(
-        f"/api/entity/{DONE}", json={"base_commit": base, "fields": {"assigned_on": "9999-12-31"}}
+        f"/api/record/{DONE}", json={"base_commit": base, "fields": {"assigned_on": "9999-12-31"}}
     )
     assert saved.status_code == 200, saved.text
 
@@ -2574,12 +2574,12 @@ def test_a_size_that_is_not_a_number_is_refused_at_both_doors(client: TestClient
     headers = {"content-type": "application/json"}
 
     saved = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         content=f'{{"base_commit": "{base}", "fields": {{"person_weeks": {literal}}}}}',
         headers=headers,
     )
     created = client.post(
-        "/api/entity",
+        "/api/record",
         content=(
             '{"fields": {"kind": "task", "title": "Big", "owner": "ann", '
             f'"reviewers": ["bo"], "status": "ready", "person_weeks": {literal}}}}}'
@@ -2612,9 +2612,9 @@ def test_a_size_that_is_not_a_number_is_refused_at_both_doors(client: TestClient
 
 JSON_HEADERS = {"content-type": "application/json"}
 WRITE_ROUTES = (
-    ("PATCH", f"/api/entity/{TASK}"),
+    ("PATCH", f"/api/record/{TASK}"),
     ("PUT", "/api/cycle/3"),
-    ("POST", "/api/entity"),
+    ("POST", "/api/record"),
     ("POST", "/api/preview"),
     ("PUT", "/api/icon"),
 )
@@ -2650,7 +2650,7 @@ def test_a_request_that_is_not_an_object_is_refused_rather_than_raised(
     assert git_head(repo_path) == was
 
 
-@pytest.mark.parametrize("method,route", (("PATCH", f"/api/entity/{TASK}"),
+@pytest.mark.parametrize("method,route", (("PATCH", f"/api/record/{TASK}"),
                                           ("PUT", "/api/cycle/3")))
 @pytest.mark.parametrize(
     "base", ("__MISSING__", "null", '""', "7", '"' + "z" * 40 + '"', '"' + "0" * 40 + '"')
@@ -2658,7 +2658,7 @@ def test_a_request_that_is_not_an_object_is_refused_rather_than_raised(
 def test_a_save_without_a_real_base_commit_is_refused_at_both_doors(
     client: TestClient, repo_path: Path, method: str, route: str, base: str
 ):
-    """The entity save learned this from a restored draft carrying a commit that
+    """The record save learned this from a restored draft carrying a commit that
     a re-clone of the plan had taken away. The cycle save beside it had the same
     four ways to fault — absent, null, not a string, and a sha nothing has — and
     none of the guard, so the same stale tab was a 500 there.
@@ -2678,9 +2678,9 @@ def test_a_save_without_a_real_base_commit_is_refused_at_both_doors(
     assert git_head(repo_path) == was
 
 
-@pytest.mark.parametrize("method,route", (("PATCH", f"/api/entity/{TASK}"),
+@pytest.mark.parametrize("method,route", (("PATCH", f"/api/record/{TASK}"),
                                           ("PUT", "/api/cycle/3"),
-                                          ("POST", "/api/entity")))
+                                          ("POST", "/api/record")))
 def test_fields_that_are_not_a_map_are_refused_rather_than_raised(
     client: TestClient, repo_path: Path, method: str, route: str
 ):
@@ -2696,9 +2696,9 @@ def test_fields_that_are_not_a_map_are_refused_rather_than_raised(
     assert git_head(repo_path) == was
 
 
-@pytest.mark.parametrize("method,route", (("PATCH", f"/api/entity/{TASK}"),
+@pytest.mark.parametrize("method,route", (("PATCH", f"/api/record/{TASK}"),
                                           ("PUT", "/api/cycle/3"),
-                                          ("POST", "/api/entity")))
+                                          ("POST", "/api/record")))
 def test_a_body_that_is_not_text_is_refused_rather_than_raised(
     client: TestClient, repo_path: Path, method: str, route: str
 ):
@@ -3468,8 +3468,8 @@ def test_the_refusal_names_the_chain_and_not_merely_the_record(client: TestClien
 
     said = save(client, DONE, {"depends_on": [TASK]}).json()["detail"]
     # Every record on the ring, in the order somebody would walk it.
-    for entity_id in (DONE, TASK, OTHER):
-        assert entity_id in said, f"{entity_id} is on the loop and is not named: {said}"
+    for record_id in (DONE, TASK, OTHER):
+        assert record_id in said, f"{record_id} is on the loop and is not named: {said}"
     assert said.startswith(f"that would leave {DONE} waiting for itself")
 
 
@@ -3628,13 +3628,13 @@ def test_a_file_that_will_not_parse_is_not_remembered_as_an_answer(
 def test_two_files_with_the_same_bytes_are_two_records(client: TestClient, repo_path: Path):
     """The defect a content-keyed cache buys if the key is only the content.
 
-    `parse_text` stamps `entity._source` with the file it came from, and
+    `parse_text` stamps `record._source` with the file it came from, and
     `_identity_problems` reads it to report the two blockers that matter most:
     another file claims this id too, and this file is named for something else.
     Keyed on the blob alone, two files with IDENTICAL bytes are one cached object
     carrying the first path's `_source` — and both blockers stop firing.
 
-    Measured with the bug in place: two entities, ONE object, no blockers at all.
+    Measured with the bug in place: two records, ONE object, no blockers at all.
     The check that stopped firing is the one whose docstring says a save
     otherwise "lands on the wrong file" and answers 200 with no warning.
 
@@ -3748,16 +3748,23 @@ def test_nothing_edits_a_record_after_it_has_been_parsed(client: TestClient):
     sorted in place — the change would leak into every later request and into
     other threads mid-read.
 
-    Grepping says nothing does: the only assignment to a parsed entity anywhere is
-    `entity._source` inside `parse_text` itself, before the object is ever cached.
+    Grepping says nothing does: the only assignment to a parsed record anywhere is
+    `record._source` inside `parse_text` itself, before the object is ever cached.
     This is that grep turned into something that fails when it stops being true,
     by taking a copy of every record, exercising the pages that read them, and
     comparing.
     """
     from openproj import web
 
+    # `_PARSED` is a module global that every earlier test in this process has
+    # been filling. Without this clear, `before` holds other tests' leftovers:
+    # the non-empty assertion below is satisfied by records this client never
+    # served, so the test can pass while the app under test caches nothing —
+    # and which leftovers exist depends on which tests ran before this one in
+    # this process, which is exactly what splitting CI into shards reshuffles.
+    web._PARSED.clear()
     client.get("/")
-    before = {key: entity.model_dump(mode="json") for key, entity in list(web._PARSED.items())}
+    before = {key: record.model_dump(mode="json") for key, record in list(web._PARSED.items())}
     assert before, "nothing was cached, so nothing was checked"
 
     for route in ("/", "/graph", "/timeline", "/people", "/cycles", "/api/index.json"):
@@ -3769,10 +3776,10 @@ def test_nothing_edits_a_record_after_it_has_been_parsed(client: TestClient):
 
 
 def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
-    """Entities (issues and notes now among them), cycles and people, each
+    """Records (issues and notes now among them), cycles and people, each
     parsed once per (blob, path).
 
-    It was written for entities alone and the others went on doing a full
+    It was written for records alone and the others went on doing a full
     walk plus a read and a parse of every file on EVERY request, warm or cold —
     which does not decay, and notes and issues are exactly what a betting table
     accumulates. Measured on a plan with 300 of each, back when the inboxes had
@@ -3814,6 +3821,13 @@ def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
         "one of every kind",
     )
 
+    # The same leftover hazard as the test above: earlier tests in this process
+    # have already put tasks/, people/ and cycles/ keys into the module-global
+    # cache, so without the clear a kind can look "read through the cache" when
+    # it was cached by some OTHER test's app — the assertion passes while the
+    # app under test reads that kind around the cache. Cleared, `held` is what
+    # this app cached and nothing else, whatever ran before it.
+    web._PARSED.clear()
     app = create_app(repo_path, auth="dev", secret=SECRET)
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))

@@ -46,7 +46,7 @@ BODY = "First line.\nSecond line.\nThird line.\n"
 WRITERS = 8
 
 
-def entity(
+def record(
     *,
     id: str = "task-c00001",
     title: str = "Reproduce the equator artefact",
@@ -69,8 +69,8 @@ def entity(
 
 
 SEED = {
-    PATH: entity(),
-    OTHER: entity(id="task-c00002", title="Downgrade numpy", owner="bo"),
+    PATH: record(),
+    OTHER: record(id="task-c00002", title="Downgrade numpy", owner="bo"),
     "config/defaults.yaml": "nominal_availability: 1.0\n",
 }
 
@@ -172,7 +172,7 @@ def test_the_repository_stays_bare_and_no_index_file_is_ever_created(store: Stor
     """
     store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -195,7 +195,7 @@ def test_a_write_to_a_directory_that_does_not_exist_yet_builds_the_subtree(
     """
     result = store.write(
         path="pitches/pitch-b00001.md",
-        content=entity(id="pitch-b00001", title="Halo exchange"),
+        content=record(id="pitch-b00001", title="Halo exchange"),
         base_commit=store.head(),
         author="ann",
         message="pitch-b00001: create",
@@ -247,7 +247,7 @@ def test_a_write_against_the_current_head_is_committed_directly(store: Store, re
     base = store.head()
     result = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=base,
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -259,7 +259,7 @@ def test_a_write_against_the_current_head_is_committed_directly(store: Store, re
 
 
 def test_a_stale_base_whose_path_nobody_touched_is_retried_silently(store: Store, repo_path: Path):
-    """~95% of collisions: two people editing two different entities.
+    """~95% of collisions: two people editing two different records.
 
     Refusing this pair is what makes a planning tool unusable at thirty people, so
     the retry is invisible — a new commit on the current head, no conflict.
@@ -267,7 +267,7 @@ def test_a_stale_base_whose_path_nobody_touched_is_retried_silently(store: Store
     stale = store.head()
     theirs = store.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -275,7 +275,7 @@ def test_a_stale_base_whose_path_nobody_touched_is_retried_silently(store: Store
 
     mine = store.write(
         path=PATH,
-        content=entity(priority="high"),
+        content=record(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -296,7 +296,7 @@ def test_two_edits_to_different_frontmatter_keys_of_one_file_are_merged(store: S
     stale = store.head()
     store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00001: status todo -> wip",
@@ -304,7 +304,7 @@ def test_two_edits_to_different_frontmatter_keys_of_one_file_are_merged(store: S
 
     mine = store.write(
         path=PATH,
-        content=entity(priority="high"),
+        content=record(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -321,7 +321,7 @@ def test_two_edits_to_different_parts_of_the_body_are_merged(store: Store):
     stale = store.head()
     store.write(
         path=PATH,
-        content=entity(body="Their first line.\nSecond line.\nThird line.\n"),
+        content=record(body="Their first line.\nSecond line.\nThird line.\n"),
         base_commit=stale,
         author="bo",
         message="task-c00001: reshape the opening",
@@ -329,7 +329,7 @@ def test_two_edits_to_different_parts_of_the_body_are_merged(store: Store):
 
     mine = store.write(
         path=PATH,
-        content=entity(body="First line.\nSecond line.\nMy third line.\n"),
+        content=record(body="First line.\nSecond line.\nMy third line.\n"),
         base_commit=stale,
         author="ann",
         message="task-c00001: reshape the ending",
@@ -347,7 +347,7 @@ def test_both_changing_one_key_differently_is_a_conflict_that_writes_nothing(sto
     stale = store.head()
     theirs = store.write(
         path=PATH,
-        content=entity(owner="bo"),
+        content=record(owner="bo"),
         base_commit=stale,
         author="bo",
         message="task-c00001: owner ann -> bo",
@@ -355,7 +355,7 @@ def test_both_changing_one_key_differently_is_a_conflict_that_writes_nothing(sto
 
     mine = store.write(
         path=PATH,
-        content=entity(owner="cy"),
+        content=record(owner="cy"),
         base_commit=stale,
         author="ann",
         message="task-c00001: owner ann -> cy",
@@ -373,7 +373,7 @@ def test_both_rewriting_one_body_line_differently_is_a_conflict(store: Store):
     stale = store.head()
     store.write(
         path=PATH,
-        content=entity(body="First line.\nTheir second line.\nThird line.\n"),
+        content=record(body="First line.\nTheir second line.\nThird line.\n"),
         base_commit=stale,
         author="bo",
         message="task-c00001: rewrite the middle",
@@ -381,7 +381,7 @@ def test_both_rewriting_one_body_line_differently_is_a_conflict(store: Store):
 
     mine = store.write(
         path=PATH,
-        content=entity(body="First line.\nMy second line.\nThird line.\n"),
+        content=record(body="First line.\nMy second line.\nThird line.\n"),
         base_commit=stale,
         author="ann",
         message="task-c00001: rewrite the middle",
@@ -398,7 +398,7 @@ def test_no_conflict_marker_ever_reaches_the_caller_or_the_repository(store: Sto
     stale = store.head()
     store.write(
         path=PATH,
-        content=entity(owner="bo", body="First line.\nTheir second line.\nThird line.\n"),
+        content=record(owner="bo", body="First line.\nTheir second line.\nThird line.\n"),
         base_commit=stale,
         author="bo",
         message="task-c00001: theirs",
@@ -406,7 +406,7 @@ def test_no_conflict_marker_ever_reaches_the_caller_or_the_repository(store: Sto
 
     mine = store.write(
         path=PATH,
-        content=entity(owner="cy", body="First line.\nMy second line.\nThird line.\n"),
+        content=record(owner="cy", body="First line.\nMy second line.\nThird line.\n"),
         base_commit=stale,
         author="ann",
         message="task-c00001: mine",
@@ -428,7 +428,7 @@ def test_the_author_is_the_person_and_the_committer_is_the_bot(store: Store, rep
     free, while any future push credential stays a bot that no human shares."""
     result = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -446,7 +446,7 @@ def test_git_log_reads_back_as_the_audit_trail(store: Store, repo_path: Path):
     for author, status in (("ann", "in_progress"), ("bo", "done"), ("cy", "shelved")):
         store.write(
             path=PATH,
-            content=entity(status=status),
+            content=record(status=status),
             base_commit=store.head(),
             author=author,
             message=f"task-c00001: status -> {status}",
@@ -468,14 +468,14 @@ def test_a_retried_write_still_records_the_person_who_asked_for_it(store: Store,
     stale = store.head()
     store.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00002: status todo -> wip",
     )
     mine = store.write(
         path=PATH,
-        content=entity(priority="high"),
+        content=record(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -495,7 +495,7 @@ def test_a_commit_made_outside_the_store_is_seen_by_head(store: Store, repo_path
     and a cached head turns their commit into the parent of nothing."""
     before = store.head()
     outside = commit_directly(
-        repo_path, {**SEED, "tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        repo_path, {**SEED, "tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
@@ -507,13 +507,13 @@ def test_the_next_write_lands_on_top_of_an_external_commit_not_over_it(
 ):
     stale = store.head()
     outside = commit_directly(
-        repo_path, {**SEED, "tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        repo_path, {**SEED, "tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
     mine = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=stale,
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -525,17 +525,17 @@ def test_the_next_write_lands_on_top_of_an_external_commit_not_over_it(
     assert parse_text(store.read(mine.commit, PATH), PATH).status == "in_progress"
 
 
-def test_a_human_editing_the_same_entity_is_merged_or_refused_like_anybody_else(
+def test_a_human_editing_the_same_record_is_merged_or_refused_like_anybody_else(
     store: Store, repo_path: Path
 ):
     """An external commit is not privileged and is not ignored: it is just the
     other side of the compare-and-swap."""
     stale = store.head()
-    commit_directly(repo_path, {**SEED, PATH: entity(owner="bo")}, "task-c00001: owner -> bo")
+    commit_directly(repo_path, {**SEED, PATH: record(owner="bo")}, "task-c00001: owner -> bo")
 
     mine = store.write(
         path=PATH,
-        content=entity(owner="cy"),
+        content=record(owner="cy"),
         base_commit=stale,
         author="ann",
         message="task-c00001: owner -> cy",
@@ -551,7 +551,7 @@ def test_a_human_editing_the_same_entity_is_merged_or_refused_like_anybody_else(
 
 
 def test_reading_a_path_that_does_not_exist_gives_none(store: Store):
-    """None, not an exception: "no such entity" is a 404 the caller renders, and
+    """None, not an exception: "no such record" is a 404 the caller renders, and
     the alternative is a try/except around every read in the index build."""
     assert store.read(store.head(), "tasks/task-ffffff.md") is None
     assert store.read(store.head(), "tasks") is None  # a directory is not a file
@@ -562,7 +562,7 @@ def test_a_path_is_read_at_the_commit_it_is_asked_for(store: Store):
     before = store.head()
     after = store.write(
         path="tasks/task-c00003.md",
-        content=entity(id="task-c00003", title="Later"),
+        content=record(id="task-c00003", title="Later"),
         base_commit=before,
         author="ann",
         message="task-c00003: create",
@@ -580,7 +580,7 @@ def test_paths_lists_every_file_in_the_tree_at_that_commit(store: Store):
     before = store.head()
     after = store.write(
         path="pitches/pitch-b00001.md",
-        content=entity(id="pitch-b00001", title="Halo exchange"),
+        content=record(id="pitch-b00001", title="Halo exchange"),
         base_commit=before,
         author="ann",
         message="pitch-b00001: create",
@@ -630,7 +630,7 @@ def test_eight_concurrent_writers_all_land_their_commits(
         barrier.wait()
         return store.write(
             path=f"tasks/task-{n:06d}.md",
-            content=entity(id=f"task-{n:06d}", title=f"Concurrent {n}"),
+            content=record(id=f"task-{n:06d}", title=f"Concurrent {n}"),
             base_commit=base,
             author=f"user{n}",
             message=f"task-{n:06d}: create",
@@ -665,7 +665,7 @@ def test_concurrent_writers_to_one_path_neither_lose_nor_interleave(
         barrier.wait()
         return store.write(
             path=PATH,
-            content=entity(priority=["high", "medium", "low"][n % 3]),
+            content=record(priority=["high", "medium", "low"][n % 3]),
             base_commit=store.head(),
             author=f"user{n}",
             message=f'task-c00001: priority -> {["high", "medium", "low"][n % 3]}',
@@ -888,11 +888,11 @@ def test_a_side_branch_edit_merged_in_carries_the_side_commits_time(tmp_path: Pa
     base = commit_directly(path, SEED, "seed", when=1_000_000)
 
     on_main = dict(SEED)
-    on_main[OTHER] = entity(id="task-c00002", title="Downgrade numpy differently", owner="bo")
+    on_main[OTHER] = record(id="task-c00002", title="Downgrade numpy differently", owner="bo")
     tip = commit_directly(path, on_main, "edit the other task on main", when=1_000_100)
 
     on_side = dict(SEED)
-    on_side[PATH] = entity(title="Reproduce the artefact at the pole")
+    on_side[PATH] = record(title="Reproduce the artefact at the pole")
     side = commit_directly(
         path, on_side, "edit on a side branch", when=1_000_200, parents=[base], ref=None
     )
@@ -931,7 +931,7 @@ def test_an_edit_reverted_inside_one_batch_is_stamped_with_the_revert(tmp_path: 
         known = store.last_edited()
 
         edited = dict(SEED)
-        edited[PATH] = entity(status="in_progress")
+        edited[PATH] = record(status="in_progress")
         commit_directly(path, edited, "edit", when=1_000_100)
         commit_directly(path, SEED, "revert the edit", when=1_000_200)
 
@@ -953,7 +953,7 @@ def test_last_edited_drops_a_deleted_path_and_stamps_an_added_one(tmp_path: Path
         known = store.last_edited()
         changed = dict(SEED)
         del changed[OTHER]
-        changed["tasks/task-c00003.md"] = entity(id="task-c00003", title="A third task")
+        changed["tasks/task-c00003.md"] = record(id="task-c00003", title="A third task")
         commit_directly(path, changed, "add one, delete one", when=1_000_300)
 
         head, stamps = store.last_edited(known=known)
@@ -978,7 +978,7 @@ def test_a_rewound_ref_discards_the_cache_and_rebuilds(tmp_path: Path):
     store = Store(path)
     try:
         doomed_tree = dict(SEED)
-        doomed_tree[PATH] = entity(title="An edit whose push will lose")
+        doomed_tree[PATH] = record(title="An edit whose push will lose")
         doomed = commit_directly(path, doomed_tree, "a doomed publish", when=1_000_100)
         known = store.last_edited()
         assert known[0] == doomed
@@ -987,7 +987,7 @@ def test_a_rewound_ref_discards_the_cache_and_rebuilds(tmp_path: Path):
         # Rewind the way `_attempt` does, then land somebody else's commit.
         pygit2.Repository(str(path)).references["refs/heads/main"].set_target(base)
         winners = dict(SEED)
-        winners[OTHER] = entity(id="task-c00002", title="The write that won", owner="bo")
+        winners[OTHER] = record(id="task-c00002", title="The write that won", owner="bo")
         winner = commit_directly(path, winners, "the winning write", when=1_000_150)
 
         head, stamps = store.last_edited(known=known)

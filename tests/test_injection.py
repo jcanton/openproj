@@ -79,8 +79,8 @@ FORGED_IMAGES = {"x", "y"}
 # rather than a rule with a hole in it.
 OURS = ("form", "onsubmit", "return false")
 
-# What `served()` names an entity's own detail page — the editable one.
-ONE_ENTITY = "one entity"
+# What `served()` names a record's own detail page — the editable one.
+ONE_RECORD = "one record"
 
 STATIC_PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
                 "graph.html", "timeline.html")
@@ -95,7 +95,7 @@ def ids(text: str) -> tuple[str, str, str]:
 
 def inbox_ids(text: str) -> tuple[str, str]:
     """The issue and the note, each carrying the payload in its id — the same
-    shape the three entity ids take. They were deliberately NOT armed while the
+    shape the three record ids take. They were deliberately NOT armed while the
     inbox routes refused their paths and the census read only the list pages;
     an issue now renders on /detail/<id> like everything else, so its id is
     free text to exactly the same renderer."""
@@ -105,9 +105,9 @@ def inbox_ids(text: str) -> tuple[str, str]:
 def corpus(text: str) -> dict[str, str]:
     """A plan whose every free-text field holds `text`.
 
-    Three entities, not one. A parent link, a Blocks row and a Blocked-by row
+    Three records, not one. A parent link, a Blocks row and a Blocked-by row
     only exist between records and are rendered by a different code path from
-    the fields an entity holds alone, so the plan is a pitch with two tasks under
+    the fields a record holds alone, so the plan is a pitch with two tasks under
     it and the second waiting on the first. A task that waited on its own parent
     would have been simpler and useless: that is a contradiction, the scheduler
     refuses to place it, and the timeline then draws no bars at all — which is
@@ -117,14 +117,14 @@ def corpus(text: str) -> dict[str, str]:
     the cycle page, the people page and the cycles index come with the fixture.
 
     And one issue and one note, because a corpus that does not hold the one
-    string that matters proves nothing about them. They are entities on
+    string that matters proves nothing about them. They are records on
     unplanned rungs now, drawn by the one record template — but through fact
     rows no planned kind has (`reported_by`, `written_by`, `pitched_into`,
     `became`), and each links at the hostile pitch — so one record's id
     reaching another record's markup is under test on those rows too.
 
     The ids are hostile too. A malformed id is a *reported* blocker and not a
-    refusal — the entity still loads and every page still draws it — so an id is
+    refusal — the record still loads and every page still draws it — so an id is
     free text as far as the renderer is concerned.
     """
     pitch_id, first_id, second_id = ids(text)
@@ -158,7 +158,7 @@ def corpus(text: str) -> dict[str, str]:
             f"parent: '{text_yaml(pitch_id)}'\n"
             f"depends_on: ['{text_yaml(first_id)}']\nperson_weeks: 1\n---\n{body}"
         ),
-        # Both inbox records armed like the entities above them: a malformed id
+        # Both inbox records armed like the records above them: a malformed id
         # is a reported blocker rather than a refusal, so the record loads, and
         # /detail/<id> draws it now that an issue is a rung.
         "issues/i.md": (
@@ -265,8 +265,8 @@ def static_pages(root: Path, out: Path, plan: dict[str, str]) -> dict[str, str]:
     for path, content in plan.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content, encoding="utf-8")
-    entities, config, _ = load_repo(root)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 17))
     render_static(index, out)
     return {name: (out / name).read_text(encoding="utf-8") for name in STATIC_PAGES}
 
@@ -288,9 +288,9 @@ def benign_static(tmp_path: Path) -> dict[str, str]:
 CENSUS_BLIND: set[str] = set()
 
 
-def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
+def census_routes(record_ids: tuple[str, ...]) -> dict[str, str]:
     """Every page the census opens, module-level so the completeness test can
-    hold it against `app.routes`. Named rather than keyed by URL: the entity
+    hold it against `app.routes`. Named rather than keyed by URL: the record
     pages have the payload in their path, so the hostile plan and the benign
     one address different URLs for the same page."""
     return {
@@ -306,18 +306,18 @@ def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
         "issues": "/issues", "notes": "/notes",
         "new issue": "/new?kind=issue", "new note": "/new?kind=note",
         "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",
-        # `/detail` is the whole plan and read-only; an entity's own page is the
+        # `/detail` is the whole plan and read-only; a record's own page is the
         # editable one, and the only one that carries the combobox.
         "every detail": "/detail",
         **{
-            f"{ONE_ENTITY} {n}": f"/detail/{quote(entity_id, safe='')}"
-            for n, entity_id in enumerate(entity_ids)
+            f"{ONE_RECORD} {n}": f"/detail/{quote(record_id, safe='')}"
+            for n, record_id in enumerate(record_ids)
         },
     }
 
 
 def served(
-    tmp_path: Path, plan: dict[str, str], name: str, entity_ids: tuple[str, ...]
+    tmp_path: Path, plan: dict[str, str], name: str, record_ids: tuple[str, ...]
 ) -> dict[str, str]:
     """Every page the server draws, including the three the export has not.
 
@@ -326,13 +326,13 @@ def served(
     to run somebody else's script.
 
     The plan and the ids to open are passed in, not derived from one string,
-    because the second corpus in this file has one entity per marker rather than
+    because the second corpus in this file has one record per marker rather than
     one payload in every field.
     """
     path = tmp_path / f"{name}.git"
     pygit2.init_repository(str(path), bare=True, initial_head="main")
     commit_directly(path, plan, "seed a hostile plan")
-    routes = census_routes(entity_ids)
+    routes = census_routes(record_ids)
     pages = {}
     with TestClient(create_app(path, auth="dev", secret="a-signing-secret-for-tests")) as client:
         for name, route in routes.items():
@@ -492,7 +492,7 @@ def test_the_fixture_really_is_hostile(hostile_static):
     # carried their meaning — a census that actually SEES the payload-bearing
     # inbox records — is the count: five hostile records, five articles on the
     # shared page, the issue and the note among them. A fold that quietly
-    # dropped the two would pass every substring above off the three entities
+    # dropped the two would pass every substring above off the three records
     # alone.
     assert hostile_static["detail.html"].count("<article") == 5
 
@@ -564,7 +564,7 @@ def test_the_table_cell_editor_does_not_let_a_stored_value_become_markup(hostile
         "   for (const field of Object.keys(EDITABLE)) {"
         "     const cell = document.createElement('td');"
         "     cell.className = 'edit';"
-        "     cell.dataset.entity = id; cell.dataset.field = field;"
+        "     cell.dataset.record = id; cell.dataset.field = field;"
         "     openEditor(cell);"
         "   } return ''; })()",
     )
@@ -587,11 +587,11 @@ def test_the_hover_card_does_not_let_a_field_become_markup(hostile_served):
     assert_js_clean(written, "hover card")
 
 
-@pytest.mark.parametrize("page", ["table", f"{ONE_ENTITY} 0", "new task", "cycle 41"])
+@pytest.mark.parametrize("page", ["table", f"{ONE_RECORD} 0", "new task", "cycle 41"])
 def test_the_combobox_popup_does_not_let_a_suggestion_become_markup(hostile_served, page):
     """Every source, on every page that carries the widget.
 
-    For the `entities` source the label IS an entity title, so opening the Parent
+    For the `records` source the label IS a record title, so opening the Parent
     list is enough to run somebody else's script — on the detail page, which
     offers a Save button one line below it.
     """
@@ -662,6 +662,11 @@ _DELIMITED = re.compile(r"@@[\w.-]+@@")
 # The nine that were really substituted, named because the fix deleted them from
 # the source: a derivation alone would now come back without the very strings
 # this is a regression test for.
+#
+# `ENTITY_HREF` keeps its spelling for that reason and is the one place in the
+# tree where the pre-Record word is still written. It is the marker that shipped,
+# not a name anything answers to now — renaming it here would pin a string this
+# repository never substituted and stop pinning the one it did.
 SUBSTITUTED = (
     "PAYLOAD_JSON", "ELEMENTS_JSON", "BARS_JSON", "HELD_JSON", "ROSTER_JSON", "ENTITY_HREF",
     "@@cytoscape.min.js@@", "@@dagre.min.js@@", "@@cytoscape-dagre.js@@",
@@ -695,7 +700,7 @@ def marker_plan(values: tuple[str, ...]) -> dict[str, str]:
     """One task per value, carrying that value as its title, its owner and its tag,
     and a cycle whose roster names every value as a login.
 
-    One entity per value rather than `corpus()`'s one payload in every field,
+    One record per value rather than `corpus()`'s one payload in every field,
     because what triggers this defect is a whole field *equalling* a marker —
     thirty markers concatenated into one title is a title that equals nothing.
     """
@@ -724,7 +729,7 @@ def marker_plan(values: tuple[str, ...]) -> dict[str, str]:
 BENIGN_VALUES = tuple(f"an ordinary value number {n}" for n in range(len(MARKERS)))
 
 # The ids the marker plan uses, and the three of them whose own detail page is
-# opened. Three and not all of them: an entity's page carries the whole plan's
+# opened. Three and not all of them: a record's page carries the whole plan's
 # suggestions either way, so opening the hundred-and-somethingth adds nothing but
 # a hundred requests.
 MARKER_IDS = tuple(f"task-c{n:05x}" for n in range(3))

@@ -1,0 +1,12 @@
+# editor — 151.3s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
+# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
+# somewhere else entirely, because caching template compilation moved the file
+# costs by far more than the shard sizes.
+#
+# The floor, and the reason there are five shards and not six: this one file is
+# 115 tests, 151.04s of which is `call`, and 53 of the suite's 135 real-Chrome
+# call sites — every one laying out a page carrying 594 KB of inlined Ace. No
+# file-level cut goes below it, so it runs alone and everything else balances
+# around it. Going faster than this means splitting the file, and its natural
+# seam is `?editor=ace` against `?editor=plain`.
+tests/test_editor.py

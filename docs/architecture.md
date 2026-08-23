@@ -7,19 +7,26 @@ last edited where there is git history to ask and by id in an export of a plain 
 search box above it. `table.html` is the filterable, searchable table and the page PM work lives
 in. `graph.html` is the dependency DAG, grouped by project and pitch. `timeline.html` is the
 derived Gantt. `cycles.html` and `people.html` are the cycle records with their betting tables, and
-who is on what and who is full; `detail.html` is one record on its own page — any of the six kinds
-— and under the server it is also where a record is edited.
+who is on what and who is full. On a cycle's roster a capacity number and a date are drawn beside
+each other or neither is trusted, so each person's row carries their scheduled end date next to
+their capacity bar — the two come from different subsystems and cannot quietly disagree, and a green
+bar against a timeline running into November is what stops a room trusting the tool. `detail.html`
+is one record on its own page — any of the six kinds — and under the server it is also where a
+record is edited.
 
 Issues and notes are records whose rung says `planned=False`: they are on Records and on their own
-pages, and never in the plan views. The exclusion is not a filter on each page — `Index.entities`
-holds planned kinds only, a validator on `Index` refuses anything else, and a page that wants every
-kind reaches for `Index.records` by name, a word that looks wrong in a function about the timeline.
-`POST /api/promote` is the door out of both inboxes: it writes the entity and marks the source in
-one commit.
+pages, and never in the plan views. The exclusion is not a filter on each page — `Index.plan`
+holds planned kinds only, a validator on `Index` refuses anything else, and each name states its
+population, so a timeline function that reaches for `records` announces the widened view on the
+line that takes it. `POST /api/promote` is the door out of both inboxes: it writes the record and
+marks the source in one commit.
 
 They render from one in-memory index, share one filter model, and keep their state in the query
 string — so every view is a shareable URL, the back button works, and there are no saved views to
-manage.
+manage. The index is rebuilt whole from a commit and never incrementally — measured 2026-08-12 at
+~50 ms over 300 records and ~250 ms over 2,000, which buys the deletion of the entire class of
+incremental-invalidation bugs. It is an immutable snapshot swapped in atomically, so a reader holds
+a reference and is never blocked by a write.
 
 `/deck/<n>` is the odd one out and is a route only. It is the deck for one cycle's review meeting —
 a title slide, then one slide per piece of work bet into that cycle, each with its ticked points,
@@ -43,7 +50,7 @@ The tool and the plan are separate repositories, and stay separate in production
 
 ```
 C2SM/openproj        this repo — code, tests, and fixtures. No real plan data.
-C2SM/<name>-plan     the data — markdown entities and config. No code.
+C2SM/<name>-plan     the data — markdown records and config. No code.
 ```
 
 `seed/` and `tests/fixtures/corpus/` live here only because they are a demo and a
@@ -92,14 +99,13 @@ src/openproj/schedule.py   the scheduler — a pure function, the product
 src/openproj/index.py      the snapshot every view renders from
 src/openproj/render.py     the pages
 src/openproj/store.py      the git write layer — bare repo, one writer, scoped CAS
-src/openproj/coedit.py     the co-editing rooms — one Y.Text per entity, in memory
+src/openproj/coedit.py     the co-editing rooms — one Y.Text per record, in memory
 src/openproj/web.py        the server: routes, auth, the write endpoints
 src/openproj/cli.py        check / render / schedule / serve / demo
 src/openproj/themes.py     the colour schemes — sixteen numbers a row, nothing else
 seed/                      the demo corpus
 tests/fixtures/corpus/     the frozen golden corpus the scheduler goldens pin
 static/                    vendored, pinned JS — see static/VENDOR.md
-docs/superpowers/          the spec and the plan
 ```
 
 `store.py` is a bare repository with no index to contend for, one writer behind an `flock`, and
@@ -142,7 +148,7 @@ every family in both polarities.
 ## Co-editing one document
 
 Several people can type in one shaping document at once. `src/openproj/coedit.py` holds the rooms —
-one `Y.Text` of the markdown body per entity, and nothing else; the frontmatter stays on the form,
+one `Y.Text` of the markdown body per record, and nothing else; the frontmatter stays on the form,
 where the fields are typed and `validate_all` decides requiredness in one place. `WSS
 /api/coedit/<id>` carries it, which `connect-src 'self'` already permits.
 
@@ -156,28 +162,29 @@ arrived on rather than to the client id inside the update.
 
 Nothing is persisted: git holds the text. The room is in memory on one process, which
 `--max-instances 1` makes safe, and losing it costs the twenty-second window and nothing that was
-committed. `docs/superpowers/specs/2026-08-18-co-editing-design.md` is the record of why Yjs, why
-not Automerge, and what a socket costs a policy that says `default-src 'none'`.
+committed. Why Yjs and not Automerge is in `static/VENDOR.md`, beside the bytes: Automerge's wasm
+is 3,571,259 bytes and running it needs `script-src 'wasm-unsafe-eval'`, and weakening a policy
+that says `default-src 'none'` to run a merge algorithm is the wrong trade.
 
 ## Deliberately not built
 
-Notification infrastructure, user-defined custom fields, a PR-based editing workflow, time tracking,
-burndown charts, per-project permissions. If you are about to add one of these, read the spec first —
-each is excluded for a reason recorded there. Real-time co-editing was on this list until the design
-above; `docs/superpowers/specs/2026-08-12-appetite-design.md` excluded it on the grounds that
+Each of these was excluded, and the reason is here so that it is not re-opened. **Notification
+infrastructure** is its own project, and Slack exists. **User-defined custom fields** mean editing
+the model and running a migration — the honest cost of a field every page has to know about. **A
+PR-based editing workflow** is what git already is, and the premise of this tool is that a pull
+request is the wrong default for a plan. **Time tracking, burndown charts and per-project
+permissions** were out of scope in the first requirements list and nobody here has asked since — no
+argument was ever recorded for them, and each would need a second source of truth before there
+could be one.
+**Inline comments and resolved threads on a record** would be the first piece of plan state that is
+not a file — a second store, a second permission model and a second notification path — while the
+review channel this team already uses is the pull request, which every pitch names in `prs:`.
+
+Real-time co-editing was on this list until the design above, excluded on the grounds that
 compare-and-swap *is* the design, and that argument still holds for everything except the body of one
 document that two people are writing at the same time.
 
-Nothing may make the CI bot write entity frontmatter. The bot owns `derived/` and nothing else;
+Nothing may make the CI bot write record frontmatter. The bot owns `derived/` and nothing else;
 if it starts patching frontmatter, bot and humans fight over the same files forever.
-
-## The design records
-
-| | |
-|---|---|
-| `docs/superpowers/specs/2026-08-12-appetite-design.md` | the spec: what a size is, and what is excluded |
-| `docs/superpowers/specs/2026-08-16-cycles-design.md` | cycles, betting and capacity |
-| `docs/superpowers/specs/2026-08-16-tailoring-plan.md` | what the team actually does, and what was tailored to it |
-| `docs/superpowers/plans/2026-08-12-phase1.md` | the plan and its gates |
 
 🤖 Written by an agent on behalf of @jcanton

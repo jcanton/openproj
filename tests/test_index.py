@@ -25,7 +25,7 @@ from openproj.index import (
     apply_filters,
     build_index,
 )
-from openproj.model import Config, Entity, Pitch, Project, Task, load_repo, parse_text, validate_all
+from openproj.model import Config, Pitch, Project, Record, Task, load_repo, parse_text, validate_all
 from openproj.schedule import schedule
 
 TODAY = date(2026, 8, 13)
@@ -50,7 +50,7 @@ def a_task(id: str, title: str = "A task", **fields) -> Task:
     return Task(id=id, kind="task", title=title, **fields)
 
 
-def a_family() -> list[Entity]:
+def a_family() -> list[Record]:
     """One project, one pitch under it, two tasks under the pitch, one dependency."""
     return [
         a_project("proj-a00001", "Greenline", owner="alice", reviewers=["bob"]),
@@ -75,8 +75,8 @@ def family_index() -> Index:
 
 @pytest.fixture
 def seed_index(seed_root: Path) -> Index:
-    entities, config, _ = load_repo(seed_root)
-    return build_index(entities, config, TODAY)
+    records, config, _ = load_repo(seed_root)
+    return build_index(records, config, TODAY)
 
 
 # --- structure -------------------------------------------------------------
@@ -87,10 +87,12 @@ def test_children_lists_each_parents_children_by_id(family_index: Index):
     assert family_index.children["pitch-b00001"] == ["task-c00001", "task-c00002"]
 
 
-def test_every_entity_is_a_key_in_every_edge_map(family_index: Index):
-    """A childless or unblocked entity gets an empty list, not a missing key: the
-    views index these maps directly and a KeyError there is a blank page."""
-    ids = set(family_index.entities)
+def test_every_record_is_a_key_in_every_edge_map(family_index: Index):
+    """A childless or unblocked record gets an empty list, not a missing key: the
+    views index these maps directly and a KeyError there is a blank page. The
+    maps are total over `records`, not over the plan — the record page draws
+    fact rows for every kind."""
+    ids = set(family_index.records)
     assert set(family_index.children) == ids
     assert set(family_index.blocked_by) == ids
     assert set(family_index.blocks) == ids
@@ -121,19 +123,19 @@ def test_a_stored_blocks_key_in_frontmatter_is_ignored():
         ]
     )
     lying = parse_text(text, "task-c00001.md")
-    entities = [lying, a_task("task-c00002", "Second")]
-    index = build_index(entities, CONFIG, TODAY)
+    records = [lying, a_task("task-c00002", "Second")]
+    index = build_index(records, CONFIG, TODAY)
 
     assert not hasattr(lying, "blocks")
     assert index.blocks["task-c00001"] == []
     assert index.blocked_by["task-c00002"] == []
 
 
-def test_blocked_by_keeps_only_edges_to_entities_that_exist():
+def test_blocked_by_keeps_only_edges_to_records_that_exist():
     """A dangling id is already a validation blocker; carrying it into the edge
     maps would invent a node the graph and the reverse map cannot agree on."""
-    entities = [a_task("task-c00001", depends_on=["task-ffffff"])]
-    index = build_index(entities, CONFIG, TODAY)
+    records = [a_task("task-c00001", depends_on=["task-ffffff"])]
+    index = build_index(records, CONFIG, TODAY)
 
     assert index.blocked_by["task-c00001"] == []
     assert "task-ffffff" not in index.blocks
@@ -153,28 +155,28 @@ def test_a_parent_that_names_nothing_does_not_take_the_whole_index_down():
     helper in `test_validate` — so it has to be a plan the index can render.
     Unresolvable means "no project", the same answer as no parent at all.
     """
-    entities = [a_task("task-c00001", parent="proj-ffffff", owner="alice", person_weeks=1.0)]
+    records = [a_task("task-c00001", parent="proj-ffffff", owner="alice", person_weeks=1.0)]
 
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     # Unresolvable means "no project" — the same answer as no parent at all, and
     # since that is now askable from the menu it is `[NO_VALUE]` rather than the
     # empty list.
     assert index.facets["project"] == [NO_VALUE]
-    assert set(index.entities) == {"task-c00001"}
+    assert set(index.plan) == {"task-c00001"}
 
 
 def test_a_parent_chain_that_ends_outside_the_plan_still_finds_the_project_it_names():
     """The half of the same walk that must keep working: a chain that reaches a
     real project reports it, even though a later link is missing."""
-    entities = [
+    records = [
         a_project("proj-a00001", "Greenline"),
         a_pitch("pitch-b00001", parent="proj-a00001"),
         a_task("task-c00001", parent="pitch-b00001"),
         a_task("task-c00002", parent="pitch-ffffff"),
     ]
 
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     # `task-c00002` names a pitch that does not exist, so it is in no project and
     # contributes the `(none)` option; the chain that does resolve still reports
@@ -182,9 +184,9 @@ def test_a_parent_chain_that_ends_outside_the_plan_still_finds_the_project_it_na
     assert index.facets["project"] == [NO_VALUE, "proj-a00001"]
 
 
-def test_entities_are_keyed_by_id(family_index: Index):
-    assert family_index.entities["task-c00001"].title == "First"
-    assert set(family_index.entities) == {
+def test_the_plan_is_keyed_by_id(family_index: Index):
+    assert family_index.plan["task-c00001"].title == "First"
+    assert set(family_index.plan) == {
         "proj-a00001",
         "pitch-b00001",
         "task-c00001",
@@ -196,9 +198,9 @@ def test_entities_are_keyed_by_id(family_index: Index):
 
 
 def test_spans_and_explanations_come_from_the_scheduler():
-    entities = a_family()
-    spans, explanations = schedule(entities, CONFIG, TODAY)
-    index = build_index(entities, CONFIG, TODAY)
+    records = a_family()
+    spans, explanations = schedule(records, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert index.spans == spans
     assert index.explanations == explanations
@@ -206,10 +208,10 @@ def test_spans_and_explanations_come_from_the_scheduler():
 
 
 def test_problems_come_from_validate_all():
-    entities = a_family()
-    index = build_index(entities, CONFIG, TODAY)
+    records = a_family()
+    index = build_index(records, CONFIG, TODAY)
 
-    assert index.problems == validate_all(entities, CONFIG)
+    assert index.problems == validate_all(records, CONFIG)
     assert index.problems, "the pitch has no owner, so the family cannot validate clean"
 
 
@@ -239,12 +241,12 @@ def test_the_predicate_facet_is_the_one_predicate_list(family_index: Index):
 
 
 def test_facets_are_sorted_distinct_values_as_strings():
-    entities = [
+    records = [
         a_task("task-c00001", owner="bob", priority="low", cycle=36, tags=["ci", "gpu"]),
         a_task("task-c00002", owner="alice", priority="high", cycle=36, tags=["gpu"]),
         a_task("task-c00003", owner="alice", priority="high", cycle=None, tags=[]),
     ]
-    facets = build_index(entities, CONFIG, TODAY).facets
+    facets = build_index(records, CONFIG, TODAY).facets
 
     assert facets["owner"] == ["alice", "bob"]
     assert facets["priority"] == ["high", "low"]
@@ -258,7 +260,7 @@ def test_facets_are_sorted_distinct_values_as_strings():
 def test_an_absent_value_is_a_question_and_not_a_fake_name():
     """An unset field is still not a facet VALUE — there is no owner called
     "unowned" in the menu. What there is now is one option that is not a value at
-    all: `(none)`, which selects the entities where the field is empty.
+    all: `(none)`, which selects the records where the field is empty.
 
     It had to be added because emptiness was otherwise unaskable. An unset field
     yields nothing to select, and the blank option every menu already had means
@@ -287,9 +289,9 @@ def test_the_project_facet_follows_the_parent_closure(family_index: Index):
     ]
 
 
-def test_an_entity_outside_any_project_matches_no_project_filter():
-    entities = [a_task("task-c00001", "Orphan")]
-    index = build_index(entities, CONFIG, TODAY)
+def test_a_record_outside_any_project_matches_no_project_filter():
+    records = [a_task("task-c00001", "Orphan")]
+    index = build_index(records, CONFIG, TODAY)
 
     # The menu offers the question — an orphan is exactly what `(none)` is for —
     # and naming a project it is not in still matches nothing.
@@ -305,13 +307,13 @@ def test_the_searchable_text_is_the_fields_and_not_the_document():
     900-word pitch in a substring search makes every long word in the plan a
     match for something, and nothing on the row says which word matched.
     """
-    entity = a_task(
+    record = a_task(
         "task-c00001",
         "Reproduce the 2-GPU Equator Artefact",
         tags=["GPU", "ci"],
         body="Only on Daint.\n",
     )
-    blob = build_index([entity], CONFIG, TODAY).search_blob["task-c00001"]
+    blob = build_index([record], CONFIG, TODAY).search_blob["task-c00001"]
 
     assert "reproduce the 2-gpu equator artefact" in blob
     assert "gpu" in blob
@@ -329,8 +331,8 @@ def test_the_searchable_text_holds_the_names_a_record_is_known_by():
     The document is out now, so a login in this text means the one thing it
     should — that somebody's name is on this record.
     """
-    entity = a_task("task-c00001", "Something", owner="alice", reviewers=["bob"])
-    blob = build_index([entity], CONFIG, TODAY).search_blob["task-c00001"]
+    record = a_task("task-c00001", "Something", owner="alice", reviewers=["bob"])
+    blob = build_index([record], CONFIG, TODAY).search_blob["task-c00001"]
 
     assert "alice" in blob
     assert "bob" in blob
@@ -366,7 +368,7 @@ def test_the_searchable_text_holds_an_inbox_records_author():
 # --- apply_filters ---------------------------------------------------------
 
 
-def test_no_filters_and_no_query_returns_every_entity_sorted_by_id(family_index: Index):
+def test_no_filters_and_no_query_returns_the_whole_plan_sorted_by_id(family_index: Index):
     assert apply_filters(family_index, {}, "") == [
         "pitch-b00001",
         "proj-a00001",
@@ -376,12 +378,12 @@ def test_no_filters_and_no_query_returns_every_entity_sorted_by_id(family_index:
 
 
 def test_values_within_one_field_are_ored():
-    entities = [
+    records = [
         a_task("task-c00001", owner="alice"),
         a_task("task-c00002", owner="bob"),
         a_task("task-c00003", owner="carol"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"owner": ["alice", "carol"]}, "") == [
         "task-c00001",
@@ -390,23 +392,23 @@ def test_values_within_one_field_are_ored():
 
 
 def test_fields_are_anded_across():
-    entities = [
+    records = [
         a_task("task-c00001", owner="alice", status="ready"),
         a_task("task-c00002", owner="alice", status="in_progress"),
         a_task("task-c00003", owner="bob", status="in_progress"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     filters = {"owner": ["alice"], "status": ["in_progress"]}
     assert apply_filters(index, filters, "") == ["task-c00002"]
 
 
 def test_a_list_valued_field_matches_if_any_element_matches():
-    entities = [
+    records = [
         a_task("task-c00001", tags=["ci", "gpu"], reviewers=["bob"]),
         a_task("task-c00002", tags=["ci"], reviewers=["carol"]),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"tags": ["gpu"]}, "") == ["task-c00001"]
     assert apply_filters(index, {"reviewers": ["bob", "carol"]}, "") == [
@@ -420,39 +422,39 @@ def test_a_value_nothing_carries_matches_nothing(family_index: Index):
 
 
 def test_the_blocked_predicate_needs_a_blocker_that_is_neither_done_nor_shelved():
-    entities = [
+    records = [
         a_task("task-c00001", status="done"),
         a_task("task-c00002", status="shelved"),
         a_task("task-c00003", status="ready"),
         a_task("task-c00004", depends_on=["task-c00001", "task-c00002"]),
         a_task("task-c00005", depends_on=["task-c00003"]),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"predicate": ["blocked"]}, "") == ["task-c00005"]
 
 
 def test_the_unblocked_predicate_is_the_complement_of_blocked():
-    entities = [
+    records = [
         a_task("task-c00001", status="ready"),
         a_task("task-c00002", depends_on=["task-c00001"]),
         a_task("task-c00003"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     blocked = apply_filters(index, {"predicate": ["blocked"]}, "")
     unblocked = apply_filters(index, {"predicate": ["unblocked"]}, "")
     assert blocked == ["task-c00002"]
     assert unblocked == ["task-c00001", "task-c00003"]
-    assert sorted(blocked + unblocked) == sorted(index.entities)
+    assert sorted(blocked + unblocked) == sorted(index.plan)
 
 
 def test_the_overruns_cycle_predicate_reads_the_span():
-    entities = [
+    records = [
         a_task("task-c00001", owner="alice", person_weeks=6.0, cycle=36),
         a_task("task-c00002", owner="bob", person_weeks=0.2, cycle=None),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert index.spans["task-c00001"].overruns_cycle_weeks is not None
     assert apply_filters(index, {"predicate": ["overruns_cycle"]}, "") == ["task-c00001"]
@@ -461,7 +463,7 @@ def test_the_overruns_cycle_predicate_reads_the_span():
 def test_the_missing_required_fields_predicate_reads_the_problems():
     """Severity-agnostic on purpose: a grandfathered rule reports a warning, and a
     field the team has decided it wants is still missing whichever way it reports."""
-    entities = [
+    records = [
         a_project("proj-a00001", owner="alice", assignees=["alice"], reviewers=["bob"],
             status="in_progress", assigned_on=TODAY),
         a_pitch("pitch-b00001", parent="proj-a00001", owner="alice", assignees=["alice"],
@@ -477,7 +479,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
         ),
         a_task("task-c00002", parent="pitch-b00001", status="ready"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"predicate": ["missing_required_fields"]}, "") == ["task-c00002"]
 
@@ -495,22 +497,22 @@ def test_the_has_blocker_predicate_is_the_strict_half_of_missing_required_fields
     any_problem = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
     blocking = set(apply_filters(seed_index, {"predicate": ["has_blocker"]}, ""))
 
-    assert blocking == {p.entity_id for p in seed_index.problems if p.severity == "blocker"}
+    assert blocking == {p.record_id for p in seed_index.problems if p.severity == "blocker"}
     assert blocking < any_problem, "a warning is a problem and is not a blocker"
     assert any_problem - blocking == {
-        p.entity_id for p in seed_index.problems if p.severity == "warning"
+        p.record_id for p in seed_index.problems if p.severity == "warning"
     } - blocking
 
 
 def test_the_review_waived_predicate_finds_deliberate_waivers_only():
     """`review_waived` is a recorded human decision; empty `reviewers` is nobody
     having decided yet. Collapsing the two would hide a team waiving everything."""
-    entities = [
+    records = [
         a_task("task-c00001", review_waived=True),
         a_task("task-c00002", reviewers=[]),
         a_task("task-c00003", reviewers=["bob"]),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"predicate": ["review_waived"]}, "") == ["task-c00001"]
 
@@ -521,12 +523,12 @@ def test_every_computed_predicate_is_filterable(family_index: Index):
 
 
 def test_predicates_are_ored_within_the_field():
-    entities = [
+    records = [
         a_task("task-c00001", status="ready"),
         a_task("task-c00002", depends_on=["task-c00001"]),
         a_task("task-c00003", review_waived=True),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"predicate": ["blocked", "review_waived"]}, "") == [
         "task-c00002",
@@ -535,12 +537,12 @@ def test_predicates_are_ored_within_the_field():
 
 
 def test_search_is_a_case_insensitive_substring_match():
-    entities = [
+    records = [
         a_task("task-c00001", "Reproduce the 2-GPU equator artefact"),
         a_task("task-c00002", "Downgrade numpy", tags=["reductions"]),
         a_task("task-c00003", "Read the paper", body="Anurag's IPDPS 2014 paper on REDUCTIONS."),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {}, "EQUATOR") == ["task-c00001"]
     # And the third one, whose only `reductions` is in its shaping document, is
@@ -551,12 +553,12 @@ def test_search_is_a_case_insensitive_substring_match():
 
 
 def test_filters_and_search_narrow_together():
-    entities = [
+    records = [
         a_task("task-c00001", "Downgrade numpy", owner="alice"),
         a_task("task-c00002", "Downgrade numpy again", owner="bob"),
         a_task("task-c00003", "Try deterministic means", owner="alice"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
 
     assert apply_filters(index, {"owner": ["alice"]}, "downgrade") == ["task-c00001"]
 
@@ -565,8 +567,8 @@ def test_filters_and_search_narrow_together():
 
 
 def test_the_seed_index_has_the_shape_of_the_corpus(seed_index: Index):
-    assert len(seed_index.entities) == 17
-    kinds = [e.kind for e in seed_index.entities.values()]
+    assert len(seed_index.plan) == 17
+    kinds = [e.kind for e in seed_index.plan.values()]
     assert (kinds.count("project"), kinds.count("pitch"), kinds.count("task")) == (1, 5, 11)
 
     assert seed_index.children["proj-7e57a0"] == ["task-0e4b7a"]
@@ -588,9 +590,9 @@ def test_the_seed_diamond_reverses_into_blocks(seed_index: Index):
 def test_task_2b6c94_is_unblocked_because_its_only_blocker_is_done(seed_index: Index):
     """The corpus's live-item-behind-finished-work case. Reading `depends_on`
     non-empty as "blocked" would park this task behind work that is already over."""
-    assert seed_index.entities["task-2b6c94"].status == "ready"
+    assert seed_index.plan["task-2b6c94"].status == "ready"
     assert seed_index.blocked_by["task-2b6c94"] == ["task-31f6c4"]
-    assert seed_index.entities["task-31f6c4"].status == "done"
+    assert seed_index.plan["task-31f6c4"].status == "done"
 
     assert "task-2b6c94" not in apply_filters(seed_index, {"predicate": ["blocked"]}, "")
     assert "task-2b6c94" in apply_filters(seed_index, {"predicate": ["unblocked"]}, "")
@@ -615,7 +617,7 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
     # value, it is the question "which of these has nobody in it", and it is the
     # only way to ask it: an unset field yields no facet value at all, so before
     # this it could never be selected. Status does not grow one, because every
-    # entity has a status; cycle does, because a pitch that is not bet yet is
+    # record has a status; cycle does, because a pitch that is not bet yet is
     # the ordinary case rather than an error.
     assert seed_index.facets["cycle"] == ["(none)", "28", "34", "35", "36"]
     assert seed_index.facets["project"] == ["(none)", "proj-7e57a0"]
@@ -678,7 +680,7 @@ def test_the_seed_review_waiver_is_the_only_one(seed_index: Index):
     assert apply_filters(seed_index, {"predicate": ["review_waived"]}, "") == ["task-5a4e39"]
 
 
-def test_the_seed_incomplete_entities_are_the_ones_missing_fields(seed_index: Index):
+def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Index):
     """pitch-1b3f9a is missing only the grandfathered `shaped_by`, so it has to
     show up here despite reporting as a warning.
 
@@ -693,13 +695,13 @@ def test_the_seed_incomplete_entities_are_the_ones_missing_fields(seed_index: In
 
 
 def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Path):
-    entities, config, _ = load_repo(seed_root)
-    index = build_index(entities, config, TODAY)
-    spans, explanations = schedule(entities, config, TODAY)
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config, TODAY)
+    spans, explanations = schedule(records, config, TODAY)
 
     assert index.spans == spans
     assert index.explanations == explanations
-    assert index.problems == validate_all(entities, config)
+    assert index.problems == validate_all(records, config)
 
 
 def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index):
@@ -709,8 +711,8 @@ def test_searching_the_seed_corpus_finds_the_task_by_its_title(seed_index: Index
     ]
 
 
-def test_a_predicate_never_touches_an_entity_that_has_no_span(seed_index: Index):
-    """Six seed entities are done or shelved and get no span at all. A predicate
+def test_a_predicate_never_touches_a_record_that_has_no_span(seed_index: Index):
+    """Six seed records are done or shelved and get no span at all. A predicate
     that indexes index.spans directly turns the whole page into a KeyError."""
     result = apply_filters(seed_index, {"predicate": ["overruns_cycle"]}, "")
     assert set(result).isdisjoint({"pitch-2a7f3e", "pitch-3c9a41", "task-3d84e9"})
@@ -718,9 +720,9 @@ def test_a_predicate_never_touches_an_entity_that_has_no_span(seed_index: Index)
 
 def test_a_dangling_dependency_does_not_count_as_a_blocker():
     """blocked_by already drops a target that does not exist; the predicate must
-    agree with it, or an entity blocked by a typo looks blocked forever."""
-    entities = [a_task("task-c00001", depends_on=["task-ffffff"])]
-    index = build_index(entities, CONFIG, TODAY)
+    agree with it, or a record blocked by a typo looks blocked forever."""
+    records = [a_task("task-c00001", depends_on=["task-ffffff"])]
+    index = build_index(records, CONFIG, TODAY)
     assert apply_filters(index, {"predicate": ["blocked"]}, "") == []
     assert apply_filters(index, {"predicate": ["unblocked"]}, "") == ["task-c00001"]
 
@@ -745,7 +747,7 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
     """`cycle:` records where a bet was MADE and is never re-stamped (D-C1), which
     is what keeps an overrun accusing. It also means a filter on `cycle == N`
     cannot see carryover — and the cycle page exists to add up who is full."""
-    entities = [
+    records = [
         a_task("task-c00001", owner="ann", person_weeks=2.0, cycle=37, status="ready"),
         a_task(
             "task-c00002",
@@ -756,18 +758,18 @@ def test_work_bet_in_an_earlier_cycle_and_still_running_counts_against_this_one(
             assigned_on=date(2026, 8, 3),
         ),
     ]
-    index = build_index(entities, _two_cycles(), TODAY)
+    index = build_index(records, _two_cycles(), TODAY)
 
     assert index.load(37) == {"ann": 5.0}
     assert index.carried_into(37) == ["task-c00002"]
 
 
 def test_work_finished_in_the_earlier_cycle_is_not_carried_into_this_one():
-    entities = [
+    records = [
         a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="done",
                prs=["C2SM/icon4py#1"], assigned_on=date(2026, 7, 1)),
     ]
-    index = build_index(entities, _two_cycles(), TODAY)
+    index = build_index(records, _two_cycles(), TODAY)
     assert index.load(37) == {}
     assert index.carried_into(37) == []
 
@@ -776,24 +778,24 @@ def test_an_undated_cycle_counts_only_what_was_bet_into_it_by_name():
     """A number nobody has given a window to is a hypothetical. Letting it absorb
     every running item would put the whole plan's load on the page for a cycle
     that may never run."""
-    entities = [
+    records = [
         a_task("task-c00001", owner="ann", person_weeks=3.0, cycle=36, status="in_progress",
                assigned_on=date(2026, 8, 3)),
     ]
-    index = build_index(entities, _two_cycles(), TODAY)
+    index = build_index(records, _two_cycles(), TODAY)
     assert index.load(99) == {}
 
 
 def test_a_carried_parent_charges_nothing_because_its_children_already_did():
     """The same rule `load` applies to anything else (D-C2). A rollup counted as
     well as its children double-books the same weeks."""
-    entities = [
+    records = [
         a_pitch("pitch-b00001", owner="ann", person_weeks=4.0, cycle=36, status="in_progress",
                 assigned_on=date(2026, 8, 3)),
         a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=1.0, cycle=36,
                status="in_progress", assigned_on=date(2026, 8, 3)),
     ]
-    index = build_index(entities, _two_cycles(), TODAY)
+    index = build_index(records, _two_cycles(), TODAY)
 
     # Charged to 36, which is the cycle the work is actually in: it is in
     # progress and was assigned on 3 August, so it runs 08-03 to 08-07, inside
@@ -813,13 +815,13 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
     half-week one is not two equal halves of anything. Ticked from each task's own
     `status`, so closing one from the table moves this and there is no checkbox
     for the two to disagree about."""
-    entities = [
+    records = [
         a_pitch("pitch-b00001", person_weeks=6.0),
         a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
                prs=["C2SM/icon4py#1"]),
         a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0),
     ]
-    counted = build_index(entities, CONFIG, TODAY).progress["pitch-b00001"]
+    counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]
 
     assert (counted.done, counted.total, counted.unit) == (4.0, 6.0, "weeks")
     assert counted.text == "4/6 wk"
@@ -829,53 +831,53 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
 def test_a_shelved_task_is_in_neither_half_of_its_pitchs_progress():
     """Otherwise parking a task makes a pitch look less finished than it was the
     day before."""
-    entities = [
+    records = [
         a_pitch("pitch-b00001", person_weeks=6.0),
         a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0, status="done",
                prs=["C2SM/icon4py#1"]),
         a_task("task-c00002", parent="pitch-b00001", person_weeks=2.0, status="shelved"),
     ]
-    counted = build_index(entities, CONFIG, TODAY).progress["pitch-b00001"]
+    counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]
     assert (counted.done, counted.total) == (4.0, 4.0)
 
 
 def test_a_pitch_with_tasks_ignores_its_own_body_checklist():
     """Two answers to one question is one answer too many, and the tasks are the
     ones anybody else can see."""
-    entities = [
+    records = [
         a_pitch("pitch-b00001", person_weeks=6.0, body="- [x] a\n- [x] b\n- [x] c\n"),
         a_task("task-c00001", parent="pitch-b00001", person_weeks=4.0),
     ]
-    counted = build_index(entities, CONFIG, TODAY).progress["pitch-b00001"]
+    counted = build_index(records, CONFIG, TODAY).progress["pitch-b00001"]
     assert (counted.done, counted.unit) == (0.0, "weeks")
 
 
 def test_a_task_under_a_pitch_is_counted_in_the_cycle_its_pitch_was_bet_into():
     """The bet is made once, on the thing the room named. A task carries no cycle
     of its own, and the capacity sum has to find it anyway."""
-    entities = [
+    records = [
         a_pitch("pitch-b00001", cycle=36, person_weeks=4.0, status="in_progress",
                 assigned_on=date(2026, 7, 1)),
         a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0,
                status="in_progress", assigned_on=date(2026, 7, 1)),
     ]
-    index = build_index(entities, _two_cycles(), TODAY)
+    index = build_index(records, _two_cycles(), TODAY)
 
     assert index.load(36) == {"ann": 2.0}
-    assert index.counts_in(index.entities["task-c00001"], 36)
+    assert index.counts_in(index.plan["task-c00001"], 36)
 
 
 def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
     """Carryover is decided by the dates, not by the status: a task that has not
     started is still what somebody's next weeks are spent on, and it was dropped
     from the total for not having begun."""
-    entities = [
+    records = [
         a_pitch("pitch-b00001", cycle=36, person_weeks=4.0, status="in_progress",
                 assigned_on=date(2026, 7, 1)),
         a_task("task-c00001", parent="pitch-b00001", owner="ann", person_weeks=2.0,
                status="ready"),
     ]
-    index = build_index(entities, _two_cycles(), TODAY)
+    index = build_index(records, _two_cycles(), TODAY)
 
     span = index.spans["task-c00001"]
     assert span.start <= date(2026, 10, 9) and span.end >= date(2026, 8, 17), "it lands in 37"
@@ -884,8 +886,8 @@ def test_a_ready_task_carried_into_this_cycle_is_counted_by_its_dates():
 
 
 def test_a_checklist_in_the_body_is_counted_once_into_the_index():
-    entities = [a_task("task-c00001", body="## Progress\n\n- [x] a\n- [ ] b\n")]
-    index = build_index(entities, CONFIG, TODAY)
+    records = [a_task("task-c00001", body="## Progress\n\n- [x] a\n- [ ] b\n")]
+    index = build_index(records, CONFIG, TODAY)
     counted = index.progress["task-c00001"]
     assert (counted.done, counted.total, counted.unit) == (1, 2, "items")
     # With its unit, like the weeks a rollup counts: one column holding `1/2`
@@ -895,24 +897,24 @@ def test_a_checklist_in_the_body_is_counted_once_into_the_index():
 
 def test_live_work_with_no_checklist_is_findable_and_shaping_work_is_not():
     """A note, not a rule: the template asks for a checklist and this finds the
-    entities where nobody kept one. An idea nobody has bet on owes nothing."""
-    entities = [
+    records where nobody kept one. An idea nobody has bet on owes nothing."""
+    records = [
         a_task("task-c00001", status="in_progress", body="prose"),
         a_task("task-c00002", status="in_progress", body="- [ ] a"),
         a_task("task-c00003", status="shaping", body="prose"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
     assert apply_filters(index, {"predicate": ["untracked"]}, "") == ["task-c00001"]
 
 
 def test_a_for_later_list_is_the_only_record_of_scope_being_cut():
-    entities = [
+    records = [
         a_pitch("pitch-b00001", body="## Solution\n\nX\n\n## For later\n\n- the rest\n"),
         a_pitch("pitch-b00002", body="## Solution\n\nX\n"),
         # Present but empty is not a record of anything.
         a_pitch("pitch-b00003", body="## For later\n"),
     ]
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
     assert index.for_later == ["pitch-b00001"]
     assert apply_filters(index, {"predicate": ["for_later"]}, "") == ["pitch-b00001"]
 
@@ -933,11 +935,11 @@ def test_a_status_nobody_uses_is_left_out_of_the_menu_and_a_strange_one_is_not(s
 
 
 def test_a_pr_reference_is_searchable(demo_root: Path):
-    """"Which entity is #1364?" is asked in front of a screen, and the answer was
+    """"Which record is #1364?" is asked in front of a screen, and the answer was
     findable only if the number also happened to appear in the prose."""
-    entities, config, _ = load_repo(demo_root)
-    index = build_index(entities, config, TODAY)
-    cited = {ref for e in index.entities.values() for ref in e.prs}
+    records, config, _ = load_repo(demo_root)
+    index = build_index(records, config, TODAY)
+    cited = {ref for e in index.plan.values() for ref in e.prs}
     assert cited, "the demo corpus cites PRs"
 
     for ref in cited:
@@ -948,15 +950,15 @@ def test_a_pr_reference_is_searchable(demo_root: Path):
 def test_work_running_past_its_cycles_build_is_a_filter(demo_root: Path):
     """Shape Up's circuit breaker. Derived from dates the tool already has, rather
     than from anything a person remembers to set."""
-    entities, config, _ = load_repo(demo_root)
-    index = build_index(entities, config, TODAY)
-    caught = [i for i in index.entities if _matches_predicate(index, i, "past_cycle_build")]
+    records, config, _ = load_repo(demo_root)
+    index = build_index(records, config, TODAY)
+    caught = [i for i in index.plan if _matches_predicate(index, i, "past_cycle_build")]
 
     assert caught, "the demo corpus has work running past its build"
-    for entity_id in caught:
-        entity = index.entities[entity_id]
-        assert entity.status == "in_progress"
-        assert index.spans[entity_id].end > index.build_end(entity.cycle)
+    for record_id in caught:
+        record = index.plan[record_id]
+        assert record.status == "in_progress"
+        assert index.spans[record_id].end > index.build_end(record.cycle)
 
 
 def test_the_build_end_a_predicate_uses_is_the_one_the_timeline_uses(seed_index: Index):
@@ -980,7 +982,7 @@ def test_the_build_end_a_predicate_uses_is_the_one_the_timeline_uses(seed_index:
     assert isinstance(seed_index.plans.get(37), (Cycle, type(None)))
 
 
-def test_an_entity_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):
+def test_a_record_in_progress_with_nothing_linked_is_a_question_not_a_rule(seed_index: Index):
     """Opening a PR early to get CI machine time is a good habit; a validation
     rule against it would teach people to stop listing PRs. It is a filter."""
     from openproj.model import Task, validate_all
@@ -1020,7 +1022,7 @@ def test_a_field_nobody_filled_in_can_be_asked_for():
 
 
 def test_a_menu_never_offers_an_option_that_can_select_nothing():
-    """Every entity has a status, so Status must not grow an empty option; the
+    """Every record has a status, so Status must not grow an empty option; the
     day a pitch is written and not bet, Cycle must."""
     bet = Pitch(id="pitch-000001", kind="pitch", title="Bet", status="ready", cycle=37)
     index = build_index([bet], Config(), TODAY)

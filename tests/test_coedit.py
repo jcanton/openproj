@@ -108,7 +108,7 @@ def log_of(plan: Path) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------- #
 
 
-def open_room(client: TestClient, login: str, entity_id: str = TASK):
+def open_room(client: TestClient, login: str, record_id: str = TASK):
     """One browser's socket, signed in as this person.
 
     The session travels as a header rather than on the client, because the point
@@ -116,7 +116,7 @@ def open_room(client: TestClient, login: str, entity_id: str = TASK):
     """
     token = sign_session(User(login=login, member=True), SECRET)
     return client.websocket_connect(
-        f"/api/coedit/{entity_id}", headers={"cookie": f"{SESSION_COOKIE}={token}"}
+        f"/api/coedit/{record_id}", headers={"cookie": f"{SESSION_COOKIE}={token}"}
     )
 
 
@@ -239,7 +239,7 @@ def test_a_room_opens_holding_exactly_what_the_page_is_showing(client: TestClien
     bar says "1 unsaved change" over text nobody has touched, and the quiet
     window commits that character.
     """
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     with open_room(client, "ann") as one:
         ann = Session(one, "ann")
         ann.hello()
@@ -735,7 +735,7 @@ def test_the_page_stops_saving_when_the_room_says_there_was_nothing_to_save(
     # `?editor=plain`, because an address that says nothing has been Ace since
     # 2026-08-20 and the claim here is about the `<textarea>` path.
     page = client.get(f"/detail/{TASK}?editor=plain").text
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",
@@ -1129,9 +1129,9 @@ def test_a_socket_re_reads_the_session_it_was_opened_with(
     assert len(log_of(plan)) == before + 1
 
 
-def test_a_room_for_an_entity_that_is_not_there_never_opens(client: TestClient):
+def test_a_room_for_a_record_that_is_not_there_never_opens(client: TestClient):
     with pytest.raises(WebSocketDisconnect):
-        with open_room(client, "ann", entity_id="task-ffffff"):
+        with open_room(client, "ann", record_id="task-ffffff"):
             pass
 
 
@@ -1473,7 +1473,7 @@ def test_an_edit_across_an_emoji_reaches_the_room_as_the_character_it_was(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert shown == was, "the page is not showing the body this test is about"
 
     room = typed_in_the_page(client, shown, [now])
@@ -1567,7 +1567,7 @@ def in_chrome_room(
         # A session first, or there is no socket to welcome: `connect()` runs at
         # session start now — a reader holds no seat — so the room this helper
         # welcomes the page into exists only once a session is open.
-        "if (!document.querySelector('article.entity').classList.contains('editing'))"
+        "if (!document.querySelector('article.record').classList.contains('editing'))"
         " flipEditing();\n"
         f"window.__room.onmessage({{data: {json.dumps(json.dumps(welcome))}}});\n" + script,
         patience=6800, query=query,
@@ -1622,7 +1622,7 @@ def test_an_edit_across_an_emoji_reaches_the_room_through_the_adapter(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert shown == was, "the page is not showing the body this test is about"
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
@@ -1677,7 +1677,7 @@ def test_a_carriage_return_in_a_room_is_a_thing_the_box_cannot_hold(
     front, _ = split_front_matter(stored(plan))
     body = "Ann says\r\nand then\nlast line\r\n"
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "CRLF in the body")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert "\r\n" in shown, "the carriage returns did not survive the parse"
 
     typed = "Ann says\nand then\nlast line and more\n"
@@ -1786,7 +1786,7 @@ def test_somebody_elses_keystroke_is_reflected_and_never_sent_back(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
 
     # Ann's room, and the welcome taken BEFORE anybody else types into it.
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
@@ -2079,7 +2079,7 @@ def test_the_parsed_editing_surface_answers_the_body_the_server_rendered(
     front, _ = split_front_matter(stored(plan))
     body = "Ann's note <b> & \"quoted\" — done.\n"
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "escapes")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert shown == body, "the record under test is not the one the page is showing"
 
     # `?editor=plain`, because an address that says nothing has been Ace since
@@ -2105,7 +2105,7 @@ def test_a_draft_in_the_box_is_offered_to_a_room_that_has_not_moved(client: Test
     conflict report. A harness that can only ever reach the refusal cannot tell
     a working editor from one that throws away every restored draft.
     """
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     # `?editor=plain`, because an address that says nothing has been Ace since
     # 2026-08-20 and the claim here is about the `<textarea>` path.
     page = client.get(f"/detail/{TASK}?editor=plain").text
@@ -2177,7 +2177,7 @@ def test_the_page_degrades_to_todays_editor_when_the_socket_never_opens(client: 
     )
     assert not answer["errors"], answer["errors"]
     assert answer["value"] is False
-    sent = [call for call in answer["calls"] if "/api/entity/" in call["url"]]
+    sent = [call for call in answer["calls"] if "/api/record/" in call["url"]]
     assert len(sent) == 1, answer["calls"]
     # The body goes over PATCH, against the commit this page was rendered at,
     # exactly as it did before.
@@ -2198,8 +2198,8 @@ def test_the_static_export_carries_no_socket(tmp_path: Path):
     for path, content in SEED.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content, encoding="utf-8")
-    entities, config, unreadable = load_repo(root)
-    index = build_index(entities, config, date(2026, 8, 18), unreadable)
+    records, config, unreadable = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 18), unreadable)
 
     out = tmp_path / "out"
     for name in render_static(index, out):
@@ -2244,17 +2244,33 @@ def serving(plan: Path):
     `websockets` nor `wsproto` — and the handshake a browser makes is an HTTP
     request that `TestClient` never performs.
     """
-    import socket as sockets
     import threading
 
     import uvicorn
 
-    with sockets.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-
     app = create_app(plan, auth="dev", secret=SECRET)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    # port=0, and the real number read back off the listening socket after
+    # startup. The previous version bound a probe socket to 0, read the number,
+    # CLOSED the probe and handed the number to uvicorn — and between that close
+    # and uvicorn's bind the port belonged to nobody. Two pytest processes on
+    # one machine, one port: the loser dies with "address already in use" inside
+    # whichever of these tests drew it, dressed up as a coedit failure. With
+    # port=0 the socket that got the number is the socket that serves on it, so
+    # there is no window — the same pattern as `live_server` in test_web.py.
+    #
+    # timeout_graceful_shutdown=1: without it, teardown waits a flat 5 s per
+    # test for members to say goodbye — and ann is *designed* to stop reading.
+    # Every assertion has already run by teardown, so the wait proved nothing
+    # and cost ~16 s across this file.
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=0,
+            log_level="error",
+            timeout_graceful_shutdown=1,
+        )
+    )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(200):
@@ -2263,7 +2279,7 @@ def serving(plan: Path):
         time.sleep(0.05)
     assert server.started, "the server never came up"
     try:
-        yield port
+        yield server.servers[0].sockets[0].getsockname()[1]
     finally:
         server.should_exit = True
         thread.join(10)
@@ -2823,7 +2839,7 @@ def test_a_real_browser_opens_the_socket_under_this_policy_and_draws_the_room(
             # about a page that had not connected yet. Idempotent for the same
             # reason: it must not toggle edit mode off again on the second ask.
             "(() => {"
-            " const one = document.querySelector('article.entity');"
+            " const one = document.querySelector('article.record');"
             " if (!one.classList.contains('editing'))"
             "   flipEditing();"
             " const who = document.getElementById('together').textContent;"
@@ -3178,7 +3194,7 @@ def test_an_edit_in_the_second_surface_reaches_the_room_as_the_character_it_was(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\n{was}"}, "a body with an emoji in it"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert shown == was, "the page is not showing the body this test is about"
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
@@ -3243,7 +3259,7 @@ def test_backspacing_a_whole_glyph_in_the_second_surface_leaves_both_copies_agre
     """
     front, _ = split_front_matter(stored(plan))
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "a glyph")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
@@ -3290,7 +3306,7 @@ def test_opening_the_second_surface_changes_no_byte_of_the_document(
     body = "first line\r\nsecond line\nthird line\nfourth line\n"
     front, _ = split_front_matter(stored(plan))
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "mixed endings")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     answer = in_chrome_room(
@@ -3363,7 +3379,7 @@ def test_a_tab_that_is_only_watching_the_second_surface_is_credited_zero_charact
     body = "a line\nanother line\n"
     front, _ = split_front_matter(stored(plan))
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "a body")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = _welcome(room)
@@ -3435,7 +3451,7 @@ def test_two_editors_in_one_room_over_a_body_with_crlf_in_it_settle_on_one_docum
     body = "first line\r\nsecond line\r\nthird line\n"
     front, _ = split_front_matter(stored(plan))
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "crlf")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert "\r" in shown, "the fixture lost its carriage returns before the test began"
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
@@ -3524,7 +3540,7 @@ def test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent(
             "Every cycle has a cool-down, and the cycle after it starts cold.\n") * 12
     front, _ = split_front_matter(stored(plan))
     commit_directly(plan, {**SEED, PATH: f"---\n{front}\n---\n\n{body}"}, "cycles")
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     assert shown.count("cycle") >= 40, "the fixture is not the bulk gesture this is about"
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
@@ -3603,7 +3619,7 @@ def test_undo_never_takes_back_something_somebody_else_typed(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = _welcome(room)
@@ -3703,7 +3719,7 @@ def test_undo_in_a_room_gives_back_your_own_last_thing_on_the_textarea(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
 
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = _welcome(room)
@@ -3836,7 +3852,7 @@ def test_the_history_buttons_answer_the_keyboard_and_say_when_a_stack_is_empty(
     commit_directly(
         plan, {**SEED, PATH: f"---\n{front}\n---\n\nthe body ann is reading\n"}, "a body"
     )
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
 
     answer = in_chrome_room(
@@ -3881,7 +3897,7 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
 
     That HTML was rendered when the page loaded, at the commit before this one,
     so the article under the editor is the body as it was and the fact rows are
-    the fields as they were. jcanton, 2026-08-20: "editing the body of an entity
+    the fields as they were. jcanton, 2026-08-20: "editing the body of a record
     and saving works, the view goes back out of editing, but it shows the
     un-edited text until I refresh."
 
@@ -3895,7 +3911,7 @@ def test_saving_in_a_room_leaves_the_read_view_showing_what_was_saved(
     # the driver's DOM. The claim here is about what happens after a save, which
     # is the same on both surfaces.
     page = client.get(f"/detail/{TASK}?editor=plain").text
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",
@@ -3942,7 +3958,7 @@ def test_what_the_room_said_about_a_save_survives_the_reload(
     handed to the page that comes back.
     """
     page = client.get(f"/detail/{TASK}?editor=plain").text
-    shown = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
     room = coedit.Room(TASK, PATH, "0" * 40, shown)
     welcome = {
         "t": "welcome",

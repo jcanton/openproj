@@ -2,8 +2,8 @@
 
 Phase 1's table could be read, sorted and filtered, and that was all. Every field
 that actually changes during a week — a status, an owner, a reviewer, a priority —
-had to be changed one entity at a time on a detail page, and there was no way to
-bring a new entity into existence from the UI at all. A plan that costs a page
+had to be changed one record at a time on a detail page, and there was no way to
+bring a new record into existence from the UI at all. A plan that costs a page
 load per field is a plan that goes stale between meetings, and a plan you cannot
 add to from the view you live in is a plan that gets kept somewhere else instead.
 
@@ -138,10 +138,10 @@ def page(client: TestClient) -> str:
 
 @pytest.fixture
 def demo_page(demo_root: Path) -> str:
-    """The shipped demo, rendered: seventeen entities, with more than one name in
-    a list on almost every row.
+    """The shipped demo, rendered: a seventeen-row plan, with more than one name
+    in a list on almost every row.
 
-    The corpus above is four entities and answers everything about markup, but a
+    The corpus above is four records and answers everything about markup, but a
     control that expands a whole column has almost nothing to say on a plan where
     a single cell hides anything — and the height this deliberately costs is a
     fact about seventeen rows. It is also the corpus `MEASURED` was read from, so
@@ -154,8 +154,8 @@ def demo_page(demo_root: Path) -> str:
     """
     from openproj.render import render_table
 
-    entities, config, _ = load_repo(demo_root)
-    return render_table(build_index(entities, config, date(2026, 8, 17)))
+    records, config, _ = load_repo(demo_root)
+    return render_table(build_index(records, config, date(2026, 8, 17)))
 
 
 # --------------------------------------------------------------------------- #
@@ -220,14 +220,14 @@ def control(html: str, name: str) -> str:
 @pytest.fixture
 def new_page(client: TestClient) -> str:
     """The create page. It used to be a form at the bottom of the table, which made
-    creating an entity a different-shaped act from editing one; it is now the same
+    creating a record a different-shaped act from editing one; it is now the same
     layout as a detail page in edit mode."""
     return client.get("/new?kind=pitch").text
 
 
 def create_form(html: str) -> str:
     match = re.search(r'<form[^>]*id="create".*?</form>', html, re.S)
-    assert match, "the table must carry a form for creating an entity"
+    assert match, "the table must carry a form for creating a record"
     return match.group(0)
 
 
@@ -293,7 +293,7 @@ def test_the_status_control_offers_every_status_and_not_only_the_ones_in_use(new
     status control built from the facet could therefore never shelve anything.
 
     Deletion is `status: shelved` (spec §4.5), so that is not a missing option, it
-    is the only way to retire an entity.
+    is the only way to retire a record.
     """
     assert "shelved" in new_page
     for status in STATUSES:
@@ -309,8 +309,8 @@ def test_the_page_carries_the_commit_it_was_rendered_at(page: str):
     )
 
 
-def test_the_table_offers_a_way_to_create_an_entity(page: str, client: TestClient):
-    """Entities are overwhelmingly born in the UI, so the UI has to be able to bear
+def test_the_table_offers_a_way_to_create_a_record(page: str, client: TestClient):
+    """Records are overwhelmingly born in the UI, so the UI has to be able to bear
     them. Without this the only supported way to add a task is to write a file by
     hand, which is the workflow this tool exists to replace."""
     assert re.search(r'href="/new"', page), "the table needs a way to reach the create page"
@@ -409,7 +409,7 @@ def test_a_record_created_from_the_merged_page_round_trips(client: TestClient, k
     base = re.search(r'name="base_commit" value="([0-9a-f]{40})"', page.text).group(1)
 
     made = client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": base,
               "fields": {"kind": kind, "title": f"Round trip {kind}"},
               "body": "A record made from the merged page.\n"},
@@ -480,7 +480,7 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
 
     Every status that demands the field, not the first one — the rules are a chain
     of `elif` and not a stack. Read cumulatively, `done` demanded an owner the
-    validator forgives it, so the form refused to create exactly the entity the
+    validator forgives it, so the form refused to create exactly the record the
     server would have accepted.
 
     Putting the gates on each control keeps the second copy honest: it is a
@@ -507,7 +507,7 @@ def test_the_gates_are_the_validator_s_own_and_not_a_second_copy(new_page: str):
     """A hand-written map drifts the day somebody edits `_status_problems`, and the
     drift shows up as a form that refuses what the server accepts — or worse,
     accepts what it refuses. These are the validator's gates, run over a blank
-    entity of each kind at each status.
+    record of each kind at each status.
 
     The derivation lives in `model` beside the rule it mirrors. `render` used to do
     it here by importing `model._status_problems` across the module boundary at
@@ -577,7 +577,7 @@ def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
     invisible to the tool, and wrong the day somebody greps for it.
     """
     response = client.post(
-        "/api/entity",
+        "/api/record",
         json={"fields": {"kind": "task", "title": "x", "shaped_by": ["ann"]}, "body": ""},
     )
 
@@ -600,13 +600,13 @@ def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: P
     export that shows a Save button is a page that silently does nothing, which is
     worse than one that never offered.
     """
-    entities, config, _ = load_repo(seed_root)
-    render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
+    records, config, _ = load_repo(seed_root)
+    render_static(build_index(records, config, date(2026, 8, 17)), tmp_path)
     exported = (tmp_path / "table.html").read_text(encoding="utf-8")
 
     assert not controls(exported)
     assert "base_commit" not in exported
-    assert "/api/entity" not in exported
+    assert "/api/record" not in exported
 
 
 def test_editing_the_table_pulled_in_no_library(page: str):
@@ -626,11 +626,11 @@ def test_editing_the_table_pulled_in_no_library(page: str):
 # --------------------------------------------------------------------------- #
 
 
-def test_a_row_says_which_entity_it_is_and_a_cell_says_which_field(page: str):
+def test_a_row_says_which_record_it_is_and_a_cell_says_which_field(page: str):
     """A PATCH needs both, and reading them off the DOM is what lets one listener
     serve every cell instead of a closure per cell. Proxy for a browser checking
     that the attributes are actually on the elements."""
-    assert re.search(r"<tr[^>]*data-id=", script(page)), "a row must carry its entity id"
+    assert re.search(r"<tr[^>]*data-id=", script(page)), "a row must carry its record id"
     assert re.search(r"<td[^>]*data-field=", script(page)), "a cell must carry its field"
 
 
@@ -702,7 +702,7 @@ def test_the_create_checks_the_status_gate_before_it_posts(new_page: str):
 def test_the_server_refusal_is_shown_and_not_swallowed(page: str):
     """The form's copy of the rules is a simplification and will disagree with
     `validate_all` eventually — grandfathering alone means the form cannot know
-    whether a rule applies to an entity that does not exist yet. When the server
+    whether a rule applies to a record that does not exist yet. When the server
     says no anyway, the page has to say what it said."""
     body = script(page)
 
@@ -717,7 +717,7 @@ def test_a_conflict_is_never_written_into_an_editable_cell(page: str):
 
     A conflict report names both values, so pasting it into the cell it came from
     would commit `stored 'bo' · yours 'cy'` as the owner on the next save. It goes
-    beside the row instead, and as text: the report quotes entity fields, so
+    beside the row instead, and as text: the report quotes record fields, so
     `innerHTML` would render whatever somebody happened to type into a title.
 
     Proxy for a browser checking which element it lands in; what is assertable here
@@ -765,7 +765,7 @@ def test_one_cell_edit_is_one_commit_of_one_line(client: TestClient, repo_path: 
 
 def test_editing_another_row_from_the_same_page_is_invisible(client: TestClient):
     """The common case on a table, where every row is edited from one rendered
-    page: two people change two entities and neither is told anything. If this were
+    page: two people change two records and neither is told anything. If this were
     a conflict, a table would be unusable with more than one person in it."""
     stale = head(client)
     save(client, OTHER, {"priority": "high"})
@@ -775,7 +775,7 @@ def test_editing_another_row_from_the_same_page_is_invisible(client: TestClient)
     assert response.status_code == 200
     assert response.json()["outcome"] == "retried"
     assert response.json()["conflict"] is None
-    assert index_of(client)["entities"][OTHER]["priority"] == "high"  # not clobbered
+    assert index_of(client)["plan"][OTHER]["priority"] == "high"  # not clobbered
 
 
 def test_two_tabs_editing_one_cell_is_a_409_that_writes_nothing(
@@ -839,7 +839,7 @@ def test_the_new_control_creates_through_the_api_and_the_server_mints_the_id(
 
     stored = file_at(repo_path, response.json()["commit"], f"tasks/{new_id}.md")
     assert f"id: {new_id}" in stored
-    assert index_of(client)["entities"][new_id]["title"] == NEW_TASK["title"]
+    assert index_of(client)["plan"][new_id]["title"] == NEW_TASK["title"]
 
 
 def test_an_id_sent_by_the_client_is_ignored_rather_than_honoured(
@@ -908,7 +908,7 @@ def test_a_create_racing_another_write_is_still_one_commit(client: TestClient):
 
     assert response.status_code == 201
     assert response.json()["outcome"] in ("committed", "retried")
-    assert index_of(client)["entities"][TASK]["priority"] == "high"  # not rolled back
+    assert index_of(client)["plan"][TASK]["priority"] == "high"  # not rolled back
 
 
 def test_the_bold_column_is_the_one_being_sorted_by(page: str):
@@ -969,7 +969,7 @@ def test_the_table_draws_its_rows_in_a_browser_that_refuses_storage(page: str):
     Run, not grepped, and run twice. "It still drew something" is also what a
     fallback that quietly loses half the columns does, so the rows a denied
     browser draws have to be the same markup as the rows a working one draws,
-    and every entity has to be in them.
+    and every record has to be in them.
     """
     from test_injection import run_js
 
@@ -981,8 +981,8 @@ def test_the_table_draws_its_rows_in_a_browser_that_refuses_storage(page: str):
     assert drawn == [written for written in working["written"] if "<tr" in written], (
         "a browser that refuses storage draws different rows from one that allows it"
     )
-    for entity_id in payload(page)["rows"]:
-        assert entity_id in drawn[0], f"{entity_id} is missing from the denied browser's table"
+    for record_id in payload(page)["rows"]:
+        assert record_id in drawn[0], f"{record_id} is missing from the denied browser's table"
     # And it got exactly as far: the widths it could not read are simply the
     # ones nobody dragged. Both runs stop at the same place, which is the shim's
     # own gap rather than anything storage did.
@@ -1800,7 +1800,7 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
 
     A second, differently-shaped form for creating is what made the tool feel like
     two tools: the facts list here has to be the facts list there, or the layout
-    moves under you between reading an entity and making one.
+    moves under you between reading a record and making one.
     """
     detail = client.get(f"/detail/{TASK}").text
 
@@ -1813,7 +1813,7 @@ def test_creating_is_the_detail_page_with_nothing_in_it(new_page: str, client: T
     # And they agree about where the control that commits the form is — jcanton,
     # 2026-08-20, "consistency!". The two pages had it at opposite ends of the
     # same markup for a day, which is the layout moving under you between reading
-    # an entity and making one, in the one place it matters most.
+    # a record and making one, in the one place it matters most.
     #
     # Ordering here, pixels in `test_the_create_button_is_reachable_from_anywhere_
     # in_the_form`. What this asks is that the two pages put the bar in the SAME
@@ -1884,9 +1884,9 @@ def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_pa
         ("owner", "people"),
         ("assignees", "people"),
         ("reviewers", "people"),
-        ("parent", "entities"),
+        ("parent", "records"),
         ("cycle", "cycles"),
-        ("depends_on", "entities"),
+        ("depends_on", "records"),
     ):
         assert f'data-suggest="{source}"' in control(new_page, field), field
 
@@ -1895,7 +1895,7 @@ def test_every_reference_on_the_create_form_is_offered_and_not_remembered(new_pa
     suggestions = json.loads(
         re.search(r'<script id="suggest"[^>]*>(.*?)</script>', new_page, re.S).group(1)
     )
-    assert {"people", "entities", "cycles"} <= set(suggestions)
+    assert {"people", "records", "cycles"} <= set(suggestions)
     assert [entry["value"] for entry in suggestions["people"]] == ["ann", "bo", "cy"]
 
 
@@ -1921,7 +1921,7 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
     # a mark that could not be taken off would be an asterisk beside every field.
     assert "mark.hidden = !demanded" in new_page
     assert "form.addEventListener('change', () => markRequired(form));" in new_page
-    assert "article.entity:not(.editing) .req { display: none; }" in new_page
+    assert "article.record:not(.editing) .req { display: none; }" in new_page
 
 
 # Fill the title, then look at the Create button from three places in the form.
@@ -2201,14 +2201,14 @@ def test_the_blocking_count_names_the_population_its_link_opens():
     """"5 blocking problems" opening a table of 2 rows is the exact way a count
     stops being trusted, and it is what this said.
 
-    The number counts *problems*; `?predicate=has_blocker` matches *entities*, and
-    one entity can carry three of them. So both numbers are on the label and the
+    The number counts *problems*; `?predicate=has_blocker` matches *records*, and
+    one record can carry three of them. So both numbers are on the label and the
     second one is the promise the link has to keep.
     """
     from openproj.model import Config, Task
     from openproj.render import render_table
 
-    # Two entities, five blockers between them: ready needs an owner, a reviewer
+    # Two records, five blockers between them: ready needs an owner, a reviewer
     # and an effort, and one of the three is filled in on the second.
     nameless = Task(id="task-000001", kind="task", title="Ready and nameless",
                     status="ready")
@@ -2219,16 +2219,16 @@ def test_the_blocking_count_names_the_population_its_link_opens():
     index = build_index([nameless, fine, half], Config(), date(2026, 8, 17))
 
     problems = [p for p in index.problems if p.severity == "blocker"]
-    entities = {p.entity_id for p in problems}
-    assert len(problems) == 5 and len(entities) == 2, "the two numbers must differ"
+    records = {p.record_id for p in problems}
+    assert len(problems) == 5 and len(records) == 2, "the two numbers must differ"
 
     page = render_table(index)
     payload = json.loads(re.search(r'id="payload"[^>]*>(.*?)</script>', page, re.S).group(1))
     matched = {i for i, row in payload["rows"].items() if "has_blocker" in row["predicates"]}
 
-    assert matched == entities, "the filter is the population the label names"
+    assert matched == records, "the filter is the population the label names"
     assert f'id="blocker-count">{len(problems)}<' in page
-    assert f">blocking problems on {len(matched)} entities</span>" in page
+    assert f">blocking problems on {len(matched)} records</span>" in page
 
     # And the script rebuilds the same sentence after a save, off the same pass
     # that decides the predicate.
@@ -2251,9 +2251,9 @@ def test_a_title_somebody_typed_never_becomes_markup():
     from openproj.render import render_table
 
     hostile = 'Fix <b>&"the" </script><img src=x> equator'
-    entity = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
+    record = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
                   person_weeks=1, tags=["<i>one", "two&three"], prs=["C2SM/icon4py#1"])
-    index = build_index([entity], Config(), date(2026, 8, 17))
+    index = build_index([record], Config(), date(2026, 8, 17))
     page = render_table(index, base_commit="0" * 40)      # the editor is a way in too
 
     # The payload. `json.dumps` leaves `<` alone, so `</script>` in a title closed
@@ -2311,8 +2311,8 @@ def test_an_empty_table_says_which_of_the_three_empties_it_is(page: str):
     """
     body = script(page)
 
-    assert "'No entity matches these filters.'" in body
-    assert "'This plan has no entities yet.'" in body
+    assert "'No record matches these filters.'" in body
+    assert "'This plan has no records yet.'" in body
     assert "'The plan could not be loaded.'" in body
     assert re.search(r'<tr class="nothing"><td colspan=', body), "inside the body, not beside it"
     # The load failure is a real state, not a comment: the payload is parsed
@@ -2337,8 +2337,8 @@ def test_clearing_the_filters_is_a_button_and_never_a_form_field(page: str):
     cleared = (r"for \(const field of \[\.\.\.FILTERS, \.\.\.onPage, 'predicate', 'q'\]\)"
                r" params\.delete")
     assert re.search(cleared, body)
-    # And every control the page draws, not only the entity fields: the people
-    # page filters by role, which is not a field of an entity and was left set.
+    # And every control the page draws, not only the record fields: the people
+    # page filters by role, which is not a field of a record and was left set.
     assert "document.querySelectorAll('.facet[data-field]')]\n    .map(facet" in body
 
 
@@ -2718,7 +2718,7 @@ def test_an_editable_cell_shows_it_and_a_derived_one_says_why_not(page: str):
 
 
 def test_the_page_never_reports_its_own_write_to_itself(page: str, client: TestClient):
-    """`mine` was decided by the entity in the URL, which the table has none of,
+    """`mine` was decided by the record in the URL, which the table has none of,
     so every save from this page came back as "The plan changed" one keystroke
     after making it — and a banner that fires on your own typing is wallpaper.
 
@@ -2770,7 +2770,7 @@ def test_the_grouping_of_problems_is_written_once(page: str):
     carried = payload(page)
 
     assert isinstance(carried["problems"], list)
-    assert {"severity", "entity_id", "field", "message"} <= set(carried["problems"][0])
+    assert {"severity", "record_id", "field", "message"} <= set(carried["problems"][0])
     assert "problems" not in next(iter(carried["rows"].values())), (
         "one list, not one per row"
     )
@@ -2897,7 +2897,7 @@ def test_the_popup_a_cell_opens_hangs_off_the_body_and_not_off_the_cell(page: st
         "  const row = document.createElement('tr'); row.dataset.id = id;"
         "  const cell = document.createElement('td');"
         "  cell.className = 'edit'; cell.dataset.col = 'owner';"
-        "  cell.dataset.entity = id; cell.dataset.field = 'owner';"
+        "  cell.dataset.record = id; cell.dataset.field = 'owner';"
         "  row.append(cell);"
         "  openEditor(cell);"
         "  const parked = document.body.querySelectorAll('ul.suggest');"
@@ -2943,11 +2943,11 @@ def test_every_control_on_the_create_form_has_a_name(new_page: str):
 # --------------------------------------------------------------------------- #
 # 8. A row you type into
 #
-# Creating an entity meant leaving the table for `/new`, which is the right page
+# Creating a record meant leaving the table for `/new`, which is the right page
 # for writing a pitch properly and the wrong one for "and a task for the docs".
 # The `+` row is the same act at the scale of a row: pick the kind, fill in the
-# columns that kind has, press Create — through the same `POST /api/entity`,
-# because two ways to create an entity is two sets of rules about what a new
+# columns that kind has, press Create — through the same `POST /api/record`,
+# because two ways to create a record is two sets of rules about what a new
 # record must carry, and they disagree by Thursday.
 #
 # The rows are drawn by the page's own script, so most of what is asserted below
@@ -3012,7 +3012,7 @@ def test_an_empty_plan_still_offers_the_row_that_would_end_it(client: TestClient
     """Empty must not look like broken, and an empty table that also has no way to
     add anything looks like a tool that has not finished loading.
 
-    The sentence stays what it was — this plan has no entities yet — and the
+    The sentence stays what it was — this plan has no records yet — and the
     control sits directly under it, which is what turns a statement into an
     invitation.
     """
@@ -3040,13 +3040,13 @@ def test_a_rendered_file_offers_no_row_to_type_into(seed_root: Path, tmp_path: P
     not carry the code at all rather than carrying it and refusing — the same
     line the rest of this page already draws.
     """
-    entities, config, _ = load_repo(seed_root)
-    render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
+    records, config, _ = load_repo(seed_root)
+    render_static(build_index(records, config, date(2026, 8, 17)), tmp_path)
     exported = script((tmp_path / "table.html").read_text(encoding="utf-8"))
 
     assert "function adderHtml" not in exported
     assert "+ New row" not in exported
-    assert "/api/entity" not in exported
+    assert "/api/record" not in exported
 
 
 def test_the_new_row_offers_the_fields_that_kind_has_and_no_others():
@@ -3164,7 +3164,7 @@ def test_a_row_created_inline_goes_through_the_one_create_route(page: str):
     )
     posts = [call for call in answer["calls"] if call["method"] == "POST"]
 
-    assert len(posts) == 1 and posts[0]["url"] == "/api/entity"
+    assert len(posts) == 1 and posts[0]["url"] == "/api/record"
     sent = json.loads(posts[0]["body"])
     assert sent["fields"]["kind"] == "task"
     assert sent["fields"]["title"] == "Write the migration note"
@@ -3200,7 +3200,7 @@ def test_the_created_row_is_re_read_rather_than_invented(page: str):
         ],
     )
 
-    assert [call["url"] for call in answer["calls"]] == ["/api/entity", "/api/table.json"]
+    assert [call["url"] for call in answer["calls"]] == ["/api/record", "/api/table.json"]
     assert answer["value"]["base"] == "c0ffee"
     assert answer["value"]["rows"] == 1, "the table is the plan as it is now, not as it was"
     assert answer["value"]["draft"] is None, "and the row that was typed is a record now"
@@ -3209,8 +3209,8 @@ def test_the_created_row_is_re_read_rather_than_invented(page: str):
 def test_a_row_with_no_title_is_never_sent(page: str):
     """A title at minimum, refused here rather than by the server.
 
-    The server refuses a titleless record too — it will not read back as an
-    entity — but it refuses it as YAML, and the reason a row needs a title is not
+    The server refuses a titleless row too — what it would commit does not read
+    back as a record — but it refuses it as YAML, and the reason a row needs a title is not
     about YAML: it is that a row with none is a row nobody can find again, in a
     table whose first column is a mint-fresh id nobody has ever seen. Everything
     else a status demands is left to `validate_all`, which is the only thing that
@@ -3254,15 +3254,15 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
         "          draft: !!DRAFT};"
         "})()",
         replies=[{"status": 422, "json": {"problems": [
-            {"severity": "blocker", "entity_id": "pitch-000000", "field": "owner",
-             "message": "a ready entity needs an owner"},
-            {"severity": "blocker", "entity_id": "pitch-000000", "field": "shaped_by",
+            {"severity": "blocker", "record_id": "pitch-000000", "field": "owner",
+             "message": "a ready record needs an owner"},
+            {"severity": "blocker", "record_id": "pitch-000000", "field": "shaped_by",
              "message": "a ready pitch needs to say who shaped it"},
         ]}}],
     )
     got = answer["value"]
 
-    assert got["said"] == ["a ready entity needs an owner",
+    assert got["said"] == ["a ready record needs an owner",
                            "a ready pitch needs to say who shaped it"]
     assert got["draft"] is True, "the row is still there, with everything typed into it"
 
@@ -3515,7 +3515,7 @@ def test_a_drop_is_one_patch_of_one_field_through_the_save_path(page: str):
     patches = [call for call in answer["calls"] if call["method"] == "PATCH"]
 
     assert len(patches) == 1, "one drop, one commit"
-    assert patches[0]["url"] == f"/api/entity/{TASK}"
+    assert patches[0]["url"] == f"/api/record/{TASK}"
     sent = json.loads(patches[0]["body"])
     assert sent["fields"] == {"parent": PROJECT}, "one field travels, and it is the parent"
     assert sent["body"] is None, "an empty body is a replacement, not an omission"
@@ -3754,7 +3754,7 @@ def test_the_route_the_table_re_reads_is_the_payload_it_was_drawn_from(
     """One shape, so a table that has just written something is built exactly like
     a table that has just been opened.
 
-    The alternative was to re-read `/api/index.json`, which answers with entities
+    The alternative was to re-read `/api/index.json`, which answers with the plan
     and spans — and turning those into rows means `_row` written a second time in
     JavaScript: a progress fraction counted out of a body, a blocker count, a
     project walked up the tree. A copy that only runs after a save is a copy
@@ -3915,7 +3915,7 @@ def test_the_row_a_drop_would_land_in_is_named_beside_the_cursor(page: str):
 #   tree: the parent is wherever its owner's name falls and its children are
 #   three screens away. Every other column sorts flat, and draws no connectors,
 #   because there is nothing there for a connector to be true about.
-# * **Filtering keeps the whole tree.** An entity that would be filtered out but
+# * **Filtering keeps the whole tree.** A record that would be filtered out but
 #   holds something that matched stays, dimmed — a filtered table is still a plan
 #   and not a list of orphans — and it must not be counted, because the count is
 #   of answers.
@@ -4244,13 +4244,13 @@ def test_the_draft_rows_marks_are_drawn(demo_root: Path, tmp_path: Path):
     rule to resolve. The question is how many pixels the drawing came out, and
     this is where that answer lives.
     """
-    # The demo corpus and not the four-entity one, because the id column is as
+    # The demo corpus and not the four-record one, because the id column is as
     # wide as the fit made it and the fit was measured against this plan: on
     # seventeen rows the column is 121px, which is the width the picker has to
     # say `Project` in.
-    entities, config, _ = load_repo(demo_root)
+    records, config, _ = load_repo(demo_root)
     page = render_table(
-        build_index(entities, config, date(2026, 8, 17)), base_commit="deadbee"
+        build_index(records, config, date(2026, 8, 17)), base_commit="deadbee"
     )
     got = measured_in(chrome(), page, tmp_path / "draft.html", 1460, _DRAFT_MARKS)
 
@@ -4326,7 +4326,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     # A corpus of three, hand-built: every pitch in `seed/` names its own
     # reviewers, which is what a plan somebody has been keeping looks like — and
     # the whole question here is about one that does not.
-    entities = [
+    records = [
         Pitch(id="pitch-000001", kind="pitch", title="Held up by its tasks",
               status="ready", owner="ann", reviewers=[], person_weeks=4,
               shaped_by=["ann"], assigned_on=date(2026, 8, 10)),
@@ -4337,7 +4337,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
              status="ready", owner="bo", reviewers=["cy"], person_weeks=2,
              assigned_on=date(2026, 8, 10)),
     ]
-    page = render_table(build_index(entities, Config(), date(2026, 8, 17)))
+    page = render_table(build_index(records, Config(), date(2026, 8, 17)))
     got = measured_in(chrome(), page, tmp_path / "inherited.html", 1460, _INHERITED)
 
     assert got["borrowing"], "no row in this corpus takes its reviewers from below"
@@ -4506,7 +4506,7 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
 
     assert save(client, TASK, {"depends_on": [OTHER, DONE]}).status_code == 200
 
-    def blockers_of(entity_id: str) -> int:
+    def blockers_of(record_id: str) -> int:
         # Off the table's own payload, which is what the column is drawn from —
         # `/api/index.json` is the flat index and answers a different question.
         page = client.get("/table").text
@@ -4514,7 +4514,7 @@ def test_a_blocker_that_is_done_is_not_a_blocker(client: TestClient, repo_path: 
             re.search(r'<script id="payload" type="application/json">(.*?)</script>', page, re.S)
             .group(1)
         )["rows"]
-        return rows[entity_id]["blocked_by"]
+        return rows[record_id]["blocked_by"]
 
     # `DONE` is already done, so only the open one counts.
     assert blockers_of(TASK) == 1, "a finished dependency is still being counted"

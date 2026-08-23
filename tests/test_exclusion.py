@@ -1,10 +1,10 @@
 """The exclusion: a kind whose rung says `planned=False` is off every PM surface.
 
-Spec §2 ("one record, one page"): `Index.entities` is the plan and only the
+Spec §2 ("one record, one page"): `Index.plan` is the plan and only the
 plan; `Index.records` is every record that parsed. The inversion makes every
 existing consumer safe — a forgotten one sees fewer records, never more — and
 the validator on `Index` is the by-construction guarantee the type system gave
-up when every kind became an Entity.
+up when every kind became a Record.
 
 Two layers, on purpose:
 
@@ -23,9 +23,9 @@ Two layers, on purpose:
 Vacuous until the commit that put issue and note on the ladder; from that
 commit it seeds one issue and one note and asserts each is absent from /table,
 /graph, /timeline, /people, the schedule payload, /api/index.json, every facet
-and the suggestions blob's entity completions, present on / and its own
+and the suggestions blob's record completions, present on / and its own
 /detail page, and refused by the Index validator. (The suggestions blob's
-people and tag lists deliberately DO carry unplanned records — the entity
+people and tag lists deliberately DO carry unplanned records — the record
 completions are the plan-only part — and every seed carries a tag so that
 exemption is asserted rather than only documented.) The served corpus also
 carries one planned task whose hand-written `depends_on` names the seeded
@@ -124,7 +124,7 @@ def test_with_only_planned_kinds_the_records_are_exactly_the_plan():
     unplanned kind exists, so the two populations are equal and every existing
     consumer is untouched by construction."""
     index = build_index(a_family(), CONFIG, TODAY)
-    assert index.records == index.entities
+    assert index.records == index.plan
 
 
 def test_build_index_keeps_an_unplanned_kind_out_of_the_plan(monkeypatch):
@@ -138,7 +138,7 @@ def test_build_index_keeps_an_unplanned_kind_out_of_the_plan(monkeypatch):
     dropped = sorted(eid for eid in index.records if eid.startswith("task-"))
     assert dropped == ["task-c00001", "task-c00002"], "the family's tasks are the fixture"
     for eid in dropped:
-        assert eid not in index.entities, f"{eid} leaked into the plan"
+        assert eid not in index.plan, f"{eid} leaked into the plan"
         assert eid in index.records
 
     # The maps a record page and the landing search read are TOTAL: a fact row
@@ -170,7 +170,7 @@ def test_a_hand_built_index_smuggling_an_unplanned_kind_is_refused(monkeypatch):
     good = build_index(a_family(), CONFIG, TODAY)
     sneaked = a_task("task-0faded", "Smuggled into the plan")
     with pytest.raises(ValidationError) as refusal:
-        Index(**{**dict(good), "entities": {**good.entities, sneaked.id: sneaked}})
+        Index(**{**dict(good), "plan": {**good.plan, sneaked.id: sneaked}})
     said = str(refusal.value)
     assert "task-0faded is a task" in said, "the refusal names the id and the kind"
     assert ".records" in said, "and says where the record belongs instead"
@@ -178,16 +178,16 @@ def test_a_hand_built_index_smuggling_an_unplanned_kind_is_refused(monkeypatch):
 
 def test_every_unplanned_kind_is_out_of_the_plan_and_in_the_records():
     unplanned = _armed()
-    entities = a_family()
+    records = a_family()
     seeded: list[tuple[Rung, str]] = []
     for rung in unplanned:
         eid, path, text = _seed_for(rung)
-        entities.append(parse_text(text, path))
+        records.append(parse_text(text, path))
         seeded.append((rung, eid))
 
-    index = build_index(entities, CONFIG, TODAY)
+    index = build_index(records, CONFIG, TODAY)
     for rung, eid in seeded:
-        assert eid not in index.entities, f"a {rung.name} leaked into the plan"
+        assert eid not in index.plan, f"a {rung.name} leaked into the plan"
         assert eid in index.records, f"the {rung.name} fell out of the record population"
         # The scheduler never dates it, so no payload built from spans can name it.
         assert eid not in index.spans and eid not in index.explanations
@@ -222,9 +222,9 @@ def test_the_schedule_payload_never_names_an_unplanned_kind(tmp_path: Path, caps
 
     assert main(["schedule", str(tmp_path), "--json", "--today", "2026-08-13"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert "task-c00001" in payload["entities"], "the planned control is scheduled"
+    assert "task-c00001" in payload["plan"], "the planned control is scheduled"
     for eid in seeded:
-        assert eid not in payload["entities"]
+        assert eid not in payload["plan"]
         assert eid not in payload["spans"] and eid not in payload["explanations"]
 
 
@@ -278,7 +278,7 @@ def sweep_client(tmp_path: Path):
         yield client
 
 
-# Every PM page the spec names as an `entities` reader. The whole document is
+# Every PM page the spec names as a `plan` reader. The whole document is
 # one response — rows, embedded payload, facet bar, suggestions datalist — so
 # absence of the id and the title needle from the text is absence from all of
 # them at once. The cycle pages and the deck render whatever number they are
@@ -303,12 +303,12 @@ def test_an_unplanned_record_is_on_its_own_page_and_the_landing_and_nowhere_else
             assert NEEDLE not in page.text, f"the {rung.name}'s title leaked onto {route}"
 
         listed = sweep_client.get("/api/index.json").json()
-        assert eid not in listed["entities"], "the external contract is plan-only"
+        assert eid not in listed["plan"], "the external contract is plan-only"
         assert eid not in listed["spans"]
-        # The problems list too: its keys are ids the payload's own `entities`
+        # The problems list too: its keys are ids the payload's own `plan`
         # map must be able to resolve, and every seed deliberately carries one
         # warning (see `_seed_for`) so this line has something to hold out.
-        assert eid not in {p["entity_id"] for p in listed["problems"]}, (
+        assert eid not in {p["record_id"] for p in listed["problems"]}, (
             "a problem keyed by an unplanned id rode the plan-only contract"
         )
 
@@ -337,7 +337,7 @@ def test_an_inbox_tag_is_offered_where_tags_are_edited_and_its_id_is_not(
     never complete a name that only ever appears on issues. Nothing asserted
     that, so a tightening of the blob back to the plan would have narrowed
     every picker in silence while all the absence tests above stayed green.
-    The entity completions in the SAME blob stay plan-only — offering an issue
+    The record completions in the SAME blob stay plan-only — offering an issue
     to `parent` or `depends_on` is offering an edge the model refuses — so
     both halves of the one decision are read off one page.
     """
@@ -353,7 +353,7 @@ def test_an_inbox_tag_is_offered_where_tags_are_edited_and_its_id_is_not(
         assert TAG in [t["value"] for t in suggest["tags"]], (
             f"the inbox tag fell out of {route}'s tag picker"
         )
-        offered = [e["value"] for e in suggest["entities"]]
+        offered = [e["value"] for e in suggest["records"]]
         for rung in unplanned:
             eid, _, _ = _seed_for(rung)
             assert eid not in offered, f"{eid} is offered where edges are typed"

@@ -4,9 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from openproj.model import (
-    Entity,
     Pitch,
     Project,
+    Record,
     Task,
     checklist,
     checklist_items,
@@ -20,18 +20,18 @@ from openproj.model import (
 )
 
 
-def test_an_entity_needs_only_id_kind_and_title():
+def test_a_record_needs_only_id_kind_and_title():
     """Parse permissively: everything else must be optional, or one hand-edited
     file with a missing field would make the whole repository unloadable."""
-    entity = Entity(id="task-abc123", kind="task", title="Something")
-    assert entity.status == "shaping"
-    assert entity.owner is None
-    assert entity.assignees == []
-    assert entity.reviewers == []
-    assert entity.review_waived is False
-    assert entity.depends_on == []
-    assert entity.priority == "medium"
-    assert entity.created_schema_version == 1
+    record = Record(id="task-abc123", kind="task", title="Something")
+    assert record.status == "shaping"
+    assert record.owner is None
+    assert record.assignees == []
+    assert record.reviewers == []
+    assert record.review_waived is False
+    assert record.depends_on == []
+    assert record.priority == "medium"
+    assert record.created_schema_version == 1
 
 
 def test_sizes_are_optional_on_both_subclasses():
@@ -55,7 +55,7 @@ def test_a_pitch_and_a_task_share_one_size_field_and_a_project_has_none():
     # `shaped_by` is the field that really is one kind's: shaping is what a pitch
     # gets, and it is asked for at `ready`.
     assert "shaped_by" not in Task.model_fields
-    assert Project.model_fields.keys() == Entity.model_fields.keys()
+    assert Project.model_fields.keys() == Record.model_fields.keys()
 
 
 def test_optional_fields_still_accept_real_values():
@@ -80,9 +80,9 @@ def test_status_and_kind_are_still_constrained():
     # Status is deliberately NOT constrained here: a stale or mistyped one has to
     # parse and be reported, or one old file takes every page down. See
     # test_validate.test_a_word_nobody_defined_is_a_problem_and_not_a_crash.
-    assert Entity(id="task-abc123", kind="task", title="T", status="in-progress").status
+    assert Record(id="task-abc123", kind="task", title="T", status="in-progress").status
     with pytest.raises(ValidationError):
-        Entity(id="task-abc123", kind="banana", title="T")
+        Record(id="task-abc123", kind="banana", title="T")
 
 
 # --------------------------------------------------------------------------- #
@@ -315,7 +315,7 @@ def test_a_login_typed_into_the_frontmatter_is_ignored_rather_than_believed():
     """The one thing a second copy of the identity could do is disagree with the
     first, and then which record this is depends on which half of the app you
     ask. That is `_identity_problems`, two blocker rules and a special case in
-    the entity save, all paid for a fact the filename already carried — so here
+    the record save, all paid for a fact the filename already carried — so here
     the frontmatter simply has no say."""
     from openproj.model import parse_person_text
 

@@ -1,22 +1,22 @@
 # Global planning defaults.
 #
-# schema_version is the version NEW entities are created at. It is not a claim
+# schema_version is the version NEW records are created at. It is not a claim
 # about the corpus: every validation rule records the version that introduced
-# it, and an entity is only blocked by rules whose version is <= its own
-# created_schema_version (spec 5.4). A rule newer than the entity it judges may
+# it, and a record is only blocked by rules whose version is <= its own
+# created_schema_version (spec 5.4). A rule newer than the record it judges may
 # only warn. That is what lets a required field be added without invalidating
 # work written before the field existed.
 #
-# Every entity in this corpus is created_schema_version 2, so every rule
+# Every record in this corpus is created_schema_version 2, so every rule
 # currently defined — including the version-2 rule that a todo pitch must name
 # a shaped_by — applies to all of them as a blocker. There is no grandfathered
-# entity here to exercise the warning path.
+# record here to exercise the warning path.
 schema_version: 4
 # The rate one person works at when nobody has said otherwise. A size is
 # PERSON-weeks (D-C4), so the people on a bet divide it, each at their own rate;
 # per-cycle figures override this one.
 nominal_availability: 1.0
-default_task_effort: 0.5    # weeks assumed when an entity states no size
+default_task_effort: 0.5    # weeks assumed when a record states no size
 # Of each cycle's window, how much is cool-down rather than build. An overrun is
 # measured against the end of build: cool-down is for the mess afterwards, so
 # work that lands in it did not fit its box.

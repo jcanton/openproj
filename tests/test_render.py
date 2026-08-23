@@ -34,8 +34,8 @@ PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html"
 def seed_index(seed_root: Path) -> Index:
     from datetime import date
 
-    entities, config, _ = load_repo(seed_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(seed_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 @pytest.fixture
@@ -194,7 +194,7 @@ def test_every_library_is_inlined_exactly_once_and_no_marker_survives(
         assert other.count(signature) == 0, f"{name} is in a page that does not use it"
 
 
-def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, seed_index: Index):
+def test_the_table_carries_the_whole_plan_and_its_derived_dates(rendered: Path, seed_index: Index):
     payload = json.loads(
         re.search(
             r'<script id="payload" type="application/json">(.*?)</script>',
@@ -202,7 +202,7 @@ def test_the_table_carries_every_entity_and_its_derived_dates(rendered: Path, se
             re.S,
         ).group(1)
     )
-    assert set(payload["rows"]) == set(seed_index.entities)
+    assert set(payload["rows"]) == set(seed_index.plan)
     scheduled = payload["rows"]["task-53a9f0"]
     # Its own `assigned_on`, because it is in progress: work under way started
     # when it started, and the floor at today applies to what has not begun.
@@ -295,12 +295,12 @@ def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):
         e["data"]["id"]: e["data"] for e in _elements(seed_index) if "source" not in e["data"]
     }
 
-    for entity_id in seed_index.entities:
-        for field, value in _row(seed_index, entity_id).items():
-            assert nodes[entity_id][field] == value, f"{entity_id}.{field}"
+    for record_id in seed_index.plan:
+        for field, value in _row(seed_index, record_id).items():
+            assert nodes[record_id][field] == value, f"{record_id}.{field}"
         # And the two keys the row does not carry, because only a canvas needs them.
-        assert nodes[entity_id]["label"] == seed_index.entities[entity_id].title
-        assert nodes[entity_id]["depends_on"] == seed_index.blocked_by[entity_id]
+        assert nodes[record_id]["label"] == seed_index.plan[record_id].title
+        assert nodes[record_id]["depends_on"] == seed_index.blocked_by[record_id]
 
 
 def test_the_graph_filters_the_plan_the_way_the_table_does(rendered: Path):
@@ -348,8 +348,8 @@ def test_the_graph_says_which_of_the_three_emptinesses_it_is(rendered: Path):
 
     assert 'id="nothing"' in graph
     assert "#nothing[hidden] { display: none; }" in graph, "hidden loses to display:flex"
-    assert "No entity matches these filters." in body
-    assert "This plan has no entities yet." in body
+    assert "No record matches these filters." in body
+    assert "This plan has no records yet." in body
     assert "The plan could not be loaded." in body
     # Only the filtered one offers a way out: there is nothing to clear when the
     # plan is empty or the payload never arrived, and a Clear that clears nothing
@@ -483,7 +483,7 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
     """An estimated or unowned span is a forecast, not a commitment. If the two
     look alike, a guess gets read as a promise.
 
-    Built from a constructed index rather than the seed: every seed entity now
+    Built from a constructed index rather than the seed: every seed record now
     states a size, so the corpus no longer exercises the defaulted path at all.
     """
     from datetime import date
@@ -632,9 +632,9 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
     drawn = dict(re.findall(r'<rect data-id="([^"]+)"[^>]*width="([\d.]+)"', body))
     assert set(drawn) == set(index.spans)
 
-    for entity_id, span in index.spans.items():
+    for record_id, span in index.spans.items():
         days = (span.end - span.start).days + 1        # inclusive of both ends
-        assert float(drawn[entity_id]) == max(_MIN_BAR_PX, zoom, days * zoom), entity_id
+        assert float(drawn[record_id]) == max(_MIN_BAR_PX, zoom, days * zoom), record_id
 
     # Said again as two numbers rather than a formula: eight weeks and one day are
     # not the same width, and neither of them is the meter's 140.
@@ -651,10 +651,18 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
     # for a bar, never a bare `.bar` that is both.
     style = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
     style = re.sub(r"/\*.*?\*/", " ", style, flags=re.S)   # a comment is not a selector
+    # Split rather than `re.findall(r"([^{}]*)\{", style)`, which is the same
+    # answer and took 13.4 of this test's 13.6 seconds. `[^{}]*` runs to the
+    # closing `}` of a declaration block, fails the `\{`, and backtracks a
+    # character at a time from every start position inside the block — quadratic
+    # in the block length, over a 110 KB inlined stylesheet. Splitting on `{`
+    # leaves each chunk holding the text before one brace; the last brace such a
+    # chunk can contain is a `}`, so what follows it is exactly the selector the
+    # regex captured. Checked: same 318 strings, in the same order, in 0.1ms.
     unqualified = [
         selector.strip()
-        for rule in re.findall(r"([^{}]*)\{", style)
-        for selector in rule.split(",")
+        for chunk in style.split("{")[:-1]
+        for selector in chunk.rsplit("}", 1)[-1].split(",")
         if re.search(r"(^|[\s>+~])\.bar\b", selector.strip())
     ]
     assert not unqualified, unqualified
@@ -726,11 +734,11 @@ def test_every_explanation_reaches_the_reader(rendered: Path, seed_index: Index)
     unexplained surprising date is when people stop believing the timeline."""
     body = read(rendered, "timeline.html")
     assert seed_index.explanations
-    for entity_id, explanation in seed_index.explanations.items():
-        assert explanation.text in body, entity_id
+    for record_id, explanation in seed_index.explanations.items():
+        assert explanation.text in body, record_id
 
 
-def test_a_span_less_entity_is_listed_but_not_drawn(rendered: Path, seed_index: Index):
+def test_a_span_less_record_is_listed_but_not_drawn(rendered: Path, seed_index: Index):
     """Done and shelved work has no span. It still belongs in the table — dropping
     it would make the board lie about what exists."""
     payload = json.loads(
@@ -747,12 +755,13 @@ def test_a_span_less_entity_is_listed_but_not_drawn(rendered: Path, seed_index: 
 # --- the detail page -------------------------------------------------------
 
 
-def test_a_detail_page_exists_for_every_entity(rendered: Path, seed_index: Index):
+def test_a_detail_page_exists_for_every_record(rendered: Path, seed_index: Index):
     """The whole premise is that the shaping doc IS the record. A viewer that
     never shows the body is a viewer of the frontmatter only."""
     body = read(rendered, "detail.html")
-    for entity_id in seed_index.entities:
-        assert f'id="{entity_id}"' in body, entity_id
+    # `records`, not the plan: this is the one page every kind gets.
+    for record_id in seed_index.records:
+        assert f'id="{record_id}"' in body, record_id
 
 
 def test_the_detail_page_opens_as_an_index_not_a_wall_of_text(rendered: Path, seed_index: Index):
@@ -760,10 +769,10 @@ def test_the_detail_page_opens_as_an_index_not_a_wall_of_text(rendered: Path, se
     document. Showing all seventeen bodies at once is not a detail view."""
     body = read(rendered, "detail.html")
     assert 'class="toc"' in body
-    for entity_id in seed_index.entities:
+    for record_id in seed_index.records:
         # `detail.html#id` in a rendered file, `/detail/id` on the server: the link
         # comes from Links either way, so the index cannot drift from the routes.
-        assert f'href="detail.html#{entity_id}"' in body, entity_id
+        assert f'href="detail.html#{record_id}"' in body, record_id
     # The script must hide every article unless one is selected.
     assert "article.style.display = match ? '' : 'none'" in body
 
@@ -780,9 +789,9 @@ def test_the_detail_page_shows_the_derived_dates_and_the_explanation(
     rendered: Path, seed_index: Index
 ):
     body = read(rendered, "detail.html")
-    entity_id, explanation = next(iter(seed_index.explanations.items()))
+    record_id, explanation = next(iter(seed_index.explanations.items()))
     assert explanation.text in body
-    assert seed_index.spans[entity_id].start.isoformat() in body
+    assert seed_index.spans[record_id].start.isoformat() in body
 
 
 @pytest.fixture
@@ -791,8 +800,8 @@ def demo_rendered(demo_root: Path, tmp_path: Path) -> tuple[Path, Index]:
     references and the dependency diamond these tests are about."""
     from datetime import date
 
-    entities, config, _ = load_repo(demo_root)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    index = build_index(records, config, date(2026, 8, 17))
     out = tmp_path / "demo"
     render_static(index, out)
     return out, index
@@ -801,7 +810,7 @@ def demo_rendered(demo_root: Path, tmp_path: Path) -> tuple[Path, Index]:
 def test_pr_references_become_links_that_resolve(demo_rendered: tuple[Path, Index]):
     """A dead PR reference teaches people the field is decorative."""
     out, index = demo_rendered
-    refs = {ref for e in index.entities.values() for ref in e.prs}
+    refs = {ref for e in index.plan.values() for ref in e.prs}
     assert refs, "the demo corpus should carry PR references"
     detail = read(out, "detail.html")
     for ref in refs:
@@ -836,11 +845,14 @@ def test_the_suggestion_list_offers_names_and_not_sentences(seed_index: Index):
     from openproj.model import Task
     from openproj.render import _suggestions
 
-    polluted = dict(seed_index.entities)
+    # Into `records`, because that is the map `_suggestions` gathers people
+    # from — a name polluted into the plan alone would never reach the list,
+    # and the assertion below would pass with the filter deleted.
+    polluted = dict(seed_index.records)
     polluted["task-ffffff"] = Task(
         id="task-ffffff", kind="task", title="Bad", reviewers=["jcanton, halungge"]
     )
-    suggestions = _suggestions(seed_index.model_copy(update={"entities": polluted}))
+    suggestions = _suggestions(seed_index.model_copy(update={"records": polluted}))
 
     assert all("," not in person["value"] for person in suggestions["people"])
 
@@ -875,11 +887,11 @@ def test_the_people_page_lists_everyone_the_plan_names(rendered: Path, seed_inde
     body = read(rendered, "people.html")
     named = {
         login
-        for entity in seed_index.entities.values()
+        for record in seed_index.plan.values()
         for field in ("owner", "shaped_by", "assignees", "reviewers")
         for login in (
             lambda v: v if isinstance(v, list) else [v] if v else []
-        )(getattr(entity, field, None))
+        )(getattr(record, field, None))
     }
 
     assert named
@@ -896,13 +908,13 @@ def test_a_person_row_says_which_hat_they_are_wearing(rendered: Path):
         assert f'class="role">{role}<' in body, role
 
 
-def test_every_person_row_links_to_the_entity(rendered: Path, seed_index: Index):
+def test_every_person_row_links_to_the_record(rendered: Path, seed_index: Index):
     body = read(rendered, "people.html")
-    owned = [i for i, e in seed_index.entities.items() if e.owner]
+    owned = [i for i, e in seed_index.plan.items() if e.owner]
 
     assert owned
-    for entity_id in owned:
-        assert f'href="detail.html#{entity_id}"' in body, entity_id
+    for record_id in owned:
+        assert f'href="detail.html#{record_id}"' in body, record_id
 
 
 def test_the_people_page_is_alphabetical_and_filterable(rendered: Path):
@@ -1272,7 +1284,7 @@ def test_an_empty_timeline_says_which_kind_of_empty_it_is(tmp_path: Path):
     empty = build_index([], Config(), date(2026, 8, 17))
     render_static(empty, tmp_path / "empty")
     body = read(tmp_path / "empty", "timeline.html")
-    assert "This plan has no entities yet." in body
+    assert "This plan has no records yet." in body
     assert '<button type="button" id="clear-filters" hidden>' in body
 
     parked = Task(id="task-000001", kind="task", title="Parked", status="shelved")
@@ -1285,7 +1297,7 @@ def test_an_empty_timeline_says_which_kind_of_empty_it_is(tmp_path: Path):
     index = build_index([live], Config(), date(2026, 8, 17))
     render_static(index, tmp_path / "live")
     live_body = read(tmp_path / "live", "timeline.html")
-    assert "No entity matches these filters." in live_body
+    assert "No record matches these filters." in live_body
     assert '<button type="button" id="clear-filters">Clear' in live_body
 
     # A window with nothing in it is the dates' fault, and clearing a filter would
@@ -1338,7 +1350,7 @@ def test_drawing_a_dependency_does_not_write_one(rendered: Path):
 
 
 def test_a_batch_of_edges_is_saved_against_the_commit_before_it(rendered: Path):
-    """Each write moves HEAD. Reusing the page's base for the second entity would
+    """Each write moves HEAD. Reusing the page's base for the second record would
     make it a conflict against a commit the same button had just created."""
     body = read(rendered, "graph.html")
     save = re.search(r"SAVE\.onclick.*?\n  \};", body, re.S).group(0)
@@ -1433,8 +1445,8 @@ def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
             "---\nid: issue-f00001\nkind: issue\ntitle: Picked-up breakage\n"
             "status: ready\npitched_into: [pitch-f00001]\n---\n\nx\n"),
     }
-    entities = [parse_text(text, path) for path, text in files.items()]
-    index = build_index(entities, Config(known_people=["ann", "bo"]), date(2026, 8, 17))
+    records = [parse_text(text, path) for path, text in files.items()]
+    index = build_index(records, Config(known_people=["ann", "bo"]), date(2026, 8, 17))
     render_static(index, tmp_path)
 
     body = read(tmp_path, "detail.html")
@@ -1475,7 +1487,7 @@ def test_a_status_nobody_uses_gets_no_heading(seed_index: Index):
 
 
 def test_an_unknown_status_still_reaches_the_index(seed_index: Index):
-    """An entity missing from the index because its status is misspelt is
+    """A record missing from the index because its status is misspelt is
     invisible — and the index is how you find the thing to fix."""
     from openproj.render import _by_status
 
@@ -1496,7 +1508,7 @@ def test_a_pr_reference_completes_in_two_halves(demo_rendered: tuple[Path, Index
     _, index = demo_rendered
     offered = _suggestions(index)["prs"]
     values = [item["value"] for item in offered]
-    cited = {ref for e in index.entities.values() for ref in e.prs}
+    cited = {ref for e in index.plan.values() for ref in e.prs}
 
     assert "C2SM/icon4py#" in values
     assert cited <= set(values)
@@ -1816,7 +1828,7 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
     fields through it.
 
     `role` is only ever offered here: which hat somebody is wearing is not a field
-    of an entity, it is which field their name is in.
+    of a record, it is which field their name is in.
     """
     people, index = read(rendered, "people.html"), read(rendered, "table.html")
     shape = (r'<div id="controls">\s*<div class="searching">\s*'
@@ -1828,7 +1840,7 @@ def test_the_people_page_draws_the_control_bar_the_plan_draws(rendered: Path):
     assert re.findall(r'<div class="facet" data-field="([^"]+)"', people) == [
         "role", "kind", "status"
     ]
-    assert 'aria-label="Search person, entity, id"' in people
+    assert 'aria-label="Search person, record, id"' in people
     assert 'aria-label="Search titles, tags, PRs, people"' in index
 
 
@@ -1843,7 +1855,7 @@ def test_no_fact_is_formatted_for_the_detail_page_twice(seed_index: Index):
     """
     from openproj.render import _DETAIL, _detail_rows
 
-    # `e.` is one entity's own line; `group.` is the index, which reads `status`
+    # `e.` is one record's own line; `group.` is the index, which reads `status`
     # to group by it and prints it as the heading over each group. The status
     # left the meta line under the title — it was the same chip the facts column
     # shows forty pixels below, said twice — and the grouping is the reader that
@@ -2290,7 +2302,7 @@ def test_the_graph_repaints_rather_than_reloads_on_a_theme_change(rendered: Path
 
 
 def test_a_persons_rows_lead_with_what_they_own(rendered: Path):
-    """Built one entity at a time, a person with twenty rows had their four
+    """Built one record at a time, a person with twenty rows had their four
     ownerships scattered through it — and ownership is what being on the page is
     for. Ordered by answerability, then by title within a role."""
     from openproj.render import _ROLE_ORDER
@@ -2307,7 +2319,7 @@ def test_a_persons_rows_lead_with_what_they_own(rendered: Path):
 
 def test_the_graph_carries_one_hint_and_no_mode_paragraph(rendered: Path):
     """The standing hint is true of the rendered build as much as of the served
-    one: it pans, it zooms, and a double-click opens the entity. The paragraph
+    one: it pans, it zooms, and a double-click opens the record. The paragraph
     that used to swap in for edit mode is gone from both — the served page says
     what edit mode is for beside the button that turns it on, and this build has
     no such button."""
@@ -2326,12 +2338,12 @@ def test_the_parent_reads_as_a_title_and_edits_as_an_id(demo_rendered: tuple[Pat
     written, and the autocomplete offers ids with titles beside them."""
     out, index = demo_rendered
     body = read(out, "detail.html")
-    child = next(e for e in index.entities.values() if e.parent in index.entities)
-    parent = index.entities[child.parent]
+    child = next(e for e in index.plan.values() if e.parent in index.plan)
+    parent = index.plan[child.parent]
 
     assert f">{parent.title}</a>" in body
     assert "· in <a" in body
-    # The entity's OWN id stays in its meta line — that one is wanted. It is the
+    # The record's OWN id stays in its meta line — that one is wanted. It is the
     # parent's id that was standing in for a title.
     article = re.search(rf'<article id="{child.id}".*?</article>', body, re.S).group(0)
     parent_row = re.search(r"<dt[^>]*>Parent</dt>\s*<dd.*?</dd>", article, re.S).group(0)
@@ -2361,7 +2373,7 @@ def test_the_shaping_doc_does_not_repeat_the_heading_it_is_under(
     rather than as a convention."""
     body = read(rendered, "detail.html")
     repeated = next(
-        e for e in seed_index.entities.values() if e.body.lstrip().startswith(f"# {e.title}")
+        e for e in seed_index.plan.values() if e.body.lstrip().startswith(f"# {e.title}")
     )
     article = re.search(rf'<article id="{repeated.id}".*?</article>', body, re.S).group(0)
     headings = re.findall(r"<h[1-3][^>]*>(.*?)</h[1-3]>", article, re.S)
@@ -2376,7 +2388,7 @@ def test_a_first_heading_that_is_not_the_title_is_left_alone(rendered: Path, see
     body = read(rendered, "detail.html")
     differs = next(
         e
-        for e in seed_index.entities.values()
+        for e in seed_index.plan.values()
         if e.body.lstrip().startswith("# ") and not e.body.lstrip().startswith(f"# {e.title}")
     )
     article = re.search(rf'<article id="{differs.id}".*?</article>', body, re.S).group(0)
@@ -2405,7 +2417,7 @@ _WRITTEN = """## Progress
 def editable_page(
     index: Index, body: str | None = None, editor: str = ""
 ) -> tuple[str, str]:
-    """One entity's detail page as a writer receives it: the id, and the page.
+    """One record's detail page as a writer receives it: the id, and the page.
 
     `base_commit` and `may_write`, which is the combination the static export
     never produces — `render_static` passes neither, so the exported file carries
@@ -2416,9 +2428,9 @@ def editable_page(
     editor is in the page, and the rules about what a page may fetch have to be
     asked of the page that carries the newest bytes.
     """
-    one = next(iter(index.entities))
+    one = next(iter(index.plan))
     if body is not None:
-        index.entities[one].body = body
+        index.plan[one].body = body
     return one, render_detail(
         index, ROUTES, only=one, base_commit="deadbee", may_write=True, editor=editor
     )
@@ -2540,7 +2552,7 @@ def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index)
     """
     from openproj.render import ROUTES, render_detail
 
-    one = next(iter(seed_index.entities))
+    one = next(iter(seed_index.plan))
     # A signed-out reader on the SERVED route, which is the case the audit
     # measured and the one `editable` cannot see: the route passes a commit for
     # everyone, so this page already carries the box, the toolbar and two
@@ -2651,7 +2663,7 @@ def test_the_detail_column_is_centred_and_the_facts_sit_beside_the_document(rend
     grip. A window breakpoint would put a sidebar on a column dragged to 400px."""
     body = read(rendered, "detail.html")
 
-    assert re.search(r"article\.entity \{[^}]*margin: 0 auto", body, re.S)
+    assert re.search(r"article\.record \{[^}]*margin: 0 auto", body, re.S)
     assert "container-type: inline-size" in body
     assert "@container (min-width: 56rem)" in body
     assert re.search(r"\.panes > \.facts \{[^}]*grid-column: 2", body, re.S)
@@ -2748,7 +2760,7 @@ def test_one_capacity_formula_answers_both_cycle_pages(demo_rendered: tuple[Path
 
 
 def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[Path, Index]):
-    """F25. A cycle with dates in config/cycles.yaml, or one that entities point
+    """F25. A cycle with dates in config/cycles.yaml, or one the plan points
     at with nothing behind it, is the cycle worth finding — and it was the one
     the index left out, because it iterated the records."""
     out, index = demo_rendered
@@ -2759,7 +2771,7 @@ def test_the_cycles_index_lists_every_cycle_the_plan_names(demo_rendered: tuple[
     # is what pins the difference.
     cards = [int(n) for n in re.findall(r"<h2>Cycle (\d+)</h2>", body)]
     named = set(index.plans) | set(index.cycles) | {
-        e.cycle for e in index.entities.values() if e.cycle is not None
+        e.cycle for e in index.plan.values() if e.cycle is not None
     }
 
     assert set(cards) == named
@@ -2812,13 +2824,13 @@ def test_load_is_charged_where_the_assignees_are(demo_rendered: tuple[Path, Inde
     _, index = demo_rendered
     held = index.load(37)
     rolled_up = [
-        e for e in index.entities.values() if e.cycle == 37 and index.children.get(e.id)
+        e for e in index.plan.values() if e.cycle == 37 and index.children.get(e.id)
     ]
 
     assert rolled_up, "the corpus has a parent bet into cycle 37"
     for parent in rolled_up:
         only_parent = index.model_copy(
-            update={"entities": {parent.id: parent}, "children": {}}
+            update={"plan": {parent.id: parent}, "children": {}}
         )
         assert only_parent.load(37), "the same parent IS charged when it has no children"
     assert held, "and the leaves are charged in the real index"
@@ -2833,7 +2845,7 @@ def test_a_size_is_split_evenly_between_the_people_on_it(demo_rendered: tuple[Pa
     # `counts_in` and not `e.cycle == 37`: a task takes its cycle from the pitch
     # it is part of, so the demo's tasks no longer carry one of their own.
     shared = next(
-        e for e in index.entities.values()
+        e for e in index.plan.values()
         if index.counts_in(e, 37) and len(e.assignees) > 1 and not index.children.get(e.id)
     )
     size, _ = size_weeks(shared, Config(default_task_effort=index.default_task_effort))
@@ -2889,16 +2901,16 @@ def test_every_page_names_itself_and_holds_exactly_one_main(rendered: Path):
 
 
 def test_the_detail_page_names_each_document_it_holds(rendered: Path, seed_index: Index):
-    """It is a hash router over every entity: with no hash it is an index, with
+    """It is a hash router over every record: with no hash it is an index, with
     one it is exactly that document. Each of those views needs a name of its own,
     and only ever one of them is displayed."""
     body = read(rendered, "detail.html")
 
     assert "<h1>Every record in this plan</h1>" in body
-    for entity in seed_index.entities.values():
-        article = re.search(rf'<article id="{entity.id}".*?</article>', body, re.S).group(0)
-        named = escape(entity.title)
-        assert f'<h1><span class="read">{named}</span></h1>' in article, entity.id
+    for record in seed_index.records.values():
+        article = re.search(rf'<article id="{record.id}".*?</article>', body, re.S).group(0)
+        named = escape(record.title)
+        assert f'<h1><span class="read">{named}</span></h1>' in article, record.id
     # And the router shows one or the other, never both.
     assert "article.style.display = match ? '' : 'none';" in body
     assert "document.querySelector('.toc').style.display = found ? 'none' : '';" in body
@@ -2916,11 +2928,11 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
     * A heading that repeats the nav — one word, the same word the nav item two
       rows above it wears, and the nav now says which page you are on by lighting
       that item. On screen it was a row of space saying nothing new. Clipped.
-    * A heading that names the thing you are looking at — an entity's own title, a
+    * A heading that names the thing you are looking at — a record's own title, a
       cycle's number, the whole plan listed. That is content, and it is the reason
       the rule is not "delete the h1". Drawn.
 
-    Getting this backwards is silent: `.sr-only` on the entity title would take
+    Getting this backwards is silent: `.sr-only` on the record title would take
     the name of the document off its own page and every test above would still
     pass.
     """
@@ -2932,10 +2944,10 @@ def test_a_heading_that_repeats_the_nav_is_announced_and_not_drawn(
     seen = {text: classes for classes, text in headings(read(rendered, "detail.html"))}
     listing = "Every record in this plan"
     assert "sr-only" not in seen[listing], "the listing is what is on the screen, not a route"
-    for entity in seed_index.entities.values():
-        assert entity.title in seen, entity.id
-        assert "sr-only" not in seen[entity.title], (
-            f"{entity.id}: a document with its own name clipped off it"
+    for record in seed_index.records.values():
+        assert record.title in seen, record.id
+        assert "sr-only" not in seen[record.title], (
+            f"{record.id}: a document with its own name clipped off it"
         )
 
 
@@ -2951,18 +2963,18 @@ def server_pages(seed_index: Index) -> dict[str, str]:
     """
     from openproj.render import ROUTES, render_cycle, render_detail
 
-    one = next(iter(seed_index.entities))
+    one = next(iter(seed_index.plan))
     return {
         "cycle": render_cycle(seed_index, 37, ROUTES, base_commit="deadbee"),
         "new": render_detail(seed_index, ROUTES, base_commit="deadbee", creating="task"),
-        "entity": render_detail(seed_index, ROUTES, only=one, base_commit="deadbee"),
+        "record": render_detail(seed_index, ROUTES, only=one, base_commit="deadbee"),
     }
 
 
 def test_the_headings_a_server_draws_are_the_same_two_kinds(server_pages: dict[str, str]):
     """The same three unexported pages, decided the same way.
 
-    A cycle page and an entity page name what you are looking at and stay visible;
+    A cycle page and a record page name what you are looking at and stay visible;
     the create form is the odd one, and it is visible for the opposite reason to
     the other two — its nav item does not exist (the record page's does not
     either), so with nothing lit above it the heading is all that says what the
@@ -3002,9 +3014,9 @@ def test_the_nav_says_which_page_you_are_on(rendered: Path, server_pages: dict[s
     # that compared the current URL against the hrefs would light nothing on
     # either of these — and both are pages somebody arrives at from the nav.
     assert lit(server_pages["cycle"]) == ["Cycles"]
-    # An entity page lights nothing now: it is reached from the table and goes
+    # A record page lights nothing now: it is reached from the table and goes
     # back there, and the tab it used to light no longer exists.
-    assert lit(server_pages["entity"]) == []
+    assert lit(server_pages["record"]) == []
 
     # And the one page that marks nothing, on purpose: the create form is not one
     # of them, and pressing Table from it abandons the form rather than staying
@@ -3053,7 +3065,7 @@ def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
 def test_a_rendered_plan_offers_no_dead_control(rendered: Path, seed_index: Index):
     """A read-only export must not draw a control that cannot work.
 
-    `links.new` is the empty string on a rendered file, so "New entity" was a
+    `links.new` is the empty string on a rendered file, so "New record" was a
     button back to the page you were already on; the hint beside it promised an
     editor with no server to save to; and every cycle card linked to a per-cycle
     page that `render_static` does not write.
@@ -3096,13 +3108,13 @@ def test_the_timeline_lists_beside_the_chart_what_the_chart_draws(rendered: Path
     assert [row for row in rows] == bars, "one row beside the plot per bar on it"
     assert 'aria-label="Every bar on the chart, with its status and its dates"' in labels
     for row in re.findall(r'<div class="row" role="listitem".*?</div>', labels, re.S):
-        entity_id = re.search(r'data-id="([^"]+)"', row).group(1)
+        record_id = re.search(r'data-id="([^"]+)"', row).group(1)
         says = re.search(r'<span class="sr-only">(.*?)</span>', row, re.S).group(1)
-        assert entity_id in says, entity_id
+        assert record_id in says, record_id
         # A status word and a pair of dates, which the fill and the width are the
         # only channels for on the chart itself.
         assert re.search(r"\d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d\.", says), says
-        assert f'<a href="detail.html#{entity_id}"' in row
+        assert f'<a href="detail.html#{record_id}"' in row
     # And the anchors the role prunes are out of the tab order, or Firefox stops
     # on seventeen links that announce nothing.
     assert body.count('tabindex="-1" aria-label=') == len(bars)
@@ -3156,11 +3168,11 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
     from openproj.model import Task
     from openproj.render import _body_html
 
-    def _entity(body: str) -> Task:
+    def _record(body: str) -> Task:
         return Task(id="task-000001", kind="task", title="t", person_weeks=1, body=body)
 
     stored = "assets/0123456789abcdef.png"
-    assert f'<img src="{stored}"' in _body_html(_entity(f"![ok]({stored})"))
+    assert f'<img src="{stored}"' in _body_html(_record(f"![ok]({stored})"))
 
     for source in (
         "//example.com/a.png",              # scheme-relative: inherits the page's
@@ -3174,7 +3186,7 @@ def test_only_an_asset_this_tool_stored_is_ever_drawn_as_an_image():
         "assets/notahash.png",              # our directory, not our naming
         "assets/0123456789abcdef.svg",      # our naming, a format we do not store
     ):
-        drawn = _body_html(_entity(f"![x]({source})"))
+        drawn = _body_html(_record(f"![x]({source})"))
         # The invariant is that nothing fetches: no `<img>`, ever. What happens
         # instead varies in one case, and honestly — markdown-it refuses to link
         # `javascript:` at all and leaves the line as text, which is a better
@@ -3195,14 +3207,14 @@ def _index_reaching_the_end_of_the_calendar(seed_root: Path) -> Index:
     this is what one keystroke too many in the detail page's date box leaves in
     the repository — permanently, on a protected branch.
     """
-    entities, config, _ = load_repo(seed_root)
+    records, config, _ = load_repo(seed_root)
     # Already `done`, and nothing depends on it — the narrowest possible blast
     # radius, which is what the audit hit: every other page stayed up and only
     # `/timeline` broke.
-    marked = [e for e in entities if e.id == "task-3e07b2"]
-    assert marked, "the fixture corpus no longer holds the entity this test edits"
+    marked = [e for e in records if e.id == "task-3e07b2"]
+    assert marked, "the fixture corpus no longer holds the record this test edits"
     marked[0].assigned_on = date.max
-    return build_index(entities, config, date(2026, 8, 17))
+    return build_index(records, config, date(2026, 8, 17))
 
 
 def test_the_timeline_survives_a_date_at_the_end_of_the_calendar(seed_root: Path):
@@ -3809,7 +3821,7 @@ _MOTION = """
 // them. So drive the page the way a reader does — set the hash, call the page's
 // own `show()` — rather than clearing `hidden` from here, which would be this test
 // inventing a state the app never puts itself in.
-location.hash = document.querySelector('article.entity').id;
+location.hash = document.querySelector('article.record').id;
 show();
 const grip = document.getElementById('grip');
 const painted = getComputedStyle(grip, '::before');
@@ -3974,13 +3986,13 @@ def test_the_graph_does_not_animate_where_css_cannot_stop_it():
 def test_no_page_uses_one_id_for_more_than_one_element(rendered: Path):
     """An id names one element, and five of them named five.
 
-    `detail.html` is every entity in one document with a hash router over them,
+    `detail.html` is every record in one document with a hash router over them,
     and the facts list inside each article carried `id="facts"` — so the export
     held five, which is invalid, and `getElementById('facts')` would answer with
-    the first entity's list whatever the hash said. Nothing calls it today: it is
+    the first record's list whatever the hash said. Nothing calls it today: it is
     a hook, the styling is `.panes > .facts dl`, and a hook that answers the
     wrong element is worse than no hook. It is written now only on the page that
-    holds one entity, which is what an id means.
+    holds one record, which is what an id means.
 
     Asked of every page and not of that one, because this is the kind of thing
     that arrives with the next template that gets rendered in a loop.
@@ -4170,7 +4182,7 @@ def test_a_pitch_with_no_appetite_yet_is_not_accused_of_exceeding_it():
     from openproj.render import STATIC
 
     row = next(
-        r for r in _fact_rows(index, index.entities["pitch-000001"], STATIC)
+        r for r in _fact_rows(index, index.plan["pitch-000001"], STATIC)
         if r["label"].startswith("Appetite")
     )
 
@@ -4280,10 +4292,10 @@ def with_icons(root: Path, chosen: dict[str, str]) -> Index:
     """
     from openproj.model import Person
 
-    entities, config, unreadable = load_repo(root)
+    records, config, unreadable = load_repo(root)
     people = [Person(login=login, icon=icon) for login, icon in chosen.items()]
     return build_index(
-        entities, config.with_people(people), date(2026, 8, 17), unreadable
+        records, config.with_people(people), date(2026, 8, 17), unreadable
     )
 
 
@@ -4291,7 +4303,7 @@ def someone(index: Index) -> str:
     """A login the People page actually draws a row for, taken from the corpus
     rather than written down: the page is built from who holds work, so a name
     chosen by hand here is a name the page is free to stop listing."""
-    return sorted(entity.owner for entity in index.entities.values() if entity.owner)[0]
+    return sorted(record.owner for record in index.plan.values() if record.owner)[0]
 
 
 def test_a_persons_icon_is_drawn_in_the_page_and_not_fetched(seed_root: Path):

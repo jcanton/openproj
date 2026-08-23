@@ -91,20 +91,20 @@ def load_repo_from_git(path: Path):
     """The corpus as the server reads it, via a worktree-free read of head.
 
     `load_repo` reads a worktree and these fixtures are bare repositories, so
-    this reuses `web.py`'s own `_entities_at`/`_config_at` rather than growing
+    this reuses `web.py`'s own `_records_at`/`_config_at` rather than growing
     a third reader.
     """
     from openproj.store import Store
-    from openproj.web import _config_at, _entities_at
+    from openproj.web import _config_at, _records_at
 
     store = Store(path)
     try:
         head = store.head()
         config, bad_config = _config_at(store, head)
-        entities, bad_entities = _entities_at(store, head)
+        records, bad_records = _records_at(store, head)
     finally:
         store.close()
-    return entities, config, [*bad_config, *bad_entities]
+    return records, config, [*bad_config, *bad_records]
 
 
 # --------------------------------------------------------------------------- #
@@ -122,8 +122,8 @@ def test_the_landing_lists_every_record_newest_edit_first(tmp_path: Path):
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
 
-    entities, config, _ = load_repo_from_git(path)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo_from_git(path)
+    index = build_index(records, config, date(2026, 8, 17))
     rows = re.findall(r'<tr data-id="([\w-]+)"', page)
     # Derived from `index.records`, not written out — which is how this page and
     # this expectation widened together on the flip commit, with no edit here.
@@ -240,8 +240,8 @@ def test_every_row_carries_the_predicates_the_server_computes(tmp_path: Path):
 
     from openproj.index import query_fields
 
-    entities, config, _ = load_repo_from_git(path)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo_from_git(path)
+    index = build_index(records, config, date(2026, 8, 17))
     for record_id, row in data["rows"].items():
         assert row["predicates"] == query_fields(index, record_id)["predicate"], record_id
     assert any(row["predicates"] for row in data["rows"].values()), (
@@ -263,8 +263,8 @@ def test_a_predicate_in_the_url_filters_rows_and_an_unmatched_one_is_a_sentence(
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
 
-    entities, config, _ = load_repo_from_git(path)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo_from_git(path)
+    index = build_index(records, config, date(2026, 8, 17))
     untracked = sorted(apply_filters(index, {}, "predicate:untracked", over=index.records))
     assert untracked, "the corpus must hold untracked work or this test asks nothing"
 
@@ -301,8 +301,8 @@ def test_a_plan_with_no_records_says_so_from_the_server(tmp_path: Path):
     (root / "config" / "defaults.yaml").write_text(
         "schema_version: 1\nnominal_availability: 1.0\n", encoding="utf-8"
     )
-    entities, config, unreadable = load_repo(root)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, unreadable = load_repo(root)
+    index = build_index(records, config, date(2026, 8, 17))
 
     page = render_records(index, edited={}, now=0)
     assert "This plan has no records yet." in page
@@ -513,7 +513,7 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     place the search blob travels — so both halves are asked the same
     questions, non-ASCII included. The corpus carries an issue and a note, so
     parity is asked about the very records where `records` is more than
-    `entities`.
+    `plan`.
 
     The row now carries every field `QUERY_FIELDS` names — status, owner,
     priority, cycle, assignees, reviewers, prs, project, product and real
@@ -531,8 +531,8 @@ def test_the_landing_box_and_the_server_find_the_same_records(tmp_path: Path):
     with TestClient(create_app(path, auth="dev")) as client:
         page = client.get("/").text
 
-    entities, config, _ = load_repo_from_git(path)
-    index = build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo_from_git(path)
+    index = build_index(records, config, date(2026, 8, 17))
 
     needles = ["traçage", "équateur", "Équateur", "平流", "gpu", "ann",
                "task-c00001", "1223", "downgrade", "tag:gpu", "kind:pitch",
@@ -623,9 +623,9 @@ def test_an_export_without_git_omits_the_time_column(tmp_path: Path):
         (root / name).write_text(text, encoding="utf-8")
     assert last_edited_in(root) is None
 
-    entities, config, unreadable = load_repo(root)
+    records, config, unreadable = load_repo(root)
     out = tmp_path / "site"
-    written = render_static(build_index(entities, config, date(2026, 8, 17)), out)
+    written = render_static(build_index(records, config, date(2026, 8, 17)), out)
     assert written[:2] == ("index.html", "table.html")
     landing = (out / "index.html").read_text(encoding="utf-8")
     assert '<th data-col="edited">' not in landing, "omitted, not blank: the header too"
@@ -658,10 +658,10 @@ def test_an_export_of_a_repository_carries_the_times(tmp_path: Path):
     stamps = last_edited_in(root)
     assert stamps is not None and stamps[TASK_PATH] == 2_000_000
 
-    entities, config, unreadable = load_repo(root)
+    records, config, unreadable = load_repo(root)
     out = tmp_path / "site"
     render_static(
-        build_index(entities, config, date(2026, 8, 17)), out,
+        build_index(records, config, date(2026, 8, 17)), out,
         edited=edited_by_id(stamps), now=2_000_000 + 3600,
     )
     landing = (out / "index.html").read_text(encoding="utf-8")
@@ -679,7 +679,7 @@ def test_the_header_row_is_sticky_and_nothing_on_this_page_outranks_it(tmp_path:
     """Resolved through the real cascade, not grepped: the documented hazard on
     this mechanism is a qualifier added to win one fight silently outranking
     the rules that correct it — `dd, td.edit { position: relative }` once stole
-    `position: sticky` from the entity table's title column, and the
+    `position: sticky` from the record table's title column, and the
     `.table-scroll [data-col]` fix for THAT dropped the frozen headers behind
     their own rows. A rule being in the stylesheet says nothing about whether
     it wins, so this asks which rule wins, by name."""

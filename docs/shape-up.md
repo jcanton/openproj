@@ -4,7 +4,7 @@
 
 | in HackMD | in openproj |
 |---|---|
-| A pitch note | a `pitch` entity — frontmatter, and the shaping doc as the body |
+| A pitch note | a `pitch` record — frontmatter, and the shaping doc as the body |
 | `Shaped by: @a and @b` in the header | `shaped_by: [a, b]` |
 | `Appetite (FTEs, weeks)` | `person_weeks` — the work one person would need; the people on it divide it |
 | The cycle sheet's `Available people` | `availability:` in `cycles/<n>.md`, a fraction of the build weeks |
@@ -30,8 +30,27 @@ Deliberately, and with the team's practice as the reason:
   uphill, because the tenth is the one nobody knows how to do — so the tool draws both and
   converts neither into the other. The ball is the control that sets the status, and it only
   moves while the record is being edited, so a move costs the sentence in the body that explains
-  it.
+  it. The five status marks stay characters and are not small hills: the same five go inside
+  `<option>` elements — the table's inline editor, every facet menu — and an option is a string, so
+  a hill in the chips would add a third vocabulary rather than remove the second. Mocked against the
+  real stylesheet at 26×11, `shelved` reads as a ball floating inside the hill instead of resting on
+  the ground under it, and `ready` and `shaping` are two dots a few pixels apart, in the one column
+  already under width pressure.
 
-The reasoning behind each is in `docs/superpowers/specs/2026-08-16-tailoring-plan.md`.
+## What the team asked for and did not get
+
+Declined at the tailoring pass, 2026-08-16, each with its reason.
+
+- **`postponed` as a bet outcome** — leaving a pitch `ready` says the same thing; it produced a
+  better idea instead, the notes box on the cycle page, so what came up at the betting table has
+  somewhere to live.
+- **Appetite in cycle units** — appetite is person-week effort and the assignees divide it; "full
+  cycle" on the team's own sheet is staffing shorthand, not a second unit.
+- **A roster grouped by institution** — if institutions turn out to matter, the answer is separate
+  plans and separate deployments, not a grouping column.
+- **An availability field that admits uncertainty** — better a lie that forces a good estimate than
+  a field that accepts `some time > 0`.
+- **A `buggy` status** — work that is wrong does not get merged; it goes back to `in_progress` or is
+  shelved.
 
 🤖 Written by an agent on behalf of @jcanton

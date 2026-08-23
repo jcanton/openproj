@@ -96,12 +96,11 @@ take `--today`, because half of what they print depends on which day it is.
 | | |
 |---|---|
 | `docs/quickstart.md` | day one — what a pitch, a task and a cycle are, and how to write one |
-| `docs/data-model.md` | the fields, the rules that are enforced, and what each is load-bearing for |
+| `docs/data-model.md` | one record type and six kinds, what the index derives, and what promotes into what |
 | `docs/architecture.md` | the pages, the two repositories, the layout of the code |
 | `docs/shape-up.md` | how this maps to what the team kept in HackMD, and where it departs from the book |
 | `AGENTS.md` | the invariants, how to write code here, and how to find the bug that is already here |
 | `deploy/RUNBOOK.md` | the deployment — credentials, the Cloud Run flags, and what is left to do |
-| `docs/superpowers/specs/` | the design records: appetite, cycles, and what was tailored to the team |
 
 ## Status
 

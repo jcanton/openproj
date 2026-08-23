@@ -68,5 +68,5 @@ Exchange is a black box sometimes.
 *(the source's Progress section holds only the unfilled template placeholder, "Task 1
 ([PR#xxxx](https://github.com/icon-exclaim/icon4py/pulls))" — no real PR was ever listed, and the
 table's PR cell for row 17 is likewise empty. No sub-work is enumerated anywhere in the source, so no
-task entities were created for this pitch.)*
+task records were created for this pitch.)*
 
