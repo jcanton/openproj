@@ -1,15 +1,22 @@
 # Making CI faster
 
-*Written 2026-08-23, on branch `ci-speed` (PR #72). Two runs, both green:*
+*Written 2026-08-23, on branch `ci-speed` (PR #72). **All nine changes are now
+written and measured.** Every run below is green, and the last three are the
+answer:*
 
-| run | tree | pytest | job |
+| run | tree | slowest pytest | wall clock |
 |---|---|---:|---:|
+| [32630205174](https://github.com/jcanton/openproj/actions/runs/32630205174) | `main`, the baseline | 1353.47s | **22m50s** |
 | [32631287159](https://github.com/jcanton/openproj/actions/runs/32631287159) | `main` + the `--durations` flags | 1392.75s | 23m24s |
-| [32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097) | + changes 1 and 2 below | **711.04s** | **12m08s** |
+| [32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097) | + changes 1 and 2 | 711.04s | 12m08s |
+| [32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905) | + changes 3 to 8, five shards | 181.15s | **3m33s** |
+| [32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278) | + change 9 | 156.04s | **3m02s** |
+
+**Twenty-three minutes is three.** 1688 tests, zero skipped, five machines.
 
 *Raw tables in `docs/probes/ci-durations.txt` and
-`docs/probes/ci-durations-after-cache.txt`. The first two changes are already
-made and already measured; changes 3 to 9 are not written.*
+`docs/probes/ci-durations-after-cache.txt`. Section 5 is no longer a prediction:
+it is the measurement, including the three places the prediction was wrong.*
 
 jcanton asked: *"we should make testing and CI faster: splitting it as much as it
 makes sense to run tests in parallel instead of sequentially?"* — with the weight
@@ -254,8 +261,10 @@ launch fewer of them. Nothing in between.
 
 ## 3. The changes, in order
 
-Each is stated as what to do, what it is worth, and what it risks. The first two
-are already on this branch as commit `d979881`; the rest are not written.
+Each is stated as what to do, what it is worth, and what it risks. **All nine are
+now on this branch and all nine have run on CI**, so each one below carries what
+it actually bought under a **Measured:** line as well as what it was predicted to
+buy. Where the two differ the difference is stated rather than smoothed over.
 
 ### 1. Compile each template once — `src/openproj/render.py` — **done**
 
@@ -300,7 +309,7 @@ strings in the same order in 0.1ms.
 naming what kind of element it is — is untouched, and the output was compared
 element-for-element.
 
-### 3. Bound uvicorn's shutdown in `serving` — `tests/test_coedit.py:2251`
+### 3. Bound uvicorn's shutdown in `serving` — `tests/test_coedit.py:2251` — **done**
 
 Four real-socket room tests each pay a flat ~5.0s in **teardown** (5.09, 5.05,
 5.02, 5.04 in the first run; 15.93s of the second run's 15.93s total teardown is
@@ -316,7 +325,18 @@ shorter shutdown cannot change what they prove.
 **Worth:** ~16 seconds. **Risk:** low; if the cause is something else the number
 simply does not move, which is itself the diagnosis.
 
-### 4. Give `serving` a port it actually holds — `tests/test_coedit.py:2251`
+**Measured: about 7 seconds, not 16 — the prediction was roughly double.** The
+`coedit` leg was cut from the post-cache table at 125.6s, before this change; it
+ran at 125.86s and 118.56s in the two sharded runs. Against a run-to-run spread
+of 7s on a leg that quiet, "about half of what was claimed" is the most that can
+honestly be read out of it, and the honest reading of *that* is that the flat
+5-second waits were partly overlapping the next test's setup rather than sitting
+alone on the critical path. The change stays: it is correct on its own terms —
+teardown waiting out a timeout after every assertion has run proves nothing — and
+it makes a lone `-k` reproduction of one room test noticeably less tedious. But
+it is not a wall-clock change and should not be listed as one.
+
+### 4. Give `serving` a port it actually holds — `tests/test_coedit.py:2251` — **done**
 
 The fixture binds a probe socket to port 0, reads the number, **closes the
 probe**, and hands the number to uvicorn. Between the close and uvicorn's bind
@@ -341,7 +361,15 @@ harmless, because nothing ever binds the number: `run_demo` replaces
 `cli._taken`'s pre-flight probe. Leave it, or monkeypatch `cli._taken` to
 `lambda *a: False` and pass `--port 0`.
 
-### 5. Clear `web._PARSED` before the two tests that assert on it — **prerequisite for 6**
+**Measured: zero seconds, as predicted, and no "address already in use" in any
+of the five sharded runs.** Which proves nothing about the bug — under job
+sharding `coedit` has its own machine, so the race it closes was never going to
+fire here. It was fixed because it is real and because the next person to reach
+for `-n auto`, or to run the suite twice on one laptop, would have met it as an
+intermittent co-editing failure accusing the room code of a defect it does not
+have. Latent-bug fixes do not get to show up in a wall clock.
+
+### 5. Clear `web._PARSED` before the two tests that assert on it — **done, prerequisite for 6**
 
 `tests/test_web.py:3759` and `:3823` reach into `openproj.web._PARSED`, a
 module-global parse cache that every earlier test in the same process has been
@@ -360,7 +388,14 @@ clears it per test (which also removes the cross-test memory growth).
 **Worth:** zero seconds. It makes two assertions mean what they say, independent
 of shard layout.
 
-### 6. Split CI into shards, keeping one job named `check`
+**Measured: zero seconds, and it was needed.** Both tests moved into the `rest`
+shard, where the set of tests that run before them in the process is no longer
+the whole suite. Green before the clear and green after is not evidence either
+way — the point is that with the clear, "green" now means the app under test
+cached those five kinds, and before it meant some app in this process did. That
+is a change in what the suite proves, not in what it costs.
+
+### 6. Split CI into shards, keeping one job named `check` — **done**
 
 This is the wall-clock change. Five test jobs plus a lint job and a gate, each a
 full `actions/checkout`, differing only in the pytest selection argument.
@@ -405,7 +440,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [editor, views, graph, coedit, web, model]
+        shard: [editor, views, graph, coedit, rest]   # longest first
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7            # full, never sparse — see below
@@ -414,7 +449,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: {node-version: "24"}
       - run: uv sync --locked --group dev
-      - run: uv run pytest -q $(cat .github/shards/${{ matrix.shard }})
+      - run: uv run pytest -q $(sed 's/#.*//' .github/shards/${{ matrix.shard }})
 
   check:                                     # the one required context
     needs: [suite, lint]
@@ -437,13 +472,18 @@ Three details in there are load-bearing:
   shards were cancelled reports a red required check on a run nobody was waiting
   for. `!cancelled()` runs it when a shard fails and skips it when the run is
   torn down.
-* `fail-fast: false`, so one red shard does not cancel the other five and hide
-  four more failures. The whole point of a four-minute gate is getting all the
+* `fail-fast: false`, so one red shard does not cancel the other four and hide
+  three more failures. The whole point of a three-minute gate is getting all the
   bad news in one pass.
 
-The shard file lists live in `.github/shards/<name>` as plain space-separated
-paths rather than inline in the matrix, because change 8 has to read them from a
-test.
+The shard file lists live in `.github/shards/<name>` rather than inline in the
+matrix, because change 8 has to read them from a test. They ended up one path per
+line with `#` commentary above, and `sed 's/#.*//'` in the run step — the census
+test reads them the same way, and a shard file the test can read and the workflow
+cannot is a trap set for whoever adds the next comment. The workflow also
+refuses an empty list rather than running bare `pytest`, which would fall back to
+`testpaths` and run the *whole suite in every shard*: slow rather than wrong, and
+therefore invisible.
 
 **Never a sparse checkout.** 27 of the 47 files in `tests/` import from another file in `tests/` —
 `test_socket_offer.py` imports `test_web` and `test_store`; `test_editor.py`
@@ -490,16 +530,66 @@ a few seconds of collection ≈ **2m45s** of job time, against 12m08s now and
 23m24s before this branch; three to five minutes by the clock on the wall once
 the runner queue is counted. Queue time is not ours and should not be promised.
 
+**Measured: 3m02s and 3m33s of wall clock, against 12m08s and 22m50s. The
+headline number was right. The reasoning under it was wrong in two ways, and
+both matter more than the headline.**
+
+| shard | tests | predicted | run 566905 | run 764278 |
+|---|---:|---:|---:|---:|
+| `editor` | 120 | **151.3s** | **181.15s** | 133.05s |
+| `views` | 340 | 138.9s | 155.03s | **156.04s** |
+| `graph` | 78 | 131.2s | 106.38s | 134.67s |
+| `rest` | 1032 | 128.8s | 136.66s | 147.63s |
+| `coedit` | 118 | 125.6s | 125.86s | 118.56s |
+| | 1688 | 675.8s | 705.08s | 689.95s |
+
+**Wrong the first way: `test_editor.py` is not the floor, and there is no floor.**
+The whole five-and-only-five argument rested on that one file being 151.3s that
+nothing could get under. It ran at 181.15s once and 133.05s the next time, on the
+same code, twenty minutes apart. The **run-to-run spread on a single leg is up to
+36%** (`editor` 133→181, `graph` 106→135), which is four times the 8% the lists
+were balanced to. So the shard cut is tuned to a precision the hardware does not
+have, the bolded number in that table is a different shard in each run, and
+re-cutting the lists to chase 8% of balance is chasing noise. Re-cut them when a
+leg is *consistently* over, across several runs — never off one table.
+
+**Wrong the second way: the 35s the durations table never attributed does not
+spread evenly, and it lands on the shards with many small tests.** The post-cache
+table summed 675.79s of a 711.04s run, and the cut quietly assumed the missing
+5% was uniform. It is not: the probe ran with `--durations-min=0.05`, which drops
+every row under 50 ms, and `rest` and `views` hold 1372 of the suite's 1688 tests
+between them. Both came in over their prediction in both runs (`rest` +8s and
++19s, `views` +16s and +17s) while `editor` and `coedit` — 238 tests between
+them — came in at or under. **A per-file duration table under-counts a shard in
+proportion to how many tests it holds**, so add a few seconds per hundred tests
+to any leg cut from one.
+
+Neither mistake cost anything here, because five legs land within 60s of each
+other however the noise falls and the gate is three minutes either way. Both
+would matter to anyone re-cutting for a sixth shard, which is the thing this
+document is most likely to be read for.
+
 **Risk:** the branch-protection failure above (closed by the `check` fan-in), a
 test file that lands in no shard (closed by change 8), and the `_PARSED`
 assertions (closed by change 5). Five machines instead of one is five
-independent chances of a runner-level hiccup; a re-run is one click and four
+independent chances of a runner-level hiccup; a re-run is one click and three
 minutes rather than twenty-three. Each shard pays `render.py`'s `@cache` reads —
 594 KB of Ace (`ace.js` + `keybinding-vim.js`), 1.98 MB of graph libraries
 (`cytoscape.min.js` + `elk.bundled.js`) — once in its own process, so five times
 instead of once; that is sub-second, and it is the honest cost of the split.
 
-### 7. `ruff` in its own job
+**Measured risk: none of the three named hazards fired, and a fourth one did
+not exist.** The branch-protection trap was closed by construction: the shards
+are `suite (…)` and `check` is a separate fan-in job, so the required context
+never moved. No test file landed outside a shard — 1032 + 340 + 120 + 118 + 78 =
+**1688, exactly the 1688 `pytest --collect-only -q` reports**, so every test in
+the suite ran on exactly one machine. **Zero skips in all five legs**, which is
+the one that had to be checked and could not be assumed: `-ra` prints every skip,
+and a shard that had quietly lost `node` or `google-chrome` would have gone green
+with 34 JS tests and 175 pixel tests not run. Five legs, five runners, five
+green.
+
+### 7. `ruff` in its own job — **done**
 
 A `lint` job: checkout, setup-uv, `uv run ruff check .`. About 25 seconds.
 
@@ -515,7 +605,12 @@ different questions and you want both answers from one push; putting lint in
 front trades 25 seconds of every green run for machine time on runs that were
 going to be re-pushed regardless.
 
-### 8. A test that holds the shard lists against `tests/`
+**Measured: 10 seconds end to end, not 25 — and still zero seconds of the gate.**
+Checkout 1s, `setup-uv` 3s, `uv sync --locked --group dev` under 1s off the warm
+cache, `ruff check .` 1s. It finishes 2m41s before the slowest shard, which is
+the entire point: a misplaced import is red in ten seconds now.
+
+### 8. A test that holds the shard lists against `tests/` — **done**
 
 The shard lists are a hand-written list of files, and a hand-written list fails
 **open**: add `tests/test_new_thing.py`, forget the list, and it runs nowhere
@@ -531,7 +626,13 @@ the commit that adds the file, not six weeks later.
 **Worth:** zero seconds, and it is the difference between sharding being safe and
 sharding being a slow leak.
 
-### 9. Take the measurement flags back out
+**Measured: zero seconds, and it is `test_every_test_file_is_in_exactly_one_ci_shard`
+in `tests/test_harness.py`.** It is the one invariant on this branch that answers
+on a laptop as well as on CI, which is deliberate — the failure it catches is
+committed locally and would otherwise be reported by nothing at all, since a
+missing file makes every job greener rather than redder.
+
+### 9. Take the measurement flags back out — **done**
 
 `--durations=0 --durations-min=0.05` and the `nproc && free -m && df -h /dev/shm`
 probe are on this branch as measurement, not as policy. Both tables have now been
@@ -544,6 +645,19 @@ numbers as ±5% and the proportions as solid.
 Keep the two probe files. `docs/probes/ci-durations.txt` and
 `docs/probes/ci-durations-after-cache.txt` are what the shard lists are cut from,
 and what the next person re-cuts them from when the suite has grown.
+
+**Measured: about 30 seconds, and `--durations=25` stayed.** Runs 566905 and
+764278 differ by the flags coming out and by nothing else that touches timing,
+and the wall clock went 3m33s → 3m02s — but the per-leg spread over those same
+two runs is up to 48s, so 30s is inside the noise and should be read as "the
+bookkeeping was not free and was not large". `--durations=25` per leg is kept on
+purpose: it is display-only, pytest times every phase regardless, and what decides
+the critical path is shard *balance*, which drifts every time a test file is
+added. Twenty-five rows per leg is enough to see which file grew without anybody
+re-running a measurement workflow to find out. The `--durations-min=0.05` probe
+and the `nproc && free -m && df -h /dev/shm && google-chrome --version` step are
+gone; the second one is why this document can say "2-core, 8 GB" instead of
+assuming it.
 
 ---
 
@@ -705,68 +819,127 @@ green-looking red `browser.py` was written to prevent.
 So the acceptance test comes first, and it is cheap: keep both harnesses behind a
 switch, run the whole suite twice, and diff the JSON every `measured_in` call
 returns. Byte-identical over all 135 call sites, or it does not land. After
-change 6 the wall clock is already under three minutes, so there is no hurry —
+change 6 the wall clock is about three minutes, so there is no hurry —
 this is a QUEUE item, sized at ~330s and gated on that diff. It is also the only
-thing that gets `test_editor.py` under its 151-second floor without splitting the
-file.
+thing that gets `test_editor.py` down to where the other legs live without
+splitting the file — and see change 6's measurement for why "its 151-second
+floor" turned out not to be a floor, or a stable number at all.
 
 ---
 
-## 5. The honest expected end state
 
-Two rows of this are measured and the rest is arithmetic over a measured table.
+## 5. The measured end state
 
-| after | pytest | job |
-|---|---:|---:|
-| before this branch | 1392.75s | **23m24s** |
-| + changes 1 and 2 — **measured, green** | **711.04s** | **12m08s** |
-| + change 3 | ~695s | ~11m50s |
-| + change 6, five shards | ~151s critical path | **~2m45s** |
+Not a prediction any more. Every row is a run you can open.
 
-**Twenty-three minutes is already twelve, and five machines take it to about
-three.** The last row is the largest shard (`test_editor.py`, 151.27s in the
-run above) plus nine seconds of setup plus a few seconds of collection, plus
-whatever the runner queue costs that morning; call it three to five minutes
-honestly, because queue time is not ours to promise.
+| tree | slowest pytest | wall clock | billed |
+|---|---:|---:|---:|
+| `main`, the baseline ([32630205174](https://github.com/jcanton/openproj/actions/runs/32630205174)) | 1353.47s | **22m50s** | 23 min |
+| + changes 1 and 2 ([32633361097](https://github.com/jcanton/openproj/actions/runs/32633361097)) | 711.04s | 12m08s | 13 min |
+| + changes 3 to 8 ([32634566905](https://github.com/jcanton/openproj/actions/runs/32634566905)) | 181.15s | 3m33s | 18 min |
+| + change 9 ([32634764278](https://github.com/jcanton/openproj/actions/runs/32634764278)) | 156.04s | **3m02s** | 17 min |
 
-Note what the first row is worth on its own: **half the gate, from a change with
-no concurrency in it, that also makes the deployed server draw every page
-faster.** That is the answer to "should we parallelise" — parallelise second.
+**22m50s → 3m02s. A gate that was longer than a coffee break is shorter than
+reading the diff it is gating.** 1688 tests, 1688 run, zero skipped, zero failed.
 
-Billed machine time falls too, which is the part nobody expects of a parallel
-build: GitHub bills each job rounded up to the minute, so before this branch it
-was one job at 24 minutes, it is now one at 13, and the end state is five shards
-plus a lint job plus a gate at about **12**. The template cache pays for the
-sharding several times over, and the sharded gate is cheaper than the serial one
-was.
+Per job in the last run, and this is the whole gate:
 
-**And here is what is now flaky that was not: nothing — provided changes 5 and 8
-land with change 6.**
+| job | wall | setup | pytest | tests |
+|---|---:|---:|---:|---:|
+| `lint` | 0m10s | 7s | ruff 1s | — |
+| `suite (coedit)` | 2m11s | 8s | 118.56s | 118 |
+| `suite (editor)` | 2m25s | 9s | 133.05s | 120 |
+| `suite (graph)` | 2m29s | 7s | 134.67s | 78 |
+| `suite (rest)` | 2m43s | 7s | 147.63s | 1032 |
+| **`suite (views)`** | **2m51s** | 10s | **156.04s** | 340 |
+| `check` | 0m03s | — | — | — |
+| **run** | **3m02s** | | | **1688** |
 
-That is a real claim and it is the reason for the shape of this plan. Under
-job-sharding, each shard runs its tests **serially, in one process, in file
-order, on its own kernel**. Every port bind is uncontended exactly as it is
-today. Every `time.sleep(0.5)` in `test_coedit.py` has the whole box. Every
-`--virtual-time-budget` margin is measured against the same CPU it was sized
-against. No test's neighbours change except by moving whole files, and no test in
-this suite depends on a neighbour — verified: no `os.chdir` anywhere in `tests/`
-or `src/`, no autouse fixtures, no ordering plugins, every `monkeypatch` is
-function-scoped and restored, `coedit.Rooms()` is constructed inside
-`create_app` rather than at module level, every `Store` and `create_app` in the
-suite builds under `tmp_path`, and `render.py`'s `@cache`s are pure functions of
-committed files.
+### How much of three minutes is not testing
 
-The two exceptions are exactly changes 5 and 8, and neither is a timing problem:
-the `_PARSED` assertions get weaker or stronger depending on what ran before
-them, and a hand-written shard list fails open. Both are closed by construction
-rather than by hoping.
+Of the 182 seconds, **156 are pytest running tests and 26 are not**: 4s from run
+creation to the first runner picking the job up, 10s of setup on the critical-path
+leg (2s job init, 2s checkout, 3s `setup-uv`, 3s `setup-node`, <1s
+`uv sync --locked`), ~1s of interpreter start and collection, 4s of job teardown,
+and 7s for the `check` fan-in to schedule, run and finalise.
 
-What genuinely gets worse: five runners instead of one is five chances of an
-infrastructure hiccup, and the shard lists need re-balancing when the suite grows
-— which the durations table already tells you how to do, and which costs four
-minutes to verify instead of twenty-three.
+**So overhead is 14% of the gate, against 1.2% before.** That is the real reason
+five is the ceiling and the break-even formula in change 6 is not: the formula
+says setup cost allows ten shards, and it is right, but it is measuring the wrong
+thing. Halving the critical path again from here would put overhead near a
+quarter of a two-minute gate, and every second of it is spent on nothing.
 
-The path that was **not** taken, and why, in one line: `-n auto` would have put
-two headless Chromes and a 300-millisecond latency assertion on the same two
-vCPUs, and the first intermittent red would have been a test accusing the
-co-editing code of a defect it does not have.
+### Billed machine time — the prediction that missed by five minutes
+
+**Predicted "about 12 minutes billed". It is 17.** The arithmetic was right and
+the units were wrong: 12m52s is the actual machine *time* (10 + 131 + 145 + 149 +
+163 + 171 + 3 seconds), down 43% from the baseline's 22m43s. But **GitHub bills
+each job rounded up to the whole minute**, and five legs of 2m11s–2m51s each round
+up to 3. Seven jobs pay seven roundings. 23 → 17 is still a real saving and the
+sharded gate is genuinely cheaper than the serial one was — but anyone budgeting
+from this document should use 17, and should know that a sixth shard costs a full
+billed minute before it saves a second.
+
+### What actually got faster, in order
+
+1. **One `@cache` on template compilation: 682 seconds.** Half the gate, from a
+   change with no concurrency in it, that also makes the deployed server draw
+   every page faster. This remains the headline and it is not a CI change at all.
+2. **Five machines instead of one: 546 seconds.** Second, and only because the
+   first one shrank what had to be split.
+3. Everything else, together: inside the noise.
+
+That order is the answer to *"should we parallelise?"* — **parallelise second.**
+Had the split gone in first, it would have divided 1393 seconds five ways to
+~4m45s, been declared a success, and left the recompilation in the product where
+users pay for it on every page.
+
+### What is now flaky: still nothing, but the timing is noisier than expected
+
+No test changed behaviour, no test was disabled, no test was made to tolerate
+anything, and nothing intermittent appeared across five green runs. Within a
+shard the tests still run **serially, in one process, in file order, on their own
+kernel** — every port bind uncontended, every `time.sleep(0.5)` with the whole
+box, every `--virtual-time-budget` margin measured against the same CPU it was
+sized against. That property is what the whole plan was shaped to preserve and it
+survived intact.
+
+Three things nevertheless got worse, and they should be written down:
+
+* **Per-leg wall clock varies by up to 36% run to run.** `editor` was 181.15s and
+  then 133.05s on identical code twenty minutes apart; `graph` 106.38s then
+  134.67s. The critical path is a different shard in each run. Nothing fails
+  because of it — no test in the suite asserts on total elapsed time — but it
+  means the shard lists cannot be tuned finer than the hardware, and a leg that
+  looks 20% over on one run has told you nothing.
+* **Five runners is five chances of an infrastructure hiccup**, where there was
+  one. The compensation is that a re-run now costs three minutes rather than
+  twenty-three, so the rational response to an odd red has changed from
+  "investigate for an hour" to "press the button".
+* **The shard lists are hand-written and fail open.** Closed by
+  `test_every_test_file_is_in_exactly_one_ci_shard`, which is why change 8 is not
+  optional and why it must never be deleted as bookkeeping. Without it, adding
+  `tests/test_new.py` and forgetting the list makes CI *greener*.
+
+And one thing that did **not** get worse, because it was checked rather than
+assumed: **zero skips in all five legs.** A shard whose runner had lost `node` or
+`google-chrome` would have gone green with 34 JS tests and 175 pixel tests
+silently not run, which is the single failure mode a gate must never have.
+`addopts = "-ra"` is what makes that readable in the log, and it is the reason
+that line is in `pyproject.toml` and is not `-q`.
+
+### What is left, and what it is worth
+
+`test_editor.py` is no longer the floor — nothing is, at this precision — so the
+next move is not a sixth shard. It is section 4's deferred item: **one long-lived
+Chrome for all 175 pixel tests**, driven over DevTools the way `in_a_live_page`
+already does, worth roughly 330 seconds of process startup spread across every
+leg. At a three-minute gate there is no hurry, and it is gated on the acceptance
+test named there — both harnesses behind a switch, whole suite twice, the JSON
+from all 135 `measured_in` call sites byte-identical — because a viewport override
+is not an OS window and the failure mode is silent.
+
+The path **not** taken, in one line: `-n auto` would have put two headless Chromes
+and a 300-millisecond latency assertion on the same two vCPUs, and the first
+intermittent red would have been a test accusing the co-editing code of a defect
+it does not have.
