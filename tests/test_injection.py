@@ -51,6 +51,7 @@ import pytest
 from fastapi.testclient import TestClient
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
+from pages import render_paths, render_source
 from test_store import commit_directly
 
 from openproj.index import build_index
@@ -447,9 +448,8 @@ def test_no_template_marks_a_value_safe():
     where markup is expected is escaped rather than injected. Which only stays
     true while nothing writes `|safe` again.
     """
-    source = (Path(__file__).resolve().parents[1] / "src" / "openproj" / "render.py")
     lines = [
-        line for line in source.read_text(encoding="utf-8").splitlines()
+        line for line in render_source().splitlines()
         if "|safe" in line and not line.lstrip().startswith(("#", "*"))
         # The rule is written down in three docstrings, which have to be able to
         # name the thing they forbid.
@@ -471,8 +471,7 @@ def test_every_page_carries_exactly_one_escaper():
     from openproj.render import _SHELL
 
     assert _SHELL.count("const esc = ") == 1
-    source = (Path(__file__).resolve().parents[1] / "src" / "openproj" / "render.py")
-    assert source.read_text(encoding="utf-8").count("const esc = ") == 1
+    assert render_source().count("const esc = ") == 1
 
 
 def test_the_fixture_really_is_hostile(hostile_static):
@@ -651,8 +650,7 @@ def test_adding_somebody_whose_name_holds_a_quote_does_not_break_the_button(host
 # source so that a marker introduced tomorrow is in the corpus tomorrow.
 # --------------------------------------------------------------------------- #
 
-RENDER_PY = Path(__file__).resolve().parents[1] / "src" / "openproj" / "render.py"
-WEB_PY = RENDER_PY.with_name("web.py")
+WEB_PY = Path(__file__).resolve().parents[1] / "src" / "openproj" / "web.py"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 
 # A marker is a SHOUTING word or an `@@delimited@@` filename inside a template.
@@ -684,10 +682,11 @@ def markers() -> tuple[str, ...]:
     cannot be introduced without landing in this corpus on the same commit.
     """
     found: set[str] = set(SUBSTITUTED)
-    for node in ast.walk(ast.parse(RENDER_PY.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            found |= set(_SHOUTED.findall(node.value))
-            found |= set(_DELIMITED.findall(node.value))
+    for source in render_paths():
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                found |= set(_SHOUTED.findall(node.value))
+                found |= set(_DELIMITED.findall(node.value))
     for path in STATIC_DIR.iterdir():
         found |= {path.name, f"@@{path.name}@@"}
     return tuple(sorted(found))
@@ -854,7 +853,7 @@ def test_no_page_is_assembled_by_substitution():
     tell that from a Python call. The parser can.
     """
     offenders = []
-    for source in (RENDER_PY, WEB_PY):
+    for source in (*render_paths(), WEB_PY):
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.Call):
                 continue
