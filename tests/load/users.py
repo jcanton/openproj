@@ -407,6 +407,11 @@ class CoEditor(Person):
     answer for every run is "no, and the reason is that nobody saved".
     """
 
+    # The class `connect` opens. A scenario that needs the socket instrumented —
+    # timestamping every applied update, say — subclasses `Typist` and names it
+    # here rather than reimplementing the join. Default is exactly what it was.
+    TYPIST = Typist
+
     def __init__(
         self,
         *args,
@@ -442,7 +447,7 @@ class CoEditor(Person):
         person who typed nothing.
         """
         begun = time.monotonic()
-        self.member = Typist(
+        self.member = self.TYPIST(
             self.world.port, self.login, self.entity, self.client_id, applies=True
         )
         self.note(kind="WS join", ms=(time.monotonic() - begun) * 1000, status="joined",
