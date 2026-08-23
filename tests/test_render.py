@@ -651,10 +651,18 @@ def test_a_bar_is_exactly_as_wide_as_the_span_the_scheduler_computed(tmp_path: P
     # for a bar, never a bare `.bar` that is both.
     style = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
     style = re.sub(r"/\*.*?\*/", " ", style, flags=re.S)   # a comment is not a selector
+    # Split rather than `re.findall(r"([^{}]*)\{", style)`, which is the same
+    # answer and took 13.4 of this test's 13.6 seconds. `[^{}]*` runs to the
+    # closing `}` of a declaration block, fails the `\{`, and backtracks a
+    # character at a time from every start position inside the block — quadratic
+    # in the block length, over a 110 KB inlined stylesheet. Splitting on `{`
+    # leaves each chunk holding the text before one brace; the last brace such a
+    # chunk can contain is a `}`, so what follows it is exactly the selector the
+    # regex captured. Checked: same 318 strings, in the same order, in 0.1ms.
     unqualified = [
         selector.strip()
-        for rule in re.findall(r"([^{}]*)\{", style)
-        for selector in rule.split(",")
+        for chunk in style.split("{")[:-1]
+        for selector in chunk.rsplit("}", 1)[-1].split(",")
         if re.search(r"(^|[\s>+~])\.bar\b", selector.strip())
     ]
     assert not unqualified, unqualified

@@ -45,6 +45,15 @@ jobs:
       # never be the one deployed.
       - run: uv sync --locked --group dev
 
+      # A measurement probe, out again with the `--durations` flags below. How
+      # much parallelism is worth buying depends on the shape of the box, and
+      # this repository is PRIVATE: GitHub's standard `ubuntu-latest` is 4-core
+      # for public repositories and 2-core for private ones, so `-n auto` here
+      # may mean `-n 2`, and a `-n 4` written on that assumption would
+      # oversubscribe the CPU that the suite's wall-clock budgets are measured
+      # against. One second of log settles it instead of a guess.
+      - run: nproc && free -m && df -h /dev/shm && google-chrome --version
+
       - run: uv run ruff check .
 
       # No `ruff format --check` yet, on purpose: 32 of the 103 files predate any
