@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
-from pages import elements, headings, lit, selects
+from pages import elements, headings, lit, render_source, selects
 
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
@@ -1581,9 +1581,7 @@ def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal(
     is proved by running it (`test_table`, `test_editor`), and what this pins is
     that the next call site cannot be written bare.
     """
-    from openproj.render import __file__ as rendered_from
-
-    source = Path(rendered_from).read_text(encoding="utf-8")
+    source = render_source()
     helper = re.search(r"const remembered = \{.*?\n\};", source, re.S)
     assert helper, "the storage helper is gone or has been renamed"
 
@@ -1874,7 +1872,7 @@ def test_the_labels_and_the_bars_are_laid_out_on_one_row_height(
     a third copy of `_ROW_PX`, so this moves the constant and asks both."""
     from openproj import render
 
-    monkeypatch.setattr(render, "_ROW_PX", 30)
+    monkeypatch.setattr(render.timeline, "_ROW_PX", 30)
     page = render.render_timeline(seed_index)
 
     assert "height: 30px; line-height: 30px;" in page
@@ -1889,9 +1887,8 @@ def test_the_renderer_asks_the_model_rather_than_reaching_into_it():
     is an interface nobody agreed to: the renderer had to know the shape of a
     problem tuple to unpack it, so a change to the validator's own bookkeeping
     would have broken a page. `model.required_at()` is the front door."""
-    from openproj import render
 
-    source = Path(render.__file__).read_text(encoding="utf-8")
+    source = render_source()
     # Comments dropped: this file explains what it stopped doing, and the point is
     # that nothing executable reaches for the name any more.
     code = "\n".join(
@@ -3970,9 +3967,8 @@ def test_the_graph_does_not_animate_where_css_cannot_stop_it():
     to guard is that neither cytoscape's own animation API nor a re-introduced
     `layout({...})` brings a slide back for a reader who asked for stillness.
     """
-    from openproj import render
 
-    source = Path(render.__file__).read_text(encoding="utf-8")
+    source = render_source()
     for spec in re.findall(r"\.layout\((\{[^}]*\})\)", source):
         assert "animate" not in spec, (
             f"cytoscape was told to animate in {spec}; CSS cannot reach a canvas, so "

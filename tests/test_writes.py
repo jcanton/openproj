@@ -19,11 +19,11 @@ banner beside the row, and what was actually sent.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pygit2
 import pytest
 from fastapi.testclient import TestClient
+from pages import render_source
 from test_injection import run_js
 from test_store import commit_directly
 from test_web import ANN, SECRET, SEED, TASK
@@ -249,9 +249,8 @@ def test_no_write_path_reads_a_key_a_conflict_does_not_carry():
     """The fold, stated once. Reading `answer.detail` at a call site is the shape
     of the bug: it is a page deciding what the answer holds without knowing that
     the status could be 409."""
-    source = (Path(__file__).resolve().parents[1] / "src" / "openproj" / "render.py")
     stray = [
-        line.strip() for line in source.read_text(encoding="utf-8").splitlines()
+        line.strip() for line in render_source().splitlines()
         if "answer.detail" in line and not line.lstrip().startswith("//")
         # `refusal` itself is the one place that may read it, and the asset
         # uploader posts to an endpoint that cannot conflict — an image is named
