@@ -5620,3 +5620,578 @@ def test_the_second_editors_caret_is_reported_when_it_moves_and_not_when_it_type
         "the caret this tab would send to a room was not offered when it moved, so "
         f"everybody else's band stays where this person last typed: {got['seats']}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# A splice boundary inside a character
+#
+# `AGENTS.md` names the defect this section is written for, and names why a green
+# suite shipped it: **no test drove the editor with anything but ASCII**, and for
+# ASCII the three index spaces this application counts in are one number. They
+# are not one number on anything else:
+#
+#   * a Python `str`, and `[...text]` in the browser, count CODE POINTS;
+#   * `pycrdt.Text` counts UTF-8 BYTES;
+#   * a JavaScript string, `Y.Text`, `selectionStart` and every index the two
+#     surfaces trade count UTF-16 CODE UNITS, and an emoji is two of them.
+#
+# What is asked below is the browser's half, which is this file's half: what the
+# SURFACE does when a boundary lands between the halves of a surrogate pair.
+# `tests/test_coedit.py` asks the other half — whether a real `openproj.coedit`
+# room and a real browser converge — and that is a stronger claim about a
+# narrower path. The room here is the page's own Yjs on both ends of a socket
+# that goes nowhere, because these questions are about `reflect()`, about
+# `SURFACE.splice` and about the deltas Ace reports, none of which needs a
+# server, and because a `Room` and a uvicorn per body is a large bill for an
+# answer the browser is already holding.
+#
+# Every literal below is spelled with explicit escapes and never with characters
+# typed into an editor. Composing this corpus on macOS silently produced NFD for
+# `cafe` + U+0301 — which happened to be the case wanted, and would have been an
+# invisible change of meaning if it had gone the other way.
+# --------------------------------------------------------------------------- #
+
+# The other end of the wire, in this page. Every frame the editor writes is kept
+# for the script to hand to the room, and every frame the script wants to deliver
+# goes in through `onmessage` — so the two halves are the real ones and only the
+# wire between them is not. `fetch` is stubbed for the reason every Chrome test
+# here stubs it: a `file://` page cannot reach `/api/preview`, and a session opens
+# one.
+_ONE_PAGE_ROOM = """
+window.__errors = [];
+addEventListener('error', event => window.__errors.push(String(event.message)));
+window.fetch = async () => ({ok: true, json: async () => (
+  {html: '<p data-startline="1">rendered</p>'})});
+window.__sent = [];
+function FakeSocket() {
+  this.readyState = 1;
+  window.__socket = this;
+  setTimeout(() => { if (this.onopen) this.onopen(); }, 0);
+}
+FakeSocket.OPEN = 1;
+FakeSocket.prototype.send = function (data) { window.__sent.push(JSON.parse(data)); };
+FakeSocket.prototype.close = function () { this.readyState = 3; };
+window.WebSocket = FakeSocket;
+"""
+
+# What the three scripts below share: base64 both ways, a session, somebody
+# else's copy of the document on the other end of the socket, and the server's
+# whole job — putting what this tab sent into that copy.
+#
+# `half` is the extra signature the reflect cases need, and it is needed because
+# equality alone cannot see this one. A lone surrogate cannot be encoded, so on
+# the server side it comes back as U+FFFD and the strings differ — but a half
+# parked in an Ace row does NOT travel with the next delta, so at the instant the
+# two copies are compared there is nothing on the wire to see. This looks at the
+# surface itself.
+_A_ROOM_IN_THE_PAGE = r"""
+const b64 = bytes => {
+  let out = '';
+  for (let at = 0; at < bytes.length; at += 0x8000)
+    out += String.fromCharCode.apply(null, bytes.subarray(at, at + 0x8000));
+  return btoa(out);
+};
+const raw = held => Uint8Array.from(atob(held), letter => letter.charCodeAt(0));
+const half = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const tick = ms => new Promise(go => setTimeout(go, ms));
+
+if (!document.querySelector('article.record').classList.contains('editing')) flipEditing();
+await tick(300);
+const socket = window.__socket;
+if (!socket) return {missing: 'the session opened no socket'};
+
+// Somebody else's copy, built out of the bundle the page itself ships rather
+// than out of a shim: `tests/js/drive.js` handing its own realm's `String` into
+// a vm context is how a harness last lied to this repository, and the library
+// here cannot be a different one because it IS the page's.
+const room = new YJS.Doc();
+const shared = room.getText('body');
+shared.insert(0, ORIGINAL_BODY);
+const tell = () => socket.onmessage({data: JSON.stringify({
+  t: 'update', u: b64(YJS.encodeStateAsUpdate(room))})});
+socket.onmessage({data: JSON.stringify({
+  t: 'welcome', seed: 'a-seed', base: '0'.repeat(40), you: 'ann',
+  sv: b64(YJS.encodeStateVector(room)),
+  update: b64(YJS.encodeStateAsUpdate(room))})});
+await tick(80);
+
+let frames = 0;
+const heard = () => {
+  for (const frame of window.__sent.splice(0)) {
+    if (frame.t !== 'update') continue;
+    frames++;
+    YJS.applyUpdate(room, raw(frame.u), 'ann');
+  }
+};
+heard();
+frames = 0;
+
+const remote = async want => {
+  shared.delete(0, shared.length);
+  shared.insert(0, want);
+  tell();
+  await tick(80);
+};
+"""
+
+
+# Every pair was measured rather than reasoned about, and each row says which
+# confusion it can see. What decides a case is where the boundary falls relative
+# to the differing character — not that there is an emoji in it somewhere — so
+# each row carries the cut in two spaces.
+_REFLECTED = (
+    # A1. The named case, in the one direction nobody drives. The two thumbs
+    # differ only in their SECOND code unit, so the code-unit scan `reflect()`
+    # runs stops at head 1 — between D83D and DC4D, inside a character. It is
+    # right today because everything downstream of that index counts code units
+    # too; a scan over characters would say cut [0,1) and hand a 0 and a 1 to a
+    # `splice` that reads them as units. 7 code points, 10 bytes, 8 code units.
+    ("\N{THUMBS UP SIGN} done\n", "\N{THUMBS DOWN SIGN} done\n"),
+    # C2. A ZWJ family whose first member changes. U+1F469 and U+1F468 share
+    # their high surrogate, so the scan stops at head 1 — inside a pair and
+    # inside a grapheme cluster at once. Nothing in `src/` counts graphemes,
+    # which is why what this asserts is the document and never one-press-one-glyph.
+    ("\U0001f469\u200d\U0001f469\u200d\U0001f467 crew\n",
+     "\U0001f468\u200d\U0001f469\u200d\U0001f467 crew\n"),
+    # A3, in the reflect direction. Two regional indicators; the boundary falls
+    # inside the SECOND pair, at head 3. Half a flag is a valid DIFFERENT flag
+    # rather than a broken character, so a corpus that only looked for U+FFFD
+    # would let a shifted boundary through here.
+    ("\U0001f1e9\U0001f1ea\n", "\U0001f1e9\U0001f1eb\n"),
+    # F1. The robot, and the row that says a control has to be declared per
+    # DIRECTION as well as per confusion. It is recorded as the control for the
+    # surrogate confusion and it is one in the direction the shipped defect took:
+    # a code-unit scan stops at head 14, no boundary falls inside a pair, and the
+    # answer comes out right. It is NOT a control in the other direction, which
+    # is the one `reflect()` could take — a code-point scan stops at 13, the
+    # splice consuming it counts units, and a character on the boundary is eaten.
+    # Measured, with that scan in place: `'\U0001f916 written bysomebody\n'`.
+    # Nor is it a control for the byte confusion, where code points [13,21) are
+    # bytes [16,24).
+    ("\U0001f916 written by an agent\n", "\U0001f916 written by somebody\n"),
+    # F2. A control for both confusions AT THE REFLECT, and a live case on `ace`
+    # one line later. The cut is [7,7) in every one of the three spaces, so no
+    # scan can move it and the reflect itself is right under either break. What
+    # is not a control is what this test does next: the trailing keystroke goes in
+    # at the END of a document that now carries an astral character, so on Ace
+    # `run.from` counted in code points reports 16 where the surface spliced at
+    # 17. Measured under that break: surface and room BOTH hold
+    # `'a fine \U0001f389 resultZ\n'`, the Z one place early, in perfect
+    # agreement — `reflect()` rewrites the editor to match the run it just sent.
+    # It stays a control on `plain`, which does not use Ace's index at all.
+    #
+    # So F2 is a control for the reflect and F3 is the only one of the six that
+    # is a control end to end. A control has to be declared against a named
+    # confusion, a direction AND a surface, and this is the row that pays for
+    # that sentence.
+    ("a fine result\n", "a fine \U0001f389 result\n"),
+    # F3. A control for both, and the byte family's analogue of F2 — the em dash
+    # is present and sits AFTER both boundaries, so code points [1,5) are bytes
+    # [1,5). This is what lets the suite say that "has an em dash in it
+    # somewhere" is not the case either. The byte family has never had one.
+    ("hello \u2014 world\n", "hi \u2014 world\n"),
+)
+
+_REFLECTING = _A_ROOM_IN_THE_PAGE + r"""
+const answers = [];
+for (const [was, now] of CASES) {
+  await remote(was);
+  const opened = SURFACE.text();
+  await remote(now);
+  const after = SURFACE.text();
+  // And then one character typed by this tab, at the end of the document. On the
+  // box `typed()` diffs the whole value, so a half left parked in `.value` is
+  // pushed up the wire by the next keystroke; on Ace only the delta run travels
+  // and a half stays in the row for ever, which is the other reason `loose` is
+  // asked of the surface directly.
+  const at = after.length;
+  SURFACE.setCaret(at, at);
+  SURFACE.splice(at, at, 'Z');
+  await tick(80);
+  heard();
+  answers.push({opened, after, loose: half.test(after),
+                surface: SURFACE.text(), room: shared.toString()});
+}
+return {errors: window.__errors, answers, frames,
+        surface: SURFACE.onSplice ? 'ace' : 'textarea'};
+"""
+
+
+@pytest.mark.parametrize("editor", ["ace", "plain"])
+def test_a_remote_keystroke_between_the_halves_of_a_pair_reaches_the_surface_whole(
+    client: TestClient, tmp_path: Path, editor: str
+):
+    """Somebody else types, and the boundary lands inside a character.
+
+    `reflect()` is the one hand-off in this direction: it scans a common prefix
+    and suffix in UTF-16 code units and gives the two ends straight to
+    `SURFACE.splice`, whose `positionOf` is `indexToPosition`, which clips to
+    `[0, line.length]` and never to a character boundary. On the thumbs-up pair
+    that scan stops at 1 — between D83D and DC4D — and the whole of why the page
+    is right today is that the index and everything downstream of it are counted
+    in the SAME space. Nothing said so: every test of this direction was ASCII,
+    and for ASCII code points and code units are one number.
+
+    The failure has two shapes and only equality catches both. A boundary applied
+    from a character count leaves the surface holding a lone low surrogate, which
+    the room's copy cannot encode — so the two documents differ permanently and
+    U+FFFD appears in one of them. A boundary shifted the other way produces a
+    perfectly well-formed string that is simply wrong, which is the shape the em
+    dash and the flag have. So this asserts the string, never a substring, and
+    scans the surface for a surrogate with no partner besides.
+
+    Both surfaces, because this is the invariant written in two languages and
+    guarding one copy of it is how the browser's half shipped in the first place:
+    `textareaSurface.splice` is `was.slice(0, from) + put + was.slice(to)` and
+    Ace's is `Document.remove` and `Document.insert`, and the index arrives at
+    both of them from the same line of `reflect()`.
+
+    The controls are counted per surface, because measured they are not the same
+    set on both. On `plain`, two of the six pass with either confusion in place.
+    On `ace` only F3 does: F2's reflect is right under both, and the keystroke
+    this test makes after it is not, because by then the document carries an
+    astral character and Ace's own index is what carries the run. F1 is a control
+    in one DIRECTION only and is measured failing in the other. Each row says
+    which, above its literal — and the reason each says it rather than the corpus
+    saying it once is that "control" is a claim about a confusion, a direction
+    and a surface together, and no one of the three implies the others.
+    """
+    page = client.get(f"/detail/{TASK}?editor={editor}").text.replace(
+        '<link rel="icon"', f'<script>{_ONE_PAGE_ROOM}</script><link rel="icon"', 1
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / f"reflect-{editor}.html", 1400,
+        _REFLECTING.replace("CASES", json.dumps([list(pair) for pair in _REFLECTED])),
+        query=f"?editor={editor}", patience=9000,
+    )
+
+    assert not got.get("missing"), got.get("missing")
+    assert got["errors"] == [], f"the page threw: {got['errors']}"
+    assert got["surface"] == ("ace" if editor == "ace" else "textarea"), (
+        f"the page mounted {got['surface']}, so nothing here was driven"
+    )
+    for (was, now), answer in zip(_REFLECTED, got["answers"], strict=True):
+        assert answer["opened"] == was, (
+            f"the room's {was!r} never reached the surface, so nothing below it was "
+            f"driven: the surface holds {answer['opened']!r}"
+        )
+        assert answer["after"] == now, (
+            f"somebody else edited {was!r} into {now!r} and this surface ended up "
+            f"holding {answer['after']!r}"
+        )
+        assert not answer["loose"], (
+            f"a surrogate with no partner is parked in the surface: {answer['after']!r}"
+        )
+        assert answer["surface"] == answer["room"] == now + "Z", (
+            f"one character typed after the reflect left the surface holding "
+            f"{answer['surface']!r} and the room holding {answer['room']!r}"
+        )
+    # One frame per keystroke this tab made, and not one more. A reflect writes
+    # under `apply`, so it must put nothing on the wire at all — the naive
+    # adapter this replaced made a PASSIVE tab push the whole document back up
+    # the socket under its own name, 97,892 characters for a four-character
+    # remote keystroke.
+    assert got["frames"] == len(_REFLECTED), (
+        f"{len(_REFLECTED)} keystrokes were made in this tab and {got['frames']} update "
+        "frames went up the wire: somebody else's typing is being sent back as this "
+        "tab's own"
+    )
+
+
+# Ace's own gestures, and what the surface says it changed. The runs are the
+# thing under test: `spliced()` hands `run.from` and `run.to - run.from` to the
+# `Y.Text` with no conversion at all, which is correct ONLY while they came out
+# of `positionToIndex` — code units already. A count of characters anywhere on
+# that path splits a pair or shortens a run.
+_GESTURES = (
+    # C1. `cafe` + U+0301 and `pre` + U+0302 — a decomposed e-acute, and a
+    # backspace that takes the accent. A CONTROL FOR BOTH BROWSER CONFUSIONS,
+    # measured: 19 code points and 19 code units, so no index on this line can
+    # move between the two spaces a browser counts in. Its live arm is the third
+    # space — 21 bytes, with the deleted run ending inside a two-byte character,
+    # which is `Room.absorb` and belongs to `tests/test_coedit.py`. What this
+    # must NOT assert is that one glyph vanished: nothing in `src/` counts
+    # graphemes, Ace's `moveCursorLeft` is `moveCursorBy(0, -1)`, and measured it
+    # removes U+0301 alone and leaves `cafe`. That is Ace's decision, and what
+    # must hold is that whatever Ace removed is what the room removed.
+    {"was": "le cafe\u0301 est pre\u0302t\n", "at": "le cafe\u0301", "select": "",
+     "put": "", "now": None},
+    # E1. A selection whose ends are both on whole characters and whose LENGTH is
+    # not: the run `"— the "` is 6 code points, 8 bytes and 6 code units. A
+    # CONTROL FOR BOTH BROWSER CONFUSIONS for the reason C1 is — an em dash is
+    # one of each — and a live case for the byte one, where those 6 are 8 and
+    # the wrong answer is `'six weeks e appetite\n'`.
+    {"was": "six weeks \u2014 the appetite\n", "at": "six weeks ",
+     "select": "\u2014 the ", "put": "", "now": "six weeks appetite\n"},
+    # E2. A replacement spanning an astral emoji. Both boundaries are on whole
+    # characters, so no scan can fail — what this tests is the LENGTH, which is
+    # 8 code points, 11 bytes and 9 code units for the one run.
+    {"was": "ship \U0001f680 on friday\n", "at": "ship ",
+     "select": "\U0001f680 on friday", "put": "today", "now": "ship today\n"},
+    # And the shape none of the three above has: an edit that is only MOVED by
+    # what sits in front of it. Every other `at` here is an all-ASCII prefix, so
+    # the caret's index is the same number in both browser spaces and a `run.from`
+    # counted in code points would go unnoticed — measured, all three pass with
+    # that defect in place. The rocket is one code point and two code units, so
+    # this one is 10 in the space Ace reports and 9 in the other. It is the
+    # browser's analogue of the em-dash run on the server's side of the wire.
+    {"was": "\U0001f680 ship it\n", "at": "\U0001f680 ship it", "select": "",
+     "put": "", "now": "\U0001f680 ship i\n"},
+)
+
+_ACE_GESTURED = _A_ROOM_IN_THE_PAGE + r"""
+const editor = SURFACE.editor;
+if (!editor) return {missing: 'the page mounted the box, so nothing here was driven'};
+let said = [];
+SURFACE.onSplice(runs => { for (const run of runs) said.push([run.from, run.to, run.put]); });
+
+const answers = [];
+for (const one of CASES) {
+  // Seeded through the surface as an ordinary edit, so the room hears it the way
+  // it hears typing — and at 0 and the whole length, which is the same index in
+  // all three spaces and therefore cannot be the thing that fails below.
+  SURFACE.splice(0, SURFACE.text().length, one.was);
+  await tick(90);
+  heard();
+  const opened = SURFACE.text(), seeded = shared.toString();
+  said = [];
+  const start = one.at ? one.was.indexOf(one.at) + one.at.length : 0;
+  SURFACE.setCaret(start, start + one.select.length);
+  // Ace's own editing commands and never the surface's `splice`, so the delta
+  // the binding consumes is one Ace made rather than one this test made.
+  if (one.put) editor.insert(one.put); else editor.remove('left');
+  await tick(90);
+  heard();
+  // Snapshotted, not handed over: `said` is rebound at the top of the next turn
+  // of this loop, and an array handed over by reference goes on collecting the
+  // NEXT case's seeding runs into the answer for this one.
+  answers.push({opened, seeded, runs: said.slice(), surface: SURFACE.text(),
+                room: shared.toString(), loose: half.test(SURFACE.text())});
+}
+return {errors: window.__errors, answers, frames,
+        surface: SURFACE.onSplice ? 'ace' : 'textarea'};
+"""
+
+
+def test_what_the_second_surface_says_it_changed_is_what_the_room_changes(
+    client: TestClient, tmp_path: Path
+):
+    """The outgoing half, on three gestures nothing drives with a character that
+    is more than one of anything.
+
+    Ace reports its own deltas — a position and the lines — and the binding turns
+    the position into an index with `positionToIndex`, which counts UTF-16 code
+    units, and the length with `lines.join('\\n').length`, which counts them too.
+    That is the whole correctness argument, and it is why
+    `test_the_browser_splices_on_a_whole_character` allowlists `run.from` by name
+    while every other index into the document has to come from a named
+    conversion. Nothing drove that allowlist. Each body below has a character
+    that is more than one code unit, more than one byte, or both, and each one
+    puts a boundary or a length across it.
+
+    What this refuses to assert is how much a gesture removes. Ace's backspace
+    takes a code point, so `cafe` + U+0301 loses the accent and keeps the
+    `e` — Ace's decision, not this binding's, and pinning it here would pin
+    somebody else's behaviour. What must hold is that whatever the surface says
+    it changed is what the room changed, and that no surrogate is left without a
+    partner at either end.
+
+    Both halves of that are needed and neither is enough, because a wrong run
+    corrupts BOTH copies: `spliced()` writes it into the document, the document
+    is what `reflect()` reads, and one turn later the editor has been rewritten
+    to agree with it. Measured under a run length counted in code points, E2
+    leaves the surface AND the room holding `'ship todayy\n'`. So the outcome is
+    asserted beside the agreement wherever the gesture has one outcome; where it
+    does not — C1, whose answer is Ace's — the agreement is all there is, and
+    that case is a control here and a live case in the room.
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text.replace(
+        '<link rel="icon"', f'<script>{_ONE_PAGE_ROOM}</script><link rel="icon"', 1
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "ace-gestures.html", 1400,
+        _ACE_GESTURED.replace("CASES", json.dumps(list(_GESTURES))),
+        query="?editor=ace", patience=9000,
+    )
+
+    assert not got.get("missing"), got.get("missing")
+    assert got["errors"] == [], f"the page threw: {got['errors']}"
+    for case, answer in zip(_GESTURES, got["answers"], strict=True):
+        assert answer["opened"] == case["was"] == answer["seeded"], (
+            f"the surface opened on {answer['opened']!r} and the room on "
+            f"{answer['seeded']!r}, so nothing below was driven"
+        )
+        assert answer["runs"], "the surface reported no change at all"
+        assert answer["surface"] != case["was"], "the gesture changed nothing"
+        assert not answer["loose"], (
+            f"a surrogate with no partner is parked in the surface: {answer['surface']!r}"
+        )
+        assert answer["room"] == answer["surface"], (
+            f"the surface holds {answer['surface']!r} and the room holds "
+            f"{answer['room']!r} — the runs it reported were {answer['runs']}"
+        )
+        if case["now"] is not None:
+            assert answer["surface"] == case["now"], (
+                f"the gesture should have left {case['now']!r} and left "
+                f"{answer['surface']!r}"
+            )
+
+
+# 1,500 characters, every one of them ASCII on purpose: the find side stays
+# `cycle` so that vim's own regex is not the variable, and the character worth
+# two code units goes in the REPLACEMENT. That is what makes the document grow
+# apart from itself as the gesture runs — by the last replacement the same place
+# is 1,331 in code units and 1,284 in code points, a drift of 47 — and it is why
+# the mechanical three-length check has to be applied to the intermediate
+# document here and not to the endpoints, which would reject this case for being
+# ASCII on the way in.
+_BULK = ("A cycle is six weeks and a cycle is what a bet is made for.\n"
+         "Every cycle has a cool-down, and the cycle after it starts cold.\n") * 12
+
+_SUBSTITUTED_ASTRAL = _A_ROOM_IN_THE_PAGE + r"""
+const editor = SURFACE.editor;
+if (!editor) return {missing: 'the page mounted the box, so nothing here was driven'};
+const keymap = [...document.querySelectorAll('#statusbar button')]
+  .find(b => b.textContent.startsWith('Keymap'));
+if (!keymap) return {missing: 'the second editor carries no keymap control'};
+keymap.click();
+await tick(80);
+SURFACE.splice(0, SURFACE.text().length, CORPUS);
+await tick(150);
+heard();
+const opened = SURFACE.text(), seeded = shared.toString();
+frames = 0;
+let places = 0, touched = 0;
+SURFACE.onSplice(runs => {
+  places += runs.length;
+  for (const run of runs) touched += (run.to - run.from) + run.put.length;
+});
+// The ex line through vim's own handler, which is what typing it and pressing
+// Enter reaches. What is under test is the gesture's effect on the room and not
+// vim's command parser, so it is driven here rather than as thirteen keystrokes.
+const Vim = ace.require('ace/keyboard/vim').CodeMirror.Vim;
+Vim.handleEx(editor.state.cm, '%s/cycle/\u{1F3AF}/g');
+await tick(400);
+heard();
+return {errors: window.__errors, opened, seeded, frames, places, touched,
+        surface: SURFACE.text(), room: shared.toString(), loose: half.test(SURFACE.text()),
+        said: document.getElementById('state').textContent,
+        handler: String(editor.getKeyboardHandler().$id)};
+"""
+
+
+def test_a_substitution_that_types_an_emoji_keeps_every_later_run_where_it_belongs(
+    client: TestClient, tmp_path: Path
+):
+    """One keypress, forty-eight replacements, and a document that grows apart
+    from itself while they are applied.
+
+    `test_a_substitution_over_a_whole_document_is_announced_before_it_is_sent`
+    drives this gesture already, with `cycle` to `bet`. Both are ASCII and the
+    same length, so the drift between a code-point index and a code-unit one over
+    the whole gesture is exactly **0**, and that test cannot see this class of
+    failure at all. Replacing with U+1F3AF makes each replacement one code point
+    and two code units, so the two spaces come apart by one per run: the last
+    one's index is 1,331 in code units and 1,284 in code points. Applied one
+    space out, the measured result is the document shredded — `A [dart] is six
+    weeks and a[dart]e is what a bet is made for.` and on down the file — with no
+    U+FFFD anywhere in it, which is why the assertion here is equality and not a
+    signature.
+
+    And the number the page says out loud, in the same browser because it is the
+    same confusion moved into the copy: `touched` is
+    `(run.to - run.from) + run.put.length`, so 48 replacements are 240 code units
+    out and 96 in and the sentence must say 336. The same gesture is 288 in code
+    points, which is the number a reader would get if that sum ever counted what
+    the sentence calls "characters".
+    """
+    page = client.get(f"/detail/{TASK}?editor=ace").text.replace(
+        '<link rel="icon"', f'<script>{_ONE_PAGE_ROOM}</script><link rel="icon"', 1
+    )
+    got = measured_in(
+        chrome(), page, tmp_path / "ace-subst.html", 1400,
+        _SUBSTITUTED_ASTRAL.replace("CORPUS", json.dumps(_BULK)),
+        query="?editor=ace", patience=9000,
+    )
+
+    assert not got.get("missing"), got.get("missing")
+    assert got["errors"] == [], f"the page threw: {got['errors']}"
+    assert got["handler"] == "ace/keyboard/vim", "the keymap did not come on"
+    assert got["opened"] == _BULK == got["seeded"], (
+        "the surface and the room did not open on the same document"
+    )
+    assert got["surface"].count("\U0001f3af") == 48, (
+        f"the substitution did not run: {got['surface'][:80]!r}"
+    )
+    assert "cycle" not in got["surface"]
+    assert not got["loose"], "a surrogate with no partner is parked in the surface"
+    assert got["room"] == got["surface"], (
+        "the room and the editor disagree after a substitution that types a character "
+        f"worth two code units: the room holds {got['room'][:120]!r}"
+    )
+    # One gesture, one frame — the batching this would otherwise not notice
+    # going: 48 replacements sent one at a time fill the room's outbox.
+    assert got["frames"] == 1, f"the gesture went out as {got['frames']} update frames"
+    # The sentence, and not this test's own sum over the same runs, which would
+    # be the test agreeing with itself. `places` and `touched` come back only to
+    # make the failure readable.
+    assert "336 characters changed at once" in got["said"], (
+        f"the gesture changed 336 code units in {got['places']} places, which this "
+        f"tab's own runs add up to {got['touched']}, and the page said {got['said']!r} "
+        "— 288 is the same gesture counted in code points"
+    )
+
+
+_LONG_AND_NOT_ASCII = _STUB_RENDER + r"""
+const size = document.getElementById('statusbar').lastElementChild;
+const area = document.querySelector('textarea[name=body]');
+flipEditing();
+area.value = '\u9031'.repeat(CHARACTERS);
+area.dispatchEvent(new Event('input'));
+return {text: size.textContent, over: size.classList.contains('over'),
+        said: document.getElementById('state').textContent, units: area.value.length};
+"""
+
+
+def test_the_length_and_the_ceiling_are_not_the_same_number_on_a_document_that_is_not_ascii(
+    client: TestClient, tmp_path: Path
+):
+    """The other half of `test_the_length_says_the_ceiling_before_a_save_is_refused`.
+
+    That test fills the box with `'x'.repeat(n)`. For ASCII a code unit IS a
+    byte, so it passes unchanged over a bar that reads the ceiling off
+    `text.length` — the byte-against-something-else confusion this branch is
+    about, in the browser, on the one readout whose whole job is to say "this
+    will be refused" BEFORE the writing is done and the tab is closed.
+
+    A CJK character is one code unit and three bytes, so 90,000 of them are
+    comfortably under 262,144 as a number and half again over it as a document.
+    The bar has to say both, and say them as two different things: `Length` in
+    code units, because that is what the editor this is modelled on counts, and
+    the ceiling in bytes, because that is what the server refuses.
+    """
+    from openproj.model import MAX_BODY_BYTES
+
+    characters = 90_000
+    assert characters < MAX_BODY_BYTES < characters * 3, (
+        "this is only a fixture while it is under the ceiling as a number and over "
+        "it as a document"
+    )
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "long-cjk.html",
+        1400, _LONG_AND_NOT_ASCII.replace("CHARACTERS", str(characters)), patience=4800,
+    )
+
+    assert got["units"] == characters, "the box is not holding the document this is about"
+    assert got["text"].startswith(f"Length: {characters:,}"), (
+        f"the length is counted in something other than code units: {got['text']!r}"
+    )
+    assert f"{characters * 3:,} of {MAX_BODY_BYTES:,} bytes" in got["text"], (
+        f"a document half again over the ceiling was drawn as {got['text']!r} — the "
+        "ceiling is UTF-8 bytes and this is reading it off a count of code units"
+    )
+    assert got["over"], "a document that cannot be saved is not marked as such"
+    assert "too long to save" in got["text"], got["text"]
+    assert "cannot be saved" in got["said"], (
+        f"and nobody was told before they pressed Save: {got['said']!r}"
+    )
