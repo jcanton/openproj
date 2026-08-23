@@ -6,6 +6,11 @@ markdown file per record, the shaping document *is* the record, every date deriv
 first. This file is the part it does not say — the invariants that fail loudly when you step on
 them, the rules that nine rounds of audit paid for, and how to find the bug that is already here.
 
+**Keep this file specific.** A rule earns its place here by naming the failure it prevents, and
+there is a real one for nearly every rule below. Every generic sentence added makes the specific
+ones cheaper to skip: six hundred words that could only be about this repository beat three
+thousand that could be about any.
+
 ## Work in a worktree, never at the root
 
 `git worktree add .worktrees/<branch> -b <branch> origin/main`, and do everything there. **The
@@ -277,7 +282,19 @@ rule it switches off. The second is `.hill-ball`,
 which rolls between its stops when a status changes; its duration is a `--roll` token so that a drag
 can switch the roll off without writing a second `transition:` into the stylesheet. CSS cannot reach a canvas:
 cytoscape's layout runs at `animate: false` and has to stay there, or the graph moves for a reader
-who asked it not to.
+who asked it not to. The floor covers the reader who is not looking at the screen as well. Every
+control carries a name that reader can find — a real `<label for>` or an `aria-label`, and a
+`<dt>`/`<dd>` pair is not one. A `placeholder` is not one either: it is the last thing the name
+computation falls back to, and it is gone the moment anything is typed. Every editable surface has a
+keyboard path as well as a pointer one, and what the app announces goes into a live region: a save
+announced only visually has not announced itself. One audit found five of these at once — no control
+named anywhere, the table dblclick-only, and not one live region in the rendered output.
+
+**One save model per page, and it is visible.** The cycle page autosaved some fields while its
+setup fields waited on a Save button parked off-screen at the top, and nothing said which was
+which — so an edit you thought you had made was gone, and one you thought you still had to commit
+was already committed. Nothing silently autosaves beside something that does not: a page picks one
+model and shows it, in a bar that carries the dirty state and confirms the save landed.
 
 **Take a screenshot.** The defects that survived longest are the ones no agent could see. The frozen
 column's edge resolved to exactly the value every test asserted, on exactly the element they
@@ -303,6 +320,10 @@ claim is about pixels, look at the pixels.
 - **Derive fixtures from the code where the code is what varies.** `markers()` reads `render.py`;
   `required_at()` runs the gate over a blank record rather than restating it, so it cannot drift
   from the rule it mirrors — it *is* the rule.
+- **State a property as narrowly as it is true.** The scheduler's third property is narrow on
+  purpose: adding an item that shares no worker and no ancestor with an existing item never moves
+  that item's span. The looser "adding an unrelated item never moves anything" is false under a
+  capacity-1 resource model, and a test asserting it flakes and gets deleted by whoever meets it.
 - **Report skips.** `addopts = "-ra"`, deliberately not `-q`: a `-q` there turned the documented
   `pytest -q` into `-qq`, which suppresses the summary line entirely, and thirty-four JS tests
   skipped silently when node was absent.
@@ -350,6 +371,12 @@ nothing, not even the one file you just edited.
 
 A red CI is a normal thing to fix on a branch rather than a failure of process. It costs about
 thirteen minutes of somebody else's hardware and none of jcanton's.
+
+**A pull request GitHub cannot merge gets no CI run at all.** The workflow triggers on
+`pull_request`, which checks out `refs/pull/<n>/merge`, and that ref does not exist while GitHub
+reports the PR `mergeable: CONFLICTING` — so the branch sits with nothing running and nothing red,
+which is indistinguishable from a run that has not finished yet. If the answer has not arrived in
+thirteen minutes, ask `gh pr view <n> --json mergeable` before you ask anything else.
 
 Two habits that follow from it. Push before you are certain rather than after, since the answer
 costs you nothing and arrives in about thirteen minutes — and while it runs, keep working on the
@@ -410,6 +437,13 @@ away: `cytoscape-elk` applies positions to the non-parent nodes and never reads 
 `sections`, so every edge on the graph is cytoscape's own `round-taxi`. Audit what a library
 gives you, and then audit whether the adapter in between is passing it on — the second question
 is the one nobody asks.
+
+The same question was asked of a whole plugin and answered no. `frontend-design` was read and not
+installed: it is written for greenfield work with an open visual brief, where the risk is looking
+templated, and this is a dense internal tool with an identity already. Four of its points survived
+the translation and are in *Design* above — what a qualified selector now beats, structure is
+information, copy is design material, the quality floor — each kept because it named something
+this repository had already got wrong or nearly did. The rest answered a question we do not have.
 
 The audit is three questions: does something already do this; can it be vendored under the rules
 above; and what does it cost against what it replaces. A "no" to any of them is a fine answer —

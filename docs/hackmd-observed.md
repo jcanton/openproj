@@ -16,7 +16,7 @@ workspace logo and before `+`, `?` and search: a **pencil** (edit only), a **spl
 (edit and preview), an **eye** (preview only). One is selected and drawn as a pressed segment;
 in this shot it is the split.
 
-This contradicts where the plan put it. `2026-08-20-editor-plan.md` S2 places the tri-state in
+This contradicts where the plan put it. `docs/EDITOR.md`'s decision table places the tri-state in
 the existing `bodybar` beside Preview, which is inside the editing surface. HackMD puts it in
 the page's own header, next to the document's identity, because it is a property of how you
 are looking at the document rather than of the text — the same argument this repository makes

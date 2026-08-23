@@ -8,8 +8,6 @@ is the search, so that the next person inherits it rather than repeating it —
 `AGENTS.md`'s **Look for it before you write it**, which also says the answer is allowed
 to be no, as long as the no is written down.
 
-The plan that builds this is `docs/superpowers/plans/2026-08-20-editor-plan.md`.
-
 ## What was asked for
 
 A body editor as close to HackMD's as we can get, in this order of importance:
@@ -638,7 +636,10 @@ scar of a shipped defect.
 * **The preview is the server's markdown** through `/api/preview` (`render.py:8482`,
   `web.py:1602`). A second markdown implementation in JavaScript would eventually disagree
   with the one whose output gets committed. It also governs PR-reference linking, asset src
-  rewriting and HTML suppression, none of which a JS renderer reproduces.
+  rewriting and HTML suppression, none of which a JS renderer reproduces. It is also **read-only
+  by decision rather than by omission**: ticking a checkbox in the rendered pane would write to the
+  source from a copy of it, which fights compare-and-swap. `- [ ]` lists render as real checkboxes,
+  so a reader can see them and cannot press them.
 * **Degradation is the ordinary case** (`render.py:8636-8654`): `file://`, a proxy that
   drops the upgrade, Cloud Run tearing every socket down at 300 s, and a reader the server
   would refuse. Every path ends at a value, a `base_commit`, Save and a 409. Nothing here
@@ -748,6 +749,14 @@ whose file had CRLF writes LF back, which was already true the moment anybody ty
 table handled never reaches the page's own listener: measured in Chrome, Tab does not arrive
 and Escape and Cmd+S do. The guard was written, measured, and removed, and the comment where
 it stood says so — a guard whose condition is never true is one no mutation can catch.
+
+**The three-view chord is Ctrl+Shift+1/2/3, not the Ctrl+Alt+E/B/V the decision table above names.**
+Ctrl+Alt *is* AltGr — Chrome delivers the AltGr key as `ctrlKey` and `altKey` together — and on the
+Swiss-German layout half this team types on, AltGr+E is the euro sign, which the chord swallowed.
+Digits and not letters, because Ctrl+Shift+B is Chrome's bookmarks bar and Ctrl+Shift+V is
+paste-as-plain-text; matched on `event.code`, because shift-1 is `!` on one layout and `+` on
+another. Never Cmd still holds, for the reason it was written. The argument in full is at
+`render.py:12870`.
 
 **What is not built, and is the first thing to add:** the seat bands do not draw on the Ace
 path. `coordsAt` answers over Ace's screen rows and `drawSeats` says out loud that they are
