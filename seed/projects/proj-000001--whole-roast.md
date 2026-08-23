@@ -2,7 +2,7 @@
 id: proj-000001
 kind: project
 title: whole_roast
-parent: null
+parent: prod-0f0001
 status: in_progress
 owner: jackdawrie
 assignees: [jackdawrie, hornbillow, hoopoegrove]

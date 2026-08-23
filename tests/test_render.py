@@ -44,6 +44,22 @@ def rendered(seed_index: Index, tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture
+def unrecorded_cycle(seed_root: Path) -> Index:
+    """The same frozen corpus read from inside cycle 36, which `config/cycles.yaml`
+    dates and no file records.
+
+    The people page only ever shows `_current_cycle(index)`, and cycle 37 gained a
+    record when the corpus grew — it starts on 2026-08-17, which is `seed_index`'s
+    own `today` — so at that date the page is about a cycle with a roster. The
+    unrecorded case did not go anywhere: 28, 34, 35 and 36 are still dated in
+    config with nothing written down behind them. So it is asked of a cycle it is
+    true of instead of whichever one the calendar happens to be standing in.
+    """
+    records, config, _ = load_repo(seed_root)
+    return build_index(records, config, date(2026, 7, 1))
+
+
 def read(directory: Path, name: str) -> str:
     return (directory / name).read_text(encoding="utf-8")
 
@@ -288,6 +304,10 @@ def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):
 
     A node holding only what cytoscape draws is how a dropdown comes to filter one
     view and quietly do nothing in the next.
+
+    The dependency keys are the exception, and they say the rule rather than the
+    stored field: `depends_on` is `blocked_by` narrowed to the plan, and
+    `off_plan_deps` says whether the narrowing took anything.
     """
     from openproj.render import _elements, _row
 
@@ -298,9 +318,29 @@ def test_a_node_carries_everything_the_filters_ask_of_it(seed_index: Index):
     for record_id in seed_index.plan:
         for field, value in _row(seed_index, record_id).items():
             assert nodes[record_id][field] == value, f"{record_id}.{field}"
-        # And the two keys the row does not carry, because only a canvas needs them.
+        # And the three keys the row does not carry, because only a canvas needs them.
         assert nodes[record_id]["label"] == seed_index.plan[record_id].title
-        assert nodes[record_id]["depends_on"] == seed_index.blocked_by[record_id]
+        # `depends_on` is `blocked_by` NARROWED to the plan, never the stored
+        # field: `blocked_by` is total over records, so a hand-written edge to
+        # an unplanned record would otherwise put an inbox id on a plan page
+        # and hand cytoscape an edge whose source is a node it was never given.
+        # This asserted the whole stored field, which was only ever right
+        # because nothing had been narrowed: until the corpus grew notes and
+        # issues, `Index.plan` WAS `Index.records` here and the guard in
+        # `_elements` could not drop anything. It drops one edge now.
+        stored = seed_index.blocked_by[record_id]
+        drawable = [b for b in stored if b in seed_index.plan]
+        assert nodes[record_id]["depends_on"] == drawable, record_id
+        # And the flag says the field holds MORE than the canvas drew, which is
+        # what stops an edge edit rebuilding `depends_on` from the drawn list
+        # and silently deleting somebody's line. A boolean and never the ids.
+        assert nodes[record_id]["off_plan_deps"] == (drawable != stored), record_id
+
+    # Neither claim above may pass by never happening. The first was vacuous in
+    # every corpus before 2026-08-23 — an unplanned rung to depend ON is what
+    # the growth added — and the second is the whole of `off_plan_deps`.
+    assert set(nodes) == set(seed_index.plan), "an unplanned rung is not a node"
+    assert any(n["off_plan_deps"] for n in nodes.values()), "nothing was narrowed"
 
 
 def test_the_graph_filters_the_plan_the_way_the_table_does(rendered: Path):
@@ -1078,15 +1118,36 @@ def test_weeks_bet_into_another_cycle_are_counted_beside_this_one(
                          group.group(0)), login
 
 
-def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(rendered: Path):
-    """The golden corpus dates its cycles in config and writes a record for none of
-    them, so there is availability for nobody. "0.0 of 0.0 weeks" would be a
-    meter reading zero; what is true is that there is nothing to bet against."""
-    body = read(rendered, "people.html")
+def test_a_cycle_with_no_record_is_weeks_bet_against_no_roster(unrecorded_cycle: Index):
+    """A cycle dated in config with no record behind it has availability for
+    nobody. "0.0 of 0.0 weeks" would be a meter reading zero; what is true is that
+    there is nothing to bet against.
+
+    It took `rendered` while every cycle in the corpus was unrecorded. Cycle 37 has
+    a record now and is the current one at the fixture's `today`, so the case is
+    asked of cycle 36 — see `unrecorded_cycle`. The corpus lost nothing: four of
+    its six cycles are still dated and unwritten.
+    """
+    from openproj.render import render_people
+
+    body = render_people(unrecorded_cycle)
 
     assert "has no record, so there is no availability to bet it against" in body
     assert "weeks bet against no roster" in body
     assert 'class="bar"' not in body, "no meter without something to measure against"
+
+
+def test_a_cycle_with_a_record_bets_its_weeks_against_the_roster(rendered: Path):
+    """The other half of the branch above, and nothing could reach it until the
+    corpus grew cycle records: with `index.plans` empty every capacity was 0.0, so
+    the meter was never drawn on this page by any test, and the stranger line —
+    somebody holding weeks in a cycle whose roster does not name them — could not
+    happen at all."""
+    body = read(rendered, "people.html")
+
+    assert "has no record, so there is no availability to bet it against" not in body
+    assert 'class="bar"' in body, "a roster is something to measure against"
+    assert "weeks bet, and not on cycle 37's roster" in body
 
 
 def test_every_person_links_to_the_table_filtered_by_them(rendered: Path):
@@ -3245,7 +3306,8 @@ def test_a_bar_at_the_end_of_time_does_not_make_a_page_nobody_can_open(seed_root
     """
     from openproj.render import render_timeline
 
-    html = render_timeline(_index_reaching_the_end_of_the_calendar(seed_root))
+    index = _index_reaching_the_end_of_the_calendar(seed_root)
+    html = render_timeline(index)
     width = float(re.search(r'<svg width="([\d.]+)"', html).group(1))
     ticks = re.findall(r'<text class="month-label"', html)
 
@@ -3254,7 +3316,15 @@ def test_a_bar_at_the_end_of_time_does_not_make_a_page_nobody_can_open(seed_root
     assert len(html) < 1_000_000, f"{len(html)} bytes"
     # And it is still a drawing of the plan, not an empty frame: the bars that
     # fit the window are all there, and the page says what it is not showing.
-    assert len(re.findall(r'<rect data-id="', html)) == 11, "every bar the plan had"
+    #
+    # Named rather than counted. This was `== 11`, which was the number of spans
+    # the corpus happened to have when it was written, and growing the corpus
+    # from 17 records to 30 made it wrong — a literal that has to be re-derived
+    # every time the fixture moves is one somebody eventually re-derives by
+    # pasting what the run printed. The claim is "everything except the absurd
+    # one", so that is what it says, and it cannot go stale.
+    drawn = set(re.findall(r'<rect data-id="([^"]+)"', html))
+    assert drawn == index.spans.keys() - {"task-3e07b2"}, "every bar but the one at date.max"
 
 
 def test_a_window_typed_into_the_url_cannot_run_off_the_calendar(seed_index: Index):
@@ -3356,7 +3426,7 @@ def views(seed_index: Index) -> dict[str, str]:
 
 @pytest.mark.parametrize("view", ("graph", "table", "timeline"))
 def test_the_box_each_view_fills_stops_where_the_window_does(
-    views: dict[str, str], view: str, tmp_path: Path
+    views: dict[str, str], view: str, seed_index: Index, tmp_path: Path
 ):
     """`#cy` was `height: 78vh` — a fraction of the window that knows nothing
     about the six rows above the canvas or the sticky commit bar beside it. At an
@@ -3400,7 +3470,18 @@ def test_the_box_each_view_fills_stops_where_the_window_does(
         # built and never looks again, so a canvas that is resized afterwards and
         # not told keeps drawing at the size it was given — the plan centred for a
         # box it no longer has, with nodes off the edge of the one it does.
-        assert got["drawnCount"] == 17, f"{where}: {got['drawnCount']} nodes drawn"
+        # Every planned record, and no number written down here. It was `== 17`,
+        # which was the size of the fixture corpus on the day it was written and
+        # became a lie the morning the corpus grew to 26 — and a count that has
+        # to be edited when the corpus moves is a count nobody trusts by the
+        # second time. `len(index.plan)` is the claim the assertion was always
+        # making: the graph draws the plan, all of it, at every window. It is
+        # also what makes the two lines below mean anything, since a canvas that
+        # drew nothing is centred and inside its box.
+        assert got["drawnCount"] == len(seed_index.plan), (
+            f"{where}: {got['drawnCount']} nodes drawn for "
+            f"{len(seed_index.plan)} planned records"
+        )
         assert not got["offCanvas"], f"{where}: {got['offCanvas']} are outside the canvas"
         fitted = got["fitted"]
         for axis, (near, far) in (("vertically", ("above", "below")),
@@ -4105,11 +4186,17 @@ def test_the_progress_column_counts_the_bodys_own_checklist():
     assert "progress" not in _payload(index)["editable"]
 
 
-def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path):
+def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path, seed_index: Index):
     """The question a pitch page is opened for is where the work has got to, and
     the answer was a checklist somewhere in the middle of the prose — or, for a
     pitch whose work is tracked as tasks, nowhere at all. Every tick is a task's
-    own status, so there is no checkbox here to keep in step by hand."""
+    own status, so there is no checkbox here to keep in step by hand.
+
+    The panel is a CONTAINMENT rollup over any planned record with children, not a
+    tasks-of-a-pitch panel. It only ever listed tasks because a pitch was the only
+    parent kind the corpus had; a product's lines are its projects and a project's
+    are its pitches.
+    """
     page = read(rendered, "detail.html")
     panels = re.findall(r'<section class="progress read">.*?</section>', page, re.S)
 
@@ -4118,10 +4205,17 @@ def test_a_pitch_draws_its_tasks_as_the_progress_it_has_made(rendered: Path):
     # finished tasks and unfinished ones under the same pitches.
     assert any("☑" in panel for panel in panels)
     assert any("☐" in panel for panel in panels)
-    # And every line is a link to the task it counts, which is the other half of
-    # moving this out of the prose.
-    for panel in panels:
-        assert re.search(r'<a href="[^"]*task-[0-9a-f]{6}">', panel), panel[:120]
+    # And every line is a link to the CHILD it counts, whatever rung that child is
+    # on, which is the other half of moving this out of the prose. This asked for
+    # `task-[0-9a-f]{6}` and passed on a corpus accident: nothing but a pitch could
+    # be a parent, so nothing but a task could be a line. Products and projects
+    # became parents on 2026-08-23 and three of the nine panels stopped matching.
+    linked = [re.findall(r'<a href="[^"]*?([a-z]+-[0-9a-f]{6})">', panel) for panel in panels]
+    assert sorted(linked) == sorted(p.of for p in seed_index.progress.values() if p.of)
+    # And it reaches three rungs, so none of the above is a claim about tasks
+    # wearing a general shape.
+    kinds = {seed_index.plan[child].kind for ids in linked for child in ids}
+    assert kinds == {"task", "pitch", "project"}, kinds
 
 
 def test_a_pitch_says_what_its_tasks_add_up_to_beside_what_it_was_bet_at(rendered: Path):

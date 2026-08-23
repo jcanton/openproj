@@ -23,13 +23,21 @@ def test_the_package_and_the_project_agree_about_the_version():
     assert openproj.__version__ == pyproject["project"]["version"]
 
 
-def test_seed_corpus_has_seventeen_record_files(seed_root: Path):
+def test_seed_corpus_has_twenty_six_plan_record_files(seed_root: Path):
+    """A size sentinel, so growing the corpus is a decision somebody makes.
+
+    24 + 2 = 26, which is `len(index.plan)`. `products/` is counted on its own
+    line rather than folded into the glob below: those three directories were the
+    whole plan when this was written, and a rung added later has to be named here
+    or the sentinel goes on passing while covering less of the corpus each time.
+    """
     files = [
         path
         for directory in ("projects", "pitches", "tasks")
         for path in (seed_root / directory).glob("*.md")
     ]
-    assert len(files) == 17
+    assert len(files) == 24
+    assert len(list((seed_root / "products").glob("*.md"))) == 2
 
 
 def test_every_test_repository_names_the_branch_the_store_reads():

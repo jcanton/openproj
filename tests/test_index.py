@@ -25,7 +25,17 @@ from openproj.index import (
     apply_filters,
     build_index,
 )
-from openproj.model import Config, Pitch, Project, Record, Task, load_repo, parse_text, validate_all
+from openproj.model import (
+    Config,
+    Pitch,
+    Product,
+    Project,
+    Record,
+    Task,
+    load_repo,
+    parse_text,
+    validate_all,
+)
 from openproj.schedule import schedule
 
 TODAY = date(2026, 8, 13)
@@ -36,6 +46,10 @@ CONFIG = Config(
     default_task_effort=0.5,
     cycles={36: (date(2026, 6, 22), date(2026, 8, 14))},
 )
+
+
+def a_product(id: str, title: str = "A product", **fields) -> Product:
+    return Product(id=id, kind="product", title=title, **fields)
 
 
 def a_project(id: str, title: str = "A project", **fields) -> Project:
@@ -493,15 +507,31 @@ def test_the_has_blocker_predicate_is_the_strict_half_of_missing_required_fields
     problem list before this one — the count would have sent people to rows whose
     only complaint is a warning. A number that lands you on more rows than it
     counted is a number that stops being clicked.
+
+    Both predicates are asked over `index.records`, which is what the population
+    has to be for the identity below to be about the predicates at all.
+    `apply_filters` defaults to `index.plan`, and `validate_all` judges every
+    rung — so with the default population `note-b14d6a`, whose `became` names a
+    pitch nobody wrote, is a warning in `problems` that no filter over the plan
+    can ever return. That is not a defect in either predicate; it is the plan and
+    the records being different maps, which this corpus is the first to be able
+    to say.
     """
-    any_problem = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
-    blocking = set(apply_filters(seed_index, {"predicate": ["has_blocker"]}, ""))
+    over = seed_index.records
+    any_problem = set(
+        apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, "", over=over)
+    )
+    blocking = set(apply_filters(seed_index, {"predicate": ["has_blocker"]}, "", over=over))
 
     assert blocking == {p.record_id for p in seed_index.problems if p.severity == "blocker"}
     assert blocking < any_problem, "a warning is a problem and is not a blocker"
     assert any_problem - blocking == {
         p.record_id for p in seed_index.problems if p.severity == "warning"
     } - blocking
+    # And the unplanned half is really in there, so that a future `over` reverting
+    # to the plan fails here rather than passing narrower.
+    assert "note-b14d6a" in any_problem - blocking
+    assert "note-b14d6a" not in seed_index.plan
 
 
 def test_the_review_waived_predicate_finds_deliberate_waivers_only():
@@ -568,11 +598,36 @@ def test_filters_and_search_narrow_together():
 
 
 def test_the_seed_index_has_the_shape_of_the_corpus(seed_index: Index):
-    assert len(seed_index.plan) == 17
+    # `plan` and `records` are different maps and this corpus is the only place
+    # that can prove it: 26 planned rungs, and four more — two issues and two
+    # notes — that are records and are not plan. There is no type boundary
+    # between the two, so the sixty-odd `.records` sites in the app are held by
+    # a corpus where picking the wrong map is a visible number and not a
+    # tautology.
+    assert len(seed_index.plan) == 26
+    assert len(seed_index.records) == 30
+    assert seed_index.records.keys() - seed_index.plan.keys() == {
+        "issue-8e1a37",
+        "issue-9f2b48",
+        "note-a03c59",
+        "note-b14d6a",
+    }
     kinds = [e.kind for e in seed_index.plan.values()]
-    assert (kinds.count("project"), kinds.count("pitch"), kinds.count("task")) == (1, 5, 11)
+    assert (
+        kinds.count("product"),
+        kinds.count("project"),
+        kinds.count("pitch"),
+        kinds.count("task"),
+    ) == (2, 2, 7, 15)
 
     assert seed_index.children["proj-7e57a0"] == ["task-0e4b7a"]
+    # The product rung, walked rather than assumed: `_product_of` was a constant
+    # `None` for the whole repository until two products with a project each
+    # existed to tell a walk from a constant.
+    assert seed_index.children["prod-6d1a70"] == ["proj-7e57a0"]
+    assert seed_index.children["prod-7c2b81"] == ["proj-9a4c25"]
+    assert seed_index.children["proj-9a4c25"] == ["pitch-6f2d18", "pitch-7b3e94"]
+    assert seed_index.children["pitch-6f2d18"] == ["task-6a5c02", "task-6b7d31"]
     assert seed_index.children["pitch-3c9a41"] == [
         "task-31f6c4",
         "task-3a52d8",
@@ -601,48 +656,115 @@ def test_task_2b6c94_is_unblocked_because_its_only_blocker_is_done(seed_index: I
 
 def test_the_seed_blocked_set_is_exactly_the_live_diamond(seed_index: Index):
     assert apply_filters(seed_index, {"predicate": ["blocked"]}, "") == [
+        "pitch-7b3e94",
+        "prod-7c2b81",
         "task-58d7c6",
         "task-5c1d84",
         "task-5f062b",
+        "task-7d9f52",
     ]
+    # `prod-7c2b81` is in that list because it names a `depends_on` and a product
+    # is not allowed one. The index reads what is written and the validator says
+    # it is wrong; those are two different jobs and the honest answer is that
+    # both happen. Pinned rather than tidied away — see the file's own body.
+    assert seed_index.blocked_by["prod-7c2b81"] == ["prod-6d1a70"]
+    assert "depends_on" in {
+        p.field for p in seed_index.problems if p.record_id == "prod-7c2b81"
+    }
+    # `task-7d9f52` waits on a task and on an ISSUE. The issue is a record, so the
+    # edge survives into `blocked_by`; it is not part of the plan, so it never
+    # reaches the scheduler and cannot move a date. That gap is the whole of
+    # `off_plan_deps`, and this is the only file in either corpus that has one.
+    assert seed_index.blocked_by["task-7d9f52"] == ["task-7c8e40", "issue-9f2b48"]
+    assert "issue-9f2b48" not in seed_index.spans
+
+
+def test_a_pitchs_dependency_is_inherited_by_its_tasks(seed_index: Index):
+    """`task-7c8e40` carries no `depends_on` of its own and starts three working
+    days after `pitch-6f2d18` ends anyway, because its parent pitch waits on it.
+
+    The demo shipped with this broken — a bet drawn starting a month before the
+    bet it declared it waited for — and until this corpus grew, GOLDEN_SPANS
+    contained no inherited edge at all, so `blockers_of`'s ancestor loop could
+    have been deleted without a red test.
+
+    Stated as a relation rather than as two dates: this fixture's `today` is not
+    GOLDEN_TODAY, and the dates themselves belong beside the derivation that
+    produced them, in `test_schedule.py`.
+    """
+    assert seed_index.plan["task-7c8e40"].depends_on == []
+    assert seed_index.plan["task-7c8e40"].assigned_on is None
+    assert seed_index.plan["pitch-7b3e94"].depends_on == ["pitch-6f2d18"]
+
+    ends = seed_index.spans["pitch-6f2d18"].end
+    starts = seed_index.spans["task-7c8e40"].start
+    assert starts > ends
+    # The next WORKING day, so the gap is a weekend and nothing else.
+    assert (starts - ends).days == 3
+    assert ends.weekday() == 4 and starts.weekday() == 0
 
 
 def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
-    assert seed_index.facets["kind"] == ["pitch", "project", "task"]
+    assert seed_index.facets["kind"] == ["pitch", "product", "project", "task"]
     # A sequence, not a set: alphabetical put `done` at the top of the status
     # menu and read `high, low, medium` for priority, which is not an order
     # anybody means by priority. Everything else is genuinely alphabetical.
-    assert seed_index.facets["status"] == ["ready", "in_progress", "done", "shelved"]
-    assert seed_index.facets["priority"] == ["high", "medium", "low"]
+    #
+    # Status and priority BOTH lead with `(none)` now, and the reason is worth
+    # reading before anybody "fixes" it. The model defaults every record's status
+    # to `shaping` and its priority to `medium`, so a product would answer both
+    # menus as though somebody had shaped it — and filtering to `shaping` would
+    # bring back a codebase. `_facet_values` asks `unread_fields(kind)` first and
+    # a product reads neither field, so it contributes no value and falls to
+    # `(none)`. Until two products existed, that branch could not fire on any
+    # file anybody had written.
+    assert seed_index.facets["status"] == ["(none)", "ready", "in_progress", "done", "shelved"]
+    assert seed_index.facets["priority"] == ["(none)", "high", "medium", "low"]
+    assert {e.status for e in seed_index.plan.values() if e.kind == "product"} == {"shaping"}
+    assert "shaping" not in seed_index.facets["status"]
     # `(none)` leads the menus where something is actually missing — it is not a
     # value, it is the question "which of these has nobody in it", and it is the
     # only way to ask it: an unset field yields no facet value at all, so before
-    # this it could never be selected. Status does not grow one, because every
-    # record has a status; cycle does, because a pitch that is not bet yet is
-    # the ordinary case rather than an error.
-    assert seed_index.facets["cycle"] == ["(none)", "28", "34", "35", "36"]
-    assert seed_index.facets["project"] == ["(none)", "proj-7e57a0"]
+    # this it could never be selected. Cycle grows one because a pitch that is
+    # not bet yet is the ordinary case rather than an error.
+    assert seed_index.facets["cycle"] == ["(none)", "28", "34", "35", "36", "37", "38"]
+    assert seed_index.facets["project"] == ["(none)", "proj-7e57a0", "proj-9a4c25"]
+    assert seed_index.facets["product"] == ["(none)", "prod-6d1a70", "prod-7c2b81"]
+    # `sorted()` on `str`, so a capitalised login leads. Four names below appear
+    # on nothing but the hearth island — `redpollard`, `chiffchaffy`,
+    # `Whimbrelson`, `stonechatty` — and that is not decoration: the scheduler's
+    # third property only promises that adding an item sharing NO worker and NO
+    # ancestor leaves an existing span alone, so new people are what let this
+    # corpus grow without re-deriving GOLDEN_SPANS by hand.
     assert seed_index.facets["owner"] == [
         "(none)",
         "Oxpeckerly",
+        "Whimbrelson",
         "eveningtern",
         "hoopoegrove",
         "jackdawrie",
         "merganserly",
         "nightjarelli",
+        "redpollard",
         "sanderlingly",
+        "stonechatty",
     ]
     assert seed_index.facets["assignees"] == [
         "(none)",
         "Dunnocksen",
         "Oxpeckerly",
+        "Whimbrelson",
+        "chiffchaffy",
         "jackdawrie",
         "merganserly",
         "nightjarelli",
+        "redpollard",
+        "stonechatty",
         "yellowhammer7",
     ]
     assert seed_index.facets["reviewers"] == [
         "(none)",
+        "Whimbrelson",
         "accentor9",
         "eiderdowny",
         "hornbillow",
@@ -650,22 +772,32 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
         "jackdawrie",
         "merganserly",
         "mudlarkish",
+        "redpollard",
     ]
+    # No `(none)`: every record on this corpus is tagged, products included.
     assert seed_index.facets["tags"] == [
+        "api",
+        "backend",
+        "benchmark",
         "bitwise-reproducibility",
         "buggy",
         "ci",
         "distributed",
+        "dsl",
         "f2py",
         "fortran-module",
         "gpu",
         "griddle",
         "halo-exchange",
+        "hardening",
+        "hearth",
         "kiln4py",
+        "model",
         "mpi",
         "numpy",
         "reading",
         "reductions",
+        "scan-operator",
         "standalone-driver",
         "synthetic",
         "throughflow",
@@ -688,11 +820,27 @@ def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Ind
     The corpus's tasks carry a `cycle` their pitch now owns, which is a v4
     warning apiece — and this predicate is severity-agnostic on purpose, so they
     are all in here. `task-3d84e9` is the one task left out: it is shelved, and
-    shelved records are exempt from every rule."""
+    shelved records are exempt from every rule.
+
+    `prod-7c2b81` is in here for a different reason and a deliberate one: it
+    carries `person_weeks`, `depends_on` and `owner`, none of which a product
+    reads. Until that file was written the `unread_fields` rules had no document
+    anywhere in the repository to fire on — they were exercised only by records
+    the tests built in memory, which proves the rule and not the reading of a
+    file. Do not tidy it; the file's own body says so too.
+
+    The NINE planned records of the hearth island are all absent, and that is the
+    other half of the assertion: they are `created_schema_version: 2`, so this is
+    the first corpus where grandfathering is a contrast inside one directory
+    rather than a rule with nothing on either side of it."""
     incomplete = set(apply_filters(seed_index, {"predicate": ["missing_required_fields"]}, ""))
 
-    assert {"pitch-1b3f9a", "pitch-48ea9e", "task-3e07b2"} <= incomplete
+    assert {"pitch-1b3f9a", "pitch-48ea9e", "task-3e07b2", "prod-7c2b81"} <= incomplete
     assert "task-3d84e9" not in incomplete
+    assert incomplete.isdisjoint({
+        "prod-6d1a70", "proj-9a4c25", "pitch-6f2d18", "pitch-7b3e94",
+        "task-6a5c02", "task-6b7d31", "task-7c8e40", "task-7d9f52",
+    })
 
 
 def test_the_seed_index_carries_the_scheduler_and_validator_output(seed_root: Path):
@@ -827,6 +975,88 @@ def test_a_pitch_is_as_far_along_as_its_tasks_weighted_by_their_sizes():
     assert (counted.done, counted.total, counted.unit) == (4.0, 6.0, "weeks")
     assert counted.text == "4/6 wk"
     assert counted.of == ["task-c00001", "task-c00002"]
+
+
+def test_a_container_is_weighed_by_what_is_under_it_and_not_by_half_a_week():
+    """`size_weeks` says a container "has no size of its own" and then returns
+    `config.default_task_effort` anyway, because that fallback was written for an
+    unsized TASK. Nothing noticed until a product existed: `Rung.under` lets
+    nothing but a product nest a container, so a container could not be somebody's
+    child.
+
+    The moment one could, a product holding a project worth five weeks reported
+    `0/0.5 wk` on the record page, under a meter reading "0 per cent of this bet
+    is done" — a denominator nobody typed.
+    """
+    records = [
+        a_product("prod-a00001"),
+        a_project("proj-b00001", parent="prod-a00001"),
+        a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=3.0),
+        a_pitch("pitch-c00002", parent="proj-b00001", person_weeks=2.0),
+    ]
+    index = build_index(records, CONFIG, TODAY)
+
+    assert index.progress["proj-b00001"].text == "0/5 wk"
+    assert index.progress["prod-a00001"].text == "0/5 wk", (
+        "the product was charged the default task effort for a project"
+    )
+    assert index.progress["prod-a00001"].of == ["proj-b00001"]
+
+
+def test_a_container_is_as_far_along_as_the_work_beneath_it():
+    """The done half rolls up too — jcanton, 2026-08-23, choosing between this and
+    a container counting only once every descendant is finished. `Progress` says
+    a record is "as far along as its tasks are, weighted by their sizes", and a
+    container has no completion of its own to fall back on.
+
+    Weighed as leaves, a project whose two pitches stood at 4/7.5 and 3/7.5 read
+    **0/31**: both pitches were `sized`, so each was taken at its appetite and
+    credited nothing, and everything finished underneath them was invisible one
+    rung up.
+    """
+    records = [
+        a_product("prod-a00001"),
+        a_project("proj-b00001", parent="prod-a00001"),
+        a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=6.0),
+        a_task("task-d00001", parent="pitch-c00001", person_weeks=4.0, status="done",
+               prs=["kilnlab/kiln4py#1"]),
+        a_task("task-d00002", parent="pitch-c00001", person_weeks=2.0),
+        a_pitch("pitch-c00002", parent="proj-b00001", person_weeks=4.0, status="done"),
+    ]
+    index = build_index(records, CONFIG, TODAY)
+
+    # The pitch from its tasks; the project from the pitch's finished weeks plus
+    # the whole of the one that is done; the product straight through.
+    assert index.progress["pitch-c00001"].text == "4/6 wk"
+    assert index.progress["proj-b00001"].text == "8/10 wk"
+    assert index.progress["prod-a00001"].text == "8/10 wk"
+
+
+def test_a_child_that_is_done_counts_for_all_of_it_even_with_work_left_under_it():
+    """`status: done` is the only completion this model stores, so it wins over
+    what its children say. The alternative — believing the tasks — would mean a
+    pitch somebody closed on purpose reads unfinished for ever because one task
+    was never ticked."""
+    records = [
+        a_project("proj-b00001"),
+        a_pitch("pitch-c00001", parent="proj-b00001", person_weeks=6.0, status="done"),
+        a_task("task-d00001", parent="pitch-c00001", person_weeks=4.0),
+    ]
+    index = build_index(records, CONFIG, TODAY)
+
+    assert index.progress["pitch-c00001"].text == "0/4 wk"  # its own tasks, untouched
+    assert index.progress["proj-b00001"].text == "6/6 wk", "a done child is done"
+
+
+def test_a_container_with_nothing_under_it_shows_no_fraction_at_all():
+    """Rather than half a week. An empty project contributes no weeks because
+    there are no weeks under it, and inventing some puts the same made-up number
+    back in a smaller place."""
+    records = [a_product("prod-a00001"), a_project("proj-b00001", parent="prod-a00001")]
+    index = build_index(records, CONFIG, TODAY)
+
+    assert "proj-b00001" not in index.progress
+    assert "prod-a00001" not in index.progress
 
 
 def test_a_shelved_task_is_in_neither_half_of_its_pitchs_progress():

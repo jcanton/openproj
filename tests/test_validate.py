@@ -450,7 +450,7 @@ def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
 
 
 def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
-    """Integration over the real 17 files. The set is exhaustive on purpose: a new
+    """Integration over the real 30 files. The set is exhaustive on purpose: a new
     rule that fires on the committed corpus has to be argued for here first.
 
     Only pitch-1b3f9a is missing shaped_by *at status todo*, which is where that
@@ -464,9 +464,16 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     one pitch whose five tasks propose twice the work it was bet at. All
     warnings: the corpus is created_schema_version 2 and these rules are 4, so
     nothing written before them breaks.
+
+    The corpus grew from 17 files to 30 on 2026-08-23, and this set grew by
+    exactly four entries — all four on records the growth added, none on a record
+    that was already here. That second half is the load-bearing one: growing a
+    corpus must not change what the checker says about the files already in it,
+    and this assertion is where that would be caught. Every added entry is a
+    document deliberately written wrong; see the comments beside them.
     """
     records, config, _ = load_repo(seed_root)
-    assert len(records) == 17
+    assert len(records) == 30
     inherits = "the bet is on the pitch, so this task takes its cycle from {}; " \
         "the number here is ignored"
     assert summaries(validate_all(records, config)) == {
@@ -522,6 +529,29 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
             "cut scope, or re-bet it",
             4,
         ),
+        # `prod-7c2b81` carries `person_weeks`, `depends_on` and `owner` in its
+        # frontmatter on purpose, and its body says so and says not to fix it. It
+        # is the only file in either corpus these three `unread_fields` rules have
+        # to fire on — before it they were exercised only by records the tests
+        # built in memory, which proves the rule and not the reading of a file.
+        # Two blockers and one warning, and that split is the point: an appetite
+        # or a dependency on a container is a claim about work that is not there,
+        # while an owner on it is only a name nobody reads.
+        (
+            "blocker", "prod-7c2b81", "depends_on",
+            "a product waits on nothing: its projects, pitches and tasks do", 1,
+        ),
+        ("blocker", "prod-7c2b81", "person_weeks", "a product carries no appetite", 1),
+        (
+            "warning", "prod-7c2b81", "owner",
+            "a product is a grouping and is never scheduled, so its owner is not read", 1,
+        ),
+        # `note-b14d6a` points `became` at a pitch nobody wrote a file for, and its
+        # body explains that the link is broken and is being left broken: the idea
+        # was re-shaped twice and neither board row became a record. So the note
+        # falls back to `thinking` rather than claiming a promotion nothing opens,
+        # and the missing id is reported beside it. Do not "fix" the note.
+        ("warning", "note-b14d6a", "became", "became pitch-000000, which is missing", 1),
     }
 
 

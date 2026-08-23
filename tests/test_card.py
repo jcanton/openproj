@@ -24,7 +24,7 @@ from browser import chrome, measured_in
 from test_injection import run_js
 
 from openproj.index import Index, build_index
-from openproj.model import load_repo
+from openproj.model import RUNG, load_repo
 from openproj.render import ROUTES, render_graph, render_table, render_timeline
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -518,8 +518,33 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     assert set(got["said"]) >= {"project", "pitch"}, (
         f"only {sorted(got['said'])} was asked, so the other kind of box is untested"
     )
+    # WHICH boxes answer is a fact about the ladder and not about this list.
+    # `carded` is a property on `Rung` in `model.py` — a product declares
+    # `carded: false`, because a card of one would be a title, a sentence and
+    # eight dashes, which teaches a reader that cards are not worth hovering
+    # for. The graph reads that same property (`CARDED` in `graph.py`), so this
+    # asserts the rule rather than a list of kinds that has to be edited every
+    # time a rung is added.
+    #
+    # Untestable until 2026-08-23: `carded: false` had no record in any corpus,
+    # so the one rung that declares it was never hovered and the branch that
+    # honours it was never reached. This test asserted "every box opens a card"
+    # and passed for four kinds that all happen to be carded.
     for kind, answer in got["said"].items():
-        assert answer == "a card", f"a {kind}'s own title brought up {answer}"
+        wanted = "a card" if RUNG[kind].carded else "nothing"
+        assert answer == wanted, (
+            f"a {kind}'s own title brought up {answer}, and the ladder says "
+            f"carded={RUNG[kind].carded}, so it should bring up {wanted}"
+        )
+    # And both halves of that rule were actually asked. A corpus with no
+    # uncarded box would pass the loop above without ever reaching the branch it
+    # was written for — which is exactly the state this suite was in yesterday.
+    carded = {kind for kind in got["said"] if RUNG[kind].carded}
+    assert carded, "no carded box was hovered, so 'a card comes up' is untested"
+    assert set(got["said"]) - carded, (
+        "no box of an uncarded kind is on this graph, so the rule that a hover "
+        "over one brings up nothing is untested"
+    )
 
 
 # How many times the card's markup changes between the hover and the card being
