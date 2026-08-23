@@ -1,0 +1,3 @@
+tests/test_coedit.py
+tests/test_socket_offer.py
+tests/test_search.py
