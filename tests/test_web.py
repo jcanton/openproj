@@ -45,6 +45,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -52,9 +53,16 @@ import pygit2
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
-from pages import elements
+from pages import elements, render_source
+
+# `test_remote` owns the vocabulary for a plan with a remote on the other end of
+# it — what a fork looks like, how to take the remote away without a socket, and
+# what a person with a terminal does. Imported rather than copied, so section 13
+# below cannot drift into building a fork this project would not recognise.
+from test_remote import contains, pushed_from_a_terminal, unplugged
 from test_store import commit_directly
 
+from openproj import coedit
 from openproj.auth import User, sign_session
 from openproj.web import create_app
 
@@ -544,6 +552,12 @@ def test_healthz_reports_the_commit_being_served(client: TestClient, repo_path: 
         "ok": True,
         "head": git_head(repo_path),
         "version": __version__,
+        # Zero because there is no remote here at all, which is the honest answer
+        # rather than a special case: nothing is waiting to be pushed. `detail` is
+        # present and null rather than absent — a key that appears only when
+        # something is wrong is a key a script's JSON path breaks on.
+        "unpushed": 0,
+        "detail": None,
     }
 
     save(client, TASK, {"priority": "high"})
@@ -566,6 +580,249 @@ def test_the_health_check_is_reachable_at_a_path_that_is_ours(client: TestClient
 
     assert ours.status_code == 200
     assert ours.json() == client.get("/healthz").json()
+
+
+# --------------------------------------------------------------------------- #
+# Health, and the one condition it could not report
+#
+# `ok` was the literal `True` and could not be false. On a plan this container's
+# clone had forked from, the concurrency audit measured 26 of 26 write requests
+# refused across all seven routes — including a PATCH to a file neither side of
+# the fork had touched, and a POST creating a record nobody could have edited —
+# for the life of the container, while `GET /` answered 200 five times out of
+# five and `/api/health` said `ok` six times out of six. The RUNBOOK's verify
+# step and any uptime check went straight through a service that could not write
+# a single character.
+#
+# A fork needs a real remote to exist at all, so these carry one: `file://` a
+# second bare repository, which is a real git transport, for the same reason
+# `tests/test_remote.py` uses one. A suite that needs a network is a suite that
+# does not run.
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def with_a_remote(tmp_path: Path):
+    """(client, origin, plan) — a server whose plan has a durable copy elsewhere,
+    and which is *healthy* when it is handed over.
+
+    The `forked` fixture in section 13 hands over a plan that has already forked,
+    which is what the write routes need. These need the flag to be watched as it
+    moves: false when it should be false, and true again afterwards without a
+    restart. A fixture that starts wedged cannot show either.
+
+    Cloned rather than seeded twice, because two repositories that merely hold the
+    same files have unrelated histories and every push between them is already a
+    divergence. The clone's own `origin` is deleted for `test_remote`'s reason —
+    the Store is TOLD where the remote is, and one quietly working off
+    `.git/config` would pass while ignoring the argument it was given. It also
+    leaves the store with no `refs/remotes/origin/main` until something pushes,
+    which is the floor `unpushed` counts from when there is nothing else.
+
+    `raise_server_exceptions=False` because what a *write* answers on a forked
+    plan is section 13's subject — these must neither fail nor pass on it.
+    """
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    clone.remotes.delete("origin")
+    app = create_app(plan, auth="dev", secret=SECRET, remote=f"file://{origin}")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        yield client, origin, plan
+
+
+def strand_a_commit(client: TestClient, origin: Path):
+    """One save while the remote is away: a commit that is real, local, and on no
+    origin. Half of a fork, and the ordinary Cloud Run failure on its own."""
+    from test_remote import unplugged
+
+    with unplugged(origin):
+        stranded = save(client, TASK, {"priority": "low"})
+    assert stranded.json()["pushed"] is False, "the remote was not away after all"
+    return stranded
+
+
+def fork(client: TestClient, origin: Path, plan: Path):
+    """Strand a commit, then let somebody with a terminal push to the plan.
+
+    Loss 1 followed by a human, which is the only route to a divergence the audit
+    could find — and neither half of it is a mistake. Driven through the API and a
+    real push rather than by writing refs, because refs written by hand would only
+    prove that this test can write refs.
+
+    Returns the write that discovers it: a store learns about a fork by trying,
+    which is the only way it can. Nothing polls, and the health route
+    deliberately does not fetch.
+    """
+    from test_remote import contains, pushed_from_a_terminal
+
+    strand_a_commit(client, origin)
+    theirs = pushed_from_a_terminal(
+        origin,
+        {f"tasks/{OTHER}.md": SEED[f"tasks/{OTHER}.md"].replace("numpy 2.1.", "numpy 2.1. Noted.")},
+        "task-c00002: revised in a terminal",
+    )
+    # Stated rather than assumed. This is worth nothing if one history happens to
+    # contain the other, and neither repository holds the other's commit at all
+    # yet — which is the strongest form of saying so.
+    assert not contains(origin, git_head(plan)), "origin already has the local commit"
+    assert not contains(plan, theirs), "the plan already has the remote commit"
+    return save(client, TASK, {"priority": "high"})
+
+
+def test_health_says_no_when_this_disk_and_the_plan_have_forked(with_a_remote):
+    """The defect in one assertion: `ok` was a literal and could not be false.
+
+    503 rather than a 200 carrying a false flag, because a flag only a
+    JSON-parsing reader can see is the second key nobody reads.
+    `gcloud_deploy.sh` verifies a deploy with `curl -fsS "$URL/api/health"`,
+    which exits 0 on any 200 whatever the body says, and an uptime check is a
+    status code unless somebody configures it not to be.
+    """
+    client, origin, plan = with_a_remote
+
+    assert client.get("/api/health").json()["ok"] is True
+
+    refused = fork(client, origin, plan)
+    assert refused.status_code >= 400, "the write landed, so there is no wedge to report"
+
+    answer = client.get("/api/health")
+
+    assert answer.status_code == 503, "a check that reads status codes still passed"
+    assert answer.json()["ok"] is False
+    # Both doors say the same thing, including the code.
+    assert client.get("/healthz").status_code == 503
+    assert client.get("/healthz").json() == answer.json()
+
+    # And it is `_absorb_remote`'s own sentence, carrying both shas: the operator
+    # reading a monitor and the person who pressed Save are told one thing about
+    # one condition, and a runbook can be written from either.
+    detail = answer.json()["detail"]
+    local = git_head(plan)
+    remote = str(pygit2.Repository(str(origin)).references["refs/heads/main"].target)
+    assert "have both moved" in detail
+    assert local[:7] in detail and remote[:7] in detail
+    assert "restart" in detail, "the first instinct is the wrong one and goes unwarned"
+
+    # Nothing else says no, which is the whole reason this had to. Every page is
+    # drawn from the local ref and answers perfectly while no write can land.
+    for route in ("/", "/table", f"/detail/{TASK}", "/api/index.json"):
+        assert client.get(route).status_code == 200
+
+
+def test_health_counts_the_commits_that_are_only_on_this_disk(with_a_remote):
+    """`pushed: false` tells one caller about one write. This is the same fact for
+    the whole store, and it is the number that says what a replaced container
+    costs: Cloud Run's filesystem is in memory and `--min-instances 0` tears the
+    instance down after a few quiet minutes.
+
+    Counted against the last commit the remote is known to hold —
+    `refs/remotes/origin/main`, which libgit2 moves on a successful push as well
+    as on a fetch — so it is a depth against what actually landed rather than a
+    tally this process keeps of its own attempts.
+    """
+    client, origin, plan = with_a_remote
+
+    assert client.get("/api/health").json()["unpushed"] == 0
+    assert save(client, TASK, {"priority": "high"}).json()["pushed"] is True
+    assert client.get("/api/health").json()["unpushed"] == 0, (
+        "a commit that reached the remote is not at risk"
+    )
+
+    strand_a_commit(client, origin)
+    assert client.get("/api/health").json()["unpushed"] == 1
+    strand_a_commit(client, origin)
+    assert client.get("/api/health").json()["unpushed"] == 2
+
+    # Still `ok`, and that is the decision rather than an oversight. An unpushed
+    # commit is usually GitHub having been away for a moment; a push sends
+    # everything that is ahead, so the number goes back to zero at the next save
+    # with nobody doing anything. A flag that goes red for a condition that heals
+    # itself is a flag people learn to ignore, which is how the one that does not
+    # heal gets missed.
+    assert client.get("/api/health").json()["ok"] is True
+
+    assert save(client, TASK, {"priority": "medium"}).json()["pushed"] is True
+    assert client.get("/api/health").json()["unpushed"] == 0
+
+
+def test_health_clears_itself_when_the_fork_does_and_needs_no_restart(with_a_remote):
+    """What was decided about clearing, from both sides.
+
+    A flag set at the raise and cleared at "a successful write" is a memory of
+    events, and it has to decide what counts as one — `PUT /api/icon` answers 200
+    for an icon that is already set, without ever reaching the store. A flag
+    never cleared is worse: the way people clear it is by restarting the
+    container, and on an in-memory filesystem a restart clears this by discarding
+    the very commits `unpushed` is counting.
+
+    So `ok` is neither set nor cleared. It is a reading of two local refs taken
+    per request — the same reading `_absorb_remote` makes one line before it
+    raises. It therefore stays red for exactly as long as the fork is there, and
+    goes green on its own the moment a write attempt learns the fork is gone.
+    """
+    client, origin, plan = with_a_remote
+    fork(client, origin, plan)
+    assert client.get("/api/health").json()["ok"] is False
+
+    # Not cleared by a failing write, by reading every page, or by asking again.
+    save(client, TASK, {"priority": "low"})
+    client.get("/")
+    client.get("/table")
+    assert client.get("/api/health").json()["ok"] is False
+    assert client.get("/api/health").status_code == 503
+
+    # Somebody with a terminal puts the plan back onto a history this container
+    # already contains. Nothing here is reset, restarted or re-cloned.
+    remote = pygit2.Repository(str(origin))
+    remote.references["refs/heads/main"].set_target(
+        remote[remote.references["refs/heads/main"].target].parents[0].id
+    )
+    assert client.get("/api/health").json()["ok"] is False, (
+        "a tracking ref moves when something fetches, and this route does not"
+    )
+
+    landed = save(client, TASK, {"priority": "high"})
+
+    assert landed.status_code == 200 and landed.json()["pushed"] is True
+    answer = client.get("/api/health")
+    assert answer.status_code == 200
+    assert answer.json()["ok"] is True
+    assert answer.json()["detail"] is None
+    assert answer.json()["unpushed"] == 0
+
+
+def test_the_health_route_never_reaches_the_network(with_a_remote, monkeypatch):
+    """The audit was explicit, and the reason is good: report the local condition,
+    not a network probe.
+
+    A health route that fetches is slow, fails when GitHub is slow rather than
+    when this service is wedged, and answers a different question every time it
+    is asked. Asserted by making a fetch impossible rather than by timing one — a
+    threshold measured against a `file://` remote says nothing about GitHub.
+    """
+    from openproj.store import Store
+
+    client, origin, plan = with_a_remote
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("the health route fetched")
+
+    monkeypatch.setattr(Store, "fetch", never)
+    assert client.get("/api/health").status_code == 200
+    monkeypatch.undo()
+
+    fork(client, origin, plan)
+
+    # And on the branch where the temptation is greatest: the answer is already
+    # on disk, because the write that raised had just fetched.
+    monkeypatch.setattr(Store, "fetch", never)
+    for path in ("/api/health", "/healthz"):
+        answer = client.get(path)
+        assert answer.status_code == 503
+        assert answer.json()["ok"] is False
 
 
 def test_the_index_json_carries_the_plan_the_spans_and_the_problems(client: TestClient):
@@ -3966,3 +4223,426 @@ def test_the_service_says_which_version_it_is_running(client: TestClient):
     assert client.get("/healthz").json()["version"] == __version__
     # The two are different facts and must not be read for one another.
     assert answer["head"] != answer["version"]
+
+
+# --------------------------------------------------------------------------- #
+# 13. The plan has forked, and every route has to be able to say so
+#
+# `Store._absorb_remote` raises `StoreDiverged` when local and remote have both
+# moved and neither history contains the other, and it refuses to guess which
+# commits to discard. That refusal is right — it is the reason a wedged plan is
+# safe rather than destructive — and it is not what is under test here.
+#
+# What is under test is the next line. `WRITE_FAILURES` names exactly this family
+# and was caught in exactly one place, the co-editing socket, so the seven HTTP
+# write routes let the raise become Starlette's default 500 with twenty-one bytes
+# of `text/plain` in it. `response.json()` rejects on that, which is how every
+# page ended up printing the bare word "refused" — and the store's own sentence,
+# the one that names the two shas, went to a server log nobody reads. The
+# concurrency audit measured what that costs: 26 write requests over three
+# passes, all 500, while `GET /` answered 200 five times out of five. A permanent
+# write outage that every page reported as healthy.
+#
+# The fork below is built out of the two moves this repository already has rather
+# than a third: a bare `origin.git` seeded with `SEED`, a bare clone of it as the
+# plan the server holds, joined over `file://` — `test_remote`'s fixtures, whose
+# helpers are imported rather than copied. Then the remote is renamed away for
+# exactly one save, so the plan gains a commit origin has never seen, and
+# somebody with a terminal pushes into origin, so origin gains one the plan has
+# never seen. Nothing is patched and nothing is faked; the store discovers the
+# fork the way it discovers it in production, on the way out of a push.
+# --------------------------------------------------------------------------- #
+
+
+class Forked(NamedTuple):
+    client: TestClient
+    plan: Path
+    origin: Path
+    #: The tip the server holds, which origin has never seen.
+    local: str
+    #: The tip origin holds, which the server has never seen.
+    remote: str
+    #: An inbox record made before the fork, so `POST /api/promote` — one of the
+    #: seven — is refused by the divergence rather than by a missing source.
+    note: str
+
+
+@pytest.fixture
+def forked(tmp_path: Path) -> Forked:
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    # Cloned rather than seeded separately, because two repositories that merely
+    # hold the same files have unrelated histories and every push between them is
+    # a divergence — which would make this fixture prove itself. The clone's own
+    # `origin` is deleted for `test_remote`'s reason: the Store is TOLD where the
+    # remote is, and one quietly working off `.git/config` would pass while
+    # ignoring the argument it was given.
+    clone.remotes.delete("origin")
+
+    app = create_app(plan, auth="dev", secret=SECRET, remote=f"file://{origin}")
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        note = client.post(
+            "/api/record",
+            json={
+                "base_commit": head(client),
+                "body": "Somebody said the halo exchange feels slow.\n",
+                "fields": {"kind": "note", "title": "Halo exchange feels slow"},
+            },
+        )
+        assert note.status_code == 201, note.text
+
+        # One save with the remote taken away. The commit is real, it is local,
+        # and it is on no origin — which is the ordinary Cloud Run failure
+        # `test_every_write_answer_says_whether_the_commit_reached_the_remote` is
+        # about, and half of a fork rather than a fork.
+        with unplugged(origin):
+            unpushed = save(client, TASK, {"priority": "high"})
+            assert unpushed.status_code == 200, unpushed.text
+            assert unpushed.json()["pushed"] is False, "the fixture pushed what it meant to strand"
+
+        # And the other half: somebody with a checkout and a terminal, which is
+        # not privileged and not ignored — the CLI does this by design.
+        remote_head = pushed_from_a_terminal(
+            origin,
+            {
+                f"projects/{PROJECT}.md": SEED[f"projects/{PROJECT}.md"].replace(
+                    "more than one rank.", "more than one rank. Revised in a terminal."
+                )
+            },
+            "revise the driver's shaping document",
+        )
+
+        local = git_head(plan)
+        # Stated rather than assumed. This fixture is worth nothing if one
+        # history happens to contain the other, and neither repository holds the
+        # other's commit at all yet — which is the strongest form of saying so.
+        assert not contains(origin, local), "origin already has the local commit"
+        assert not contains(plan, remote_head), "the plan already has the remote commit"
+
+        yield Forked(client, plan, origin, local, remote_head, note.json()["id"])
+
+
+def wedged_writes(forked: Forked) -> dict[str, object]:
+    """Every HTTP write route, driven once, against a plan that has forked.
+
+    A dict and not a list because the failures are read by name: "the asset
+    upload answered 500" is a different piece of news from "the promote route
+    did", and the two raise in different places — `put_asset` calls
+    `_absorb_remote` as its first line under the writer lock, while the six
+    `write_all` routes get all the way through the per-path compare-and-swap and
+    only discover the fork on the way out of the push.
+    """
+    client = forked.client
+    base = head(client)
+    return {
+        "PATCH /api/record/{id}": save(client, OTHER, {"priority": "high"}, base=base),
+        "POST /api/record": create(client, {"kind": "note", "title": "made while wedged"}),
+        "DELETE /api/record/{id}": remove(client, DONE, base=base),
+        "POST /api/promote": client.post(
+            "/api/promote", json={"source": forked.note, "kind": "pitch", "base_commit": base}
+        ),
+        "PUT /api/cycle/{number}": client.put(
+            "/api/cycle/41",
+            json={
+                "base_commit": base,
+                "fields": {"starts_on": "2026-09-01", "reviews_on": "2026-10-01"},
+            },
+        ),
+        "PUT /api/icon": client.put("/api/icon", json={"icon": "fox"}),
+        "POST /api/asset": upload(client, PNG),
+    }
+
+
+def refused_in_the_room(client: TestClient, record_id: str = TASK) -> str:
+    """What the co-editing socket says about the same condition, over a real
+    socket, in its own words.
+
+    The room has answered this correctly since it was written — `_commit_room`
+    was the only place `WRITE_FAILURES` was ever caught — so it is both the
+    control for the HTTP fix and the source of the sentence the HTTP answer has
+    to contain. Taking the store's words from here rather than restating them
+    means this suite cannot pass by agreeing with itself.
+    """
+    token = sign_session(ANN, SECRET)
+    with client.websocket_connect(
+        f"/api/coedit/{record_id}", headers={"cookie": f"{SESSION_COOKIE}={token}"}
+    ) as socket:
+        # Never `coedit.SEED`: the seed's client id belongs to the seed, and a
+        # second writer sharing it is indistinguishable from it.
+        doc = coedit.Doc(client_id=4242)
+        doc[coedit.BODY] = coedit.Text()
+
+        def take(*kinds: str, most: int = 40) -> dict:
+            for _ in range(most):
+                message = socket.receive_json()
+                if message["t"] == "update":
+                    doc.apply_update(base64.b64decode(message["u"]))
+                if message["t"] in kinds:
+                    return message
+            raise AssertionError(f"the room never said any of {kinds}")
+
+        socket.send_json(
+            {"t": "hello", "seed": None, "sv": base64.b64encode(doc.get_state()).decode()}
+        )
+        welcome = take("welcome", "reload")
+        assert welcome["t"] == "welcome", welcome
+        if welcome["update"]:
+            doc.apply_update(base64.b64decode(welcome["update"]))
+        socket.send_json(
+            {
+                "t": "update",
+                "u": base64.b64encode(
+                    doc.get_update(base64.b64decode(welcome["sv"]))
+                ).decode(),
+            }
+        )
+
+        before = doc.get_state()
+        doc[coedit.BODY].insert(0, "typed into a room whose plan has forked\n")
+        socket.send_json(
+            {"t": "update", "u": base64.b64encode(doc.get_update(before)).decode()}
+        )
+        socket.send_json({"t": "save", "fields": {}})
+        answer = take("refused", "saved")
+        # `saved` is in the list on purpose: without it this waits on a frame that
+        # is never coming, and a test that hangs says less than one that reports
+        # what the server actually answered.
+        assert answer["t"] == "refused", (
+            f"the room committed onto a forked plan: {answer}"
+        )
+        return answer["why"]
+
+
+def test_a_save_to_a_record_neither_side_touched_is_refused_in_words(forked: Forked):
+    """The line between a conflict and an outage, and it is on the outage side.
+
+    `tasks/task-c00002.md` was not touched by the unpushed local commit and was
+    not touched by the one pushed from a terminal. There is no per-path question
+    that could refuse this save: divergence is a property of the BRANCH, which is
+    why the compare-and-swap runs, passes, builds a tree and makes a commit, and
+    the fork is only discovered on the way out of the push. So this is not "your
+    edit collided with somebody's" — it is "this service cannot write anything at
+    all", and it has to read as that.
+    """
+    before = git_head(forked.plan)
+
+    response = save(forked.client, OTHER, {"priority": "high"})
+
+    assert response.status_code == 503, response.text
+    assert response.headers["content-type"].startswith("application/json"), (
+        "the answer that told a person nothing was 21 bytes of text/plain, and "
+        "`answerOf` in the shell returns {} for anything it cannot parse — which "
+        "is how every page printed the bare word 'refused'"
+    )
+    detail = response.json()["detail"]
+    assert forked.local[:7] in detail, detail
+    assert forked.remote[:7] in detail, detail
+    # `_attempt` rewinds to `before` and only then absorbs, so a refusal has
+    # never left half a commit behind. The fix must not change that.
+    assert git_head(forked.plan) == before
+
+
+def test_the_refused_write_says_what_to_do_and_the_room_still_says_its_half(forked: Forked):
+    """One condition, two surfaces, and neither invents its own words for it.
+
+    The store's sentence is taken from the room rather than restated here,
+    because a test that spells out the copy it is checking is a test that agrees
+    with itself. What the HTTP answer has to add is the part the store cannot
+    know: that the request was refused, that this is the plan rather than one
+    record, and that trying again is not the thing to do — a person looking at a
+    browser has no other way to learn any of it.
+    """
+    said_in_the_room = refused_in_the_room(forked.client)
+
+    assert forked.local[:7] in said_in_the_room, said_in_the_room
+    assert forked.remote[:7] in said_in_the_room, said_in_the_room
+
+    detail = save(forked.client, OTHER, {"priority": "low"}).json()["detail"]
+
+    assert said_in_the_room in detail, (
+        f"the page and the room describe one condition in two ways:\n"
+        f"  room: {said_in_the_room!r}\n  page: {detail!r}"
+    )
+    assert len(detail) > len(said_in_the_room), (
+        "the store says what happened; a person in a browser also needs to be "
+        "told that the write did not land and that retrying will not help"
+    )
+    assert "again" in detail, f"nothing in this tells somebody not to retry: {detail!r}"
+
+
+def test_every_write_route_answers_a_sentence_when_the_plan_has_forked(forked: Forked):
+    """Seven routes, not the one the audit happened to test.
+
+    The inventory is checked against the app's own router rather than typed out,
+    so an eighth write route cannot be added without either being driven here or
+    being named as one that never touches the store.
+    """
+    exempt = {
+        # Renders markdown and answers with it. No store, no commit, and it
+        # answers an anonymous visitor.
+        ("POST", "/api/preview"),
+        # Clears a cookie.
+        ("POST", "/logout"),
+    }
+    answers = wedged_writes(forked)
+    driven = {
+        ("PATCH", "/api/record/{record_id}"),
+        ("POST", "/api/record"),
+        ("DELETE", "/api/record/{record_id}"),
+        ("POST", "/api/promote"),
+        ("PUT", "/api/cycle/{number}"),
+        ("PUT", "/api/icon"),
+        ("POST", "/api/asset"),
+    }
+    routed = {
+        (method, route.path)
+        for route in forked.client.app.routes
+        for method in getattr(route, "methods", ())
+        if method in {"POST", "PATCH", "PUT", "DELETE"}
+    }
+
+    assert routed == driven | exempt, (
+        "a write route this suite does not drive: a route added without a line "
+        f"here is a route that can go back to answering a traceback — {routed ^ (driven | exempt)}"
+    )
+    assert len(answers) == len(driven)
+
+    for name, response in answers.items():
+        assert response.status_code == 503, f"{name}: {response.status_code} {response.text}"
+        assert response.headers["content-type"].startswith("application/json"), name
+        detail = response.json()["detail"]
+        assert forked.local[:7] in detail, f"{name}: {detail}"
+        assert forked.remote[:7] in detail, f"{name}: {detail}"
+
+
+def test_a_forked_plan_is_not_spelled_as_the_code_the_pages_read_as_a_conflict(forked: Forked):
+    """The status code, checked against what the browser already does with one.
+
+    409 is the code that reads right and is the one that must not be used: four
+    JavaScript call sites branch on it before they look at anything else, and
+    `refusal()` answers a 409 out of `answer.conflict` — the report naming the
+    file and each field that disagreed. A divergence carries no such report, so a
+    409 would paint the conflict box empty and say "somebody else changed this
+    first", which describes something a reload fixes.
+
+    The statuses are read out of the shipped scripts rather than listed here, so
+    a page that starts special-casing some other number brings this test with it.
+    """
+    response = save(forked.client, OTHER, {"priority": "high"})
+    special = {int(n) for n in re.findall(r"status\s*===\s*(\d{3})", render_source())}
+
+    assert special, "the sweep found no status branch at all, so it proved nothing"
+    assert response.status_code not in special, (
+        f"a forked plan answers {response.status_code}, which the pages already "
+        f"read as something else: {sorted(special)}"
+    )
+    assert not 200 <= response.status_code < 300, (
+        "a refused write read as success is strictly worse than the traceback"
+    )
+    assert "detail" in response.json(), (
+        "every write site in `render/` falls through `!response.ok` to "
+        "`refusal(answer, status)`, which reads `answer.detail`"
+    )
+
+
+def test_no_write_route_escapes_the_refusal():
+    """Read as syntax, because this is a shape rather than a string.
+
+    Every `store.write`, `store.write_all` and `store.put_asset` in `web.py` is
+    either the first argument to `_write_or_refuse` or inside `_commit_room`,
+    which answers over its socket instead. `grep -c exception_handler web.py`
+    answered 0 for the whole of the outage this fixes, and the seven routes were
+    each one missing `except` away from a traceback; nothing held the shape they
+    were missing, so nothing said when the eighth was added either.
+    """
+    import ast
+
+    from openproj import web
+
+    WRITERS = {"write", "write_all", "put_asset", "remove"}
+    tree = ast.parse(Path(web.__file__).read_text(encoding="utf-8"))
+
+    def writes(node) -> list[ast.Attribute]:
+        return [
+            found
+            for found in ast.walk(node)
+            if isinstance(found, ast.Attribute)
+            and isinstance(found.value, ast.Name)
+            and found.value.id == "store"
+            and found.attr in WRITERS
+        ]
+
+    room = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+        and node.name == "_commit_room"
+    )
+    refused = {
+        id(call.args[0])
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_write_or_refuse"
+        and call.args
+    }
+    the_rooms = {id(node) for node in writes(room)}
+
+    assert refused, "nothing goes through the refusal, so the fix is not wired up"
+    assert len(the_rooms) == 1, (
+        "the room is documented as ending in exactly one `store.write`; that is "
+        f"what makes it the one exemption here, and it now has {len(the_rooms)}"
+    )
+    escaped = [node.lineno for node in writes(tree) if id(node) not in refused | the_rooms]
+    assert not escaped, (
+        f"web.py:{escaped} writes to the store outside `_write_or_refuse`, so a "
+        "forked plan answers it with a traceback"
+    )
+
+
+def test_the_other_failures_the_tuple_names_are_answered_too():
+    """`WRITE_FAILURES` names five classes and a divergence is one of them.
+
+    The other four went to the same place and got the same twenty-one bytes, so
+    they are answered here rather than left for the next audit to find. Each arm
+    is a decision: an `HTTPException` is already an answer and passes through
+    untouched, so a 404 does not become a 503 on its way out of a write; a held
+    writer lock is not a bug in this service either, and its own message already
+    names the pid and how to clear it; and a failure nobody has named still says
+    its class out loud instead of shrugging — the same last arm, in the same
+    words, that `_commit_room` writes for the room.
+    """
+    from fastapi import HTTPException
+
+    from openproj.store import StoreLocked
+    from openproj.web import _refusal
+
+    passed_through = HTTPException(404, "no record 'task-zzzzzz'")
+    assert _refusal(passed_through) is passed_through
+
+    locked = _refusal(StoreLocked("another openproj writer already holds x (pid 41)."))
+    assert locked.status_code == 503
+    assert "pid 41" in locked.detail
+    assert "Nothing was written" in locked.detail
+
+    unnamed = _refusal(pygit2.GitError("the odb is not there"))
+    assert unnamed.status_code == 500, (
+        "a git error really is this service failing at something it should manage"
+    )
+    assert "GitError" in unnamed.detail and "the odb is not there" in unnamed.detail
+
+    # And the sentence the room writes for the same class, so the two surfaces
+    # cannot drift into describing one failure two ways.
+    from openproj import web
+
+    room = Path(web.__file__).read_text(encoding="utf-8")
+    assert room.count('f"that save did not go through: ') == 2, (
+        "the room writes this sentence for the room and `_refusal` writes it for "
+        "the pages; one of the two has changed wording, so a person meeting the "
+        "same failure on the two surfaces is now told two different things"
+    )

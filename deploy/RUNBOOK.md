@@ -293,7 +293,7 @@ they can be re-run by hand later, when something that worked stops working.
 
 ```bash
 URL=$(gcloud run services describe openproj --region $REGION --format='value(status.url)')
-curl -s $URL/api/health                               # {"ok":true,"head":"..."}
+curl -fsS $URL/api/health; echo                       # 200 {"ok":true,…,"unpushed":0}
 curl -s -o /dev/null -w '%{http_code}\n' $URL/graph   # 200, not 500 — static/ resolved
 curl -s -X PATCH $URL/api/record/x -d '{}'            # 401 — writes are gated
 gcloud run services logs read openproj --region $REGION --limit 20 | grep cloning
@@ -309,6 +309,41 @@ a container that resolved it wrongly serves every other page fine and 500s only
 there. The `cloning` line proves the credential worked on a cold start — if it is
 missing and the service is up, it is serving an empty plan it made itself.
 
+**This check can fail, and before this change it could not.** `ok` was the
+literal `true` in the source, and for a while it was false in fact: the
+concurrency audit found a container whose clone had forked from the plan,
+refusing every save for its whole life, answering `ok` on all six asks and
+serving every page perfectly throughout. On that condition the route now answers
+**503**, which is why the line above is `curl -fsS` rather than `curl -s` — `-f`
+is what turns a red service into a non-zero exit. It also suppresses the body, so
+when it goes quiet, ask again without it and read `detail`.
+
+Three of the payload's fields answer "can this service do its job":
+
+- **`ok`** — can it write. False only for a forked history, which is permanent and
+  needs a person. It is not set or cleared by anything: it is read per request
+  from two refs on the container's own disk, so it goes false when the fork is
+  discovered and true again when it is gone, with no restart and no flag for
+  anybody to reset.
+- **`unpushed`** — commits on the container's disk that origin does not have.
+  Normally 0. Above zero means a push failed, usually because GitHub was away for
+  a moment; it goes back to 0 at the next successful save, because a push sends
+  everything that is ahead. **It is also the number of commits a restart would
+  destroy**, which is why the check reports it and why *The service cannot write*
+  below opens with "do not restart".
+- **`detail`** — `null`, or the sentence saying what is wrong and what to do.
+
+`/api/health` is deliberately not wired as a Cloud Run **liveness probe**, and
+must not be. Cloud Run answers a failing liveness probe by replacing the
+container, and replacing the container is exactly the move that clears this
+condition by throwing away the unpushed commits. The deploy sets no HTTP probe;
+the default startup probe is TCP on the port and stays that way.
+
+Anything watching from outside — an uptime check, a cron, a status page — should
+treat the status code as the alarm and `unpushed` as a separate, slower-tempered
+one. Do not alert on `unpushed` at the first sample; alert if it has stayed above
+zero for a few minutes.
+
 ---
 
 ## The service, as deployed
@@ -322,6 +357,84 @@ prints. Both are permanent and both reach the same service; the project-number
 one above is the one to hand round, because the other is a token nobody can
 retype. GitHub matches a redirect URI exactly, so **both** belong on the OAuth
 App — otherwise sign-in works or 404s depending on which link somebody followed.
+
+## The service cannot write
+
+`/api/health` answers **503** with `"ok": false`, every save is refused with the
+same sentence, and every page still draws perfectly. The sentence names two
+shas:
+
+> local `abc1234` and remote `def5678` have both moved; refusing to guess which
+> commits to discard
+
+This container's clone and the plan repository have forked: each holds commits
+the other has never seen. `Store._absorb_remote` refuses to pick between them,
+and that refusal is why this is an outage rather than a loss — every automatic
+answer discards somebody's commits. Nothing is damaged. The plan repository is
+fine, and no write left anything half-done: the branch is rewound before the
+refusal, so the container's HEAD did not move across any of the 26 refused writes
+the audit measured.
+
+It takes two ordinary events, in order, neither of them a mistake. A save is
+committed while GitHub is unreachable, so it is real, local and on no origin
+(`unpushed: 1`). Then somebody pushes to the plan from a terminal, which they are
+entitled to do and which the CLI does by design. Now neither history contains the
+other.
+
+**Do not restart, redeploy, or `gcloud run services update` yet.** The
+container's filesystem is in memory. A replacement clones the plan afresh and
+comes up green — by discarding the `unpushed` commits, which exist nowhere else.
+That is the same outage wearing a different hat and it is the expensive way to
+clear it. Worse, with `--min-instances 0` the instance goes away on its own after
+a few quiet minutes, so this is a clock rather than a decision.
+
+1. **Read `unpushed`.** `curl -sS $URL/api/health` — if it is 0 there is nothing
+   to save and you can go straight to step 4.
+
+2. **Get that work off the container, first.** Reads still serve the container's
+   own head, so the unpushed edits are on the live site and nowhere else:
+
+   ```bash
+   curl -sS "$URL/api/index.json" > container-plan.json   # every record's frontmatter
+   ```
+
+   The shaping documents are not in that payload — open `$URL/detail/<id>` for
+   each id whose frontmatter differs from the plan repository and copy the text
+   out of the editing box. `container-plan.json` carries `head`, which is the sha
+   in the refusal's first half; `git log` in a clone of the plan against the
+   second half tells you which records to look at.
+
+3. **Put it back through git, from a clone.** Re-apply those edits to a checkout
+   of the plan repository, commit and push. Origin is then correct, and it is
+   still not a descendant of the container's history — the content is recovered,
+   the commits are not, and that is fine.
+
+4. **Then replace the instance**, which is now the cheap move rather than the
+   destructive one. `deploy/boot.py` clones at start, so a new container comes up
+   level with origin. Leaving the service alone does it by itself — with
+   `--min-instances 0` the instance goes after a few quiet minutes and the next
+   request cold-starts a fresh clone. To do it on purpose rather than on a timer,
+   change any env var, which is what makes Cloud Run cut a new revision:
+
+   ```bash
+   gcloud run services update openproj --region $REGION \
+     --update-env-vars "OPENPROJ_RECLONED_AT=$(date -u +%FT%TZ)"
+   curl -fsS $URL/api/health; echo    # 200 {"ok":true,…,"unpushed":0}
+   ```
+
+   The variable is read by nothing; its value is a note to whoever reads the
+   revision list later and wonders why it exists.
+
+Force-pushing origin back behind the fork is the other way out and it is not
+available: branch protection on `main` blocks force-push and deletion for
+everybody including admins (step 1). That is deliberate — it is what keeps the
+worst thing this service can do to the plan "add a commit".
+
+**What makes it less likely.** Two instances is the fastest route here: each
+container clones into its own in-memory filesystem and takes its own `flock` on
+its own file, so neither can see the other and both are granted. `--max-instances
+1` can be briefly exceeded. If this recurs, look at `container/instance_count`
+before looking at anything else.
 
 ## Day one, before anybody else uses it
 
