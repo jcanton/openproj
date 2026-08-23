@@ -83,7 +83,15 @@ from .table import (
     _payload,
     render_table,
 )
-from .timeline import _MARK_WORDS, _MIN_BAR_PX, _ROW_PX, _timeline, render_timeline
+from .timeline import (
+    _MARK_WORDS,
+    _MIN_BAR_PX,
+    _ROW_PX,
+    _containment_rows,
+    _month_ticks,
+    _timeline,
+    render_timeline,
+)
 from .tokens import (
     _KIND_MODELS,
     _TASK_TEMPLATE,
@@ -147,6 +155,8 @@ __all__ = [
     "_ROLE_FILTER",
     "_ROLE_ORDER",
     "_ROW_PX",
+    "_containment_rows",
+    "_month_ticks",
     "_SHELL",
     "_STATE_HINT",
     "_TABLE_COLUMNS",

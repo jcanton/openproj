@@ -4564,6 +4564,52 @@ def test_the_static_export_carries_the_drawings_and_offers_no_picker(
     assert "/api/icon" not in page
 
 
+def test_the_facade_reaches_every_name_anything_outside_the_package_asks_for():
+    """`render/__init__.py` exists to be the whole of what `openproj.render` is,
+    private names included — `web.py` reaches `render._payload`, and tests import
+    `_TABLE_COLUMNS`, `_body_html`, `_TASK_TEMPLATE` and a dozen more.
+
+    **Be clear about what this catches, because it is narrower than it looks.**
+    A missing `from openproj.render import X` is an ImportError at COLLECTION and
+    this test never gets to run — that is how `_containment_rows` was found, and
+    this test would not have caught it. What it catches is the other half:
+    ATTRIBUTE reaches, `render.X`, which import fine and raise at runtime. Those
+    are the dangerous ones, because `web.py` is full of them and a route that
+    raises `AttributeError` in production is a 500 nobody saw in CI.
+
+    It also turns the collection error into a sentence. A traceback that says
+    `cannot import name '_containment_rows'` tells you a name is missing; this
+    tells you the facade is what is missing it, which is where the fix goes.
+
+    Derived rather than listed, so the next name arrives with a failing test
+    rather than with a list somebody forgot to update.
+    """
+    import ast
+
+    from openproj import render
+
+    root = Path(__file__).resolve().parents[1]
+    wanted: set[str] = set()
+    for source in [*root.glob("tests/*.py"), *root.glob("src/openproj/*.py")]:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in {"openproj.render", ".render"}:
+                wanted.update(alias.name for alias in node.names)
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "render"
+            ):
+                wanted.add(node.attr)
+
+    # `render` is also the name of an argparse subparser in cli.py, so its
+    # attributes land in the sweep. Nothing else is exempt.
+    wanted -= {"add_argument", "set_defaults"}
+
+    missing = sorted(name for name in wanted if not hasattr(render, name))
+    assert not missing, f"the facade does not re-export {missing}"
+
+
 def test_one_record_on_its_own_page_is_the_row_the_export_would_have_built(seed_index: Index):
     """`only` is applied inside `_detail_rows` now, not by filtering after it.
 
