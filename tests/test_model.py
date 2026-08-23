@@ -39,9 +39,9 @@ def test_sizes_are_optional_on_both_subclasses():
     # A list, and empty rather than None: shaping is often done in pairs, and a
     # bare string in a file still parses (and still writes back) as one name.
     assert Pitch(id="pitch-abc123", kind="pitch", title="P").shaped_by == []
-    assert Pitch(id="pitch-abc123", kind="pitch", title="P", shaped_by="jcanton").shaped_by == [
-        "jcanton"
-    ]
+    assert Pitch(
+        id="pitch-abc123", kind="pitch", title="P", shaped_by="jackdawrie"
+    ).shaped_by == ["jackdawrie"]
     assert Task(id="task-abc123", kind="task", title="T").person_weeks is None
 
 
@@ -64,9 +64,9 @@ def test_optional_fields_still_accept_real_values():
         kind="pitch",
         title="MPI on CI verify with serial",
         person_weeks=1.0,
-        shaped_by="jcanton",
-        owner="msimberg",
-        reviewers=["jcanton"],
+        shaped_by="jackdawrie",
+        owner="merganserly",
+        reviewers=["jackdawrie"],
         assigned_on=date(2026, 8, 13),
         depends_on=["task-5a4e39"],
     )
@@ -168,11 +168,11 @@ def test_a_section_is_dropped_with_everything_written_underneath_it():
     slide with nothing above it to say what it was part of, which is worse than
     printing the whole section."""
     body = (
-        "## Rabbit holes\n\nThe TDMA.\n\n### Second one\n\nThe savepoints.\n\n"
+        "## Rabbit holes\n\nThe TDMA.\n\n### Second one\n\nThe tap points.\n\n"
         "## Notes\n\nKept.\n"
     )
     assert without_sections(body, {"rabbit holes"}) == "## Notes\n\nKept."
-    assert "The savepoints." in only_sections(body, {"rabbit holes"})
+    assert "The tap points." in only_sections(body, {"rabbit holes"})
     assert "Kept." not in only_sections(body, {"rabbit holes"})
 
 
@@ -230,13 +230,13 @@ def test_the_goal_is_a_field_and_the_notes_are_the_body():
     cycle. Sharing one box put the cycle's whole point wherever the growing half
     of the document happened to leave it."""
     cycle = parse_cycle_text(
-        "---\ncycle: 38\nstarts_on: 2026-09-28\ngoal: Ship the dycore port\n---\n"
-        "Turbulence was left out: no reviewer free.\n",
+        "---\ncycle: 38\nstarts_on: 2026-09-28\ngoal: Ship the core solver port\n---\n"
+        "Throughflow was left out: no reviewer free.\n",
         "cycles/0038.md",
     )
 
-    assert cycle.goal == "Ship the dycore port"
-    assert cycle.body == "Turbulence was left out: no reviewer free.\n"
+    assert cycle.goal == "Ship the core solver port"
+    assert cycle.body == "Throughflow was left out: no reviewer free.\n"
     # A record written before the field existed still loads, with an empty goal
     # rather than a refusal — every field here is optional at the type level.
     assert parse_cycle_text("---\ncycle: 1\nstarts_on: 2026-01-05\n---\n", "c.md").goal == ""
@@ -256,11 +256,11 @@ def test_the_goal_is_a_field_and_the_notes_are_the_body():
 
 @pytest.mark.parametrize(
     "login",
-    ("jcanton", "a", "a" * 39, "OngChia", "yiluchen1066", "abishekg7", "a-b", "a--b"),
+    ("jackdawrie", "a", "a" * 39, "Oxpeckerly", "yellowhammer7", "accentor9", "a-b", "a--b"),
 )
 def test_a_login_becomes_the_one_path_it_may_be_written_at(login: str):
     """1 to 39 of `[A-Za-z0-9-]`, no hyphen at either end — every one of these is
-    a real login from the team's own roster or the edge of the rule. `a--b` is
+    a login from this corpus's own roster or the edge of the rule. `a--b` is
     admitted although GitHub itself refuses it: being narrower than the wire buys
     nothing this pattern exists for, and would refuse somebody the day GitHub
     relaxes its own rule."""
@@ -305,9 +305,9 @@ def test_a_person_record_takes_its_login_from_the_path():
     """The path is the identity. The record itself says only what was chosen."""
     from openproj.model import parse_person_text
 
-    person = parse_person_text("---\nicon: fox\n---\n", "people/jcanton.md")
+    person = parse_person_text("---\nicon: fox\n---\n", "people/jackdawrie.md")
 
-    assert person.login == "jcanton"
+    assert person.login == "jackdawrie"
     assert person.icon == "fox"
 
 
@@ -350,8 +350,8 @@ def test_a_sentence_somebody_wrote_about_themselves_survives_a_pick():
     come back byte for byte, because the file is one a person may write in git.
     That is `patch_text`'s promise rather than this record's, which is the point:
     the record shape inherits it instead of restating it."""
-    original = "---\nicon: fox\n---\n\nAnn, who works on the dycore.\n"
+    original = "---\nicon: fox\n---\n\nAnn, who works on the core solver.\n"
 
     patched = patch_text(original, {"icon": "owl"})
 
-    assert patched == "---\nicon: owl\n---\n\nAnn, who works on the dycore.\n"
+    assert patched == "---\nicon: owl\n---\n\nAnn, who works on the core solver.\n"

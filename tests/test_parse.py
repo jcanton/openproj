@@ -30,20 +30,20 @@ FIXTURE = Path(__file__).parent / "fixtures" / "roundtrip.md"
 
 
 def test_parse_file_reads_a_seed_pitch(seed_root: Path):
-    pitch = parse_file(seed_root / "pitches" / "pitch-2a7f3e--tracer-adv-port-ls-coeffs.md")
+    pitch = parse_file(seed_root / "pitches" / "pitch-2a7f3e--transport-port-blend-coeffs.md")
     assert isinstance(pitch, Pitch)
     assert pitch.id == "pitch-2a7f3e"
-    assert pitch.title == "Tracer adv port LS coeffs"
+    assert pitch.title == "Transport port blend coeffs"
     assert pitch.status == "done"
     assert pitch.person_weeks is None
-    assert pitch.assignees == ["nfarabullini", "DropD"]
+    assert pitch.assignees == ["nightjarelli", "Dunnocksen"]
     assert pitch.cycle == 34
-    assert "tracer-advection" in pitch.tags
+    assert "transport" in pitch.tags
 
 
 def test_parse_dispatches_to_the_subclass_named_by_kind(seed_root: Path):
     project = parse_file(seed_root / "projects" / "proj-7e57a0--testing.md")
-    task = parse_file(seed_root / "tasks" / "task-53a9f0--reproduce-2gpu-equator-artefact.md")
+    task = parse_file(seed_root / "tasks" / "task-53a9f0--reproduce-2gpu-seam-artefact.md")
     assert type(project) is Project
     assert type(task) is Task
     assert task.person_weeks == 2
@@ -53,7 +53,7 @@ def test_parse_dispatches_to_the_subclass_named_by_kind(seed_root: Path):
 def test_the_markdown_body_survives_parsing(seed_root: Path):
     pitch = parse_file(seed_root / "pitches" / "pitch-1b3f9a--mpi-on-ci-verify-with-serial.md")
     assert pitch.body.startswith("# MPI on CI verify with serial")
-    assert "hackmd.io" in pitch.body
+    assert "github.com/kilnlab/kiln4py" in pitch.body
     assert "id: pitch-1b3f9a" not in pitch.body
 
 
@@ -110,34 +110,34 @@ def test_serialise_writes_one_edited_key_and_leaves_its_neighbours_alone():
     text = FIXTURE.read_text(encoding="utf-8")
     record = parse_text(text, FIXTURE.name)
     record.status = "done"
-    record.prs = ["C2SM/icon4py#1234"]
+    record.prs = ["kilnlab/kiln4py#1234"]
     output = serialise(record, text)
     assert "status: done\n" in output
-    assert "prs: [C2SM/icon4py#1234]\n" in output
-    assert "owner: \"müller\"        # quoted on purpose" in output
+    assert "prs: [kilnlab/kiln4py#1234]\n" in output
+    assert "owner: \"grünfink\"      # quoted on purpose" in output
     assert output.split("---\n")[1].count("\n") == text.split("---\n")[1].count("\n")
 
 
 def test_one_shaper_keeps_the_spelling_the_corpus_is_written_in():
     """`shaped_by` grew from a scalar to a list, because shaping is usually done in
     pairs. Every existing file writes one name as a bare string, and rewriting all
-    of them to `[jcanton]` on an unrelated save is a diff nobody asked for in a
+    of them to `[jackdawrie]` on an unrelated save is a diff nobody asked for in a
     file somebody else is reading."""
-    text = "---\nid: pitch-abc123\nkind: pitch\ntitle: P\nshaped_by: jcanton\n---\n\nb\n"
+    text = "---\nid: pitch-abc123\nkind: pitch\ntitle: P\nshaped_by: jackdawrie\n---\n\nb\n"
     pitch = parse_text(text, "p.md")
-    assert pitch.shaped_by == ["jcanton"]
+    assert pitch.shaped_by == ["jackdawrie"]
     assert serialise(pitch, text) == text
 
-    pitch.shaped_by = ["jcanton", "msimberg"]
-    assert "shaped_by:\n  - jcanton\n  - msimberg\n" in serialise(pitch, text)
+    pitch.shaped_by = ["jackdawrie", "merganserly"]
+    assert "shaped_by:\n  - jackdawrie\n  - merganserly\n" in serialise(pitch, text)
 
 
 def test_serialise_appends_a_field_the_file_never_had():
     text = "---\nid: task-abc123\nkind: task\ntitle: T\n---\n\nbody\n"
     record = parse_text(text, "sparse.md")
-    record.owner = "jcanton"
+    record.owner = "jackdawrie"
     assert serialise(record, text) == (
-        "---\nid: task-abc123\nkind: task\ntitle: T\nowner: jcanton\n---\n\nbody\n"
+        "---\nid: task-abc123\nkind: task\ntitle: T\nowner: jackdawrie\n---\n\nbody\n"
     )
 
 

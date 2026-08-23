@@ -2,7 +2,7 @@
 id: note-33bb44
 title: A dashboard for validation runs
 status: dropped
-written_by: ninaburg
+written_by: nuthatchett
 written_on: 2026-07-29
 tags: [tooling, validation]
 became: []

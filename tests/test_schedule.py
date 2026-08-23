@@ -96,7 +96,7 @@ def test_weekends_do_not_count_and_a_weekend_start_rolls_forward():
 
 
 def test_configured_holidays_do_not_count(seed_root: Path):
-    """The seed's ETH year-end closure: 24 and 25 December 2026 are not working days."""
+    """The seed's year-end shutdown: 24 and 25 December 2026 are not working days."""
     config = model.load_config(seed_root)
     assert working_days_after(date(2026, 12, 21), 1.0, config) == date(2026, 12, 29)
 
@@ -668,12 +668,12 @@ def test_a_size_that_is_not_a_number_is_one_bad_row(size: float):
 
 
 def test_a_pitch_level_dependency_delays_the_tasks_inside_the_dependent_pitch():
-    """"The land port waits for turbulence" is a sentence about two pitches, and
+    """"The bed port waits for throughflow" is a sentence about two pitches, and
     it moved nothing: only a leaf is placed against its blockers, and a parent's
     span is the rollup of children who had never heard of the edge.
 
-    The demo shipped with exactly this — land starting a month before the
-    turbulence it declared it waited for, while the table's `blocked` filter
+    The demo shipped with exactly this — the bed starting a month before the
+    throughflow it declared it waited for, while the table's `blocked` filter
     returned it. Two views of one record, disagreeing."""
     spans, _ = run([
         pitch("aaa001"),

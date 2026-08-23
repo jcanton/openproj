@@ -90,9 +90,9 @@ def task(**overrides: object) -> Task:
         "title": "A task",
         "parent": PITCH_ID,
         "status": "ready",
-        "owner": "jcanton",
-        "assignees": ["jcanton"],
-        "reviewers": ["msimberg"],
+        "owner": "jackdawrie",
+        "assignees": ["jackdawrie"],
+        "reviewers": ["merganserly"],
         "person_weeks": 1.0,
     }
     return Task(**(fields | overrides))
@@ -106,11 +106,11 @@ def pitch(**overrides: object) -> Pitch:
         "title": "A pitch",
         "parent": None,
         "status": "ready",
-        "owner": "jcanton",
-        "assignees": ["jcanton"],
-        "reviewers": ["msimberg"],
+        "owner": "jackdawrie",
+        "assignees": ["jackdawrie"],
+        "reviewers": ["merganserly"],
         "person_weeks": 2.0,
-        "shaped_by": "havogt",
+        "shaped_by": "hornbillow",
     }
     return Pitch(**(fields | overrides))
 
@@ -123,9 +123,9 @@ def project(**overrides: object) -> Project:
         "title": "A project",
         "parent": None,
         "status": "in_progress",
-        "owner": "jcanton",
-        "assignees": ["jcanton"],
-        "reviewers": ["msimberg"],
+        "owner": "jackdawrie",
+        "assignees": ["jackdawrie"],
+        "reviewers": ["merganserly"],
         "assigned_on": date(2026, 8, 3),
     }
     return Project(**(fields | overrides))
@@ -264,8 +264,8 @@ def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
     wip = task(
         status="in_progress",
         assigned_on=date(2026, 8, 3),
-        owner="jcanton",
-        reviewers=["jcanton"],
+        owner="jackdawrie",
+        reviewers=["jackdawrie"],
     )
     problem = only(check(wip), TASK_ID)
     assert summary(problem) == ("blocker", "reviewers", NEEDS_INDEPENDENT_REVIEWER, 1)
@@ -288,8 +288,8 @@ def test_review_waived_satisfies_both_the_todo_and_the_wip_reviewer_gates():
     wip = task(
         status="in_progress",
         assigned_on=date(2026, 8, 3),
-        owner="jcanton",
-        reviewers=["jcanton"],
+        owner="jackdawrie",
+        reviewers=["jackdawrie"],
         review_waived=True,
     )
     assert check(todo) == []
@@ -490,11 +490,11 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("blocker", "pitch-48ea9e", "assigned_on", NEEDS_ASSIGNED_ON, 1),
         # wip with an empty reviewer list and nothing underneath carrying one.
         # `pitch-5e7b1c` was here too and is not any more: its own list is empty,
-        # but its tasks name iomaganaris, muellch and abishekg7, and a pitch whose
+        # but its tasks name ibisbillie, mudlarkish and accentor9, and a pitch whose
         # tasks are reviewed is reviewed. That is the rule doing what it was added
-        # for, on the corpus the first real import produced.
+        # for, on the corpus this one was converted from.
         ("blocker", "pitch-48ea9e", "reviewers", NEEDS_INDEPENDENT_REVIEWER, 1),
-        # done, but the migration recovered no PR links
+        # done, but no PR links were recorded
         ("blocker", "pitch-2a7f3e", "prs", NEEDS_PR, 1),
         ("blocker", "pitch-3c9a41", "prs", NEEDS_PR, 1),
         ("blocker", "task-31f6c4", "prs", NEEDS_PR, 1),
@@ -565,10 +565,15 @@ def test_a_name_nobody_recognises_is_a_warning_not_a_refusal():
     reality. Blocking on it would make a new colleague unassignable on their first
     day; warning catches the case that actually happens, which is a typo quietly
     creating a task nobody reviews."""
-    roster = Config(known_people=["jcanton", "msimberg"])
+    roster = Config(known_people=["jackdawrie", "merganserly"])
 
-    problem = only(check(task(owner="jcnaton"), config=roster), TASK_ID)
-    assert summary(problem) == ("warning", "owner", "jcnaton is not in config/people.yaml", 1)
+    problem = only(check(task(owner="jackdawire"), config=roster), TASK_ID)
+    assert summary(problem) == (
+        "warning",
+        "owner",
+        "jackdawire is not in config/people.yaml",
+        1,
+    )
 
 
 def test_a_roster_that_does_not_exist_checks_nothing():
@@ -579,9 +584,9 @@ def test_a_roster_that_does_not_exist_checks_nothing():
 
 
 def test_every_person_field_is_checked_against_the_roster():
-    roster = Config(known_people=["jcanton"])
+    roster = Config(known_people=["jackdawrie"])
     problems = check(
-        task(owner="jcanton", reviewers=["ghost"], assignees=["phantom"]), config=roster
+        task(owner="jackdawrie", reviewers=["ghost"], assignees=["phantom"]), config=roster
     )
 
     assert {(p.field, p.message.split()[0]) for p in problems} == {
@@ -652,7 +657,7 @@ def test_a_kind_that_reads_no_status_has_no_vocabulary_to_violate():
     """
     for word in ("shelved", "banana"):
         written = parse_text(
-            f"---\nid: prod-000001\nkind: product\ntitle: gt4py\nstatus: {word}\n---\n\nx\n",
+            f"---\nid: prod-000001\nkind: product\ntitle: hearth\nstatus: {word}\n---\n\nx\n",
             "products/prod-000001.md",
         )
         said = validate_all([written], Config())
@@ -721,11 +726,12 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
     records = [
         pitch(status="ready", owner=None, reviewers=[], person_weeks=None, shaped_by=None),
-        task(status="in_progress", assigned_on=None, reviewers=["jcanton"], owner="jcanton"),
+        task(status="in_progress", assigned_on=None, reviewers=["jackdawrie"], owner="jackdawrie"),
         project(status="ready", owner=None, reviewers=[]),
-        Task(id=OTHER_TASK_ID, kind="task", title="T", status="ready", owner="jcanton",
-             reviewers=["msimberg"], person_weeks=None, depends_on=["task-999999", SHELVED_ID]),
-        Task(id=SHELVED_ID, kind="task", title="D", status="shelved", owner="jcanton"),
+        Task(id=OTHER_TASK_ID, kind="task", title="T", status="ready", owner="jackdawrie",
+             reviewers=["merganserly"], person_weeks=None,
+             depends_on=["task-999999", SHELVED_ID]),
+        Task(id=SHELVED_ID, kind="task", title="D", status="shelved", owner="jackdawrie"),
         Task(id=loop_a, kind="task", title="A", status="shaping", depends_on=[loop_b]),
         Task(id=loop_b, kind="task", title="B", status="shaping", depends_on=[loop_a]),
     ]
@@ -756,7 +762,7 @@ def test_a_pitch_whose_tasks_are_reviewed_is_reviewed():
     """
     held = check(
         pitch(reviewers=[]),
-        task(reviewers=["msimberg"]),
+        task(reviewers=["merganserly"]),
     )
 
     assert [p for p in held if p.record_id == PITCH_ID and p.field == "reviewers"] == []
@@ -785,7 +791,7 @@ def test_a_shelved_task_reviews_nothing():
     """Parked work is not work anybody is reviewing, and `validate_all` already
     leaves shelved children out of the map this walks."""
     problem = only(
-        check(pitch(reviewers=[]), task(reviewers=["msimberg"], status="shelved")),
+        check(pitch(reviewers=[]), task(reviewers=["merganserly"], status="shelved")),
         PITCH_ID,
         field="reviewers",
     )
@@ -800,7 +806,7 @@ def test_a_project_inherits_through_its_pitches():
     held = check(
         project(reviewers=[], status="ready", person_weeks=None),
         pitch(parent=PROJECT_ID, reviewers=[]),
-        task(reviewers=["msimberg"]),
+        task(reviewers=["merganserly"]),
     )
 
     assert [p for p in held if p.field == "reviewers"] == []
@@ -813,7 +819,7 @@ def test_in_progress_wants_somebody_other_than_the_owner_from_underneath_too():
     problem = only(
         check(
             pitch(reviewers=[], status="in_progress", assigned_on=date(2026, 8, 3)),
-            task(reviewers=["jcanton"], owner="jcanton"),
+            task(reviewers=["jackdawrie"], owner="jackdawrie"),
         ),
         PITCH_ID,
         field="reviewers",

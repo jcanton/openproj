@@ -207,7 +207,7 @@ def test_the_rest_of_the_plan_is_still_on_the_page(door, name: str, where: str, 
     push(where, content)
 
     with TestClient(create_app(path, auth="dev")) as client:
-        assert "Reproduce the 2-GPU equator artefact" in client.get("/table").text, name
+        assert "Reproduce the 2-GPU seam artefact" in client.get("/table").text, name
         records = client.get("/api/index.json").json()["plan"]
         assert TASK in records, name
 

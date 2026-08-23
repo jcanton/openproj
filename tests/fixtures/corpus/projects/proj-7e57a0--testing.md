@@ -4,8 +4,8 @@ kind: project
 title: Testing
 parent: null
 status: in_progress
-owner: jcanton
-reviewers: [msimberg]
+owner: jackdawrie
+reviewers: [merganserly]
 assigned_on: null
 cycle: null
 priority: medium
