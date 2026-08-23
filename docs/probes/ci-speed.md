@@ -1,5 +1,27 @@
 # Making CI faster
 
+> **Superseded in one respect, 2026-08-23, later the same day: the repository went PUBLIC.**
+>
+> Every runner measurement below was taken on the **2-core, 8 GB** box GitHub gives a *private*
+> repository, and that number is the reason this document chose five sharded jobs over
+> `pytest-xdist -n auto` — see section 2. Public repositories get **4-core, 16 GB**, so the
+> constraint that decided the design no longer holds.
+>
+> First observation on the new hardware: the same suite, same shards, **2m25s** against the
+> 3m02s–3m33s range recorded below. That is one run and not a measurement — the spread between runs
+> here is already ±30 s, and nothing has been re-probed.
+>
+> What is worth re-taking before changing anything: the runner's actual core count and memory
+> (section 2 probed it rather than trusting the docs, and so should whoever revisits this); whether
+> `-n 2` *inside* each shard now pays, given that the Chrome-heavy shards were memory-bound as much
+> as CPU-bound; and whether five shards is still the right number when each machine has twice the
+> cores. Fewer, wider shards would cut the per-job setup that section 5 measures at 26 of 182
+> seconds.
+>
+> Actions minutes are also free for a public repository, so the billed-minutes column in section 5
+> is now a curiosity rather than a constraint.
+
+
 *Written 2026-08-23, on branch `ci-speed` (PR #72). **All nine changes are now
 written and measured.** Every run below is green, and the last three are the
 answer:*

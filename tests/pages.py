@@ -19,6 +19,7 @@ anything was painted. This is the layer below that: the document, parsed.
 from __future__ import annotations
 
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import NamedTuple
 
 
@@ -307,3 +308,29 @@ def elements(page: str) -> list[Element]:
     parser = _Elements()
     parser.feed(page)
     return parser.found
+
+
+# The renderer's own source, as one text. It was one file until render.py became
+# a package, and four tests read it off disk rather than restating what it
+# contains: the `|safe` sweep, the one-escaper count, the marker corpus, and the
+# `answer.detail` sweep. Each is asking "is this true of everything the renderer
+# ships", so each has to see all of it — and a new module in the package must be
+# swept the day it lands, not the day somebody remembers to add it to a list.
+#
+# `vendor.py` is in here although it sits outside the package: it holds the
+# inlining that reads `static/` off the disk, it emits into the same pages, and
+# leaving it out would be a hole in exactly the sweeps this exists for.
+def render_paths() -> list[Path]:
+    """Every file of Python the renderer is made of, in a stable order.
+
+    The sweeps that read the renderer as SYNTAX need the files rather than the
+    text: `from __future__ import annotations` has to be the first statement in
+    a module, so a concatenation of modules is not parseable Python.
+    """
+    root = Path(__file__).resolve().parents[1] / "src" / "openproj"
+    return sorted((root / "render").glob("*.py")) + [root / "vendor.py"]
+
+
+def render_source() -> str:
+    """The same files as one text, for the sweeps that read it as text."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in render_paths())

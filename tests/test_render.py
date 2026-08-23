@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from markupsafe import escape
-from pages import elements, headings, lit, selects
+from pages import elements, headings, lit, render_source, selects
 
 from openproj.index import Index, build_index
 from openproj.model import Config, load_repo
@@ -1581,9 +1581,7 @@ def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal(
     is proved by running it (`test_table`, `test_editor`), and what this pins is
     that the next call site cannot be written bare.
     """
-    from openproj.render import __file__ as rendered_from
-
-    source = Path(rendered_from).read_text(encoding="utf-8")
+    source = render_source()
     helper = re.search(r"const remembered = \{.*?\n\};", source, re.S)
     assert helper, "the storage helper is gone or has been renamed"
 
@@ -1874,7 +1872,7 @@ def test_the_labels_and_the_bars_are_laid_out_on_one_row_height(
     a third copy of `_ROW_PX`, so this moves the constant and asks both."""
     from openproj import render
 
-    monkeypatch.setattr(render, "_ROW_PX", 30)
+    monkeypatch.setattr(render.timeline, "_ROW_PX", 30)
     page = render.render_timeline(seed_index)
 
     assert "height: 30px; line-height: 30px;" in page
@@ -1889,9 +1887,8 @@ def test_the_renderer_asks_the_model_rather_than_reaching_into_it():
     is an interface nobody agreed to: the renderer had to know the shape of a
     problem tuple to unpack it, so a change to the validator's own bookkeeping
     would have broken a page. `model.required_at()` is the front door."""
-    from openproj import render
 
-    source = Path(render.__file__).read_text(encoding="utf-8")
+    source = render_source()
     # Comments dropped: this file explains what it stopped doing, and the point is
     # that nothing executable reaches for the name any more.
     code = "\n".join(
@@ -3979,9 +3976,8 @@ def test_the_graph_does_not_animate_where_css_cannot_stop_it():
     to guard is that neither cytoscape's own animation API nor a re-introduced
     `layout({...})` brings a slide back for a reader who asked for stillness.
     """
-    from openproj import render
 
-    source = Path(render.__file__).read_text(encoding="utf-8")
+    source = render_source()
     for spec in re.findall(r"\.layout\((\{[^}]*\})\)", source):
         assert "animate" not in spec, (
             f"cytoscape was told to animate in {spec}; CSS cannot reach a canvas, so "
@@ -4481,3 +4477,47 @@ def test_the_static_export_carries_the_drawings_and_offers_no_picker(
     assert 'id="picker"' not in page
     assert 'id="pick"' not in page
     assert "/api/icon" not in page
+
+
+def test_one_record_on_its_own_page_is_the_row_the_export_would_have_built(seed_index: Index):
+    """`only` is applied inside `_detail_rows` now, not by filtering after it.
+
+    It used to build a row for every record in the plan — each carrying a full
+    `markdown_it` render of that record's body — and then keep one. Measured
+    under twenty readers on a 561-record corpus, 369 of those page renders were
+    92.6 of the server's 113.4 CPU-seconds: about 63% of the machine spent
+    drawing markdown that was discarded before it reached anybody.
+
+    Moving the filter is only safe if the surviving row is the SAME row. Asked
+    of the ROWS and not of the rendered page, because the two pages are
+    legitimately different documents: `only` sets `single`, which changes the
+    furniture around the record. What must not change is the record.
+
+    `_detail_rows` is a per-record comprehension with no cross-row state, so it
+    should hold — but "should" is how the two halves of a page come apart, and
+    this repository has already paid for one fact formatted in two places.
+    """
+    from openproj.render import _detail_rows
+
+    every = {row["id"]: row for row in _detail_rows(seed_index, ROUTES)}
+    assert every.keys() == seed_index.records.keys(), "the export is not every record"
+
+    for record_id in seed_index.records:
+        alone = _detail_rows(seed_index, ROUTES, only=record_id)
+        assert [row["id"] for row in alone] == [record_id]
+        assert alone[0] == every[record_id], (
+            f"{record_id} built alone is not the row the export builds for it"
+        )
+
+
+def test_a_record_that_is_not_there_is_an_empty_page_and_not_a_KeyError(seed_index: Index):
+    """The route 404s first, so only a non-route caller reaches this — but the
+    filter that used to run after the build could not raise, and the one that
+    runs inside it can. Same answer as before: nothing, quietly."""
+    from openproj.render import _detail_rows
+
+    assert _detail_rows(seed_index, ROUTES, only="task-ffffff") == []
+    page = render_detail(seed_index, ROUTES, only="task-ffffff")
+
+    assert "task-ffffff" not in page
+    assert "<article" not in page
