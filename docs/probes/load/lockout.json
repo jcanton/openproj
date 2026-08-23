@@ -1,0 +1,406 @@
+{
+ "probe": "lockout",
+ "cells": [
+  {
+   "room_types": "end",
+   "outside_writes": "end",
+   "path": "tasks/task-000000--task-1.md",
+   "body_lines_at_start": 34,
+   "first_save": [
+    {
+     "t": "saved",
+     "commit": "1dbc593686134946fa9d42b8d98533075b86f4df",
+     "outcome": "committed",
+     "pushed": false,
+     "at_": 273768.490765
+    }
+   ],
+   "first_save_reached_git": true,
+   "outside": {
+    "status": 200,
+    "body": {
+     "outcome": "committed",
+     "commit": "a664747185fa517966e92acc050b458bdf2fb821",
+     "conflict": null,
+     "head": "1dbc593686134946fa9d42b8d98533075b86f4df"
+    },
+    "line": "- [ ] added by somebody outside the room (end)"
+   },
+   "rounds": [
+    {
+     "attempt": 0,
+     "said": [
+      {
+       "t": "refused",
+       "at_": 273771.986212083,
+       "why": "tasks/task-000000--task-1.md \u2014 somebody changed this before you, in the same places:\n  lines 35-35: stored '[first-0] a "
+      }
+     ]
+    },
+    {
+     "attempt": 1,
+     "said": [
+      {
+       "t": "refused",
+       "at_": 273775.411590708,
+       "why": "tasks/task-000000--task-1.md \u2014 somebody changed this before you, in the same places:\n  lines 35-35: stored '[first-0] a "
+      }
+     ]
+    },
+    {
+     "attempt": 2,
+     "said": [
+      {
+       "t": "refused",
+       "at_": 273778.839907208,
+       "why": "tasks/task-000000--task-1.md \u2014 somebody changed this before you, in the same places:\n  lines 35-35: stored '[first-0] a "
+      }
+     ]
+    },
+    {
+     "attempt": 3,
+     "said": [
+      {
+       "t": "refused",
+       "at_": 273782.250181791,
+       "why": "tasks/task-000000--task-1.md \u2014 somebody changed this before you, in the same places:\n  lines 35-35: stored '[first-0] a "
+      }
+     ]
+    },
+    {
+     "attempt": 4,
+     "said": [
+      {
+       "t": "refused",
+       "at_": 273785.663919458,
+       "why": "tasks/task-000000--task-1.md \u2014 somebody changed this before you, in the same places:\n  lines 35-35: stored '[first-0] a "
+      }
+     ]
+    }
+   ],
+   "room_base_after": "1dbc593686134946fa9d42b8d98533075b86f4df",
+   "room_seed": "a772c4ee1cecc366bf5fa2dfe2f2bc9f28468e69",
+   "markers_typed": 15,
+   "markers_in_git": 0,
+   "outside_line_in_git": true,
+   "commits_touching_record": [
+    "a664747 task-000000: body",
+    "1dbc593 task-000000: body",
+    "a772c4e load corpus"
+   ],
+   "final_body_lines": 36
+  },
+  {
+   "room_types": "end",
+   "outside_writes": "middle",
+   "path": "tasks/task-000000--task-1.md",
+   "body_lines_at_start": 34,
+   "first_save": [
+    {
+     "t": "saved",
+     "commit": "f8dcf2a385c2a2255573a472eac4e777e2536a3f",
+     "outcome": "committed",
+     "pushed": false,
+     "at_": 273795.140722958
+    }
+   ],
+   "first_save_reached_git": true,
+   "outside": {
+    "status": 200,
+    "body": {
+     "outcome": "committed",
+     "commit": "5f247f9876532b5b667241c4c449408f7104a8fd",
+     "conflict": null,
+     "head": "f8dcf2a385c2a2255573a472eac4e777e2536a3f"
+    },
+    "line": "- [ ] added by somebody outside the room (middle)"
+   },
+   "rounds": [
+    {
+     "attempt": 0,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "753ae0f3d055360f3054d98c32579ae1a3bea99d",
+       "outcome": "merged",
+       "pushed": false,
+       "at_": 273798.640008541
+      }
+     ]
+    },
+    {
+     "attempt": 1,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "a8351fdd731ac39e5f65a2bca1461d26415ce681",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273802.028347875
+      }
+     ]
+    },
+    {
+     "attempt": 2,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "7295677b7bfc476a19277d746b2780e815546432",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273805.454330083
+      }
+     ]
+    },
+    {
+     "attempt": 3,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "ba1325eea13529c7f842297523123ca26b69699f",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273808.873989375
+      }
+     ]
+    },
+    {
+     "attempt": 4,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "62e1baaeaf06aafaa38b2cb0d26b27ce463edcc4",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273812.284522375
+      }
+     ]
+    }
+   ],
+   "room_base_after": "62e1baaeaf06aafaa38b2cb0d26b27ce463edcc4",
+   "room_seed": "a772c4ee1cecc366bf5fa2dfe2f2bc9f28468e69",
+   "markers_typed": 15,
+   "markers_in_git": 15,
+   "outside_line_in_git": true,
+   "commits_touching_record": [
+    "62e1baa task-000000: body",
+    "ba1325e task-000000: body",
+    "7295677 task-000000: body",
+    "a8351fd task-000000: body",
+    "753ae0f task-000000: body",
+    "5f247f9 task-000000: body",
+    "f8dcf2a task-000000: body",
+    "a772c4e load corpus"
+   ],
+   "final_body_lines": 51
+  },
+  {
+   "room_types": "middle",
+   "outside_writes": "end",
+   "path": "tasks/task-000000--task-1.md",
+   "body_lines_at_start": 34,
+   "first_save": [
+    {
+     "t": "saved",
+     "commit": "ff7a1b7cccbb703bc8d324982b5b583dcea51715",
+     "outcome": "committed",
+     "pushed": false,
+     "at_": 273821.71365925
+    }
+   ],
+   "first_save_reached_git": true,
+   "outside": {
+    "status": 200,
+    "body": {
+     "outcome": "committed",
+     "commit": "ee9a7fd6da579125acfd8c8de71e088f8b8edeb4",
+     "conflict": null,
+     "head": "ff7a1b7cccbb703bc8d324982b5b583dcea51715"
+    },
+    "line": "- [ ] added by somebody outside the room (end)"
+   },
+   "rounds": [
+    {
+     "attempt": 0,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "fc775c012e7985b9ad03b518a194e10d68cc5dd9",
+       "outcome": "merged",
+       "pushed": false,
+       "at_": 273825.23514125
+      }
+     ]
+    },
+    {
+     "attempt": 1,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "76f7e341e71cb168d118bd23370f434f129a0c2b",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273828.636157041
+      }
+     ]
+    },
+    {
+     "attempt": 2,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "c9ffc3f7638f482a40316f9a8aaaf9e04c554c32",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273832.034998458
+      }
+     ]
+    },
+    {
+     "attempt": 3,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "66dd85cc780d6f876cfb4eab58889d2d02c75877",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273835.46846125
+      }
+     ]
+    },
+    {
+     "attempt": 4,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "0672fa6f7e63523d0a2c5c6778b84104ef3f078f",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273838.872172208
+      }
+     ]
+    }
+   ],
+   "room_base_after": "0672fa6f7e63523d0a2c5c6778b84104ef3f078f",
+   "room_seed": "a772c4ee1cecc366bf5fa2dfe2f2bc9f28468e69",
+   "markers_typed": 15,
+   "markers_in_git": 15,
+   "outside_line_in_git": true,
+   "commits_touching_record": [
+    "0672fa6 task-000000: body",
+    "66dd85c task-000000: body",
+    "c9ffc3f task-000000: body",
+    "76f7e34 task-000000: body",
+    "fc775c0 task-000000: body",
+    "ee9a7fd task-000000: body",
+    "ff7a1b7 task-000000: body",
+    "a772c4e load corpus"
+   ],
+   "final_body_lines": 50
+  },
+  {
+   "room_types": "middle",
+   "outside_writes": "middle",
+   "path": "tasks/task-000000--task-1.md",
+   "body_lines_at_start": 34,
+   "first_save": [
+    {
+     "t": "saved",
+     "commit": "bfcdb2671f90a25c933ad7e88542bfa8c2a49665",
+     "outcome": "committed",
+     "pushed": false,
+     "at_": 273848.253361333
+    }
+   ],
+   "first_save_reached_git": true,
+   "outside": {
+    "status": 200,
+    "body": {
+     "outcome": "committed",
+     "commit": "c1063613c672edacdd6e6646aa67aeedf98f7e26",
+     "conflict": null,
+     "head": "bfcdb2671f90a25c933ad7e88542bfa8c2a49665"
+    },
+    "line": "- [ ] added by somebody outside the room (middle)"
+   },
+   "rounds": [
+    {
+     "attempt": 0,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "07a82d97534091aca1e1c0e7903fa7717169347f",
+       "outcome": "merged",
+       "pushed": false,
+       "at_": 273851.793792041
+      }
+     ]
+    },
+    {
+     "attempt": 1,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "938a981e803b27a0c5a7f455c38ded37e3589c99",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273855.188872166
+      }
+     ]
+    },
+    {
+     "attempt": 2,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "a0dc30af086b020d19421dc03f568ad3d16fab09",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273858.590562
+      }
+     ]
+    },
+    {
+     "attempt": 3,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "41ff9787e0cac1928e0b720629ff3afc0022261e",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273861.989679041
+      }
+     ]
+    },
+    {
+     "attempt": 4,
+     "said": [
+      {
+       "t": "saved",
+       "commit": "0f3085987a204b454c197529999e37f03efb01a6",
+       "outcome": "committed",
+       "pushed": false,
+       "at_": 273865.415480541
+      }
+     ]
+    }
+   ],
+   "room_base_after": "0f3085987a204b454c197529999e37f03efb01a6",
+   "room_seed": "a772c4ee1cecc366bf5fa2dfe2f2bc9f28468e69",
+   "markers_typed": 15,
+   "markers_in_git": 15,
+   "outside_line_in_git": true,
+   "commits_touching_record": [
+    "0f30859 task-000000: body",
+    "41ff978 task-000000: body",
+    "a0dc30a task-000000: body",
+    "938a981 task-000000: body",
+    "07a82d9 task-000000: body",
+    "c106361 task-000000: body",
+    "bfcdb26 task-000000: body",
+    "a772c4e load corpus"
+   ],
+   "final_body_lines": 50
+  }
+ ]
+}
