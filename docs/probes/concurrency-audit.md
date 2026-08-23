@@ -29,6 +29,45 @@ Three things to know before reading a number here:
 
 ---
 
+## 0. Re-measured after the template cache landed (2026-08-23, later the same day)
+
+Everything below was taken on a tree cut at `5a09f6d`. `main` has since landed a one-line fix in
+`render.py`: `Environment.from_string` was compiling the same fourteen Jinja templates on every
+call, because Jinja's own cache hangs off a loader and there is no loader here — the templates are
+module constants. So the read numbers below were inflated, and the honest thing is to say by how
+much rather than to caveat them.
+
+`readload.py --readers 20 --seconds 25` re-run on the fixed tree, same corpus, same machine,
+p50 in the warm-1 phase:
+
+| route | as measured below | after the fix | |
+|---|---:|---:|---:|
+| `GET /` | 1142.7 ms | 350.9 ms | **3.3x** |
+| `GET /table` | 1196.1 ms | 386.6 ms | 3.1x |
+| `GET /graph` | 1204.9 ms | 387.7 ms | 3.1x |
+| `GET /issues` | 1112.4 ms | 334.6 ms | 3.3x |
+| `GET /timeline` | 1034.5 ms | 341.9 ms | 3.0x |
+| `PATCH` | 978.6 ms | 226.0 ms | 4.3x |
+| **`GET /detail/<id>`** | **4112.0 ms** | **3885.6 ms** | **1.06x** |
+
+**Every route got about three times faster except the one this document is about.** That is the
+result, and it makes section 6's first item more urgent rather than less: `/detail` did not move
+because its cost is not template compilation, it is `_detail_rows` building a full `markdown_it`
+render for every record in the plan and then keeping one. After the fix `/detail` is roughly EIGHT
+times slower than every other page, where before it was three.
+
+The server still ran at 0.94-1.05 cores throughout, so the ceiling is still one core and still CPU.
+What changed is how much of that core is spent on work somebody asked for.
+
+Two numbers below are therefore stale in the reader's favour and are left as they were taken:
+the per-route latencies in section 3, and the 63% share of CPU attributed to discarded `/detail`
+work — that share is now HIGHER, because everything it was competing with got three times cheaper.
+
+The write-path findings, the three data-loss mechanisms and every integrity result are unaffected:
+they are about the store, the merge and the socket, and none of them renders a page.
+
+---
+
 ## 1. The answer in five lines
 
 **The plan repository is safe, and that is measured rather than assumed.** About 1,800 accepted
