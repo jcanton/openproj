@@ -59,4 +59,10 @@ jobs:
       # (set in pyproject, deliberately not `-q`) prints every skip — so a suite
       # that has quietly stopped checking pixels says so in the log instead of
       # just looking green.
-      - run: uv run pytest -q
+      # `--durations=0 --durations-min=0.05` is a measurement probe, not a
+      # permanent line: the twenty-two minutes this step takes have never been
+      # attributed to a test, and the per-step timings in the jobs API say the
+      # other six steps together are ten seconds, so the whole answer is inside
+      # this one. `0` means "do not truncate the table" and the floor keeps the
+      # thousand-odd sub-50ms tests out of it. Revert once the table is read.
+      - run: uv run pytest -q --durations=0 --durations-min=0.05
