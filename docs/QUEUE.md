@@ -29,6 +29,14 @@ and each says why it is still here.
   browser's caret. One rule against four popups with their own keyboard handling
   and their own tests, for a control with one choice in it.
 
+* **Boxing the id strings in the table.** Offered by jcanton himself as the
+  alternative when the kind chips came out of the id cell, and not taken: a box
+  around all seventeen ids is the same noise wearing a different hat. The id is
+  already monospace, and that is what marks it as a token to be cited; the kind
+  is already the id's prefix, which the data model guarantees agrees with `kind`.
+  Kind stays filterable in the KIND facet, which is where "show me only tasks" is
+  actually asked.
+
 * **Drag-to-reparent on the graph** (#20). Built, and removed the same day after
   jcanton used it: a pitch could not be dropped into a project at all, and taking
   one out looked like nothing happening — the project's outline follows the pitch
@@ -106,6 +114,12 @@ and each says why it is still here.
   `test_the_arrows_read_the_way_the_layout_was_asked_for` is the canary: if it
   fails on a corpus nobody touched, this is the entry to read.
 
+* **Re-betting as a record of its own.** Deferred 2026-08-16, and the symptom is
+  already visible: a standing item like `[GT4Py] Development work` is bet again
+  every cycle, and because `cycle:` records where the bet was first made and is
+  never re-stamped, it reads as a permanent overrun. The fix is not to re-stamp
+  `cycle:` — that is the one thing `docs/data-model.md` forbids — it is a second
+  record of the later bet.
 * **The review deck**, awaiting jcanton's feedback after a proper read.
 * **The editor.** Handed to a session of its own on 2026-08-19; the decisions,
   the library shortlist and the list of what must not be lost are in
@@ -302,5 +316,7 @@ A `support` field (reviewers carry it), a `from_note` field on `Record` (the
 provenance is prose in the shaping document, so a note id never enters the type
 every view is built from), HackMD as a backend (tested and refused: a PATCH
 disconnects every live editor, `lastChangedAt` does not move while somebody
-types, 400 API requests a month), and a record kind of its own for brainstorming
-(that is what a note is).
+types, 400 API requests a month), a `hackmd:` field or any other link back to
+where a document came from (content moves in and nothing links out, because a
+link to the old system is how two sources of truth survive a migration), and a
+record kind of its own for brainstorming (that is what a note is).
