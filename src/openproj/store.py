@@ -545,7 +545,15 @@ class Store:
         # cold start and teach everybody to ignore the number. It also bounds that
         # revwalk to the commits this process made rather than to the size of the
         # plan's history, which is what keeps a health check cheap.
-        self._opened_at = self.head()
+        # `.get`, not `head()`, because a plan repository that has never been
+        # committed to has no `refs/heads/main` at all and `head()` raises a
+        # `KeyError` on it. That is not an error state: `pygit2.init_repository`
+        # gives an unborn branch, which is what a brand-new plan and every
+        # `create_app` against a fresh bare repo start from. `condition` treats
+        # `None` as "no floor to count from", which is the truth — there are no
+        # commits to be at risk.
+        born = pygit2.Repository(str(self._path)).references.get(_BRANCH)
+        self._opened_at = str(born.target) if born else None
 
     # -- reading, always at an explicit commit ------------------------------
 
@@ -715,7 +723,9 @@ class Store:
             and not repo.descendant_of(remote, local)
         )
         walk = repo.walk(local, SortMode.NONE)
-        walk.hide(remote or self._opened_at)
+        floor = remote or self._opened_at
+        if floor is not None:
+            walk.hide(floor)
         return Condition(
             head=local,
             remote=remote,
