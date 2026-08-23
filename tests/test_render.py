@@ -1381,7 +1381,7 @@ def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Pa
     )
 
 
-def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index: Index):
+def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
     """shaping first, dropped last. Alphabetical put `done` at the top, which is
     the one group nobody opens the index looking for — and, once notes arrived,
     put a note's terminal state above its live one.
@@ -1390,21 +1390,76 @@ def test_the_index_is_grouped_in_the_order_work_moves(rendered: Path, seed_index
     `NOTE_STATES` precisely so `promoted` has a heading, and grouping by the
     stored word filed every promoted note under "Thinking" and left that rung
     unreachable — this test pinned the wrong grouping for as long as it read
-    `r.status` too. The seed corpus keeps one promoted note and one pitched
-    issue so both derivations are visible on the page, and the ladder's rung
-    is asserted by name so the corpus cannot quietly stop carrying the case.
+    `r.status` too.
+
+    Its own corpus, not `seed_root`: the frozen golden corpus deliberately
+    holds no inbox records (its docstring in conftest.py forbids it moving),
+    so rendering it can never show a derived state — which is exactly how the
+    first version of this test asserted "Promoted" over a page that could not
+    contain it. This corpus is the smallest one whose states cover EVERY rung
+    of `_TOC_LADDER`, and it reaches two of them only by derivation: no file
+    stores `promoted` (`NOTE_STATUS` cannot) or `in_progress`, so those two
+    headings exist on this page only if the TOC asks `state()` — the note's
+    through `became`, the issue's through `pitched_into`.
     """
+    from openproj.model import parse_text
     from openproj.render import _TOC_LADDER, _human
 
-    body = read(rendered, "detail.html")
+    files = {
+        "projects/proj-f00001.md": (
+            "---\nid: proj-f00001\nkind: project\ntitle: Ladder project\n"
+            "status: shaping\n---\n\nx\n"),
+        "pitches/pitch-f00001.md": (
+            "---\nid: pitch-f00001\nkind: pitch\ntitle: Ready pitch\n"
+            "parent: proj-f00001\nstatus: ready\nowner: ann\nreviewers: [bo]\n"
+            "person_weeks: 1\n---\n\nx\n"),
+        "pitches/pitch-f00002.md": (
+            "---\nid: pitch-f00002\nkind: pitch\ntitle: Shelved pitch\n"
+            "parent: proj-f00001\nstatus: shelved\nperson_weeks: 1\n---\n\nx\n"),
+        "tasks/task-f00001.md": (
+            "---\nid: task-f00001\nkind: task\ntitle: Done task\n"
+            "parent: pitch-f00001\nstatus: done\nowner: ann\nreview_waived: true\n"
+            "person_weeks: 1\n---\n\nx\n"),
+        "notes/note-f00001.md": (
+            "---\nid: note-f00001\nkind: note\ntitle: Live thought\n"
+            "status: thinking\n---\n\nx\n"),
+        "notes/note-f00002.md": (
+            "---\nid: note-f00002\nkind: note\ntitle: Dropped thought\n"
+            "status: dropped\n---\n\nx\n"),
+        "notes/note-f00003.md": (
+            "---\nid: note-f00003\nkind: note\ntitle: Grown thought\n"
+            "status: thinking\nbecame: [pitch-f00001]\n---\n\nx\n"),
+        "issues/issue-f00001.md": (
+            "---\nid: issue-f00001\nkind: issue\ntitle: Picked-up breakage\n"
+            "status: ready\npitched_into: [pitch-f00001]\n---\n\nx\n"),
+    }
+    entities = [parse_text(text, path) for path, text in files.items()]
+    index = build_index(entities, Config(known_people=["ann", "bo"]), date(2026, 8, 17))
+    render_static(index, tmp_path)
+
+    body = read(tmp_path, "detail.html")
     headings = re.findall(r'<h2 class="tocgroup">\s*([^<]+?)\s*<span', body)
-    states = {r.state(seed_index.records) for r in seed_index.records.values()}
+    states = {r.state(index.records) for r in index.records.values()}
+    stored = {r.status for r in index.records.values()}
     present = [s for s in _TOC_LADDER if s in states]
 
     assert headings == [_human(s) for s in present]
     assert set(headings) == {_human(s) for s in states}
+    # The whole ladder, derived from the ladder: a rung added later fails here
+    # asking for a record that stands on it, instead of silently never being
+    # asked about — how the promoted gap survived the first time.
+    assert set(states) == set(_TOC_LADDER), (
+        "this corpus no longer covers every rung of _TOC_LADDER"
+    )
+    assert {"promoted", "in_progress"} & stored == set(), (
+        "a stored word reached a derived-only rung, so the two guards below "
+        "would pass without state() being asked"
+    )
     assert _human("promoted") in headings, (
-        "no promoted note in the seed corpus, so the derived-state rung is untested"
+        "no promoted note in this corpus, so the derived-state rung is untested"
+    )
+    assert _human("in_progress") in headings, (
+        "no pitched issue in this corpus, so the issue derivation is untested"
     )
     # The heading was the last place a status was still spelled the way the file
     # spells it, two lines above a kind that already read as a word.
