@@ -3589,7 +3589,9 @@ link.href = '/login';
 who.replaceChildren(link);
 who.hidden = false;
 
-const bar = document.querySelector('article.record .editbar');
+const article = document.querySelector('article.record');
+const bar = article.querySelector('.editbar');
+const top = article.querySelector('.back');
 // What a pointer aimed at the middle of a control would actually hit. A class
 // name cannot answer this: the whole finding is that an opaque fixed surface was
 // painted over these two, and `elementFromPoint` is the question.
@@ -3598,17 +3600,29 @@ const reaches = el => {
   return document.elementFromPoint(
     box.left + box.width / 2, box.top + box.height / 2) === el;
 };
+// Rounded, because the assertions are about which row a thing is in and how far
+// it is from an edge, and a subpixel is neither.
+const edges = el => {
+  const r = el.getBoundingClientRect();
+  return {top: Math.round(r.top), right: Math.round(r.right)};
+};
+const row = el => [...el.querySelectorAll('a[href], button, select')]
+  .filter(el => el.getClientRects().length)
+  .map(el => el.id || el.tagName);
 const shape = () => ({
   parent: corner.parentElement.tagName,
   inBar: bar.contains(corner),
+  onTopRow: top.contains(corner),
   inert: corner.closest('[inert]') !== null,
   navInert: !!nav.inert,
   themeReachable: reaches(theme),
   themeNamed: theme.getAttribute('aria-label'),
   signInReachable: reaches(link),
-  keyboard: [...bar.querySelectorAll('a[href], button, select')]
-    .filter(el => el.getClientRects().length)
-    .map(el => el.id || el.tagName),
+  corner: edges(corner),
+  surface: edges(article),
+  bar: edges(bar),
+  keyboard: row(bar),
+  keyboardTop: row(top),
 });
 
 const before = shape();
@@ -3640,14 +3654,24 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     `inert` while the full-page surface is up, because an audit found eight
     focusable elements geometrically covered by an opaque fixed article and still
     in the tab order. That fix stays — un-inerting the nav would put the defect
-    back — so the two controls move instead, into the editor's own header row
-    beside the view switcher.
+    back — so the controls move instead, onto the surface.
 
     The same nodes, not copies: `#theme` and `#who` are ids on a template the
     static export renders once per record into one file, and the shell's own
     scripts reach for both by id. So the test asks what a MOVE has to be true of
     and a copy would not — the listener still fires, the label still changes, and
     the control is reachable by a pointer at the place it is drawn.
+
+    **And WHERE they land, in pixels.** This assertion used to be
+    `bar.contains(corner)` and nothing else, and it passed through the whole of
+    the defect jcanton reported next, with a screenshot of `/new`: the create
+    form has no stored document to land on, so it is full page from birth and
+    `.editbar` is its FIFTH row — under the back link, the kind picker, the
+    heading and the meta line. Three controls whose only learned property is that
+    they live in the top-right corner of the window sat four hundred pixels down
+    the right-hand side of a page whose corner was empty, and a containment check
+    called that a pass. A class name cannot tell a corner from a fifth row, so
+    the test asks the browser for the box.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "corner.html",
@@ -3658,7 +3682,26 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     assert got["before"]["themeReachable"] and got["before"]["signInReachable"]
 
     inside = got["inside"]
-    assert inside["inBar"], "the corner did not come into the editor's bar"
+    assert inside["onTopRow"], "the corner did not come onto the surface"
+    assert not inside["inBar"], (
+        "the corner is on the switcher's row, which on the create form is the "
+        "fifth row of the page — see the docstring"
+    )
+    # The two that say "corner" rather than "somewhere on the surface", and they
+    # are the pair the containment check could not make. Above the switcher's row
+    # is what puts it in the first row; within 40px of the surface's right edge is
+    # what puts it at the right-hand end of that row rather than beside the back
+    # link. 40 and not 0 because `.corner` carries `padding-left` and the article
+    # its own padding, and a number smaller than the padding would be a test of
+    # the padding.
+    assert inside["corner"]["top"] < inside["bar"]["top"], (
+        f"the corner is at y={inside['corner']['top']} and the switcher's row "
+        f"starts at y={inside['bar']['top']}, so it is below the first row"
+    )
+    assert inside["surface"]["right"] - inside["corner"]["right"] <= 40, (
+        f"the corner ends {inside['surface']['right'] - inside['corner']['right']}px "
+        "from the surface's right edge, which is not a corner"
+    )
     assert inside["navInert"], (
         "the nav is not inert while the surface is up, so the tab-order defect the "
         "move exists to keep fixed has been fixed the wrong way instead"
@@ -3669,10 +3712,14 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     )
     assert inside["signInReachable"], "the way in is in the bar and unreachable"
     assert inside["themeNamed"] in ("Dark mode", "Light mode"), inside["themeNamed"]
-    # In this order, and the order is the argument: the controls that act on the
-    # document you are writing come before the two that act on the application.
+    # Two rows now, and the split is the argument. The surface's first row is the
+    # nav's job done by another element: the way back, then the three controls
+    # that act on the application — which is the order they are reached for in
+    # the nav they came from, and the order they keep here. The switcher's row is
+    # the document's, and holds only controls that act on what you are writing.
+    assert inside["keyboardTop"] == ["A", "A", "scheme", "theme"], inside["keyboardTop"]
     assert inside["keyboard"] == [
-        "view-edit", "view-both", "preview", "editorswitch", "A", "scheme", "theme"
+        "view-edit", "view-both", "preview", "editorswitch"
     ], inside["keyboard"]
 
     assert got["themed"]["now"] != got["themed"]["was"], (
