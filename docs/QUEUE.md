@@ -51,6 +51,29 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **The table's cells are still editable to a reader.** Found on 2026-08-24 while
+  gating the create buttons, and left alone in that commit on purpose.
+
+  `render_table` sets `editable = base_commit is not None`, which means "there is
+  a server behind this page" and is standing in for "this person may write" —
+  the same conflation the Create button had. So a signed-out visitor can
+  double-click a cell, type into it, press Enter, and collect a 403 from the
+  save. `role="grid"` is on the table for them, the combobox is on the page, and
+  the draft row's `+` is offered.
+
+  It is the rule from #19 — do not draw a control whose only answer for this
+  person is a refusal — one door further in. It was not changed under the
+  create-button heading because turning the whole table read-only for readers is
+  a bigger answer than the one asked for, and it wants a look: the reader still
+  needs to sort, filter, search and follow links, so `editable` has to split
+  rather than simply narrow.
+
+  Thirty-one test call sites pass `base_commit` to `render_table` and expect an
+  editable grid, so whoever does this decides whether `may_write` defaults True
+  (kind to the tests, unsafe if a caller forgets) or False (safe, and thirty-one
+  edits). `render_detail` already defaults it False, which is the precedent.
+
+
 * **A container's progress rollup charges its container children half a week.**
   Found on 2026-08-23, the day the fixture corpus grew products, and unreachable
   before that: `Rung.under` lets nothing but a product nest a container, so a

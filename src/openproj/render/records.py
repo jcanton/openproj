@@ -14,7 +14,7 @@ _RECORDS = """
 {#- Announced, not drawn: the lit nav item already says which view this is. -#}
 <h1 class="sr-only">{{ heading }}</h1>
 <p class="hint">{{ describe }}</p>
-{%- if editable %}
+{%- if creatable %}
 <p class="editbar"><a class="button" href="{{ create.href }}">{{ create.label }}</a></p>
 {%- endif %}
 {{ facets }}
@@ -42,7 +42,7 @@ _RECORDS = """
       colspan="{{ columns|length }}">
     <p class="headline">{% if not rows %}{{ said.empty_headline }}{% endif %}</p>
     <p class="hint">{% if not rows %}{{ said.empty_hint }}{% endif %}</p>
-    {%- if not rows and editable %}
+    {%- if not rows and creatable %}
     <a class="button primary" href="{{ create.href }}">{{ create.label }}</a>
     {%- endif %}
   </td></tr>
@@ -206,6 +206,7 @@ def render_records(
     edited: dict[str, int] | None = None,
     now: int = 0,
     only: str | None = None,
+    may_write: bool = False,
 ) -> str:
     """The landing list — and, held to one kind each, the two inbox views.
 
@@ -236,6 +237,16 @@ def render_records(
     """
     timed = edited is not None
     editable = base_commit is not None
+    # `editable` is "there is a server behind this page"; `creatable` is "this
+    # person may write". They were the same question until somebody opened the
+    # tool signed out: every control on the create form is behind `may_write`,
+    # so the button led to a heading, a kind picker and nothing to type into.
+    # jcanton, 2026-08-24: "this opens a crippled editor page".
+    #
+    # A door that opens onto a refusal is worse than no door, and the static
+    # export needs neither — it has no server to post to, which is why
+    # `editable` exists at all and why the two names both stay.
+    creatable = editable and may_write
     # The Links field, the nav slot and the export filename in one word,
     # off the ladder rather than a second map: `RUNG["issue"].directory`
     # is "issues".
@@ -310,6 +321,7 @@ def render_records(
         rows=rows,
         timed=timed,
         editable=editable,
+        creatable=creatable,
         links=links,
         heading=dict(_NAV)[key],
         describe=describe,

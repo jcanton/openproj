@@ -1311,7 +1311,7 @@ def create_app(
     def page(html: str) -> HTMLResponse:
         return HTMLResponse(html)
 
-    def record_list(only: str | None) -> HTMLResponse:
+    def record_list(request: Request, only: str | None) -> HTMLResponse:
         """The landing and its two inbox views: one renderer, one page, the
         population decided by the route."""
         commit, index = index_now()
@@ -1327,25 +1327,30 @@ def create_app(
                 edited=edited_by_id(stamps),
                 now=int(time.time()),
                 only=only,
+                may_write=may_write(request),
             )
         )
 
     @app.get("/", response_class=HTMLResponse)
-    def records() -> HTMLResponse:
-        return record_list(None)
+    def records(request: Request) -> HTMLResponse:
+        return record_list(request, None)
 
     @app.get("/issues", response_class=HTMLResponse)
-    def issues() -> HTMLResponse:
-        return record_list("issue")
+    def issues(request: Request) -> HTMLResponse:
+        return record_list(request, "issue")
 
     @app.get("/notes", response_class=HTMLResponse)
-    def notes() -> HTMLResponse:
-        return record_list("note")
+    def notes(request: Request) -> HTMLResponse:
+        return record_list(request, "note")
 
     @app.get("/table", response_class=HTMLResponse)
-    def table() -> HTMLResponse:
+    def table(request: Request) -> HTMLResponse:
         commit, index = index_now()
-        return page(render.render_table(index, render.ROUTES, base_commit=commit))
+        return page(
+            render.render_table(
+                index, render.ROUTES, base_commit=commit, may_write=may_write(request)
+            )
+        )
 
     @app.get("/graph", response_class=HTMLResponse)
     def graph() -> HTMLResponse:
@@ -1640,6 +1645,18 @@ def create_app(
     def new(request: Request, kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
+        # A reader is refused the page rather than shown a hollow one. Every
+        # control on the create form is behind `may_write`, so a signed-out
+        # visitor who reached it got the heading, the kind picker and nothing to
+        # type into — jcanton, 2026-08-24: "this opens a crippled editor page".
+        #
+        # Asked through `writer` (which `may_write` calls) and not through the
+        # session, because the two disagree in the mode the tool is tried in:
+        # under `--auth dev` there is no session and `/api/me` says signed out,
+        # while the write path invents a user and takes the write. A gate on the
+        # session would refuse the demo its own create form.
+        if not may_write(request):
+            raise HTTPException(403, "sign in to create a record")
         commit, index = index_now()
         who = viewer(request)
         return page(
