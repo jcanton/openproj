@@ -34,7 +34,7 @@ import pytest
 from browser import chrome, measured_in
 
 from openproj.index import Index, build_index
-from openproj.model import load_repo
+from openproj.model import load_repo, unread_fields
 from openproj.render import ROUTES, render_graph
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -327,18 +327,30 @@ return {
   meter: meter && {w: Math.round(meter.width), h: Math.round(meter.height)},
   spread: widths.length ? Math.max(...widths) - Math.min(...widths) : -1,
   inside: keys.top >= box.top - 1 && keys.right <= box.right + 1,
-  // A card's label, which should be its title and nothing else — its two marks
-  // are the drawing below.
-  marked: cy.nodes().filter(n => n.isChildless()).slice(0, 5)
-    .map(n => (n.style('label') || '').replace(/\s+/g, '')),
-  // The drawing itself: the two coloured characters at the card's left edge.
-  meters: cy.nodes().filter(n => n.isChildless()).slice(0, 3)
-    .map(n => String(n.style('background-image') || ''))
-    .filter(one => one && one !== 'none'),
-  // And a box's label, which carries the same two marks as characters because a
-  // drawing cannot be put on a compound's own line.
-  boxed: cy.nodes().filter(n => n.isParent()).slice(0, 3)
-    .map(n => (n.style('label') || '').replace(/\s+/g, '').slice(0, 2)),
+  // Every card and every box, each with the rung it is on — because WHICH marks
+  // a node wears is a fact about its kind and not about its position in this
+  // list. `slice(0, 3)` was here and read the first three boxes, which is a
+  // sample that says nothing about the fourth; the whole drawing is 26 nodes and
+  // reading a style off each is cheaper than the layout that produced them.
+  //
+  // `title` is `data('label')` — what the record is called — while `label` is
+  // what cytoscape draws, which is `labelOf()`'s work. Both, so the test can say
+  // what a box's name is made of rather than only what it starts with.
+  //
+  // A card's label should be its title and nothing else: its marks are the
+  // drawing in `image`. A box's are characters in its own name, because a
+  // drawing cannot be put on a compound's line.
+  marked: cy.nodes().filter(n => n.isChildless()).map(n => ({
+    kind: n.data('kind'),
+    title: (n.data('label') || '').replace(/\s+/g, ''),
+    label: (n.style('label') || '').replace(/\s+/g, ''),
+    image: String(n.style('background-image') || ''),
+  })),
+  boxed: cy.nodes().filter(n => n.isParent()).map(n => ({
+    kind: n.data('kind'),
+    title: (n.data('label') || '').replace(/\s+/g, ''),
+    label: (n.style('label') || '').replace(/\s+/g, ''),
+  })),
 };
 """
 
@@ -410,40 +422,89 @@ def test_a_card_wears_both_its_marks_in_front_of_its_name(index: Index, tmp_path
     compound's label sits on the box's top edge with an opaque background, and an
     image placed in a compound's rectangle is positioned against the rectangle —
     it lands in the corner, under the name and clipped by the box's radius.
+
+    *Which* marks a node wears is off the ladder in `model.py`, not a constant
+    here: a product reads neither priority nor status — both are in
+    `unread_fields("product")`, and `_row` nulls them — so it has no mark to
+    wear and its name is its title alone. This asserted that every box leads
+    with a priority glyph, and passed for a year because every kind that could
+    be a box happened to read one; the corpus grew a product on 2026-08-23 and
+    the first box measured was `kiln4py`, whose label starts `ki`. The record is
+    right and the assertion was over-claiming.
     """
     from openproj.render import PRIORITY_GLYPH, STATUS_GLYPH
+
+    def marks_of(kind: str) -> tuple[bool, bool]:
+        """Whether this rung reads a priority and a status, off the ladder."""
+        unread = unread_fields(kind)
+        return "priority" not in unread, "status" not in unread
 
     page = render_graph(index, ROUTES, base_commit=HEAD)
     got = measured_in(chrome(), page, tmp_path / "marks.html", 1900, _KEYS,
                       height=820, patience=3500)
 
-    assert got["marked"], "no node was measured"
-    for label in got["marked"]:
-        assert label[0] not in PRIORITY_GLYPH.values(), (
-            f"a card is writing its marks into the label again: {label!r}"
+    assert got["marked"], "no card was measured"
+    for card in got["marked"]:
+        pri, stat = marks_of(card["kind"])
+        # Whatever it wears, it does not write it into the label: the label is
+        # the title, and only the title.
+        assert card["label"] == card["title"], (
+            f"a {card['kind']} card's label is {card['label']!r} and its title is "
+            f"{card['title']!r}, so it is writing its marks into the name again"
         )
-    assert got["meters"], "no card carries a mark at all"
-    for image in got["meters"]:
-        assert image.startswith("data:image/svg+xml"), image[:40]
-        drawn = unquote(image)
-        assert drawn.count("<text") == 2, f"a card's marks are not two characters: {drawn}"
-        assert any(one in drawn for one in PRIORITY_GLYPH.values()), drawn
-        assert any(one in drawn for one in STATUS_GLYPH.values()), drawn
-        # Two fills, and neither of them the label's ink: the point of the
-        # drawing is that the two marks are coloured apart from each other.
+        drawn = unquote(card["image"]) if card["image"] and card["image"] != "none" else ""
+        if drawn:
+            assert card["image"].startswith("data:image/svg+xml"), card["image"][:40]
+        # One `<text>` per mark the rung actually reads — so a card of a kind
+        # that reads neither draws no marks rather than two invented ones.
+        assert drawn.count("<text") == pri + stat, (
+            f"a {card['kind']} card draws {drawn.count('<text')} marks and its rung "
+            f"reads {pri + stat}: {drawn or '(no drawing)'}"
+        )
+        assert any(one in drawn for one in PRIORITY_GLYPH.values()) == pri, drawn
+        assert any(one in drawn for one in STATUS_GLYPH.values()) == stat, drawn
+        # A fill each, and no two marks sharing one: the point of the drawing is
+        # that the marks are coloured apart from each other, which is the whole
+        # reason they are an SVG instead of two characters in the label.
         fills = set(re.findall(r'fill="([^"]+)"', drawn))
-        assert len(fills) == 2, f"the two marks share one colour: {sorted(fills)}"
+        assert len(fills) == pri + stat, (
+            f"a {card['kind']} card's {pri + stat} marks resolve to {sorted(fills)}"
+        )
+    # Both branches of that rule were asked, or the loop above proves only that
+    # the corpus is uniform. Every earlier version of this test measured five
+    # cards off the top of one list and could not have said which kinds it saw.
+    assert any(marks_of(card["kind"]) == (True, True) for card in got["marked"]), (
+        "no card of a kind that reads both marks was measured"
+    )
 
-    # And a box says the same two things in its own name, where a drawing cannot
-    # go. Read off the label, which for a compound is what carries them.
+    # And a box says the same things in its own name, where a drawing cannot go.
+    # Read off the label, which for a compound is what carries them.
     assert got["boxed"], "no box was measured"
-    for label in got["boxed"]:
-        assert label[0] in PRIORITY_GLYPH.values(), (
-            f"a box does not lead with its priority mark: {label!r}"
-        )
-        assert label[1] in STATUS_GLYPH.values(), (
-            f"a box does not carry its status glyph after it: {label!r}"
-        )
+    for box in got["boxed"]:
+        pri, stat = marks_of(box["kind"])
+        if pri:
+            assert box["label"][0] in PRIORITY_GLYPH.values(), (
+                f"a {box['kind']} box does not lead with its priority mark: {box['label']!r}"
+            )
+        if stat:
+            assert box["label"][pri] in STATUS_GLYPH.values(), (
+                f"a {box['kind']} box does not carry its status glyph: {box['label']!r}"
+            )
+        if not pri and not stat:
+            # No mark to write, so nothing is written: the box's name is the
+            # record's name. A glyph here would be a priority somebody would
+            # then try to change.
+            assert box["label"] == box["title"], (
+                f"a {box['kind']} box reads neither mark and is labelled "
+                f"{box['label']!r} over a title of {box['title']!r}"
+            )
+    assert any(marks_of(box["kind"]) == (True, True) for box in got["boxed"]), (
+        "no box of a kind that reads both marks was measured"
+    )
+    assert any(marks_of(box["kind"]) == (False, False) for box in got["boxed"]), (
+        "no box of a kind that reads neither mark is on this graph, so the rule "
+        "that such a box is named by its title alone is untested"
+    )
 
 
 _UNDERNEATH = """

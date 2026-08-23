@@ -611,6 +611,10 @@ def test_no_slide_in_the_shipped_demo_is_a_heading_over_an_empty_page(demo_index
     were five empty sheets. The demo keeps no checklist anywhere, which is why it
     is the corpus that finds this: there were no points to fall back on either.
 
+    Eleven now — the four bets the demo grew into cycle 37 on 2026-08-23. The
+    count is the demo's and moves whenever the demo does, which is exactly why
+    the claim below is about blankness and not about the number.
+
     So the assertion is not that a page was returned. It is that every slide has
     something on it a person could stand up and read out — a sentence of prose,
     or ticked points, or a pull request — and enough of it to be worth a sheet of
@@ -618,7 +622,7 @@ def test_no_slide_in_the_shipped_demo_is_a_heading_over_an_empty_page(demo_index
     found = slides_in(render_deck(demo_index, 37, ROUTES))
     work = found[1:]
 
-    assert len(found) == 7, [s["heading"] for s in found]
+    assert len(found) == 11, [s["heading"] for s in found]
     assert "CI for the standalone driver v1.5" in [s["heading"] for s in found]
 
     blank = [
