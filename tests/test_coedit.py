@@ -2244,17 +2244,33 @@ def serving(plan: Path):
     `websockets` nor `wsproto` — and the handshake a browser makes is an HTTP
     request that `TestClient` never performs.
     """
-    import socket as sockets
     import threading
 
     import uvicorn
 
-    with sockets.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-
     app = create_app(plan, auth="dev", secret=SECRET)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    # port=0, and the real number read back off the listening socket after
+    # startup. The previous version bound a probe socket to 0, read the number,
+    # CLOSED the probe and handed the number to uvicorn — and between that close
+    # and uvicorn's bind the port belonged to nobody. Two pytest processes on
+    # one machine, one port: the loser dies with "address already in use" inside
+    # whichever of these tests drew it, dressed up as a coedit failure. With
+    # port=0 the socket that got the number is the socket that serves on it, so
+    # there is no window — the same pattern as `live_server` in test_web.py.
+    #
+    # timeout_graceful_shutdown=1: without it, teardown waits a flat 5 s per
+    # test for members to say goodbye — and ann is *designed* to stop reading.
+    # Every assertion has already run by teardown, so the wait proved nothing
+    # and cost ~16 s across this file.
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=0,
+            log_level="error",
+            timeout_graceful_shutdown=1,
+        )
+    )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(200):
@@ -2263,7 +2279,7 @@ def serving(plan: Path):
         time.sleep(0.05)
     assert server.started, "the server never came up"
     try:
-        yield port
+        yield server.servers[0].sockets[0].getsockname()[1]
     finally:
         server.should_exit = True
         thread.join(10)

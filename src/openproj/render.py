@@ -26,7 +26,7 @@ from functools import cache, lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
-from jinja2 import Environment
+from jinja2 import Environment, Template
 from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
 from markdown_it.rules_core import StateCore
@@ -1989,6 +1989,34 @@ _ENV = Environment(autoescape=True)
 _ENV.filters["tojson"] = _script_json
 
 
+@cache
+def _compiled(source: str) -> Template:
+    """This template, lexed, parsed and compiled to Python exactly once.
+
+    `Environment.from_string` compiles every time it is called — Jinja's own
+    cache hangs off a loader and `get_template`, and there is no loader here
+    because the templates are string constants in this module. So the fourteen
+    of them were being recompiled per call, and the calls are per record: the
+    hill is a fragment, the promote menu is a fragment, and a plan with 479
+    records rendered its pages through 6,739 separate `compile()` calls.
+    Measured on that corpus, one export took 43.6 seconds and 21 of them were
+    inside `jinja2.visitor`; with this cache it takes 0.74. The frozen golden
+    corpus went 0.66s to 0.026s, and one served `/detail` 60ms to 5ms.
+
+    Keyed on the source rather than on a name because that is what the call
+    sites have, and it costs nothing: the keys are the module constants
+    themselves, already resident, and there are fourteen distinct ones. Nothing
+    here builds a template string at run time, so the cache cannot grow.
+
+    A compiled `Template` is stateless and re-renderable by design, and filters
+    are resolved against the environment at render time rather than baked in at
+    compile time — so `_ENV.filters["tojson"]` above still applies. Checked
+    rather than assumed: every page of both corpora, static and served, is
+    byte-identical with the cache and without it.
+    """
+    return _ENV.from_string(source)
+
+
 def _fragment(template: str, **values: object) -> Markup:
     """One rendered piece of a page, typed as the markup it is.
 
@@ -2000,7 +2028,7 @@ def _fragment(template: str, **values: object) -> Markup:
     that is markup renders and a value that is not gets escaped — which is the
     same rule for every page, enforced by the type rather than by remembering.
     """
-    return Markup(_ENV.from_string(template).render(**values))
+    return Markup(_compiled(template).render(**values))
 
 
 _SHELL = """<!doctype html>
@@ -9720,7 +9748,7 @@ def _timeline_css() -> str:
     of the last of them.
     """
     return (
-        _ENV.from_string(_TIMELINE_STYLE).render(row_px=_ROW_PX, foot_px=_PLOT_FOOT_PX)
+        _compiled(_TIMELINE_STYLE).render(row_px=_ROW_PX, foot_px=_PLOT_FOOT_PX)
         + _status_paint_css()
     )
 
@@ -18705,7 +18733,7 @@ def render_cycle(
     index: Index, number: int, links: Links = ROUTES, base_commit: str | None = None
 ) -> str:
     view = _cycle_view(index, number, links)
-    body = _ENV.from_string(_CYCLE).render(
+    body = _compiled(_CYCLE).render(
         c=view,
         links=links,
         editable=base_commit is not None,
@@ -19235,7 +19263,7 @@ def render_deck(
     view = _deck_view(index, number, links, asset)
     return _page(
         f"openproj — cycle {number} review",
-        _ENV.from_string(_DECK).render(d=view, links=links),
+        _compiled(_DECK).render(d=view, links=links),
         _DETAIL_STYLE + _DECK_STYLE,
         links,
         # A deck is of a cycle, and the Cycles listing is the listing of cycles.
@@ -19415,7 +19443,7 @@ def render_cycles(
     decided = set(index.plans) | set(index.cycles)
     top = max(decided) if decided else 0
     ends = index.cycles.get(top)
-    body = _ENV.from_string(_CYCLES).render(
+    body = _compiled(_CYCLES).render(
         cycles=rows,
         links=links,
         editable=base_commit is not None,
@@ -19589,7 +19617,7 @@ def render_people(index: Index, links: Links = STATIC, editable: bool = False,
         key: sorted({row[key] for rows in held.values() for row in rows})
         for key in ("role", "kind", "status")
     }
-    body = _ENV.from_string(_PEOPLE).render(
+    body = _compiled(_PEOPLE).render(
         people=people,
         links=links,
         # Every icon, drawn once, for the picker. In `ICONS` order, which is the
@@ -19721,7 +19749,7 @@ def render_detail(
                 if base_commit is not None and may_write and record.kind in PROMOTABLE
                 else Markup("")
             )
-    body = _ENV.from_string(_DETAIL).render(
+    body = _compiled(_DETAIL).render(
         records=rows,
         groups=[] if creating else _by_status(rows),
         # Every record this page holds, not the one in the URL: the static export
@@ -19971,7 +19999,7 @@ def _page(
     """
     if current and current not in _PAGE_KEYS:
         raise ValueError(f"{current!r} is not a page: {sorted(_PAGE_KEYS)}")
-    return _ENV.from_string(_SHELL).render(
+    return _compiled(_SHELL).render(
         title=title,
         content=Markup(content),
         style=Markup(style),
@@ -20341,7 +20369,7 @@ def render_records(
                  "it turns out to be work, promote it and it becomes a "
                  "project, a pitch or a task.",
     }[key]
-    body = _ENV.from_string(_RECORDS).render(
+    body = _compiled(_RECORDS).render(
         rows=rows,
         timed=timed,
         editable=editable,
@@ -20373,7 +20401,7 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         p for p in index.problems
         if p.severity == "blocker" and p.record_id in index.plan
     ]
-    body = _ENV.from_string(_TABLE).render(
+    body = _compiled(_TABLE).render(
         payload=payload,
         blockers=len(blocking),
         # The population `?predicate=has_blocker` matches. One record can carry
@@ -20414,7 +20442,7 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
     ends both failures for the same reason: Jinja substitutes into the template,
     never into what a value expanded to.
     """
-    body = _ENV.from_string(_GRAPH).render(
+    body = _compiled(_GRAPH).render(
         editable=base_commit is not None,
         base_commit=base_commit or "",
         facets=_facets_html(index.facets, aside=_GRAPH_HINT, titles=_titles(index)),
@@ -20447,7 +20475,7 @@ def render_timeline(
     zoom: float | None = None,
 ) -> str:
     timeline = _timeline(index, window, zoom)
-    body = _ENV.from_string(_TIMELINE).render(
+    body = _compiled(_TIMELINE).render(
         t=timeline,
         links=links,
         zooms=_ZOOMS,

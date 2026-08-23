@@ -340,11 +340,12 @@ uv sync
 uv run ruff check .
 ```
 
-Then push and open the PR. `uv run pytest -q` over everything is CI's line, in
-`.github/workflows/ci.yml`, and it is the one that gates the merge. See *The tests run in CI, not
-on the laptop* below for why, and do not talk yourself back into a local run because you
-are nearly finished, or because the suite you have in mind is a small one — that is exactly when it
-costs the most and tells you the least.
+Then push and open the PR. The whole suite is CI's, in `.github/workflows/ci.yml`, and it is what
+gates the merge. See *The tests run in CI, not on the laptop* below for why, and do not talk
+yourself back into a local run because you are nearly finished, or because the suite you have in
+mind is a small one — that is exactly when it costs the most and tells you the least. **It answers
+in about three minutes**, which is less time than reading the diff it is gating, so there is
+nothing a local run buys you but a hot laptop.
 
 The one thing this does not forbid: running **a single test function** (`-k one_exact_name`) to
 reproduce a failure CI has already reported. That is debugging, and it is a few seconds. Two of
@@ -354,9 +355,25 @@ ruff: line length 100, target py312, `E,F,I,UP,B`.
 
 ## The tests run in CI, not on the laptop
 
-`ruff check .`, then open the PR. Every test is CI's job — `.github/workflows/ci.yml` runs
-`uv run pytest -q` on every pull request, with real Chrome and real node, on hardware that is not
-somebody's working machine.
+`ruff check .`, then open the PR. Every test is CI's job — `.github/workflows/ci.yml` runs the
+suite on every pull request, with real Chrome and real node, on hardware that is not somebody's
+working machine.
+
+**It is six jobs, not one, and the shape is load-bearing.** `lint` is ruff alone and answers in ten
+seconds, deliberately not depended on by anything: a lint error and a test failure are different
+news and you should get both in one run rather than the first one twice. Then five `suite` shards
+run the tests in parallel on five machines, cut by `.github/shards/<name>` — one test path per
+line, hand-written, because the cut is decided by Chrome and by two module fixtures rather than by
+file size and no heuristic finds that. Then `check` fans them in, and **`check` is the name branch
+protection requires, so it must not move**: a `strategy.matrix` on a job named `check` reports six
+differently-named checks, none of them called `check`, and the merge button goes green while every
+shard is red.
+
+Two things follow for anybody adding tests. A new test FILE has to be named in exactly one shard
+file — `test_every_test_file_is_in_exactly_one_ci_shard` in `tests/test_harness.py` holds that, and
+it is the reason a file cannot quietly fall out of the gate. And the shard lists drift out of
+balance every time a file grows; rebalancing them is a five-minute job with `--durations` and
+`docs/probes/ci-speed.md` says how.
 
 This is not a licence to push carelessly. It is a decision about where eight minutes of CPU and
 several gigabytes of RAM should be spent — jcanton, 2026-08-20, on a machine that has already been
@@ -370,17 +387,17 @@ to prevent, several times in one night. So the line is drawn where it cannot be 
 nothing, not even the one file you just edited.
 
 A red CI is a normal thing to fix on a branch rather than a failure of process. It costs about
-thirteen minutes of somebody else's hardware and none of jcanton's.
+three minutes of somebody else's hardware and none of jcanton's.
 
 **A pull request GitHub cannot merge gets no CI run at all.** The workflow triggers on
 `pull_request`, which checks out `refs/pull/<n>/merge`, and that ref does not exist while GitHub
 reports the PR `mergeable: CONFLICTING` — so the branch sits with nothing running and nothing red,
 which is indistinguishable from a run that has not finished yet. If the answer has not arrived in
-thirteen minutes, ask `gh pr view <n> --json mergeable` before you ask anything else.
+five minutes, ask `gh pr view <n> --json mergeable` before you ask anything else.
 
 Two habits that follow from it. Push before you are certain rather than after, since the answer
-costs you nothing and arrives in about thirteen minutes — and while it runs, keep working on the
-next thing rather than watching it. And if you ever do have a process to stop, look at what you are
+costs you nothing and arrives in about three minutes — and while it runs, keep working on the next
+thing rather than watching it. And if you ever do have a process to stop, look at what you are
 stopping first: `pkill -f pytest` on this machine kills the OTHER session's suite too, and leaves
 its headless Chrome orphaned.
 

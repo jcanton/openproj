@@ -3756,6 +3756,13 @@ def test_nothing_edits_a_record_after_it_has_been_parsed(client: TestClient):
     """
     from openproj import web
 
+    # `_PARSED` is a module global that every earlier test in this process has
+    # been filling. Without this clear, `before` holds other tests' leftovers:
+    # the non-empty assertion below is satisfied by records this client never
+    # served, so the test can pass while the app under test caches nothing —
+    # and which leftovers exist depends on which tests ran before this one in
+    # this process, which is exactly what splitting CI into shards reshuffles.
+    web._PARSED.clear()
     client.get("/")
     before = {key: record.model_dump(mode="json") for key, record in list(web._PARSED.items())}
     assert before, "nothing was cached, so nothing was checked"
@@ -3814,6 +3821,13 @@ def test_all_five_kinds_are_read_through_the_one_cache(repo_path: Path):
         "one of every kind",
     )
 
+    # The same leftover hazard as the test above: earlier tests in this process
+    # have already put tasks/, people/ and cycles/ keys into the module-global
+    # cache, so without the clear a kind can look "read through the cache" when
+    # it was cached by some OTHER test's app — the assertion passes while the
+    # app under test reads that kind around the cache. Cleared, `held` is what
+    # this app cached and nothing else, whatever ran before it.
+    web._PARSED.clear()
     app = create_app(repo_path, auth="dev", secret=SECRET)
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
