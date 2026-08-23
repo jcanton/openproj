@@ -373,9 +373,9 @@ printf '   /graph             %s (want 200)\n' \
   "$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/graph")"
 
 # Writes are gated. A 401 here is the whole security model working.
-printf '   PATCH an entity    %s (want 401)\n' \
+printf '   PATCH a record     %s (want 401)\n' \
   "$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
-       -X PATCH -H 'Content-Type: application/json' -d '{}' "$URL/api/entity/task-000000")"
+       -X PATCH -H 'Content-Type: application/json' -d '{}' "$URL/api/record/task-000000")"
 
 # Proves the push credential worked on the cold start. If this line is missing
 # and the service is up, it is serving an empty plan it made itself — which

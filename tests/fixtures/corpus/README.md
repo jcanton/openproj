@@ -7,7 +7,7 @@ plan.**
 
 ## What is real
 
-Titles, statuses, subsystem grouping, PR references, and the body text of every entity. Bodies were
+Titles, statuses, subsystem grouping, PR references, and the body text of every record. Bodies were
 taken from the linked shaping documents where one existed; where none did, the body says so plainly
 rather than inventing one.
 
@@ -22,8 +22,8 @@ rather than inventing one.
 | `parent: proj-7e57a0` | Placeholder. See `projects/proj-7e57a0--testing.md`. |
 | `proj-7e57a0` itself | Entirely fabricated. |
 
-The four `done` entities still have no size. That is deliberate: they exercise the grandfathering
-path, where an entity created before a rule existed produces a warning rather than a blocker.
+The four `done` records still have no size. That is deliberate: they exercise the grandfathering
+path, where a record created before a rule existed produces a warning rather than a blocker.
 
 ## The shape it exercises
 

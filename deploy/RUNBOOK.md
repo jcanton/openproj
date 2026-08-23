@@ -295,7 +295,7 @@ they can be re-run by hand later, when something that worked stops working.
 URL=$(gcloud run services describe openproj --region $REGION --format='value(status.url)')
 curl -s $URL/api/health                               # {"ok":true,"head":"..."}
 curl -s -o /dev/null -w '%{http_code}\n' $URL/graph   # 200, not 500 — static/ resolved
-curl -s -X PATCH $URL/api/entity/x -d '{}'            # 401 — writes are gated
+curl -s -X PATCH $URL/api/record/x -d '{}'            # 401 — writes are gated
 gcloud run services logs read openproj --region $REGION --limit 20 | grep cloning
 ```
 

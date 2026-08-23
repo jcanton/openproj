@@ -102,8 +102,8 @@ def test_the_static_export_carries_it_because_it_has_no_server(tmp_path: Path):
     from openproj.model import load_repo
     from openproj.render import render_static
 
-    entities, config, unreadable = load_repo(SEED)
-    render_static(build_index(entities, config, date(2026, 8, 17), unreadable=unreadable), tmp_path)
+    records, config, unreadable = load_repo(SEED)
+    render_static(build_index(records, config, date(2026, 8, 17), unreadable=unreadable), tmp_path)
 
     written = sorted(tmp_path.glob("*.html"))
     assert written, "nothing was exported"

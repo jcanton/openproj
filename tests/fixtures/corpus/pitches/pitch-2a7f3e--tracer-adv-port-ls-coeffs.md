@@ -110,7 +110,7 @@ The table's `[LS coeff. shape-up]` link definition resolves to <https://hackmd.i
 
 **PRs.** The table's PR column is empty for this row and the shaping doc cites no PR, so `prs` is empty. For the next stage: a GitHub search finds C2SM/icon4py#1028 "Least square tracer advection coefficients implementation" (merged 2026-02-05, author `nfarabullini`, body "porting of advection least square coefficients for both sphere and torus"), with follow-ups #1099, #1103 and #1379 — almost certainly this row's work, but not recorded in `prs` because no source cites them.
 
-**Parent.** No project entity was created: the row's group ("rows 15-19, tracer advection") is an inferred label — the table encodes grouping only as blank rows and has no heading. The natural umbrella, if one is ever created, is *[Greenline] Warm Bubble Experiment Tasks for Cycle 34* (<https://hackmd.io/5ceTe0y2SZWJGZBwFDdMiQ>), which lists this pitch as one of eight subtasks.
+**Parent.** No project record was created: the row's group ("rows 15-19, tracer advection") is an inferred label — the table encodes grouping only as blank rows and has no heading. The natural umbrella, if one is ever created, is *[Greenline] Warm Bubble Experiment Tasks for Cycle 34* (<https://hackmd.io/5ceTe0y2SZWJGZBwFDdMiQ>), which lists this pitch as one of eight subtasks.
 
 **Priority.** The table uses four levels (High+, High, Medium, Low), mapped order-preserving onto 0/1/2/3; this row's "High" → 1.
 

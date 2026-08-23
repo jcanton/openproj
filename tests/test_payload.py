@@ -61,8 +61,8 @@ NOT_NUMBERS = (".inf", "-.inf", ".nan")
 
 
 def index_with(*texts: str):
-    entities = [parse_text(text, f"tasks/task-{n}.md") for n, text in enumerate(texts)]
-    return build_index(entities, Config(schema_version=2), date(2026, 8, 17))
+    records = [parse_text(text, f"tasks/task-{n}.md") for n, text in enumerate(texts)]
+    return build_index(records, Config(schema_version=2), date(2026, 8, 17))
 
 
 def plan_repo(tmp_path: Path, size: str) -> Path:
@@ -187,13 +187,13 @@ def test_the_index_route_answers_rather_than_faulting_on_such_a_size(
         got = client.get("/api/index.json")
 
         assert got.status_code == 200, got.text
-        entities = got.json()["entities"]
-        assert set(entities) == {"task-e00001", "task-e00002"}
+        records = got.json()["plan"]
+        assert set(records) == {"task-e00001", "task-e00002"}
         # Null, not a clamp: JSON has no way to say this number, and every page
         # already draws an absent one as a dash. A clamp would put a figure
         # nobody wrote into a cell.
-        assert entities["task-e00002"]["person_weeks"] is None
-        assert entities["task-e00001"]["person_weeks"] == 1.0
+        assert records["task-e00002"]["person_weeks"] is None
+        assert records["task-e00001"]["person_weeks"] == 1.0
 
 
 @pytest.mark.parametrize("size", NOT_NUMBERS)

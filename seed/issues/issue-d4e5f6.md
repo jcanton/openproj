@@ -7,4 +7,4 @@ opened_on: 2026-08-14
 tags: [tooling]
 pitched_into: [task-0c1002]
 ---
-About four seconds on 150 entities. Not urgent; noting it before I forget.
+About four seconds on 150 records. Not urgent; noting it before I forget.

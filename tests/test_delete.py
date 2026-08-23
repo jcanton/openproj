@@ -36,12 +36,12 @@ MARKUP = '<div class="confirming"'
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 def one_task(index: Index) -> str:
-    return sorted(e for e, entity in index.entities.items() if entity.kind == "task")[0]
+    return sorted(e for e, record in index.plan.items() if record.kind == "task")[0]
 
 
 def test_only_somebody_the_server_would_take_a_write_from_is_offered_the_button(
@@ -55,10 +55,10 @@ def test_only_somebody_the_server_would_take_a_write_from_is_offered_the_button(
     editor above it has lived with that; a button that removes a record from the
     plan should not, because the way you find out is by pressing it.
     """
-    entity_id = one_task(index)
-    writer = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
-    reader = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=False)
-    exported = render_detail(index, STATIC, only=entity_id)
+    record_id = one_task(index)
+    writer = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
+    reader = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=False)
+    exported = render_detail(index, STATIC, only=record_id)
 
     # The markup and not the word: the stylesheet is inlined into every copy of
     # this page whatever the reader may do, so a plain substring test passes on a
@@ -72,12 +72,12 @@ def test_the_question_names_the_record_it_is_about(index: Index):
     """"Are you sure?" over a record you cannot see is a question nobody can
     answer. This page is as long as a shaping document and the control is at the
     foot of it, so the title can easily be a screen and a half away."""
-    entity_id = one_task(index)
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    record_id = one_task(index)
+    page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
 
     asking = page[page.index(MARKUP) :]
-    assert index.entities[entity_id].title in asking
-    assert entity_id in asking
+    assert index.plan[record_id].title in asking
+    assert record_id in asking
     # And it says what "delete" means here, which is not what the word usually
     # promises: the file leaves the plan and stays in the history.
     assert "git revert" in asking
@@ -96,8 +96,8 @@ def test_delete_stands_beside_edit_and_wears_what_edit_wears(index: Index):
     by construction rather than by two rules somebody has to keep in step. Only
     the colour it turns on hover is its own.
     """
-    entity_id = one_task(index)
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    record_id = one_task(index)
+    page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
 
     bar = page[page.index('<p class="editbar">') :]
     bar = bar[: bar.index("</p>")]
@@ -131,9 +131,9 @@ def test_the_panel_says_what_the_delete_will_take_with_it(index: Index):
     wrong about the commit it is authorising.
     """
     parent = next(
-        entity_id
-        for entity_id in sorted(index.entities)
-        if cascade_of(index, entity_id)[0]
+        record_id
+        for record_id in sorted(index.plan)
+        if cascade_of(index, record_id)[0]
     )
     doomed, _ = cascade_of(index, parent)
     page = render_detail(index, ROUTES, only=parent, base_commit=HEAD, may_write=True)
@@ -153,9 +153,9 @@ def test_a_leaf_record_asks_a_plain_question(index: Index):
     A panel that says "this also deletes 0 records" teaches people to skim the
     line that matters."""
     leaf = next(
-        entity_id
-        for entity_id in sorted(index.entities)
-        if cascade_of(index, entity_id) == ([], [])
+        record_id
+        for record_id in sorted(index.plan)
+        if cascade_of(index, record_id) == ([], [])
     )
     page = render_detail(index, ROUTES, only=leaf, base_commit=HEAD, may_write=True)
     asking = page[page.index(MARKUP) :]
@@ -173,7 +173,7 @@ window.fetch = (url, options) => {
   window.__sent.push({url, method: options.method, body: JSON.parse(options.body)});
   return new Promise(() => {});
 };
-const one = document.querySelector('article.entity');
+const one = document.querySelector('article.record');
 const open = one.querySelector('.editbar button.delete');
 const panel = one.querySelector('.confirming');
 const before = {asked: !panel.hidden, sent: window.__sent.length};
@@ -196,8 +196,8 @@ def test_it_takes_two_presses_and_the_first_one_writes_nothing(
 ):
     """The whole point of the control. Everything up to the second press is a
     question, and a question that has already deleted the record is not one."""
-    entity_id = one_task(index)
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    record_id = one_task(index)
+    page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
 
     got = measured_in(chrome(), page, tmp_path / "delete.html", 1200, _PRESSES)
 
@@ -210,7 +210,7 @@ def test_it_takes_two_presses_and_the_first_one_writes_nothing(
     assert len(got["sent"]) == 1, got["sent"]
     sent = got["sent"][0]
     assert sent["method"] == "DELETE"
-    assert sent["url"] == f"/api/entity/{entity_id}"
+    assert sent["url"] == f"/api/record/{record_id}"
     # The base commit the page was drawn against, so the server can refuse a
     # delete of something somebody has edited since. Without it this would be the
     # one write in the app that cannot say what it thought it was removing.
@@ -227,7 +227,7 @@ window.fetch = (url, options) => {
   window.__sent.push({url});
   return new Promise(() => {});
 };
-const bars = [...document.querySelectorAll('article.entity')]
+const bars = [...document.querySelectorAll('article.record')]
   .filter(one => one.querySelector('.editbar button.delete'));
 const last = bars[bars.length - 1];
 last.querySelector('.editbar button.delete').click();
@@ -239,7 +239,7 @@ return {bars: bars.length, sent: window.__sent.map(one => one.url)};
 def test_the_delete_under_a_record_is_the_delete_of_that_record(
     index: Index, tmp_path: Path
 ):
-    """The page can hold every entity in the plan — `/detail` serves them all on
+    """The page can hold every record in the plan — `/detail` serves them all on
     one route. Every other control here is found with `getElementById`, which on
     that page answers with the first element of the name whatever you pressed;
     for the editor the worst case is typing into the wrong box, in front of you,
@@ -250,8 +250,8 @@ def test_the_delete_under_a_record_is_the_delete_of_that_record(
     got = measured_in(chrome(), page, tmp_path / "many.html", 1200, _WRONG_ONE)
 
     assert got["bars"] > 1, "the page held one record, so nothing was proved"
-    last = sorted(index.entities)[-1]
-    assert got["sent"] == [f"/api/entity/{last}"], (
+    last = sorted(index.plan)[-1]
+    assert got["sent"] == [f"/api/record/{last}"], (
         f"the last record's Delete asked the server about {got['sent']}"
     )
 
@@ -267,7 +267,7 @@ window.fetch = () => Promise.resolve({
   ok: false, status: 409,
   json: () => Promise.resolve({detail: %s}),
 });
-const one = document.querySelector('article.entity');
+const one = document.querySelector('article.record');
 const panel = one.querySelector('.confirming');
 one.querySelector('.editbar button.delete').click();
 panel.querySelector('button.really').click();
@@ -287,8 +287,8 @@ def test_a_refusal_is_shown_where_the_question_was_asked(index: Index, tmp_path:
     """The server refuses a delete that would orphan children and names them. That
     sentence is the useful half of the feature — "delete those three first" — and
     it must not go to the console."""
-    entity_id = one_task(index)
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    record_id = one_task(index)
+    page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
     reason = "pitch-x cannot be deleted while task-a and task-b are filed under it."
 
     got = measured_in(
@@ -323,8 +323,8 @@ def test_the_commit_bar_is_not_on_screen_when_there_is_nothing_to_commit(
     and the other is the browser's. Every menu on the table page opened on load
     the day that was forgotten.
     """
-    entity_id = one_task(index)
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    record_id = one_task(index)
+    page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
 
     got = measured_in(chrome(), page, tmp_path / "bar.html", 1200, _QUIET_BAR)
 
@@ -337,7 +337,7 @@ def test_the_commit_bar_is_not_on_screen_when_there_is_nothing_to_commit(
 
 
 _WHILE_EDITING = """
-const one = document.querySelector('article.entity');
+const one = document.querySelector('article.record');
 const remove = one.querySelector('.editbar button.delete');
 const before = !remove.hidden;
 flipEditing();
@@ -355,8 +355,8 @@ def test_delete_leaves_while_an_edit_is_open(index: Index, tmp_path: Path):
     the hand from the two that keep it. It comes back when the edit ends, by
     either door.
     """
-    entity_id = one_task(index)
-    page = render_detail(index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True)
+    record_id = one_task(index)
+    page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
 
     got = measured_in(chrome(), page, tmp_path / "editing.html", 1200, _WHILE_EDITING)
 

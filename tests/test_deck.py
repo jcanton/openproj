@@ -9,7 +9,7 @@ made `blocks` derived rather than stored.
 The claims here are about three different mediums and are asked in three
 different places. What is *on* a slide is a question about a document, so it is
 parsed rather than searched for: the shell inlines its own stylesheet into every
-page, comments and all, and a substring test for "☑" or for an entity id finds
+page, comments and all, and a substring test for "☑" or for a record id finds
 its answer in a CSS comment as happily as in a slide. Which rule wins is asked of
 `cascade.py`. And whether one slide really is one page is asked of Chrome, with
 `--print-to-pdf`, because a `break-after: page` that resolves is still only a
@@ -31,9 +31,9 @@ from openproj.index import Index, build_index
 from openproj.model import (
     Config,
     Cycle,
-    Entity,
     Pitch,
     Project,
+    Record,
     Task,
     checklist,
     checklist_items,
@@ -171,7 +171,7 @@ The gather/scatter seam is the one to watch.
 """
 
 
-def corpus() -> list[Entity]:
+def corpus() -> list[Record]:
     project = Project(id="proj-000001", kind="project", title="Physics")
     land = Pitch(id="pitch-0c0001", kind="pitch", title="Porting land", owner="ann",
                  person_weeks=6.0, parent="proj-000001", status="in_progress", cycle=37,
@@ -212,15 +212,15 @@ def deck(index: Index) -> str:
 
 @pytest.fixture
 def demo_index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, TODAY)
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, TODAY)
 
 
 @pytest.fixture
 def golden_index(seed_root: Path) -> Index:
     """The frozen corpus, which is the only hand-written checklist in the suite."""
-    entities, config, _ = load_repo(seed_root)
-    return build_index(entities, config, TODAY)
+    records, config, _ = load_repo(seed_root)
+    return build_index(records, config, TODAY)
 
 
 # --------------------------------------------------------------------------- #
@@ -641,7 +641,7 @@ def test_every_slide_of_the_frozen_corpus_is_worth_the_sheet_it_prints_on(
     the record's own words to stand up and read out, or points to walk, or a pull
     request to open. The cycles come off the corpus rather than being listed, so
     a cycle added to it is covered by the commit that adds it."""
-    for number in sorted({e.cycle for e in golden_index.entities.values() if e.cycle}):
+    for number in sorted({e.cycle for e in golden_index.plan.values() if e.cycle}):
         found = slides_in(render_deck(golden_index, number, ROUTES))
 
         assert len(found) > 1, number
@@ -737,8 +737,8 @@ def test_a_hand_written_checklist_reaches_the_slide_it_belongs_to(golden_index: 
 
     assert ticked, [s["heading"] for s in found]
     for heading, points in ticked.items():
-        entity = next(e for e in golden_index.entities.values() if e.title == heading)
-        counted = golden_index.progress[entity.id]
+        record = next(e for e in golden_index.plan.values() if e.title == heading)
+        counted = golden_index.progress[record.id]
 
         assert len(points) == counted.total, heading
         assert sum(1 for p in points if p["done"]) == counted.done, heading
@@ -819,7 +819,7 @@ def test_an_uploaded_screenshot_is_served_into_the_deck_as_bytes(served):
     path = uploaded.json()["path"]
 
     saved = client.patch(
-        f"/api/entity/{BET_ID}",
+        f"/api/record/{BET_ID}",
         json={"base_commit": git_head(repo), "fields": {},
               "body": f"## Progress\n\n- [x] Gather to rank 0\n\n## Notes\n\n![a run]({path})\n"},
     )
@@ -932,7 +932,7 @@ def test_every_deck_this_suite_can_reach_prints_one_slide_to_a_page(
     decks = {"the fixture": deck, "seed 37": render_deck(demo_index, 37, ROUTES)}
     decks |= {
         f"corpus {number}": render_deck(golden_index, number, ROUTES)
-        for number in sorted({e.cycle for e in golden_index.entities.values() if e.cycle})
+        for number in sorted({e.cycle for e in golden_index.plan.values() if e.cycle})
     }
 
     for name, page in decks.items():

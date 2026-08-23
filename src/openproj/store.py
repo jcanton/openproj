@@ -250,7 +250,7 @@ def _already_gone(path: str) -> str:
 
 
 def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, str | None]:
-    """Structured merge of one entity file. Returns (merged_text, conflict_report)."""
+    """Structured merge of one record file. Returns (merged_text, conflict_report)."""
     base_front, base_body = _split(base)
     mine_front, mine_body = _split(mine)
     theirs_front, theirs_body = _split(theirs)
@@ -469,7 +469,7 @@ class Store:
         this repository has never seen reaches `_tree` as `None.tree`, and one
         that is not hex reaches it as a ValueError — both of which are a 500 on a
         route whose whole job is to refuse politely. The caller that needs this is
-        the entity save: a restored draft carries the commit it was drafted
+        the record save: a restored draft carries the commit it was drafted
         against, which is older than HEAD on purpose, and a draft that has sat in
         a browser through a re-clone of the plan is a sha nothing here has.
         """

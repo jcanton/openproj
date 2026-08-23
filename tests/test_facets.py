@@ -30,8 +30,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 @pytest.fixture
@@ -200,7 +200,7 @@ return {
 def test_clearing_puts_every_field_back(page: str, tmp_path: Path):
     """A Clear that leaves a control set is a Clear that did not clear — the rule
     that already cost this bar one defect, when the people page's `role` was left
-    behind because it is not a field of an entity."""
+    behind because it is not a field of a record."""
     got = measured_in(chrome(), page, tmp_path / "clear.html", 1460, _CLEARS)
 
     assert got["before"], "nothing was set, so this asks nothing"
@@ -259,7 +259,7 @@ def every_page(index: Index) -> dict[str, str]:
         render_timeline,
     )
 
-    number = max(e.cycle for e in index.entities.values() if e.cycle)
+    number = max(e.cycle for e in index.plan.values() if e.cycle)
     return {
         # The landing shares the whole control bar's scope with a script of its
         # own, so it is in the sweep from the commit that adds it.

@@ -150,10 +150,10 @@ def seeded(body: str) -> Doc:
 
 
 class Room:
-    """One entity's body, live, with everyone currently typing in it."""
+    """One record's body, live, with everyone currently typing in it."""
 
-    def __init__(self, entity_id: str, path: str, commit: str, body: str) -> None:
-        self.entity_id = entity_id
+    def __init__(self, record_id: str, path: str, commit: str, body: str) -> None:
+        self.record_id = record_id
         self.path = path
         # What the document was built from, and what a returning client is asked
         # to match. It does not move when the room commits: the history is still
@@ -372,11 +372,11 @@ class Rooms:
         self._rooms: dict[str, Room] = {}
         self._emptied: dict[str, float] = {}
 
-    def get(self, entity_id: str) -> Room | None:
-        return self._rooms.get(entity_id)
+    def get(self, record_id: str) -> Room | None:
+        return self._rooms.get(record_id)
 
     def add(self, room: Room) -> Room:
-        self._rooms[room.entity_id] = room
+        self._rooms[room.record_id] = room
         return room
 
     def all(self) -> list[Room]:
@@ -384,22 +384,22 @@ class Rooms:
 
     def enter(self, room: Room, connection: int, login: str) -> None:
         room.join(connection, login)
-        self._emptied.pop(room.entity_id, None)
+        self._emptied.pop(room.record_id, None)
 
     def exit(self, room: Room, connection: int) -> None:
         room.leave(connection)
         if room.empty():
-            self._emptied[room.entity_id] = time.monotonic()
+            self._emptied[room.record_id] = time.monotonic()
 
     def sweep(self) -> list[Room]:
         """Drop the rooms nobody came back to. Returns the ones dropped."""
         gone = []
-        for entity_id, when in list(self._emptied.items()):
-            room = self._rooms.get(entity_id)
+        for record_id, when in list(self._emptied.items()):
+            room = self._rooms.get(record_id)
             if room is None or room.members:
-                self._emptied.pop(entity_id, None)
+                self._emptied.pop(record_id, None)
                 continue
             if time.monotonic() - when >= LINGER_SECONDS:
-                self._emptied.pop(entity_id, None)
-                gone.append(self._rooms.pop(entity_id))
+                self._emptied.pop(record_id, None)
+                gone.append(self._rooms.pop(record_id))
         return gone

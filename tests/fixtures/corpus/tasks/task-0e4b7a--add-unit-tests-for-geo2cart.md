@@ -75,8 +75,8 @@ but imports only `vector_operations` and `vertical_operations`, and contains a s
 and `tests/common/states/unit_tests/test_factory.py` — i.e. the coverage that exists is incidental,
 through a factory test, and there is no direct unit test of the three operators.
 
-The source enumerates no sub-work; `geo2cart_onX` is a wildcard, not a task list. No task entities
-were created, and no project entity was created because the grouping of rows 86–89 is encoded only
+The source enumerates no sub-work; `geo2cart_onX` is a wildcard, not a task list. No task records
+were created, and no project record was created because the grouping of rows 86–89 is encoded only
 as a blank table row — the table contains no group heading naming a project.
 
 ## Related, but deliberately not linked

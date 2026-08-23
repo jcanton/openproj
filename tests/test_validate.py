@@ -5,7 +5,7 @@ human sees in the CLI and the web view — so they are single-sourced as constan
 here rather than retyped per test.
 
 Grandfathering is the reason `Problem` carries `rule_version` at all: a rule
-introduced after an entity was written may only warn about it, never block it.
+introduced after a record was written may only warn about it, never block it.
 `test_grandfathering_*` is the load-bearing test of this module.
 """
 
@@ -18,10 +18,10 @@ from openproj.model import (
     ID_PATTERN,
     KINDS,
     Config,
-    Entity,
     Pitch,
     Problem,
     Project,
+    Record,
     Task,
     cycle_of,
     load_repo,
@@ -37,18 +37,18 @@ PROJECT_ID = "proj-ccc333"
 
 NEEDS_TITLE = "title must not be empty"
 BAD_ID_PATTERN = "id must match " + ID_PATTERN.pattern
-NEEDS_OWNER = "a ready entity needs an owner"
-NEEDS_REVIEWER = "a ready entity needs a reviewer, or review waived"
+NEEDS_OWNER = "a ready record needs an owner"
+NEEDS_REVIEWER = "a ready record needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
 NEEDS_APPETITE = "a ready pitch needs an appetite"
 NEEDS_SHAPED_BY = "a ready pitch needs to say who shaped it"
 NEEDS_ASSIGNED_ON = "work in progress needs the date it was assigned"
-NEEDS_SOMEBODY_READY = "a ready entity needs somebody on it"
+NEEDS_SOMEBODY_READY = "a ready record needs somebody on it"
 NEEDS_SOMEBODY_WIP = "work in progress needs somebody on it"
 NEEDS_INDEPENDENT_REVIEWER = (
     "work in progress needs a reviewer other than its owner, or review waived"
 )
-NEEDS_PR = "a done entity needs at least one PR"
+NEEDS_PR = "a done record needs at least one PR"
 SHOULD_HAVE_PARENT = "a task should have a parent"
 DEPENDS_ON_CYCLE = "part of a blocked-by cycle"
 PARENT_CYCLE = "part of a parent cycle"
@@ -131,16 +131,16 @@ def project(**overrides: object) -> Project:
     return Project(**(fields | overrides))
 
 
-def check(*entities: Entity, config: Config | None = None) -> list[Problem]:
-    return validate_all(list(entities), config or Config())
+def check(*records: Record, config: Config | None = None) -> list[Problem]:
+    return validate_all(list(records), config or Config())
 
 
-def only(problems: list[Problem], entity_id: str, field: str | None = None) -> Problem:
+def only(problems: list[Problem], record_id: str, field: str | None = None) -> Problem:
     matching = [
         p for p in problems
-        if p.entity_id == entity_id and (field is None or p.field == field)
+        if p.record_id == record_id and (field is None or p.field == field)
     ]
-    named = entity_id if field is None else f"{entity_id}.{field}"
+    named = record_id if field is None else f"{record_id}.{field}"
     assert len(matching) == 1, f"expected exactly one problem for {named}, got {matching}"
     return matching[0]
 
@@ -150,10 +150,10 @@ def summary(problem: Problem) -> tuple[str, str | None, str, int]:
 
 
 def summaries(problems: list[Problem]) -> set[tuple[str, str, str | None, str, int]]:
-    return {(p.severity, p.entity_id, p.field, p.message, p.rule_version) for p in problems}
+    return {(p.severity, p.record_id, p.field, p.message, p.rule_version) for p in problems}
 
 
-def test_a_fully_specified_entity_has_no_problems():
+def test_a_fully_specified_record_has_no_problems():
     """Guards the helpers: if the clean fixtures were dirty, every test below would
     be asserting about the wrong problem."""
     assert check(task(), pitch(), project()) == []
@@ -184,7 +184,7 @@ def test_every_depends_on_target_must_exist():
     assert summary(problem) == ("blocker", "depends_on", missing_target("task-fff666"), 1)
 
 
-def test_regression_an_entity_may_not_depend_on_its_own_ancestor_or_descendant():
+def test_regression_a_record_may_not_depend_on_its_own_ancestor_or_descendant():
     """Regression: containment already implies an ordering, so a dependency along
     the parent chain is a contradiction the scheduler cannot resolve."""
     upwards = only(check(task(depends_on=[PITCH_ID]), pitch()), TASK_ID)
@@ -193,18 +193,18 @@ def test_regression_an_entity_may_not_depend_on_its_own_ancestor_or_descendant()
     assert summary(downwards) == ("blocker", "depends_on", descendant_dep(TASK_ID), 1)
 
 
-def test_a_depends_on_cycle_is_reported_on_every_entity_in_it():
-    entities = (task(depends_on=[OTHER_TASK_ID]), task(id=OTHER_TASK_ID, depends_on=[TASK_ID]))
-    found = check(*entities)
-    for entity_id in (TASK_ID, OTHER_TASK_ID):
-        assert summary(only(found, entity_id)) == ("blocker", "depends_on", DEPENDS_ON_CYCLE, 1)
+def test_a_depends_on_cycle_is_reported_on_every_record_in_it():
+    records = (task(depends_on=[OTHER_TASK_ID]), task(id=OTHER_TASK_ID, depends_on=[TASK_ID]))
+    found = check(*records)
+    for record_id in (TASK_ID, OTHER_TASK_ID):
+        assert summary(only(found, record_id)) == ("blocker", "depends_on", DEPENDS_ON_CYCLE, 1)
 
 
-def test_a_parent_chain_cycle_is_reported_on_every_entity_in_it():
-    entities = (pitch(parent=OTHER_PITCH_ID), pitch(id=OTHER_PITCH_ID, parent=PITCH_ID))
-    found = check(*entities)
-    for entity_id in (PITCH_ID, OTHER_PITCH_ID):
-        assert summary(only(found, entity_id)) == ("blocker", "parent", PARENT_CYCLE, 1)
+def test_a_parent_chain_cycle_is_reported_on_every_record_in_it():
+    records = (pitch(parent=OTHER_PITCH_ID), pitch(id=OTHER_PITCH_ID, parent=PITCH_ID))
+    found = check(*records)
+    for record_id in (PITCH_ID, OTHER_PITCH_ID):
+        assert summary(only(found, record_id)) == ("blocker", "parent", PARENT_CYCLE, 1)
 
 
 def test_a_task_without_a_parent_is_only_a_warning():
@@ -213,7 +213,7 @@ def test_a_task_without_a_parent_is_only_a_warning():
     assert summary(problem) == ("warning", "parent", SHOULD_HAVE_PARENT, 1)
 
 
-def test_depending_on_a_shelved_entity_is_only_a_warning():
+def test_depending_on_a_shelved_record_is_only_a_warning():
     shelved = task(id=OTHER_TASK_ID, status="shelved")
     problem = only(check(task(depends_on=[OTHER_TASK_ID]), shelved), TASK_ID)
     assert summary(problem) == ("warning", "depends_on", shelved_target(OTHER_TASK_ID), 1)
@@ -222,16 +222,16 @@ def test_depending_on_a_shelved_entity_is_only_a_warning():
 # --- rules that apply at one status -----------------------------------------
 
 
-def test_a_todo_entity_needs_an_owner():
+def test_a_todo_record_needs_an_owner():
     assert summary(only(check(task(owner=None)), TASK_ID)) == ("blocker", "owner", NEEDS_OWNER, 1)
 
 
-def test_a_todo_entity_needs_a_reviewer_unless_review_is_waived():
+def test_a_todo_record_needs_a_reviewer_unless_review_is_waived():
     problem = only(check(task(reviewers=[])), TASK_ID)
     assert summary(problem) == ("blocker", "reviewers", NEEDS_REVIEWER, 1)
 
 
-def test_a_todo_entity_needs_a_size():
+def test_a_todo_record_needs_a_size():
     assert summary(only(check(task(person_weeks=None)), TASK_ID)) == (
         "blocker",
         "person_weeks",
@@ -247,18 +247,18 @@ def test_a_todo_entity_needs_a_size():
 
 
 def test_a_todo_pitch_needs_shaped_by():
-    """Version 2 of the rules; here on an entity created at 2, so it blocks."""
+    """Version 2 of the rules; here on a record created at 2, so it blocks."""
     problem = only(check(pitch(shaped_by=None, created_schema_version=2)), PITCH_ID)
     assert summary(problem) == ("blocker", "shaped_by", NEEDS_SHAPED_BY, 2)
 
 
-def test_a_wip_entity_needs_assigned_on():
-    for entity in (task(status="in_progress", assigned_on=None), project(assigned_on=None)):
-        problem = only(check(entity), entity.id)
+def test_a_wip_record_needs_assigned_on():
+    for record in (task(status="in_progress", assigned_on=None), project(assigned_on=None)):
+        problem = only(check(record), record.id)
         assert summary(problem) == ("blocker", "assigned_on", NEEDS_ASSIGNED_ON, 1)
 
 
-def test_a_wip_entity_needs_a_reviewer_who_is_not_its_owner():
+def test_a_wip_record_needs_a_reviewer_who_is_not_its_owner():
     """Self-review is the same as no review, so the reviewer list must contain
     somebody else before work may be in progress."""
     wip = task(
@@ -271,12 +271,12 @@ def test_a_wip_entity_needs_a_reviewer_who_is_not_its_owner():
     assert summary(problem) == ("blocker", "reviewers", NEEDS_INDEPENDENT_REVIEWER, 1)
 
 
-def test_a_done_entity_needs_at_least_one_pr():
+def test_a_done_record_needs_at_least_one_pr():
     problem = only(check(task(status="done", prs=[])), TASK_ID)
     assert summary(problem) == ("blocker", "prs", NEEDS_PR, 1)
 
 
-def test_a_shelved_entity_has_no_requirements_at_all():
+def test_a_shelved_record_has_no_requirements_at_all():
     """Shelved work is parked, not broken: nothing about it is worth reporting,
     not even the warnings that would fire on the same fields at any other status."""
     parked = task(status="shelved", parent=None, owner=None, reviewers=[], person_weeks=None)
@@ -299,9 +299,9 @@ def test_review_waived_satisfies_both_the_todo_and_the_wip_reviewer_gates():
 # --- grandfathering ---------------------------------------------------------
 
 
-def test_grandfathering_turns_a_newer_rule_into_a_warning_on_an_older_entity():
+def test_grandfathering_turns_a_newer_rule_into_a_warning_on_an_older_record():
     """The whole point of rule_version: shipping the version 2 shaped_by rule must
-    not retroactively block a corpus written at version 1. Same entity, same
+    not retroactively block a corpus written at version 1. Same record, same
     missing field, severity decided by created_schema_version alone."""
     old = only(check(pitch(shaped_by=None, created_schema_version=1)), PITCH_ID)
     new = only(check(pitch(shaped_by=None, created_schema_version=2)), PITCH_ID)
@@ -309,7 +309,7 @@ def test_grandfathering_turns_a_newer_rule_into_a_warning_on_an_older_entity():
     assert summary(new) == ("blocker", "shaped_by", NEEDS_SHAPED_BY, 2)
 
 
-def test_grandfathering_does_not_soften_a_rule_older_than_the_entity():
+def test_grandfathering_does_not_soften_a_rule_older_than_the_record():
     problem = only(check(pitch(owner=None, created_schema_version=2)), PITCH_ID)
     assert summary(problem) == ("blocker", "owner", NEEDS_OWNER, 1)
 
@@ -319,14 +319,14 @@ def test_grandfathering_does_not_soften_a_rule_older_than_the_entity():
 
 def test_a_parent_of_the_wrong_kind_is_named_as_such():
     """The levels the spec claimed from its first day and nothing checked."""
-    entities = [
+    records = [
         Project(id="proj-000001", kind="project", title="P"),
         Pitch(id="pitch-000001", kind="pitch", title="Q", parent="proj-000001"),
         Task(id="task-000001", kind="task", title="T", parent="pitch-000001"),
         Task(id="task-000002", kind="task", title="U", parent="task-000001",
              created_schema_version=4),
     ]
-    problem = only(validate_all(entities, Config()), "task-000002", field="parent")
+    problem = only(validate_all(records, Config()), "task-000002", field="parent")
     assert summary(problem) == (
         "blocker", "parent", "a task belongs to a pitch or a project, not to a task", 4
     )
@@ -353,23 +353,23 @@ def test_a_task_may_hang_straight_off_a_project():
     a pitch invented to hold them, which puts a bet in the corpus that no betting
     table ever made. A plan that lies about what was bet is worse than a tree
     that is two levels deep in places."""
-    entities = [
+    records = [
         Project(id="proj-000001", kind="project", title="P"),
         Task(id="task-000001", kind="task", title="T", parent="proj-000001",
              created_schema_version=4),
     ]
 
-    assert not [p for p in validate_all(entities, Config())
-                if p.entity_id == "task-000001" and p.field == "parent"]
+    assert not [p for p in validate_all(records, Config())
+                if p.record_id == "task-000001" and p.field == "parent"]
 
 
 def test_a_project_belongs_to_nothing():
-    entities = [
+    records = [
         Project(id="proj-000001", kind="project", title="P"),
         Project(id="proj-000002", kind="project", title="Q", parent="proj-000001",
                 created_schema_version=4),
     ]
-    problem = only(validate_all(entities, Config()), "proj-000002", field="parent")
+    problem = only(validate_all(records, Config()), "proj-000002", field="parent")
     # A project belongs to a PRODUCT now, and to nothing else — the message is
     # built from `PARENT_KINDS`, which is built from the ladder, so it followed
     # the new rung without being edited.
@@ -377,12 +377,12 @@ def test_a_project_belongs_to_nothing():
 
 
 def test_a_pitch_under_a_project_and_a_task_under_a_pitch_are_the_shape():
-    entities = [
+    records = [
         Project(id="proj-000001", kind="project", title="P"),
         Pitch(id="pitch-000001", kind="pitch", title="Q", parent="proj-000001"),
         Task(id="task-000001", kind="task", title="T", parent="pitch-000001"),
     ]
-    assert [p for p in validate_all(entities, Config()) if p.field == "parent"] == []
+    assert [p for p in validate_all(records, Config()) if p.field == "parent"] == []
 
 
 def test_a_chore_nobody_pitched_keeps_its_own_cycle_and_a_parented_task_does_not():
@@ -390,38 +390,38 @@ def test_a_chore_nobody_pitched_keeps_its_own_cycle_and_a_parented_task_does_not
     betting table; a task inside a pitch came with the pitch, and a second cycle
     number on it is one fact in two files."""
     dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
-    entities = [
+    records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", cycle=36),
         Task(id="task-000001", kind="task", title="T", parent="pitch-000001", cycle=36,
              created_schema_version=4),
         Task(id="task-000002", kind="task", title="Chore", cycle=36),
     ]
-    problems = [p for p in validate_all(entities, dated) if p.field == "cycle"]
+    problems = [p for p in validate_all(records, dated) if p.field == "cycle"]
 
-    assert [p.entity_id for p in problems] == ["task-000001"]
+    assert [p.record_id for p in problems] == ["task-000001"]
     assert problems[0].severity == "warning", "it is ignored, not refused"
-    assert cycle_of(entities[1], {e.id: e for e in entities}) == 36, "inherited from its pitch"
-    assert cycle_of(entities[2], {e.id: e for e in entities}) == 36, "its own"
+    assert cycle_of(records[1], {e.id: e for e in records}) == 36, "inherited from its pitch"
+    assert cycle_of(records[2], {e.id: e for e in records}) == 36, "its own"
 
 
 def test_a_project_is_not_bet_because_it_holds_bets():
     dated = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
-    entities = [Project(id="proj-000001", kind="project", title="P", cycle=36)]
-    problem = only(validate_all(entities, dated), "proj-000001", field="cycle")
+    records = [Project(id="proj-000001", kind="project", title="P", cycle=36)]
+    problem = only(validate_all(records, dated), "proj-000001", field="cycle")
     assert problem.message.startswith("a project is not bet")
-    assert cycle_of(entities[0], {"proj-000001": entities[0]}) is None
+    assert cycle_of(records[0], {"proj-000001": records[0]}) is None
 
 
 def test_tasks_that_add_up_to_more_than_the_bet_say_so():
     """The appetite is the box and the tasks are what somebody proposes to put in
     it. Nothing compared the two, so a six-week bet holding seven and a half
     weeks of tasks read as a six-week bet on every page."""
-    entities = [
+    records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
         Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=3.5),
     ]
-    problem = only(validate_all(entities, Config()), "pitch-000001", field="person_weeks")
+    problem = only(validate_all(records, Config()), "pitch-000001", field="person_weeks")
     assert problem.severity == "warning", "cutting scope or re-betting is a decision"
     assert "7.5 weeks, more than the 6" in problem.message
 
@@ -429,21 +429,21 @@ def test_tasks_that_add_up_to_more_than_the_bet_say_so():
 def test_tasks_that_fit_inside_the_bet_say_nothing():
     """Under the appetite is the normal state of a pitch whose tasks are still
     being written, and saying so on every one of them is noise."""
-    entities = [
+    records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=6.0),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
     ]
-    assert [p for p in validate_all(entities, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
 
 
 def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
-    entities = [
+    records = [
         Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
         Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=4.0),
         Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=4.0,
              status="shelved"),
     ]
-    assert [p for p in validate_all(entities, Config()) if p.field == "person_weeks"] == []
+    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
 
 
 # --- the seed corpus --------------------------------------------------------
@@ -465,11 +465,11 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     warnings: the corpus is created_schema_version 2 and these rules are 4, so
     nothing written before them breaks.
     """
-    entities, config, _ = load_repo(seed_root)
-    assert len(entities) == 17
+    records, config, _ = load_repo(seed_root)
+    assert len(records) == 17
     inherits = "the bet is on the pitch, so this task takes its cycle from {}; " \
         "the number here is ignored"
-    assert summaries(validate_all(entities, config)) == {
+    assert summaries(validate_all(records, config)) == {
         # Nine records at ready or in_progress with nobody assigned, which is the
         # argument for that rule made against real files: an owner answers for a
         # bet and assignees are who is doing it, and the scheduler prices a record
@@ -536,9 +536,9 @@ def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(
     the per-rung vocabulary unchanged: a problem this pair does not notice
     appearing or vanishing is a validation change that got past the refactor.
     """
-    entities, config, unreadable = load_repo(seed_root)
+    records, config, unreadable = load_repo(seed_root)
     problems = sorted(
-        validate_all(entities, config), key=lambda p: (p.severity, p.entity_id, p.field or "")
+        validate_all(records, config), key=lambda p: (p.severity, p.record_id, p.field or "")
     )
     blockers = [p for p in problems if p.severity == "blocker"]
 
@@ -550,7 +550,7 @@ def test_check_over_the_seed_corpus_prints_exactly_the_validated_problems(
         f"{one.why}"
         for one in unreadable
     ]
-    expected += [f"{p.severity}: {p.entity_id}: {p.field}: {p.message}" for p in problems]
+    expected += [f"{p.severity}: {p.record_id}: {p.field}: {p.message}" for p in problems]
     expected.append(
         f"{len(blockers) + len(unreadable)} blockers, {len(problems) - len(blockers)} warnings"
     )
@@ -597,7 +597,7 @@ def test_a_word_nobody_defined_is_a_problem_and_not_a_crash():
     back `priority: 1` as an int. Refusing either at parse time took every page
     down with a 500 over one stale record — which is precisely the failure the
     permissive-parse rule exists to prevent. One bad file is one problem beside one
-    entity.
+    record.
     """
     stale = parse_text(
         "---\nid: pitch-bbb222\nkind: pitch\ntitle: T\nstatus: wip\npriority: 1\n---\n\nB.\n",
@@ -679,17 +679,17 @@ def test_a_stale_vocabulary_still_schedules_and_renders():
 
 def test_a_cycle_nobody_dated_is_reported_rather_than_ignored():
     """`_overrun` looks the window up with `.get`, so an undated number does not
-    raise — it returns None, and the entity silently stops being checked for
+    raise — it returns None, and the record silently stops being checked for
     overrun. A typo therefore reads as "on time" forever, which is the one
     reading nobody would question."""
     config = Config(cycles={36: (date(2026, 6, 22), date(2026, 8, 14))})
-    entities = [task(cycle=99), task(id="task-000002", cycle=36)]
+    records = [task(cycle=99), task(id="task-000002", cycle=36)]
 
-    problems = validate_all(entities, config)
+    problems = validate_all(records, config)
     reported = [p for p in problems if p.field == "cycle"]
 
     assert len(reported) == 1
-    assert reported[0].entity_id == entities[0].id
+    assert reported[0].record_id == records[0].id
     assert reported[0].severity == "warning"
     assert "no dates" in reported[0].message
 
@@ -719,7 +719,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     # Every gate, tripped at once: each status, each kind, a missing dependency, a
     # shelved one, and a pair that depend on each other.
     loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
-    entities = [
+    records = [
         pitch(status="ready", owner=None, reviewers=[], person_weeks=None, shaped_by=None),
         task(status="in_progress", assigned_on=None, reviewers=["jcanton"], owner="jcanton"),
         project(status="ready", owner=None, reviewers=[]),
@@ -729,7 +729,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
         Task(id=loop_a, kind="task", title="A", status="shaping", depends_on=[loop_b]),
         Task(id=loop_b, kind="task", title="B", status="shaping", depends_on=[loop_a]),
     ]
-    problems = check(*entities)
+    problems = check(*records)
     assert len(problems) >= 9, f"the gates did not all fire: {[p.message for p in problems]}"
 
     leaked = sorted(
@@ -759,7 +759,7 @@ def test_a_pitch_whose_tasks_are_reviewed_is_reviewed():
         task(reviewers=["msimberg"]),
     )
 
-    assert [p for p in held if p.entity_id == PITCH_ID and p.field == "reviewers"] == []
+    assert [p for p in held if p.record_id == PITCH_ID and p.field == "reviewers"] == []
 
 
 def test_a_pitch_with_nothing_under_it_still_needs_a_reviewer():
@@ -826,7 +826,7 @@ def test_a_parent_cycle_does_not_send_the_reviewer_walk_round_for_ever():
     """The walk that reads reviewers off the work underneath had no memory of
     where it had been, and a plan is allowed to contain a parent cycle — this
     tool reports one as a blocker rather than refusing to load the plan, which is
-    the whole reason `test_a_parent_chain_cycle_is_reported_on_every_entity_in_it`
+    the whole reason `test_a_parent_chain_cycle_is_reported_on_every_record_in_it`
     above has a corpus to run on.
 
     On that corpus the walk went round for ever, appending a reviewer per pass:
@@ -835,10 +835,10 @@ def test_a_parent_cycle_does_not_send_the_reviewer_walk_round_for_ever():
     this bound is for. A test that hangs reports nothing; a test that fails names
     the thing.
     """
-    entities = (pitch(parent=OTHER_PITCH_ID), pitch(id=OTHER_PITCH_ID, parent=PITCH_ID))
+    records = (pitch(parent=OTHER_PITCH_ID), pitch(id=OTHER_PITCH_ID, parent=PITCH_ID))
 
     started = time.monotonic()
-    found = check(*entities)
+    found = check(*records)
     took = time.monotonic() - started
 
     assert took < 5, f"the validator took {took:.1f}s over a two-record cycle"
@@ -865,7 +865,7 @@ def test_a_parent_cycle_does_not_send_the_delete_walk_round_for_ever():
     assert found == [OTHER_PITCH_ID], "a record must not be filed under itself"
 
 
-def test_a_todo_entity_needs_somebody_on_it():
+def test_a_todo_record_needs_somebody_on_it():
     """An owner answers for the bet; assignees are who is doing the work.
 
     Not the same question, and the scheduler already reads them as different

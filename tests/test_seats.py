@@ -28,14 +28,14 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 def a_record_with_a_document(index: Index) -> str:
-    for entity_id, entity in sorted(index.entities.items()):
-        if entity.body.count("\n") > 8:
-            return entity_id
+    for record_id, record in sorted(index.plan.items()):
+        if record.body.count("\n") > 8:
+            return record_id
     raise AssertionError("no record here has a document long enough to sit in")
 
 
@@ -120,14 +120,14 @@ def test_the_room_draws_a_band_where_somebody_else_is(index: Index, tmp_path: Pa
     right about the line or visibly wrong about it — and visibly wrong is a state
     somebody can act on.
     """
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
     # carries no room at all and there is nothing here to test. `editor="plain"`
     # for the other half of the same sentence: the bands are drawn over a
     # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
@@ -164,14 +164,14 @@ addEventListener('load', () => setTimeout(() => {
 
 def test_nobody_is_drawn_a_band_for_themselves(index: Index, tmp_path: Path):
     """Your own caret is the one thing on the page you can already see."""
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
     # carries no room at all and there is nothing here to test. `editor="plain"`
     # for the other half of the same sentence: the bands are drawn over a
     # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", MY_OWN_SEAT + "</body>"
@@ -215,14 +215,14 @@ def test_two_people_get_two_colours_and_two_places(index: Index, tmp_path: Path)
     everybody's window and nothing has to allocate one. The name is on the band
     because a colour on its own is a colour a reader has to be told the meaning
     of."""
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
     # carries no room at all and there is nothing here to test. `editor="plain"`
     # for the other half of the same sentence: the bands are drawn over a
     # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", TWO_PEOPLE + "</body>"
@@ -248,14 +248,14 @@ return {wanted: body.value.indexOf('line 5'),
 
 def test_this_tab_says_where_it_is_sitting(index: Index, tmp_path: Path):
     """The other half: a room can only draw what its members tell it."""
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
     # carries no room at all and there is nothing here to test. `editor="plain"`
     # for the other half of the same sentence: the bands are drawn over a
     # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
@@ -309,7 +309,7 @@ addEventListener('load', () => setTimeout(() => {
 _BAND_AT_EVERY_WIDTH = """
 const body = document.querySelector('textarea[name=body]');
 const layer = document.getElementById('seats');
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const settle = ms => new Promise(go => setTimeout(go, ms));
 
 // The ground truth, built here and owing nothing to the page: a CONTENT-box div
@@ -410,14 +410,14 @@ def test_a_seat_band_lands_on_the_right_line_at_a_width_that_wraps(
     narrow gives the same answer as a correct one, which is why nothing in this
     suite noticed for as long as it was there.
     """
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
     # carries no room at all and there is nothing here to test. `editor="plain"`
     # for the other half of the same sentence: the bands are drawn over a
     # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace(
         "</body>", WRAPPED_SEAT + "</body>"
@@ -495,14 +495,14 @@ def test_somebody_elses_keystroke_leaves_the_numbers_counting_the_document_there
     So in a live room somebody else adding three lines left your numbers counting
     a document nobody had any more, until you typed or resized the window.
     """
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     # `may_write`, because the socket is only offered to somebody the server
     # would take a frame from — see `test_socket_offer.py`. Without it this page
     # carries no room at all and there is nothing here to test. `editor="plain"`
     # for the other half of the same sentence: the bands are drawn over a
     # `<textarea>`, and since 2026-08-20 an address that says nothing gets Ace.
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", SEAT + "</body>")
 
@@ -562,9 +562,9 @@ def test_the_second_surface_says_it_cannot_draw_where_anybody_is(index: Index, t
     now, because whether a surface has seats is a fact about the surface and not
     about whether the box it replaced is on screen.
     """
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="ace"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="ace"
     )
     page = page.replace("<head>", "<head>" + STUB, 1).replace("</body>", _ACE_SEAT + "</body>")
 
@@ -644,9 +644,9 @@ def test_a_reader_holds_no_seat(index: Index, tmp_path: Path):
     connection at load means none of them exist, and the last-person-out
     commit never waits on a reader.
     """
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + COUNTING, 1).replace("</body>", READING + "</body>")
 
@@ -711,9 +711,9 @@ def test_the_next_session_is_one_seat_not_two(index: Index, tmp_path: Path):
     `saved` moves `base_commit` under a session it does not belong to, which is
     the silent-overwrite family by wire.
     """
-    entity_id = a_record_with_a_document(index)
+    record_id = a_record_with_a_document(index)
     page = render_detail(
-        index, ROUTES, only=entity_id, base_commit=HEAD, may_write=True, editor="plain"
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
     )
     page = page.replace("<head>", "<head>" + COUNTING, 1).replace("</body>", RESEATED + "</body>")
 

@@ -5,9 +5,9 @@ import pytest
 
 from openproj.model import (
     Config,
-    Entity,
     Pitch,
     Project,
+    Record,
     Task,
     ancestors,
     load_repo,
@@ -58,31 +58,31 @@ def test_the_markdown_body_survives_parsing(seed_root: Path):
 
 
 def test_parse_tolerates_a_file_that_states_almost_nothing():
-    entity = parse_text("---\nid: task-abc123\nkind: task\n---\n", "nearly-empty.md")
-    assert entity.title == ""
-    assert entity.owner is None
-    assert entity.reviewers == []
-    assert entity.body == ""
+    record = parse_text("---\nid: task-abc123\nkind: task\n---\n", "nearly-empty.md")
+    assert record.title == ""
+    assert record.owner is None
+    assert record.reviewers == []
+    assert record.body == ""
 
 
 def test_parse_tolerates_explicit_nulls_where_a_default_belongs():
     """A hand-written `reviewers: null` must not take the repository down; it means
     the same as the field being absent."""
-    entity = parse_text(
+    record = parse_text(
         "---\nid: task-abc123\nkind: task\ntitle: null\nreviewers: null\n"
         "status: null\nassigned_on: null\n---\n",
         "nulls.md",
     )
-    assert entity.title == ""
-    assert entity.reviewers == []
-    assert entity.status == "shaping"
-    assert entity.assigned_on is None
+    assert record.title == ""
+    assert record.reviewers == []
+    assert record.status == "shaping"
+    assert record.assigned_on is None
 
 
 def test_parse_falls_back_to_the_id_prefix_when_kind_is_missing():
-    entity = parse_text("---\nid: pitch-abc123\ntitle: P\n---\n", "no-kind.md")
-    assert isinstance(entity, Pitch)
-    assert entity.kind == "pitch"
+    record = parse_text("---\nid: pitch-abc123\ntitle: P\n---\n", "no-kind.md")
+    assert isinstance(record, Pitch)
+    assert record.kind == "pitch"
 
 
 def test_parse_refuses_a_file_it_cannot_classify():
@@ -108,10 +108,10 @@ def test_every_seed_file_round_trips_byte_identically(path: Path):
 
 def test_serialise_writes_one_edited_key_and_leaves_its_neighbours_alone():
     text = FIXTURE.read_text(encoding="utf-8")
-    entity = parse_text(text, FIXTURE.name)
-    entity.status = "done"
-    entity.prs = ["C2SM/icon4py#1234"]
-    output = serialise(entity, text)
+    record = parse_text(text, FIXTURE.name)
+    record.status = "done"
+    record.prs = ["C2SM/icon4py#1234"]
+    output = serialise(record, text)
     assert "status: done\n" in output
     assert "prs: [C2SM/icon4py#1234]\n" in output
     assert "owner: \"müller\"        # quoted on purpose" in output
@@ -134,9 +134,9 @@ def test_one_shaper_keeps_the_spelling_the_corpus_is_written_in():
 
 def test_serialise_appends_a_field_the_file_never_had():
     text = "---\nid: task-abc123\nkind: task\ntitle: T\n---\n\nbody\n"
-    entity = parse_text(text, "sparse.md")
-    entity.owner = "jcanton"
-    assert serialise(entity, text) == (
+    record = parse_text(text, "sparse.md")
+    record.owner = "jcanton"
+    assert serialise(record, text) == (
         "---\nid: task-abc123\nkind: task\ntitle: T\nowner: jcanton\n---\n\nbody\n"
     )
 
@@ -169,8 +169,8 @@ def test_ancestors_are_nearest_first():
 
 
 def test_ancestors_of_a_seed_task_reach_its_pitch(seed_root: Path):
-    entities, _, _ = load_repo(seed_root)
-    by_id = {entity.id: entity for entity in entities}
+    records, _, _ = load_repo(seed_root)
+    by_id = {record.id: record for record in records}
     assert ancestors("task-2b6c94", by_id) == ["pitch-2a7f3e"]
     assert ancestors("task-0e4b7a", by_id) == ["proj-7e57a0"]
 
@@ -210,17 +210,17 @@ def test_size_weeks_keeps_a_stated_zero():
 
 
 def test_load_repo_loads_the_whole_seed_corpus(seed_root: Path):
-    entities, config, _ = load_repo(seed_root)
-    assert len(entities) == 17
-    kinds = [entity.kind for entity in entities]
+    records, config, _ = load_repo(seed_root)
+    assert len(records) == 17
+    kinds = [record.kind for record in records]
     assert kinds.count("project") == 1
     assert kinds.count("pitch") == 5
     assert kinds.count("task") == 11
     assert config.schema_version == 2
-    assert all(isinstance(entity, Entity) for entity in entities)
+    assert all(isinstance(record, Record) for record in records)
 
 
 def test_load_repo_of_an_empty_directory_is_empty(tmp_path: Path):
-    entities, config, _ = load_repo(tmp_path)
-    assert entities == []
+    records, config, _ = load_repo(tmp_path)
+    assert records == []
     assert config == Config()

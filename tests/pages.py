@@ -3,7 +3,7 @@
 A substring cannot tell markup from text, and it cannot tell either of them from
 prose: the shell's stylesheet is inlined into every page, so a comment that
 mentions a heading or names a control puts those exact characters into the served
-bytes, and two assertions written as `"New entity" not in body` found their answer
+bytes, and two assertions written as `"New record" not in body` found their answer
 in a CSS comment rather than in a button. Five escaping bugs had already shipped
 under tests that asserted on substrings of a page.
 

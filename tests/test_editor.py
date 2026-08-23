@@ -92,7 +92,7 @@ def test_the_detail_page_can_be_edited_in_place(page: str):
 def test_the_body_textarea_holds_what_is_stored(page: str, client: TestClient):
     """The stored body, byte for byte. An editor that shows a rendered or
     re-wrapped version of the text quietly rewrites it on the next save."""
-    stored = client.get("/api/index.json").json()["entities"][TASK]["body"]
+    stored = client.get("/api/index.json").json()["plan"][TASK]["body"]
     shown = re.search(r'<textarea[^>]*name="body"[^>]*>(.*?)</textarea>', page, re.S).group(1)
 
     assert stored.strip()
@@ -374,13 +374,13 @@ def test_a_date_box_says_what_it_will_store(page: str):
 
 
 def test_the_facts_read_as_a_column_beside_the_document(page: str):
-    """One `<article>` still — the sidebar is a pane inside the entity, not a
-    second entity — and the prose keeps the measure while the facts take the
+    """One `<article>` still — the sidebar is a pane inside the record, not a
+    second record — and the prose keeps the measure while the facts take the
     space that was empty to the right of it."""
     assert page.count("<article") == 1
     assert '<aside class="facts">' in page
     assert page.index('<aside class="facts">') < page.index('<div class="main">')
-    assert re.search(r"article\.entity \{[^}]*margin: 0 auto", page, re.S)
+    assert re.search(r"article\.record \{[^}]*margin: 0 auto", page, re.S)
 
 
 # --------------------------------------------------------------------------- #
@@ -396,7 +396,7 @@ def test_a_save_changes_one_line_and_leaves_the_file_alone(
     client: TestClient, repo_path: Path, page: str
 ):
     response = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": base_of(page), "fields": {"priority": "high"}, "body": None},
     )
     assert response.status_code == 200
@@ -416,7 +416,7 @@ def test_a_number_typed_as_a_word_is_refused_rather_than_committed(
     than in the file. Priority is a closed set now, so it cannot be typed wrong."""
     before = str(pygit2.Repository(str(repo_path)).references["refs/heads/main"].target)
     response = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": base_of(page), "fields": {"cycle": "soon"}, "body": None},
     )
     assert response.status_code == 422
@@ -450,11 +450,11 @@ def test_a_conflict_reaches_the_page_as_a_report_and_never_as_markers(
 ):
     stale = base_of(page)
     client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": stale, "fields": {"owner": "bo"}, "body": None},
     )
     response = client.patch(
-        f"/api/entity/{TASK}",
+        f"/api/record/{TASK}",
         json={"base_commit": stale, "fields": {"owner": "cy"}, "body": None},
     )
 
@@ -482,8 +482,8 @@ def test_a_static_page_opens_no_event_stream(tmp_path: Path):
     from openproj.model import load_repo
     from openproj.render import render_static
 
-    entities, config, _ = load_repo(Path("seed"))
-    render_static(build_index(entities, config, date(2026, 8, 17)), tmp_path)
+    records, config, _ = load_repo(Path("seed"))
+    render_static(build_index(records, config, date(2026, 8, 17)), tmp_path)
 
     assert "EventSource" not in (tmp_path / "index.html").read_text()
 
@@ -551,7 +551,7 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
         "the status is a hill on this page, and a chip is the thing it replaced"
     )
     facts = detail.index('<dl id="facts">')
-    assert facts < detail.index('data-hill="entity"') < detail.index("</dl>", facts)
+    assert facts < detail.index('data-hill="record"') < detail.index("</dl>", facts)
 
     # The create form is the same document in another mode, so the picker that
     # decides the kind sits where the kind chip sits.
@@ -665,7 +665,7 @@ def test_a_write_from_the_cycle_page_is_not_reported_back_as_somebody_else_s(
     page = client.get("/cycle/37").text
 
     assert page.count("dispatchEvent(new Event('openproj:writing'));") == 3, (
-        "the cycle record, each entity in the batch, and the asset upload the "
+        "the cycle record, each record in the batch, and the asset upload the "
         "shared editor helpers carry onto this page"
     )
     assert page.count("dispatchEvent(new CustomEvent('openproj:wrote'") == 3
@@ -752,7 +752,7 @@ def test_every_control_on_the_form_has_a_name(page: str):
     on the detail form had a name at all.
 
     The label carries the id of the control it names, and the ids are prefixed
-    with the entity's — the static export puts every entity in one file, and
+    with the record's — the static export puts every record in one file, and
     `owner` alone would be the same id sixteen times over.
     """
     from openproj.render import LABELS
@@ -931,7 +931,7 @@ def test_a_restored_draft_is_saved_against_the_commit_it_was_drafted_against(
     assert written["body"] == typed
 
     # And the real server refuses it, in the words every other write path shows.
-    refused = client.patch(f"/api/entity/{TASK}", json=written)
+    refused = client.patch(f"/api/record/{TASK}", json=written)
     assert refused.status_code == 409
     report = refused.json()["conflict"]
     assert PATH in report and "somebody changed this before you" in report
@@ -941,7 +941,7 @@ def test_a_restored_draft_is_saved_against_the_commit_it_was_drafted_against(
     # The defect itself, one line, so this test cannot pass for the wrong reason:
     # the same body against the page's fresh commit is taken without a murmur and
     # Bo's paragraph is gone from the file.
-    silent = client.patch(f"/api/entity/{TASK}", json={**written, "base_commit": second})
+    silent = client.patch(f"/api/record/{TASK}", json={**written, "base_commit": second})
     assert silent.status_code == 200
     assert "by bo" not in file_at(repo_path, git_head(repo_path), PATH)
 
@@ -1862,7 +1862,7 @@ window.fetch = async (url, options) => {
 """
 
 _VIEWING = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const area = document.querySelector('textarea[name=body]');
 const pane = document.getElementById('body-preview');
 const marks = document.getElementById('marks');
@@ -2008,7 +2008,7 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
 
 
 _DEEP_LINK = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 return {
   classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
   editing: article.classList.contains('editing'),
@@ -2067,7 +2067,7 @@ window.WebSocket = CountingSocket;
 # very thing `asked` pins — so the stub goes into the <head> beside `_SOCKETS`
 # and counts from t=0.
 _LINKED = """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const doc = article.querySelector('.doc.read');
 return {
   classes: [...article.classList].filter(c => c === 'full' || c.startsWith('view-')).sort(),
@@ -2124,7 +2124,7 @@ def test_a_view_link_is_sessionless_and_a_both_link_opens_a_session(
 # The stub lives in the <head> here too (same reason as `_LINKED`), so the
 # input-driven refreshPreview below hits a working fetch from the first event.
 _DIVERGED = """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const area = document.querySelector('textarea[name=body]');
 const doc = article.querySelector('.doc.read');
 // Non-ASCII on purpose: no test drives this editor with plain ASCII alone —
@@ -2198,7 +2198,7 @@ def test_a_draft_at_load_forces_a_session_and_the_room_refusal_still_fires(
     got = measured_in(
         chrome(), page, tmp_path / "draftload.html", 1400,
         """
-        const article = document.querySelector('article.entity');
+        const article = document.querySelector('article.record');
         const area = document.querySelector('textarea[name=body]');
         const socket = window.__sockets[0] || null;
         const forced = {editing: article.classList.contains('editing'),
@@ -2252,7 +2252,7 @@ def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
         tmp_path / "legacy.html", 1400,
         _STUB_PREVIEW + """
         flipEditing();
-        const article = document.querySelector('article.entity');
+        const article = document.querySelector('article.record');
         return {view: VIEW, editing: article.classList.contains('editing'),
                 full: article.classList.contains('full')};
         """,
@@ -2264,7 +2264,7 @@ def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
 
 
 _GRIPPING = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const grip = document.getElementById('grip');
 const seg = name => document.getElementById(
   {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
@@ -2326,7 +2326,7 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
 # element and the one question this feature turns on — is there a handle drawn —
 # would answer "no" for ever.
 _DIVIDING = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const split = article.querySelector('.bodysplit');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
@@ -2505,7 +2505,7 @@ def test_every_surface_that_splits_carries_the_same_handle(client: TestClient, w
     assert 'tabindex="0"' in inside, "a splitter no key can reach"
 
 _SPLIT_BY_KEY = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 const pane = article.querySelector('#body-preview');
@@ -2568,7 +2568,7 @@ def test_the_join_between_the_panes_moves_for_the_keyboard_too(
 
 
 _SPLIT_AT_A_WIDTH = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const facts = article.querySelector('.panes > .facts');
 const main = article.querySelector('.panes > .main');
@@ -2647,7 +2647,7 @@ def test_there_is_no_handle_where_there_is_nothing_to_divide(
 
 
 _SPLIT_REMEMBERED = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 const pane = article.querySelector('#body-preview');
@@ -2722,7 +2722,7 @@ def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
     reason: `outline: 2px solid` resolving on the element says nothing about
     paint, and the ring is drawn entirely OUTSIDE the border box — so an
     `overflow: hidden` ancestor throws it away with every assertion about it still
-    passing. `article.entity.full` is one, `.panes` is another, and this handle is
+    passing. `article.record.full` is one, `.panes` is another, and this handle is
     full height inside both of them.
 
     Two shots of the same page, differing only in which element has focus.
@@ -2754,7 +2754,7 @@ def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
 # The join dragged as far as it will go, on a window wide enough that the outer
 # fence is what stops it rather than the pixel floor.
 _SPLIT_TO_THE_END = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 const pane = article.querySelector('#body-preview');
@@ -2770,7 +2770,7 @@ return {box: box.getBoundingClientRect().width, pane: pane.getBoundingClientRect
 
 # And the same page opened again with exactly what that left behind in the store.
 _SPLIT_AS_FOUND = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 const pane = article.querySelector('#body-preview');
@@ -2825,7 +2825,7 @@ def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_bac
 
 
 _CANCELLED_DRAG = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 document.getElementById('view-both').click();
@@ -2884,7 +2884,7 @@ def test_a_drag_the_browser_takes_away_lets_go_of_the_join(
 
 
 _MODIFIED_KEYS = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const handle = article.querySelector('#splitter');
 const box = article.querySelector('.bodywrap');
 document.getElementById('view-both').click();
@@ -2994,7 +2994,7 @@ const longRows = rows - 160;
 const topOfEightyTwo = padTop + (80 + longRows) * step;
 // The block's top **inside the pane it scrolls in**, and not its `offsetTop`.
 // Nothing positions `#body-preview`, so the offset parent of every block in it is
-// `article.entity` — which full page makes `position: fixed` — and `offsetTop` is
+// `article.record` — which full page makes `position: fixed` — and `offsetTop` is
 // therefore a distance from the top of the window while `scrollTop`, which is
 // what this number is compared against, is a distance inside the pane. The two
 // differ by a constant: the pane's own top within the article, 283.625px at this
@@ -3392,7 +3392,7 @@ def test_every_line_number_sits_on_the_line_it_numbers(client: TestClient, tmp_p
 
 
 _LEAVING = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const nav = document.querySelector('body > nav');
 const link = nav.querySelector('a');
 // Whether a pointer aimed at the middle of the first nav link would actually
@@ -3435,7 +3435,7 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
     view, decide not to save, press Cancel.
 
     `flipEditing` dropped `.editing` and left `.full` and `body.fullpage` alone —
-    and `.views` was drawn only under `.entity.editing` then, so the switcher,
+    and `.views` was drawn only under `.record.editing` then, so the switcher,
     which the commit message named as the way back, vanished at the same
     instant. The box went with it, so Escape could not be reached either; the
     nav was painted over by an opaque fixed article; and the only exits left
@@ -3470,7 +3470,7 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
 # room's own save reloads nowadays — the test above pins that — so what this
 # drives is the shared ending itself, not a door invented for a test.
 _SAVED_IN_A_ROOM = _STUB_PREVIEW + """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const nav = document.querySelector('body > nav');
 const link = nav.querySelector('a');
 const corner = document.querySelector('.corner');
@@ -3544,7 +3544,7 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
     the one Cancel and the view toggle use.)
     Measured in Chrome from the split view before the fix: the article kept
     `full view-both`, `<body>` kept `fullpage`, the nav stayed `inert`, and the
-    switcher — then drawn only under `.entity.editing`, and named by the commit
+    switcher — then drawn only under `.record.editing`, and named by the commit
     that fixed Cancel as the documented way back — went at the same instant. The
     reader was left inside a fixed, opaque, window-filling article showing a
     record nobody was editing.
@@ -3589,7 +3589,7 @@ link.href = '/login';
 who.replaceChildren(link);
 who.hidden = false;
 
-const bar = document.querySelector('article.entity .editbar');
+const bar = document.querySelector('article.record .editbar');
 // What a pointer aimed at the middle of a control would actually hit. A class
 // name cannot answer this: the whole finding is that an opaque fixed surface was
 // painted over these two, and `elementFromPoint` is the question.
@@ -3644,7 +3644,7 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     beside the view switcher.
 
     The same nodes, not copies: `#theme` and `#who` are ids on a template the
-    static export renders once per entity into one file, and the shell's own
+    static export renders once per record into one file, and the shell's own
     scripts reach for both by id. So the test asks what a MOVE has to be true of
     and a copy would not — the listener still fires, the label still changes, and
     the control is reachable by a pointer at the place it is drawn.
@@ -3740,7 +3740,7 @@ for (let el = sw.parentElement; el; el = el.parentElement) {
     out.clippers.push((el.tagName + '.' + el.className).slice(0, 60));
   }
   // The walk stops at the surface, and that is a rule rather than a convenience:
-  // `article.entity.full` is `position: fixed`, so its containing block is the
+  // `article.record.full` is `position: fixed`, so its containing block is the
   // viewport and an `overflow` on anything above it — `body.fullpage`, which has
   // one — cannot reach in. Chrome stops painting the clip there and so does this.
   if (style.position === 'fixed') break;
@@ -3821,7 +3821,7 @@ def test_the_editor_switch_says_which_editor_it_is_and_that_it_reloads(
     assert got["border"] == "1px solid" and got["radius"] == "3px"
 
     # The ring is drawn OUTSIDE the border box, so the failure to look for is an
-    # ancestor that throws it away. `article.entity.full` is `overflow: hidden`
+    # ancestor that throws it away. `article.record.full` is `overflow: hidden`
     # and the surface's own padding is what keeps the ring inside it.
     assert got["outline"] == "2px solid", got["outline"]
     assert got["clippers"] == [], (
@@ -4346,7 +4346,7 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
 
 
 _STICKY = _STUB_RENDER + r"""
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const mode = () => VIEW;
 const atLoad = {view: mode(), full: article.classList.contains('full'),
                 editing: article.classList.contains('editing')};
@@ -4547,7 +4547,7 @@ _PASTED_CRLF = r"""
   await new Promise(r => setTimeout(r, 300));
   // ONE line, which is the state Ace re-detects the newline sequence in:
   // `Document.insert` is `this.getLength() <= 1 && this.$detectNewLine(text)`.
-  // A new entity starts here, and so does any document somebody has just
+  // A new record starts here, and so does any document somebody has just
   // selected all of and deleted.
   SURFACE.apply(() => SURFACE.splice(0, SURFACE.text().length, 'first line'));
   const at = SURFACE.text().length;
@@ -4576,7 +4576,7 @@ def test_the_second_surface_holds_one_line_ending_whatever_is_pasted_into_it(
     there.
 
     Ace's `Document.insert` is `this.getLength() <= 1 && this.$detectNewLine(t)`:
-    on a document of one line — a new entity, or one somebody has just cleared —
+    on a document of one line — a new record, or one somebody has just cleared —
     inserting text whose first ending is CRLF sets `$autoNewLine`, and
     `getValue()` then rejoins EVERY line with it. The document that comes back
     out is a different string from the one that went in, at the same line count,
@@ -4904,7 +4904,7 @@ def test_the_editor_a_person_chose_is_carried_back_into_the_address(
 # scrolling inside it; with only the reorder, the document got the 60px of free
 # space the facts' auto row left over.
 _NARROW_FULL_PAGE = """
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const area = document.querySelector('textarea[name=body]');
 const panes = document.querySelector('.panes');
 const facts = document.querySelector('.facts');
@@ -4939,7 +4939,7 @@ out.fixed = getComputedStyle(article).position;
 out.paneRows = Math.round(
   pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight));
 press('preview');
-const doc = document.querySelector('article.entity .doc.read');
+const doc = document.querySelector('article.record .doc.read');
 out.read = {
   paneRows: Math.round(
     pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight)),
@@ -5407,7 +5407,7 @@ if (typeof flipEditing === 'function') {
   await new Promise(go => setTimeout(go, 150));
 }
 const marks = document.getElementById('marks');
-const article = document.querySelector('article.entity');
+const article = document.querySelector('article.record');
 const buttons = [...marks.querySelectorAll('button.mark')];
 const edge = article.getBoundingClientRect().right;
 return {
@@ -5439,7 +5439,7 @@ def test_every_button_on_the_toolbar_can_be_reached_at_a_window_that_is_not_wide
 
     Measured in Chrome at 500px, on this page and on the create forms: the Link,
     Image, Table and Horizontal-rule buttons sat 101px past the right edge of
-    `article.entity`, and the document scrolled sideways to 581px to hold them.
+    `article.record`, and the document scrolled sideways to 581px to hold them.
     Four of sixteen controls off the surface, on every page that has an editor.
 
     Two things this asks that a stylesheet cannot answer, and one it must not.

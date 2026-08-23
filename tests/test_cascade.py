@@ -38,8 +38,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(seed_root: Path) -> Index:
-    entities, config, _ = load_repo(seed_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(seed_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 @pytest.fixture
@@ -56,11 +56,11 @@ def served_pages(index: Index) -> dict[str, str]:
         "table": render_table(index, ROUTES, base_commit=HEAD),
         "graph": render_graph(index, ROUTES, base_commit=HEAD),
         "timeline": render_timeline(index, ROUTES),
-        "detail": render_detail(index, ROUTES, only=sorted(index.entities)[0],
+        "detail": render_detail(index, ROUTES, only=sorted(index.plan)[0],
                                 base_commit=HEAD, may_write=True),
         # The editing surface, which a served detail page does not show: the
         # toolbar, the view switcher and the status bar are all `.field`s inside
-        # `article.entity.editing`, so on a record somebody is only READING they
+        # `article.record.editing`, so on a record somebody is only READING they
         # have no client rects and the sweep below never sees them. The create
         # page is the same markup and the same stylesheet with the mode already
         # on — twenty controls that would otherwise be measured on no page at all.
@@ -355,7 +355,7 @@ def test_the_suggestion_popup_hangs_off_the_body_where_nothing_clips_it(table: S
 
 
 def pages(index: Index) -> dict[str, str]:
-    number = max(e.cycle for e in index.entities.values() if e.cycle)
+    number = max(e.cycle for e in index.plan.values() if e.cycle)
     return {
         "table": render_table(index, ROUTES, base_commit=HEAD),
         "cycle": render_cycle(index, number, ROUTES, base_commit=HEAD),
@@ -377,8 +377,8 @@ def test_the_row_a_pages_own_controls_stand_in_is_a_row_on_every_page(index: Ind
 
 def test_a_link_that_is_a_control_is_drawn_as_one_on_every_page(index: Index):
     """The only `.button` rule was `.tl-controls .button`, scoped to the
-    timeline's filter bar. The table's create action — the one way to bring an
-    entity into existence from the UI — wore the class with nothing behind it and
+    timeline's filter bar. The table's create action — the one way to bring a
+    record into existence from the UI — wore the class with nothing behind it and
     rendered as underlined blue text in a default-margin paragraph."""
     for name, page in pages(index).items():
         sheet = sheet_of(page)
@@ -615,7 +615,7 @@ def people(index: Index) -> Sheet:
     reader who gets a picker at all."""
     from openproj.render import render_people
 
-    who = sorted(e.owner for e in index.entities.values() if e.owner)[0]
+    who = sorted(e.owner for e in index.plan.values() if e.owner)[0]
     return sheet_of(render_people(index, ROUTES, editable=True, me=who))
 
 
@@ -806,7 +806,7 @@ def detail(index: Index) -> Sheet:
 def _writing(mode: str) -> list[El]:
     """Inside the surface, in one of the three views."""
     return PAGE + [
-        el("article", f"entity editing full view-{mode}"),
+        el("article", f"record editing full view-{mode}"),
         el("form", id="edit"),
         el("div", "panes"),
         el("div", "main"),
@@ -820,7 +820,7 @@ def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
     had asked the cascade about.
 
     Full page is a third mode over two that are already one class apart, so every
-    one of its rules is `.entity.full …` at (0,3,x) sitting above `.entity.editing
+    one of its rules is `.record.full …` at (0,3,x) sitting above `.record.editing
     .field` at (0,3,0) — the rule that puts the controls on the page at all.
     What is asserted is that the full-page rules changed the *geometry* and left
     the two modes to decide what exists: a `display` on the box or the pane taken
@@ -831,7 +831,7 @@ def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
 
     for path, what in ((box, "the box"), (pane, "the rendered pane")):
         won = detail.winner(path, "display")
-        assert won and won.selector == ".entity.editing .field", (
+        assert won and won.selector == ".record.editing .field", (
             f"{what} is displayed by {won} in the split view\n" + says(detail, path, "display")
         )
 
@@ -839,14 +839,14 @@ def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
     # so leaving that view gives it back.
     gone = _writing("view") + [el("div", "bodywrap")]
     assert detail.value(gone, "display") == "none", says(detail, gone, "display")
-    assert detail.winner(gone, "display").selector.startswith("article.entity.full.view-view")
+    assert detail.winner(gone, "display").selector.startswith("article.record.full.view-view")
     kept = _writing("both") + [el("div", "bodywrap")]
     assert detail.value(kept, "display") is None, says(detail, kept, "display")
 
     # The surface is the window, so the measure has to lose here and win
-    # everywhere else. Both are `article.entity…`, and (0,2,1) beats (0,1,1).
-    inside = PAGE + [el("article", "entity editing full view-edit")]
-    outside = PAGE + [el("article", "entity editing")]
+    # everywhere else. Both are `article.record…`, and (0,2,1) beats (0,1,1).
+    inside = PAGE + [el("article", "record editing full view-edit")]
+    outside = PAGE + [el("article", "record editing")]
     assert detail.value(inside, "width") == "auto", says(detail, inside, "width")
     assert detail.value(outside, "width") == "var(--measure, 64rem)"
 
@@ -867,7 +867,7 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
 
     * the handle is `display: none` by default and the split view is what turns it
       on. `#splitter` is (1,0,0) and every rule that could give it back a box is a
-      class selector, so the *default* has to be the id — an `article.entity.full
+      class selector, so the *default* has to be the id — an `article.record.full
       .bodysplit > div` written to lay the panes out would otherwise draw a
       separator on the cycle page, the cycles index and the deck, which have no
       document to split;
@@ -887,7 +887,7 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
     """
     split = _writing("both")
     won = detail.winner(split, "grid-template-columns")
-    assert won and won.selector == "article.entity.full.view-both .bodysplit", (
+    assert won and won.selector == "article.record.full.view-both .bodysplit", (
         f"the split's columns are decided by {won}\n"
         + says(detail, split, "grid-template-columns")
     )
@@ -904,7 +904,7 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
     for where in (
         _writing("edit") + [el("div", id="splitter")],
         _writing("view") + [el("div", id="splitter")],
-        PAGE + [el("article", "entity editing"), el("form", id="edit"),
+        PAGE + [el("article", "record editing"), el("form", id="edit"),
                 el("div", "bodysplit"), el("div", id="splitter")],
     ):
         off = detail.winner(where, "display")
@@ -938,7 +938,7 @@ def record(index: Index) -> Sheet:
 
 
 _RECORD_EDITING = [
-    el("body"), el("main", id="main"), el("article", "entity editing"),
+    el("body"), el("main", id="main"), el("article", "record editing"),
 ]
 
 
@@ -947,7 +947,7 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
     the mode class moved off `<body>` and onto the article — and now held on
     the one surviving surface.
 
-    `.entity.editing .field` and `.entity.editing .bodybar` are both (0,3,0), so
+    `.record.editing .field` and `.record.editing .bodybar` are both (0,3,0), so
     the tie is decided by order and nothing else — which is why the answer has to
     be asked rather than assumed. And the tie is real: every bar on the merged
     page wears `.field`, because that class is how a bar hides in read mode, so
@@ -958,7 +958,7 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
     """
     bar = _RECORD_EDITING + [el("p", "bodybar markbar")]
     won = record.winner(bar, "display")
-    assert won and won.selector == ".entity.editing .bodybar" and won.value == "flex", (
+    assert won and won.selector == ".record.editing .bodybar" and won.value == "flex", (
         f"the toolbar is displayed by {won}\n" + says(record, bar, "display")
     )
 
@@ -966,7 +966,7 @@ def test_the_record_pages_bar_still_beats_the_field_rule_it_once_lost_to(record:
     # still, and by order alone — this half is the live markup.
     with_field = _RECORD_EDITING + [el("p", "field bodybar markbar")]
     reaching = record.selectors_reaching(with_field, "display")
-    assert reaching[-1].selector == ".entity.editing .bodybar", (
+    assert reaching[-1].selector == ".record.editing .bodybar", (
         "the bar loses to `.field` on the page as it is written\n"
         + says(record, with_field, "display")
     )
@@ -987,7 +987,7 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
 
     The 44rem reading-measure cap this asserted went with the record pages'
     own stylesheet: on the surviving sheet the measure lives on
-    `article.entity` as `--measure`, dragged by `#grip`, and the box fills the
+    `article.record` as `--measure`, dragged by `#grip`, and the box fills the
     article.
     """
     box = _RECORD_EDITING + [
@@ -1019,7 +1019,7 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
     # the window.
     inside = [
         el("body", "fullpage"), el("main", id="main"),
-        el("article", "entity editing full view-both"),
+        el("article", "record editing full view-both"),
         el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
         el("textarea", "field body-field"),
     ]
@@ -1033,7 +1033,7 @@ def test_a_hidden_control_stays_hidden_on_the_one_stylesheet(record: Sheet):
     a `.field`, `hidden` until a view asks for it — must stay dark.
     """
     pane = [
-        el("body"), el("main", id="main"), el("article", "entity editing"),
+        el("body"), el("main", id="main"), el("article", "record editing"),
         el("div", "field doc", id="body-preview", hidden="hidden"),
     ]
     won = record.winner(pane, "display")
@@ -1060,7 +1060,7 @@ def test_the_handle_between_the_panes_is_one_control_on_the_one_stylesheet(
     """
     inside = [
         el("body", "fullpage"), el("main", id="main"),
-        el("article", "entity editing full view-both"), el("form", id="edit"),
+        el("article", "record editing full view-both"), el("form", id="edit"),
         el("div", "bodysplit"), el("div", id="splitter"),
     ]
     won = record.winner(inside, "display")
@@ -1073,7 +1073,7 @@ def test_the_handle_between_the_panes_is_one_control_on_the_one_stylesheet(
     )
 
     outside = [
-        el("body"), el("main", id="main"), el("article", "entity editing"),
+        el("body"), el("main", id="main"), el("article", "record editing"),
         el("div", "bodysplit"), el("div", id="splitter"),
     ]
     off = record.winner(outside, "display")
@@ -1114,12 +1114,12 @@ def test_every_commit_bar_sticks_to_the_same_edge_and_one_rule_decides_it(index:
     number = sorted(index.cycles)[0]
     bar = el("div", "commitbar", id="commitbar")
     pages = {
-        "detail": (render_detail(index, ROUTES, only=sorted(index.entities)[0],
+        "detail": (render_detail(index, ROUTES, only=sorted(index.plan)[0],
                                  base_commit=HEAD, may_write=True),
-                   [el("article", "entity editing"), bar]),
+                   [el("article", "record editing"), bar]),
         "create": (render_detail(index, ROUTES, base_commit=HEAD, may_write=True,
                                  creating="task"),
-                   [el("article", "entity editing"), bar]),
+                   [el("article", "record editing"), bar]),
         "cycle": (render_cycle(index, number, ROUTES, base_commit=HEAD), [bar]),
         "graph": (render_graph(index, ROUTES, base_commit=HEAD), [bar]),
     }

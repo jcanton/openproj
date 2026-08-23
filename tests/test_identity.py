@@ -1,4 +1,4 @@
-"""An entity's identity is written twice, and the two have to agree.
+"""A record's identity is written twice, and the two have to agree.
 
 The id is in the frontmatter and it is in the filename. Nothing compared them, and
 the two halves of the application resolved a collision in opposite directions:
@@ -58,14 +58,14 @@ def test_a_file_named_for_one_id_declaring_another_is_a_blocker(tmp_path: Path):
             "tasks/task-0f0001--honest.md": HONEST,
         },
     )
-    entities, config, unreadable = load_repo(root)
+    records, config, unreadable = load_repo(root)
 
     # It loads. Blocked, not dropped: a record you cannot see is a record nobody
     # can fix, and this one is readable — it is only lying about which one it is.
     assert unreadable == [], "a mismatch is a problem about a record, not an unreadable file"
-    assert {entity.id for entity in entities} == {"task-0a1001", "task-0f0001"}
+    assert {record.id for record in records} == {"task-0a1001", "task-0f0001"}
 
-    problems = validate_all(entities, config)
+    problems = validate_all(records, config)
     named = [p for p in problems if p.field == "id" and p.severity == "blocker"]
     assert named, "the plan reported nothing at all before this"
     assert any("impostor" in p.message for p in named), named
@@ -84,8 +84,8 @@ def test_two_files_claiming_one_id_both_say_so(tmp_path: Path):
             "tasks/task-0a1001--second.md": twin,
         },
     )
-    entities, config, _ = load_repo(root)
-    problems = [p for p in validate_all(entities, config) if p.field == "id"]
+    records, config, _ = load_repo(root)
+    problems = [p for p in validate_all(records, config) if p.field == "id"]
 
     assert problems, "two files, one id, and nothing said so"
     assert any("claims this id too" in p.message for p in problems)
@@ -98,25 +98,25 @@ def test_a_renamed_slug_is_still_the_same_record(tmp_path: Path):
     """The slug is decoration and renaming it is legal; the id is the fact. A rule
     that fired on this would make every retitle a blocker."""
     root = _plan(tmp_path, {"tasks/task-0f0001--a-name-nobody-uses-now.md": HONEST})
-    entities, config, _ = load_repo(root)
+    records, config, _ = load_repo(root)
 
-    assert [p for p in validate_all(entities, config) if p.field == "id"] == []
+    assert [p for p in validate_all(records, config) if p.field == "id"] == []
 
 
 def test_the_bare_id_with_no_slug_is_legal(tmp_path: Path):
     root = _plan(tmp_path, {"tasks/task-0f0001.md": HONEST})
-    entities, config, _ = load_repo(root)
+    records, config, _ = load_repo(root)
 
-    assert [p for p in validate_all(entities, config) if p.field == "id"] == []
+    assert [p for p in validate_all(records, config) if p.field == "id"] == []
 
 
 def test_a_record_built_in_memory_has_no_filename_to_disagree_with():
-    """Every other test in this suite constructs entities directly. None of them
+    """Every other test in this suite constructs records directly. None of them
     came from a file, so none of them can be named wrong."""
-    entity = parse_text(HONEST, "")
-    assert named_for(entity) is False or entity._source == ""
-    assert validate_all([entity], Config()) == [] or all(
-        p.field != "id" for p in validate_all([entity], Config())
+    record = parse_text(HONEST, "")
+    assert named_for(record) is False or record._source == ""
+    assert validate_all([record], Config()) == [] or all(
+        p.field != "id" for p in validate_all([record], Config())
     )
 
 
@@ -124,9 +124,9 @@ def test_the_seed_corpus_reports_no_identity_problem():
     """If this rule is right, the corpus everybody uses does not trip it. If it
     fires here, the rule is wrong and not the corpus."""
     root = Path(__file__).resolve().parents[1] / "seed"
-    entities, config, _ = load_repo(root)
+    records, config, _ = load_repo(root)
 
-    assert [p for p in validate_all(entities, config) if p.field == "id"] == []
+    assert [p for p in validate_all(records, config) if p.field == "id"] == []
 
 
 @pytest.mark.parametrize("today", [date(2026, 8, 17)])
@@ -142,12 +142,12 @@ def test_the_index_and_the_write_path_no_longer_disagree(tmp_path: Path, today: 
             "tasks/task-0f0001--honest.md": HONEST,
         },
     )
-    entities, config, unreadable = load_repo(root)
-    index = build_index(entities, config, today, unreadable=unreadable)
+    records, config, unreadable = load_repo(root)
+    index = build_index(records, config, today, unreadable=unreadable)
 
     # The impostor is in the index under the id it claims, which is exactly why
     # the write path must refuse: the file it would find is the other one.
-    assert "task-0a1001" in index.entities
+    assert "task-0a1001" in index.plan
     assert index.problems, "and the page says so"
     assert any(p.field == "id" for p in index.problems)
 
@@ -155,7 +155,7 @@ def test_the_index_and_the_write_path_no_longer_disagree(tmp_path: Path, today: 
 def test_a_save_refuses_when_the_file_does_not_declare_the_id_it_is_named_for(tmp_path: Path):
     """The half that costs work.
 
-    PATCH /api/entity/task-0a1001 answered 200 "committed" and `git show` proved
+    PATCH /api/record/task-0a1001 answered 200 "committed" and `git show` proved
     the commit landed in the file named for that id — a file that was not in the
     index and was not the record the page had shown. A person read one record,
     pressed save, and a different record changed on disk.
@@ -186,7 +186,7 @@ def test_a_save_refuses_when_the_file_does_not_declare_the_id_it_is_named_for(tm
     with TestClient(app) as client:
         head = client.get("/api/index.json").json()["head"]
         answer = client.patch(
-            "/api/entity/task-0a1001",
+            "/api/record/task-0a1001",
             json={"base_commit": head, "fields": {"priority": "low"}},
         )
 

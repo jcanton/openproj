@@ -20,7 +20,7 @@ This contradicts where the plan put it. `2026-08-20-editor-plan.md` S2 places th
 the existing `bodybar` beside Preview, which is inside the editing surface. HackMD puts it in
 the page's own header, next to the document's identity, because it is a property of how you
 are looking at the document rather than of the text — the same argument this repository makes
-for the width grip being remembered per browser and not per entity. Three adjacent icons that
+for the width grip being remembered per browser and not per record. Three adjacent icons that
 look like one control also say "these are three states of one thing" in a way three separate
 buttons in a row of unrelated controls do not.
 

@@ -2,7 +2,7 @@
 
 A note is the record for "we are thinking of creating something that does not
 exist and our ideas are confused", where an issue is "we found something
-existing that is broken". A note is now an `Entity` on a rung with
+existing that is broken". A note is now a `Record` on a rung with
 `planned=False`: what used to be kept true by a separate type — no place on the
 table, the graph, the timeline or the people page — is enforced once in
 `build_index`, guarded by the Index validator, and swept by the KINDS-derived
@@ -60,7 +60,7 @@ def client(repo_path: Path):
 def written(client: TestClient, title: str, base: str, body: str = "", **fields) -> str:
     """A note through the one door every record uses now."""
     response = client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": base, "body": body,
               "fields": {"kind": "note", "title": title, **fields}},
     )
@@ -71,7 +71,7 @@ def written(client: TestClient, title: str, base: str, body: str = "", **fields)
 def opened_issue(client: TestClient, title: str, base: str, body: str = "",
                  **fields) -> str:
     response = client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": base, "body": body,
               "fields": {"kind": "issue", "title": title, **fields}},
     )
@@ -85,7 +85,7 @@ def promote(client: TestClient, source: str, kind: str, base: str):
     )
 
 
-def entities(**by_id: str) -> dict[str, Task]:
+def records(**by_id: str) -> dict[str, Task]:
     return {
         i: Task(id=i, kind="task", title=i, status=status) for i, status in by_id.items()
     }
@@ -102,7 +102,7 @@ def test_a_note_has_two_statuses_and_the_third_state_is_derived():
     shaped" is a promise the Promote button keeps in one press; and no `done`
     because a note is not finished, it is answered — by `promoted`, which is read
     off the link rather than typed beside it."""
-    world = entities(**{"pitch-aa0001": "shaping"})
+    world = records(**{"pitch-aa0001": "shaping"})
     idea = Note(id="note-000001", kind="note", title="x")
     grown = Note(id="note-000002", kind="note", title="x", became=["pitch-aa0001"])
 
@@ -119,7 +119,7 @@ def test_a_promoted_note_does_not_track_what_it_became():
     reason to carry one — and the two disagree the first time somebody edits
     either end."""
     for status in ("shaping", "ready", "in_progress", "done", "shelved"):
-        world = entities(**{"pitch-aa0001": status})
+        world = records(**{"pitch-aa0001": status})
         note = Note(id="note-000001", kind="note", title="x", became=["pitch-aa0001"])
 
         assert note.state(world) == "promoted", status
@@ -128,7 +128,7 @@ def test_a_promoted_note_does_not_track_what_it_became():
 def test_dropped_is_a_decision_that_a_link_does_not_reverse():
     """"We thought about this and we are not doing it" was said by a person.
     Somebody linking a record to it afterwards does not un-say it."""
-    world = entities(**{"pitch-aa0001": "shaping"})
+    world = records(**{"pitch-aa0001": "shaping"})
     dropped = Note(id="note-000001", kind="note", title="x", status="dropped",
                    became=["pitch-aa0001"])
 
@@ -149,8 +149,8 @@ def test_a_link_to_something_that_is_gone_is_a_warning_and_not_a_promotion():
 
 def test_a_note_reads_no_field_that_is_a_commitment():
     """An owner, a size, an appetite and a cycle are all things somebody agreed
-    to, and the claim a note makes is that nobody has agreed to anything. As an
-    Entity subclass the note now DECLARES those fields — that is what makes one
+    to, and the claim a note makes is that nobody has agreed to anything. As a
+    Record subclass the note now DECLARES those fields — that is what makes one
     page serve every kind — so the boundary moved from the type to the ladder:
     every one of them is unread on this rung, the editors decline to offer what
     is unread, and a hand edit that writes one in is reported, not obeyed."""
@@ -175,7 +175,7 @@ def test_a_status_that_is_not_one_is_refused_and_says_which_are(
     note_id = written(client, "x", git_head(repo_path))
     before = git_head(repo_path)
     refused = client.patch(
-        f"/api/entity/{note_id}",
+        f"/api/record/{note_id}",
         json={"base_commit": before, "fields": {"status": "promoted"}, "body": None},
     )
 
@@ -204,7 +204,7 @@ def test_writing_a_note_down_asks_for_a_title_and_nothing_else(
     assert f"written_by: {ANN.login}" in stored
     assert re.search(r"written_on: '\d{4}-\d{2}-\d{2}'", stored)
     assert client.post(
-        "/api/entity",
+        "/api/record",
         json={"base_commit": git_head(repo_path),
               "fields": {"kind": "note", "title": "  "}},
     ).status_code == 422
@@ -216,7 +216,7 @@ def test_a_note_the_server_could_not_read_back_is_never_committed(
     note_id = written(client, "x", git_head(repo_path))
     before = git_head(repo_path)
     refused = client.patch(
-        f"/api/entity/{note_id}",
+        f"/api/record/{note_id}",
         json={"base_commit": before, "fields": {"tags": "not-a-list"}, "body": None},
     )
 
@@ -271,12 +271,12 @@ def test_a_note_promotes_into_a_record_that_validates(client: TestClient, repo_p
 
     # Through the validator the CI gate runs, over the whole corpus, so nothing
     # about the promoted records is judged in isolation from what they landed in.
-    entities_now, config, unreadable = load_repo_from(repo_path)
+    records_now, config, unreadable = load_repo_from(repo_path)
     assert not unreadable
-    promoted = {e.id for e in entities_now if e.status == "shaping"}
+    promoted = {e.id for e in records_now if e.status == "shaping"}
     blockers = [
-        p for p in validate_all(entities_now, config)
-        if p.severity == "blocker" and p.entity_id in promoted
+        p for p in validate_all(records_now, config)
+        if p.severity == "blocker" and p.record_id in promoted
     ]
     assert promoted and not blockers, blockers
 
@@ -285,7 +285,7 @@ def test_a_promoted_record_says_where_it_came_from_in_its_own_document(
     client: TestClient, repo_path: Path
 ):
     """"Where did this pitch come from" has to be answerable from the pitch alone.
-    Prose and not a field: a `from_note` on `Entity` would put a note id into the
+    Prose and not a field: a `from_note` on `Record` would put a note id into the
     type every view of the plan is built from."""
     note_id = written(client, "Radiation still calls Fortran", git_head(repo_path))
     new_id = promote(client, note_id, "pitch", git_head(repo_path)).json()["id"]
@@ -351,15 +351,15 @@ def test_the_trail_survives_a_round_trip_through_git(client: TestClient, tmp_pat
 
     clone = tmp_path / "clone"
     pygit2.clone_repository(str(repo_path), str(clone))
-    entities_now, config, unreadable = load_repo(clone)
+    records_now, config, unreadable = load_repo(clone)
 
     assert not unreadable
-    note = next(e for e in entities_now if e.id == note_id)
-    pitch = next(e for e in entities_now if e.id == new_id)
+    note = next(e for e in records_now if e.id == note_id)
+    pitch = next(e for e in records_now if e.id == new_id)
     assert note.became == [new_id]
     assert note_id in pitch.body, "and the other end, in the document itself"
     assert "Confused." in pitch.body
-    assert note.state({e.id: e for e in entities_now}) == "promoted"
+    assert note.state({e.id: e for e in records_now}) == "promoted"
 
 
 def test_an_issue_promotes_into_a_pitch_or_a_task_and_nothing_else(
@@ -430,22 +430,22 @@ def test_an_issue_promoted_into_a_task_lands_as_a_task_this_plan_can_read_back(
     for commitment in ("owner:", "person_weeks:", "cycle:", "assignees:", "parent:"):
         assert commitment not in stored, commitment
 
-    entities_now, config, unreadable = load_repo_from(repo_path)
+    records_now, config, unreadable = load_repo_from(repo_path)
     assert not unreadable
-    made = next(entity for entity in entities_now if entity.id == new_id)
+    made = next(record for record in records_now if record.id == new_id)
 
     assert made.kind == "task" and made.parent is None
     assert is_bettable(made), "which is the state the model already has a word for"
     assert not [
-        p for p in validate_all(entities_now, config)
-        if p.severity == "blocker" and p.entity_id == new_id
+        p for p in validate_all(records_now, config)
+        if p.severity == "blocker" and p.record_id == new_id
     ]
     # And the trail back, at both ends: the issue names it, and the record says
     # in its own document where it came from.
-    issue = next(e for e in entities_now if e.id == opened)
+    issue = next(e for e in records_now if e.id == opened)
     assert issue.pitched_into == [new_id]
     assert opened in made.body
-    assert issue.state({e.id: e for e in entities_now}) == "in_progress", (
+    assert issue.state({e.id: e for e in records_now}) == "in_progress", (
         "an issue that has been picked up says so, whichever kind picked it up"
     )
 
@@ -557,22 +557,22 @@ def test_the_citation_says_what_it_can_and_no_more():
 
 
 def test_the_shipped_demo_carries_notes_that_load(demo_root: Path):
-    entities_now, config, unreadable = load_repo(demo_root)
+    records_now, config, unreadable = load_repo(demo_root)
     assert not unreadable
 
-    index = build_index(entities_now, config, date(2026, 8, 17))
+    index = build_index(records_now, config, date(2026, 8, 17))
     notes = {i: r for i, r in index.records.items() if r.kind == "note"}
 
     assert notes, "the demo corpus has notes"
-    assert not set(notes) & set(index.entities), "and none of them is in the plan"
+    assert not set(notes) & set(index.plan), "and none of them is in the plan"
     assert not [
-        p for p in index.problems if p.severity == "blocker" and p.entity_id in notes
+        p for p in index.problems if p.severity == "blocker" and p.record_id in notes
     ]
-    assert {n.state(index.entities) for n in notes.values()} == set(NOTE_STATES), (
+    assert {n.state(index.plan) for n in notes.values()} == set(NOTE_STATES), (
         "all three states, because a demo that shows one teaches one"
     )
-    promoted = next(n for n in notes.values() if n.state(index.entities) == "promoted")
-    became = index.entities[promoted.became[0]]
+    promoted = next(n for n in notes.values() if n.state(index.plan) == "promoted")
+    became = index.plan[promoted.became[0]]
     assert promoted.id in became.body, "the trail is drawn at both ends in the demo too"
 
 
@@ -582,9 +582,9 @@ def test_the_static_export_carries_every_note(demo_root: Path, tmp_path: Path):
     static file has nowhere to post to."""
     from openproj.render import render_static
 
-    entities_now, config, _ = load_repo(demo_root)
+    records_now, config, _ = load_repo(demo_root)
     written_files = render_static(
-        build_index(entities_now, config, date(2026, 8, 17)), tmp_path
+        build_index(records_now, config, date(2026, 8, 17)), tmp_path
     )
     detail = (tmp_path / "detail.html").read_text(encoding="utf-8")
 
