@@ -177,17 +177,25 @@ class SameRecordWriter(users.FormWriter):
         return f"WS{self.index:02d}.{n:04d}"
 
     def payload_for(self, source: str, n: int) -> tuple[dict, str, object]:
-        """`(json payload, marker, the value sent)` for this save."""
+        """`(json payload, marker, the value sent)` for this save.
+
+        The marker of an `accumulate` lane is the string the save actually
+        ADDS to the list, not this writer's serial number, and the difference is
+        not cosmetic: `verify.form_changes` decides "committed or LOST" by
+        looking for the marker in the final file, so a marker the save never
+        wrote reports every one of that writer's saves as lost data. The
+        `depends_on` lane appends a real entity id — an edge to a record that
+        does not exist is dropped from the index — and judging it by `WS04.0007`
+        called 13 honest merges a loss on the first run of this file.
+        """
         marker = self.marker(n)
         record = parse_text(source, self.path)
         if self.variant == "body":
             _, body = split_front_matter(source)
-            return (
-                {"fields": {}, "body": self.with_line(body, marker)},
-                marker,
-                None,
-            )
+            return ({"fields": {}, "body": self.with_line(body, marker)}, marker, None)
         value = self.value_for(record, marker, n)
+        if self.lane == "accumulate":
+            marker = str(value[-1])
         return ({"fields": {self.field: value}}, marker, value)
 
     def value_for(self, record, marker: str, n: int) -> object:
