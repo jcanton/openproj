@@ -1,0 +1,398 @@
+{
+  "commits": {
+    "by_author": {
+      "edopao": 9,
+      "halungge": 9,
+      "iomaganaris": 9,
+      "jcanton": 5,
+      "msimberg": 2,
+      "nfarabullini": 5
+    },
+    "made_by_this_run": 39,
+    "total": 40
+  },
+  "config": {
+    "body_edit": "append",
+    "coedit_save_at_end": true,
+    "coedit_save_every": 8.0,
+    "coeditors": 3,
+    "gap": 3.0,
+    "overlap": false,
+    "readers": 3,
+    "seconds": 40.0,
+    "stale": false,
+    "think": 0.4,
+    "writers": 3
+  },
+  "driver_failures": {},
+  "measured": {
+    "errors": {},
+    "latency_ms": {
+      "GET /": {
+        "max": 2170.1,
+        "mean": 348.9,
+        "n": 29,
+        "p50": 87.6,
+        "p90": 1939.1,
+        "p99": 2170.1
+      },
+      "GET /api/health": {
+        "max": 31.2,
+        "mean": 3.7,
+        "n": 27,
+        "p50": 2.0,
+        "p90": 6.4,
+        "p99": 31.2
+      },
+      "GET /detail/<id>": {
+        "max": 2223.4,
+        "mean": 310.5,
+        "n": 114,
+        "p50": 234.9,
+        "p90": 318.1,
+        "p99": 2067.5
+      },
+      "GET /issues": {
+        "max": 2096.9,
+        "mean": 339.4,
+        "n": 29,
+        "p50": 86.6,
+        "p90": 1916.3,
+        "p99": 2096.9
+      },
+      "GET /table": {
+        "max": 2094.5,
+        "mean": 344.6,
+        "n": 29,
+        "p50": 90.8,
+        "p90": 1919.4,
+        "p99": 2094.5
+      },
+      "PATCH": {
+        "max": 2527.8,
+        "mean": 1007.7,
+        "n": 27,
+        "p50": 658.6,
+        "p90": 1882.2,
+        "p99": 2527.8
+      },
+      "WS join": {
+        "max": 3.9,
+        "mean": 2.3,
+        "n": 3,
+        "p50": 1.6,
+        "p90": 3.9,
+        "p99": 3.9
+      },
+      "WS keystroke": {
+        "max": 0.9,
+        "mean": 0.2,
+        "n": 479,
+        "p50": 0.1,
+        "p90": 0.5,
+        "p99": 0.7
+      },
+      "WS save": {
+        "max": 1128.3,
+        "mean": 673.4,
+        "n": 15,
+        "p50": 662.9,
+        "p90": 1096.0,
+        "p99": 1128.3
+      }
+    },
+    "pushed": {
+      "false": 0,
+      "true": 13,
+      "unknown": 27
+    },
+    "statuses": {
+      "GET /": {
+        "200": 29
+      },
+      "GET /api/health": {
+        "200": 27
+      },
+      "GET /detail/<id>": {
+        "200": 114
+      },
+      "GET /issues": {
+        "200": 29
+      },
+      "GET /table": {
+        "200": 29
+      },
+      "PATCH": {
+        "200": 27
+      },
+      "WS join": {
+        "joined": 3
+      },
+      "WS keystroke": {
+        "typed": 479
+      },
+      "WS save": {
+        "nothing": 2,
+        "saved": 13
+      }
+    },
+    "throughput": {
+      "accepted_writes_per_second": 0.96,
+      "pages_per_second": 5.45,
+      "seconds": 41.9
+    },
+    "write_outcomes": {
+      "committed": 19,
+      "retried": 21
+    }
+  },
+  "scenario": "mixed",
+  "seed": 7,
+  "server": {
+    "cpu_seconds": 12.81,
+    "rss_mb": 111.2
+  },
+  "server_log_tail": "INFO:     127.0.0.1:63728 - \"GET /table HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63726 - \"PATCH /api/entity/task-000002 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63729 - \"GET /detail/task-000003 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63728 - \"GET /detail/task-000004 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63730 - \"GET /detail/task-000002 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63727 - \"PATCH /api/entity/task-000003 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63729 - \"GET /table HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63728 - \"GET /issues HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63730 - \"GET / HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63729 - \"GET /detail/task-000004 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63728 - \"GET /detail/task-000005 HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:63730 - \"GET /detail/task-000003 HTTP/1.1\" 200 OK",
+  "strays": [],
+  "verification": {
+    "checks": {
+      "authors": {
+        "edopao": 9,
+        "halungge": 9,
+        "iomaganaris": 9,
+        "jcanton": 5,
+        "msimberg": 2,
+        "nfarabullini": 5,
+        "openproj-bot": 1
+      },
+      "coeditors": [
+        {
+          "anchor_in_tree": true,
+          "committed": 159,
+          "entity": "task-000000",
+          "saves": [
+            {
+              "commit": "99d2b38c2f31327cbacee04d098d22093c6617f5",
+              "ms": 1096.0,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 40,
+              "why": null
+            },
+            {
+              "commit": "93042c6176fc7f3e4b3a56c3ee042d1ce74005a0",
+              "ms": 782.6,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 73,
+              "why": null
+            },
+            {
+              "commit": "3a8f1c8634920b7c275eb817518f642d3ff0b20a",
+              "ms": 585.7,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 106,
+              "why": null
+            },
+            {
+              "commit": "bbab243e02191293d319eb498dd088db016760e0",
+              "ms": 638.8,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 138,
+              "why": null
+            },
+            {
+              "commit": "f365c5e1de13a1e22dc444d14045984da0e5c821",
+              "ms": 695.9,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 159,
+              "why": null
+            }
+          ],
+          "trouble": [],
+          "typed": 159,
+          "who": "coeditor-0"
+        },
+        {
+          "anchor_in_tree": true,
+          "committed": 160,
+          "entity": "task-000000",
+          "saves": [
+            {
+              "commit": "99d2b38c2f31327cbacee04d098d22093c6617f5",
+              "ms": 1075.6,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 39,
+              "why": null
+            },
+            {
+              "commit": "93042c6176fc7f3e4b3a56c3ee042d1ce74005a0",
+              "ms": 828.7,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 72,
+              "why": null
+            },
+            {
+              "commit": "3a8f1c8634920b7c275eb817518f642d3ff0b20a",
+              "ms": 527.8,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 107,
+              "why": null
+            },
+            {
+              "commit": "bbab243e02191293d319eb498dd088db016760e0",
+              "ms": 662.9,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 140,
+              "why": null
+            },
+            {
+              "commit": null,
+              "ms": 56.1,
+              "outcome": null,
+              "pushed": null,
+              "t": "nothing",
+              "typed_by_then": 160,
+              "why": null
+            }
+          ],
+          "trouble": [],
+          "typed": 160,
+          "who": "coeditor-1"
+        },
+        {
+          "anchor_in_tree": true,
+          "committed": 160,
+          "entity": "task-000000",
+          "saves": [
+            {
+              "commit": "99d2b38c2f31327cbacee04d098d22093c6617f5",
+              "ms": 1128.3,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 40,
+              "why": null
+            },
+            {
+              "commit": "93042c6176fc7f3e4b3a56c3ee042d1ce74005a0",
+              "ms": 661.1,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 73,
+              "why": null
+            },
+            {
+              "commit": "3a8f1c8634920b7c275eb817518f642d3ff0b20a",
+              "ms": 691.6,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 106,
+              "why": null
+            },
+            {
+              "commit": "bbab243e02191293d319eb498dd088db016760e0",
+              "ms": 612.6,
+              "outcome": "retried",
+              "pushed": true,
+              "t": "saved",
+              "typed_by_then": 139,
+              "why": null
+            },
+            {
+              "commit": null,
+              "ms": 57.7,
+              "outcome": null,
+              "pushed": null,
+              "t": "nothing",
+              "typed_by_then": 160,
+              "why": null
+            }
+          ],
+          "trouble": [],
+          "typed": 160,
+          "who": "coeditor-2"
+        }
+      ],
+      "conflict_markers": {
+        "commits_walked": 40,
+        "found": []
+      },
+      "fields": {
+        "checked": 3,
+        "invented": []
+      },
+      "form_writes": {
+        "ambiguous_absent": 0,
+        "ambiguous_present": 0,
+        "committed": 27,
+        "lost": 0,
+        "refused": 0,
+        "refused_but_present": 0
+      },
+      "fsck": {
+        "origin": {
+          "output": "",
+          "returncode": 0
+        },
+        "plan": {
+          "output": "",
+          "returncode": 0
+        }
+      },
+      "head": "f365c5e1de",
+      "parses": {
+        "blockers": 9,
+        "blockers_before": 9,
+        "records": 41,
+        "unreadable": [],
+        "unreadable_before": 0,
+        "warnings": 33
+      },
+      "push": {
+        "equal": true,
+        "forked": false,
+        "local": "f365c5e1de",
+        "origin": "f365c5e1de",
+        "unpushed_commits": 0
+      }
+    },
+    "findings": [
+      {
+        "detail": null,
+        "severity": "note",
+        "what": "9 validation blockers, all of them already in the corpus this run started from"
+      }
+    ],
+    "lost_data": false,
+    "ok": true
+  },
+  "world": {
+    "base_commit": "13b509516a",
+    "corpus": "corpus",
+    "port": 8900,
+    "records": 41,
+    "remote": "file://origin.git",
+    "rtt_ms": 600.0,
+    "size": "small",
+    "work": "/var/folders/r9/bm7bmxxj1nlfq0w1lzk458lm0000gq/T/openproj-load-2go0i0is"
+  }
+}
