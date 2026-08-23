@@ -310,8 +310,10 @@ def test_the_retired_issue_routes_redirect_to_the_shared_ones(
 ):
     issue_id = opened(client, "x", git_head(repo_path))
 
+    # `/issues` is deliberately not in this list any more: it 301ed to `/` for
+    # exactly one release and renders again now, as the landing held to
+    # `kind:issue` — test_records.py owns that page.
     for old, new in (
-        ("/issues", "/"),
         ("/issue/new", "/new?kind=issue"),
         (f"/issue/{issue_id}", f"/detail/{issue_id}"),
     ):

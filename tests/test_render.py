@@ -27,7 +27,7 @@ from openproj.render import (
 )
 
 PAGES = ("index.html", "table.html", "detail.html", "people.html", "cycles.html",
-         "graph.html", "timeline.html")
+         "graph.html", "timeline.html", "issues.html", "notes.html")
 
 
 @pytest.fixture

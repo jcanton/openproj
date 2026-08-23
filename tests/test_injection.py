@@ -301,10 +301,8 @@ def census_routes(entity_ids: tuple[str, ...]) -> dict[str, str]:
         # building on: a deck is printed and handed to somebody who was not in
         # the room. Same cycle as the one above, so both read the same plan.
         "deck 41": "/deck/41",
-        # The retired inbox addresses, censused where they land — the redirect
-        # is followed, so this renders the Records landing under the hostile
-        # plan a second time, which costs nothing and keeps the
-        # census-completeness test honest about the routes existing.
+        # The inbox views of the landing — the same page held to one kind, so
+        # each renders the hostile issue or note rows under its own URL.
         "issues": "/issues", "notes": "/notes",
         "new issue": "/new?kind=issue", "new note": "/new?kind=note",
         "new task": "/new?kind=task", "new pitch": "/new?kind=pitch",

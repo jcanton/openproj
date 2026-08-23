@@ -928,32 +928,44 @@ class Rung(NamedTuple):
     carded: bool           # does a hover show its shaping document
     planned: bool          # does it appear in the plan: table, graph, timeline, people, scheduler
     statuses: tuple[str, ...]  # the status vocabulary this kind reads; () means status is not read
+    # The field that answers "who is behind this record". Per rung because the
+    # kinds do not share one: `owner` is who HOLDS a piece of work, `reported_by`
+    # and `written_by` are who noticed or wrote — which is why the column that
+    # reads this is headed "Who" and not "Created by": a header promising
+    # authorship over a field recording ownership is copy drift.
+    who: str
 
 
 KINDS: tuple[Rung, ...] = (
     # `statuses=()` — status is one of the nine fields a product does not read
     # (jcanton, 2026-08-20: a codebase is not `in_progress`), and () is how the
     # ladder says so now that the vocabulary is a per-rung fact.
+    # `who="owner"` on a rung whose `owner` is unread (it is in `_WORK_FIELDS`
+    # and a product is not work): the readers of `who` go through
+    # `unread_fields`, so a product answers "Who" with nothing rather than with
+    # a field it does not read.
     Rung("product", "prod", "products", Product, under=(),
          schedules=False, depends=False, sized=False, carded=False,
-         planned=True, statuses=()),
+         planned=True, statuses=(), who="owner"),
     Rung("project", "proj", "projects", Project, under=("product",),
          schedules=True, depends=True, sized=False, carded=True,
-         planned=True, statuses=STATUS_ORDER),
+         planned=True, statuses=STATUS_ORDER, who="owner"),
     Rung("pitch", "pitch", "pitches", Pitch, under=("project",),
          schedules=True, depends=True, sized=True, carded=True,
-         planned=True, statuses=STATUS_ORDER),
+         planned=True, statuses=STATUS_ORDER, who="owner"),
     # A task may skip the pitch — work that nobody shaped still belongs to a
     # project — which is why `under` is written out per rung rather than derived
     # as "everything coarser". Derived, a task could be filed straight under a
     # product, three rungs up, which is not a thing anybody means.
     Rung("task", "task", "tasks", Task, under=("pitch", "project"),
          schedules=True, depends=True, sized=True, carded=True,
-         planned=True, statuses=STATUS_ORDER),
+         planned=True, statuses=STATUS_ORDER, who="owner"),
     Rung("issue", "issue", "issues", Issue, under=(), schedules=False, depends=False,
-         sized=False, carded=False, planned=False, statuses=ISSUE_STATUS),
+         sized=False, carded=False, planned=False, statuses=ISSUE_STATUS,
+         who="reported_by"),
     Rung("note",  "note",  "notes",  Note,  under=(), schedules=False, depends=False,
-         sized=False, carded=False, planned=False, statuses=NOTE_STATUS),
+         sized=False, carded=False, planned=False, statuses=NOTE_STATUS,
+         who="written_by"),
 )
 
 KIND_NAMES: tuple[str, ...] = tuple(rung.name for rung in KINDS)

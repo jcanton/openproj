@@ -36,13 +36,12 @@ from mdit_py_plugins.tasklists import tasklists_plugin
 from pydantic import BaseModel
 
 from .index import (
-    COMPUTED_PREDICATES,
     Index,
-    _matches_predicate,
     _people_on,
     _product_of,
     _project_of,
     cascade_of,
+    predicates_of,
 )
 from .model import (
     ISSUE_STATUS,
@@ -1149,7 +1148,7 @@ def _row(index: Index, entity_id: str) -> dict:
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(entity, index.entities),
         "product": _product_of(entity, index.entities),
-        "predicates": [p for p in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, p)],
+        "predicates": predicates_of(index, entity_id),
         # What the box searches, built once by `searchable` (`index.py`) and
         # carried rather than rebuilt: the browser used to search
         # `row.title + ' ' + row.tags` while the server searched four fields and
@@ -1625,6 +1624,10 @@ class Links(BaseModel):
     # The landing list — every record, last edited first. It takes the root
     # name in both modes because it is the page the tool opens on.
     records: str = "index.html"
+    # The same list held to one kind each: quick access to what would otherwise
+    # be a click on a filter.
+    issues: str = "issues.html"
+    notes: str = "notes.html"
     table: str = "table.html"
     detail: str = "detail.html"
     graph: str = "graph.html"
@@ -1676,7 +1679,8 @@ assert not set(CSP) & set('<>&"'), "a policy needing escaping cannot be written 
 
 STATIC = Links()
 ROUTES = Links(
-    records="/", table="/table", detail="/detail", graph="/graph", timeline="/timeline",
+    records="/", issues="/issues", notes="/notes",
+    table="/table", detail="/detail", graph="/graph", timeline="/timeline",
     entity="/detail/", new="/new", people="/people",
     cycles="/cycles", cycle="/cycle/",
     asset="/assets/", deck="/deck/", body="/api/body/",
@@ -7286,18 +7290,20 @@ frozenEdge();
 </script>
 """
 
-_TABLE_STYLE = """
-/* The far end of the edit bar. `margin-left: auto` and not `space-between`,
-   because on a rendered file the bar holds nothing else — the count stays at the
-   right rather than sliding to the left when the controls beside it are gone. */
-.editbar #summary { margin: 0 0 0 auto; text-align: right; }
-/* The whole phrase, not the digit: "1 blocking problems" in danger red with the
-   count black beside it read as two separate facts. And the colour has to mean
-   something — at zero it is muted, because danger nobody can act on is danger
-   nobody reads. */
-#blockers { color: var(--sev-blocker); text-decoration: none; }
-#blockers:hover { text-decoration: underline; }
-#blockers.none { color: var(--muted); }
+# The scroll-and-freeze mechanism, shared by the pages that draw one full-width
+# record table under the control bar — the entity table and the records list.
+# One copy because it is one invariant: the body scrolls inside `.table-scroll`
+# while `thead th` holds against it, and a second spelling of that pair is how
+# the two pages would drift the first time either was tuned.
+#
+# Every selector here is deliberately the lightest that can reach its cells —
+# bare elements, (0,0,1) and (0,0,2) — so a page that includes this block can
+# correct any of it with a single class or attribute. The table page does
+# exactly that (`th.sorted`, `[data-col=…]`, `.scrolled td[…]`); what it must
+# never do again is qualify a correction so far that it outranks the OTHER
+# corrections — the `.table-scroll [data-col=…]` story told above `[data-col]`
+# below.
+_SCROLL_STYLE = """
 /* The table body scrolls in here rather than in the page. `position: sticky` on
    a header needs a scroll container to hold against, and a container the height
    of its own content gives `top: 0` nothing to do.
@@ -7327,9 +7333,37 @@ th, td {
 }
 th { color: var(--muted); font-weight: 400;
      text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+thead th {
+  position: sticky; top: 0; z-index: 3; background: var(--surface);
+  /* A collapsed border is not painted on a sticky cell — the first row scrolls
+     straight over the top of it — so the rule is drawn inside the box instead. */
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+"""
+
+_TABLE_STYLE = _SCROLL_STYLE + """
+/* The far end of the edit bar. `margin-left: auto` and not `space-between`,
+   because on a rendered file the bar holds nothing else — the count stays at the
+   right rather than sliding to the left when the controls beside it are gone. */
+.editbar #summary { margin: 0 0 0 auto; text-align: right; }
+/* The whole phrase, not the digit: "1 blocking problems" in danger red with the
+   count black beside it read as two separate facts. And the colour has to mean
+   something — at zero it is muted, because danger nobody can act on is danger
+   nobody reads. */
+#blockers { color: var(--sev-blocker); text-decoration: none; }
+#blockers:hover { text-decoration: underline; }
+#blockers.none { color: var(--muted); }
 th[data-sort] { cursor: pointer; user-select: none; }
+/* (0,1,1) over the shared block's bare `th` at (0,0,1): the sorted column keeps
+   its emphasis whichever order the two blocks are inlined in. */
 th.sorted { color: inherit; font-weight: 700; }
-th { position: relative; }
+/* No `th { position: relative }` here any more: every th this page draws is a
+   `thead th`, whose `position: sticky` — (0,0,2) in the shared block against
+   the (0,0,1) that used to sit here — is itself a positioned value, so the
+   grips and the `+` control anchor to the sticky box and the relative rule
+   decided nothing. Gone rather than kept, because an inert rule beside a
+   sticky one is exactly the bait the `.table-scroll [data-col]` episode
+   below was taken by. */
 /* The button is the header: it takes the cell's type so the column still reads
    as a label, and only the focus ring says it is a control. */
 th button { font: inherit; color: inherit; letter-spacing: inherit;
@@ -7338,12 +7372,6 @@ th button { font: inherit; color: inherit; letter-spacing: inherit;
 /* Reserved whether or not this is the sorted column, so sorting does not shove
    every header one glyph to the left. */
 th .dir { display: inline-block; width: .8em; color: var(--accent); }
-thead th {
-  position: sticky; top: 0; z-index: 3; background: var(--surface);
-  /* A collapsed border is not painted on a sticky cell — the first row scrolls
-     straight over the top of it — so the rule is drawn inside the box instead. */
-  box-shadow: inset 0 -1px 0 var(--line);
-}
 /* The two columns that say which row you are looking at. Scrolled right without
    them, fourteen columns of values belong to nobody. They need a ground of their
    own and a layer above the cells passing underneath.
@@ -16183,6 +16211,13 @@ LABELS = {
     "reported_by": "Reported by", "written_by": "Written by",
     "pitched_into": "Pitched into", "became": "Became",
     "opened_on": "Opened on", "written_on": "Written on",
+    # The records list's two columns that are not one stored field. `who` is
+    # `Rung.who` — owner, reported_by or written_by by rung — and the header is
+    # "Who", not "Created by": `owner` is who HOLDS a pitch, not who typed it,
+    # and a header promising authorship over a field recording ownership is
+    # exactly the copy drift HUMAN exists to prevent. `edited` is the history
+    # walk's stamp, a fact about commits rather than about any field.
+    "who": "Who", "edited": "Last modified",
     # Not stored fields: a facet and a derived column. They are read by the same
     # people in the same control bar, so they take their words from here too.
     "kind": "Kind", "project": "Project", "product": "Product",
@@ -19843,6 +19878,10 @@ _PROMOTE = """
 _NAV = (
     ("records", "Records"), ("table", "Table"), ("graph", "Graph"),
     ("timeline", "Timeline"), ("cycles", "Cycles"), ("people", "People"),
+    # The two inbox views of the landing list, back in the nav on jcanton's
+    # ruling: quick access to what would otherwise be a click on a filter. At
+    # the end, where they sat before the records flip retired their own pages.
+    ("issues", "Issues"), ("notes", "Notes"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
 # Pages that exist and are not in the nav, and may still say which item to light.
@@ -19971,25 +20010,42 @@ def preview_html(body: str, links: Links = ROUTES, title: str = "") -> str:
 
 
 _RECORDS = """
-{#- Announced, not drawn: the lit nav item already says Records. -#}
-<h1 class="sr-only">Records</h1>
+{#- Announced, not drawn: the lit nav item already says which view this is. -#}
+<h1 class="sr-only">{{ heading }}</h1>
+<p class="hint">{{ describe }}</p>
+{%- if editable %}
+<p class="editbar"><a class="button" href="{{ create.href }}">{{ create.label }}</a></p>
+{%- endif %}
 {{ facets }}
-<ul id="records">
+<div class="table-scroll" data-fills><table id="records"><thead><tr>
+  {%- for column in columns %}
+  <th data-col="{{ column }}">{{ label(column) }}</th>
+  {%- endfor %}
+</tr></thead><tbody>
 {%- for r in rows %}
-  <li data-id="{{ r.id }}">
-    <span class="chip kind-{{ r.kind }}">{{ r.kind }}</span>
-    <a href="{{ links.entity }}{{ r.id }}">{{ r.title or r.id }}</a>
-    {%- if timed %}<span class="when">{{ r.ago }}</span>{% endif %}
-  </li>
+  <tr data-id="{{ r.id }}">
+    <td data-col="kind"><span class="chip kind-{{ r.kind }}">{{ r.kind }}</span></td>
+    <td data-col="title"><a href="{{ links.entity }}{{ r.id }}">{{ r.title or r.id }}</a></td>
+    <td data-col="who">{{ r.who or '—' }}</td>
+    <td data-col="tags">{{ r.tags|join(', ') or '—' }}</td>
+    {%- if timed %}<td data-col="edited">{{ r.ago }}</td>{% endif %}
+  </tr>
 {%- endfor %}
-</ul>
-{#- The no-records sentence is server-rendered so it is right before any script
-    runs and in an export where none may. The script below redraws the same
-    block for the states only the browser can reach. -#}
-<div id="records-empty" role="status"{% if rows %} hidden{% endif %}>
-  <p class="headline">{% if not rows %}This plan has no records yet.{% endif %}</p>
-  <p class="hint">{% if not rows %}Nothing has been written down.{% endif %}</p>
-</div>
+{#- The no-records state is server-rendered so it is right before any script
+    runs and in an export where none may — and inside the table body, with the
+    control that gets you out of it, the shape every empty record table here
+    takes. The script below redraws the same row for the states only the
+    browser can reach; it rewrites the two sentences and never the create
+    link, which only the empty-view state can be showing. -#}
+  <tr class="nothing" id="records-empty"{% if rows %} hidden{% endif %}><td
+      colspan="{{ columns|length }}">
+    <p class="headline">{% if not rows %}{{ said.empty_headline }}{% endif %}</p>
+    <p class="hint">{% if not rows %}{{ said.empty_hint }}{% endif %}</p>
+    {%- if not rows and editable %}
+    <a class="button primary" href="{{ create.href }}">{{ create.label }}</a>
+    {%- endif %}
+  </td></tr>
+</tbody></table></div>
 <script id="landing" type="application/json">{{ payload|tojson }}</script>
 {{ filters }}
 <script>
@@ -20005,13 +20061,20 @@ try {
 const RECORDS_LOADED = RECORDS !== null;
 if (!RECORDS_LOADED) RECORDS = {rows: {}};
 
-const recordItems = [...document.querySelectorAll('#records li[data-id]')];
+const recordItems = [...document.querySelectorAll('#records tbody tr[data-id]')];
 const recordsEmpty = document.getElementById('records-empty');
 
-// Four states, four sentences, and they must not look like each other: a
-// payload that did not load, a plan with no records, a query that cannot be
+// The sentences the server also draws, handed over rather than retyped: the
+// empty-view pair was already rendered into the row above when the view was
+// empty, and a second spelling here is what would let the two drift.
+const SAID = {{ said|tojson }};
+
+// Four states, four sentences, and they must not look like each other: a view
+// with no records at all, a payload that did not load, a query that cannot be
 // read (whose parse error `sayQueryError` already puts beside the box — the
-// block only points at it), and a search that matched nothing.
+// row only points at it), and a search that matched nothing. The empty view is
+// asked FIRST: with nothing to filter, a sentence about the search box would
+// be true and useless.
 function recordsApply() {
   let shown = 0;
   for (const item of recordItems) {
@@ -20020,46 +20083,119 @@ function recordsApply() {
     item.hidden = !kept;
     shown += kept ? 1 : 0;
   }
-  let headline = '', hint = '';
-  if (!RECORDS_LOADED) {
+  let headline = '', hint = '', spoken = '';
+  if (!recordItems.length) {
+    headline = SAID.empty_headline;
+    hint = SAID.empty_hint;
+  } else if (!RECORDS_LOADED) {
     headline = 'This search cannot run.';
     hint = 'The page arrived without its search data, so the list is shown unfiltered.';
-  } else if (!recordItems.length) {
-    headline = 'This plan has no records yet.';
-    hint = 'Nothing has been written down.';
+    spoken = headline;
   } else if (queryError()) {
     headline = 'That search cannot be read.';
     hint = 'What is wrong with it is beside the search box.';
   } else if (!shown) {
-    headline = 'No record matches this search.';
-    hint = 'Every record is hidden by what is in the box.';
+    headline = SAID.none_headline;
+    hint = SAID.none_hint;
+    spoken = headline;
   }
   recordsEmpty.querySelector('.headline').textContent = headline;
   recordsEmpty.querySelector('.hint').textContent = hint;
   recordsEmpty.hidden = !headline;
+  // The row is not a live region, and must not be: role="status" on the tr or
+  // its cell would overwrite the table's row and cell semantics. So the two
+  // states only this script can reach a reader through go out over the shell's
+  // `announce` into the sr-only #announce region (this page has no #state).
+  // NOT the query-error state — #query-error is role="status" and speaks the
+  // parse error itself, so a second sentence here would double-speak — and not
+  // the empty view, which is server-rendered and never changes under a reader.
+  // '' when rows are showing again, so the region does not hold a stale "no
+  // match" and a later identical state is a change the region announces.
+  announce(spoken);
 }
 addEventListener('openproj:filter', recordsApply);
 recordsApply();
 </script>
 """
 
-_RECORDS_STYLE = """
-/* One line per record: chip, title, time. The chip rules come from the shell
-   (`.chip.kind-…`), so a kind added to the ladder arrives here already drawn. */
-#records { list-style: none; margin: 1rem 0 2rem; padding: 0; max-width: 62rem; }
-#records li { display: flex; align-items: baseline; gap: .6rem;
-              padding: .4rem .25rem; border-bottom: 1px solid var(--line); }
-/* The flex rule above is (1,0,1) and the browser's own `[hidden] { display:
-   none }` is (0,1,0), so without this a filtered-out row stayed on screen with
-   the attribute set — the `.commitbar[hidden]` lesson, on a new page. (1,1,1)
-   beats only the flex rule above; nothing else addresses these rows. */
-#records li[hidden] { display: none; }
-#records li a { min-width: 0; overflow-wrap: anywhere; }
-#records .when { margin-left: auto; color: var(--muted); font-size: 12px;
-                 white-space: nowrap; font-variant-numeric: tabular-nums; }
-#records-empty .headline { font-weight: 600; margin: 1.5rem 0 .25rem; }
-#records-empty .hint { color: var(--muted); margin: 0; }
+_RECORDS_STYLE = _SCROLL_STYLE + """
+/* One row per record: chip, title, who, tags, time. The chips come from the
+   shell (`.chip.kind-…`), so a kind added to the ladder arrives here already
+   drawn; the scroll box and the frozen header row are `_SCROLL_STYLE`, the
+   same mechanism the entity table stands on. Every rule below is resolved
+   against that block by name: each is (1,1,1) against its bare (0,0,2)
+   elements, wins exactly its own properties, and none of them positions a
+   cell — the move that once stole `position: sticky` from the entity table's
+   title column. */
+/* Against the browser's own `[hidden]` at (0,1,0) — which already hides an
+   unmatched row today, since no author rule gives these rows a display.
+   Pinned anyway: a future `#records tr { display: … }` is (1,0,1), quietly
+   beats the UA rule, and puts every filtered-out row back on screen — the
+   `.commitbar[hidden]` failure, which this page shipped once already as
+   `#records li { display: flex }` over the UA rule. */
+#records tbody tr[hidden] { display: none; }
+/* The column that is a sentence, and the row's link. The nothing row's cell
+   has no data-col, so it needs no exception the way `:nth-child(2)` once did. */
+#records td[data-col="title"] { font-weight: 600; }
+/* A time and a login are tokens, not sentences: wrapped, "17 hours ago" reads
+   as two facts and "msimberg" as two names (seen at 700px). `nowrap` makes
+   the shared block's `overflow-wrap: anywhere` moot in these two columns,
+   which is the point — when the window is too narrow the row scrolls
+   sideways inside `.table-scroll`, the shared box's job. Titles and tags
+   keep wrapping. */
+#records td[data-col="who"] { white-space: nowrap; }
+/* The header too: "Last modified" broke over two lines at 1200px while every
+   cell under it held one — a two-line label over one-line values reads as a
+   different column. Beats only the UA's `white-space: normal`; nothing else
+   sets the property on a th. */
+#records th[data-col="edited"] { white-space: nowrap; }
+#records td[data-col="edited"] { color: var(--muted); font-size: 12px;
+                                 white-space: nowrap;
+                                 font-variant-numeric: tabular-nums; }
 """
+
+
+def _record_row(index: Index, record_id: str) -> dict:
+    """One landing row: what the page draws, and what the search box may ask.
+
+    The queryable values mirror `query_fields` (`index.py`) — the same
+    `unread_fields` gate, the same holder walk, and both resolved against the
+    TOTAL map — because the box's `matches()` and the server's `apply_filters`
+    must find the same records: the row used to carry only id, kind, title and
+    tags, so `status:done` typed into the box, or an `/?owner=…` URL pasted
+    from the table, resolved to `[]` and hid every row under "no match" while
+    the server answered them all. `predicates` is real for the same reason.
+
+    Values are RAW where the server lowers its own, because `matches()`'s
+    dropdown loop compares a row against URL params without lowering and the
+    params carry the table's raw facet values; the query language lowers both
+    sides itself. Resolved against `index.records`, unlike the table's `_row`:
+    this page lists records the plan does not hold, and `query_fields` — the
+    contract this map is held to — walks the total map too.
+    """
+    entity = index.records[record_id]
+    unread = unread_fields(entity.kind)
+
+    def read(name):
+        return None if name in unread else getattr(entity, name)
+
+    return {
+        "id": entity.id,
+        "kind": entity.kind,
+        "title": entity.title,
+        "tags": entity.tags,
+        "status": read("status"),
+        "owner": read("owner"),
+        "assignees": read("assignees"),
+        "reviewers": read("reviewers"),
+        "priority": read("priority"),
+        "cycle": read("cycle"),
+        "prs": read("prs"),
+        "project": _project_of(entity, index.records),
+        "product": _product_of(entity, index.records),
+        "predicates": predicates_of(index, record_id),
+        "search": index.search_blob[record_id],
+    }
 
 
 def render_records(
@@ -20068,13 +20204,23 @@ def render_records(
     base_commit: str | None = None,
     edited: dict[str, int] | None = None,
     now: int = 0,
+    only: str | None = None,
 ) -> str:
-    """The landing list: every record, sorted by when a commit last touched it.
+    """The landing list — and, held to one kind each, the two inbox views.
 
-    One row is a kind badge, a title linking to the record's page, and one
-    relative time — the count of what a HackMD card carries. Nothing else: no
-    owner, no status, no tags. The table is the filtering surface; this is the
-    finding one.
+    One renderer because they are one page: `/` is every record, `/issues` and
+    `/notes` are the same rows with `kind` decided by the route — quick access
+    to what would otherwise be a click on a filter. What varies is the
+    population and the words; the columns, the search box and the scroll
+    mechanism do not. There is deliberately no state dropdown, which the old
+    inbox pages carried: the query box already says `status:shelved`, and a
+    second control saying the same thing in different vocabulary is the drift
+    the shared bar exists to end.
+
+    One row is a kind chip, a title linking to the record's page, who is
+    behind it (`Rung.who` — the holder for plan kinds, the reporter or writer
+    for the inbox ones), its tags, and one relative time. Sorted last-edited
+    descending.
 
     `edited` is record id -> epoch seconds (`Store.last_edited` joined through
     `edited_by_id`), or None where there is no history to ask — `openproj
@@ -20083,48 +20229,93 @@ def render_records(
     the one order that exists without a clock. File mtimes are never consulted:
     they lie after a fresh clone.
 
-    `base_commit` is accepted for signature parity with every other page
-    renderer and unused: the page offers no writes, so there is nothing to
-    compare-and-swap against.
+    `base_commit` is what says a server is behind the page: with it the create
+    button is drawn, kind pre-filled per view. Without it — the static
+    export — there is nowhere to post and no button.
     """
     timed = edited is not None
+    editable = base_commit is not None
+    # The Links field, the nav slot and the export filename in one word,
+    # off the ladder rather than a second map: `RUNG["issue"].directory`
+    # is "issues".
+    key = RUNG[only].directory if only else "records"
+    word = only or "record"
+    asks: dict[str, dict] = {}
     rows = []
     for record_id, record in index.records.items():
+        if only and record.kind != only:
+            continue
+        asks[record_id] = _record_row(index, record_id)
         epoch = (edited or {}).get(record_id, 0)
+        rung = RUNG[record.kind]
         rows.append(
-            {
-                "id": record_id,
-                "kind": record.kind,
-                "title": record.title,
-                "tags": record.tags,
+            asks[record_id]
+            | {
                 "epoch": epoch,
                 # Empty when the id has no stamp (a path collision the pages
                 # already report as a blocker): nothing, not 1970.
                 "ago": _ago(epoch, now) if timed and epoch else "",
-                "search": index.search_blob[record_id],
+                # Through the same gate `_record_row` reads by, so a product —
+                # whose `owner` is a field it does not read — answers Who with
+                # nothing rather than with a stray value from its file.
+                "who": None if rung.who in unread_fields(record.kind)
+                       else getattr(record, rung.who),
             }
         )
     if timed:
         rows.sort(key=lambda row: (-row["epoch"], row["id"]))
     else:
         rows.sort(key=lambda row: row["id"])
+    create = {
+        "label": f"Create {word}",
+        # On `/` the kind picker opens on its default; the inbox views
+        # pre-fill theirs.
+        "href": links.new if only is None else f"{links.new}?kind={only}",
+    }
+    empty_headline, empty_hint = {
+        "records": (
+            "This plan has no records yet.",
+            "Everything here starts as a record: work to plan, an issue "
+            "somebody noticed, half a thought in a note.",
+        ),
+        "issues": (
+            "No issues are open.",
+            "An issue is something somebody noticed and nobody has fixed. "
+            "There is nothing here, which is good news.",
+        ),
+        "notes": (
+            "Nothing has been written down yet.",
+            "A note is where an idea goes before anybody knows what it is — "
+            "no owner, no size, no cycle.",
+        ),
+    }[key]
+    said = {
+        "empty_headline": empty_headline,
+        "empty_hint": empty_hint,
+        "none_headline": f"No {word} matches this search.",
+        "none_hint": f"Every {word} is hidden by what is in the box.",
+    }
+    describe = {
+        "records": "Everything written down in this plan, newest edit first — "
+                   "the plan's work, its issues and its notes.",
+        "issues": "Something somebody noticed. At the betting table somebody "
+                  "reads what is open and writes a pitch for what matters.",
+        "notes": "Something somebody is thinking about, before anybody knows "
+                 "what it is. A note has no owner, no size and no cycle — when "
+                 "it turns out to be work, promote it and it becomes a "
+                 "project, a pitch or a task.",
+    }[key]
     body = _ENV.from_string(_RECORDS).render(
         rows=rows,
         timed=timed,
+        editable=editable,
         links=links,
-        # `predicates: []`, literally: `matches()` dereferences it unguarded,
-        # and an omitted array plus a `?predicate=` in the URL is a blank page.
-        # Empty rather than computed, because predicates are plan diagnostics
-        # and the table is where they are drawn and filtered.
-        payload={
-            "rows": {
-                row["id"]: {
-                    "id": row["id"], "kind": row["kind"], "title": row["title"],
-                    "tags": row["tags"], "search": row["search"], "predicates": [],
-                }
-                for row in rows
-            }
-        },
+        heading=dict(_NAV)[key],
+        describe=describe,
+        create=create,
+        said=said,
+        columns=("kind", "title", "who", "tags") + (("edited",) if timed else ()),
+        payload={"rows": asks},
         # No dropdowns: facets are plan vocabulary and this page is the whole
         # record population. The bar still renders #q, #query-error and
         # #unfilter, which is all `_FILTER_JS`'s unguarded listeners need.
@@ -20132,7 +20323,7 @@ def render_records(
         filters=_FILTER_JS,
     )
     return _page(
-        "openproj — records", body, _RECORDS_STYLE, links, "records", index.unreadable
+        f"openproj — {key}", body, _RECORDS_STYLE, links, key, index.unreadable
     )
 
 
@@ -20290,6 +20481,11 @@ def render_static(
         ("cycles.html", render_cycles(index)),
         ("graph.html", render_graph(index)),
         ("timeline.html", render_timeline(index)),
+        # The two inbox views of the landing, because every exported page's nav
+        # names them: a nav link into a file nobody wrote is a dead link on
+        # all the others.
+        ("issues.html", render_records(index, edited=edited, now=now, only="issue")),
+        ("notes.html", render_records(index, edited=edited, now=now, only="note")),
     ):
         (out_dir / name).write_text(html, encoding="utf-8")
         written.append(name)

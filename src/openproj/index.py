@@ -399,16 +399,18 @@ NO_VALUE = "(none)"
 # `ready` matches half the plan through a box that cannot say which field it
 # matched.
 #
-# What those inbox pages matched that this deliberately does NOT yet: the BODY.
+# What those inbox pages matched that this deliberately does NOT: the BODY.
 # Their blobs were `id + title + tags + author + body`, so a word that appears
 # only in an issue's prose found the issue there and finds nothing anywhere now
-# — a known capability regression, not an oversight. It is not restored here
-# because this blob rides every row of /table and the landing, and "Fields, not
-# bodies" above is the standing ruling for exactly that cost: putting `body` in
-# would inline every shaping document into every table page load. Whether the
-# inbox kinds' bodies earn an exception is decided in the follow-up branch that
-# redesigns the landing row payload, with that payload on the table in front of
-# whoever decides.
+# — a known capability regression, not an oversight. It is not restored because
+# this blob rides every row of /table and the landing, and "Fields, not bodies"
+# above is the standing ruling for exactly that cost: putting `body` in would
+# inline every shaping document into every table page load. The decision was
+# deferred to the branch that widened the landing row and it was decided there:
+# the widened row already carries every query field, so the blob is the one
+# remaining place a body could ride, at the same cost that ruled it out of the
+# table — the inbox kinds earn no exception. Anyone reopening this reopens it
+# for the query language (`body:` as a field), not for the blob.
 SEARCH_FIELDS = (
     "id", "title", "tags", "prs", "owner", "assignees", "reviewers",
     "reported_by", "written_by",
@@ -627,6 +629,20 @@ def _matches_predicate(index: Index, entity_id: str, predicate: str) -> bool:
     return False
 
 
+def predicates_of(index: Index, entity_id: str) -> list[str]:
+    """Every computed predicate that holds for this record, in ladder order.
+
+    One spelling for the three payloads that carry a record's flags — this
+    module's `query_fields`, the table's `_row` and the landing's
+    `_record_row` — because the browser's `matches()` and the server's
+    `apply_filters` answer `predicate:` from these lists, and a site that
+    filtered `COMPUTED_PREDICATES` its own way would disagree silently.
+    """
+    return [
+        name for name in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, name)
+    ]
+
+
 def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
     """One record's values per field, lowered — what `query.evaluate` asks about.
 
@@ -642,9 +658,7 @@ def query_fields(index: Index, entity_id: str) -> dict[str, list[str]]:
     fields["id"] = [entity.id.lower()]
     fields["title"] = [entity.title.lower()]
     fields["prs"] = [pr.lower() for pr in entity.prs]
-    fields["predicate"] = [
-        name for name in COMPUTED_PREDICATES if _matches_predicate(index, entity_id, name)
-    ]
+    fields["predicate"] = predicates_of(index, entity_id)
     return fields
 
 
