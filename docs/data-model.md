@@ -27,10 +27,11 @@ That table is not prose about the code. It **is** `KINDS` in `model.py` — a tu
 first — with a few of its columns left out here: whether the scheduler dates the kind, whether it may
 wait on anything, whether it carries an appetite, whether a hover shows its document, which words its
 `status` may take, and which field answers "who is behind this". Everything else is derived from that
-tuple: the directories the loader walks, the id pattern (a rung's prefix and six hex digits), the
-parent rules, the filter menus, the create form, and `unread_fields`, which is how a form declines to
-offer a box the validator would then complain about. A seventh kind is a row, not a search for the
-places `project` was written down.
+tuple: the directories the loader walks, the id pattern (a rung's prefix and six hex digits from
+`secrets.token_hex(3)` — random and not sequential, so two people creating records in different
+tabs, or on different branches, never collide), the parent rules, the filter menus, the create form,
+and `unread_fields`, which is how a form declines to offer a box the validator would then complain
+about. A seventh kind is a row, not a search for the places `project` was written down.
 
 A field the rung does not read is reported beside the record rather than refused — a blocker where it
 changes what the plan means (`depends_on` on a product is a dependency nobody will schedule,
@@ -157,6 +158,9 @@ it divide it, each at their own availability, so adding a second name halves the
 with tasks takes its dates and its capacity from them, which makes its own appetite the **bet**: what
 the room agreed to spend, kept as written. Where the tasks add up to more, the page says so and
 `openproj check` warns; cutting scope or re-betting is a person's decision, so nothing refuses the save.
+A cycle bet over its capacity is warned about the same way — on that cycle's page, with both numbers
+beside each other — and is never a `Problem` and never a CI failure: a build that fails on whoever
+honestly declared they were busy is a rule that gets reverted rather than obeyed.
 
 Only `depends_on` is stored, on the dependent. Any kind may block any kind — a task may wait on a
 whole pitch — and an edge written on a pitch is inherited by everything inside it, so the edge stays
@@ -178,6 +182,12 @@ margin of its own table.
 | `done` | at least one PR |
 | `shelved` | nothing — parked work is not broken work |
 
+**A reviewer is named when the bet is made, not when a PR appears**: assignment is routing, and a bet
+nobody will review is a bet that should not be made. `review_waived` is not an empty list — it is a
+deliberate act, for work with nothing to review (a paper, a spike), and it is a facet and a count, so
+a team that waives everything sees itself doing it. Without it the honest answer for a reading task
+is a fake reviewer, and the field becomes noise.
+
 **Parse permissively, validate strictly.** Every field is optional at the type level and `status` and
 `priority` are plain `str`, so a hand-edited file with a missing field or a retired word still loads
 and reports a problem instead of taking the index down. Only `kind` is strict: an unknown kind has no
@@ -191,7 +201,11 @@ is the live example.
 ## The structures that are not records
 
 **`Cycle`** — `cycles/<n>.md`, frontmatter and a body like a record, but not on the ladder: it has no
-id, no kind, and lives in `Config.plans` rather than in `Index.records`. It stores **two dates, and
+id, no kind, and lives in `Config.plans` rather than in `Index.records`. Not a seventh kind, and that
+is a decision: `Record` would drag in a `status` its two dates already answer, a `depends_on` that
+between cycles is temporal and would put cycles in the scheduler's DAG and on the graph, and an
+`assignees` list with nowhere for the percentage the whole feature exists for — and it would reach
+`_place` with no size and draw itself a half-week bar nobody wrote. It stores **two dates, and
 both are meetings**: `starts_on` is the betting table and the first day of build, `reviews_on` is the
 review meeting, which is also the brainstorm for the next cycle. Beside them sit an `availability`
 fraction per person, a `goal` the betting table settles, and a body for what came up. Everything else

@@ -101,7 +101,6 @@ take `--today`, because half of what they print depends on which day it is.
 | `docs/shape-up.md` | how this maps to what the team kept in HackMD, and where it departs from the book |
 | `AGENTS.md` | the invariants, how to write code here, and how to find the bug that is already here |
 | `deploy/RUNBOOK.md` | the deployment — credentials, the Cloud Run flags, and what is left to do |
-| `docs/superpowers/specs/` | the design records: appetite, cycles, and what was tailored to the team |
 
 ## Status
 
