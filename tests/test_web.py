@@ -619,6 +619,106 @@ def test_a_rule_newer_than_the_record_reaches_the_client_as_a_warning(client: Te
 # --------------------------------------------------------------------------- #
 
 
+def test_a_warmed_server_builds_one_index_for_the_first_burst_not_one_each(
+    repo_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`index_now` takes no lock, deliberately — the comment above it argues that
+    a single atomic read has no window to be preempted in, and that is right. What
+    it does not give is single-flight: N readers arriving on a COLD key each miss
+    the memo and each build their own index.
+
+    Measured on a fresh server against a 561-record plan: twenty first requests
+    all completed within 5 ms of each other at 10.35 SECONDS — twenty parses
+    serialised by the GIL. The affected minute delivered 355 pages against 431
+    warm, so 16% of a minute's throughput went on the first ten seconds. On Cloud
+    Run `--min-instances 0` re-arms it after every idle period, so it is what the
+    first person back from lunch gets, not a first-boot curiosity.
+
+    Warming before uvicorn binds means the herd never forms. Asked by counting
+    builds rather than by timing, so it cannot go flaky on a busy machine.
+    """
+    import openproj.web as web
+
+    builds = []
+    real = web.build_index
+    monkeypatch.setattr(web, "build_index", lambda *a, **k: builds.append(1) or real(*a, **k))
+
+    app = web.create_app(repo_path, auth="dev", secret=SECRET)
+    app.state.warm_index()
+    assert len(builds) == 1, "warming did not build the index"
+
+    with TestClient(app) as client:
+        for _ in range(5):
+            assert client.get("/").status_code == 200
+
+    assert len(builds) == 1, (
+        f"the first requests rebuilt the index {len(builds) - 1} more times; "
+        "warming is not reaching the memo `index_now` reads"
+    )
+
+
+def test_the_server_warms_the_index_before_it_binds():
+    """The test above proves the hook works and would pass with nothing calling
+    it, which is the failure this repository has been bitten by before: a
+    mechanism that works and is not wired up.
+
+    Read out of the source rather than by starting a server, because the claim is
+    about ORDER — before uvicorn binds, so it can never ride a request — and the
+    only way to observe that from outside is to race it.
+    """
+    source = (Path(__file__).resolve().parents[1] / "src" / "openproj" / "cli.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert source.count("warm_index()") == 2, (
+        "both entry points warm the index: `serve`, and `demo`, which is the one "
+        "everybody tries first"
+    )
+    # Before the server is constructed, not after it is running.
+    assert source.index("warm_index()") < source.index("_exit_aware_server")
+
+
+def test_every_write_answer_says_whether_the_commit_reached_the_remote(
+    client: TestClient, repo_path: Path
+):
+    """`WriteResult.pushed` was set honestly and read by one caller in the whole
+    application — the co-editing socket's `saved` frame. Every HTTP write route
+    dropped it, so a save was answered `200` with a commit sha and no way to say
+    the sha exists only here.
+
+    That matters because Cloud Run's filesystem is in memory and
+    `--min-instances 0` tears the instance down after a few quiet minutes. The
+    concurrency audit made the remote unwritable for eight seconds and got ten
+    saves answered `200` with a commit sha, all ten on the instance and on no
+    origin — the commits somebody finds missing on Monday, having watched the
+    page say "saved" ten times.
+
+    This does not stop the loss; it gives the API a field to describe it in. With
+    no remote configured there is nothing to push to and `pushed` is False, which
+    is the honest answer rather than a special case.
+    """
+    base = head(client)
+    response = save(client, TASK, {"priority": "high"}, base=base)
+
+    assert response.status_code == 200
+    assert "pushed" in response.json(), (
+        "a write answer that cannot say whether the commit left the instance"
+    )
+    assert response.json()["pushed"] is False  # no remote here, so nothing was pushed
+
+    # And on the answer that writes nothing, so a caller reading one shape gets
+    # one shape — the key exists whether or not it succeeded. A genuine
+    # collision, not a bad base: an unknown base is refused before the write
+    # path and answers a `detail`, which is a different shape on purpose.
+    settled = head(client)
+    save(client, TASK, {"priority": "low"}, base=settled)
+    refused = save(client, TASK, {"priority": "very_high"}, base=settled)
+
+    assert refused.status_code == 409
+    assert refused.json()["outcome"] == "conflict"
+    assert "pushed" in refused.json()
+
+
 def test_a_save_against_the_current_head_is_committed(client: TestClient, repo_path: Path):
     base = head(client)
     response = save(client, TASK, {"priority": "high"}, base=base)

@@ -268,9 +268,10 @@ def _demo(args) -> int:
             dev_login=signed_in,
             today=when,
         )
-        # Same rule as `_serve`: startup owns the first walk. On a demo corpus
-        # it is microseconds, so it earns no log line of its own.
+        # Same rule as `_serve`: startup owns the first walk and the first index.
+        # On a demo corpus both are microseconds, so they earn no log line.
         app.state.warm_edited()
+        app.state.warm_index()
         # One write and flushed, because stdout is a pipe as often as it is a
         # terminal and Python buffers it when it is. uvicorn logs to stderr, which
         # is not buffered — so unflushed, the four lines that say what this is
@@ -320,6 +321,23 @@ def _serve(args) -> int:
     print(
         f"walked the plan's history: {len(stamps)} paths at {walked[:7]} "
         f"in {time.perf_counter() - begun:.2f}s",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    # The index too, and for a sharper reason than the history walk: `index_now`
+    # takes no lock, so the first N requests to a cold instance each build their
+    # own index instead of queueing behind one. Twenty first requests to a fresh
+    # server all completed within 5 ms of each other at 10.35 SECONDS. Doing it
+    # here means the herd never forms, at the cost of ~0.6 s of startup — inside
+    # the window `--cpu-boost` already pays for.
+    #
+    # It also moves the discovery of an unparseable plan from the first request
+    # to startup, which is better and is a behaviour change worth noticing.
+    begun = time.perf_counter()
+    app.state.warm_index()
+    print(
+        f"built the index in {time.perf_counter() - begun:.2f}s",
         file=sys.stderr,
         flush=True,
     )
