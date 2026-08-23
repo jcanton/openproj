@@ -12235,9 +12235,12 @@ _VIEWS = Markup(r"""
 <script>
 const VIEW_ARTICLE = BODY.closest('article.record');
 const VIEW_PANE = document.getElementById('body-preview');
-// The row the switcher is drawn in, and the two page-chrome controls that come
-// to live in it while the surface is up. See `showView`, which does the moving.
+// The row the switcher is drawn in, and the surface's own first row — the one
+// the back link is in, which is the top of the page once the surface is up.
+// The page-chrome controls come to live in the second of these; see `showView`,
+// which does the moving.
 const VIEW_BAR = VIEW_ARTICLE.querySelector('.editbar');
+const VIEW_TOP = VIEW_ARTICLE.querySelector('.back');
 const CORNER = document.querySelector('nav > .corner');
 const CORNER_HOME = CORNER && CORNER.parentElement;
 // The segment ids: the third is `preview`, which is the id the in-place Preview
@@ -12295,9 +12298,21 @@ function showView(mode) {
   //
   // The cause is the loop directly above, and the loop is right: those eight
   // covered focusable elements really were in the tab order behind an opaque
-  // surface. So the nav stays inert and the two controls MOVE, into the editor's
-  // own header row beside the view switcher — where the note this is modelled on
-  // puts them, and where the editor switch beside them now is.
+  // surface. So the nav stays inert and the two controls MOVE, onto the surface.
+  //
+  // **Into the surface's FIRST row, beside the back link — not the switcher's
+  // row.** They landed on the switcher's row first, and jcanton reported it with
+  // a screenshot of `/new`: the create form has no `.doc.read`, so it is full
+  // page from birth, and `.editbar` is its FIFTH row — under the back link, the
+  // kind picker, the heading and the meta line. Sign-in and the two palette
+  // controls sat four hundred pixels down the right-hand side, on a page whose
+  // actual top-right corner was empty. A control that is in the corner of the
+  // window everywhere else in the app is not in the corner here, and the corner
+  // is the only thing about it a reader has learnt.
+  //
+  // `.back` is the surface's first row on both pages and on the create form, so
+  // this is one rule and not a branch on `creating`. The detail page gets the
+  // same move for the same reason — full page is full page.
   //
   // **The same nodes, not a second copy.** `#theme` and `#who` are ids, in a
   // document the detail template can be rendered seventeen times into; a copy
@@ -12306,11 +12321,12 @@ function showView(mode) {
   // `#who` — would leave empty. The move keeps the accessible name, the state,
   // the listeners and the identity by construction, because it is one object.
   //
-  // Appended, so they come after the switcher in the tab order: the controls
-  // that act on the document you are writing before the two that act on the
-  // application. `.corner`'s own `margin-left: auto` puts them at the far end,
-  // which is where they sit in the nav they came from.
-  if (CORNER) (full ? VIEW_BAR : CORNER_HOME).append(CORNER);
+  // Appended to that row, which puts them after the back link and before
+  // everything the document is written with — the same place in the tab order
+  // they hold in the nav they came from, where they follow the nav's links and
+  // precede the page. `.corner`'s own `margin-left: auto` puts them at the far
+  // end, which is likewise where they sit there.
+  if (CORNER) (full ? (VIEW_TOP || VIEW_BAR) : CORNER_HOME).append(CORNER);
   // One mechanism for whether the preview pane is on the page, and it is the
   // `hidden` attribute the pane was drawn with. The landing does not use the
   // pane at all: the server already rendered this document into `.doc.read`
@@ -15014,11 +15030,26 @@ button.stat.pick:hover { color: var(--accent); }
    same thing to a screen reader and `announce` says it in words. */
 .eswitch.waiting .eknob { transform: translateX(6px); }
 .eswitch.waiting { opacity: .55; }
-/* The two page-chrome controls, while they are lodged in this bar rather than in
-   the nav they came from. `.corner` brings its own `margin-left: auto`, which is
-   what puts them at the far end here exactly as it does there; what it does not
-   bring is the room between them and the switcher when the row wraps. */
-.editbar > .corner { margin-left: auto; padding-left: .6rem; }
+/* The three page-chrome controls, while they are lodged on the surface rather
+   than in the nav they came from. `showView` puts them in the surface's first
+   row — the back link's — so that they stay in the top-right corner of the
+   window, which is the only thing about their position anybody has learnt.
+   `.corner` brings its own `margin-left: auto`, which is what pushes them to the
+   far end here exactly as it does in the nav; what it does not bring is a row to
+   be pushed along, because `.back` is a paragraph with one link in it. Hence the
+   flex, and hence `min-width: 0` — a `<select>` is as wide as its longest option
+   and would otherwise refuse to give the link its room back.
+
+   13px and not the 12px `.back` sets, because these are the same three controls
+   as the nav's and the nav is 13px. A control that changes size when it moves
+   reads as a different control.
+
+   `.editbar` keeps the rule as the fallback `showView` falls back to: it appends
+   to `.back` if there is one, and every record page has one today. */
+article.record.full > .back { display: flex; flex-wrap: wrap; align-items: center;
+                              gap: .35rem 1rem; min-width: 0; }
+article.record.full > .back > .corner,
+.editbar > .corner { margin-left: auto; padding-left: .6rem; font-size: 13px; }
 /* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
    panes scroll on their own.
    `position: fixed` rather than a taller box, because the page behind it — the
