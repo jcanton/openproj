@@ -7,7 +7,7 @@ from openproj.model import Config, Problem, load_config
 def test_problem_carries_the_rule_version_that_introduced_the_rule():
     problem = Problem(
         severity="warning",
-        entity_id="pitch-1b3f9a",
+        record_id="pitch-1b3f9a",
         field="shaped_by",
         message="a pitch must record who shaped it",
         rule_version=2,
@@ -27,7 +27,7 @@ def test_config_defaults_stand_alone():
 
 def test_load_config_merges_the_three_seed_files(seed_root: Path):
     config = load_config(seed_root)
-    # schema_version 2 is what NEW entities are created at; the corpus is still 1.
+    # schema_version 2 is what NEW records are created at; the corpus is still 1.
     assert config.schema_version == 2
     assert config.nominal_availability == 1.0
     assert config.default_task_effort == 0.5

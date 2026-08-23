@@ -23,7 +23,7 @@ def test_the_package_and_the_project_agree_about_the_version():
     assert openproj.__version__ == pyproject["project"]["version"]
 
 
-def test_seed_corpus_has_seventeen_entity_files(seed_root: Path):
+def test_seed_corpus_has_seventeen_record_files(seed_root: Path):
     files = [
         path
         for directory in ("projects", "pitches", "tasks")

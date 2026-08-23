@@ -1,6 +1,6 @@
-"""Entities, configuration and validation.
+"""Records, configuration and validation.
 
-Parse permissively, validate strictly: every entity field is optional at the type
+Parse permissively, validate strictly: every record field is optional at the type
 level so that a hand-edited file with a missing field still loads. Requiredness
 lives in `validate_all`, never in the parse types — see spec section 5.2.
 """
@@ -138,12 +138,12 @@ def days_after(day: date, days: float) -> date:
 class Problem(BaseModel):
     """One validation finding, carrying the rule version that introduced it.
 
-    `rule_version` is what makes grandfathering possible: an entity is only
+    `rule_version` is what makes grandfathering possible: a record is only
     blocked by rules that existed when it was created.
     """
 
     severity: Literal["blocker", "warning"]
-    entity_id: str
+    record_id: str
     field: str | None
     message: str
     rule_version: int
@@ -152,10 +152,10 @@ class Problem(BaseModel):
 class Unreadable(BaseModel):
     """A file in the plan that is not a record, and the reason in one line.
 
-    Deliberately not a `Problem`. A Problem is about an entity: it is keyed by
-    entity id, every page hangs it on that entity's row, and the table's headline
-    count links to a filter over entities. A file that will not parse has no
-    entity — that is precisely what is wrong with it — so keying one to a path
+    Deliberately not a `Problem`. A Problem is about a record: it is keyed by
+    record id, every page hangs it on that record's row, and the table's headline
+    count links to a filter over records. A file that will not parse has no
+    record — that is precisely what is wrong with it — so keying one to a path
     would add to a count whose filter can never show it, which is the mismatch
     that count was fixed for once already.
     """
@@ -248,7 +248,7 @@ def record_paths_in(
 
     A plan directory holds one file per record and does not nest. That is not a
     convention, it is what the rest of the code already assumes: `login_of` reads
-    a person's login off the filename, `_path_for` (`web.py`) reads an entity's id
+    a person's login off the filename, `_path_for` (`web.py`) reads a record's id
     off it, and `person_path` and `_cycle_path` write one flat name. The server
     read the same tree by asking whether the FIRST path segment was `people` —
     which is true of `people/team/ann.md` — so a file one directory down became a
@@ -356,7 +356,7 @@ class Cycle(BaseModel):
 class Person(BaseModel):
     """One person's own settings, stored as `people/<login>.md`.
 
-    Frontmatter and a body, the same shape as an entity, a cycle and an issue —
+    Frontmatter and a body, the same shape as a record, a cycle and an issue —
     and that shape is the whole argument for this record existing at all. The
     first attempt at icons put them in `config/people.yaml`, which would have been
     the first writable path in this repository that is YAML end to end, and
@@ -426,7 +426,7 @@ class Person(BaseModel):
 class Config(BaseModel):
     """Repository-wide planning configuration.
 
-    `schema_version` is the version NEW entities are created at, which is not
+    `schema_version` is the version NEW records are created at, which is not
     necessarily the version the existing corpus was written at.
     """
 
@@ -572,7 +572,7 @@ def read_config(
     invalid" names no file and leaves a reader four to search; validating the
     merge as it grows says which one broke it. A file that will not merge is
     dropped and named, and the settings in the others still load — the same
-    bargain the entity files get, and for the same reason: `holidays:
+    bargain the record files get, and for the same reason: `holidays:
     [not-a-day]` is one word in one file and it took every page down.
     """
     loaded, refused = readable(paths, lambda path: _config_mapping(path, text_of(path)))
@@ -613,8 +613,8 @@ def _config_on_disk(root: Path) -> tuple[list[str], Callable[[str], str]]:
     return paths, lambda path: (root / path).read_text(encoding="utf-8")
 
 
-class Entity(BaseModel):
-    """A project, pitch or task.
+class Record(BaseModel):
+    """One record of any rung: project, pitch, task, product, issue or note.
 
     Every field but `id`, `kind` and `title` is optional. That is deliberate:
     requiredness is a validation rule, not a parse constraint, so a file missing
@@ -690,11 +690,11 @@ class Entity(BaseModel):
 
         A file written before a vocabulary change holds `priority: 1`, which YAML
         gives us as an int. Refusing it here means the whole index fails to load
-        over one stale record; accepting it means one problem next to one entity.
+        over one stale record; accepting it means one problem next to one record.
         """
         return value if value is None else str(value)
 
-    def state(self, entities: dict[str, Entity]) -> str:
+    def state(self, records: dict[str, Record]) -> str:
         """What this record actually is — for a plan record, its written status.
 
         The base of the derivation `Issue.state` and `Note.state` already do:
@@ -706,11 +706,11 @@ class Entity(BaseModel):
         return self.status
 
 
-class Project(Entity):
+class Project(Record):
     pass
 
 
-class Pitch(Entity):
+class Pitch(Record):
     # PERSON-weeks: the work one person would need, which the people on it divide
     # (D-C4). Named for its unit because the unit is what went wrong — D1 read the
     # same number as elapsed weeks and the scheduler was wrong for as long as that
@@ -731,11 +731,11 @@ class Pitch(Entity):
         return [value] if isinstance(value, str) else value
 
 
-class Task(Entity):
+class Task(Record):
     person_weeks: float | None = None
 
 
-class Product(Entity):
+class Product(Record):
     """A codebase, and a container for projects — nothing else.
 
     gt4py is the DSL under icon4py, dace is a backend, pmap is another code, and
@@ -744,7 +744,7 @@ class Product(Entity):
     cross-dependencies", and a dependency this tool cannot express is a
     dependency somebody tracks in their head.
 
-    It inherits every field an entity has and is allowed almost none of them.
+    It inherits every field a record has and is allowed almost none of them.
     `KINDS` below is what enforces that, so the rule lives in one table rather
     than in a validator per field: a product has no owner, no dates, no appetite,
     is never scheduled, and may not depend on anything. Its projects, pitches and
@@ -755,23 +755,23 @@ class Product(Entity):
 ISSUE_STATUS = ("ready", "in_progress", "done", "shelved")
 
 
-class Issue(Entity):
+class Issue(Record):
     """Something somebody noticed, before anybody has decided to do it.
 
-    Stored as `issues/<id>.md`, and — since the sixth rung landed — an Entity,
+    Stored as `issues/<id>.md`, and — since the sixth rung landed — a Record,
     on a rung with `planned=False`. It used to be a separate type, and the
     argument for that was real: a separate type kept an issue off the table, the
     graph, the people page and the timeline *by construction*, rather than by an
     exclusion in each of them that somebody later forgets. What replaced the
-    type is a stronger construction, not a repeal of it. `build_index` filters
-    `Index.entities` down to planned rungs in one comprehension; a
-    model_validator on `Index` refuses any index holding an unplanned kind
-    there; and the KINDS-derived sweep in the tests seeds one record of every
-    unplanned rung and asserts its absence from every plan view. The type
-    boundary lived in sixty read sites' annotations with no compiler behind
-    them and failed OPEN — forget one filter and an issue appears on the
-    timeline. A forgotten consumer of the filtered map now fails CLOSED: it
-    sees fewer records, never more.
+    type is a stronger construction, not a repeal of it. `build_index` builds
+    `Index.plan` by filtering the records down to planned rungs in one
+    comprehension; a model_validator on `Index` refuses any index whose `plan`
+    holds an unplanned kind; and the KINDS-derived sweep in the tests seeds one
+    record of every unplanned rung and asserts its absence from every plan
+    view. The type boundary lived in sixty read sites' annotations with no
+    compiler behind them and failed OPEN — forget one filter and an issue
+    appears on the timeline. A forgotten consumer of the filtered map now
+    fails CLOSED: it sees fewer records, never more.
 
     What the type cost while it lasted was a second copy of every page, and #67
     measured the drift that buys: the note page got the status hill and the
@@ -788,12 +788,12 @@ class Issue(Entity):
     status: str = "ready"
     reported_by: str | None = None
     opened_on: date | None = None
-    # The pitches and tasks this was pitched into. One direction only: an entity
+    # The pitches and tasks this was pitched into. One direction only: a record
     # does not list its issues, because two directions for one edge disagree the
     # first time somebody edits the wrong end.
     pitched_into: list[str] = []
 
-    def state(self, entities: dict[str, Entity]) -> str:
+    def state(self, records: dict[str, Record]) -> str:
         """What this issue actually is, given what it was pitched into.
 
         Derived rather than copied. An issue that has been pitched has been
@@ -806,10 +806,10 @@ class Issue(Entity):
         """
         if self.status == "shelved":
             return "shelved"
-        linked = [entities[i] for i in self.pitched_into if i in entities]
+        linked = [records[i] for i in self.pitched_into if i in records]
         if not linked:
             return self.status
-        if all(entity.status in ("done", "shelved") for entity in linked):
+        if all(record.status in ("done", "shelved") for record in linked):
             return "done"
         return "in_progress"
 
@@ -836,10 +836,10 @@ NOTE_STATUS = ("thinking", "dropped")
 NOTE_STATES = ("thinking", "promoted", "dropped")
 
 
-class Note(Entity):
+class Note(Record):
     """An idea before anybody knows what it is.
 
-    Stored as `notes/<id>.md`. Like the issue above it is an Entity on an
+    Stored as `notes/<id>.md`. Like the issue above it is a Record on an
     unplanned rung, and the docstring there carries the argument for the new
     boundary; what this one keeps is the distinction between the two inboxes,
     which the model change did not touch:
@@ -860,7 +860,7 @@ class Note(Entity):
     `written_by` is who to ask, not who owns it (an owner is a commitment, and
     the whole claim of this record is that nobody has committed to anything);
     `became` is the records it graduated into, one direction only, exactly as
-    `Issue.pitched_into` is. Every work field it inherits from Entity —
+    `Issue.pitched_into` is. Every work field it inherits from Record —
     owner, cycle, priority, the lot — is on `unread_fields("note")`, so the
     editors never offer one and the validator reports one that is written in
     by hand.
@@ -869,14 +869,14 @@ class Note(Entity):
     status: str = "thinking"
     written_by: str | None = None
     written_on: date | None = None
-    # The entities this note graduated into. On the NOTE and not on the entity:
-    # a `from_note` field on `Entity` would put a note id into the type every
-    # view of the plan is built from. What the promoted record says about where
-    # it came from, it says in its own shaping document, in prose. See
-    # `shaping_document`.
+    # The records this note graduated into. On the NOTE and not on the planned
+    # record it became: a `from_note` field on `Record` would put a note id
+    # into the type every view of the plan is built from. What the promoted
+    # record says about where it came from, it says in its own shaping
+    # document, in prose. See `shaping_document`.
     became: list[str] = []
 
-    def state(self, entities: dict[str, Entity]) -> str:
+    def state(self, records: dict[str, Record]) -> str:
         """`dropped` first and unconditionally — "we are not doing this" was
         said by a person, and somebody linking a record afterwards does not
         un-say it (the same rule `Issue.state` gives `shelved`). `promoted`
@@ -889,7 +889,7 @@ class Note(Entity):
         """
         if self.status == "dropped":
             return "dropped"
-        if any(target in entities for target in self.became):
+        if any(target in records for target in self.became):
             return "promoted"
         return self.status
 
@@ -920,7 +920,7 @@ class Rung(NamedTuple):
     name: str
     prefix: str            # what its ids start with
     directory: str         # where its files live
-    model: type[Entity]
+    model: type[Record]
     under: tuple[str, ...]  # the kinds it may be filed under, nearest first
     schedules: bool        # does the scheduler give it dates
     depends: bool          # may it wait on anything
@@ -1010,7 +1010,7 @@ def unread_fields(kind: str) -> tuple[str, ...]:
         fields.append("status")
     return tuple(fields)
 RUNG: dict[str, Rung] = {rung.name: rung for rung in KINDS}
-_MODELS: dict[str, type[Entity]] = {rung.name: rung.model for rung in KINDS}
+_MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KINDS}
 _ID_PREFIXES = {rung.prefix: rung.name for rung in KINDS}
 # Where a reader looks for records. Written out at the top of this file, it was
 # the FIFTH copy of the ladder — with `PREFIX` and `_KIND_MODELS` in `render.py`
@@ -1018,7 +1018,7 @@ _ID_PREFIXES = {rung.prefix: rung.name for rung in KINDS}
 # holding two products loaded thirty-three records and none of them was a
 # product, with nothing reported, because a directory nobody walks is a
 # directory whose files do not exist.
-_ENTITY_DIRS = tuple(rung.directory for rung in KINDS)
+_RECORD_DIRS = tuple(rung.directory for rung in KINDS)
 
 
 def edited_by_id(stamps: dict[str, int]) -> dict[str, int]:
@@ -1034,7 +1034,7 @@ def edited_by_id(stamps: dict[str, int]) -> dict[str, int]:
     column the newest claim wins, because the row exists either way and a wrong
     recency beats a missing row.
     """
-    record_paths, _ = record_paths_in(_ENTITY_DIRS, stamps)
+    record_paths, _ = record_paths_in(_RECORD_DIRS, stamps)
     found: dict[str, int] = {}
     for path in record_paths:
         stem = path.rpartition("/")[2].removesuffix(".md")
@@ -1083,8 +1083,8 @@ def _split(text: str, source: str) -> tuple[str, str]:
     return frontmatter, content.lstrip("\n")
 
 
-def parse_text(text: str, source: str) -> Entity:
-    """Parse one entity file. `source` names the file in error messages only."""
+def parse_text(text: str, source: str) -> Record:
+    """Parse one record file. `source` names the file in error messages only."""
     frontmatter, body = _split(text, source)
     data = _round_trip_yaml().load(frontmatter) or {}
     # Said here rather than met four lines down as `'CommentedSeq' object has no
@@ -1109,22 +1109,22 @@ def parse_text(text: str, source: str) -> Entity:
         # A hand-written `reviewers: null` means "absent", not "not a list".
         and not (value is None and model.model_fields[name].default is not None)
     }
-    entity = model.model_validate({"id": "", "title": "", **fields, "kind": kind, "body": body})
+    record = model.model_validate({"id": "", "title": "", **fields, "kind": kind, "body": body})
     # The record remembers the file it came from, because it is the only moment
     # both halves of its identity are in the same place. `source` was already here
     # and was only ever used to name the file in an error message.
-    entity._source = source
-    entity._unread = tuple(name for name in data if name not in model.model_fields)
-    return entity
+    record._source = source
+    record._unread = tuple(name for name in data if name not in model.model_fields)
+    return record
 
 
-def parse_file(path: Path) -> Entity:
+def parse_file(path: Path) -> Record:
     return parse_text(path.read_text(encoding="utf-8"), str(path))
 
 
 def parse_cycle_text(text: str, source: str) -> Cycle:
-    """Parse one cycle file. Same frontmatter-and-body shape as an entity, and a
-    different type: nearly every field an Entity carries is nonsense on a cycle,
+    """Parse one cycle file. Same frontmatter-and-body shape as a record, and a
+    different type: nearly every field a Record carries is nonsense on a cycle,
     and the one it would reach for — `assignees: list[str]` — cannot hold the
     fraction that is the whole point of the record."""
     frontmatter, body = _split(text, source)
@@ -1197,7 +1197,7 @@ def parse_person_text(text: str, source: str) -> Person:
     `login:` in the frontmatter is ignored on purpose. The path already says who
     this is, and a second copy of that fact is a copy that can disagree with the
     first — which for an id is `_identity_problems`, two blocker rules and a
-    special case in the entity save, all of it paid for a fact the filename
+    special case in the record save, all of it paid for a fact the filename
     already carried.
     """
     frontmatter, _ = _split(text, source)
@@ -1228,8 +1228,8 @@ def _in_the_style_of(old: object, new: object) -> object:
     return new
 
 
-def serialise(entity: Entity, original_text: str | None = None) -> str:
-    """Render an entity back to file text, preserving the original formatting.
+def serialise(record: Record, original_text: str | None = None) -> str:
+    """Render a record back to file text, preserving the original formatting.
 
     Given the file it came from, the frontmatter is edited in place: a key keeps
     its position, its comment and its style, and only keys whose value actually
@@ -1238,21 +1238,21 @@ def serialise(entity: Entity, original_text: str | None = None) -> str:
     to fill in.
     """
     yaml = _round_trip_yaml()
-    dumped = entity.model_dump(exclude={"body"})
+    dumped = record.model_dump(exclude={"body"})
     if original_text is None:
         data = dumped
     else:
-        data = yaml.load(_split(original_text, entity.id)[0]) or {}
+        data = yaml.load(_split(original_text, record.id)[0]) or {}
         for key, value in dumped.items():
             if key in data:
                 if data[key] != value:
                     data[key] = _in_the_style_of(data[key], value)
-            elif value != type(entity).model_fields[key].default:
+            elif value != type(record).model_fields[key].default:
                 data[key] = value
 
     stream = io.StringIO()
     yaml.dump(data, stream)
-    return f"---\n{stream.getvalue()}---\n" + (f"\n{entity.body}" if entity.body else "")
+    return f"---\n{stream.getvalue()}---\n" + (f"\n{record.body}" if record.body else "")
 
 
 def _plan_files(root: Path, *directories: str) -> tuple[list[str], list[Unreadable]]:
@@ -1278,7 +1278,7 @@ def _plan_files(root: Path, *directories: str) -> tuple[list[str], list[Unreadab
     )
 
 
-def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
+def load_repo(root: Path) -> tuple[list[Record], Config, list[Unreadable]]:
     """Everything in a plan repository: the records, the configuration, and the
     files that are neither.
 
@@ -1296,9 +1296,9 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     a whole team can push to will contain a file that is not a record; that is
     not an exceptional condition, it is Tuesday.
     """
-    entity_paths, nested_entities = _plan_files(root, *_ENTITY_DIRS)
-    entities, unreadable = readable(
-        entity_paths,
+    record_paths, nested_records = _plan_files(root, *_RECORD_DIRS)
+    records, unreadable = readable(
+        record_paths,
         # Read here rather than through `parse_file`, so the name in the message
         # is the name in `Unreadable.path`. `parse_file` names its source by the
         # absolute path it was handed, and the banner prints the path beside the
@@ -1327,7 +1327,7 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     )
     config, unreadable_config = read_config(*_config_on_disk(root))
     return (
-        entities,
+        records,
         config.with_plans(plans).with_people(people),
         # Sorted by path, so the banner and `openproj check` list them in the
         # order somebody would open them rather than in the order the separate
@@ -1340,7 +1340,7 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
                 *unreadable_config,
                 # A record filed one directory too deep is a file that is not a
                 # record, and lands in the same list for the same reason.
-                *nested_entities,
+                *nested_records,
                 *nested_plans,
                 *nested_people,
             ],
@@ -1349,30 +1349,30 @@ def load_repo(root: Path) -> tuple[list[Entity], Config, list[Unreadable]]:
     )
 
 
-def ancestors(entity_id: str, by_id: dict[str, Entity]) -> list[str]:
+def ancestors(record_id: str, by_id: dict[str, Record]) -> list[str]:
     """The parent chain, nearest first.
 
     A cycle in the chain is a validation blocker (see `validate_all`), so here it
     only has to stop: return the chain walked so far rather than spinning.
     """
     chain: list[str] = []
-    seen = {entity_id}
-    entity = by_id.get(entity_id)
-    while entity is not None and entity.parent is not None and entity.parent not in seen:
-        chain.append(entity.parent)
-        seen.add(entity.parent)
-        entity = by_id.get(entity.parent)
+    seen = {record_id}
+    record = by_id.get(record_id)
+    while record is not None and record.parent is not None and record.parent not in seen:
+        chain.append(record.parent)
+        seen.add(record.parent)
+        record = by_id.get(record.parent)
     return chain
 
 
-def size_weeks(entity: Entity, config: Config) -> tuple[float, bool]:
+def size_weeks(record: Record, config: Config) -> tuple[float, bool]:
     """Weeks of work, and whether that number had to be invented.
 
     One field on a pitch and a task, and none on a project — a container has no
     size of its own. Read here rather than reached for directly, so the scheduler,
     the index and the pages cannot disagree about what a missing one means.
     """
-    stated = getattr(entity, "person_weeks", None)
+    stated = getattr(record, "person_weeks", None)
     if stated is not None:
         return float(stated), False
     return config.default_task_effort, True
@@ -1635,26 +1635,26 @@ def only_sections(body: str, names: Iterable[str]) -> str:
 # Validation
 #
 # Rules are data, not branches: each carries the schema_version that introduced
-# it, which is what makes grandfathering possible. A rule newer than the entity
+# it, which is what makes grandfathering possible. A rule newer than the record
 # it is judging may only warn. Adding a required field must never invalidate a
 # corpus written before the field existed — otherwise the rule gets reverted
 # rather than adopted.
 # --------------------------------------------------------------------------- #
 
 # One pattern for every rung, issues and notes included — where there were
-# three. The comments that stood here argued the opposite: the entity pattern
-# was what kept `projects|pitches|tasks/<id>.md` the whole writable surface,
-# so admitting an inbox id would have widened that surface "by degrees", and
-# each inbox therefore kept a pattern of its own. Both halves of that argument
-# moved when the ladder did. The writable surface is now DERIVED from `KINDS`
-# (`web.ID_PATTERN`, `web.DIRECTORY`), so it widens exactly when a rung is
-# added and never otherwise — there is no "by degrees" left to lose. And what
-# keeps an issue out of the PLAN is no longer which pattern its id matches but
-# `planned=False` on its rung, enforced once in `build_index`, asserted by the
-# Index model_validator, and swept by the KINDS-derived exclusion test. A
-# pattern was the wrong home for that rule anyway: it could only refuse ids,
-# and the leak it guarded against — an issue on the timeline — never travelled
-# through an id.
+# three. The comments that stood here argued the opposite: the plan-only
+# pattern was what kept `projects|pitches|tasks/<id>.md` the whole writable
+# surface, so admitting an inbox id would have widened that surface "by
+# degrees", and each inbox therefore kept a pattern of its own. Both halves of
+# that argument moved when the ladder did. The writable surface is now DERIVED
+# from `KINDS` (`web.ID_PATTERN`, `web.DIRECTORY`), so it widens exactly when a
+# rung is added and never otherwise — there is no "by degrees" left to lose.
+# And what keeps an issue out of the PLAN is no longer which pattern its id
+# matches but `planned=False` on its rung, enforced once in `build_index`,
+# asserted by the Index model_validator, and swept by the KINDS-derived
+# exclusion test. A pattern was the wrong home for that rule anyway: it could
+# only refuse ids, and the leak it guarded against — an issue on the timeline —
+# never travelled through an id.
 #
 # Public and the ONLY copy: `web.py` imports this rather than deriving the same
 # regex a second time, because it is both what the validator judges an id by and
@@ -1726,7 +1726,7 @@ def _loop_through(edges: dict[str, list[str]], node: str) -> list[str]:
     return [node]
 
 
-def loop_made(candidate: Entity, plan: Iterable[Entity]) -> str | None:
+def loop_made(candidate: Record, plan: Iterable[Record]) -> str | None:
     """The loop this record would put itself on, named, or None.
 
     `validate_all` reports parent and blocked-by cycles as blockers, and reporting
@@ -1741,7 +1741,7 @@ def loop_made(candidate: Entity, plan: Iterable[Entity]) -> str | None:
     asks, so a save cannot be refused for a loop the validator would not report,
     or committed into one it would.
     """
-    by_id = {entity.id: entity for entity in plan if entity.id != candidate.id}
+    by_id = {record.id: record for record in plan if record.id != candidate.id}
     by_id[candidate.id] = candidate
     for field, edges in (
         ("parent", {i: [e.parent] if e.parent else [] for i, e in by_id.items()}),
@@ -1755,30 +1755,30 @@ def loop_made(candidate: Entity, plan: Iterable[Entity]) -> str | None:
 
 
 def _dependency_problems(
-    entity: Entity, by_id: dict[str, Entity], parent_cycles: set[str], dep_cycles: set[str]
+    record: Record, by_id: dict[str, Record], parent_cycles: set[str], dep_cycles: set[str]
 ) -> Iterator[tuple[str, str | None, str, int]]:
-    if entity.id in dep_cycles:
+    if record.id in dep_cycles:
         yield "blocker", "depends_on", "part of a blocked-by cycle", 1
         return
     # A parent cycle makes "ancestor" undefined, so the relational checks are
     # skipped rather than reporting a second, derived problem for one broken chain.
-    own_ancestors = set() if entity.id in parent_cycles else set(ancestors(entity.id, by_id))
-    for target in entity.depends_on:
+    own_ancestors = set() if record.id in parent_cycles else set(ancestors(record.id, by_id))
+    for target in record.depends_on:
         if target not in by_id:
             yield "blocker", "depends_on", f"blocked by {target}, which does not exist", 1
         elif target in own_ancestors:
             yield "blocker", "depends_on", f"cannot depend on {target}: it is an ancestor", 1
-        elif entity.id in ancestors(target, by_id):
+        elif record.id in ancestors(target, by_id):
             yield "blocker", "depends_on", f"cannot depend on {target}: it is a descendant", 1
         elif by_id[target].status == "shelved":
             yield "warning", "depends_on", f"blocked by {target}, which is shelved", 1
 
 
-def under(entity_id: str, children: dict[str, list[str]]) -> list[str]:
+def under(record_id: str, children: dict[str, list[str]]) -> list[str]:
     """Every record filed below this one, however deep, each once and not itself.
 
     What a delete has to cascade over. Read from the index's `children` map — ids
-    rather than entities, which is the shape the write path has — and returned in
+    rather than records, which is the shape the write path has — and returned in
     the order the walk finds them, sorted by the caller where it is shown to
     somebody.
 
@@ -1792,8 +1792,8 @@ def under(entity_id: str, children: dict[str, list[str]]) -> list[str]:
     version of that function without a `seen` set took a laptop down.
     """
     found: list[str] = []
-    seen: set[str] = {entity_id}
-    stack = list(children.get(entity_id, []))
+    seen: set[str] = {record_id}
+    stack = list(children.get(record_id, []))
     while stack:
         child = stack.pop()
         if child in seen:
@@ -1804,7 +1804,7 @@ def under(entity_id: str, children: dict[str, list[str]]) -> list[str]:
     return found
 
 
-def reviewers_under(entity_id: str, children: dict[str, list[Entity]]) -> list[str]:
+def reviewers_under(record_id: str, children: dict[str, list[Record]]) -> list[str]:
     """Everybody reviewing the work filed under this record, each once.
 
     A pitch with tasks under it is reviewed by whoever reviews those tasks. That
@@ -1826,8 +1826,8 @@ def reviewers_under(entity_id: str, children: dict[str, list[Entity]]) -> list[s
     down before a test caught it, which is why the test below exists.
     """
     found: list[str] = []
-    seen: set[str] = {entity_id}
-    stack = list(children.get(entity_id, []))
+    seen: set[str] = {record_id}
+    stack = list(children.get(record_id, []))
     while stack:
         child = stack.pop()
         if child.id in seen:
@@ -1839,7 +1839,7 @@ def reviewers_under(entity_id: str, children: dict[str, list[Entity]]) -> list[s
 
 
 def _status_problems(
-    entity: Entity, reviewers: list[str] | None = None
+    record: Record, reviewers: list[str] | None = None
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """One gate per status, not a cumulative stack.
 
@@ -1856,52 +1856,52 @@ def _status_problems(
     on `Problem.field`, which is how the page finds the control to mark.
     """
     # Whoever reviews this, counting the work under it. `None` means "ask the
-    # record itself", which is what a blank entity with no corpus around it can
+    # record itself", which is what a blank record with no corpus around it can
     # answer — `required_at` derives the gates that way.
-    reviews = entity.reviewers if reviewers is None else reviewers
+    reviews = record.reviewers if reviewers is None else reviewers
     # A rung the scheduler never sees has no work state to gate. On a product,
     # `status` is a label to filter by — shelved hides a codebase and everything
     # under it — and not a claim that anybody is doing it, so demanding an owner
     # at `ready` and a PR at `done` would be demanding the very fields the same
     # ladder says the record does not read.
-    if entity.kind in RUNG and not RUNG[entity.kind].schedules:
+    if record.kind in RUNG and not RUNG[record.kind].schedules:
         return
-    if entity.status in ("shaping", "shelved"):
+    if record.status in ("shaping", "shelved"):
         return
-    if entity.status == "ready":
-        if entity.owner is None:
-            yield "blocker", "owner", "a ready entity needs an owner", 1
+    if record.status == "ready":
+        if record.owner is None:
+            yield "blocker", "owner", "a ready record needs an owner", 1
         # And somebody actually on it. An owner is who answers for the bet, which
         # is not the same question as who is doing the work — the scheduler prices
         # a record by the people on it (`_people_on`), so a bet with an owner and
         # nobody assigned is a bet that has been accepted and staffed with nobody.
         # jcanton, 2026-08-22.
-        if not entity.assignees:
-            yield "blocker", "assignees", "a ready entity needs somebody on it", 2
-        if not (entity.review_waived or reviews):
-            yield "blocker", "reviewers", "a ready entity needs a reviewer, or review waived", 1
-        field = _SIZE_FIELD.get(entity.kind)
-        if field is not None and getattr(entity, field) is None:
+        if not record.assignees:
+            yield "blocker", "assignees", "a ready record needs somebody on it", 2
+        if not (record.review_waived or reviews):
+            yield "blocker", "reviewers", "a ready record needs a reviewer, or review waived", 1
+        field = _SIZE_FIELD.get(record.kind)
+        if field is not None and getattr(record, field) is None:
             # One field and one word now. It was `appetite_weeks` on a pitch and
             # `effort_weeks` on a task — one quantity under two names, which
             # `size_weeks` had to paper over on every read.
-            yield "blocker", field, f"a ready {entity.kind} needs an appetite", 1
-        if entity.kind == "pitch" and not entity.shaped_by:
+            yield "blocker", field, f"a ready {record.kind} needs an appetite", 1
+        if record.kind == "pitch" and not record.shaped_by:
             yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
-    elif entity.status == "in_progress":
-        if entity.assigned_on is None:
+    elif record.status == "in_progress":
+        if record.assigned_on is None:
             yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
-        if not entity.assignees:
+        if not record.assignees:
             yield "blocker", "assignees", "work in progress needs somebody on it", 2
-        if not entity.review_waived and not (set(reviews) - {entity.owner}):
+        if not record.review_waived and not (set(reviews) - {record.owner}):
             yield (
                 "blocker",
                 "reviewers",
                 "work in progress needs a reviewer other than its owner, or review waived",
                 1,
             )
-    elif entity.status == "done" and not entity.prs:
-        yield "blocker", "prs", "a done entity needs at least one PR", 1
+    elif record.status == "done" and not record.prs:
+        yield "blocker", "prs", "a done record needs at least one PR", 1
 
 
 def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
@@ -1914,9 +1914,9 @@ def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
     what the rules say. `_status_problems` is a chain of `elif`: `done` wants a PR
     and forgives the owner that `ready` insists on, deliberately, because migrated
     history often cannot name who owned something in 2025. Read cumulatively, the
-    form refused to create exactly the entity the server would have accepted.
+    form refused to create exactly the record the server would have accepted.
 
-    Derived by running the gate over a blank entity of each kind at each status and
+    Derived by running the gate over a blank record of each kind at each status and
     collecting the fields it names, so it cannot drift from the rule it mirrors —
     it *is* the rule. It lives here rather than in `render.py`, which used to reach
     across and import `_status_problems`: the fields a status demands are this
@@ -1941,9 +1941,9 @@ def required_at(kind: str | None = None) -> dict[str, tuple[str, ...]]:
     return {field: tuple(statuses) for field, statuses in gates.items()}
 
 
-def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str, int]]:
+def _vocabulary_problems(record: Record) -> Iterator[tuple[str, str | None, str, int]]:
     """A word nobody defined, named where it is rather than as a stack trace."""
-    statuses = RUNG[entity.kind].statuses
+    statuses = RUNG[record.kind].statuses
     # An empty vocabulary means the kind reads no status, so there is no word to
     # judge: `unread_fields` already reports a status written on such a file as
     # "not read", and a blocker on top of that would hold a product to a ladder
@@ -1951,7 +1951,7 @@ def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str,
     # what this replaced, and it was wrong in both directions at once: it would
     # turn every stale note into an ungrandfatherable blocker the day notes
     # become records, and it makes `shaping` silently legal on an issue.
-    if statuses and entity.status not in statuses:
+    if statuses and record.status not in statuses:
         # "for an issue", because the vocabulary is the rung's, not the tool's:
         # a word this rung refuses can be a real status on a planned rung —
         # `shaping` on a pitch — and a sentence that denies the word outright
@@ -1961,21 +1961,21 @@ def _vocabulary_problems(entity: Entity) -> Iterator[tuple[str, str | None, str,
         yield (
             "blocker",
             "status",
-            f"{entity.status!r} is not a status for {_an(entity.kind)}: "
+            f"{record.status!r} is not a status for {_an(record.kind)}: "
             f"expected one of {', '.join(statuses)}",
             1,
         )
-    if entity.priority not in PRIORITY_RANK:
+    if record.priority not in PRIORITY_RANK:
         yield (
             "blocker",
             "priority",
-            f"{entity.priority!r} is not a priority: expected one of "
+            f"{record.priority!r} is not a priority: expected one of "
             f"{', '.join(PRIORITY_RANK)}",
             1,
         )
 
 
-def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str | None, str, int]]:
+def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str | None, str, int]]:
     """Names that are nobody, reported as a warning.
 
     A warning rather than a blocker on purpose: the roster is a file somebody
@@ -1986,7 +1986,7 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
     if not config.known_people:
         return
     for field in ("owner", "shaped_by", "assignees", "reviewers", "reported_by", "written_by"):
-        value = getattr(entity, field, None)
+        value = getattr(record, field, None)
         for login in value if isinstance(value, list) else [value] if value else []:
             if login not in config.known_people:
                 yield "warning", field, f"{login} is not in config/people.yaml", 1
@@ -2022,17 +2022,17 @@ def _people_problems(entity: Entity, config: Config) -> Iterator[tuple[str, str 
 PARENT_KINDS = {rung.name: rung.under for rung in KINDS}
 
 
-def is_bettable(entity: Entity) -> bool:
+def is_bettable(record: Record) -> bool:
     """Whether a cycle can be bet on this record.
 
     A pitch, or a task nobody pitched. Those are the two things a betting table
     puts a name against: everything else either contains bets (a project) or is
     part of one (a task under a pitch), and takes its cycle from what holds it.
     """
-    return entity.kind == "pitch" or (entity.kind == "task" and entity.parent is None)
+    return record.kind == "pitch" or (record.kind == "task" and record.parent is None)
 
 
-def bet_of(entity: Entity, by_id: dict[str, Entity]) -> Entity | None:
+def bet_of(record: Record, by_id: dict[str, Record]) -> Record | None:
     """The record whose bet this one is part of — itself, or its pitch.
 
     One place, because the cycle page, the scheduler's overrun and the capacity
@@ -2045,24 +2045,24 @@ def bet_of(entity: Entity, by_id: dict[str, Entity]) -> Entity | None:
     carry would take the work out of every capacity sum on the site over a
     reference somebody has not written yet.
     """
-    if is_bettable(entity):
-        return entity
-    if entity.parent is None:
+    if is_bettable(record):
+        return record
+    if record.parent is None:
         return None
-    parent = by_id.get(entity.parent)
+    parent = by_id.get(record.parent)
     if parent is None:
-        return entity
+        return record
     return parent if is_bettable(parent) else None
 
 
-def cycle_of(entity: Entity, by_id: dict[str, Entity]) -> int | None:
-    """The cycle this entity's work belongs to: its own, or its pitch's."""
-    bet = bet_of(entity, by_id)
+def cycle_of(record: Record, by_id: dict[str, Record]) -> int | None:
+    """The cycle this record's work belongs to: its own, or its pitch's."""
+    bet = bet_of(record, by_id)
     return bet.cycle if bet is not None else None
 
 
 def _containment_problems(
-    entity: Entity, by_id: dict[str, Entity]
+    record: Record, by_id: dict[str, Record]
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """A parent of the wrong kind.
 
@@ -2070,10 +2070,10 @@ def _containment_problems(
     deliberately not a problem, so that a plan half-way through an import still
     loads and still says what it can.
     """
-    parent = by_id.get(entity.parent) if entity.parent else None
+    parent = by_id.get(record.parent) if record.parent else None
     if parent is None:
         return
-    allowed = PARENT_KINDS.get(entity.kind, ())
+    allowed = PARENT_KINDS.get(record.kind, ())
     if parent.kind not in allowed:
         # `_an`, because `by_id` is every record: a task hand-filed under an
         # issue reaches this sentence, and `f"a {kind}"` reads "a issue".
@@ -2081,13 +2081,13 @@ def _containment_problems(
         yield (
             "blocker",
             "parent",
-            f"{_an(entity.kind)} belongs to {belongs}, not to {_an(parent.kind)}",
+            f"{_an(record.kind)} belongs to {belongs}, not to {_an(parent.kind)}",
             4,
         )
 
 
 def _bet_problems(
-    entity: Entity, by_id: dict[str, Entity]
+    record: Record, by_id: dict[str, Record]
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """A cycle stamped on something nobody bets.
 
@@ -2097,13 +2097,13 @@ def _bet_problems(
     the copy is stale the first time somebody re-bets the pitch — which is the
     same argument that keeps `blocks` derived.
     """
-    if entity.cycle is None or is_bettable(entity):
+    if record.cycle is None or is_bettable(record):
         return
     # Nothing to inherit from: an unresolved parent leaves this record's own
     # number the only one there is, and `bet_of` keeps it for that reason.
-    if entity.parent is not None and entity.parent not in by_id:
+    if record.parent is not None and record.parent not in by_id:
         return
-    if entity.kind == "project":
+    if record.kind == "project":
         yield (
             "warning",
             "cycle",
@@ -2111,7 +2111,7 @@ def _bet_problems(
             4,
         )
         return
-    parent = by_id.get(entity.parent) if entity.parent else None
+    parent = by_id.get(record.parent) if record.parent else None
     named = f" from {parent.id}" if parent is not None else ""
     yield (
         "warning",
@@ -2123,7 +2123,7 @@ def _bet_problems(
 
 
 def _rollup_problems(
-    entity: Entity, children: dict[str, list[Entity]], config: Config
+    record: Record, children: dict[str, list[Record]], config: Config
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """Children that add up to more than the bet they sit inside.
 
@@ -2137,22 +2137,22 @@ def _rollup_problems(
     tasks are not written yet is under its appetite by definition, which is not
     worth saying.
     """
-    kids = children.get(entity.id, [])
-    stated, defaulted = size_weeks(entity, config)
+    kids = children.get(record.id, [])
+    stated, defaulted = size_weeks(record, config)
     if not kids or defaulted:
         return
     total = sum(size_weeks(kid, config)[0] for kid in kids)
     if total > stated:
         yield (
             "warning",
-            _SIZE_FIELD.get(entity.kind),
+            _SIZE_FIELD.get(record.kind),
             f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
             f"{stated:g} it was bet at — cut scope, or re-bet it",
             4,
         )
 
 
-def _carries(entity: Entity, field: str) -> bool:
+def _carries(record: Record, field: str) -> bool:
     """Whether this record was actually given `field` — something to report.
 
     Two places to look, because a rung that does not read a field usually does
@@ -2165,14 +2165,14 @@ def _carries(entity: Entity, field: str) -> bool:
     defaults to a real value, so `is not None` would report every product ever
     written.
     """
-    if field in entity._unread:
+    if field in record._unread:
         return True
-    if field not in type(entity).model_fields:
+    if field not in type(record).model_fields:
         return False
-    value = getattr(entity, field)
+    value = getattr(record, field)
     if value in (None, [], "", False):
         return False
-    return value != type(entity).model_fields[field].get_default(
+    return value != type(record).model_fields[field].get_default(
         call_default_factory=True
     )
 
@@ -2188,20 +2188,20 @@ _PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
 
 
 def _problems_for(
-    entity: Entity,
+    record: Record,
     config: Config,
-    by_id: dict[str, Entity],
-    children: dict[str, list[Entity]],
+    by_id: dict[str, Record],
+    children: dict[str, list[Record]],
     parent_cycles: set[str],
     dep_cycles: set[str],
 ) -> Iterator[tuple[str, str | None, str, int]]:
     """Yield (severity_before_grandfathering, field, message, rule_version)."""
-    if not entity.title.strip():
+    if not record.title.strip():
         yield "blocker", "title", "title must not be empty", 1
-    if not ID_PATTERN.match(entity.id):
+    if not ID_PATTERN.match(record.id):
         yield "blocker", "id", f"id must match {ID_PATTERN.pattern}", 1
-    elif not entity.id.startswith(_PREFIX_FOR_KIND[entity.kind] + "-"):
-        yield "blocker", "id", f"id prefix must match kind {entity.kind}", 1
+    elif not record.id.startswith(_PREFIX_FOR_KIND[record.kind] + "-"):
+        yield "blocker", "id", f"id prefix must match kind {record.kind}", 1
 
     # What this rung is not allowed to carry, off the ladder rather than out of a
     # validator per field. A product is a container: it groups the codebases a
@@ -2216,10 +2216,10 @@ def _problems_for(
     # product that will ever exist is written after this. Stamped 5, a
     # hand-written product with `depends_on` reports a warning where it means a
     # blocker, for ever.
-    if entity.kind in RUNG:
-        name = entity.kind
+    if record.kind in RUNG:
+        name = record.kind
         for field in unread_fields(name):
-            if not _carries(entity, field):
+            if not _carries(record, field):
                 continue
             if field == "depends_on":
                 # The clause about projects, pitches and tasks belongs to the
@@ -2244,46 +2244,46 @@ def _problems_for(
                 )
                 yield "warning", field, f"{what}, so its {field} is not read", 1
 
-    if entity.id in parent_cycles:
+    if record.id in parent_cycles:
         yield "blocker", "parent", "part of a parent cycle", 1
-    elif entity.kind == "task" and entity.parent is None:
+    elif record.kind == "task" and record.parent is None:
         yield "warning", "parent", "a task should have a parent", 1
 
     # Not while the chain is a loop: "part of a parent cycle" already says this
     # record's containment is broken, and adding that its parent is the wrong
     # kind is a second sentence about the same thing — in a set of records where
     # every one of them is going to say it.
-    if entity.id not in parent_cycles:
-        yield from _containment_problems(entity, by_id)
-        yield from _bet_problems(entity, by_id)
-        yield from _rollup_problems(entity, children, config)
+    if record.id not in parent_cycles:
+        yield from _containment_problems(record, by_id)
+        yield from _bet_problems(record, by_id)
+        yield from _rollup_problems(record, children, config)
 
-    if entity.cycle is not None and entity.cycle not in config.cycles:
+    if record.cycle is not None and record.cycle not in config.cycles:
         # `_overrun` looks the window up with `.get`, so a number nobody has dated
-        # does not raise — it silently returns None and the entity stops being
+        # does not raise — it silently returns None and the record stops being
         # checked for overrun at all. A typo therefore reads as "on time" forever.
         yield (
             "warning",
             "cycle",
-            f"cycle {entity.cycle} has no dates in config/cycles.yaml, "
+            f"cycle {record.cycle} has no dates in config/cycles.yaml, "
             "so this is not checked for overrun",
             3,
         )
 
-    yield from _dependency_problems(entity, by_id, parent_cycles, dep_cycles)
+    yield from _dependency_problems(record, by_id, parent_cycles, dep_cycles)
     for field, phrase in _PROMOTION_LINKS.items():
-        for target in getattr(entity, field, []):
+        for target in getattr(record, field, []):
             if target not in by_id:
                 yield "warning", field, f"{phrase} {target}, which is missing", 1
-    yield from _vocabulary_problems(entity)
+    yield from _vocabulary_problems(record)
     # The reviewers of the work under this record count as its own. A pitch whose
     # tasks each name a reviewer is reviewed; asking it to name one as well is
     # asking for a second copy of a fact that is already a level below, and the
     # copy goes stale the first time a task changes hands.
     yield from _status_problems(
-        entity, list(dict.fromkeys([*entity.reviewers, *reviewers_under(entity.id, children)]))
+        record, list(dict.fromkeys([*record.reviewers, *reviewers_under(record.id, children)]))
     )
-    yield from _people_problems(entity, config)
+    yield from _people_problems(record, config)
 
 
 def shaping_document(template: str, provenance: str, body: str) -> str:
@@ -2311,7 +2311,7 @@ def shaping_document(template: str, provenance: str, body: str) -> str:
     `provenance` is one line of visible prose above everything, and it is the
     answer to "where did this pitch come from" asked of the record itself. Prose
     rather than a frontmatter field for two reasons: a field would put a note id
-    inside `Entity`, which drags notes into every view of the plan that is built
+    inside `Record`, which drags notes into every view of the plan that is built
     from it; and a second stored end of an edge whose first end is already stored
     on the note is the two-copies-of-one-fact problem `depends_on` exists to
     avoid. A sentence in a shaping document cannot fall out of step with anything,
@@ -2365,19 +2365,19 @@ def promoted_from(source_id: str, what: str, who: str | None, when: date | None)
         # document came from, which is the only thing it is for.
         said = "in this plan"
     return f"> Promoted from {source_id} — {what} {said}."
-def named_for(entity: Entity) -> bool:
+def named_for(record: Record) -> bool:
     """Whether the file this record was read from is named for the id it declares.
 
     Filenames are `<id>--<slug>.md` and the slug drifts as titles are edited, so
     only the half before `--` is the fact; the rest is decoration and renaming it
     is legal.
     """
-    stem = Path(entity._source).name.removesuffix(".md")
-    return stem == entity.id or stem.startswith(f"{entity.id}--")
+    stem = Path(record._source).name.removesuffix(".md")
+    return stem == record.id or stem.startswith(f"{record.id}--")
 
 
-def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
-    """An entity says who it is twice, and here the two are made to agree.
+def _identity_problems(records: list[Record]) -> Iterator[Problem]:
+    """A record says who it is twice, and here the two are made to agree.
 
     The id is in the frontmatter and it is in the filename, and nothing compared
     them — so the two halves of the application resolved a collision in opposite
@@ -2399,30 +2399,30 @@ def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
     and it has no filename to disagree with.
     """
     claimants: dict[str, list[str]] = {}
-    for entity in entities:
-        if entity._source:
-            claimants.setdefault(entity.id, []).append(entity._source)
+    for record in records:
+        if record._source:
+            claimants.setdefault(record.id, []).append(record._source)
 
-    for entity in entities:
-        if not entity._source:
+    for record in records:
+        if not record._source:
             continue
-        if not named_for(entity):
+        if not named_for(record):
             yield Problem(
                 severity="blocker",
-                entity_id=entity.id,
+                record_id=record.id,
                 field="id",
                 message=(
-                    f"this record says it is {entity.id} and its file is named "
-                    f"{Path(entity._source).name} — until they agree, a save can land "
+                    f"this record says it is {record.id} and its file is named "
+                    f"{Path(record._source).name} — until they agree, a save can land "
                     "on the wrong file"
                 ),
                 rule_version=1,
             )
-        others = [path for path in claimants[entity.id] if path != entity._source]
+        others = [path for path in claimants[record.id] if path != record._source]
         if others:
             yield Problem(
                 severity="blocker",
-                entity_id=entity.id,
+                record_id=record.id,
                 field="id",
                 message=(
                     f"{', '.join(sorted(others))} claims this id too, so which record "
@@ -2432,7 +2432,7 @@ def _identity_problems(entities: list[Entity]) -> Iterator[Problem]:
             )
 
 
-def _parked(entity: Entity) -> bool:
+def _parked(record: Record) -> bool:
     """Exempt from every rule: parked work is not broken work.
 
     Structural rather than the word `shelved`: every status ladder ends in its
@@ -2443,37 +2443,37 @@ def _parked(entity: Entity) -> bool:
     `status: shelved` used to buy itself a silent skip with a word it does not
     even read, and now its written-but-unread status is reported instead.
     """
-    statuses = RUNG[entity.kind].statuses
-    return bool(statuses) and entity.status == statuses[-1]
+    statuses = RUNG[record.kind].statuses
+    return bool(statuses) and record.status == statuses[-1]
 
 
-def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
-    """Check every entity against every rule it is old enough to be held to.
+def validate_all(records: list[Record], config: Config) -> list[Problem]:
+    """Check every record against every rule it is old enough to be held to.
 
-    Parked entities — those at their own ladder's terminal status, see
+    Parked records — those at their own ladder's terminal status, see
     `_parked` — are exempt from all of them: parked work is not broken work,
     and a validator that nags about it teaches people to ignore the validator.
     """
-    by_id = {entity.id: entity for entity in entities}
-    parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in entities})
-    dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in entities})
-    children: dict[str, list[Entity]] = {}
-    for entity in entities:
-        if entity.parent in by_id and not _parked(entity):
-            children.setdefault(entity.parent, []).append(entity)
+    by_id = {record.id: record for record in records}
+    parent_cycles = _cyclic_members({e.id: [e.parent] if e.parent else [] for e in records})
+    dep_cycles = _cyclic_members({e.id: list(e.depends_on) for e in records})
+    children: dict[str, list[Record]] = {}
+    for record in records:
+        if record.parent in by_id and not _parked(record):
+            children.setdefault(record.parent, []).append(record)
 
     problems: list[Problem] = []
-    for entity in entities:
-        if _parked(entity):
+    for record in records:
+        if _parked(record):
             continue
         for severity, field, message, rule_version in _problems_for(
-            entity, config, by_id, children, parent_cycles, dep_cycles
+            record, config, by_id, children, parent_cycles, dep_cycles
         ):
-            grandfathered = rule_version > entity.created_schema_version
+            grandfathered = rule_version > record.created_schema_version
             problems.append(
                 Problem(
                     severity="warning" if grandfathered else severity,
-                    entity_id=entity.id,
+                    record_id=record.id,
                     field=field,
                     message=message,
                     rule_version=rule_version,
@@ -2483,7 +2483,7 @@ def validate_all(entities: list[Entity], config: Config) -> list[Problem]:
     # work is not broken work — but a parked record can still be the one whose id
     # a second file has taken, and the save that lands on the wrong file does not
     # care that one of the two is parked.
-    problems.extend(_identity_problems(entities))
+    problems.extend(_identity_problems(records))
     return problems
 
 

@@ -75,7 +75,7 @@ The GitHub usernames are all real `C2SM/icon4py` contributors.
 `Config` by `openproj.model.load_config`. The holidays are genuine Zurich cantonal holidays
 plus the ETH year-end closure; the cycle calendar is synthetic.
 
-Every entity is `created_schema_version: 2`, so the rules introduced at version 4 —
+Every record is `created_schema_version: 2`, so the rules introduced at version 4 —
 containment, where a `cycle` may live, and tasks adding up to more than the bet they sit
 inside — report as warnings here rather than as blockers.
 

@@ -24,7 +24,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from openproj import model
-from openproj.model import Config, Cycle, Entity, Pitch, Task
+from openproj.model import Config, Cycle, Pitch, Record, Task
 from openproj.schedule import Explanation, Span, schedule, working_days_after
 
 MONDAY = date(2026, 8, 17)
@@ -54,19 +54,19 @@ def pitch(suffix: str, *, owner: str | None = "ann", size: float | None = None, 
 
 
 def run(
-    entities: list[Entity],
+    records: list[Record],
     today: date = MONDAY,
     config: Config = CONFIG,
     availability: dict[str, float] | None = None,
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
     """`availability` is a convenience: it becomes cycle 36's roster, which is the
-    cycle the helpers below put entities in by default."""
+    cycle the helpers below put records in by default."""
     if availability is not None:
         config = config.with_plans(
             [Cycle(cycle=36, starts_on=date(2026, 6, 22), build_weeks=6.0,
                    availability=availability)]
         )
-    return schedule(entities, config, today)
+    return schedule(records, config, today)
 
 
 # --------------------------------------------------------------------------- #
@@ -134,7 +134,7 @@ def test_a_size_that_only_just_fits_is_still_walked_exactly():
 # --------------------------------------------------------------------------- #
 
 
-def test_step1_shelved_entities_are_outside_the_graph_and_get_no_span():
+def test_step1_shelved_records_are_outside_the_graph_and_get_no_span():
     shelved = task("aaa001", status="shelved")
     spans, _ = run([shelved, task("aaa002", owner="bo", depends_on=["task-aaa001"])])
     assert "task-aaa001" not in spans
@@ -142,14 +142,14 @@ def test_step1_shelved_entities_are_outside_the_graph_and_get_no_span():
 
 
 def test_step2_a_dependency_cycle_leaves_its_members_and_descendants_unscheduled():
-    """schedule() never raises: a cycle costs you those entities, not the index."""
-    entities = [
+    """schedule() never raises: a cycle costs you those records, not the index."""
+    records = [
         task("aaa001", depends_on=["task-aaa002"]),
         task("aaa002", owner="bo", depends_on=["task-aaa001"]),
         task("aaa003", owner="cy", depends_on=["task-aaa001"]),
         task("aaa004", owner="di"),
     ]
-    spans, _ = run(entities)
+    spans, _ = run(records)
     caught = ("task-aaa001", "task-aaa002", "task-aaa003")
     assert [spans[i].unscheduled for i in caught] == [True, True, True]
     assert spans["task-aaa001"].start == spans["task-aaa001"].end == MONDAY
@@ -165,8 +165,8 @@ def test_step3_done_work_is_a_historical_point_marker_or_no_span_at_all():
 
 
 def test_step3_a_done_parent_stays_historical_even_with_a_live_child():
-    entities = [pitch("bbb001", status="done"), task("aaa001", parent="pitch-bbb001")]
-    spans, _ = run(entities)
+    records = [pitch("bbb001", status="done"), task("aaa001", parent="pitch-bbb001")]
+    spans, _ = run(records)
     assert "pitch-bbb001" not in spans
 
 
@@ -182,8 +182,8 @@ def test_step4_a_missing_size_falls_back_to_the_default_and_is_marked_estimated(
 
 def test_step5_ordering_is_by_priority_then_id():
     """Order is only observable through capacity: all three want the same worker."""
-    entities = [task("aaa001"), task("aaa002"), task("aaa003", priority="high")]
-    spans, _ = run(entities)
+    records = [task("aaa001"), task("aaa002"), task("aaa003", priority="high")]
+    spans, _ = run(records)
     assert spans["task-aaa003"].start == MONDAY
     assert spans["task-aaa001"].start == date(2026, 8, 24)
     assert spans["task-aaa002"].start == date(2026, 8, 31)
@@ -194,9 +194,9 @@ def test_step5_a_cycle_closed_by_a_containment_edge_does_not_raise():
     graph adds child -> parent edges and closes the loop. A naive
     lexicographical_topological_sort raises NetworkXUnfeasible here and takes the
     whole page down over one bad record."""
-    entities = [pitch("bbb001", owner="bo"), task("aaa001", parent="pitch-bbb001",
-                                                  depends_on=["pitch-bbb001"])]
-    spans, _ = run(entities)
+    records = [pitch("bbb001", owner="bo"), task("aaa001", parent="pitch-bbb001",
+                                                 depends_on=["pitch-bbb001"])]
+    spans, _ = run(records)
     assert {"pitch-bbb001", "task-aaa001"} <= set(spans)
 
 
@@ -208,43 +208,43 @@ def test_step6_a_past_assignment_date_does_not_pull_work_into_the_past():
 
 
 def test_step6_a_leaf_waits_for_today_its_assignment_date_and_its_blockers():
-    entities = [
+    records = [
         task("aaa001"),
         task("aaa002", owner="bo", depends_on=["task-aaa001"]),
         task("aaa003", owner="cy", assigned_on=date(2026, 9, 1)),
     ]
-    spans, _ = run(entities)
+    spans, _ = run(records)
     assert spans["task-aaa002"].start == date(2026, 8, 24)  # the working day after Friday's end
     assert spans["task-aaa003"].start == date(2026, 9, 1)
 
 
 def test_step7_one_item_per_worker_at_a_time_but_unowned_work_is_unlimited():
-    entities = [
+    records = [
         task("aaa001", owner=None),
         task("aaa002", owner=None),
         task("aaa003", reviewers=["bo"]),
         task("aaa004", owner="bo"),
     ]
-    spans, _ = run(entities)
+    spans, _ = run(records)
     assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21), unowned=True)
     assert spans["task-aaa002"].start == MONDAY
     assert spans["task-aaa004"].start == MONDAY  # reviewing is not doing
 
 
 def test_step7_assignees_consume_capacity_and_are_not_unowned():
-    entities = [task("aaa001", owner=None, assignees=["cy"]), task("aaa002", owner="cy")]
-    spans, _ = run(entities)
+    records = [task("aaa001", owner=None, assignees=["cy"]), task("aaa002", owner="cy")]
+    spans, _ = run(records)
     assert spans["task-aaa001"] == Span(start=MONDAY, end=date(2026, 8, 21))
     assert spans["task-aaa002"].start == date(2026, 8, 24)
 
 
 def test_step8_a_parent_spans_from_its_first_child_to_its_last():
-    entities = [
+    records = [
         pitch("bbb001", owner="cy", size=4.0),
         task("aaa001", parent="pitch-bbb001"),
         task("aaa002", owner="bo", parent="pitch-bbb001", depends_on=["task-aaa001"]),
     ]
-    spans, _ = run(entities)
+    spans, _ = run(records)
     assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
 
 
@@ -284,12 +284,12 @@ def test_regression_children_are_ordered_before_their_parent():
     """The parent outranks both children on (priority, id), so only the
     containment edges can keep it from being visited first — and a parent
     visited first has no child spans to build its own span from."""
-    entities = [
+    records = [
         pitch("bbb001", owner=None, priority="high"),
         task("aaa001", priority="low", parent="pitch-bbb001"),
         task("aaa002", owner="bo", priority="low", parent="pitch-bbb001", size=2.0),
     ]
-    spans, _ = run(entities)
+    spans, _ = run(records)
     assert spans["pitch-bbb001"] == Span(start=MONDAY, end=date(2026, 8, 28))
 
 
@@ -364,28 +364,28 @@ def test_regression_a_task_and_a_pitch_of_the_same_size_take_the_same_time():
 
 def test_regression_done_work_neither_occupies_the_future_nor_consumes_capacity():
     finished = task("aaa001", status="done", assigned_on=date(2026, 7, 1), size=4.0)
-    entities = [finished, task("aaa002")]
-    spans, _ = run(entities)
+    records = [finished, task("aaa002")]
+    spans, _ = run(records)
     assert spans["task-aaa001"].end == date(2026, 7, 1)
     assert spans["task-aaa002"].start == MONDAY
 
 
 def test_regression_a_parent_does_not_double_book_the_owner_of_its_only_child():
-    entities = [pitch("bbb001", size=2.0), task("aaa001", parent="pitch-bbb001", size=2.0)]
-    spans, _ = run(entities)
+    records = [pitch("bbb001", size=2.0), task("aaa001", parent="pitch-bbb001", size=2.0)]
+    spans, _ = run(records)
     child = Span(start=MONDAY, end=date(2026, 8, 28))
     assert spans["pitch-bbb001"] == spans["task-aaa001"] == child
 
 
 def test_regression_depending_on_an_ancestor_is_rejected_and_degrades_gracefully():
     child = task("aaa001", parent="pitch-bbb001", depends_on=["pitch-bbb001"])
-    entities = [pitch("bbb001", owner="bo"), child]
-    problems = model.validate_all(entities, CONFIG)
+    records = [pitch("bbb001", owner="bo"), child]
+    problems = model.validate_all(records, CONFIG)
     assert any(
-        p.entity_id == "task-aaa001" and p.field == "depends_on" and p.severity == "blocker"
+        p.record_id == "task-aaa001" and p.field == "depends_on" and p.severity == "blocker"
         for p in problems
     )
-    spans, _ = run(entities)  # the containment cycle must not take the whole schedule down
+    spans, _ = run(records)  # the containment cycle must not take the whole schedule down
     assert {"task-aaa001", "pitch-bbb001"} <= spans.keys()
 
 
@@ -395,10 +395,10 @@ def test_regression_depending_on_an_ancestor_is_rejected_and_degrades_gracefully
 
 
 def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
-    entities = [task("aaa001"), task("aaa002", owner="bo", depends_on=["task-aaa001"])]
-    _, explanations = run(entities)
+    records = [task("aaa001"), task("aaa002", owner="bo", depends_on=["task-aaa001"])]
+    _, explanations = run(records)
     assert explanations["task-aaa002"] == Explanation(
-        entity_id="task-aaa002",
+        record_id="task-aaa002",
         text="Cannot start before 2026-08-24: task-aaa001 finishes on 2026-08-21.",
         blocker_id="task-aaa001",
     )
@@ -407,7 +407,7 @@ def test_a_blocker_bound_start_is_explained_by_naming_the_blocker():
 def test_a_worker_bound_start_is_explained_by_naming_the_worker():
     _, explanations = run([task("aaa001"), task("aaa002")])
     assert explanations["task-aaa002"] == Explanation(
-        entity_id="task-aaa002",
+        record_id="task-aaa002",
         text="Cannot start before 2026-08-24: ann is busy until 2026-08-21.",
         worker_busy_until=date(2026, 8, 21),
     )
@@ -427,11 +427,11 @@ PARENT_ID = "pitch-000001"
 
 
 @st.composite
-def dags(draw: st.DrawFn) -> list[Entity]:
+def dags(draw: st.DrawFn) -> list[Record]:
     """A random valid DAG: tasks numbered in topological order, each depending
     only on lower-numbered ones, some of them hanging off a common parent."""
     count = draw(st.integers(min_value=1, max_value=6))
-    tasks: list[Entity] = []
+    tasks: list[Record] = []
     for i in range(count):
         deps = draw(st.lists(st.integers(0, i - 1), max_size=2, unique=True)) if i else []
         tasks.append(
@@ -453,27 +453,27 @@ def dags(draw: st.DrawFn) -> list[Entity]:
     return tasks
 
 
-def workers_of(entity: Entity) -> list[str]:
-    return ([entity.owner] if entity.owner else []) + entity.assignees
+def workers_of(record: Record) -> list[str]:
+    return ([record.owner] if record.owner else []) + record.assignees
 
 
 @settings(deadline=None)
 @given(dags())
-def test_property_no_dependent_ever_starts_before_its_blocker_has_finished(entities: list[Entity]):
-    spans, _ = run(entities)
-    for entity in entities:
-        for blocker in entity.depends_on:
-            assert spans[entity.id].start > spans[blocker].end
+def test_property_no_dependent_ever_starts_before_its_blocker_has_finished(records: list[Record]):
+    spans, _ = run(records)
+    for record in records:
+        for blocker in record.depends_on:
+            assert spans[record.id].start > spans[blocker].end
 
 
 @settings(deadline=None)
 @given(dags())
-def test_property_a_worker_never_holds_two_overlapping_spans(entities: list[Entity]):
-    spans, _ = run(entities)
+def test_property_a_worker_never_holds_two_overlapping_spans(records: list[Record]):
+    spans, _ = run(records)
     for worker in WORKERS:
         booked = sorted(
             (spans[e.id].start, spans[e.id].end)
-            for e in entities
+            for e in records
             if e.kind == "task" and worker in workers_of(e)
         )
         assert all(a[1] < b[0] for a, b in zip(booked, booked[1:], strict=False))
@@ -482,11 +482,11 @@ def test_property_a_worker_never_holds_two_overlapping_spans(entities: list[Enti
 @settings(deadline=None)
 @given(dags())
 def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_moves_that_items_span(
-    entities: list[Entity],
+    records: list[Record],
 ):
-    before, _ = run(entities)
+    before, _ = run(records)
     stranger = Task(id="task-ffffff", kind="task", title="stranger", owner="zed", person_weeks=2.0)
-    after, _ = run([*entities, stranger])
+    after, _ = run([*records, stranger])
     assert {i: after[i] for i in before} == before
 
 
@@ -497,7 +497,7 @@ def test_property_adding_an_item_that_shares_no_worker_and_no_ancestor_never_mov
 GOLDEN_TODAY = date(2026, 8, 17)
 
 # Re-derived 2026-08-16 for D-C4: a size is person-weeks and the people on it
-# divide it. Every entity with more than one worker moved; the single-worker ones
+# divide it. Every record with more than one worker moved; the single-worker ones
 # did not, which is the check that the change did what it says. Two were verified
 # by hand against the definition rather than copied out of the run:
 #   task-53a9f0  size 2.0, one worker  -> 2 elapsed weeks, 08-17 .. 08-28
@@ -522,7 +522,7 @@ GOLDEN_SPANS = {
     "task-5f062b": (date(2026, 8, 18), date(2026, 8, 24)),
 }
 
-# Every done entity in the corpus has a null assigned_on, and the shelved one is
+# Every done record in the corpus has a null assigned_on, and the shelved one is
 # out of the graph, so none of them appear on the timeline at all.
 GOLDEN_ABSENT = {
     "pitch-2a7f3e",
@@ -551,14 +551,14 @@ GOLDEN_OVERRUNS = {
 
 
 def test_the_seed_corpus_schedules_to_the_golden_timeline(seed_root: Path):
-    entities, config, _ = model.load_repo(seed_root)
-    spans, _ = schedule(entities, config, GOLDEN_TODAY)
+    records, config, _ = model.load_repo(seed_root)
+    spans, _ = schedule(records, config, GOLDEN_TODAY)
     assert {i: (s.start, s.end) for i, s in spans.items()} == GOLDEN_SPANS
 
 
 def test_the_seed_corpus_golden_overruns_and_flags(seed_root: Path):
-    entities, config, _ = model.load_repo(seed_root)
-    spans, _ = schedule(entities, config, GOLDEN_TODAY)
+    records, config, _ = model.load_repo(seed_root)
+    spans, _ = schedule(records, config, GOLDEN_TODAY)
     assert not GOLDEN_ABSENT & spans.keys()
     overruns = {i: s.overruns_cycle_weeks for i, s in spans.items() if s.overruns_cycle_weeks}
     assert overruns == pytest.approx(GOLDEN_OVERRUNS)
@@ -580,7 +580,7 @@ def test_a_cool_down_longer_than_the_window_does_not_invert_the_build():
     assert build_end(36, window, absurd) >= window[0]
 
 
-def test_an_entity_too_large_for_the_calendar_is_unscheduled_and_says_why():
+def test_a_record_too_large_for_the_calendar_is_unscheduled_and_says_why():
     """Not clamped to `date.max`: unscheduled, the way a dependency cycle is.
 
     A span ending at the end of the calendar is drawable in principle and a

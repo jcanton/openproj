@@ -127,7 +127,7 @@ server do not search the same thing:
 The table filters in the browser, so a word that appears in a shaping document
 finds nothing in the UI while the same query through `apply_filters` matches it.
 Searching a PR number has the same hole — and `index.py`'s own comment says
-"'Which entity is #1364?' is a question people ask in front of a screen", which
+"'Which record is #1364?' is a question people ask in front of a screen", which
 is exactly where it does not work.
 
 So: one definition of the searchable text, built once and travelling with the
@@ -155,7 +155,7 @@ result set is worse than one that visibly empties it.
 ## 2. Multi-select in the dropdowns
 
 Exposes what `apply_filters` already does — AND across fields, OR within one. Two
-cycles selected means either, because an entity has one cycle and "both" is empty
+cycles selected means either, because a record has one cycle and "both" is empty
 by construction. For list fields (`tags`, `assignees`, `reviewers`) "both" is
 meaningful and is what the query language above is for; the menus stay OR.
 
@@ -269,7 +269,7 @@ product's status and PRs, and the progress column's units — in `polish4`.
 5. **The legend is not vertically aligned, and the priority swatches are wider
    than the status ones.** Third time this has been reported; whatever is done
    here should be a measurement in a test, not an eye.
-6. **Saving a body leaves the stale text on screen.** Edit the body of an entity,
+6. **Saving a body leaves the stale text on screen.** Edit the body of a record,
    save, the editor closes and the *old* text is shown until a refresh. The save
    itself lands. So the view is rendering from something the save did not update.
 
@@ -298,9 +298,9 @@ To look at it: `git checkout themes && uv run openproj serve --plan <plan>`.
 
 ## What is deliberately not here
 
-A `support` field (reviewers carry it), a `from_note` field on `Entity` (the
+A `support` field (reviewers carry it), a `from_note` field on `Record` (the
 provenance is prose in the shaping document, so a note id never enters the type
 every view is built from), HackMD as a backend (tested and refused: a PATCH
 disconnects every live editor, `lastChangedAt` does not move while somebody
-types, 400 API requests a month), and a fourth entity kind for brainstorming
+types, 400 API requests a month), and a record kind of its own for brainstorming
 (that is what a note is).

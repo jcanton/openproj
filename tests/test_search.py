@@ -4,7 +4,7 @@ The two halves of this app filter the same plan. The server's `apply_filters`
 swept title, tags, PR references *and the whole shaping document* into one blob;
 the browser searched `row.title + ' ' + row.tags`. So a word in a body found
 seventeen rows through a link and none in the box in front of you, a PR number
-found the entity on the server and nothing in the table, and neither side
+found the record on the server and nothing in the table, and neither side
 erred — which is the shape of every divergence this repository has shipped: two
 answers to one question, both silent.
 
@@ -38,8 +38,8 @@ WORD = re.compile(r"[a-z0-9_]{4,}")
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 @pytest.fixture
@@ -50,9 +50,9 @@ def page(index: Index) -> str:
 def fields_of(index: Index) -> list[str]:
     """Every value a record carries in a field, as text."""
     said = []
-    for entity in index.entities.values():
-        said += [entity.id, entity.title, *entity.tags, *entity.prs]
-        said += [entity.owner or "", *entity.assignees, *entity.reviewers]
+    for record in index.plan.values():
+        said += [record.id, record.title, *record.tags, *record.prs]
+        said += [record.owner or "", *record.assignees, *record.reviewers]
     return [word for word in said if word]
 
 
@@ -60,13 +60,13 @@ def needles(index: Index) -> list[str]:
     """What a person types: a tag, a PR number, a login, an id, a word from a
     title. Each is taken from the corpus, so this list grows with the plan."""
     found: set[str] = set()
-    for entity in index.entities.values():
-        found.update(entity.tags)
-        found.update(entity.prs)
-        found.update(pr.lstrip("#") for pr in entity.prs)
-        found.update(filter(None, [entity.owner, *entity.assignees, *entity.reviewers]))
-        found.add(entity.id)
-        found.update(WORD.findall(entity.title.lower()))
+    for record in index.plan.values():
+        found.update(record.tags)
+        found.update(record.prs)
+        found.update(pr.lstrip("#") for pr in record.prs)
+        found.update(filter(None, [record.owner, *record.assignees, *record.reviewers]))
+        found.add(record.id)
+        found.update(WORD.findall(record.title.lower()))
     return sorted(found)
 
 
@@ -79,8 +79,8 @@ def body_words(index: Index) -> list[str]:
     """
     in_fields = {word for value in fields_of(index) for word in WORD.findall(value.lower())}
     said: set[str] = set()
-    for entity in index.entities.values():
-        said.update(WORD.findall(entity.body.lower()))
+    for record in index.plan.values():
+        said.update(WORD.findall(record.body.lower()))
     return sorted(said - in_fields)
 
 
@@ -159,13 +159,13 @@ def test_every_searchable_field_is_reachable_from_the_box(index: Index, page: st
     on the list and empty on every row — the reader types a login and finds
     nothing, and nothing anywhere says the field was never carried.
     """
-    for entity in index.entities.values():
-        for value in filter(None, [entity.id, entity.title, *entity.tags, *entity.prs]):
-            assert entity.id in found_in_the_browser(page, value), (
-                f"{entity.id} does not find itself by {value!r}"
+    for record in index.plan.values():
+        for value in filter(None, [record.id, record.title, *record.tags, *record.prs]):
+            assert record.id in found_in_the_browser(page, value), (
+                f"{record.id} does not find itself by {value!r}"
             )
-            assert entity.id in apply_filters(index, {}, value), (
-                f"the server does not find {entity.id} by {value!r}"
+            assert record.id in apply_filters(index, {}, value), (
+                f"the server does not find {record.id} by {value!r}"
             )
         break
 
@@ -194,7 +194,7 @@ def test_a_field_asks_that_field_and_nothing_else(index: Index):
     owned = set(ids(index, "owner:jcanton"))
 
     assert owned < everywhere, "owner: found no fewer records than the bare word"
-    assert all(index.entities[i].owner == "jcanton" for i in owned)
+    assert all(index.plan[i].owner == "jcanton" for i in owned)
 
 
 def test_two_tags_can_be_asked_for_at_once(index: Index):
@@ -207,14 +207,14 @@ def test_two_tags_can_be_asked_for_at_once(index: Index):
         for one in tags
         for two in tags
         if one < two
-        and any({one, two} <= set(e.tags) for e in index.entities.values())
+        and any({one, two} <= set(e.tags) for e in index.plan.values())
     ]
     assert pairs, "no record in this corpus carries two tags, so this asks nothing"
 
     one, two = pairs[0]
     both = ids(index, f"tag:{one} and tag:{two}")
     assert both == sorted(
-        i for i, e in index.entities.items() if {one, two} <= set(e.tags)
+        i for i, e in index.plan.items() if {one, two} <= set(e.tags)
     )
     assert set(both) < set(ids(index, f"tag:{one} or tag:{two}"))
 
@@ -233,7 +233,7 @@ def test_parentheses_change_the_answer(index: Index):
     # The precondition, stated rather than hoped for: the two spellings differ
     # only if some pitch is not done, and a corpus where every pitch is finished
     # would let a parser that ignored brackets pass this.
-    assert any(e.kind == "pitch" and e.status != "done" for e in index.entities.values())
+    assert any(e.kind == "pitch" and e.status != "done" for e in index.plan.values())
 
     grouped = ids(index, "kind:pitch or (kind:task and status:done)")
     flat = ids(index, "(kind:pitch or kind:task) and status:done")
@@ -274,13 +274,13 @@ def test_the_empty_menu_option_is_askable_in_the_language(index: Index):
     from openproj.index import NO_VALUE
 
     asked = ids(index, f'cycle:"{NO_VALUE}"')
-    assert asked == sorted(i for i, e in index.entities.items() if not e.cycle)
+    assert asked == sorted(i for i, e in index.plan.items() if not e.cycle)
 
 
 def test_a_pr_is_found_however_it_is_written(index: Index):
     """`#1364`, `1364` and the whole `C2SM/icon4py#1364` are one PR, and a person
     reading a review types whichever of the three is in front of them."""
-    holders = [e for e in index.entities.values() if e.prs]
+    holders = [e for e in index.plan.values() if e.prs]
     assert holders, "no record in this corpus names a PR"
 
     whole = holders[0].prs[0]

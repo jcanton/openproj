@@ -208,8 +208,8 @@ def test_the_rest_of_the_plan_is_still_on_the_page(door, name: str, where: str, 
 
     with TestClient(create_app(path, auth="dev")) as client:
         assert "Reproduce the 2-GPU equator artefact" in client.get("/table").text, name
-        entities = client.get("/api/index.json").json()["entities"]
-        assert TASK in entities, name
+        records = client.get("/api/index.json").json()["plan"]
+        assert TASK in records, name
 
 
 @pytest.mark.parametrize("name,where,content", BREAKAGES, ids=NAMES)
@@ -290,7 +290,7 @@ def test_saving_a_file_that_will_not_parse_is_a_refusal_naming_it(door):
         ann = sign_session(User(login="ann", member=True), SECRET)
         client.cookies.set("__Host-openproj_session", ann)
         answer = client.patch(
-            f"/api/entity/{TASK}",
+            f"/api/record/{TASK}",
             json={"base_commit": head(client), "fields": {"priority": "high"}},
         )
 
@@ -321,7 +321,7 @@ def test_a_file_below_the_directory_does_not_claim_the_id_above_it(door):
             "__Host-openproj_session", sign_session(User(login="ann", member=True), SECRET)
         )
         answer = client.patch(
-            f"/api/entity/{TASK}",
+            f"/api/record/{TASK}",
             json={"base_commit": head(client), "fields": {"priority": "high"}},
         )
 
@@ -472,8 +472,8 @@ def test_every_page_the_renderer_can_draw_carries_the_banner(on_disk: Path):
     from openproj.index import build_index
     from openproj.model import load_repo
 
-    entities, config, unreadable = load_repo(on_disk)
-    index = build_index(entities, config, date(2026, 8, 17), unreadable)
+    records, config, unreadable = load_repo(on_disk)
+    index = build_index(records, config, date(2026, 8, 17), unreadable)
     assert len(unreadable) == 2, "the corpus stopped being broken, so this proves nothing"
 
     drawn = 0
@@ -501,8 +501,8 @@ def test_the_banner_says_how_many_and_why_rather_than_only_that(on_disk: Path):
     from openproj.model import load_repo
     from openproj.render import ROUTES, render_table
 
-    entities, config, unreadable = load_repo(on_disk)
-    page = render_table(build_index(entities, config, date(2026, 8, 17), unreadable), ROUTES)
+    records, config, unreadable = load_repo(on_disk)
+    page = render_table(build_index(records, config, date(2026, 8, 17), unreadable), ROUTES)
 
     named = sorted(unreadable_in(page))
     assert named[0].startswith("cycles/0039.md — ")

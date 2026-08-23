@@ -4,7 +4,7 @@
 
 | in HackMD | in openproj |
 |---|---|
-| A pitch note | a `pitch` entity — frontmatter, and the shaping doc as the body |
+| A pitch note | a `pitch` record — frontmatter, and the shaping doc as the body |
 | `Shaped by: @a and @b` in the header | `shaped_by: [a, b]` |
 | `Appetite (FTEs, weeks)` | `person_weeks` — the work one person would need; the people on it divide it |
 | The cycle sheet's `Available people` | `availability:` in `cycles/<n>.md`, a fraction of the build weeks |

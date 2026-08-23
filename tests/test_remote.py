@@ -45,9 +45,9 @@ from test_store import (  # noqa: F401  — `preempted` is a fixture, requested 
     SEED,
     WRITERS,
     commit_directly,
-    entity,
     history,
     preempted,
+    record,
 )
 
 from openproj.model import parse_text
@@ -202,7 +202,7 @@ def test_with_no_remote_a_write_behaves_exactly_as_it_does_today(
 
     result = local_only.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=base,
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -224,7 +224,7 @@ def test_with_no_remote_the_scoped_compare_and_swap_is_untouched(local_only: Sto
     stale = local_only.head()
     local_only.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=stale,
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -232,7 +232,7 @@ def test_with_no_remote_the_scoped_compare_and_swap_is_untouched(local_only: Sto
 
     elsewhere = local_only.write(
         path=PATH,
-        content=entity(priority="high"),
+        content=record(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -241,7 +241,7 @@ def test_with_no_remote_the_scoped_compare_and_swap_is_untouched(local_only: Sto
 
     collision = local_only.write(
         path=PATH,
-        content=entity(priority="low"),
+        content=record(priority="low"),
         base_commit=stale,
         author="cy",
         message="task-c00001: priority 2 -> 3",
@@ -269,7 +269,7 @@ def test_a_write_lands_in_the_remote_and_says_that_it_did(
     back out of the remote, because that is the copy that survives the instance."""
     result = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -290,7 +290,7 @@ def test_the_audit_trail_survives_the_push_unaltered(store: Store, remote_path: 
     anything would also be a push that could not fast-forward."""
     result = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -307,7 +307,7 @@ def test_a_refused_write_pushes_nothing(store: Store, remote_path: Path):
     stale = store.head()
     theirs = store.write(
         path=PATH,
-        content=entity(owner="bo"),
+        content=record(owner="bo"),
         base_commit=stale,
         author="bo",
         message="task-c00001: owner ann -> bo",
@@ -315,7 +315,7 @@ def test_a_refused_write_pushes_nothing(store: Store, remote_path: Path):
 
     mine = store.write(
         path=PATH,
-        content=entity(owner="cy"),
+        content=record(owner="cy"),
         base_commit=stale,
         author="ann",
         message="task-c00001: owner ann -> cy",
@@ -330,7 +330,7 @@ def test_pushing_an_already_pushed_commit_reports_nothing_to_do(store: Store, re
     on a timer without inventing work or writing a log line every ten seconds."""
     result = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=store.head(),
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -359,7 +359,7 @@ def test_local_main_is_only_ever_ahead_of_the_remote_never_divergent(
     for status in ("in_progress", "done", "shelved"):
         result = store.write(
             path=PATH,
-            content=entity(status=status),
+            content=record(status=status),
             base_commit=store.head(),
             author="ann",
             message=f"task-c00001: status -> {status}",
@@ -391,7 +391,7 @@ def test_a_write_that_has_returned_is_already_in_the_remote(
         barrier.wait()
         result = store.write(
             path=f"tasks/task-{n:06d}.md",
-            content=entity(id=f"task-{n:06d}", title=f"Concurrent {n}"),
+            content=record(id=f"task-{n:06d}", title=f"Concurrent {n}"),
             base_commit=base,
             author=f"user{n}",
             message=f"task-{n:06d}: create",
@@ -416,7 +416,7 @@ def test_every_commit_the_remote_receives_has_exactly_one_parent(
     for status in ("in_progress", "done"):
         store.write(
             path=PATH,
-            content=entity(status=status),
+            content=record(status=status),
             base_commit=store.head(),
             author="ann",
             message=f"task-c00001: status -> {status}",
@@ -443,7 +443,7 @@ def test_a_push_rejected_by_a_moved_remote_retries_on_top_of_it(
     """
     first = store.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -453,13 +453,13 @@ def test_a_push_rejected_by_a_moved_remote_retries_on_top_of_it(
     stale = store.head()
     outside = pushed_from_a_terminal(
         remote_path,
-        {"tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
     mine = store.write(
         path=PATH,
-        content=entity(priority="high"),
+        content=record(priority="high"),
         base_commit=stale,
         author="ann",
         message="task-c00001: priority 2 -> 1",
@@ -489,7 +489,7 @@ def test_a_push_rejected_onto_a_real_collision_refuses_and_leaves_nothing_behind
     """
     first = store.write(
         path=OTHER,
-        content=entity(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
         base_commit=store.head(),
         author="bo",
         message="task-c00002: status todo -> wip",
@@ -498,12 +498,12 @@ def test_a_push_rejected_onto_a_real_collision_refuses_and_leaves_nothing_behind
 
     stale = store.head()
     outside = pushed_from_a_terminal(
-        remote_path, {PATH: entity(owner="bo")}, "task-c00001: owner ann -> bo"
+        remote_path, {PATH: record(owner="bo")}, "task-c00001: owner ann -> bo"
     )
 
     mine = store.write(
         path=PATH,
-        content=entity(owner="cy"),
+        content=record(owner="cy"),
         base_commit=stale,
         author="ann",
         message="task-c00001: owner ann -> cy",
@@ -538,7 +538,7 @@ def test_an_unreachable_remote_still_commits_and_admits_it_did_not_push(
     with unplugged(remote_path):
         mine = store.write(
             path=PATH,
-            content=entity(status="in_progress"),
+            content=record(status="in_progress"),
             base_commit=store.head(),
             author="ann",
             message="task-c00001: status todo -> wip",
@@ -561,7 +561,7 @@ def test_the_commit_the_remote_missed_is_still_there_to_push_afterwards(
     with unplugged(remote_path):
         mine = store.write(
             path=PATH,
-            content=entity(status="in_progress"),
+            content=record(status="in_progress"),
             base_commit=store.head(),
             author="ann",
             message="task-c00001: status todo -> wip",
@@ -582,14 +582,14 @@ def test_a_write_while_unreachable_still_lands_on_the_one_before_it(
     with unplugged(remote_path):
         first = store.write(
             path=PATH,
-            content=entity(status="in_progress"),
+            content=record(status="in_progress"),
             base_commit=store.head(),
             author="ann",
             message="task-c00001: status todo -> wip",
         )
         second = store.write(
             path=OTHER,
-            content=entity(id="task-c00002", title="Downgrade numpy", owner="bo",
+            content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
                 status="in_progress"),
             base_commit=store.head(),
             author="bo",
@@ -624,7 +624,7 @@ def test_fetch_sees_a_commit_pushed_from_a_terminal(store: Store, remote_path: P
     before = store.head()
     outside = pushed_from_a_terminal(
         remote_path,
-        {"tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
@@ -639,7 +639,7 @@ def test_fetch_reports_a_commit_once_and_then_stops(store: Store, remote_path: P
     index and broadcast an SSE event every fifteen seconds."""
     pushed_from_a_terminal(
         remote_path,
-        {"tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
@@ -656,14 +656,14 @@ def test_the_next_write_lands_on_top_of_a_fetched_commit_not_over_it(
     stale = store.head()
     outside = pushed_from_a_terminal(
         remote_path,
-        {"tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
     assert store.fetch() == outside
 
     mine = store.write(
         path=PATH,
-        content=entity(status="in_progress"),
+        content=record(status="in_progress"),
         base_commit=stale,
         author="ann",
         message="task-c00001: status todo -> wip",
@@ -693,7 +693,7 @@ def diverged(store: Store, repo_path: Path, remote_path: Path) -> tuple[str, str
     with unplugged(remote_path):
         ours = store.write(
             path=OTHER,
-            content=entity(id="task-c00002", title="Downgrade numpy", owner="bo",
+            content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
                 status="in_progress"),
             base_commit=base,
             author="bo",
@@ -703,7 +703,7 @@ def diverged(store: Store, repo_path: Path, remote_path: Path) -> tuple[str, str
 
     theirs = pushed_from_a_terminal(
         remote_path,
-        {"tasks/task-c00003.md": entity(id="task-c00003", title="By hand")},
+        {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
         "task-c00003: added from a terminal",
     )
 
@@ -728,7 +728,7 @@ def test_a_genuine_divergence_raises_instead_of_guessing(
     with pytest.raises(StoreDiverged) as caught:
         store.write(
             path=PATH,
-            content=entity(status="in_progress"),
+            content=record(status="in_progress"),
             base_commit=store.head(),
             author="ann",
             message="task-c00001: status todo -> wip",

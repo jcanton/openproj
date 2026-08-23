@@ -32,27 +32,27 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 @pytest.fixture
 def index(demo_root: Path) -> Index:
-    entities, config, _ = load_repo(demo_root)
-    return build_index(entities, config, date(2026, 8, 17))
+    records, config, _ = load_repo(demo_root)
+    return build_index(records, config, date(2026, 8, 17))
 
 
 def one_pitch(index: Index) -> str:
     """A record with people, a cycle, dates and a document — so a card of it has
     something in every row rather than four dashes."""
-    for entity_id, entity in sorted(index.entities.items()):
-        if entity.kind == "pitch" and entity.body and entity.tags and entity.owner:
-            return entity_id
+    for record_id, record in sorted(index.plan.items()):
+        if record.kind == "pitch" and record.body and record.tags and record.owner:
+            return record_id
     raise AssertionError("the corpus has no pitch with a document on it")
 
 
 # The card, drawn for one row, with the body fetch answered by hand. `drive.js`
 # hands the page a `fetch` that returns these in order, so what is asked for and
 # what is done with the answer are both visible from here.
-def card_for(page: str, entity_id: str, replies: list[dict] | None = None) -> dict:
+def card_for(page: str, record_id: str, replies: list[dict] | None = None) -> dict:
     answer = run_js(
         page,
         "(async () => {"
-        f"  const arriving = showCard(DATA.rows[{json.dumps(entity_id)}], 100, 100);"
+        f"  const arriving = showCard(DATA.rows[{json.dumps(record_id)}], 100, 100);"
         "  const first = CARD.innerHTML;"
         "  await arriving;"
         # Microtasks and not a timer: `drive.js` queues timers rather than
@@ -60,7 +60,7 @@ def card_for(page: str, entity_id: str, replies: list[dict] | None = None) -> di
         # comes back as never settled — which reads as a card that drew nothing.
         "  for (let i = 0; i < 20; i++) await Promise.resolve();"
         f"  return {{first, then: CARD.innerHTML, hidden: CARD.hidden,"
-        f"          held: CARD_BODIES.get({json.dumps(entity_id)})}};"
+        f"          held: CARD_BODIES.get({json.dumps(record_id)})}};"
         "})()",
         page=True,
         replies=replies or [],
@@ -91,7 +91,7 @@ def test_the_three_views_draw_the_same_card(index: Index, tmp_path: Path):
     the graph is cytoscape: a harness that cannot build the view cannot be asked
     what the view draws.
     """
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     drawn = {
         "table": render_table(index, ROUTES, base_commit=HEAD),
         "graph": render_graph(index, ROUTES, base_commit=HEAD),
@@ -103,7 +103,7 @@ def test_the_three_views_draw_the_same_card(index: Index, tmp_path: Path):
             page,
             tmp_path / f"{name}.html",
             1200,
-            _DRAWN[name] % json.dumps(entity_id),
+            _DRAWN[name] % json.dumps(record_id),
         )["html"]
         for name, page in drawn.items()
     }
@@ -123,13 +123,13 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
     """A node is a title and a glyph; a bar is a rectangle. What the card is for
     is the rest of the record, so it says who owns it, when it runs, what it is
     tagged and what kind it is."""
-    entity_id = one_pitch(index)
-    entity = index.entities[entity_id]
-    drawn = card_for(render_table(index, ROUTES, base_commit=HEAD), entity_id)["value"]["first"]
+    record_id = one_pitch(index)
+    record = index.plan[record_id]
+    drawn = card_for(render_table(index, ROUTES, base_commit=HEAD), record_id)["value"]["first"]
 
-    assert entity.title in drawn
-    assert entity.owner in drawn
-    assert entity.tags[0] in drawn
+    assert record.title in drawn
+    assert record.owner in drawn
+    assert record.tags[0] in drawn
     for word in ("Owner", "Scheduled", "Tags"):
         assert f"<dt>{word}</dt>" in drawn, word
 
@@ -141,14 +141,14 @@ def test_the_document_is_fetched_on_hover_and_not_shipped_with_the_rows(index: I
     So the card asks for one, by id, when a pointer arrives — and the page it asks
     from is the server's, which is the only place the answer exists.
     """
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD)
-    assert index.entities[entity_id].body not in page, "the corpus is in the page after all"
+    assert index.plan[record_id].body not in page, "the corpus is in the page after all"
 
-    answer = card_for(page, entity_id, [{"status": 200, "json": {"html": "<p>the document</p>"}}])
+    answer = card_for(page, record_id, [{"status": 200, "json": {"html": "<p>the document</p>"}}])
 
     asked = [call["url"] for call in answer["calls"]]
-    assert asked == [f"/api/body/{entity_id}"], asked
+    assert asked == [f"/api/body/{record_id}"], asked
     assert "card-body" not in answer["value"]["first"], "the card waited for the fetch"
     # What was done with the answer is asked in the browser below: the shim's
     # `innerHTML` reports the string that was assigned to it, not a serialisation
@@ -162,11 +162,11 @@ def test_a_refused_document_costs_the_document_and_nothing_else(index: Index):
     what the row already carried. The fields are the part that was never in
     doubt, and a card that empties itself because a fetch failed is a card that
     reports a network as a plan."""
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD)
 
-    for reply in ({"status": 404, "text": "no such entity"}, {"status": 500, "text": "boom"}):
-        answer = card_for(page, entity_id, [reply])
+    for reply in ({"status": 404, "text": "no such record"}, {"status": 500, "text": "boom"}):
+        answer = card_for(page, record_id, [reply])
         assert "card-title" in answer["value"]["then"], reply
         assert "card-body" not in answer["value"]["then"], reply
         assert answer["value"]["hidden"] is False, reply
@@ -179,7 +179,7 @@ def test_a_document_that_arrives_late_is_not_drawn_on_the_wrong_card(index: Inde
     card is up: without the check this draws one record's shaping document under
     another record's title, which is worse than showing nothing at all.
     """
-    ids = sorted(index.entities)[:2]
+    ids = sorted(index.plan)[:2]
     page = render_table(index, ROUTES, base_commit=HEAD)
 
     answer = run_js(
@@ -199,7 +199,7 @@ def test_a_document_that_arrives_late_is_not_drawn_on_the_wrong_card(index: Inde
     )
     html = answer["value"]["html"]
 
-    assert index.entities[ids[1]].title in html, "the card is not the one that was asked for last"
+    assert index.plan[ids[1]].title in html, "the card is not the one that was asked for last"
     assert "first document" not in html, "one record's document is under another's title"
 
 
@@ -208,11 +208,11 @@ def test_a_rendered_file_draws_a_card_with_no_server_to_ask(index: Index):
     given, and no document. The title beside it is still a link into
     `detail.html#id`, where the whole document is — the same shape as co-editing
     falling back to a plain textarea."""
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index)     # STATIC links: no `body` route
 
     assert 'data-body-url' not in page
-    answer = card_for(page, entity_id)
+    answer = card_for(page, record_id)
 
     assert "card-title" in answer["value"]["first"]
     assert "card-body" not in answer["value"]["then"]
@@ -238,13 +238,13 @@ def test_a_card_at_the_edge_of_the_window_stays_inside_it(index: Index, tmp_path
     of the pointer rather than hanging off the page. The timeline's did this
     already; it is asserted here because two more views now depend on it, and one
     of them is a table whose last row is at the bottom of the window."""
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     got = measured_in(
         chrome(),
         render_table(index, ROUTES, base_commit=HEAD),
         tmp_path / "edge.html",
         1200,
-        _PLACED % json.dumps(entity_id),
+        _PLACED % json.dumps(record_id),
         height=800,
     )
 
@@ -270,13 +270,13 @@ def test_a_nine_hundred_word_document_does_not_cover_the_table(index: Index, tmp
     """Larger and scrollable, with a cap. A pitch drawn in full is taller than the
     window it is drawn over, and a card that covers the table it was opened from
     is a card that has to be dismissed before the plan can be read again."""
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     got = measured_in(
         chrome(),
         render_table(index, ROUTES, base_commit=HEAD),
         tmp_path / "tall.html",
         1200,
-        _TALL_BODY % json.dumps(entity_id),
+        _TALL_BODY % json.dumps(record_id),
         height=800,
     )
 
@@ -313,9 +313,9 @@ def test_the_document_is_drawn_under_the_fields(index: Index, tmp_path: Path):
     them. The shim cannot answer this — its `innerHTML` reports what was assigned
     to it rather than what the element now contains — so it is asked of a
     browser."""
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD).replace(
-        "</body>", _OPENS_A_CARD % json.dumps(entity_id) + "</body>"
+        "</body>", _OPENS_A_CARD % json.dumps(record_id) + "</body>"
     )
     got = measured_in(chrome(), page, tmp_path / "body.html", 1200, _WITH_A_DOCUMENT)
 
@@ -344,7 +344,7 @@ def test_a_pointer_passing_over_a_row_does_not_open_a_card(index: Index, tmp_pat
 
     Asked with a real timer in a real browser, because the claim is about time.
     """
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD).replace(
         "</body>",
         # Assigned to a global rather than returned: the measuring script cannot
@@ -352,7 +352,7 @@ def test_a_pointer_passing_over_a_row_does_not_open_a_card(index: Index, tmp_pat
         # than the 1200ms `measured_in` gives the page, so the answer is there
         # when it looks.
         "<script>(async () => {"
-        + (_HOVER_INTENT % json.dumps(entity_id))
+        + (_HOVER_INTENT % json.dumps(record_id))
         + "})();</script></body>",
     )
     got = measured_in(
@@ -386,11 +386,11 @@ def test_the_card_can_be_reached_and_stays_while_the_pointer_is_in_it(
     starts a timer that entering the card cancels. Without the second the gap
     between the row and the box cannot be crossed.
     """
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD).replace(
         "</body>",
         "<script>(async () => {"
-        + (_REACHABLE % json.dumps(entity_id))
+        + (_REACHABLE % json.dumps(record_id))
         + "})();</script></body>",
     )
     got = measured_in(
@@ -420,11 +420,11 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
     back, or a cached body lands in the same tick as a fetched one. Appending
     drew the shaping document twice inside one box, which is the thing jcanton
     saw and could not reproduce."""
-    entity_id = one_pitch(index)
+    record_id = one_pitch(index)
     page = render_table(index, ROUTES, base_commit=HEAD).replace(
         "</body>",
         "<script>(async () => {"
-        + (_TWICE % json.dumps(entity_id))
+        + (_TWICE % json.dumps(record_id))
         + "})();</script></body>",
     )
     got = measured_in(

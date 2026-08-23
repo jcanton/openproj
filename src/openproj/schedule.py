@@ -17,7 +17,7 @@ that looks plausible and is wrong:
   children already booked; booking the parent too double-books its owner.
 
 The scheduler never raises. A cycle, a contradictory record or a cycle number
-nobody has dated costs you those entities, never the whole page.
+nobody has dated costs you those records, never the whole page.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from .model import (
     PRIORITY_RANK,
     RUNG,
     Config,
-    Entity,
+    Record,
     ancestors,
     cycle_of,
     days_after,
@@ -55,7 +55,7 @@ class Span(BaseModel):
 
 
 class Explanation(BaseModel):
-    entity_id: str
+    record_id: str
     text: str
     blocker_id: str | None = None
     worker_busy_until: date | None = None
@@ -69,7 +69,7 @@ def _next_working_day(day: date, config: Config) -> date:
     """The first working day after `day`, or the end of the calendar if there is none.
 
     This walk and `_first_working_day`'s stop at `date.max` rather than stepping
-    past it. `_place` calls this on a blocker's last day, and a `done` entity
+    past it. `_place` calls this on a blocker's last day, and a `done` record
     carries whatever `assigned_on` says — so `assigned_on: 9999-12-31`, typed
     into the detail page, walked one day off the end of the calendar and
     answered 500 on every page that reads the index. Saturating is the same
@@ -128,7 +128,7 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
 
     The end of the calendar when the work does not fit inside it: this is the
     primitive, and a primitive that raises is a 500 on every page. The scheduler
-    asks `_runs_past_the_calendar` first and leaves such an entity unscheduled,
+    asks `_runs_past_the_calendar` first and leaves such a record unscheduled,
     which is the answer a reader can actually use.
     """
     if _runs_past_the_calendar(start, weeks, config):
@@ -140,7 +140,7 @@ def working_days_after(start: date, weeks: float, config: Config) -> date:
 
 
 def _duration_weeks(
-    entity: Entity, config: Config, by_id: dict[str, Entity]
+    record: Record, config: Config, by_id: dict[str, Record]
 ) -> tuple[float, bool]:
     """Elapsed weeks, and whether the size was defaulted rather than stated.
 
@@ -157,17 +157,17 @@ def _duration_weeks(
     Nobody assigned is one notional person at nominal availability. Zero would be
     a division by zero, and infinity is not a useful forecast for unowned work.
     """
-    size, defaulted = size_weeks(entity, config)
-    rates = [_availability_of(who, entity, config, by_id) for who in _workers(entity)]
+    size, defaulted = size_weeks(record, config)
+    rates = [_availability_of(who, record, config, by_id) for who in _workers(record)]
     return size / (sum(rates) or config.nominal_availability or 1.0), defaulted
 
 
 def _availability_of(
-    who: str, entity: Entity, config: Config, by_id: dict[str, Entity]
+    who: str, record: Record, config: Config, by_id: dict[str, Record]
 ) -> float:
-    """One person's rate in the cycle this entity was bet into.
+    """One person's rate in the cycle this record was bet into.
 
-    Read from the entity's own cycle rather than passed in, so there is one
+    Read from the record's own cycle rather than passed in, so there is one
     source: a global override and a per-cycle record would disagree the first
     time somebody set both.
 
@@ -180,25 +180,25 @@ def _availability_of(
     # The cycle of the BET, so a task reads the rates of the cycle its pitch was
     # bet into. A task carries no cycle of its own any more, and falling back to
     # nominal here would have quietly undone every per-person rate on the page.
-    number = cycle_of(entity, by_id)
+    number = cycle_of(record, by_id)
     plan = config.plans.get(number) if number is not None else None
     stated = plan.availability.get(who) if plan else None
     return stated if stated else config.nominal_availability or 1.0
 
 
-def _workers(entity: Entity) -> list[str]:
+def _workers(record: Record) -> list[str]:
     """Everyone on the hook, each counted once.
 
     An owner who is also an assignee — which is most of them — was counted twice,
     so they were booked twice and, now that the workers divide the size, would
     have halved it on their own.
     """
-    named = ([entity.owner] if entity.owner else []) + list(entity.assignees)
+    named = ([record.owner] if record.owner else []) + list(record.assignees)
     return list(dict.fromkeys(named))
 
 
 def _overrun(
-    entity: Entity, end: date, config: Config, by_id: dict[str, Entity]
+    record: Record, end: date, config: Config, by_id: dict[str, Record]
 ) -> float | None:
     """Weeks past the end of the BUILD of the cycle this was bet into, or None.
 
@@ -217,7 +217,7 @@ def _overrun(
     A cycle nobody has dated yet is not an overrun. Indexing `config.cycles`
     directly would turn one unconfigured number into a KeyError for every span.
     """
-    number = cycle_of(entity, by_id)
+    number = cycle_of(record, by_id)
     window = config.cycles.get(number) if number is not None else None
     if window is None:
         return None
@@ -246,14 +246,14 @@ def build_end(number: int | None, window: tuple[date, date], config: Config) -> 
         else days_after(window[1], -(config.cooldown_weeks * 7))
     )
     # A cool-down longer than the window would put the end of build before the
-    # cycle began, and then every entity in it overruns by definition. Clamped
+    # cycle began, and then every record in it overruns by definition. Clamped
     # rather than rejected: a bad number in one config file should cost that
     # cycle's flag, not every date on the page.
     return max(ends, window[0])
 
 
-def blockers_of(entity: Entity, by_id: dict[str, Entity]) -> list[str]:
-    """What this entity waits for: its own blockers, and its ancestors'.
+def blockers_of(record: Record, by_id: dict[str, Record]) -> list[str]:
+    """What this record waits for: its own blockers, and its ancestors'.
 
     A dependency is written at the level people think at. "The land port waits
     for turbulence" is a sentence about two pitches, and it was decoration: only
@@ -264,14 +264,14 @@ def blockers_of(entity: Entity, by_id: dict[str, Entity]) -> list[str]:
     disagreeing about the same record.
 
     So a bet's blockers are its tasks' blockers. Inherited rather than copied: the
-    edge stays written once, on the entity somebody wrote it on, and `blocks`
+    edge stays written once, on the record somebody wrote it on, and `blocks`
     keeps meaning what it says on the page.
 
     Order is the chain's, nearest first, deduplicated — it decides only which
     blocker gets named in the explanation when two end on the same day.
     """
-    waits = list(entity.depends_on)
-    for ancestor in ancestors(entity.id, by_id):
+    waits = list(record.depends_on)
+    for ancestor in ancestors(record.id, by_id):
         # `.get`, not `[]`. `ancestors` returns the chain as it is *named*, so its
         # last link can be an id no file was written for — a dangling parent is
         # deliberately legal — and the map handed in here is the *live* one, so a
@@ -285,13 +285,13 @@ def blockers_of(entity: Entity, by_id: dict[str, Entity]) -> list[str]:
 
 
 def _ordering(
-    active: dict[str, Entity], config: Config
+    active: dict[str, Record], config: Config
 ) -> tuple[list[str], set[str]]:
     """Visit order: blockers before dependents, children before parents.
 
     Containment is not a dependency, so a topological sort over `depends_on`
     alone would visit a parent before the children its span is built from. The
-    two edge kinds can also disagree — an entity depending on its own ancestor
+    two edge kinds can also disagree — a record depending on its own ancestor
     contributes a dependency edge one way and a containment edge the other — and
     that record is dropped rather than allowed to raise.
 
@@ -302,19 +302,19 @@ def _ordering(
     """
     graph = nx.DiGraph()
     graph.add_nodes_from(active)
-    for entity in active.values():
-        for blocker in blockers_of(entity, active):
+    for record in active.values():
+        for blocker in blockers_of(record, active):
             if blocker in active:
-                graph.add_edge(blocker, entity.id)
+                graph.add_edge(blocker, record.id)
 
     contradictory: set[str] = set()
-    for entity in active.values():
-        if entity.parent not in active:
+    for record in active.values():
+        if record.parent not in active:
             continue
-        if nx.has_path(graph, entity.parent, entity.id):
-            contradictory |= {entity.id, entity.parent}
+        if nx.has_path(graph, record.parent, record.id):
+            contradictory |= {record.id, record.parent}
             continue
-        graph.add_edge(entity.id, entity.parent)
+        graph.add_edge(record.id, record.parent)
 
     graph.remove_nodes_from(contradictory)
     # Inheritance can close a loop that neither edge kind closes on its own: a
@@ -322,7 +322,7 @@ def _ordering(
     # records are legal on their own and `_unschedulable` cannot see it, because
     # it reads the written edges. Caught here as the sort's own precondition
     # rather than by letting `lexicographical_topological_sort` raise — one
-    # contradictory pair must cost those entities, never every date on the page.
+    # contradictory pair must cost those records, never every date on the page.
     looping = {
         node
         for component in nx.strongly_connected_components(graph)
@@ -345,14 +345,14 @@ def _ordering(
     return list(order), contradictory
 
 
-def _unschedulable(active: dict[str, Entity]) -> set[str]:
-    """Entities on a `depends_on` cycle, plus everything downstream of one."""
+def _unschedulable(active: dict[str, Record]) -> set[str]:
+    """Records on a `depends_on` cycle, plus everything downstream of one."""
     graph = nx.DiGraph()
     graph.add_nodes_from(active)
-    for entity in active.values():
-        for blocker in entity.depends_on:
+    for record in active.values():
+        for blocker in record.depends_on:
             if blocker in active:
-                graph.add_edge(blocker, entity.id)
+                graph.add_edge(blocker, record.id)
     caught = {
         node
         for component in nx.strongly_connected_components(graph)
@@ -363,7 +363,7 @@ def _unschedulable(active: dict[str, Entity]) -> set[str]:
 
 
 def schedule(
-    entities: list[Entity], config: Config, today: date
+    records: list[Record], config: Config, today: date
 ) -> tuple[dict[str, Span], dict[str, Explanation]]:
     # Shelved work is parked, and a kind the ladder says is never scheduled has
     # nothing to schedule. A product groups the codebases a plan spans — gt4py
@@ -375,23 +375,23 @@ def schedule(
     # are scheduled" is a property of a kind and belongs beside the others.
     live = {
         e.id: e
-        for e in entities
+        for e in records
         if e.status != "shelved" and RUNG[e.kind].schedules
     }
     children: dict[str, list[str]] = defaultdict(list)
-    for entity in live.values():
-        if entity.parent in live:
-            children[entity.parent].append(entity.id)
+    for record in live.values():
+        if record.parent in live:
+            children[record.parent].append(record.id)
 
     spans: dict[str, Span] = {}
     explanations: dict[str, Explanation] = {}
 
     # Completed work is a historical marker, never a forecast, and never a claim
     # on anyone's future capacity.
-    for entity in live.values():
-        if entity.status == "done" and entity.assigned_on is not None:
-            spans[entity.id] = Span(
-                start=entity.assigned_on, end=entity.assigned_on, historical=True
+    for record in live.values():
+        if record.status == "done" and record.assigned_on is not None:
+            spans[record.id] = Span(
+                start=record.assigned_on, end=record.assigned_on, historical=True
             )
 
     active = {i: e for i, e in live.items() if e.status != "done"}
@@ -400,19 +400,19 @@ def schedule(
         {i: e for i, e in active.items() if i not in stalled}, config
     )
     floor = _first_working_day(today, config)
-    for entity_id in stalled | contradictory:
-        spans[entity_id] = Span(start=floor, end=floor, unscheduled=True)
+    for record_id in stalled | contradictory:
+        spans[record_id] = Span(start=floor, end=floor, unscheduled=True)
 
     booked: dict[str, list[tuple[date, date]]] = defaultdict(list)
-    for entity_id in order:
-        entity = active[entity_id]
-        kids = [spans[k] for k in children.get(entity_id, ()) if k in spans]
+    for record_id in order:
+        record = active[record_id]
+        kids = [spans[k] for k in children.get(record_id, ()) if k in spans]
         if kids:
-            spans[entity_id] = Span(
+            spans[record_id] = Span(
                 start=min(k.start for k in kids),
                 end=max(k.end for k in kids),
                 estimated=any(k.estimated for k in kids),
-                overruns_cycle_weeks=_overrun(entity, max(k.end for k in kids), config, live),
+                overruns_cycle_weeks=_overrun(record, max(k.end for k in kids), config, live),
             )
             continue
 
@@ -420,13 +420,13 @@ def schedule(
         # has no size field, so it fell to the default and drew a half-week bar
         # nobody had written — a phantom on the timeline for a milestone whose
         # pitches have not been shaped yet. No span at all is the honest answer,
-        # and every view already copes with an entity that has none.
-        if entity.kind == "project":
+        # and every view already copes with a record that has none.
+        if record.kind == "project":
             continue
 
-        duration, estimated = _duration_weeks(entity, config, live)
-        workers = _workers(entity)
-        placed = _place(entity, duration, workers, booked, spans, floor, config, live)
+        duration, estimated = _duration_weeks(record, config, live)
+        workers = _workers(record)
+        placed = _place(record, duration, workers, booked, spans, floor, config, live)
         if placed is None:
             # Unscheduled, exactly as a dependency cycle is: the scheduler has no
             # answer, and saying so is better than inventing one. Clamping the end
@@ -438,25 +438,25 @@ def schedule(
             # number from setting the scale for every other bar on the page.
             # Nothing is booked either: work with no dates on it holds nobody's
             # capacity.
-            spans[entity_id] = Span(
+            spans[record_id] = Span(
                 start=floor, end=floor, unscheduled=True, estimated=estimated,
                 unowned=not workers,
             )
-            explanations[entity_id] = Explanation(
-                entity_id=entity_id,
+            explanations[record_id] = Explanation(
+                record_id=record_id,
                 text=f"Not placed: {duration:g} weeks of work runs past the end of the calendar.",
             )
             continue
         span, explanation = placed
-        spans[entity_id] = span.model_copy(
+        spans[record_id] = span.model_copy(
             update={
                 "estimated": estimated,
                 "unowned": not workers,
-                "overruns_cycle_weeks": _overrun(entity, span.end, config, live),
+                "overruns_cycle_weeks": _overrun(record, span.end, config, live),
             }
         )
         if explanation is not None:
-            explanations[entity_id] = explanation
+            explanations[record_id] = explanation
         for worker in workers:
             booked[worker].append((span.start, span.end))
 
@@ -464,16 +464,16 @@ def schedule(
 
 
 def _place(
-    entity: Entity,
+    record: Record,
     duration: float,
     workers: list[str],
     booked: dict[str, list[tuple[date, date]]],
     spans: dict[str, Span],
     floor: date,
     config: Config,
-    by_id: dict[str, Entity],
+    by_id: dict[str, Record],
 ) -> tuple[Span, Explanation | None] | None:
-    """Earliest slot at or after the entity is ready, respecting capacity 1.
+    """Earliest slot at or after the record is ready, respecting capacity 1.
 
     `None` when no slot fits inside the calendar. The question used to be asked
     once, in `schedule`, against today — but the start is not today: a blocker
@@ -485,7 +485,7 @@ def _place(
     blocker_id, blocker_ready = None, floor
     # Its own blockers and its ancestors': a dependency written on the pitch is
     # what its tasks wait for. See `blockers_of`.
-    for target in blockers_of(entity, by_id):
+    for target in blockers_of(record, by_id):
         if target in spans and spans[target].end >= blocker_ready:
             blocker_id, blocker_ready = target, _next_working_day(spans[target].end, config)
 
@@ -504,8 +504,8 @@ def _place(
     # rule rather than the plan. An in-progress item whose blocker is unfinished
     # is a real and visible state — `_ordering` and the problems list are where
     # that gets said.
-    begun = entity.status == "in_progress" and entity.assigned_on is not None
-    ready = entity.assigned_on if begun else max(floor, entity.assigned_on or floor, blocker_ready)
+    begun = record.status == "in_progress" and record.assigned_on is not None
+    ready = record.assigned_on if begun else max(floor, record.assigned_on or floor, blocker_ready)
     start = _first_working_day(ready, config)
     busy_worker, busy_until = None, None
     while True:
@@ -534,12 +534,12 @@ def _place(
         start = _next_working_day(busy_until, config)
 
     return Span(start=start, end=end), _explain(
-        entity.id, start, floor, blocker_id, blocker_ready, busy_worker, busy_until, spans
+        record.id, start, floor, blocker_id, blocker_ready, busy_worker, busy_until, spans
     )
 
 
 def _explain(
-    entity_id: str,
+    record_id: str,
     start: date,
     floor: date,
     blocker_id: str | None,
@@ -557,13 +557,13 @@ def _explain(
         return None
     if busy_until is not None and busy_until >= blocker_ready:
         return Explanation(
-            entity_id=entity_id,
+            record_id=record_id,
             text=f"Cannot start before {start}: {busy_worker} is busy until {busy_until}.",
             worker_busy_until=busy_until,
         )
     if blocker_id is not None:
         return Explanation(
-            entity_id=entity_id,
+            record_id=record_id,
             text=f"Cannot start before {start}: {blocker_id} finishes on {spans[blocker_id].end}.",
             blocker_id=blocker_id,
         )

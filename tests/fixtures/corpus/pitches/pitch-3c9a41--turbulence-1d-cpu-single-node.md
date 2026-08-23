@@ -78,5 +78,5 @@ The *Appetite*, *Rabbit holes* and *No-gos* sections of the note are present but
 - **assigned_on.** `2025-04-08`, the cycle-28 betting-table date typed in the overview — the meeting at which this pitch was bet and Yilu named as its developer. No other date is stated anywhere for this row.
 - **PRs.** The row's PR column is empty and neither the shaping doc nor the cycle-28 overview cites a PR, so `prs` is empty. (The cycle-34 successor pitch cites `C2SM/icon-exclaim#437`, but that belongs to the later integration work, not this row.)
 - **Dependencies.** The row's *Depends on* cell is empty — `depends_on: []`. Inbound references from rows 23 and 99 are recorded on those rows, per the depends_on-only invariant.
-- **Parent.** No project entity: the row's group (rows 21–24, turbulence) is a blank-row group with **no heading in the source** — the grouping label was inferred by an earlier pass, so nothing in the table names a project.
+- **Parent.** No project record: the row's group (rows 21–24, turbulence) is a blank-row group with **no heading in the source** — the grouping label was inferred by an earlier pass, so nothing in the table names a project.
 - **Priority mapping used:** table `High+` → 0, `High` → 1, `Medium` → 2, `Low` → 3. Row 22 is `High` → `priority: high`.
