@@ -13,7 +13,7 @@ the same twice.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 
 from pydantic import BaseModel, model_validator
@@ -123,18 +123,81 @@ class Progress(BaseModel):
         return f"{self.done:g}/{self.total:g} {'wk' if self.unit == 'weeks' else 'items'}"
 
 
+def _weighed(
+    kid: Record, config: Config, rolled: Callable[[str], Progress | None]
+) -> tuple[float, float] | None:
+    """One child's (done, total) weeks, or None when it carries no weeks at all.
+
+    **The total is what was BET on that child.** A sized rung carries its own
+    appetite and that is the number somebody typed, so it is the one used — a
+    pitch counts for its appetite whether or not its tasks add up to it, which is
+    the mismatch `_rollup_problems` exists to report rather than to hide. A
+    container carries no appetite, so its total is what is under it.
+
+    `size_weeks` says in its own docstring that a container "has no size of its
+    own" and then returns `config.default_task_effort` anyway, because that
+    fallback was written for an unsized TASK. Nothing noticed until a product
+    existed, because `Rung.under` lets nothing but a product nest a container —
+    and then a product holding a project worth five weeks reported `0/0.5 wk`
+    with a meter reading "0 per cent of this bet is done", on a denominator
+    nobody typed.
+
+    **The done half rolls up.** A child that is `done` counts for the whole of
+    it — that is the only completion this model stores, and `Progress` says so.
+    A child that is not done still counts for whatever is finished BENEATH it,
+    so a project whose pitches are half-built reads half-built instead of zero.
+    Before this, a container's children were weighed as leaves and two pitches at
+    4/7.5 and 3/7.5 rolled up to a project reading 0/31.
+
+    Container or leaf is read off the ladder — `Rung.sized` already means "may it
+    carry person_weeks", which is exactly the question — so a seventh rung needs
+    no edit here.
+
+    None, rather than a default, when a container has nothing under it. An empty
+    project contributes no weeks because there are no weeks under it, and
+    inventing half of one puts the same made-up number back in a smaller place.
+    It also keeps the units apart: a container whose own body has a checklist
+    counts in items, and items cannot be summed into weeks — the same reason
+    `Progress` refuses to convert one into the other.
+    """
+    below = rolled(kid.id)
+    if RUNG[kid.kind].sized:
+        total = size_weeks(kid, config)[0]
+    elif below is not None and below.unit == "weeks":
+        total = below.total
+    else:
+        return None
+    if kid.status == "done":
+        return total, total
+    if below is not None and below.unit == "weeks":
+        return below.done, total
+    return 0.0, total
+
+
 def _progress_of(
-    record: Record, children: list[Record], config: Config
+    record: Record,
+    children: list[Record],
+    config: Config,
+    rolled: Callable[[str], Progress | None],
 ) -> Progress | None:
-    """A pitch's progress from its tasks, a leaf's from its own checklist."""
+    """A container's progress from what is under it, a leaf's from its own
+    checklist. `rolled` answers a child's own rollup and is memoised by the
+    caller, because a container's weight is not known until its descendants are.
+    """
     if children:
-        sized = [(kid, size_weeks(kid, config)[0]) for kid in children]
-        return Progress(
-            done=sum(size for kid, size in sized if kid.status == "done"),
-            total=sum(size for _, size in sized),
-            unit="weeks",
-            of=[kid.id for kid, _ in sized],
-        )
+        weighed = [(kid, _weighed(kid, config, rolled)) for kid in children]
+        counted = [(kid, half) for kid, half in weighed if half is not None]
+        if counted:
+            return Progress(
+                done=sum(done for _, (done, _) in counted),
+                total=sum(total for _, (_, total) in counted),
+                unit="weeks",
+                of=[kid.id for kid, _ in counted],
+            )
+        # Every child is a container with nothing under it. There is no honest
+        # fraction here, so there is none — the same answer a leaf with no
+        # checklist gives, and for the same reason.
+        return None
     ticked, items = checklist(record.body)
     return Progress(done=ticked, total=items, unit="items") if items else None
 
@@ -525,6 +588,30 @@ def build_index(
     # `SEARCH_FIELDS`, which is also what a row carries to the browser.
     for record in records.values():
         search_blob[record.id] = searchable(record)
+    # Progress is computed depth-first and memoised, because a container's weight
+    # is what is under it and that is not known when `plan.values()` happens to
+    # reach it. The memo doubles as the cycle guard: a record already being
+    # computed answers None rather than recursing, so a hand-written parent loop
+    # in somebody's file costs a missing fraction and not a RecursionError. The
+    # graph's own cycle check reports the loop; this only has to survive it.
+    rolling: dict[str, Progress | None] = {}
+
+    def _rolled(record_id: str) -> Progress | None:
+        if record_id in rolling:
+            return rolling[record_id]
+        rolling[record_id] = None
+        # A shelved child is not work anybody is waiting for, so it counts in
+        # neither half of the fraction — otherwise parking a task makes a pitch
+        # look less finished than it was the day before. Looked up in `plan`,
+        # not `records`: an unplanned record with a hand-written `parent` is
+        # already a containment problem, and counting it into a pitch's progress
+        # would let the bad file move a number on the table.
+        kids = [
+            plan[k] for k in children[record_id] if k in plan and plan[k].status != "shelved"
+        ]
+        rolling[record_id] = _progress_of(plan[record_id], kids, config, _rolled)
+        return rolling[record_id]
+
     # Facets, progress and deferred scope are PLAN facts: an unplanned kind in a
     # facet menu is a dead option on the table.
     for record in plan.values():
@@ -535,14 +622,7 @@ def build_index(
             # status has a value, so Status never grows one; Cycle grows one the
             # moment a pitch is written and not yet bet.
             facets[field].update(values or [NO_VALUE])
-        # A shelved child is not work anybody is waiting for, so it counts in
-        # neither half of the fraction — otherwise parking a task makes a pitch
-        # look less finished than it was the day before. Looked up in `plan`,
-        # not `records`: an unplanned record with a hand-written `parent` is
-        # already a containment problem, and counting it into a pitch's progress
-        # would let the bad file move a number on the table.
-        kids = [plan[k] for k in children[record.id] if k in plan and plan[k].status != "shelved"]
-        counted = _progress_of(record, kids, config)
+        counted = _rolled(record.id)
         if counted is not None:
             progress[record.id] = counted
         if sections(record.body).get(_FOR_LATER):
