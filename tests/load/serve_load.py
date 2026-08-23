@@ -40,9 +40,45 @@ sys.path.insert(0, str(HERE))
 from server import shim  # noqa: E402  - tests/load/server.py
 
 
+def charge_accept(ms: float) -> None:
+    """Make `await socket.accept()` suspend, the way one of uvicorn's two
+    websocket implementations does.
+
+    This is not a fault injection, it is the OTHER supported configuration.
+    uvicorn ships two: with `wsproto` installed (which is what this project
+    depends on) `WSProtocol.send` writes the accept straight to the transport
+    after `await self.writable.wait()`, an already-set `asyncio.Event`, so the
+    accept performs no suspension at all. With `websockets` installed — which
+    uvicorn prefers whenever it is importable — `WebSocketProtocol.asgi_send`
+    ends the accept branch with `await self.handshake_completed_event.wait()`,
+    an event set by a different task, which does suspend.
+
+    `web.py`'s join path reads `store.head()` before the accept and uses that
+    commit after it, in `room.absorb(_body_at(head, path))` and
+    `room.settled(head, ...)`. Whether those two lines straddle a suspension is
+    therefore decided by which websocket library is installed. This is how a run
+    measures the second case without installing it, and `src/openproj/` is
+    untouched either way — the wrapper is on Starlette's `WebSocket`, from out
+    here, exactly as `LOAD_RTT_MS` wraps `pygit2`.
+    """
+    import asyncio  # noqa: PLC0415
+
+    from starlette.websockets import WebSocket  # noqa: PLC0415
+
+    original = WebSocket.accept
+
+    async def accept(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        await asyncio.sleep(ms / 1000.0)
+        return await original(self, *args, **kwargs)
+
+    WebSocket.accept = accept
+
+
 def main() -> None:
     repo, port = Path(sys.argv[1]), int(sys.argv[2])
     shim(float(os.environ.get("LOAD_RTT_MS", "0")))
+    if os.environ.get("LOAD_ACCEPT_YIELD"):
+        charge_accept(float(os.environ["LOAD_ACCEPT_YIELD"]))
 
     from openproj.cli import _exit_aware_server  # noqa: PLC0415
     from openproj.web import create_app  # noqa: PLC0415

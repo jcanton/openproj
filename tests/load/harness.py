@@ -157,6 +157,7 @@ class Harness:
         port: int | None = None,
         keep: bool = False,
         remote: bool = True,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.seed = seed
         self.rtt_ms = rtt_ms
@@ -164,6 +165,11 @@ class Harness:
         self.size = size
         self.keep = keep
         self.wants_remote = remote
+        # Extra variables for the child, for a scenario that needs the server
+        # configured differently — the same door `LOAD_RTT_MS` comes through, so
+        # a shim stays outside the application and `src/openproj/` stays what is
+        # deployed.
+        self.env = dict(env or {})
         self.port = port or free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         self.work = Path(tempfile.mkdtemp(prefix="openproj-load-"))
@@ -228,6 +234,7 @@ class Harness:
             OPENPROJ_SECRET=SECRET,
             LOAD_LOGIN=UNSIGNED,
             LOAD_RTT_MS=str(self.rtt_ms),
+            **self.env,
         )
         if self.wants_remote:
             environment["OPENPROJ_REMOTE"] = f"file://{self.origin}"
@@ -337,6 +344,7 @@ class Harness:
             "records": self.corpus.records if self.corpus else None,
             "base_commit": (self.corpus.head[:10] if self.corpus else None),
             "rtt_ms": self.rtt_ms,
+            "env": self.env,
             "remote": "file://origin.git" if self.wants_remote else None,
             "port": self.port,
             "startup_seconds": self.startup_seconds,
