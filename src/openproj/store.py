@@ -210,21 +210,6 @@ def _stranded_shas(repo: pygit2.Repository) -> list[str]:
     ]
 
 
-def _settle(repo: pygit2.Repository, shas: list[str]) -> None:
-    """These parked commits' branches are on the remote now; drop the local refs.
-
-    Deleting is what keeps `condition().parked` honest — the count is "what this
-    container would still lose", and a branch the remote holds is not that — and
-    it is what lets `sync` know, without a conversation with the remote, that a
-    would-be-idle pass still has parked branches to send: any ref under the
-    prefix IS one.
-    """
-    for sha in shas:
-        name = f"{_STRANDED}{sha}"
-        if repo.references.get(name) is not None:
-            repo.references.delete(name)
-
-
 def _blob_at(repo: pygit2.Repository, commit: str, path: str) -> pygit2.Oid | None:
     """The id of the bytes at this path, or None — `Store.read` without the
     decode, because the replay's fast paths compare ids and never look inside."""
@@ -657,7 +642,9 @@ class Store:
     ) -> None:
         """`credentials` is anything with a `callbacks()` returning pygit2's, or
         None for a remote that needs none — a `file://` path, or no remote at all,
-        which is every test and every development run."""
+        which is every test and every development run. One that also has an
+        `offer_pull_request` — `GitHubApp` does — is how a parked branch becomes
+        a pull request; without it the branch simply goes unannounced."""
         self._path = Path(repo_path)
         # NO_SEARCH, because the default is to walk UP until it finds a
         # repository. Pointed at a directory that is not one — `--repo seed`, as
@@ -692,6 +679,12 @@ class Store:
         # so a burst of saves coalesces into one wake and there is nothing to
         # drain, replay or lose when wakes overlap.
         self.dirty = threading.Event()
+        # Why each parked commit could not replay, by sha — the sentences that
+        # become its pull request's body once the branch is confirmed on the
+        # remote. In memory only, on purpose: the local stranded refs die with
+        # the instance anyway (see `_STRANDED`), and an offer for a branch a
+        # previous life parked falls back to pointing at that pass's log.
+        self._parked_reasons: dict[str, list[str]] = {}
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
         # "a+" rather than "w": opening for write truncates, and truncating would
@@ -1128,7 +1121,7 @@ class Store:
                 # a rejection — a hiccup worth the same patient retry.
                 return SyncOutcome(landed=None, remapped={}, parked=[], state="unreachable")
             return self._recover(repo, local, str(moved.target))
-        _settle(repo, leftovers)
+        self._settle(repo, leftovers)
         repo.references.create(_PUSHED, local, force=True)
         return SyncOutcome(
             landed=local,
@@ -1190,7 +1183,7 @@ class Store:
                 # an already-applied delta is a no-op, and hand-pushes arrive at
                 # human rate. Local main was never touched, so nothing is lost.
                 return nothing
-        _settle(repo, carrying)
+        self._settle(repo, carrying)
         repo.references.create(_PUSHED, tip, force=True)
         if repo.references.get(_LANDING) is not None:
             repo.references.delete(_LANDING)
@@ -1231,7 +1224,7 @@ class Store:
                 return SyncOutcome(
                     landed=durable, remapped=remapped, parked=parked, state="unreachable"
                 )
-            _settle(repo, late)
+            self._settle(repo, late)
             repo.references.create(_PUSHED, tip, force=True)
         return SyncOutcome(landed=tip, remapped=remapped, parked=parked, state="landed")
 
@@ -1344,6 +1337,10 @@ class Store:
         """
         sha = str(commit.id)
         repo.references.create(f"{_STRANDED}{sha}", sha, force=True)
+        # Kept by sha for the pull request's body: the offer happens only once
+        # the branch push is confirmed, and by then the sentences naming the
+        # disagreement exist nowhere else.
+        self._parked_reasons[sha] = refusals
         _LOG.warning(
             "parked %s on openproj/stranded-%s — it could not be replayed:\n%s",
             sha[:7],
@@ -1351,6 +1348,78 @@ class Store:
             "\n".join(refusals),
         )
         return f"openproj/stranded-{sha}"
+
+    def _settle(self, repo: pygit2.Repository, shas: list[str]) -> None:
+        """These parked commits' branches are on the remote now: drop the local
+        refs, then offer each branch as a pull request.
+
+        Deleting is what keeps `condition().parked` honest — the count is "what
+        this container would still lose", and a branch the remote holds is not
+        that — and it is what lets `sync` know, without a conversation with the
+        remote, that a would-be-idle pass still has parked branches to send:
+        any ref under the prefix IS one.
+
+        The offer rides in the same function because it and the deletion are
+        one transition — "confirmed durable" — and a push path that settled in
+        one place and announced in another would eventually do only half.
+        Every caller is on the pusher's thread with `_writing` NOT held, which
+        is where a conversation with the network belongs.
+        """
+        for sha in shas:
+            name = f"{_STRANDED}{sha}"
+            if repo.references.get(name) is not None:
+                repo.references.delete(name)
+        self._offer_pull_requests(repo, shas)
+
+    def _offer_pull_requests(self, repo: pygit2.Repository, shas: list[str]) -> None:
+        """Best-effort visibility for branches that are already durable.
+
+        The credentials object may not know how to open one — None on a
+        laptop, a plain callbacks-only stub in a test — and that is silence,
+        not an error: a branch nobody can announce is still a branch. A
+        refusal from GitHub — the 403 of a revoked `pull_requests: write`, an
+        outage — is logged and swallowed, per branch so one failure does not
+        silence the next: the branch is the durability and the PR is only the
+        visibility (docs/deferred-push.md), and a pusher thread that dies over
+        an announcement stops landing everybody's commits.
+        """
+        offer = getattr(self._credentials, "offer_pull_request", None)
+        for sha in shas:
+            # Popped even when nobody can be told: a settled branch is never
+            # offered again, and a dict that only grows is a leak.
+            reasons = self._parked_reasons.pop(sha, None)
+            if offer is None:
+                continue
+            commit = repo[sha]
+            message = commit.message.strip()
+            summary = message.splitlines()[0] if message else sha[:7]
+            why = "\n".join(
+                reasons
+                or [
+                    "It could not be replayed onto what the remote holds; the exact "
+                    "refusals were logged by the pass that parked it."
+                ]
+            )
+            body = (
+                f"{commit.author.name}'s commit {sha} could not be replayed onto what "
+                "the remote holds, so it is parked here rather than lost.\n\n"
+                f"Why it could not be replayed:\n\n{why}\n\n"
+                "Merge this branch once the disagreement is resolved, or close it if "
+                "what the plan now says should stand."
+            )
+            try:
+                offer(
+                    branch=f"openproj/stranded-{sha}",
+                    title=f"Stranded: {summary}",
+                    body=body,
+                )
+            except Exception:
+                _LOG.warning(
+                    "could not open a pull request for openproj/stranded-%s — the commit "
+                    "is safe on that branch; only the announcement failed",
+                    sha,
+                    exc_info=True,
+                )
 
     def _land(self, repo: pygit2.Repository, refspecs: list[str]) -> None:
         """Everything a recovery sends, in one push.
