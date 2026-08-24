@@ -519,19 +519,31 @@ def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: P
 
     got = measured_in(chrome(), read(rendered, "graph.html"),
                       tmp_path / "legend.html", 1400, _LEGEND_GEOMETRY, height=900)
-    priority, status = got["rows"]
-    assert [priority["name"], status["name"]] == ["priority", "status"]
+    # Status leads — jcanton, 2026-08-24: "put the status row on top of the
+    # priority row, better!" It is the longer of the two now, so the longer row
+    # leads and the shorter hangs under its right end, which reads as one block
+    # rather than as a step.
+    status, priority = got["rows"]
+    assert [status["name"], priority["name"]] == ["status", "priority"]
 
     assert got["bands"] == 2, "the keys are not on two rows"
-    assert priority["nameX"] == status["nameX"], "the two row names do not start together"
     assert len(status["xs"]) == len(STATUSES)
     assert len(status["xs"]) > len(priority["xs"]), (
         "status is meant to be the longer row — if priority grew a rung, the grid's"
         " column count follows the wrong list"
     )
-    # Column by column, for as far as the shorter row goes.
-    for column, (over, under) in enumerate(zip(priority["xs"], status["xs"], strict=False)):
+    # Paired from the RIGHT, so the last key of each row shares a column and the
+    # slack is taken by the shorter row's name cell. From the left they are
+    # deliberately staggered by exactly the difference in their lengths — see
+    # `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing`, which
+    # measures the same claim in painted pixels.
+    for column, (over, under) in enumerate(
+        zip(reversed(priority["xs"]), reversed(status["xs"]), strict=False)
+    ):
         assert over == under, (column, over, under)
+    # The names no longer start together: the shorter row's is what absorbs the
+    # extra column, so it is wider by one column and starts where the other does.
+    assert priority["nameX"] == status["nameX"], "the two row names do not start together"
     # And each row is one row.
     assert len(set(priority["ys"])) == 1 and len(set(status["ys"])) == 1
 
