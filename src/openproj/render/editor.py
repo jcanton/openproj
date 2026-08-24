@@ -1196,18 +1196,39 @@ const COEDIT = (() => {
     // Nothing to say here: a failed handshake fires this and then `onclose`,
     // which is where the one decision lives.
     socket.onerror = () => {};
-    socket.onclose = () => {
+    socket.onclose = event => {
       if (opened !== socket) return;
       settle(null);
       names([]);
       if (dead) return;
       if (!wanted) return;
+      // The server said why, so stop and say it. 4000-4999 is the range the
+      // protocol reserves for an application, and every code the server sends in
+      // it is permanent for this page: the session expired, this login may not
+      // write here, the record is gone, two files claim its id. Read as a range
+      // and not as a list, so a fifth reason added on the server reaches a tab
+      // that shipped before it — see `_SOCKET_REFUSALS` in `web.py`, which is
+      // also where it is written down that a refusal has to be *accepted* before
+      // it can carry any of this.
+      if (event && event.code >= 4000 && event.code <= 4999)
+        return stop(event.reason || 'you can no longer edit this — reload the page');
       // A socket that has worked once and then closed is the normal case, not a
       // fault: Cloud Run closes every one of them at five minutes. A socket that
       // has never worked is a deployment without websockets, a proxy that drops
       // the upgrade, or a reader who may not write — and asking it again forever
       // is a red line in the console of a page that is working as designed.
       if (!arrived && attempts >= 4) return stop('');
+      // And a ceiling that holds when nobody said anything at all. `arrived`
+      // never resets, so the guard above stops covering a tab the moment its
+      // first socket succeeds — which is how one tab came to spend 49 hours
+      // knocking once a minute, roughly 2,900 refused handshakes, after its
+      // session quietly passed 24 hours. `attempts` is only cleared in `onopen`,
+      // so this counts consecutive failures rather than a lifetime, and a deploy
+      // is still ridden out: ten tries on the schedule below — .5, 1, 2, 4, 8,
+      // 16 seconds and then the 30-second cap four times — is about two and a
+      // half minutes, which is longer than a Cloud Run revision takes to come up.
+      if (attempts >= 10)
+        return stop('the connection kept being refused — reload the page to edit again');
       retry = setTimeout(connect, Math.min(30000, 500 * Math.pow(2, attempts++)));
     };
   }

@@ -262,6 +262,63 @@ def _wedged(state: Condition) -> str:
     )
 
 
+# Why the co-editing socket said no, in a code and a sentence the browser can
+# read — and the whole reason the route accepts a socket it is about to close.
+#
+# **A close code only crosses the wire after a handshake.** Refusing before
+# `accept` is an HTTP 403 in the access log and, in the browser, `onclose` with
+# code 1006 and an empty reason — which is byte for byte what a connection that
+# merely dropped looks like. Cloud Run's request deadline drops this socket every
+# five minutes by design, so reconnecting is the normal case, and the page could
+# not tell the two apart: it retried a permanent refusal for ever. One tab did
+# exactly that between 2026-08-22 09:15 and 2026-08-24 10:45 — 49 hours, roughly
+# 2,900 refused handshakes, once a minute, after its session passed the 24 hours
+# `read_session` gives one. Nothing on screen ever said it had been signed out.
+#
+# So the refusal is accepted and then closed. It costs one `101` in the access
+# log where a `403` used to be, which is worth saying out loud because `403` on
+# this path was a usable signal that a tab was knocking and being turned away;
+# the codes below are that signal now, and they reach the person as well.
+#
+# 4000-4999 is the range the protocol reserves for an application, and the page
+# stops on any of them rather than on a list it has to keep in step — see
+# `editor.py`'s `onclose`. Which code is off the refusal's own status, so there
+# is one answer to "why may I not write this", given by the code that decides it.
+_SOCKET_REFUSALS = {
+    400: (4400, "that is not a record id — reload the page"),
+    # Not "your session has expired", although expiry is what produces this in
+    # practice: the same arm answers a client that was never signed in at all,
+    # and telling somebody their session ran out when they never had one sends
+    # them looking for a thing that did not happen.
+    401: (4401, "you are not signed in any more — reload the page and sign in to edit"),
+    403: (4403, "you are not a member of the organisation that may edit this plan"),
+    409: (4409, "two files in the plan claim this id, so it cannot be edited"),
+}
+# What a close frame will carry: 125 bytes of payload, two of which are the code.
+# A longer reason is not truncated by the library — it is a frame the peer
+# rejects, which would turn a sentence into the silence it was written to end. So
+# it is cut here, where the budget is known.
+_CLOSE_REASON_BYTES = 123
+
+
+async def _refuse_socket(
+    socket: WebSocket, refused: HTTPException | None, record_id: str
+) -> None:
+    """Turn a co-editing socket away, saying which of the reasons it was.
+
+    `refused` is None when `_path_for` simply found no file, which is not an
+    exception and is the one refusal that names the record back.
+    """
+    code, why = _SOCKET_REFUSALS.get(
+        refused.status_code if refused is not None else 404,
+        (4404, f"{record_id} is not in the plan any more — reload the page"),
+    )
+    await socket.accept()
+    await socket.close(
+        code=code, reason=why.encode()[:_CLOSE_REASON_BYTES].decode(errors="ignore")
+    )
+
+
 # Two names for one session, chosen by the scheme the request actually arrived
 # on, because the `__Host-` prefix is not a hint — it is a rule the browser
 # enforces before it stores anything. A `Set-Cookie` carrying that prefix without
@@ -3022,19 +3079,20 @@ def create_app(
         # write" is how a page comes to offer a control whose only answer is a
         # refusal, and this is the control that has to agree with `PATCH
         # /api/record` exactly: the room writes through the same gate.
+        refused: HTTPException | None = None
         try:
             user = writer(socket)  # type: ignore[arg-type]
             head = store.head()
             path = _path_for(store, head, record_id)
-        except HTTPException:
+        except HTTPException as error:
             # Not signed in, not a member, no such record, or two files claiming
-            # one id. Refused before the handshake, which the browser sees as a
-            # socket that would not open — and a socket that would not open is
-            # the case this whole feature is designed to degrade into, so a
-            # reader who may not write gets exactly today's editor.
-            path = None
+            # one id. A reader who may not write gets exactly today's editor —
+            # that is the case this whole feature is designed to degrade into —
+            # but the page has to be able to tell that apart from a socket that
+            # merely dropped, and the sentence is how it does.
+            refused, path = error, None
         if path is None:
-            await socket.close(code=1008)
+            await _refuse_socket(socket, refused, record_id)
             return
 
         await socket.accept()
