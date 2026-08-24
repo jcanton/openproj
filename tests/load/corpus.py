@@ -116,7 +116,6 @@ def _record(rid, kind, title, parent, status, seed, weeks):
         'prs: ["C2SM/icon4py#1223"]',
         "created_schema_version: 2",
         f"person_weeks: {weeks}",
-        "shaped_by: jcanton",
         "cycle: 37",
         "---",
         "",

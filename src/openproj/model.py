@@ -752,18 +752,12 @@ class Pitch(Record):
     # stood. One field on both kinds, because a pitch's appetite and a task's
     # effort were two names for one quantity that `size_weeks` already read as one.
     person_weeks: float | None = None
-    # A list, because shaping is usually done in pairs — two of the four shaped
-    # pitches in the team's own corpus name two or three people. A bare string
-    # still parses and still writes back as a bare string, so no file has to
-    # change and `git blame` on the field survives.
-    shaped_by: list[str] = []
-
-    @field_validator("shaped_by", mode="before")
-    @classmethod
-    def _one_or_many(cls, value: object) -> object:
-        if value is None:
-            return []
-        return [value] if isinstance(value, str) else value
+    # There is no `shaped_by` any more — jcanton, 2026-08-24: owner, shaped_by,
+    # assignees and reviewers was one hat too many, so on a pitch `owner` means
+    # "who shaped it and holds it". The cost was known when he chose: the team's
+    # own HackMD header says "Shaped by", and shaping is usually a pair where
+    # `owner` holds one name. Do not reintroduce either. A file that still
+    # carries the key round-trips untouched and warns, through `_RETIRED`.
 
 
 class Task(Record):
@@ -1268,12 +1262,10 @@ def _in_the_style_of(old: object, new: object) -> object:
         styled = CommentedSeq(new)
         styled.fa.set_flow_style()
         return styled
-    # A field that grew from a scalar to a list keeps its scalar spelling while it
-    # holds one value. `shaped_by: jcanton` is what the corpus is written in, and
-    # rewriting every one of them to `[jcanton]` on an unrelated save is a diff
-    # nobody asked for in a file somebody else is reading.
-    if isinstance(old, str) and isinstance(new, list) and len(new) == 1:
-        return new[0]
+    # A scalar-to-list clause stood here for `shaped_by`, the one list field
+    # whose validator accepted a bare string. The field is retired, no list
+    # field parses from a scalar any more, and a branch no input can reach is a
+    # branch that silently rots — so it went with the field.
     return new
 
 
@@ -1946,8 +1938,8 @@ def _status_problems(
             # `effort_weeks` on a task — one quantity under two names, which
             # `size_weeks` had to paper over on every read.
             yield "blocker", field, f"a ready {record.kind} needs an appetite", 1
-        if record.kind == "pitch" and not record.shaped_by:
-            yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
+        # No shaped_by gate any more: a pitch's owner IS who shaped it, and the
+        # owner rule above already asks every ready record for one.
     elif record.status == "in_progress":
         if record.assigned_on is None:
             yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
@@ -2045,7 +2037,7 @@ def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str 
     """
     if not config.known_people:
         return
-    for field in ("owner", "shaped_by", "assignees", "reviewers", "reported_by", "written_by"):
+    for field in ("owner", "assignees", "reviewers", "reported_by", "written_by"):
         value = getattr(record, field, None)
         for login in value if isinstance(value, list) else [value] if value else []:
             if login not in config.known_people:
@@ -2247,6 +2239,23 @@ def _carries(record: Record, field: str) -> bool:
 _PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
 
 
+# Fields this tool used to read and no longer does, and where each value lives
+# now. Parsing is permissive, so a retired key survives in `_unread` and
+# `patch_text` round-trips it byte for byte — nothing is lost from the file, and
+# nothing appears on the screen. That silence is the "empty must not look like
+# broken" family: a pitch that records who shaped it and shows nothing. So the
+# key is named, once, here — a warning and never a blocker, because the file is
+# not wrong, it is older than the vocabulary.
+#
+# `shaped_by` retired 2026-08-24 — jcanton: owner, shaped_by, assignees and
+# reviewers was one hat too many, so `owner` on a pitch is who shaped it and
+# holds it.
+_RETIRED = {
+    "shaped_by": "owner records who shaped a pitch and holds it — "
+                 "move the name there and delete this key",
+}
+
+
 def _problems_for(
     record: Record,
     config: Config,
@@ -2303,6 +2312,15 @@ def _problems_for(
                     else f"{_an(name)} is never scheduled"
                 )
                 yield "warning", field, f"{what}, so its {field} is not read", 1
+
+    # Any kind, because a retired key is in nobody's `model_fields` and so lands
+    # in `_unread` wherever it is written. Stamped 5, the version that retired
+    # `shaped_by` — moot for severity, since a warning is what is yielded and
+    # grandfathering only ever demotes, but a Problem's version should still say
+    # which vocabulary it belongs to.
+    for field, where in _RETIRED.items():
+        if field in record._unread:
+            yield "warning", field, f"{field} is no longer read: {where}", 5
 
     if record.id in parent_cycles:
         yield "blocker", "parent", "part of a parent cycle", 1

@@ -54,7 +54,6 @@ EDITABLE: dict[str, str] = {
     "tags": "list",
     "prs": "list",
     "person_weeks": "number",
-    "shaped_by": "list",
 }
 # The validator's own ladder, aliased and not retyped. This line was the five
 # words written out a second time — the same defect `PREFIX` below records being
@@ -276,7 +275,6 @@ LABELS = {
     "reviewers": "Reviewers", "review_waived": "Review waived", "assigned_on": "Assigned on",
     "priority": "Priority", "cycle": "Cycle", "parent": "Parent", "depends_on": "Blocked by",
     "tags": "Tags", "prs": "PRs", "person_weeks": "Appetite (person-weeks)",
-    "shaped_by": "Shaped by",
     "reported_by": "Reported by", "written_by": "Written by",
     "pitched_into": "Pitched into", "became": "Became",
     "opened_on": "Opened on", "written_on": "Written on",
@@ -356,7 +354,6 @@ HUMAN = {
     "owner": "Owner",
     "assignee": "Assignee",
     "reviewer": "Reviewer",
-    "shaper": "Shaper",
 }
 
 
@@ -487,12 +484,12 @@ def _read_date(value: object) -> str:
 
 # Fields that name a person. They get a datalist of everyone already in the corpus,
 # so a typo shows up as "not in the list" rather than as a reviewer who does not exist.
-PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "shaped_by", "reported_by", "written_by")
+PEOPLE_FIELDS = ("owner", "assignees", "reviewers", "reported_by", "written_by")
 # Which suggestion list each field draws from. A datalist only completes a whole
 # value, so the comma-separated ones also get an "add" picker that appends a token
 # — otherwise the suggestions are useless the moment there is more than one name.
 SUGGESTS = {
-    "owner": "people", "assignees": "people", "reviewers": "people", "shaped_by": "people",
+    "owner": "people", "assignees": "people", "reviewers": "people",
     "parent": "records", "depends_on": "records", "tags": "tags", "prs": "prs",
     "reported_by": "people", "written_by": "people",
     "pitched_into": "records", "became": "records",
@@ -562,9 +559,10 @@ _KIND_MODELS: dict[str, type[Record]] = {rung.name: rung.model for rung in KIND_
 # The body a new record starts from, per kind.
 #
 # The pitch one is the team's own shaping template, copied from the note they
-# already write pitches against, minus its three header lines: `Shaped by`,
-# `Appetite` and `Developers` are fields here, and a heading restating a field is
-# the two-copies-of-one-fact problem this tool exists to end. The guidance stays
+# already write pitches against, minus its three header lines: `Appetite` and
+# `Developers` are fields here, `Shaped by` is what `owner` records now, and a
+# heading restating a field is the two-copies-of-one-fact problem this tool
+# exists to end. The guidance stays
 # in HTML comments exactly as it is written there — invisible on the page, see
 # `without_comments` — so a pitch drafted in HackMD and one drafted here are the
 # same document.

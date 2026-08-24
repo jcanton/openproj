@@ -16,7 +16,6 @@ tags: [kiln4py, standalone-driver, distributed, bitwise-reproducibility, ci]
 prs: ["kilnlab/kiln4py#2325"]
 created_schema_version: 2
 person_weeks: 6.0
-shaped_by: jackdawrie
 ---
 
 ## Problem

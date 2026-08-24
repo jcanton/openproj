@@ -16,7 +16,6 @@ tags: [hearth, scan-operator, gpu]
 prs: ["kilnlab/hearth#802"]
 created_schema_version: 2
 person_weeks: 2.0
-shaped_by: Whimbrelson
 ---
 
 # Scan operator on the GPU backend

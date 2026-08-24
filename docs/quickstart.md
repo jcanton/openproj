@@ -107,7 +107,7 @@ save and by `openproj check`.
 |---|---|---|
 | `thinking` | nobody has looked at this yet, and it is where a new record opens | nothing |
 | `shaping` | an idea nobody has bet on | nothing — it has no owner and no size by definition |
-| `ready` | shaped, and bettable | an owner, a reviewer or `review_waived`, a size, and `shaped_by` on a pitch |
+| `ready` | shaped, and bettable | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
 | `in_progress` | being built | `assigned_on`, and a reviewer who is not the owner |
 | `done` | finished | at least one PR |
 | `shelved` | parked | nothing — parked work is not broken work |

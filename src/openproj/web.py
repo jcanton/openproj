@@ -810,7 +810,7 @@ def _as_positive(value: object, name: str, most: float = math.inf) -> float:
 
 
 _NUMERIC = ("cycle", "person_weeks")
-_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on", "shaped_by",
+_LISTS = ("assignees", "reviewers", "tags", "prs", "depends_on",
           "pitched_into", "became")
 
 

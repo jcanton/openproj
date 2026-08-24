@@ -18,7 +18,7 @@ one model, one parser, one write path, one page.
 |---|---|---|---|---|---|
 | `product` | `prod-a3f81c` | `products/` | — | yes | none |
 | `project` | `proj-…` | `projects/` | `product` | yes | none |
-| `pitch` | `pitch-…` | `pitches/` | `project` | yes | `person_weeks`, `shaped_by` |
+| `pitch` | `pitch-…` | `pitches/` | `project` | yes | `person_weeks` |
 | `task` | `task-…` | `tasks/` | `pitch`, `project` | yes | `person_weeks` |
 | `issue` | `issue-…` | `issues/` | — | no | `reported_by`, `opened_on`, `pitched_into` |
 | `note` | `note-…` | `notes/` | — | no | `written_by`, `written_on`, `became` |
@@ -40,8 +40,9 @@ ignored.
 
 Each kind is one thing and says so:
 
-- A **pitch** is the unit of the bet: what the betting table offers, what carries an appetite and a
-  `shaped_by`, and the only kind whose body the shaping hints read.
+- A **pitch** is the unit of the bet: what the betting table offers, what carries an appetite, and
+  the only kind whose body the shaping hints read. Its `owner` is who shaped it and holds it —
+  there is no `shaped_by` field; `assignees` are who is building it, `reviewers` who read the PR.
 - A **task** is a piece of a pitch. It has its own size and its own people and takes its cycle from
   the pitch — a bet is made once, on the thing the room named. A task with **no** parent is a chore
   nobody pitched: bettable in its own right, and then the cycle is its own.
@@ -181,7 +182,7 @@ exists somebody has already thought about it, which is why its own ladder starts
 |---|---|
 | `thinking` | nothing — nobody has looked at this yet, and it is where a new record starts |
 | `shaping` | nothing — an idea nobody has bet on has no owner and no size by definition |
-| `ready` | `owner`; a reviewer or `review_waived`; a size; `shaped_by` on a pitch |
+| `ready` | `owner`; somebody assigned; a reviewer or `review_waived`; a size |
 | `in_progress` | `assigned_on`; a reviewer who is not the owner |
 | `done` | at least one PR |
 | `shelved` | nothing — parked work is not broken work |
@@ -199,12 +200,16 @@ a six-week build is not a workload.
 **Parse permissively, validate strictly.** Every field is optional at the type level and `status` and
 `priority` are plain `str`, so a hand-edited file with a missing field or a retired word still loads
 and reports a problem instead of taking the index down. Only `kind` is strict: an unknown kind has no
-directory, no id prefix, no parent rule and no model, so there is nothing to draw it as.
+directory, no id prefix, no parent rule and no model, so there is nothing to draw it as. A retired
+*field* gets the same courtesy in the other direction: a file that still says `shaped_by:` loads,
+keeps the key byte for byte through every save, and reports a warning naming where the value lives
+now (`owner`) — never a blocker, because the file is older than the vocabulary, not wrong.
 
 **Grandfathering.** Each rule records the `schema_version` that introduced it and a record is blocked
 only by rules that existed when it was created; a newer rule warns. Without it, adding one required
-field invalidates the whole corpus at once and the rule gets reverted rather than adopted. `shaped_by`
-is the live example.
+field invalidates the whole corpus at once and the rule gets reverted rather than adopted. The
+somebody-assigned rule at `ready` is the live example: introduced at version 2, so it blocks a record
+created since and warns about the rest of the corpus.
 
 ## The structures that are not records
 
@@ -242,7 +247,7 @@ two different paths, where compare-and-swap is scoped.
 **`Config`** — `config/*.yaml`: `schema_version` (the version new records are created at, not
 necessarily the corpus's), `nominal_availability`, `default_task_effort`, `cooldown_weeks`,
 `holidays`, the cycle windows, and `known_people`, the **roster**. Empty means the check is off, which
-is the right default; when it does name people, an owner, assignee, reviewer or shaper who is not on
+is the right default; when it does name people, an owner, assignee or reviewer who is not on
 it is a warning and never a blocker, because the roster is maintained by hand and a new colleague must
 not be unassignable on their first day. It carries `plans` and `people` too, loaded from the record
 files rather than from any config file — the roster and a person's own record answer different

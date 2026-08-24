@@ -353,7 +353,7 @@ def test_the_create_form_writes_only_fields_a_person_owns(new_page: str):
         assert field in named, field
     # Every kind's fields are on the page; which of them apply is `data-kinds`,
     # checked by test_a_field_only_one_kind_has_is_absent_from_the_others.
-    for field in ("person_weeks", "shaped_by", "person_weeks"):
+    for field in ("person_weeks",):
         assert field in named, f"{field} is status-gated at creation and must be fillable"
 
 
@@ -507,7 +507,6 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
         ("owner", "ready"),
         ("reviewers", "ready in_progress"),
         ("person_weeks", "ready"),
-        ("shaped_by", "ready"),
         ("assigned_on", "in_progress"),
         ("prs", "done"),
     ):
@@ -548,9 +547,10 @@ def test_the_gates_are_the_validator_s_own_and_not_a_second_copy(new_page: str):
 
 def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient):
     """Asking every kind for every field makes the form a schema dump rather than
-    a question. `shaped_by` is the pitch's alone — shaping is what a pitch gets,
-    and a task blocked on a missing `shaped_by` would be nonsense — while a size
-    belongs to a pitch and a task alike and a project has none, being a container.
+    a question. `reported_by` is the issue's alone and `written_by` the note's —
+    who to ask is a fact about an inbox record, and a task blocked on a missing
+    `reported_by` would be nonsense — while a size belongs to a pitch and a task
+    alike and a project has none, being a container.
 
     The page carries every kind and hides what does not apply, so that
     switching kind does not throw away a title somebody just typed. Each row says
@@ -561,7 +561,8 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     owners = {field: kinds.split() for kinds, field in found}
 
     assert owners["person_weeks"] == ["pitch", "task"]
-    assert owners["shaped_by"] == ["pitch"]
+    assert owners["reported_by"] == ["issue"]
+    assert owners["written_by"] == ["note"]
     # Every kind that reads a status AND is offered one here, in ladder order
     # and off the ladder. The container rung reads no status at all; the two
     # inbox kinds read one and are deliberately NOT offered it on this form —
@@ -588,16 +589,16 @@ def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
     """The page hides them; this is what stops them.
 
     `patch_text` writes every field into the frontmatter before the model parses
-    it, so a `shaped_by` on a task would sit in the file unread — present in git,
-    invisible to the tool, and wrong the day somebody greps for it.
+    it, so a `reported_by` on a task would sit in the file unread — present in
+    git, invisible to the tool, and wrong the day somebody greps for it.
     """
     response = client.post(
         "/api/record",
-        json={"fields": {"kind": "task", "title": "x", "shaped_by": ["ann"]}, "body": ""},
+        json={"fields": {"kind": "task", "title": "x", "reported_by": "ann"}, "body": ""},
     )
 
     assert response.status_code == 422
-    assert "shaped_by" in response.json()["detail"]
+    assert "reported_by" in response.json()["detail"]
 
 
 def test_the_create_form_has_somewhere_to_put_the_server_refusal(new_page: str):
@@ -1854,9 +1855,10 @@ def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str
 
 def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
     """The five ingredients plus the progress list, which is the template the team
-    already writes pitches against. Its three header lines — shaped by, appetite,
-    developers — are fields here, and a heading restating a field is the two
-    copies of one fact this tool exists to end."""
+    already writes pitches against. Its three header lines are covered by fields
+    here — appetite and developers directly, shaped-by as what `owner` records —
+    and a heading restating a field is the two copies of one fact this tool
+    exists to end."""
     from openproj.render import TEMPLATES
 
     pitch = TEMPLATES["pitch"]
@@ -2305,9 +2307,10 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """The reason a row is a problem lived in a native `title` on the `<tr>`, and
     a table is not a thing anybody hovers to find out.
 
-    A field the table has no column for — `shaped_by`, `person_weeks` — still has
-    to be findable, so its complaint falls to the id cell. A glyph on a column
-    nobody can see is a row that says something is wrong and will not say what.
+    A field the table has no column for — `assigned_on`, `person_weeks` — still
+    has to be findable, so its complaint falls to the id cell. A glyph on a
+    column nobody can see is a row that says something is wrong and will not say
+    what.
     """
     body = script(page)
 
@@ -3279,14 +3282,14 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
         replies=[{"status": 422, "json": {"problems": [
             {"severity": "blocker", "record_id": "pitch-000000", "field": "owner",
              "message": "a ready record needs an owner"},
-            {"severity": "blocker", "record_id": "pitch-000000", "field": "shaped_by",
-             "message": "a ready pitch needs to say who shaped it"},
+            {"severity": "blocker", "record_id": "pitch-000000", "field": "assignees",
+             "message": "a ready record needs somebody on it"},
         ]}}],
     )
     got = answer["value"]
 
     assert got["said"] == ["a ready record needs an owner",
-                           "a ready pitch needs to say who shaped it"]
+                           "a ready record needs somebody on it"]
     assert got["draft"] is True, "the row is still there, with everything typed into it"
 
 
@@ -4352,7 +4355,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Held up by its tasks",
               status="ready", owner="ann", reviewers=[], person_weeks=4,
-              shaped_by=["ann"], assigned_on=date(2026, 8, 10)),
+              assigned_on=date(2026, 8, 10)),
         Task(id="task-000001", kind="task", title="One", parent="pitch-000001",
              status="ready", owner="ann", reviewers=["bo"], person_weeks=2,
              assigned_on=date(2026, 8, 10)),

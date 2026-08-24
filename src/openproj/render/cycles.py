@@ -1350,18 +1350,19 @@ button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-r
 .groupline #state.bad { color: var(--warn); }
 """
 
-_ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"),
-          ("shaped_by", "shaper"))
+_ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"))
 
 # Most answerable first. Grouped by record — which is what building the rows one
 # record at a time gave you — a person with twenty rows had their four ownerships
 # scattered through it, and ownership is the thing being on the page is for.
-_ROLE_ORDER = ("owner", "assignee", "shaper", "reviewer")
+# There is no shaper row any more: `shaped_by` retired into `owner`, so who
+# shaped a pitch is its Owner line.
+_ROLE_ORDER = ("owner", "assignee", "reviewer")
 
 # Which table filter answers "show me this person's <role>", and the words for
-# what that link opens. The table facets three of the four fields a person's name
-# can sit in; `shaped_by` is not one of them, so a shaper count stays a count
-# rather than becoming a link to a filter the table does not have.
+# what that link opens. Every role this page draws is a table facet now, but the
+# lookups below stay `.get`-shaped: a role without a filter is a count rather
+# than a dead link, which is what kept the shaper row honest while it existed.
 _ROLE_FILTER = {
     "owner": ("owner", "owns"),
     "assignee": ("assignees", "is assigned"),
