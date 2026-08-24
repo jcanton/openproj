@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import subprocess
+from contextlib import contextmanager
 from html import unescape
 from pathlib import Path
 
@@ -176,26 +177,18 @@ def measured_in(
     return json.loads(unescape(found.group(1)))
 
 
-def in_a_live_page(
-    browser: str, url: str, expression: str, profile: Path, seconds: float = 20
-) -> tuple[object, list[str]]:
-    """Open a URL in Chrome, then ask it a question once the page has settled.
+@contextmanager
+def _devtools(browser: str, url: str, profile: Path):
+    """One headless Chrome on one page, and the two things a caller needs from
+    it: `call(method, params)` for any DevTools method, and the list the console
+    accumulates into.
 
-    `--dump-dom` cannot answer this one, and the way it fails is worth writing
-    down: it waits for the network to go idle, and a page holding a WebSocket
-    open never does. Chrome sat on the co-editing page until the test killed it
-    at three minutes — with the socket working perfectly, which is the sort of
-    green-looking red this file exists to avoid.
-
-    So this drives DevTools instead, over the same kind of socket the page under
-    test uses. That also buys the thing `--dump-dom` structurally cannot give: a
-    question asked *after* the page has settled, and asked again until it
-    answers, rather than one asked at load and answered by whatever had happened
-    by then.
-
-    Returns (the expression's value, every console message the page produced).
-    The console is half the evidence: a connection a policy refuses is a console
-    line naming the directive, and nothing else on these pages produces one.
+    Split out of `in_a_live_page` when a second question needed the same plumbing
+    — a *trusted* press, which is `Input.dispatchMouseEvent` and therefore a
+    DevTools method like any other. Copying forty lines of Popen, port discovery
+    and message pumping to send one extra method is how two harnesses come to
+    disagree about which one is telling the truth, and this file has already
+    written down what a harness that lies costs.
     """
     import time
     from urllib.parse import quote
@@ -243,18 +236,104 @@ def in_a_live_page(
 
             call("Log.enable")
             call("Runtime.enable")
-            value = None
-            deadline = time.monotonic() + seconds
-            while time.monotonic() < deadline:
-                answer = call(
-                    "Runtime.evaluate",
-                    {"expression": expression, "returnByValue": True, "awaitPromise": True},
-                )
-                value = answer.get("result", {}).get("result", {}).get("value")
-                if value:
-                    break
-                time.sleep(0.25)
-            return value, said
+            yield call, said
     finally:
         chrome_process.terminate()
         chrome_process.wait(timeout=30)
+
+
+def _evaluated(call, expression: str):
+    """One expression, awaited, with whatever it threw reported as itself.
+
+    A `Runtime.evaluate` that throws answers 200 with an `exceptionDetails` and
+    no value, so a caller that reads `result.value` sees `None` and reports the
+    page as having answered nothing — which is the same shape as a page that did
+    not lay out, and points at the harness instead of at the line that threw.
+    """
+    answer = call("Runtime.evaluate",
+                  {"expression": expression, "returnByValue": True, "awaitPromise": True})
+    thrown = answer.get("result", {}).get("exceptionDetails")
+    assert not thrown, f"the page threw: {thrown.get('exception', {}).get('description', thrown)}"
+    return answer.get("result", {}).get("result", {}).get("value")
+
+
+def pressed_in(
+    browser: str, url: str, profile: Path, *, setup: str, at: str, then: str,
+    settle: float = 1.5,
+) -> tuple[object, list[str]]:
+    """Put the page in a state, press a point on it the way a mouse does, and ask
+    what happened.
+
+    **`Input.dispatchMouseEvent` and not `element.click()`, and that distinction
+    is the whole reason this exists.** A synthetic event carries `isTrusted:
+    false` and runs no default action, so it moves no focus, blurs nothing, and
+    is *dispatched* rather than synthesised — which means it cannot ask the one
+    question that matters here: whether the browser decides to synthesise a
+    `click` at all. It does not when the element that took the `mousedown` is
+    detached before the `mouseup`, and a page that rebuilds a container on blur
+    detaches it in between. Every cheaper harness — `drive.js`, which has no
+    focus model and no bubbling, and `measured_in`, whose script can only
+    dispatch — passes with that defect in place, because in both of them the
+    press lands by construction.
+
+    `setup` puts the page where the press has to find it and is expected to
+    scroll the target into view; `at` is an expression answering `[x, y]` in
+    viewport coordinates, asked after `setup` so it sees the layout the press
+    will actually meet; `then` is the question, asked after `settle` seconds of
+    real time so a write path has run to its end.
+    """
+    import time
+
+    with _devtools(browser, url, profile) as (call, said):
+        # The page has to have drawn before anything can be pressed on it, and
+        # `--dump-dom`'s network-idle wait is not available here (see
+        # `in_a_live_page`). A short fixed wait is honest about what it is.
+        time.sleep(2)
+        _evaluated(call, setup)
+        where = _evaluated(call, at)
+        assert isinstance(where, list) and len(where) == 2, (
+            f"`at` must answer [x, y] in viewport coordinates; it answered {where!r}"
+        )
+        x, y = where
+        for kind in ("mousePressed", "mouseReleased"):
+            call("Input.dispatchMouseEvent", {
+                "type": kind, "x": x, "y": y, "button": "left", "clickCount": 1,
+                "buttons": 1 if kind == "mousePressed" else 0,
+            })
+            time.sleep(0.1)
+        time.sleep(settle)
+        return _evaluated(call, then), said
+
+
+def in_a_live_page(
+    browser: str, url: str, expression: str, profile: Path, seconds: float = 20
+) -> tuple[object, list[str]]:
+    """Open a URL in Chrome, then ask it a question once the page has settled.
+
+    `--dump-dom` cannot answer this one, and the way it fails is worth writing
+    down: it waits for the network to go idle, and a page holding a WebSocket
+    open never does. Chrome sat on the co-editing page until the test killed it
+    at three minutes — with the socket working perfectly, which is the sort of
+    green-looking red this file exists to avoid.
+
+    So this drives DevTools instead, over the same kind of socket the page under
+    test uses. That also buys the thing `--dump-dom` structurally cannot give: a
+    question asked *after* the page has settled, and asked again until it
+    answers, rather than one asked at load and answered by whatever had happened
+    by then.
+
+    Returns (the expression's value, every console message the page produced).
+    The console is half the evidence: a connection a policy refuses is a console
+    line naming the directive, and nothing else on these pages produces one.
+    """
+    import time
+
+    with _devtools(browser, url, profile) as (call, said):
+        value = None
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            value = _evaluated(call, expression)
+            if value:
+                break
+            time.sleep(0.25)
+        return value, said
