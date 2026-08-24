@@ -368,6 +368,50 @@ def _merge(path: str, base: str, mine: str, theirs: str) -> tuple[str | None, st
     return f"---\n{front}---\n{body}", None
 
 
+def _verdict(
+    path: str, was: str | None, mine: str | None, stored: str | None
+) -> tuple[str | None, str | None]:
+    """One path's fate against the tip: (resolved_text, conflict_sentence).
+
+    `was` is the file at the caller's base, `mine` what the caller wants it to
+    say — None to remove it — and `stored` what the tip holds now. At most one
+    side of the answer is not None; a resolved text of None with no conflict
+    means the proposal stands exactly as proposed, which for a removal is the
+    drop going ahead.
+
+    Extracted from `_attempt`'s loop so the deferred-push replay can re-drive a
+    commit's per-path delta through the SAME decision a save makes. Two copies
+    of this ladder would let write-time and replay-time conflict semantics
+    drift apart, and an invariant written twice will be guarded once. What does
+    NOT live here is the write path's wording around the result — the outcome
+    labels, the already-gone courtesy, the fresh-base fast path — because the
+    replay has nobody to say any of it to.
+    """
+    if was == stored:
+        # Somebody edited a different file. Nobody needs to hear.
+        return mine, None
+    # A removal has no third text to fall back on. `_merge` exists because two
+    # edits to one file can often both be kept; a delete and an edit cannot.
+    # Refused rather than merged, and refused rather than quietly winning: the
+    # edit would otherwise be committed and then thrown away without anybody
+    # reading it.
+    if mine is None:
+        return None, _changed_under_delete(path)
+    # Deleted under us, and it must not come back. `_merge` is handed
+    # `stored or ""`, so a deletion arrives looking exactly like an empty
+    # frontmatter: every key nobody touched reads as "only they moved it" and
+    # drops, the one key this write touched reads as "only we moved it" and
+    # stays. A drag onto a record somebody had just deleted therefore recreated
+    # it as a file holding nothing but `parent:`, and answered 200. Parsing
+    # would not have caught it — every field here is optional by design.
+    if was is not None and stored is None:
+        return None, _deleted(path)
+    merged, conflict = _merge(path, was or "", mine, stored or "")
+    if conflict is not None:
+        return None, conflict
+    return merged, None
+
+
 def _tree_blobs(repo: pygit2.Repository, commit: str) -> dict[str, str]:
     """Every file at this commit, and the id of the bytes in it.
 
@@ -1028,36 +1072,16 @@ class Store:
                     outcomes.append("committed")
                     continue
                 was, stored = self.read(base_commit, path), self.read(current, path)
-                if was == stored:
-                    # Somebody edited a different file. Nobody needs to hear.
-                    resolved[path] = content
-                    outcomes.append("retried")
+                text, refusal = _verdict(path, was, content, stored)
+                if refusal is not None:
+                    conflicts.append(refusal)
                     continue
-                # Deleted under us, and it must not come back. `_merge` is handed
-                # `stored or ""`, so a deletion arrives looking exactly like an
-                # empty frontmatter: every key nobody touched reads as "only they
-                # moved it" and drops, the one key this write touched reads as
-                # "only we moved it" and stays. A drag onto a record somebody had
-                # just deleted therefore recreated it as a file holding nothing
-                # but `parent:`, and answered 200. Parsing would not have caught
-                # it — every field here is optional by design.
-                # A removal has no third text to fall back on. `_merge` exists
-                # because two edits to one file can often both be kept; a delete
-                # and an edit cannot. Refused rather than merged, and refused
-                # rather than quietly winning: the edit would otherwise be
-                # committed and then thrown away without anybody reading it.
-                if content is None:
-                    conflicts.append(_changed_under_delete(path))
-                    continue
-                if was is not None and stored is None:
-                    conflicts.append(_deleted(path))
-                    continue
-                merged, conflict = _merge(path, was or "", content, stored or "")
-                if conflict is not None:
-                    conflicts.append(conflict)
-                    continue
-                resolved[path] = merged
-                outcomes.append("merged")
+                resolved[path] = text
+                # The label repeats the ladder's first comparison rather than
+                # coming back with the verdict, because it is wording and not a
+                # guard: nothing is decided by it, and `_verdict`'s other
+                # caller, the replay, has no outcome to report to anybody.
+                outcomes.append("retried" if was == stored else "merged")
             if conflicts:
                 return WriteResult(
                     commit=None, outcome="conflict", conflict="\n".join(conflicts)

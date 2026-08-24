@@ -565,6 +565,127 @@ def test_no_conflict_marker_ever_reaches_the_caller_or_the_repository(store: Sto
     assert not [marker for marker in markers if marker in stored]
 
 
+def test_every_per_path_verdict_keeps_its_outcome_and_its_exact_sentence(store: Store):
+    """The characterisation net under extracting the per-path ladder.
+
+    The deferred-push replay will re-drive commits through the same decision a
+    save makes, so the ladder is being moved out of `_attempt` into one shared
+    function — an invariant written twice will be guarded once. The move must
+    change nothing: this pins every verdict through the public API, refusal
+    sentences verbatim, because those sentences land in a textarea and a
+    reworded refusal is a behaviour change even when every branch still fires.
+    """
+    # A silent retry: somebody edited a DIFFERENT file. Nobody needs to hear.
+    stale = store.head()
+    store.write(
+        path=OTHER,
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo", status="in_progress"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00002: status todo -> wip",
+    )
+    retried = store.write(
+        path=PATH,
+        content=record(priority="high"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: priority 2 -> 1",
+    )
+    assert (retried.outcome, retried.conflict) == ("retried", None)
+
+    # A merge: two people moved different frontmatter keys of one file.
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(priority="high", status="in_progress"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00001: status todo -> wip",
+    )
+    merged = store.write(
+        path=PATH,
+        content=record(priority="high", owner="cy"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: owner ann -> cy",
+    )
+    assert (merged.outcome, merged.conflict) == ("merged", None)
+
+    # Deleted under an edit: refused, in `_deleted`'s exact words.
+    stale = store.head()
+    store.remove(PATH, base_commit=stale, author="bo", message="task-c00001: remove")
+    doomed = store.write(
+        path=PATH,
+        content=record(priority="low"),
+        base_commit=stale,
+        author="ann",
+        message="task-c00001: priority 1 -> 3",
+    )
+    assert (doomed.outcome, doomed.commit) == ("conflict", None)
+    assert doomed.conflict == (
+        f"{PATH} — somebody deleted this while you were editing it.\n"
+        "  Nothing was written. Restore it in git if it should not have gone, "
+        "or make the record again."
+    )
+
+    # Edited under a delete: refused, in `_changed_under_delete`'s exact words.
+    store.write(
+        path=PATH,
+        content=record(),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: recreate",
+    )
+    stale = store.head()
+    store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00001: status todo -> wip",
+    )
+    refused = store.remove(PATH, base_commit=stale, author="ann", message="task-c00001: remove")
+    assert (refused.outcome, refused.commit) == ("conflict", None)
+    assert refused.conflict == (
+        f"{PATH} — somebody edited this while you were deleting it.\n"
+        "  Nothing was removed. Read what they wrote, then decide again."
+    )
+
+    # A delete of something already gone: refused, in `_already_gone`'s words.
+    stale = store.head()
+    store.remove(PATH, base_commit=stale, author="bo", message="task-c00001: remove")
+    gone = store.remove(PATH, base_commit=stale, author="ann", message="task-c00001: remove too")
+    assert (gone.outcome, gone.commit) == ("conflict", None)
+    assert gone.conflict == (
+        f"{PATH} — somebody deleted this first.\n"
+        "  Nothing was written, and the record is already out of the plan."
+    )
+
+    # And a removal outrun by an edit to a DIFFERENT file retries silently and
+    # still removes. Its resolved text is None with no refusal, which must keep
+    # meaning "drop the file" and never "nothing to do" — read as the latter,
+    # the delete would commit a tree identical to its parent and answer the
+    # person who pressed Delete with the sha of an empty commit.
+    store.write(
+        path=PATH,
+        content=record(),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: recreate",
+    )
+    stale = store.head()
+    store.write(
+        path=OTHER,
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo"),
+        base_commit=stale,
+        author="bo",
+        message="task-c00002: retitle",
+    )
+    dropped = store.remove(PATH, base_commit=stale, author="ann", message="task-c00001: remove")
+    assert (dropped.outcome, dropped.conflict) == ("retried", None)
+    assert store.read(store.head(), PATH) is None
+
+
 # --------------------------------------------------------------------------- #
 # 4. Authorship
 # --------------------------------------------------------------------------- #
