@@ -2063,10 +2063,10 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
 # intersecting: half a button hanging off an edge is a control somebody scrolls
 # to anyway, which is the thing this is about.
 _WHERE_CREATE_IS = """
-// Out of the full-page surface first. The create form is always editing, so
-// "when the session starts" is the load — and a session now starts in the `edit`
-// view, where the surface IS the window and the page behind it does not scroll.
-// What this asks about is the ordinary page: a form several screens tall, and a
+// Out of the session views first, to the create form's surface-off state. A
+// session is the ordinary page too since 2026-08-24, so this is belt over
+// braces rather than an escape from a full-page surface — kept because the
+// claim is about the plainest form there is: several screens tall, and a
 // commit bar that stays reachable while you scroll it.
 const LIT = ['view-edit', 'view-both', 'preview']
   .map(id => document.getElementById(id))
