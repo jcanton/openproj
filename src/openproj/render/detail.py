@@ -1741,7 +1741,12 @@ async function save() {
 // explicit `TITLED` line below then overwrites it with the same trimmed value.
 async function createRecord() {
   const fields = {kind: KIND.value};
-  const status = FORM.querySelector('[name=status]')?.value || 'shaping';
+  // `OPENS` and not a word typed here: it is declared once beside `markRequired`
+  // in `_REQUIRED_JS`, which this script already depends on for `labelOf`, and
+  // it is the model's own opening status. Two hand-written copies of one default
+  // is how the form comes to check the gates of a status the server will not
+  // give the record it is about to create.
+  const status = FORM.querySelector('[name=status]')?.value || OPENS;
   const missing = [];
   for (const control of FORM.querySelectorAll('[data-type]')) {
     // A field this kind does not have is not empty, it is absent — sending it
@@ -2510,9 +2515,12 @@ def _new_rows() -> list[dict]:
                 # The one status control on this form is the plan ladder, and
                 # `shaping` on an issue is a word the server refuses — the form
                 # and the validator disagreeing in the most annoying possible
-                # order. A fresh inbox record's opening status is the server's
-                # stamp (`web.INBOXES`: ready, thinking), and the record page's
-                # own per-kind hill is one save away.
+                # order. `thinking` now sits on that ladder too and is refused on
+                # an issue for its own reason (see `ISSUE_STATUS`), so this stays
+                # a per-rung question and not a per-word one. A fresh inbox
+                # record's opening status is the server's stamp (`web.opens_at`,
+                # which is the model's own default), and the record page's own
+                # per-kind hill is one save away.
                 continue
             row = rows.setdefault(
                 field["name"],

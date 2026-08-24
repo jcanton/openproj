@@ -75,7 +75,7 @@ def test_parse_tolerates_explicit_nulls_where_a_default_belongs():
     )
     assert record.title == ""
     assert record.reviewers == []
-    assert record.status == "shaping"
+    assert record.status == "thinking"
     assert record.assigned_on is None
 
 

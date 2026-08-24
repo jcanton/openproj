@@ -712,16 +712,21 @@ def test_the_seed_facets_are_the_menus_the_table_will_show(seed_index: Index):
     #
     # Status and priority BOTH lead with `(none)` now, and the reason is worth
     # reading before anybody "fixes" it. The model defaults every record's status
-    # to `shaping` and its priority to `medium`, so a product would answer both
-    # menus as though somebody had shaped it — and filtering to `shaping` would
-    # bring back a codebase. `_facet_values` asks `unread_fields(kind)` first and
-    # a product reads neither field, so it contributes no value and falls to
-    # `(none)`. Until two products existed, that branch could not fire on any
-    # file anybody had written.
+    # to `thinking` and its priority to `medium`, so a product would answer both
+    # menus as though somebody had jotted it down — and filtering to `thinking`
+    # would bring back a codebase. `_facet_values` asks `unread_fields(kind)`
+    # first and a product reads neither field, so it contributes no value and
+    # falls to `(none)`. Until two products existed, that branch could not fire
+    # on any file anybody had written.
     assert seed_index.facets["status"] == ["(none)", "ready", "in_progress", "done", "shelved"]
     assert seed_index.facets["priority"] == ["(none)", "high", "medium", "low"]
-    assert {e.status for e in seed_index.plan.values() if e.kind == "product"} == {"shaping"}
-    assert "shaping" not in seed_index.facets["status"]
+    # The word moved on 2026-08-24, when `thinking` was widened to the planned
+    # rungs and became where a record opens. The seed's two product files carry
+    # no `status:` key at all, so what they hold is whatever `Record.status`
+    # defaults to — which is exactly why this is asserted here: it is the one
+    # place the base default reaches a page for a kind that does not read it.
+    assert {e.status for e in seed_index.plan.values() if e.kind == "product"} == {"thinking"}
+    assert "thinking" not in seed_index.facets["status"]
     # `(none)` leads the menus where something is actually missing — it is not a
     # value, it is the question "which of these has nobody in it", and it is the
     # only way to ask it: an unset field yields no facet value at all, so before

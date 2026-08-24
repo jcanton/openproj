@@ -6,11 +6,25 @@ from ..themes import FAMILIES, contrast
 
 # Which hue each status wears. The one place taste enters the derivation: the
 # format's eight hues are red, orange, yellow, green, cyan, blue, magenta, brown,
-# and these five choices are the app's own palette read back into them — violet
-# for shaping, blue for ready, orange for in progress, green for done, and the
-# ground's own grey for shelved, which is not a hue because shelved is not a
-# state anything is happening in.
+# and these six choices are the app's own palette read back into them — cyan for
+# thinking, violet for shaping, blue for ready, orange for in progress, green for
+# done, and the ground's own grey for shelved, which is not a hue because shelved
+# is not a state anything is happening in.
+#
+# `thinking` is not a state anything is happening in either, and that is the
+# argument that was weighed here and lost. Grey is what "nothing is happening"
+# already wears, and the ladder's whole job is to tell states apart: the ground
+# ramp's free slots are base03's own neighbours, so a second grey status would be
+# two steps of one grey in most of these palettes and unreadable against
+# `shelved` in several. The two words also do not mean the same thing — `shelved`
+# is out of the plan and nothing WILL happen; `thinking` is the first rung of it
+# and something is about to. So it takes a hue, and cyan is the one it already
+# had: `thinking` has worn `--accent`, which is a teal, on the hill ball and the
+# hover chip since before it was a status, and base0C is that hue in this format.
+# Red is `--danger`'s and yellow is one step from `in_progress`'s orange, which
+# left cyan and brown, and brown is the slot base16 schemes agree on least.
 STATUS_SLOTS = (
+    ("thinking", "base0C"),
     ("shaping", "base0E"),
     ("ready", "base0D"),
     ("in_progress", "base09"),

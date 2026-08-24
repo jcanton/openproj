@@ -241,11 +241,25 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   /* Five tokens per status, not one. Fill, ink and line draw *shapes* — a graph
      node, a timeline bar. Soft and text draw *chips* — the pill in a table cell,
      which needs a ground light enough to sit inside a row of running text.
-     The five fills are a *luminance ladder*, not five hues at one lightness:
+     The six fills are a *luminance ladder*, not six hues at one lightness:
      hue is the channel a dichromat loses, and on the graph and the timeline the
      fill used to be the only channel there was. Work gets more solid as it
      advances — done is furthest from the page, parked is nearest — so the order
      survives every kind of colour vision.
+     THE LADDER WAS RE-CUT FOR A SIXTH RUNG, and that is the part of this change
+     nobody asked for and everybody will see. `thinking` could not be INSERTED
+     into it: the four gaps that shipped were 1.280, 1.296, 1.313 and 1.416, and
+     splitting even the widest of them leaves two of 1.190 — nearer the 1.11 that
+     collapsed the old flat palette into one colour than the 1.27 that worked.
+     Nor could a rung be APPENDED: the band is pinned at both ends, by `shelved`
+     sitting 1.27 from the page above it and by `done` owing its own ink 4.5:1
+     below it, and it spans 3.085 where six rungs at the old 1.27 floor need
+     3.304. So the two END colours are exactly as they shipped and the three
+     between them were re-spaced — same hue, same chroma, lightness only, scaled
+     in linear light so the hue is arithmetically unchanged. Six rungs, five gaps:
+     1.2527 is the most this band holds and 1.2520 is what the hexes measure after
+     rounding to eight bits. `tests/test_render.py` carries that measurement and
+     the floor it sets; see its docstring for why 1.25 is the honest number.
      This theme used to run the ladder the other way, with white ink on every
      fill. White ink is what forced it: an ink that light drags every fill down
      the luminance scale to carry it, and a low-luminance amber is brown while a
@@ -256,14 +270,24 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
      the border is the only thing making a pale bar a shape, and it is the token
      that owes the 3:1 a drawn boundary owes. Each one is version 2's fill,
      already measured against this page.
-     --st-X-ink is one value on all five here, because a ladder of tints has one
+     --st-X-ink is one value on all six here, because a ladder of tints has one
      ink that reads on every rung. Five tokens are kept rather than collapsed to
-     one: a status added later may sit somewhere that needs its own. */
-  --st-shaping: #d2c5ee; --st-shaping-ink: #101416; --st-shaping-line: #7e61c2;
+     one: a status added later may sit somewhere that needs its own.
+     `thinking` is a teal because it is the teal it already wore — the hill ball
+     and the hill's hover chip painted it `var(--accent)` for as long as it was a
+     note's word and not a status, and two hand-written rules further down this
+     file said so. This is that colour given a rung of its own, which is what
+     lets those two rules go: a word drawn in the interface accent on one page
+     and in a status hue on the next is one word with two colours. It is a
+     DIFFERENT value from --accent (#0f5c6b) on purpose, near it in hue and far
+     from it in lightness, so that a chip is never the same paint as a link. */
+  --st-thinking: #a1d6e3; --st-thinking-ink: #101416; --st-thinking-line: #1c8da3;
+  --st-thinking-soft: #e9f2f4; --st-thinking-text: #135d66;
+  --st-shaping: #bfb2d8; --st-shaping-ink: #101416; --st-shaping-line: #7e61c2;
   --st-shaping-soft: #efedf5; --st-shaping-text: #5e3eaa;
-  --st-ready: #83b8e9; --st-ready-ink: #101416; --st-ready-line: #275e92;
+  --st-ready: #7ba8d9; --st-ready-ink: #101416; --st-ready-line: #275e92;
   --st-ready-soft: #ecf1f6; --st-ready-text: #22578a;
-  --st-in_progress: #e18606; --st-in_progress-ink: #101416; --st-in_progress-line: #603a04;
+  --st-in_progress: #d67c07; --st-in_progress-ink: #101416; --st-in_progress-line: #603a04;
   --st-in_progress-soft: #f7f2eb; --st-in_progress-text: #734f1b;
   --st-done: #2b925e; --st-done-ink: #101416; --st-done-line: #0d311f;
   --st-done-soft: #ecf6f1; --st-done-text: #18633d;
@@ -323,8 +347,19 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
     /* The same ladder, climbed the other way: parked is the darkest rung here
        and done the lightest, so a shape is always the *more* solid the further
        the work has got. This theme was already tints under dark ink, which is
-       what the light one has now been rebuilt to be; the fills below are
-       unchanged.
+       what the light one has now been rebuilt to be.
+       Re-cut for the sixth rung like the light one, and for a different reason.
+       This band spans 4.748 and six rungs fit in it comfortably, but they do not
+       fit BY INSERTION either: the widest gap that shipped was 1.541, which
+       splits into two of 1.241. The floor is the whole point of the ladder, so
+       the three interior rungs moved rather than the floor — same hues, lightness
+       only — and the five gaps are now 1.365, 1.372, 1.361, 1.293 and 1.442.
+       Neither end moved: `shelved` is pinned by owing this page 3:1 and `done` is
+       the lightest a fill gets. `thinking` sits one rung in from `shelved` and is
+       lifted a little off the even cut, because on the even cut #101416 reads
+       4.57 on it and 4.5 is a floor to clear rather than to graze. It costs the
+       gap above it, 1.361 down to 1.293, and pays the gap below, 1.361 up to
+       1.442 — both still clear of 1.25, and the ink now reads 4.81.
        --st-X-line here is not the fill's own value. It could have been — every
        fill already clears 3.23:1 against this ground, so nothing needs the
        border for separation. But the graph draws PRIORITY as border *width*,
@@ -333,17 +368,22 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
        So each border is the contrast midpoint between its own fill and the
        page — the same ratio either side, which is the most an edge can be worth
        when it has to read against both. `shelved` gets 1.79 and 1.81 because
-       its fill is only 3.23 from the ground and there is no more room there.
+       its fill is only 3.23 from the ground and there is no more room there, and
+       `thinking` gets 2.15 and 2.17 for the same reason one rung up.
        --st-shelved-ink stays white. The brief that inverted the light theme
        said this one clears 6.03:1 on #101416 and could join the others; it is
        3.34:1, and this ink is the node's label and the bar's glyph, which is
-       text and owes 4.5. Lifting the fill instead would put it 1.10 from
-       `shaping` and collapse the top of the ladder. */
-    --st-shaping: #9077cb; --st-shaping-ink: #101416; --st-shaping-line: #56477a;
+       text and owes 4.5. Lifting the fill instead would put it 1.07 from its
+       neighbour and collapse the bottom of the ladder — and that neighbour is
+       `thinking` now, not `shaping`, which is the one thing the sixth rung
+       changed about this paragraph. */
+    --st-thinking: #448c99; --st-thinking-ink: #101416; --st-thinking-line: #26555d;
+    --st-thinking-soft: #182e33; --st-thinking-text: #60becd;
+    --st-shaping: #a286e3; --st-shaping-ink: #101416; --st-shaping-line: #5e4d86;
     --st-shaping-soft: #262034; --st-shaping-text: #b09fd8;
-    --st-ready: #7aacdc; --st-ready-ink: #101416; --st-ready-line: #44607a;
+    --st-ready: #80b4e7; --st-ready-ink: #101416; --st-ready-line: #456381;
     --st-ready-soft: #1d2a38; --st-ready-text: #87b3dd;
-    --st-in_progress: #f9c275; --st-in_progress-ink: #101416; --st-in_progress-line: #82663d;
+    --st-in_progress: #fbc376; --st-in_progress-ink: #101416; --st-in_progress-line: #84653b;
     --st-in_progress-soft: #3b2d19; --st-in_progress-text: #daaf74;
     --st-done: #d7f4e6; --st-done-ink: #101416; --st-done-line: #6a7972;
     --st-done-soft: #1d372b; --st-done-text: #5cce97;
@@ -365,11 +405,13 @@ if (storedScheme) document.documentElement.dataset.scheme = storedScheme;
   --accent: #5cb9ca; --on-accent: #0b1214;
   --danger: #e0796a; --warn: #d9a557; --ok: #6fc095;
   --empty: #84969c; --focus: #5cb9ca;
-  --st-shaping: #9077cb; --st-shaping-ink: #101416; --st-shaping-line: #56477a;
+  --st-thinking: #448c99; --st-thinking-ink: #101416; --st-thinking-line: #26555d;
+  --st-thinking-soft: #182e33; --st-thinking-text: #60becd;
+  --st-shaping: #a286e3; --st-shaping-ink: #101416; --st-shaping-line: #5e4d86;
   --st-shaping-soft: #262034; --st-shaping-text: #b09fd8;
-  --st-ready: #7aacdc; --st-ready-ink: #101416; --st-ready-line: #44607a;
+  --st-ready: #80b4e7; --st-ready-ink: #101416; --st-ready-line: #456381;
   --st-ready-soft: #1d2a38; --st-ready-text: #87b3dd;
-  --st-in_progress: #f9c275; --st-in_progress-ink: #101416; --st-in_progress-line: #82663d;
+  --st-in_progress: #fbc376; --st-in_progress-ink: #101416; --st-in_progress-line: #84653b;
   --st-in_progress-soft: #3b2d19; --st-in_progress-text: #daaf74;
   --st-done: #d7f4e6; --st-done-ink: #101416; --st-done-line: #6a7972;
   --st-done-soft: #1d372b; --st-done-text: #5cce97;
@@ -873,12 +915,19 @@ dt:has(+ dd .hill) { align-self: start; }
 {% for s in statuses %}
 .hill-ball.hill-{{ s }} { background: var(--st-{{ s }}); border-color: var(--st-{{ s }}-line); }
 {%- endfor %}
-/* A note has neither of its two words on the status ladder, so neither has tokens
-   of its own. `dropped` borrows shelved's — it is the same sentence in the other
-   vocabulary — and `thinking` wears the accent, which is what the notes page
-   coloured that word with before it folded into this one. */
+/* `dropped` is the one word left with no tokens of its own, and it borrows
+   shelved's — it is the same sentence in the other vocabulary.
+   `thinking` used to be written here too, wearing `var(--accent)`, because it
+   was a note's word and not a status. It is a status now, the loop above emits
+   `.hill-ball.hill-thinking` from its own tokens, and this rule would have gone
+   on beating it: same specificity, (0,2,0) against (0,2,0), and later in the
+   sheet. That is one word painted the interface accent on a hill and its own
+   teal on the chip beside it, which is exactly the "colour that means two
+   things" the drop-target token two blocks up is written to avoid. Deleted, and
+   the note's ball changes colour with it — from the accent to `--st-thinking`,
+   which is the same hue and now the same paint as everywhere else that word is
+   drawn. */
 .hill-ball.hill-dropped { background: var(--st-shelved); border-color: var(--st-shelved-line); }
-.hill-ball.hill-thinking { background: var(--accent); border-color: var(--accent); }
 /* Hollow, and the one ball that is: a promoted note is not standing there, the
    record it became is. Filled, it would claim the note is a quarter of the way up
    a hill it never climbed. */
@@ -930,15 +979,15 @@ dt:has(+ dd .hill) { align-self: start; }
   background: var(--st-{{ s }}-soft); color: var(--st-{{ s }}-text);
   border-color: var(--st-{{ s }}-line); }
 {%- endfor %}
-/* A note's two words are not on the status ladder and have no tokens of their
-   own. `dropped` borrows shelved's, which is the same sentence; `thinking`
-   borrows the accent, which is what the notes page coloured it with before it
-   folded into this one. */
+/* `dropped` is not on the status ladder and has no tokens of its own; it borrows
+   shelved's, which is the same sentence in the other vocabulary.
+   `thinking`'s copy of this rule is gone for the reason the ball's is, and it was
+   the worse of the two: it set only `color` and `border-color`, so the chip took
+   its ground from the loop above and its ink from the accent — half a chip from
+   each of two rules. */
 .hill-stop.hill-dropped::after, .hill-ball.hill-dropped::after {
   background: var(--st-shelved-soft); color: var(--st-shelved-text);
   border-color: var(--st-shelved-line); }
-.hill-stop.hill-thinking::after, .hill-ball.hill-thinking::after {
-  color: var(--accent); border-color: var(--accent); }
 .hill-stop:hover::after, .hill-stop:has(input:focus-visible)::after,
 .hill-ball:hover::after, .hill.dragging .hill-ball::after { visibility: visible; }
 /* The ball is under the stops in the stacking order, so on a live hill a hover
@@ -1100,10 +1149,26 @@ table.tight-priority td[data-col="priority"] .chip.pri { padding: .1rem .3rem; }
    sits over the key under it in the other. Each column is as wide as the wider of
    its two words and no wider — an earlier attempt padded every key to the widest
    word in EITHER row, which put a hand's width of nothing between Done and
-   Shelved. */
-.legends { display: inline-grid; grid-template-columns: auto repeat(5, max-content);
+   Shelved.
+   The column count is the STATUS ladder's, because it is the longer of the two
+   lists. It was the literal `5` until status grew a sixth rung, and both ways of
+   leaving it wrong were measured in Chrome at 1400px: at `repeat(5)` the sixth
+   status key wrapped to a THIRD row and sat under the word STATUS, and at
+   `repeat(6)` — the obvious fix — the grid became seven columns, priority's name
+   and its five keys exactly filled row 1, and auto-placement put the word STATUS
+   in row 1 column 7 with the whole status row shifted one cell left.
+   `grid-column: 1` on the name is what actually holds the shape: it forces each
+   list to start a new row, so the two rows stay two rows whatever their lengths
+   are. That is the part that was missing, and it is the part that made this a
+   grid that only READ as a table while the two lists happened to be the same
+   length — three reported rounds of "the legend is not aligned"
+   (`docs/QUEUE.md` §7.5), each of which this arrangement would have survived.
+   Measured, not eyed, in `test_the_legend_is_two_rows_and_the_keys_line_up`. */
+.legends { display: inline-grid;
+           grid-template-columns: auto repeat({{ statuses|length }}, max-content);
            gap: .2rem .9rem; align-items: center; justify-items: start;
            margin: .75rem 0 0 auto; }
+.legends .legendname { grid-column: 1; }
 /* On its own — the timeline's markings key — a legend is still one flex row.
    Only inside the grid does a list hand its keys over, and only the graph's two
    rows are in one. */

@@ -567,7 +567,7 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     # inbox kinds read one and are deliberately NOT offered it on this form —
     # the single status control is the plan ladder, `shaping` on an issue is a
     # word the server refuses, and a fresh inbox record opens at the server's
-    # stamp (`web.INBOXES`) instead. That absence is pinned from the other side
+    # stamp (`web.opens_at`) instead. That absence is pinned from the other side
     # by `test_the_create_form_offers_an_issue_no_plan_status`. Derived rather
     # than listed, or this is one more copy of the ladder that goes stale the
     # day a rung is added — and spelled out once beneath, so the derivation
@@ -3155,8 +3155,11 @@ def test_the_kind_is_chosen_first_and_the_row_follows_from_it(page: str):
     assert kept["title"] == "A chore nobody pitched", "the typing survives the switch"
     assert "person_weeks" not in kept, "a project has no appetite to carry"
     # The two a record is created with, shown rather than left blank: a cell that
-    # silently becomes `shaping` on save is the row lying about what it will write.
-    assert kept["status"] == "shaping" and kept["priority"] == "medium"
+    # silently becomes `thinking` on save is the row lying about what it will
+    # write. Both are read off the model in `table.py`, so this moved on its own
+    # when the ladder gained a rung at its foot — which is what the word here is
+    # asserting: that the row shows the default rather than a copy of it.
+    assert kept["status"] == "thinking" and kept["priority"] == "medium"
 
 
 def test_a_row_created_inline_goes_through_the_one_create_route(page: str):

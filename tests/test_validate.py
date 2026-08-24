@@ -26,6 +26,7 @@ from openproj.model import (
     cycle_of,
     load_repo,
     parse_text,
+    required_at,
     validate_all,
 )
 
@@ -919,15 +920,49 @@ def test_work_in_progress_needs_somebody_on_it():
     assert summary(problem) == ("blocker", "assignees", NEEDS_SOMEBODY_WIP, 2)
 
 
-def test_shaping_and_shelved_are_not_asked_who_is_on_them():
-    """The two statuses that demand nothing at all go on demanding nothing.
+def test_the_statuses_that_demand_nothing_are_not_asked_who_is_on_them():
+    """The three statuses that demand nothing at all go on demanding nothing.
 
     A rule added at one rung has to stay at that rung: an idea nobody has bet on
-    owes nothing, and neither does parked work.
+    owes nothing, nobody has even looked at a `thinking` record, and parked work
+    is not broken work.
     """
-    for status in ("shaping", "shelved"):
+    for status in ("thinking", "shaping", "shelved"):
         found = [p for p in check(task(status=status, assignees=[])) if p.field == "assignees"]
         assert found == [], status
+
+
+def test_nothing_is_asked_of_a_record_nobody_has_looked_at():
+    """`thinking` is the foot of the ladder, and the gate at the foot is empty.
+
+    Stated as "nothing at all", not "nothing about assignees", because the point
+    of the word is that it is where a half-formed record can sit without the tool
+    nagging — which is the whole argument for having it. A record stripped of
+    every gated field is the case: at `ready` it collects five blockers, and at
+    `thinking` it must collect none.
+
+    And asked of `required_at` as well, because that is the copy the create form
+    and the table's inline editor read: a field marked required at a status the
+    server demands nothing at is a form refusing a record the server would take.
+    """
+    bare = {"owner": None, "assignees": [], "reviewers": [], "person_weeks": None,
+            "assigned_on": None, "prs": []}
+    # The control: the same record one rung up really does collect a handful, so
+    # the empty list below is the status answering and not the fixture being
+    # clean by accident.
+    assert {p.field for p in check(task(status="ready", **bare))} == {
+        "owner", "assignees", "reviewers", "person_weeks",
+    }
+    assert check(task(status="thinking", **bare)) == []
+
+    for kind in ("project", "pitch", "task"):
+        demanded = [field for field, at in required_at(kind).items() if "thinking" in at]
+        assert demanded == [], kind
+        # No more than `shaping` did, which is the rule the widening was held to:
+        # a status further down the hill cannot ask for more than the one above.
+        assert not {f for f, at in required_at(kind).items() if "thinking" in at} - {
+            f for f, at in required_at(kind).items() if "shaping" in at
+        }, kind
 
 
 def test_the_rule_only_blocks_a_record_written_after_it_existed():
@@ -948,7 +983,5 @@ def test_the_form_is_told_to_ask_for_somebody():
     """`required_at` is what marks the label, and it is derived from the gate
     rather than restated — so this is the same rule, read the way a form reads
     it."""
-    from openproj.model import required_at
-
     for kind in ("project", "pitch", "task"):
         assert set(required_at(kind)["assignees"]) == {"ready", "in_progress"}, kind

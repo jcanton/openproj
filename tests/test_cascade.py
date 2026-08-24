@@ -26,6 +26,7 @@ from openproj.index import Index, build_index
 from openproj.model import load_repo
 from openproj.render import (
     ROUTES,
+    STATUSES,
     render_cycle,
     render_cycles,
     render_detail,
@@ -592,7 +593,10 @@ def test_a_bar_and_the_key_that_names_it_are_drawn_the_same_way(index: Index):
     assert sheet.value(key, "border") == f"{width}px solid var(--danger)", (
         says(sheet, key, "border")
     )
-    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+    # STATUSES, because this is the one harness that can answer "does the
+    # generated .st-<word> rule actually WIN, and against what" — and written as
+    # five literal words it was not asked about the sixth.
+    for status in STATUSES:
         swatch = PAGE + [el("ul", "legend"), el("li"), el("span", f"swatch st-{status}")]
         assert sheet.value(swatch, "background") == f"var(--st-{status})", status
         assert sheet.value(swatch, "border") == f"1px solid var(--st-{status}-line)", (

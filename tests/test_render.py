@@ -477,6 +477,77 @@ def test_the_graph_names_every_colour_it_draws_with(rendered: Path):
     assert "In progress" in legend, "the reader's word, not the stored one"
 
 
+_LEGEND_GEOMETRY = """
+const grid = document.querySelector('.legends');
+const rows = [...grid.querySelectorAll('.legend')].map(ul => ({
+  name: ul.querySelector('.legendname').textContent.trim(),
+  nameX: +ul.querySelector('.legendname').getBoundingClientRect().left.toFixed(1),
+  xs: [...ul.querySelectorAll('li:not(.legendname)')]
+       .map(li => +li.getBoundingClientRect().left.toFixed(1)),
+  ys: [...ul.querySelectorAll('li:not(.legendname)')]
+       .map(li => +li.getBoundingClientRect().top.toFixed(1)),
+}));
+return {rows, bands: [...new Set(rows.flatMap(r => r.ys))].length};
+"""
+
+
+def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: Path):
+    """`docs/QUEUE.md` §7.5: "the legend is not vertically aligned ... third time
+    this has been reported; whatever is done here should be a measurement in a
+    test, not an eye". This is the eye replaced.
+
+    The two lists are `display: contents`, so their keys are items of ONE grid and
+    the layout only reads as two rows because something puts each name at the
+    start of one. Nothing did: it read as two rows for as long as the two lists
+    happened to be the same length, which is a fact no line of the stylesheet
+    stated. Status now has six rungs and priority five, and both ways of getting
+    it wrong were measured at 1400px before this was written:
+
+    * `repeat(5, max-content)` — the sixth status key wraps to a THIRD row and
+      sits in column 1, directly under the word STATUS. Grid 60.4px tall.
+    * `repeat(6, max-content)` with nothing pinning the names — two rows, and
+      worse: priority's name plus its five keys exactly fill row 1, so
+      auto-placement puts the word STATUS in row 1 column 7 and shifts the entire
+      status row one cell left. Not one priority key sits over its counterpart.
+
+    What is asserted is the property, not the pixel: two bands, both names at one
+    x, and every priority key starting at the same x as the status key under it —
+    with the ladder's extra rungs hanging past the end of the shorter row, which
+    is what "one more cell for the status row" means and what jcanton accepted.
+    """
+    from browser import chrome, measured_in
+
+    got = measured_in(chrome(), read(rendered, "graph.html"),
+                      tmp_path / "legend.html", 1400, _LEGEND_GEOMETRY, height=900)
+    # Status leads — jcanton, 2026-08-24: "put the status row on top of the
+    # priority row, better!" It is the longer of the two now, so the longer row
+    # leads and the shorter hangs under its right end, which reads as one block
+    # rather than as a step.
+    status, priority = got["rows"]
+    assert [status["name"], priority["name"]] == ["status", "priority"]
+
+    assert got["bands"] == 2, "the keys are not on two rows"
+    assert len(status["xs"]) == len(STATUSES)
+    assert len(status["xs"]) > len(priority["xs"]), (
+        "status is meant to be the longer row — if priority grew a rung, the grid's"
+        " column count follows the wrong list"
+    )
+    # Paired from the RIGHT, so the last key of each row shares a column and the
+    # slack is taken by the shorter row's name cell. From the left they are
+    # deliberately staggered by exactly the difference in their lengths — see
+    # `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing`, which
+    # measures the same claim in painted pixels.
+    for column, (over, under) in enumerate(
+        zip(reversed(priority["xs"]), reversed(status["xs"]), strict=False)
+    ):
+        assert over == under, (column, over, under)
+    # The names no longer start together: the shorter row's is what absorbs the
+    # extra column, so it is wider by one column and starts where the other does.
+    assert priority["nameX"] == status["nameX"], "the two row names do not start together"
+    # And each row is one row.
+    assert len(set(priority["ys"])) == 1 and len(set(status["ys"])) == 1
+
+
 def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
     """It was 9px of --muted sitting on the box border, where every edge crossing
     the box ran through it — a label saying only that something is grouped."""
@@ -496,13 +567,9 @@ def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
 def test_a_node_takes_its_ink_from_the_fill_it_sits_on(rendered: Path):
     """In dark mode the fills are light shapes carrying dark ink, so the label
     colour belongs to the status, not to the theme's foreground."""
-    from openproj.render import STATUSES
-
     graph = read(rendered, "graph.html")
     repaint = re.search(r"function paint\(\) \{.*?\n\}", graph, re.S).group(0)
 
-    for status in STATUSES:
-        assert f"token('--st-{status}-ink')" in graph, status
     assert "'color': e => INK()[e.data('status')]" in graph
     # Resolved once at build time, the ink stays light on a fill that just turned
     # light, so the repaint has to re-read it exactly as it re-reads the fill.
@@ -513,10 +580,47 @@ def test_a_node_takes_its_ink_from_the_fill_it_sits_on(rendered: Path):
     # for all five fills is 2:1 against the darkest rung of the ladder. It is the
     # status's own --st-X-line now, the same value the timeline strokes its bars
     # with, and it is re-read on a theme flip exactly as the fill and ink are.
-    for status in STATUSES:
-        assert f"token('--st-{status}-line')" in graph, status
     assert "'border-color': e => LINE()[e.data('status')]" in graph
     assert "'border-color': e => LINE()[e.data('status')]" in repaint
+    # The three maps are BUILT from the ladder the page was handed, not written
+    # out. They were three five-key object literals, and what that cost is the
+    # subject of the test below — this line is what stops them going back.
+    assert f"const STATUS_LADDER = {json.dumps(list(STATUSES))};" in graph
+    assert "const byStatus = suffix => Object.fromEntries(" in graph
+
+
+def test_every_status_a_node_can_hold_reaches_cytoscape_as_a_colour(
+    rendered: Path, tmp_path: Path
+):
+    """The graph's three status maps, asked in the browser instead of grepped.
+
+    This is the tripwire that was in the wrong medium. It used to assert that the
+    string `token('--st-<status>-ink')` appeared somewhere in the file, once per
+    status — which is a claim about the source text and not about the canvas, and
+    the day `thinking` joined the ladder the maps were hand-written five-key
+    literals: every lookup came back `undefined`, cytoscape logged it and fell
+    back to its own #999 with a black border, and the legend beside it named a
+    colour that was not on the drawing. Nothing threw and the picture looked
+    deliberate.
+
+    So the question is asked where the answer lives. `COLOUR()`, `INK()` and
+    `LINE()` are the exact functions the stylesheet calls, run against the exact
+    tokens the page ships, and every status a node can hold has to come back with
+    a colour a canvas can parse — which is what `inSRGB` in the page is for, and
+    why `rgb(...)` rather than the token stream is the shape of a right answer."""
+    from browser import chrome, measured_in
+
+    got = measured_in(
+        chrome(), read(rendered, "graph.html"), tmp_path / "node-colours.html", 1200,
+        "return {colour: COLOUR(), ink: INK(), line: LINE()};", height=800,
+    )
+    missing = [
+        f"{which}[{status}] = {maps.get(status)!r}"
+        for which, maps in got.items()
+        for status in STATUSES
+        if not re.fullmatch(r"(#[0-9a-fA-F]{3,8}|rgba?\([\d.,\s%/]+\))", maps.get(status) or "")
+    ]
+    assert not missing, missing
 
 
 def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path):
@@ -546,10 +650,16 @@ def test_the_timeline_hatches_what_it_is_guessing(rendered: Path, tmp_path: Path
     # the whole of the encoding and the bar looked exactly like a commitment. The
     # legend draws itself from the same patterns, so only the plot is counted.
     plot = body[body.index("<svg width="):]
-    assert plot.count('class="mark mark-estimated st-shaping"') == 1
-    assert plot.count('class="mark mark-unowned st-shaping"') == 1
-    assert "rect.mark-estimated.st-shaping { fill: url(#hatch-estimated-st-shaping); }" in body
-    assert "rect.mark-unowned.st-shaping { fill: url(#hatch-unowned-st-shaping); }" in body
+    # The rung these two bars stand on is whatever a record with nothing typed in
+    # it opens at, which is the model's default and not a word to write down here:
+    # this test named `shaping` and started failing on the commit that put a rung
+    # below it, about a hatch that was drawing perfectly well. The subject is the
+    # hatch, so the status is asked of the record rather than asserted.
+    opens = guessed.status
+    assert plot.count(f'class="mark mark-estimated st-{opens}"') == 1
+    assert plot.count(f'class="mark mark-unowned st-{opens}"') == 1
+    assert f"rect.mark-estimated.st-{opens} {{ fill: url(#hatch-estimated-st-{opens}); }}" in body
+    assert f"rect.mark-unowned.st-{opens} {{ fill: url(#hatch-unowned-st-{opens}); }}" in body
     # The outline channel says one thing only, and it is not this one.
     assert "rect.estimated { stroke" not in body
 
@@ -759,7 +869,11 @@ def test_the_timeline_names_every_colour_it_draws(rendered: Path):
     legend = re.search(r'<ul class="legend" aria-label="What a bar marking means">(.*?)</ul>',
                        body, re.S).group(1)
 
-    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+    # STATUSES and not the five words written out, which is what this said until
+    # the ladder grew a sixth rung and this test went on being green about a page
+    # it was no longer checking all of. A key is owed to every status a record can
+    # hold, so the list to walk is the vocabulary itself.
+    for status in STATUSES:
         assert f'<span class="swatch st-{status}" aria-hidden="true">' in body, status
         assert STATUS_GLYPH[status] in body, status
     assert "appetite assumed" in legend
@@ -1455,9 +1569,11 @@ def test_edges_turn_at_right_angles_and_are_drawn_beneath_the_boxes(rendered: Pa
 
 
 def test_the_index_is_grouped_in_the_order_work_moves(tmp_path: Path):
-    """shaping first, dropped last. Alphabetical put `done` at the top, which is
-    the one group nobody opens the index looking for — and, once notes arrived,
-    put a note's terminal state above its live one.
+    """thinking first, dropped last — `shaping` first until the ladder grew a rung
+    below it, and this line said so for one commit longer than it was true.
+    Alphabetical put `done` at the top, which is the one group nobody opens the
+    index looking for — and, once notes arrived, put a note's terminal state
+    above its live one.
 
     Grouped by `state()`, never the stored status: `_TOC_LADDER` is built from
     `NOTE_STATES` precisely so `promoted` has a heading, and grouping by the
@@ -1970,7 +2086,14 @@ def test_a_status_carries_a_chip_palette_as_well_as_a_fill(rendered: Path):
     style = re.search(r"<style>(.*?)</style>", read(rendered, "table.html"), re.S).group(1)
     light = re.search(r":root \{(.*?)\}", style, re.S).group(1)
 
-    for status in ("shaping", "ready", "in_progress", "done", "shelved"):
+    # Derived, and that is the whole point of this one: it is the test whose job is
+    # to catch a status with no tokens, and written as five literal words it could
+    # not see the status that had none. Every `{% for s in statuses %}` loop in the
+    # shell emits `.chip.st-<word>` the instant a word joins the ladder, so the
+    # rule always appears — what goes missing is the values it names, and a
+    # dangling var() does not throw. It paints: a chip with no ground and no
+    # border, and, because `fill` is inherited, a solid black timeline bar.
+    for status in STATUSES:
         for suffix in ("", "-ink", "-line", "-soft", "-text"):
             assert f"--st-{status}{suffix}:" in light, f"--st-{status}{suffix}"
         assert f".chip.st-{status} {{" in style
@@ -2007,16 +2130,18 @@ def test_the_ink_on_a_shape_stays_a_per_status_token(rendered: Path):
 # somebody has to change on purpose.
 PALETTE = {
     "light": {
-        "shaping": ("#d2c5ee", "#101416", "#7e61c2"),
-        "ready": ("#83b8e9", "#101416", "#275e92"),
-        "in_progress": ("#e18606", "#101416", "#603a04"),
+        "thinking": ("#a1d6e3", "#101416", "#1c8da3"),
+        "shaping": ("#bfb2d8", "#101416", "#7e61c2"),
+        "ready": ("#7ba8d9", "#101416", "#275e92"),
+        "in_progress": ("#d67c07", "#101416", "#603a04"),
         "done": ("#2b925e", "#101416", "#0d311f"),
         "shelved": ("#e1e5e9", "#101416", "#88959d"),
     },
     "dark": {
-        "shaping": ("#9077cb", "#101416", "#56477a"),
-        "ready": ("#7aacdc", "#101416", "#44607a"),
-        "in_progress": ("#f9c275", "#101416", "#82663d"),
+        "thinking": ("#448c99", "#101416", "#26555d"),
+        "shaping": ("#a286e3", "#101416", "#5e4d86"),
+        "ready": ("#80b4e7", "#101416", "#456381"),
+        "in_progress": ("#fbc376", "#101416", "#84653b"),
         "done": ("#d7f4e6", "#101416", "#6a7972"),
         "shelved": ("#5e6a73", "#ffffff", "#3c4449"),
     },
@@ -2080,26 +2205,45 @@ def test_a_status_shape_is_bounded_against_the_page_it_sits_on(rendered: Path):
             assert themes[name][f"--st-{status}-line"] == PALETTE["dark"][status][2], name
 
 
-def test_the_five_fills_are_separated_by_lightness_and_not_only_by_hue(rendered: Path):
+def test_the_fills_are_separated_by_lightness_and_not_only_by_hue(rendered: Path):
     """Hue is the channel a dichromat loses, and on the graph and the timeline the
     fill used to be the only channel there was: five hues at one lightness
     (1.02–1.11:1 between any two) collapsed into one colour. Lightness is what
     every kind of colour vision keeps, so consecutive rungs are held apart by it.
 
-    1.27 and not the 1.3 this once asked for. Inverting the light theme narrowed
-    the band the five rungs live in: the ink no longer flips, so no rung has to
-    be dark enough to carry white text, and the whole ladder now spans 3.08:1
-    instead of the old 14.2. The four gaps it shipped with are 1.280, 1.296,
-    1.313 and 1.416 — the closest pair being `shelved` to `shaping` — and this
-    floor sits just under the worst of them rather than at a round number that
-    would have let two more rungs drift together before anything failed."""
+    **1.25, and it moved from 1.27 to let `thinking` on.** The floor is not a
+    perceptual threshold and never was — it is a drift tripwire set just under the
+    worst gap that ships, so that no two rungs can quietly slide together. Adding
+    a rung re-cuts the ladder, so it re-sets the floor, and the number is worth
+    the arithmetic that produced it:
+
+    * The light band spans 3.085:1, top to bottom, and it is pinned at BOTH ends —
+      `shelved`'s fill is only 1.27 from the page above it, and `done` owes its own
+      ink 4.5:1 below it, which stops at L=0.205. Six rungs at the old 1.27 need
+      3.304 of band. They do not fit, and no gap could take one either: the widest
+      that shipped was 1.416, which splits into two of 1.190 — under the 1.11 at
+      which the flat palette this test was written against "collapsed into one
+      colour".
+    * So the three rungs BETWEEN the two ends were re-spaced — hue and chroma
+      untouched, scaled in linear light so the hue is arithmetically identical —
+      and six even gaps of 3.085^(1/5) = 1.2527 is the most that band holds.
+      Rounding to eight bits per channel costs the rest: 1.2520 is what the hexes
+      in `PALETTE` actually measure, and 1.25 is the floor just under it.
+    * The dark band spans 4.748 and had room to spare — its gaps are 1.365, 1.372,
+      1.361, 1.293 and 1.442 — but it could not take a rung by insertion either
+      (widest gap 1.541, which splits into two of 1.241), so it was re-cut the
+      same way.
+
+    Lowering this floor is a thing to do on purpose and to say out loud, which is
+    why the numbers are here rather than in a commit message. Raising it again
+    means either repainting `done` or accepting five rungs."""
     themes = tokens(read(rendered, "table.html"))
 
     for name in ("light", "dark"):
         rungs = sorted(_luminance(themes[name][f"--st-{s}"]) for s in STATUSES)
         for lower, upper in zip(rungs, rungs[1:], strict=False):
             gap = (upper + 0.05) / (lower + 0.05)
-            assert gap >= 1.27, (name, gap)
+            assert gap >= 1.25, (name, gap)
 
 
 def test_a_chip_pair_is_readable_in_both_themes(rendered: Path):
@@ -2277,10 +2421,12 @@ def test_a_bar_that_overruns_its_cycle_is_one_of_the_bars_on_the_corpus(rendered
 
 def test_a_dependency_arrow_can_be_seen_on_the_canvas_it_is_drawn_on(rendered: Path):
     """The arrows were drawn in --st-ready, from when that fill was a dark blue.
-    Inverting the light theme made it a tint — #83b8e9 is 2.10:1 on a white page
-    — and a dependency graph whose dependencies you cannot see is a box of
-    boxes. An arrow is a drawn boundary, not a status, so it takes the token
-    that is held at 3:1 against the page in both themes."""
+    Inverting the light theme made it a tint — #7ba8d9 is 2.49:1 on a white page,
+    and it was 2.10:1 before the ladder was re-cut for a sixth rung, so the fill
+    has never been anywhere near what an edge owes — and a dependency graph whose
+    dependencies you cannot see is a box of boxes. An arrow is a drawn boundary,
+    not a status, so it takes the token that is held at 3:1 against the page in
+    both themes."""
     graph = read(rendered, "graph.html")
     themes = tokens(graph)
 

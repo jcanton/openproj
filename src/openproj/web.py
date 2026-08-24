@@ -316,14 +316,30 @@ class Inbox(NamedTuple):
 
     author: str  # defaults to the signed-in login; the form may say otherwise
     dated: str   # always the server's: when a record was made is not an opinion
-    opens: str   # the status a fresh record starts in
     link: str    # what /api/promote appends the new record's id to
 
 
 INBOXES = {
-    "issue": Inbox("reported_by", "opened_on", "ready", "pitched_into"),
-    "note": Inbox("written_by", "written_on", "thinking", "became"),
+    "issue": Inbox("reported_by", "opened_on", "pitched_into"),
+    "note": Inbox("written_by", "written_on", "became"),
 }
+
+
+def opens_at(kind: str) -> str:
+    """The status a record of this kind is created in, off the model.
+
+    There used to be an `opens` column in the table above, holding `ready` for an
+    issue and `thinking` for a note — the same two words the models already
+    declare as their defaults, written out a second time. Nothing caught that,
+    because the two copies agreed, and they agreed until the day the planned
+    ladder gained a rung at its foot and somebody had to remember there was a
+    second list. A planned record already gets this for free: `POST /api/record`
+    writes no `status` key for one at all, so it opens at whatever the model says
+    on the way back in. This is the same fact for the two rungs that do write the
+    key, asked of the same place.
+    """
+    return str(RUNG[kind].model.model_fields["status"].default)
+
 
 # `MAX_BODY_BYTES` is imported rather than declared: it moved to `model.py` when
 # the editor's status bar gained a second reader for it, and it is re-exported
@@ -1613,10 +1629,12 @@ def create_app(
         could not honestly give it.** Title, tags and body cross; owner, size,
         appetite, cycle and reviewer do not, because the source has none of them
         and inventing one would be this tool asserting a commitment nobody made.
-        `shaping` is the status whose required-field gate is empty — "an idea
-        nobody has bet on has no owner and no size by definition" — so a
-        promotion always produces a record that validates. That is not luck; it
-        is the same claim the note was already making, carried across.
+        `shaping`'s required-field gate is empty — "an idea nobody has bet on has
+        no owner and no size by definition" — so a promotion always produces a
+        record that validates. That is not luck; it is the same claim the note
+        was already making, carried across. It is deliberately not `thinking`,
+        the status a record otherwise opens on: `thinking` says nobody has looked
+        at this, and pressing Promote is somebody looking at it.
 
         The request carries two values and both are closed vocabularies: a source
         id matched against the one record pattern and required to name an inbox
@@ -1676,8 +1694,17 @@ def create_app(
                 "id": record_id,
                 "kind": kind,
                 "title": source.title,
-                # The one status that requires nothing, which is the honest state
-                # of anything that has just been promoted. See the docstring.
+                # NOT the model's opening status, and the one place in the app
+                # that says so on purpose. `Record.status` opens on `thinking`,
+                # which means nobody has looked at this yet; somebody has just
+                # pressed Promote on this one, and that press is the looking.
+                # Both gates are empty, so the old argument here — the one status
+                # that requires nothing — stopped choosing between the two words
+                # the moment `thinking` joined the ladder, and meaning chooses
+                # instead. See the docstring, and `_HILL_HANDED_ON` in
+                # `render/hill.py`, which draws the source note's ball at this
+                # same word: move one and the picture lies about where the record
+                # went.
                 "status": "shaping",
                 "tags": list(source.tags),
                 "created_schema_version": config.schema_version,
@@ -2528,7 +2555,7 @@ def create_app(
         inbox = INBOXES.get(kind)
         if inbox is not None:
             fields.setdefault(inbox.author, user.login)
-            fields.setdefault("status", inbox.opens)
+            fields.setdefault("status", opens_at(kind))
             fields[inbox.dated] = date.today().isoformat()
         # Grandfathering protects the corpus that already exists, not the record
         # being written right now: something created today is held to today's rules.

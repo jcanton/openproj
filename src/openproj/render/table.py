@@ -122,7 +122,9 @@ def _payload(index: Index) -> dict:
         # And what it holds before anybody types anything, read off the model
         # rather than written down here. The row being filled in shows the status
         # and the priority it will be created with: a blank cell that turns into
-        # `shaping` on save is the row lying about what it is about to write.
+        # `thinking` on save is the row lying about what it is about to write.
+        # Derived, so it moved on its own when the ladder gained a foot — which
+        # is what the three hand-written copies of this default did not.
         "defaults": {
             name: _KIND_MODELS["task"].model_fields[name].default
             for name in ("status", "priority")
