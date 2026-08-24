@@ -314,6 +314,25 @@ async def _refuse_socket(
         (4404, f"{record_id} is not in the plan any more — reload the page"),
     )
     await socket.accept()
+    # The frame first and the close code second, because they answer two
+    # different vintages of this page and only one of them is deployable.
+    #
+    # A page already open in somebody's browser is the page that was served to
+    # it, and the tab this was written for has been open since 2026-08-21. That
+    # page's `onclose` takes no argument and cannot read a code — but its
+    # `heard()` has always stopped permanently on `{"t": "reload"}`, and that is
+    # the only sentence that can reach it. Without this frame the accept alone
+    # makes it WORSE: its `onopen` sets `attempts = 0`, so a refusal that is
+    # accepted resets the backoff and the tab knocks every 500 ms instead of
+    # every thirty seconds — sixty times more often, until somebody reloads it.
+    # Which is a thing nobody was going to do, since nothing on the screen ever
+    # said anything was wrong.
+    #
+    # A page served after this deploy stops on either one. Belt and braces on
+    # purpose: the frame is what rescues the tabs that are already out there,
+    # and the code is what a page can still act on when a proxy or an older
+    # revision eats the frame.
+    await socket.send_json({"t": "reload", "why": why})
     await socket.close(
         code=code, reason=why.encode()[:_CLOSE_REASON_BYTES].decode(errors="ignore")
     )

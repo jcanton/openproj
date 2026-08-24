@@ -1954,6 +1954,29 @@ def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
 
     journey = """
     (() => {
+      // Nothing at all until the document has finished parsing, and BOTH pages
+      // need that for different reasons.
+      //
+      // On the table, the rows are drawn by script and become clickable during
+      // the parse, while the shell's inline script — the thing that stamps the
+      // store this whole feature reads — has not run yet. A click in that window
+      // navigates away from a page that never recorded where you were standing,
+      // so the record page is right to say `← all records` and the walk was
+      // wrong to have asked.
+      //
+      // On the record page, the script that rewrites the link is the shell's, it
+      // is inline, and it sits BELOW the link — so `a.origin` exists carrying
+      // the address it was rendered with before the rewrite happens. That answer
+      // is truthy, so the walk ends on the default.
+      //
+      // Observed rather than reasoned about, sampling each page in Chrome as
+      // fast as it could be asked:
+      //     table   loading | NO STAMP | link clickable  ->  complete | stamped
+      //     record  loading | / ← all records            ->  complete | /table ← Table
+      // Two branches whose diffs could not have touched this failed on it, and
+      // a walk polling hard enough to land in the window reproduces the exact
+      // failure three times out of three.
+      if (document.readyState === 'loading') return null;
       if (location.pathname === '/table') {
         // The rows are drawn by script, so a title link is not there at load.
         // Null rather than a complaint: the driver asks again until something
