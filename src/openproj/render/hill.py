@@ -34,6 +34,28 @@ function attachHill(form) {
   const at = stop => [parseFloat(stop.style.left), parseFloat(stop.style.top)];
   const wordOf = stop => stop.querySelector('input').value;
 
+  // What each stop MEANS, said under the control while somebody is choosing.
+  // Read off the span's own `data-teach` rather than handed down in the page's
+  // data: this file draws a hill and has no business importing the Shape Up
+  // copy, and the element that carries the sentence is the honest place to keep
+  // the sentences. Absent on the create form and on the two inbox ladders, which
+  // is what the guard in `teachAbout` is for.
+  const teach = form.querySelector('.teach[data-teach]');
+  const TEACH = teach ? JSON.parse(teach.dataset.teach) : null;
+
+  // Inside `show` and not beside `choose`, so the sentence follows the BALL:
+  // somebody dragging onto `shelved` is deciding what shelved means, and a line
+  // describing where they came from is help for the wrong decision. A drag that
+  // is abandoned puts the old word back through the same call.
+  //
+  // Empty and not hidden for a word with nothing to say. `.record.editing
+  // .teach:empty` in `_DETAIL_STYLE` is what stops it taking a line, and it is
+  // written there rather than as a `hidden` here because an author rule setting
+  // `display: block` outranks the `hidden` attribute and this row has one.
+  function teachAbout(word) {
+    if (TEACH) teach.textContent = TEACH[word] || '';
+  }
+
   function show(word) {
     const stop = stops.find(one => wordOf(one) === word);
     if (!stop) return;
@@ -51,6 +73,7 @@ function attachHill(form) {
     // Only ever one of this ladder's own words, which is why it may be written
     // into a class at all — nothing out of a file reaches this line.
     ball.className = 'hill-ball hill-' + word;
+    teachAbout(word);
   }
 
   function choose(word) {

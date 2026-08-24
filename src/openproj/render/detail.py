@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import date
 
@@ -28,10 +29,12 @@ from .styles import _DETAIL_STYLE, _SUGGEST_STYLE
 from .tokens import (
     _KIND_MODELS,
     _SIZE_FIELD_NAME,
+    FIELD_TEACH,
     KINDS,
     LABELS,
     PREFIX,
     PRIORITY_GLYPH,
+    STATUS_TEACH,
     STATUSES,
     TEMPLATES,
     _editable_for,
@@ -1065,6 +1068,22 @@ _DETAIL = """
               only as nearby text. -#}
           {% if row.hint %}<span class="hint" id="{{ row.hint_id }}">{{ row.hint }}</span>
           {% endif %}
+          {#- And what the FIELD means, which is a different question from the one
+              above and reaches a different reader. `.editing-only` because a read
+              is roughly nine views in ten since preview became the landing view,
+              and teaching copy on all of them is how the sentence above stops
+              being read. Emitted only where there is something to say — except on
+              status, which emits an empty one on purpose because `attachHill`
+              fills it as the ball moves.
+
+              `{{- -}}` on both sides, and it is load-bearing: the span has to be
+              genuinely empty for `.record.editing .teach:empty` to hide it, and a
+              newline between the tags is a text node. -#}
+          {% if editable and row.teach_id %}
+          <span class="hint teach editing-only" id="{{ row.teach_id }}"
+                {% if row.teach_data %}data-teach="{{ row.teach_data }}"{% endif
+                %}>{{- row.teach -}}</span>
+          {% endif %}
         </dd>
         {% endif %}
         {% endfor %}
@@ -2083,6 +2102,16 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
         control = None
         hint = ""
         hint_id = ""
+        # The other tenant of the same slot, and the two are different in kind:
+        # `hint` is a fact about THIS record and reads in both modes, `teach` is
+        # what the field means and reads only while there is a control to set.
+        # Separate variables and separate spans rather than one that changes
+        # meaning, because a locked status row carries both at once — "from the
+        # work it was pitched into" is not a substitute for what shelved means,
+        # and neither sentence can be the one that gets dropped.
+        teach = FIELD_TEACH.get(name, "")
+        teach_id = f"teach-{field['id']}" if teach else ""
+        teach_data = ""
         if name == "depends_on":
             display = _links(index.blocked_by[record.id], index, links) or empty
         elif name == "parent":
@@ -2125,12 +2154,30 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
             if said != record.status:
                 hint = _STATE_HINT.get(record.kind, "")
                 hint_id = f"hint-{field['id']}" if hint else ""
+            # The one row whose teaching sentence is not fixed at render time:
+            # its control is six places to stand, and the sentence belongs to the
+            # stop rather than to the field. The span is therefore emitted EMPTY
+            # for the three words with nothing to teach — `attachHill` fills the
+            # same one as the ball moves, and it needs the element to exist
+            # before the first drag. `.record.editing .teach:empty` in
+            # `_DETAIL_STYLE` is what keeps an empty one from taking a line.
+            #
+            # Only on the `record` ladder. An issue never stands at `thinking`
+            # and a note's `thinking` means something else, so the map is wrong
+            # for both and the two inbox kinds keep this slot for their lock.
+            if ladder == "record":
+                teach = STATUS_TEACH.get(said, "")
+                teach_id = f"teach-{field['id']}"
+                teach_data = json.dumps(STATUS_TEACH)
             control = _control_html(
                 field,
                 ladder=ladder,
                 live=said == record.status,
                 shown=said,
-                describedby=hint_id,
+                # Both, space-separated, which is what `aria-describedby` takes.
+                # A hidden target is not announced, so in read mode this resolves
+                # to the lock alone without either end knowing about the other.
+                describedby=" ".join(one for one in (hint_id, teach_id) if one),
             )
         elif name == "priority":
             # The same chip the table wears, mark and all: this row and that cell
@@ -2184,7 +2231,11 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 # the `<dt>` falls back to plain text.
                 "for": "" if name == "status" else field["id"],
                 "display": display,
-                "control": control if control is not None else _control_html(field),
+                "control": (
+                    control
+                    if control is not None
+                    else _control_html(field, describedby=teach_id)
+                ),
                 "gates": field["gates"],
                 "derived": False,
                 # Only a locked status row carries these; the other appends in
@@ -2192,6 +2243,13 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
                 # falsy, which is the correct answer for "no hint".
                 "hint": hint,
                 "hint_id": hint_id,
+                # And the teaching sentence beside it. `teach_id` is what decides
+                # whether a span is emitted at all, so a field with nothing to
+                # say grows no element; status is the exception and says why
+                # above. `teach_data` is only ever on the status row.
+                "teach": teach,
+                "teach_id": teach_id,
+                "teach_data": teach_data,
                 # "Review waived: no" is a line that says nothing. The row still
                 # exists while editing, because turning the waiver on is the whole
                 # point of having it; it just does not clutter the read view.

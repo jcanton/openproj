@@ -830,6 +830,21 @@ article.record:not(.editing) .req { display: none; }
 .together:empty { display: none; }
 .editing-only { display: none; }
 .record.editing .editing-only { display: block; }
+/* Teaching copy under a control carries `.editing-only` and needs no rule of its
+   own to appear — `.hint` gives it the ink, the line above gives it the mode.
+   What it needs is a way to say nothing: the status row emits its span EMPTY for
+   the three words with nothing to teach, because `attachHill` fills that same
+   element as the ball moves and cannot fill one that was never rendered.
+
+   Which way this resolves, since qualifying a selector to win one fight in this
+   file has twice lost three: `.record.editing .editing-only` is (0,3,0) and
+   would give an empty span a block box, so the rule that hides it repeats both
+   ancestors and lands at (0,4,0). It wins on specificity and not on order, which
+   is what keeps it correct if either rule moves. Deliberately not `.hint:empty`,
+   which is lower AND would reach four spans on this page that are empty until a
+   script has news for them — the draft stamp, the template note, the upload line
+   and the gutter note. */
+.record.editing .teach:empty { display: none; }
 .record.editing .read { display: none; }
 .record.editing dd .field[type=checkbox] { display: inline-block; }
 label { display: block; }
