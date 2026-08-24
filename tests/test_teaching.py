@@ -407,9 +407,12 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
     on a radio reaches a listener on the group — and `drive.js` dispatches without
     bubbling, so it would answer for the shim rather than for the page.
 
-    The last leg is the one that would ship broken quietly: pressing a word with
-    nothing to teach has to EMPTY the line rather than leave the previous lesson
-    standing under a stop it is not about.
+    Two legs that would ship broken quietly. Pressing a word with nothing to
+    teach has to EMPTY the line rather than leave the previous lesson standing
+    under a stop it is not about. And the drag has to preview: it is the reason
+    the swap lives inside `show()` and not beside `choose()`, and a version that
+    only followed a commit would pass every click here and teach nothing while
+    somebody was actually choosing.
     """
     browser = chrome()
     record_id = a_pitch(index)
@@ -433,6 +436,30 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
           said[word] = teach.textContent;
           said[word + '_shown'] = getComputedStyle(teach).display;
         }
+
+        // And the half a click cannot reach. Aimed at the stops' own fractions
+        // of the box — `shelved` is (0.50, 0.83), directly under `ready` at
+        // (0.50, 0.17) — because a drag to the nearest CORNER lands on `done`
+        // and would assert that a lesson with nothing to say says nothing.
+        const value = document.querySelector('input[name=status]');
+        press('shaping');
+        const box = hill.getBoundingClientRect();
+        hill.setPointerCapture = () => {};
+        hill.releasePointerCapture = () => {};
+        const send = (t, fx, fy) => hill.dispatchEvent(new PointerEvent(t, {
+          bubbles: true, button: 0, pointerId: 1,
+          clientX: box.left + box.width * fx, clientY: box.top + box.height * fy}));
+        send('pointerdown', 0.30, 0.50);
+        send('pointermove', 0.50, 0.83);
+        said.over_shelved = teach.textContent;
+        said.value_midway = value.value;
+        send('pointermove', 0.50, 0.17);
+        said.over_ready = teach.textContent;
+        said.over_ready_shown = getComputedStyle(teach).display;
+        send('pointermove', 0.30, 0.50);
+        send('pointerup', 0.30, 0.50);
+        said.abandoned = teach.textContent;
+        said.value_after = value.value;
         return said;
         """,
         height=1400, patience=2500,
@@ -444,6 +471,16 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
     # And the row does not keep a blank line where that lesson was.
     assert found["done_shown"] == "none"
     assert found["shelved_shown"] != "none"
+
+    # The drag. This is what puts the swap inside `show()` rather than beside
+    # `choose()`: a preview teaches the stop under the ball while the form has
+    # not moved, and letting go where you started puts the old lesson back.
+    assert found["over_shelved"] == STATUS_TEACH["shelved"], "a drag taught nothing"
+    assert found["value_midway"] == "shaping", "a preview committed"
+    assert found["over_ready"] == ""
+    assert found["over_ready_shown"] == "none"
+    assert found["abandoned"] == STATUS_TEACH["shaping"], "an abandoned drag kept the preview"
+    assert found["value_after"] == "shaping"
 
 
 def test_a_status_nobody_may_set_is_never_taught_a_lesson(index: Index, tmp_path: Path) -> None:
