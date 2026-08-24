@@ -1035,6 +1035,15 @@ What went with the surface, and why each deletion is safe:
   sends it), and the read span and the title box share the one `<h1>` slot — below the switcher
   and the commit bar in every view, which is where jcanton asked for it. The create form keeps
   "New record" as words and the box on the next line, for the reason its own comment always gave.
+  Two residues survived the first cut and are gone now, measured in Chrome at 1400x900: opening a
+  session unhid the commit bar and moved the heading from y=146 to y=190, so on the writable page
+  the bar's box is reserved — `visibility` over the kept `display: flex`, invisible rather than
+  gone, with the hidden Save and Cancel laid out so the reserved box is the height of the live
+  one — and the heading grew 36px to 44px as the read span swapped for the padded, bordered title
+  input, so in the heading's slot the input takes the span's metrics and wears its border in
+  negative margins. A signed-out reader's page keeps `display: none`: the reservation hangs off
+  the `.editbar` sibling only a writer gets, so nobody pays a blank band for a session they
+  cannot open.
 - **The empty band over the commit bar** was `.commitbar`'s shell margin (`1.5rem`), uncollapsed
   to 40px by the surface's flex column; on this page the two rows are one header and the bar keeps
   `.4rem`, scoped to `article.record` so the cycle page keeps the shell's spacing.
@@ -1053,7 +1062,9 @@ In the split, both panes pin to `--writing` and scroll inside the page — delib
 scroll sync maps both sides in pane pixels and a pane that grows with its content has no
 `scrollTop` to drive. The page itself scrolls too, which under full page it was forbidden to; the
 acceptance test for the whole change is jcanton's own sentence, measured in Chrome: the nav, the
-back row, the switcher and the facts column keep their boxes across all three views.
+back row, the switcher, the commit bar's box, the heading, the meta line and the facts column's
+top keep their boxes across all three views — the split may move `left` (it widens by one body,
+which was asked for) and nothing may move vertically.
 
 One consequence worth naming: the split-ratio fence (`SPLIT_RANGE`) now engages only when the
 measure has been dragged out as well — at the default measure the capped article never gives the

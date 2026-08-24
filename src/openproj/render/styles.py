@@ -689,6 +689,26 @@ article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
    and it keeps the shell's spacing. */
 article.record .editbar { margin-bottom: .4rem; }
 article.record .commitbar { margin-top: 0; }
+/* The bar's BOX is on the page before the session that fills it — jcanton,
+   2026-08-24: "page elements should not move or appear/disappear when
+   switching views". `dirty()` still writes the `[hidden]` attribute; what
+   changes here is what `[hidden]` means on THIS page: invisible, not gone.
+   Measured in Chrome at 1400x900 before the rule: pressing Write unhid the
+   bar and moved the heading and everything under it 44px down the page.
+   Adjacent to `.editbar` on purpose — that row is only in the markup for
+   somebody the server would let write, so a signed-out reader's page (bar in
+   the markup, no editbar above it) keeps the shell's `display: none` and pays
+   no blank band for a session it cannot open. Which way the cascade resolves:
+   (0,3,1) over the shell's `.commitbar[hidden]` at (0,2,0), so the
+   reservation wins on weight, and the cycle page's bar sits outside
+   `article.record` and never matches. */
+article.record .editbar + .commitbar[hidden] { display: flex; visibility: hidden; }
+/* Save and Cancel are what give the live bar its height and they arrive with
+   the session (`showEditing` unhides them) — a reserved bar laid out without
+   them is 6px shorter than the bar that replaces it, which is the same jump
+   at a smaller size. The whole bar is invisible here, so laying them out
+   draws nothing. */
+article.record .editbar + .commitbar[hidden] button { display: inline-block; }
 /* `.editbar` is the shell's. It was written here, and the table — which wears the
    class on the row holding its only create action — does not load this
    stylesheet. */
@@ -788,6 +808,25 @@ input.field, select.field, textarea.field {
   background: var(--surface); color: inherit;
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
+/* In the heading's slot the box takes the READ title's metrics, so pressing
+   Write changes what the name is drawn in and never where a line of it sits —
+   measured before this pair: the `<h1>` grew 36px to 44px and pushed the meta
+   line, the facts column and the document down with it. Font inherited from
+   the `<h1>` (the same glyphs the `.read` span sets), and the padding and
+   border worn OUTSIDE the line box: the negative margins are sized to cancel
+   them exactly, .25rem+1px vertically and .4rem+1px horizontally, which also
+   keeps the first glyph on the x the read title starts at. `flow-root` is
+   load-bearing beside it — without it the negative top margin collapses
+   through the `<h1>` and lifts the heading 5px, the move this pair exists to
+   remove. The create form keeps the plain rule above: its box sits under the
+   words "New record" on a line of its own, with no read title to hold still.
+   (0,2,3) over both (0,1,1) field rules, so the slot wins on weight. */
+.record.editing h1 { display: flow-root; }
+article.record h1 input.title-field {
+  font-size: inherit; font-weight: inherit;
+  width: calc(100% + .8rem + 2px);
+  margin: calc(-.25rem - 1px) calc(-.4rem - 1px);
+}
 textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }

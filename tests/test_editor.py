@@ -2844,6 +2844,17 @@ def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_bac
     )
     # It went somewhere, and the separator says it is at the end of its own range.
     assert first["box"] > first["pane"] and first["now"] == first["most"], first
+    if width == 3440:
+        # The fence, pinned: `End` under an engaged `SPLIT_RANGE` stores exactly
+        # 8. Without this the seeded measure could silently fail to apply — at
+        # the default measure the floor is the tighter bound at ANY window
+        # width, every assertion here passes identically, and this leg degrades
+        # to a second copy of the 1400 control that stays green with the fence
+        # deleted. A broken seed now fails loudly instead.
+        assert json.loads(first["stored"])["split"] == 8, (
+            f"the drag stored {first['stored']}, so the outer fence never engaged "
+            "and this leg is not testing it — did the measure seed apply?"
+        )
 
     # The same measure on the second load: the panes' width is a function of it
     # now, and a round trip that changes the room changes what any ratio draws.
@@ -3717,6 +3728,76 @@ def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
     assert got["after"]["parent"] == "NAV" and got["after"]["inNav"]
     assert not got["after"]["navInert"]
     assert got["after"]["themeReachable"] and got["after"]["signInReachable"]
+
+
+# Every box above the document, watched through all three views. `facts` is
+# top and left only, deliberately: its CONTENT changes with the mode — read
+# values swap for controls, which is the point of a session — so its height is
+# the one measurement here that is supposed to move.
+_THE_HEADER_STAYS = _STUB_PREVIEW + """
+const box = sel => {
+  const b = document.querySelector(sel).getBoundingClientRect();
+  return {top: Math.round(b.top), height: Math.round(b.height), left: Math.round(b.left)};
+};
+const header = () => ({
+  nav: box('body > nav'),
+  editbar: box('.editbar'),
+  bar: box('#commitbar'),
+  eyebrow: box('.eyebrow'),
+  h1: box('article.record h1'),
+  meta: box('article.record .meta'),
+  facts: (({top, left}) => ({top, left}))(box('.panes > .facts')),
+});
+const landing = header();
+document.getElementById('view-edit').click();
+await new Promise(go => setTimeout(go, 150));
+const writing = header();
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 150));
+const split = header();
+document.getElementById('preview').click();
+await new Promise(go => setTimeout(go, 150));
+return {landing, writing, split, back: header()};
+"""
+
+
+def test_opening_a_session_moves_nothing_above_the_document(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-24: "ideally page elements should not move or appear or
+    disappear when switching views in this page" — measured at the two places
+    the sentence was still false after the full-page surface went.
+
+    Pressing Write used to move the heading from y=146 to y=190 and everything
+    under it — the meta line, the facts column, the document — by two mechanisms
+    at once: the commit bar unhid (38px plus its gap), and the `<h1>` grew 36px
+    to 44px as the read span swapped for a title input carrying its own padding,
+    border and margin. So two rules now hold what this asserts: the bar's box is
+    reserved (`article.record .editbar + .commitbar[hidden]` keeps `display:
+    flex` and hides with `visibility`), and the title input in the heading takes
+    the read span's metrics, wearing its border in negative margins.
+
+    The split view is allowed exactly one change, because jcanton asked for it:
+    it widens by one body and recentres. So `left` may move there and nothing's
+    `top` or `height` may.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "still.html",
+        1400, _THE_HEADER_STAYS, patience=3000,
+    )
+    landing = got["landing"]
+
+    assert got["writing"] == landing, (
+        f"opening a session moved the header: {got['writing']} against {landing}"
+    )
+    assert got["back"] == landing, (
+        f"leaving the session did not put the page back: {got['back']} against {landing}"
+    )
+    for name, spot in landing.items():
+        held = {key: spot[key] for key in ("top", "height") if key in spot}
+        assert {key: got["split"][name][key] for key in held} == held, (
+            f"the split view moved {name} vertically: {got['split'][name]} against {spot}"
+        )
 
 
 _A_FAILED_PREVIEW = """
