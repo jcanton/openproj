@@ -272,12 +272,28 @@ function aceSurface(area, seeded) {
   //
   // What the other surface needs a mirror element for, this one gets from the
   // editor that is already laying the text out.
+  //
+  // **Each seat is an ANCHOR and not the index it arrived as.** An index is a
+  // number about a document that has already changed by the time the next frame
+  // paints: this surface repaints on its own frames, which are the frames Ace
+  // paints a keystroke on, and those run BEFORE the room's own subscribers do —
+  // `spliced` is a microtask away and the roster is corrected there. Measured:
+  // three characters typed above somebody walked their band up three rows, one
+  // per keystroke, before one line of this page's own code had run.
+  //
+  // An anchor is moved by `applyDelta` itself, in the same instruction that
+  // moves the caret and every fold, so there is no window in which it is stale
+  // and nothing here has to subscribe to anything to keep it. It is the reason
+  // `splice` uses `Document`'s own `remove` and `insert`, applied to somebody
+  // else's caret instead of this tab's.
+  //
+  // They are detached on the way out. An anchor is a listener on the document,
+  // and a roster arrives every time anybody in the room moves.
   let sitting = [];
   session.addDynamicMarker({
-    openprojSeats: true,
     update(html, layer, session_, config) {
       for (const seat of sitting) {
-        const at = session_.doc.indexToPosition(seat.at);
+        const at = seat.anchor.getPosition();
         // Clipped on the DOCUMENT row and drawn at the SCREEN one, which is the
         // same pair Ace's own `update` uses on a static marker: `config.firstRow`
         // and `lastRow` count lines of the file, while `$getTop` measures from
@@ -451,8 +467,19 @@ function aceSurface(area, seeded) {
     // has already paid that once — the comment on `history.add` above is the
     // receipt.
     seats: {
-      draw(others) { sitting = others; editor.renderer.updateBackMarkers(); },
-      clear() { sitting = []; editor.renderer.updateBackMarkers(); },
+      draw(others) {
+        for (const seat of sitting) seat.anchor.detach();
+        sitting = others.map(seat => {
+          const at = document_.indexToPosition(seat.at);
+          return {...seat, anchor: document_.createAnchor(at.row, at.column)};
+        });
+        editor.renderer.updateBackMarkers();
+      },
+      clear() {
+        for (const seat of sitting) seat.anchor.detach();
+        sitting = [];
+        editor.renderer.updateBackMarkers();
+      },
     },
 
     // `history: true`, and true only because of the four lines above that bind
@@ -900,7 +927,31 @@ const COEDIT = (() => {
   // writing went into the box and then out of `localStorage` at the next
   // commit, silently. The document does not own this textarea until the one
   // decision that can lose work has been made.
-  text.observe(() => { if (bound) reflect(); });
+  text.observe(event => {
+    // **Everybody else's caret, carried across whatever just changed, BEFORE the
+    // box is rewritten.** `seats` holds an absolute index — where the room last
+    // said each person was — and `drawSeats` repaints on every keystroke this
+    // tab makes, so without this line each of those keystrokes paints their band
+    // against an index it has just invalidated. The correction was a full round
+    // trip away (this update reaches them, their `splice` carries their caret,
+    // their `sit()` goes to the server, a `who` comes back), so the band
+    // alternated between the wrong row and the right one, once per character.
+    //
+    // Reported by two people in one document: "the other user's presence line
+    // was jumping up and down 2-3 lines while I was typing, one jump per char".
+    // Two to three lines and not two to three characters because a stale index
+    // walks back through CHARACTERS: three of them are three characters of
+    // prose, or the whole of a blank line, a `- one` and another blank line —
+    // and a shaping document is made of the second kind.
+    //
+    // Here rather than in `typed` and `spliced`, which is where it was first
+    // written, and the difference is not tidiness. This is the one place that
+    // sees EVERY change to the document — this tab's, and everybody else's — so
+    // a third person typing above the second one moves the second one's band
+    // too, and neither of the other two sites could have said that.
+    carry(event.delta);
+    if (bound) reflect();
+  });
 
   function names(people) {
     if (!together) return;
@@ -922,6 +973,39 @@ const COEDIT = (() => {
   // wrong is a state somebody can act on.
 
   let seats = [];
+
+  // Where an index in the document as it WAS lands in the document as it now is.
+  //
+  // The rule is `splice`'s own `moved` — an index before the change does not
+  // move, one after it moves by the difference, one inside a deletion lands
+  // where the deletion started — applied op by op along a `Y.Text` delta rather
+  // than to one splice, because a delta is what a transaction of several is.
+  // Counted in UTF-16 code units at both ends: that is what a `Y.Text` delta
+  // measures in a browser and what `Room.sits` relays.
+  function carried(index, delta) {
+    let was = 0, now = 0;
+    for (const op of delta) {
+      if (op.insert !== undefined) {
+        // An index sitting exactly where the insert lands stays in FRONT of it,
+        // which is `at <= from ? at` in `splice`, said the other way round.
+        if (index <= was) return now;
+        now += typeof op.insert === 'string' ? op.insert.length : 1;
+      } else if (op.delete !== undefined) {
+        if (index < was + op.delete) return now;
+        was += op.delete;
+      } else {
+        if (index < was + op.retain) return now + (index - was);
+        was += op.retain;
+        now += op.retain;
+      }
+    }
+    return now + (index - was);
+  }
+
+  function carry(delta) {
+    if (!seats.length) return;
+    seats = seats.map(seat => ({...seat, at: carried(seat.at, delta)}));
+  }
 
   // Drawn again when the box appears. See `showEditing`.
   addEventListener('openproj:editing', () => { drawSeats(); sit(); });

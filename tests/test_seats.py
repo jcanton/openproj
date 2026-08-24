@@ -991,6 +991,187 @@ def test_a_seat_band_lands_on_the_right_line_on_the_second_surface(
 
 
 
+
+# A shaping document, in the shape the corpus actually has: a heading, a blank
+# line, a bullet, a blank line, and the paragraph somebody is writing in. The
+# short lines above the paragraph are the whole point — a stale index walks back
+# through CHARACTERS, so three of them cross three characters of prose and two
+# whole rows of a checklist.
+_PITCH = "\\n".join((
+    "## Problem",
+    "",
+    "- one",
+    "",
+    "the paragraph the other person has their caret in",
+))
+
+_JITTER = """
+<script>
+window.__tops = [];
+addEventListener('load', () => setTimeout(() => {
+  flipEditing();
+  const socket = window.__socket;
+  socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
+  const body = document.querySelector('textarea[name=body]');
+  body.value = '%LINES%';
+  body.dispatchEvent(new Event('input'));
+  window.__at = body.value.indexOf('the paragraph');
+  socket.hear({t: 'who', people: ['ann', 'bo'],
+               where: [{login: 'bo', at: window.__at}]});
+  // Every redraw from here on, recorded. The band is on one line and one line
+  // only for the whole of what follows: nothing below adds or removes a line.
+  const top = () => {
+    const band = document.getElementById('seats').firstElementChild;
+    return band ? Math.round(band.getBoundingClientRect().top) : null;
+  };
+  window.__tops.push(top());
+  // Three characters typed into the HEADING, above them — one `input` each, the
+  // way a keyboard delivers them. No `who` follows: the room is a round trip
+  // away and this is what the page draws in the meantime, which is the whole of
+  // what somebody sees while they type.
+  for (const character of 'xyz') {
+    const cut = body.value.indexOf('\\n');
+    body.value = body.value.slice(0, cut) + character + body.value.slice(cut);
+    body.dispatchEvent(new Event('input'));
+    window.__tops.push(top());
+  }
+}, 200));
+</script>
+""".replace("%LINES%", _PITCH)
+
+_JITTERED = """
+const body = document.querySelector('textarea[name=body]');
+return {
+  tops: window.__tops,
+  line: Math.round(parseFloat(getComputedStyle(body).lineHeight)),
+  at: window.__at,
+};
+"""
+
+
+def test_typing_above_somebody_does_not_move_their_band(index: Index, tmp_path: Path):
+    """Their band is on their line, and this tab's keystrokes are not their line.
+
+    Reported from two people in one document: "the other user's presence line was
+    jumping up and down 2-3 lines while I was typing, one jump per char I typed,
+    but this didn't happen in the other user's view."
+
+    `seats` holds an ABSOLUTE index into the document — where the room last said
+    that person's caret was — and `drawSeats` is subscribed to `onInput`, so every
+    keystroke this tab makes repaints their band against an index that keystroke
+    has just invalidated. The correction is a full round trip away: this tab's
+    update reaches them, `splice` carries their caret across it, their `sit()`
+    goes back to the server, and a `who` comes here. So the band alternates
+    between the wrong row and the right one, once per character.
+
+    It walks back through characters and lands on rows, which is why the corpus
+    shape matters: three characters is three characters of prose, or the whole of
+    a blank line, a `- one` and another blank line. A shaping document is made of
+    the second kind.
+
+    And that is the asymmetry too, with nothing else needed to explain it. A `who`
+    comes back only when the OTHER person's index changed, which happens only when
+    you edit above them. Somebody typing below your caret moves nothing of yours,
+    `sit()` sees the same `at` it last sent and returns, and their copy of your
+    band never moves.
+    """
+    record_id = a_record_with_a_document(index)
+    page = render_detail(
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="plain"
+    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace(
+        "</body>", _JITTER + "</body>"
+    )
+
+    got = measured_in(
+        chrome(), page, tmp_path / "jitter.html", 1200, _JITTERED, height=900,
+        patience=2800,
+    )
+
+    assert got["tops"] and all(top is not None for top in got["tops"]), (
+        f"the band was not drawn for one of the four samples: {got['tops']}"
+    )
+    settled = set(got["tops"])
+    assert len(settled) == 1, (
+        f"typing above somebody moved their band through {len(settled)} different rows "
+        f"without one word of theirs changing: {got['tops']}, on a {got['line']}px row. "
+        "Their caret is where it was; only this tab's idea of the index moved."
+    )
+
+
+
+_ACE_JITTER = """
+<script>
+window.__tops = [];
+addEventListener('load', () => setTimeout(() => {
+  flipEditing();
+  const socket = window.__socket;
+  socket.hear({t: 'welcome', seed: null, sv: 'AA==', update: '', people: ['ann', 'bo']});
+  const editor = document.querySelector('.acebox').env.editor;
+  const session = editor.session;
+  editor.setValue('%LINES%', -1);
+  window.__at = session.getValue().indexOf('the paragraph');
+  socket.hear({t: 'who', people: ['ann', 'bo'],
+               where: [{login: 'bo', at: window.__at}]});
+  const top = () => {
+    editor.renderer.updateFull(true);
+    const band = document.querySelector('.op-seat');
+    return band ? Math.round(band.getBoundingClientRect().top) : null;
+  };
+  window.__tops.push(top());
+  // Typed through Ace's own document, which is the path a keystroke takes here:
+  // one delta, converted at arrival, out through `spliced` — and NOT the path
+  // the other surface's `typed` takes. This one never had the transform at all.
+  for (const character of 'xyz') {
+    session.insert({row: 0, column: 2}, character);
+    window.__tops.push(top());
+  }
+}, 300));
+</script>
+""".replace("%LINES%", _PITCH)
+
+_ACE_JITTERED = """
+const editor = document.querySelector('.acebox').env.editor;
+return {tops: window.__tops, line: Math.round(editor.renderer.lineHeight),
+        at: window.__at};
+"""
+
+
+def test_typing_above_somebody_does_not_move_their_band_on_the_second_surface(
+    index: Index, tmp_path: Path
+):
+    """The same claim, on the surface whose write path never carried anything.
+
+    The band is drawn from the same `seats` here, so the defect is the same one —
+    but it arrives by a different road. This surface reports its own deltas and
+    goes out through `spliced`, where the other one diffs its value and goes out
+    through `typed`, and neither of them transformed the roster. The fix is in
+    `text.observe`, which is downstream of both, and this is the half of that
+    claim the other test cannot make.
+    """
+    record_id = a_record_with_a_document(index)
+    page = render_detail(
+        index, ROUTES, only=record_id, base_commit=HEAD, may_write=True, editor="ace"
+    )
+    page = page.replace("<head>", "<head>" + STUB, 1).replace(
+        "</body>", _ACE_JITTER + "</body>"
+    )
+
+    got = measured_in(
+        chrome(), page, tmp_path / "ace-jitter.html", 1200, _ACE_JITTERED, height=900,
+        query="?editor=ace", patience=4800,
+    )
+
+    assert got["tops"] and all(top is not None for top in got["tops"]), (
+        f"the band was not drawn for one of the four samples: {got['tops']}"
+    )
+    settled = set(got["tops"])
+    assert len(settled) == 1, (
+        f"typing above somebody moved their band through {len(settled)} different rows "
+        f"without one word of theirs changing: {got['tops']}, on a {got['line']}px row"
+    )
+
+
 # The socket, counted rather than merely replaced: the claim is about how many
 # connections a page opens and WHEN, so every construction is kept, and close()
 # behaves like a real socket — readyState moves and onclose fires — so a
