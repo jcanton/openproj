@@ -199,9 +199,10 @@ function showView(mode) {
   // made the normal case.
   dispatchEvent(new Event('openproj:editing'));
   // The width handle belongs to the measure, and the split view's edge is not
-  // the measure — `place` hides it there and parks it on the article's edge
-  // everywhere else. `place` is the detail page's; the create form has no grip
-  // and no such function.
+  // the measure — `place` hides it there and parks it on the edge of `.panes`
+  // everywhere else, which is the box the measure has been on since 2026-08-24.
+  // `place` is the detail page's; the create form has no grip and no such
+  // function.
   if (typeof place === 'function') place();
   // And the other handle, whose whole existence is this one view: the classes
   // are on the article by here, so the stylesheet has already decided whether
@@ -1125,7 +1126,7 @@ const root = document.documentElement;
 const saved = remembered.get('openproj:measure');
 if (saved) root.style.setProperty('--measure', saved);
 
-function place() {
+function shown() {
   // The visible one. On the index view every article is hidden, and measuring a
   // hidden element gives zero — which parked the handle against the left edge of
   // the page, a rule down the side of a list it has nothing to do with.
@@ -1135,16 +1136,28 @@ function place() {
   // stays the test after surviving the full-page era, when a `position: fixed`
   // article had no offset parent and an `offsetParent` check would have parked
   // the handle at the left edge through a second door.
-  const article = [...document.querySelectorAll('article.record')]
+  return [...document.querySelectorAll('article.record')]
     .find(candidate => candidate.getClientRects().length > 0);
+}
+
+// The box the measure is on, and since 2026-08-24 that is `.panes` and not the
+// article: the article is the width of the page in every view — which is what
+// stops the header moving when the split opens — so a handle on ITS edge would
+// park against the window. Written once because `place` and the drag below have
+// to agree about which edge is being dragged; two spellings of that is a handle
+// that sits on one box and resizes another.
+function column(article) { return article.querySelector('.panes'); }
+
+function place() {
+  const article = shown();
   // And not in the split view, whose width handle is the splitter. The grip
-  // sets `--measure` as the article's own width, and in the split the article
-  // is one measure plus one body wide — so a grip on that edge would move it
-  // twice the drag and land the measure somewhere nobody chose. Two handles
-  // that both change widths on one screen is the confusion `#splitter`'s
-  // comment already refuses; one of them is on the page at a time.
+  // sets `--measure` as the column's own width, and in the split the column is
+  // one measure plus one body wide — so a grip on that edge would move it twice
+  // the drag and land the measure somewhere nobody chose. Two handles that both
+  // change widths on one screen is the confusion `#splitter`'s comment already
+  // refuses; one of them is on the page at a time.
   grip.hidden = !article || article.classList.contains('view-both');
-  if (!grip.hidden) grip.style.left = article.getBoundingClientRect().right + 'px';
+  if (!grip.hidden) grip.style.left = column(article).getBoundingClientRect().right + 'px';
 }
 place();
 addEventListener('resize', place);
@@ -1153,9 +1166,15 @@ grip.onpointerdown = event => {
   grip.setPointerCapture(event.pointerId);
   grip.classList.add('dragging');
   const move = e => {
-    // The column is centred, so its right edge is half a width from the middle of
-    // the window: dragging that edge out by one pixel is two pixels of column.
-    const width = Math.max(320, (e.clientX - innerWidth / 2) * 2);
+    // The column is pinned to the page's left edge — it was centred until
+    // 2026-08-24, when the header took the page's width and left a centred
+    // document indented from its own title — so the width IS the distance from
+    // that edge to the pointer. One pixel of drag is one pixel of column now,
+    // where the centred box moved half a pixel each way and needed the double.
+    const article = shown();
+    if (!article) return;
+    const width = Math.max(
+      320, e.clientX - column(article).getBoundingClientRect().left);
     root.style.setProperty('--measure', width + 'px');
     place();
     // The one control whose entire job is to change the width of the box has to

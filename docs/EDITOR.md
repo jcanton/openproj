@@ -1070,4 +1070,44 @@ One consequence worth naming: the split-ratio fence (`SPLIT_RANGE`) now engages 
 measure has been dragged out as well — at the default measure the capped article never gives the
 panes 2,160px — so the ultrawide regression test seeds a 1900px measure to keep exercising it.
 
+## The header spans the page (2026-08-24, same day, second round)
+
+The paragraph above says a session is "the article at `--measure`, centred", and that is what
+jcanton came back about: *"I'd make the ←Table, edit/side-by-side/preview buttons and 'nothing
+saved yet' banner full width, so they stay left aligned like the nav and don't move anymore at all
+(they are still jumping between side-by-side and the other views). actually: all above the red
+lines should be full width, same as in the side-by-side view, and only the body and fields below it
+keep the current horizontal sizing"*. The red lines sat under the meta line.
+
+The header moved because the measure was on `article.record`, so the header was inside the box the
+split view widens. **The measure is on `.panes` now** and the article is the page's own content
+width, left-pinned: the back link, the switcher, the commit bar, the kind chip, the title and the
+meta line all start at the body's left padding, level with the nav, and hold every number across
+the three views.
+
+Four things had to move with it, and each is a comment in the stylesheet:
+
+- **The container.** `container-type: inline-size` went to `.panes` with the width. Left on a
+  full-width article, `@container (min-width: 56rem)` would have been asking about the window, and
+  the facts would take their 20rem column beside a document dragged down to 10rem.
+- **The container cannot answer its own query.** `@container` reaches a container's descendants,
+  so `.panes { grid-template-columns: … }` inside the block would now match nothing. The two-column
+  layout is an implicit second track instead: the query places `.facts` in column 2 and
+  `grid-auto-columns: 20rem` sizes it, which is the same number the explicit track carried.
+- **`--writing`** stays on `article.record`. The textarea, Ace's box and the split's rendered pane
+  are all inside it and reach it by inheritance wherever the width lives.
+- **`#grip`.** `place()` parks it on `.panes`'s right edge, and the drag is `clientX - panesLeft`
+  rather than `(clientX - innerWidth / 2) * 2` — one pixel of drag is one pixel of column now that
+  the column is not centred.
+
+`position: relative` stays on the article: it is what says the full-page surface has not come back,
+and nothing is positioned against it (the seat bands and the gutter resolve against `.bodywrap`,
+the split's line against `#splitter`, and `.suggest` is parked on the body in page coordinates).
+
+**Left, not centred, is the judgement in this round.** He asked for the sizing below the line to be
+kept, not the position, and a centred document under a left-pinned header is indented from its own
+title. It also buys the thing the change is for: the split grows `.panes` to the right only, so the
+editor pane opens exactly where the document was, where a centred box slid it half a body width
+left on every open.
+
 🤖 Written by an agent on behalf of @jcanton

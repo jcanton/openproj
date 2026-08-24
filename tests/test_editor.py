@@ -376,11 +376,16 @@ def test_a_date_box_says_what_it_will_store(page: str):
 def test_the_facts_read_as_a_column_beside_the_document(page: str):
     """One `<article>` still — the sidebar is a pane inside the record, not a
     second record — and the prose keeps the measure while the facts take the
-    space that was empty to the right of it."""
+    space that was empty to the right of it.
+
+    The measure is on `.panes` and not on the article: since 2026-08-24 the
+    article is the page's own width, so that the header above the panes is level
+    with the nav in all three views instead of riding the split's extra body."""
     assert page.count("<article") == 1
     assert '<aside class="facts">' in page
     assert page.index('<aside class="facts">') < page.index('<div class="main">')
-    assert re.search(r"article\.record \{[^}]*margin: 0 auto", page, re.S)
+    assert re.search(r"\.panes \{[^}]*width: var\(--measure", page, re.S)
+    assert not re.search(r"article\.record \{[^}]*width:", page, re.S)
 
 
 # --------------------------------------------------------------------------- #
@@ -2049,11 +2054,14 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
 
     `view` is the ordinary page — the server-rendered document, the facts
     column — and it is where every session ends. `edit` and `both` are
-    sessions: the SAME page, still `position: relative`, still centred, with
-    the box in the document's column — jcanton, 2026-08-24, the ask this
-    branch is for. The `full` in each expected class list below is asserted
-    absent by equality: a session that grew a full-page surface again fails
-    every one of these.
+    sessions: the SAME page, still `position: relative`, still one column of
+    prose at the reader's own measure, with the box in the document's column —
+    jcanton, 2026-08-24, the ask this branch is for. ("Centred" until later the
+    same day, when the header took the page's width and the column under it was
+    pinned to the page's left edge rather than indented from its own title.)
+    The `full` in each expected class list below is asserted absent by
+    equality: a session that grew a full-page surface again fails every one of
+    these.
 
     The fourth, unnamed state is gone: exactly one segment is always pressed,
     the pressed segment and the chord and Escape all land on the landing, and
@@ -2374,6 +2382,11 @@ def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
 
 _GRIPPING = _STUB_PREVIEW + """
 const article = document.querySelector('article.record');
+// `.panes` and not the article, since 2026-08-24: the article is the width of
+// the page in every view — that is what stops the header moving — and a handle
+// on ITS edge is the handle parked against the window this test exists about.
+// The measure is the column's, so the column is what is measured.
+const pane = article.querySelector('.panes');
 const grip = document.getElementById('grip');
 const seg = name => document.getElementById(
   {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
@@ -2383,8 +2396,8 @@ const seg = name => document.getElementById(
 const where = () => ({
   hidden: grip.hidden,
   onEdge: Math.abs(parseFloat(grip.style.left || '0')
-                   - article.getBoundingClientRect().right) < 1,
-  spare: Math.round(innerWidth - article.getBoundingClientRect().right),
+                   - pane.getBoundingClientRect().right) < 1,
+  spare: Math.round(innerWidth - pane.getBoundingClientRect().right),
 });
 
 const reading = where();
@@ -2403,12 +2416,18 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     itself against the left edge of the page, and that shipped once.
 
     Since a session is the same page (2026-08-24), the handle stays through
-    `edit` too: the article's edge IS the measure there, so dragging it means
+    `edit` too: the column's edge IS the measure there, so dragging it means
     what it means on the landing. The one view without it is the split, where
-    the article is one measure plus one body wide — a grip on that edge would
+    the column is one measure plus one body wide — a grip on that edge would
     move the measure twice the drag — and where the splitter is the view's own
     width control: two handles that both change widths on one screen are two
-    controls nobody can tell apart."""
+    controls nobody can tell apart.
+
+    The column is `.panes` and not `article.record` since the header took the
+    page's width: the article's right edge is now the window's, `spare` would be
+    the body's own padding at every width, and this test would go on passing
+    while the handle sat against the edge of the screen — the exact defect it
+    was written for."""
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "grip.html", 1400, _GRIPPING
     )
@@ -3827,18 +3846,24 @@ def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
 # top and left only, deliberately: its CONTENT changes with the mode — read
 # values swap for controls, which is the point of a session — so its height is
 # the one measurement here that is supposed to move.
+#
+# `width` is measured since 2026-08-24, and `back` is here for the same reason:
+# the header is the six boxes above the line jcanton drew under the meta line,
+# and "full width, so they stay left aligned like the nav" is a claim about
+# every one of them and about their right edges as well as their left.
 _THE_HEADER_STAYS = _STUB_PREVIEW + """
 const box = sel => {
   const b = document.querySelector(sel).getBoundingClientRect();
-  return {top: Math.round(b.top), height: Math.round(b.height), left: Math.round(b.left)};
+  return {top: Math.round(b.top), height: Math.round(b.height),
+          left: Math.round(b.left), width: Math.round(b.width)};
 };
+// The six above the line, in the order they are drawn. The nav is beside them
+// as the thing they are level with, and not as one of them.
+const HEADER = ['.back', '.editbar', '#commitbar', '.eyebrow',
+                'article.record h1', 'article.record .meta'];
 const header = () => ({
   nav: box('body > nav'),
-  editbar: box('.editbar'),
-  bar: box('#commitbar'),
-  eyebrow: box('.eyebrow'),
-  h1: box('article.record h1'),
-  meta: box('article.record .meta'),
+  ...Object.fromEntries(HEADER.map(sel => [sel, box(sel)])),
   facts: (({top, left}) => ({top, left}))(box('.panes > .facts')),
 });
 const landing = header();
@@ -3850,7 +3875,7 @@ await new Promise(go => setTimeout(go, 150));
 const split = header();
 document.getElementById('preview').click();
 await new Promise(go => setTimeout(go, 150));
-return {landing, writing, split, back: header()};
+return {landing, writing, split, back: header(), header: HEADER};
 """
 
 
@@ -3870,9 +3895,19 @@ def test_opening_a_session_moves_nothing_above_the_document(
     flex` and hides with `visibility`), and the title input in the heading takes
     the read span's metrics, wearing its border in negative margins.
 
-    The split view is allowed exactly one change, because jcanton asked for it:
-    it widens by one body and recentres. So `left` may move there and nothing's
-    `top` or `height` may.
+    The split used to be allowed one change of its own — it widened by one body
+    and recentred, so `left` was free to move there — and that exemption is what
+    jcanton came back about on 2026-08-24: "I'd make the ←Table,
+    edit/side-by-side/preview buttons and 'nothing saved yet' banner full width,
+    so they stay left aligned like the nav and don't move anymore at all (they
+    are still jumping between side-by-side and the other views)". So there is no
+    exemption left above the line: the six boxes hold every number in all three
+    views, and the measure that does change between them lives on `.panes`,
+    below it.
+
+    The facts column is the one box here that may still move sideways in the
+    split, because it is below the line and rides the measure — only its `top`
+    is asserted there.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "still.html",
@@ -3886,11 +3921,26 @@ def test_opening_a_session_moves_nothing_above_the_document(
     assert got["back"] == landing, (
         f"leaving the session did not put the page back: {got['back']} against {landing}"
     )
-    for name, spot in landing.items():
-        held = {key: spot[key] for key in ("top", "height") if key in spot}
-        assert {key: got["split"][name][key] for key in held} == held, (
-            f"the split view moved {name} vertically: {got['split'][name]} against {spot}"
+    for name in got["header"]:
+        assert got["split"][name] == landing[name], (
+            f"the split view moved {name}: {got['split'][name]} against {landing[name]}"
         )
+    assert got["split"]["facts"]["top"] == landing["facts"]["top"], (
+        "the split view moved the facts column up or down the page"
+    )
+
+    # And where the header sits, which is the half of his sentence that a
+    # comparison between views cannot see: three views that agree on a box in
+    # the wrong place agree just as well. Level with the nav and as wide as it,
+    # in every view, which is what "full width, like the nav" is.
+    for view in ("landing", "writing", "split"):
+        nav = got[view]["nav"]
+        for name in got["header"]:
+            spot = got[view][name]
+            assert (spot["left"], spot["width"]) == (nav["left"], nav["width"]), (
+                f"in the {view} view {name} is not the page's width beside the "
+                f"nav: {spot} against {nav}"
+            )
 
 
 _A_FAILED_PREVIEW = """
@@ -5429,9 +5479,13 @@ if (typeof flipEditing === 'function') {
   await new Promise(go => setTimeout(go, 150));
 }
 const marks = document.getElementById('marks');
-const article = document.querySelector('article.record');
+// The surface the toolbar is drawn on is the column, not the article: since
+// 2026-08-24 the article is the page's width and everything fits inside it by
+// construction, which would make `past` below the same negative number at every
+// window — a measurement that has stopped asking anything.
+const surface = document.querySelector('article.record .panes');
 const buttons = [...marks.querySelectorAll('button.mark')];
-const edge = article.getBoundingClientRect().right;
+const edge = surface.getBoundingClientRect().right;
 return {
   width: innerWidth,
   buttons: buttons.length,
