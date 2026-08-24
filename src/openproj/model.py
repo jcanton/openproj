@@ -2214,13 +2214,15 @@ def _rollup_problems(
     # all unsized, so its old total of 2.0 was invented wholesale and only
     # stayed quiet because the bet happened to be bigger.
     #
-    # `kids` can only hold tasks today, so the filter never meets a container:
-    # `Rung.under` files a container nowhere but beneath a product, a product
-    # carries no `person_weeks`, and the `defaulted` guard above therefore
-    # returns before a container's children are ever summed. If the ladder ever
-    # lets a container under a sized rung, this same filter already answers for
-    # it — a container is unsized by kind, so it is left out rather than counted
-    # at the invented default `_weighed` (`index.py`) documents.
+    # A container CAN reach `kids` today: the map above keys on `parent` alone,
+    # with no kind check, so a hand-committed `parent: pitch-x` on a project
+    # file lands it here — `Rung.under` makes that filing a reported containment
+    # problem, not an impossibility, because it governs validation and never the
+    # map. What keeps a mis-filed container out of the sum is this filter
+    # itself: only a pitch and a task carry `person_weeks`, so `size_weeks` on a
+    # container always answers (default, True) and it is left out as unsized
+    # rather than priced at the invented default `_weighed` (`index.py`)
+    # documents. Under the old sum it WAS priced in, at 0.5 weeks nobody typed.
     sized = [kid for kid in kids if not size_weeks(kid, config)[1]]
     total = sum(size_weeks(kid, config)[0] for kid in sized)
     if total <= stated:
