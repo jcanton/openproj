@@ -1932,6 +1932,47 @@ def live_server(repo_path: Path):
         thread.join(timeout=10)
 
 
+def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
+    live_server: str, tmp_path: Path,
+):
+    """Two real page loads, which is the one thing a shim structurally cannot do.
+
+    Everything in `test_render` about this drives one page at a time and hands
+    the stamp between them by hand — the test writing down what it already
+    believes. The claim is about a store that survives a navigation, so it is
+    asked of a browser walking the reader's own path: open the table, click a
+    title, read the link at the top of the record.
+
+    A real server rather than the static export, and the difference is the
+    origin. A `file://` document gets one at the browser's discretion — Chrome
+    151 on macOS says `file://` and lets a page store; the Linux headless build
+    this suite runs on says `null` and refuses — so the export is best-effort and
+    a test of it would pass on one machine and fail on another. Served, there is
+    an origin, and this is the mode the link was reported broken in.
+    """
+    from browser import chrome, in_a_live_page
+
+    journey = """
+    (() => {
+      if (location.pathname === '/table') {
+        // The rows are drawn by script, so a title link is not there at load.
+        // Null rather than a complaint: the driver asks again until something
+        // truthy comes back, and a complaint would end the walk on its first
+        // step every time.
+        const title = document.querySelector('td[data-col="title"] a');
+        if (title) title.click();
+        return null;
+      }
+      const back = document.querySelector('a.origin');
+      return back ? back.getAttribute('href') + ' | ' + back.textContent : null;
+    })()
+    """
+    answer, said = in_a_live_page(
+        chrome(), f"{live_server}/table", journey, tmp_path / "profile", seconds=40,
+    )
+    assert answer == "/table | ← Table", (answer, said)
+
+
 def test_a_write_is_broadcast_to_everybody_watching(live_server: str):
     """The stream is opened before the write, because an event emitted into a
     stream nobody is holding yet is precisely the bug this is here to catch.
@@ -2573,8 +2614,10 @@ def test_the_cycle_page_says_what_is_unsaved_and_that_a_save_landed(client: Test
     assert '<span id="unsaved">Nothing to save</span>' in page
     assert 'id="state" role="status"' in page, "a receipt nobody is told about"
     assert "UNSAVED.textContent" in mark and "BAR.classList.toggle('dirty'" in mark
-    assert "sessionStorage.setItem(RECEIPT" in click
-    assert "sessionStorage.getItem(RECEIPT)" in page
+    # Through the shell's one door onto a browser store, not the property: the
+    # guard for a store that throws is written there and nowhere else now.
+    assert "forThisTab.set(RECEIPT" in click
+    assert "forThisTab.get(RECEIPT)" in page
     assert re.search(r"receipt = `\$\{quiet \? 'Autosaved' : 'Saved'\}", page), \
         "the two-minute autosave confirms in the same place as the button"
 

@@ -294,10 +294,11 @@ const GOAL_WAS = GOAL ? GOAL.value : '';
 const RECEIPT = 'openproj:cycle-saved';
 let receipt = '';
 
-try {
-  const landed = sessionStorage.getItem(RECEIPT);
-  if (landed) { say(landed); sessionStorage.removeItem(RECEIPT); }
-} catch (e) { /* the save still landed; only the sentence about it is missing */ }
+// Through the shell's door, which is where the guard for a store that throws
+// lives now. It was written a second time here, as a `try` around the read —
+// the same rule in two places, and the copy that had to be remembered.
+const landed = forThisTab.get(RECEIPT);
+if (landed) { say(landed); forThisTab.forget(RECEIPT); }
 
 // The whole roster in one write. A name left out means somebody was taken off,
 // which per-field merging would silently undo.
@@ -451,7 +452,7 @@ SAVE.onclick = async () => {
     // Reloaded because capacity, load and the scheduled-until column are all
     // derived from what was just written, and the receipt is handed across the
     // reload so that pressing Save says something rather than blinking.
-    try { sessionStorage.setItem(RECEIPT, receipt); } catch (e) { /* still saved */ }
+    forThisTab.set(RECEIPT, receipt);   // and a browser that refuses still saved
     location.reload();
   }
 };

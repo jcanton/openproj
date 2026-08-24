@@ -29,7 +29,12 @@
 //                            `response.json()`, exactly as a 500 does.
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
 //                            reading the property itself throw, the way a
-//                            private window and a blocked-cookies policy do.
+//                            private window and a blocked-cookies policy do —
+//                            and it denies both stores, because one policy does.
+//          {session: {...}}  the same for sessionStorage: what the TAB was
+//                            already holding when this page opened, which is how
+//                            a record page is asked what view it came from.
+//          {here: "/t?x=1"}  the address the page is at; `/` by default.
 //          `__reloads()`     how many times the page asked for `location.reload()`,
 //                            which node cannot perform and a test has to be able
 //                            to read.
@@ -41,7 +46,8 @@
 // settles comes back as settled: false rather than as an empty answer.
 // Prints {written: [...innerHTML strings...], value: <expression result>,
 //         errors: [...], calls: [...requests...], settled: <bool>,
-//         stored: {...localStorage as the run left it...}} as JSON.
+//         stored: {...localStorage as the run left it...},
+//         tabbed: {...sessionStorage as the run left it...}} as JSON.
 
 'use strict';
 
@@ -574,22 +580,39 @@ async function run(html, expression, options) {
     });
   }
 
+  // Where the page believes it is standing, split the way a browser splits it.
+  const here = String(options.here || '/');
+  const [herePath, hereRest] = here.split('?');
+  const hereQuery = hereRest === undefined ? '' : '?' + hereRest;
+
   // Storage, in the three states a browser really has: empty, already holding
   // something, and denied. The third is the one worth having — a denied browser
   // does not answer null, it THROWS, and it throws on the `localStorage`
   // property itself rather than on the method call, which is why it is a getter
   // below and not a stub whose methods raise. A page that guards `getItem` and
   // not the property is still dead at its first read.
-  const denied = options.storage === 'denied';
-  const held = new Map(Object.entries(denied ? {} : options.storage || {}));
+  //
+  // Both stores, because the pages use both and one policy denies both: cookies
+  // blocked takes `sessionStorage` with it, and a shim that offered a working
+  // one would be a shim in which the record page's back link is never the thing
+  // that breaks. They are separate maps for the same reason a browser keeps
+  // them separate — a tab's store and a browser's store hold different things
+  // and outlive different events.
+  //
   // A real store and not a black hole: what a page writes it can read back, and
   // what it wrote comes home in the answer, which is how a test says what a
   // draft was saved *as*.
-  const storage = {
-    getItem: key => (held.has(String(key)) ? held.get(String(key)) : null),
-    setItem: (key, value) => { held.set(String(key), String(value)); },
-    removeItem: key => { held.delete(String(key)); },
+  const denied = options.storage === 'denied';
+  const shelf = start => {
+    const held = new Map(Object.entries(denied ? {} : start || {}));
+    return [held, {
+      getItem: key => (held.has(String(key)) ? held.get(String(key)) : null),
+      setItem: (key, value) => { held.set(String(key), String(value)); },
+      removeItem: key => { held.delete(String(key)); },
+    }];
   };
+  const [held, storage] = shelf(options.storage);
+  const [tabHeld, tabStorage] = shelf(options.session);
 
   // A socket, driven by hand, and only when a test asks for one. The room's
   // whole protocol is frames in and frames out, so a shim that delivered them on
@@ -687,13 +710,19 @@ async function run(html, expression, options) {
     // reload is a claim a test needs to make — "the read view under this editor
     // is the server's HTML and is now out of date, so go and get it again".
     // Reachable as `__reloads()`.
+    // Where the page believes it is standing. `/` unless a test says otherwise,
+    // which is what every run before this one was driven at — and named by the
+    // one claim that is about the address itself: a view stamps the page you
+    // were on, so that a filtered table is what a record page sends you back to
+    // and not the bare view.
     location: {
-      search: '', pathname: '/', href: 'http://localhost/',
+      search: hereQuery, pathname: herePath, href: 'http://localhost' + here,
       reload: () => { reloads += 1; },
     },
     __reloads: () => reloads,
     history: {replaceState() {}, pushState() {}},
     localStorage: storage,
+    sessionStorage: tabStorage,
     // Yjs's lib0 reads `crypto.subtle` and binds `crypto.getRandomValues` at the
     // top of the module with nothing guarding either, so the detail page's
     // editor now stops on its fourth line without one. node's real one is handed
@@ -760,7 +789,8 @@ async function run(html, expression, options) {
     // the property access — `localStorage`, `window.localStorage`, either — with
     // the error a denied browser raises.
     new vm.Script(
-      "Object.defineProperty(globalThis, 'localStorage', {configurable: true," +
+      "for (const store of ['localStorage', 'sessionStorage'])" +
+      " Object.defineProperty(globalThis, store, {configurable: true," +
       " get() { throw new Error('SecurityError: The operation is insecure.'); }});"
     ).runInContext(context);
   }
@@ -806,7 +836,8 @@ async function run(html, expression, options) {
   } catch (error) {
     errors.push('expression: ' + String(error && error.message ? error.message : error));
   }
-  return {written: WRITTEN, value, errors, calls, settled, stored: Object.fromEntries(held)};
+  return {written: WRITTEN, value, errors, calls, settled,
+    stored: Object.fromEntries(held), tabbed: Object.fromEntries(tabHeld)};
 }
 
 let input = '';

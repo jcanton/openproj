@@ -1733,7 +1733,7 @@ def test_the_theme_is_chosen_before_the_first_paint(rendered: Path):
     # And the helper it reads through is declared above it, in the same block:
     # a page whose theme is chosen by a function defined further down the
     # document is a page that throws before it has a theme at all.
-    assert head.index("const remembered = {") < head.index("remembered.get('openproj:theme')")
+    assert head.index("const door = ") < head.index("remembered.get('openproj:theme')")
 
 
 def test_every_page_carries_the_toggle(rendered: Path):
@@ -1744,7 +1744,7 @@ def test_every_page_carries_the_toggle(rendered: Path):
 # --- storage ----------------------------------------------------------------
 
 
-def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal():
+def test_nothing_touches_a_browser_store_except_the_helper_that_survives_a_refusal():
     """One door, because the browsers that slam it slam it on the property.
 
     Three of the twelve reads and writes were wrapped in a try and carried a
@@ -1754,26 +1754,36 @@ def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal(
     times out of twelve is a guard that will be forgotten the tenth time, which
     is exactly how that line got written.
 
+    Both stores, because one policy denies both and the second one was reached
+    outside the door for as long as it existed: the cycle page's receipt carried
+    a `try` of its own, which is this same rule written a second time and the
+    copy that would have gone missing next.
+
     Which makes this a grep on purpose: what a page *does* with denied storage
-    is proved by running it (`test_table`, `test_editor`), and what this pins is
-    that the next call site cannot be written bare.
+    is proved by running it (`test_table`, `test_editor`, and the back link in
+    `test_a_browser_that_refuses_its_stores_still_draws_the_page`), and what this
+    pins is that the next call site cannot be written bare.
     """
     source = render_source()
-    helper = re.search(r"const remembered = \{.*?\n\};", source, re.S)
+    helper = re.search(r"const door = reach => \(\{.*?\n\}\);", source, re.S)
     assert helper, "the storage helper is gone or has been renamed"
 
     outside = source.replace(helper.group(0), "")
     bare = [
         line
         for line in outside.splitlines()
-        # The prose above the helper has to be able to name the thing it wraps.
-        if "localStorage" in line and not line.lstrip().startswith("//")
+        # The prose above and below the helper has to be able to name the two
+        # things it wraps, and the two lines that open it are the whole point.
+        if ("localStorage" in line or "sessionStorage" in line)
+        and not line.lstrip().startswith("//")
+        and not line.startswith(("const remembered = door(", "const forThisTab = door("))
     ]
-    assert not bare, f"a bare localStorage is back: {bare}"
-    # Once, like `esc`: two classic scripts on one page share one lexical scope,
-    # so a second `const remembered` would be a SyntaxError that takes the page
-    # down rather than a duplicate that drifts quietly.
-    assert source.count("const remembered = ") == 1
+    assert not bare, f"a bare browser store is back: {bare}"
+    # Once each, like `esc`: two classic scripts on one page share one lexical
+    # scope, so a second `const remembered` would be a SyntaxError that takes the
+    # page down rather than a duplicate that drifts quietly.
+    for once in ("const door = ", "const remembered = ", "const forThisTab = "):
+        assert source.count(once) == 1, once
     # And the helper answers every question a caller could otherwise ask the
     # property directly — a missing verb is how the next bare call gets written.
     for verb in ("get(key, fallback = null)", "map(key)", "set(key, value)", "forget(key)"):
@@ -3242,6 +3252,164 @@ def test_a_nav_item_that_is_not_a_nav_item_is_refused():
 
     with pytest.raises(ValueError, match="cycle"):
         _page("t", "", current="cycle")
+
+
+# --------------------------------------------------------------------------- #
+# Where "back" goes
+# --------------------------------------------------------------------------- #
+
+# The record page's back link, driven the way a reader arrives at it: a view runs
+# its scripts and leaves a stamp behind, and the record page runs its own with
+# that stamp already in the tab. Two runs, because that is two page loads — the
+# thing under test is what one page leaves for the next one, which no single
+# rendered file can show.
+BACK = ("[document.querySelector('a.origin').getAttribute('href'),"
+        " document.querySelector('a.origin').textContent]")
+ORIGIN = "openproj:origin"
+
+
+def stamp(href: str, label: str) -> dict[str, str]:
+    """A tab that has already been on a view, as that view would have left it."""
+    return {ORIGIN: json.dumps({"href": href, "label": label})}
+
+
+def test_a_view_leaves_the_page_you_were_standing_on(views: dict[str, str]):
+    """Not the view — the page. `/table?owner=ann` is a filter somebody set, a
+    sort they chose and a scroll they had reached, and a link back to `/table` is
+    a link that throws all three away and looks like it worked.
+
+    So the stamp is `pathname + search` and not the nav's own href, which is the
+    same string for every state a view can be in.
+    """
+    from test_injection import run_js
+
+    for view, label, here in (
+        ("table", "Table", "/table?owner=ann"),
+        ("graph", "Graph", "/graph"),
+        ("timeline", "Timeline", "/timeline"),
+    ):
+        left = run_js(views[view], page=True, here=here)["tabbed"]
+        assert json.loads(left[ORIGIN]) == {"href": here, "label": label}, view
+
+
+def test_the_records_list_keeps_the_name_the_link_already_had(seed_index: Index):
+    """Every other view is stamped with the word the nav uses for it. Records is
+    stamped "all records", which is what the link says when nothing is stamped at
+    all — one destination wearing two names depending on how you had arrived
+    would be the same link reading differently on the same page.
+    """
+    from test_injection import run_js
+
+    from openproj.render import ROUTES, render_records
+
+    left = run_js(render_records(seed_index, ROUTES), page=True, here="/?kind=issue")["tabbed"]
+    assert json.loads(left[ORIGIN]) == {"href": "/?kind=issue", "label": "all records"}
+
+
+def test_a_record_page_goes_back_to_the_view_it_was_opened_from(
+    server_pages: dict[str, str],
+):
+    """The whole point. Opening a record off the table and pressing back put you
+    on the records list — a third page, and not the one with the filter and the
+    sort you had left behind.
+    """
+    from test_injection import run_js
+
+    got = run_js(server_pages["record"], BACK, page=True,
+                 session=stamp("/table?owner=ann", "Table"))
+    assert got["value"] == ["/table?owner=ann", "← Table"]
+
+
+def test_a_record_page_opened_cold_still_goes_to_the_records_list(
+    server_pages: dict[str, str],
+):
+    """A bookmark, a link in a chat window, a fresh tab. There is no view behind
+    this page, and the rendered markup is already the answer — which is why the
+    fallback is what the server wrote rather than something the script computes.
+
+    Per tab and not per browser for exactly this: a record opened in a new tab
+    beside a table has no origin, rather than one belonging to a window whose
+    Back button would not go there either.
+    """
+    from test_injection import run_js
+
+    assert run_js(server_pages["record"], BACK, page=True)["value"] == ["/", "← all records"]
+
+
+def test_a_page_reached_from_a_view_leaves_the_stamp_where_it_found_it(
+    server_pages: dict[str, str],
+):
+    """The record page and the create form are not views, so neither overwrites
+    the origin. A record page that stamped itself would send the NEXT record you
+    opened — through a parent link, or the export's index — back to a record
+    instead of back to the table, one hop further from the view each time.
+    """
+    from test_injection import run_js
+
+    was = stamp("/table?owner=ann", "Table")
+    for page in ("record", "new"):
+        assert run_js(server_pages[page], page=True, session=was)["tabbed"] == was, page
+
+
+def test_an_address_smuggled_into_the_stamp_is_not_followed(server_pages: dict[str, str]):
+    r"""A store is a place somebody's devtools can write, and an `href` is the one
+    field on this path a scheme fits inside. The check is an allowlist, because
+    there is no list of URL spellings that is ever finished.
+
+    `//host/x` and `/\host/x` are why it is not merely a leading slash, and they
+    are here because the first draft of the check took both: one is a
+    protocol-relative URL to somebody else's host — the exact spelling that got
+    past this repository's image check once — and the other is what the URL
+    parser folds into it. This test caught that draft.
+
+    Refused means the link is what the server rendered, not that the page is
+    broken: a stamp nobody can read is the same case as no stamp at all.
+    """
+    from test_injection import run_js
+
+    for hostile in ("javascript:alert(1)", "//host/x", "/\\host/x",
+                    "https://host/x", "data:text/html,x"):
+        got = run_js(server_pages["record"], BACK, page=True, session=stamp(hostile, "Table"))
+        assert got["value"] == ["/", "← all records"], hostile
+
+
+def test_a_browser_that_refuses_its_stores_still_draws_the_page(
+    views: dict[str, str], server_pages: dict[str, str],
+):
+    """`sessionStorage` throws on the property itself, exactly as `localStorage`
+    does and for the same reasons — a private window, blocked cookies, a policy.
+    Every read and write of it goes through the shell's door for that, and this
+    is the case the door is for: the back link is a convenience and the record is
+    the page.
+    """
+    from test_injection import run_js
+
+    denied = run_js(server_pages["record"], BACK, page=True,
+                    storage="denied", session=stamp("/table", "Table"))
+    assert denied["value"] == ["/", "← all records"]
+    assert not [e for e in denied["errors"] if "SecurityError" in e], denied["errors"]
+
+    left = run_js(views["table"], page=True, storage="denied", here="/table")
+    assert not [e for e in left["errors"] if "SecurityError" in e], left["errors"]
+
+
+def test_every_record_in_the_export_carries_the_link_back(rendered: Path):
+    """`detail.html` is the whole corpus in one file, so the rewrite is every
+    article's link and not the first one — and the address it goes back to is the
+    exported file, whose `pathname` over `file://` is an absolute path on disk
+    and passes the same allowlist a route does.
+    """
+    from test_injection import run_js
+
+    here = "/home/ann/plan/table.html"
+    left = run_js(read(rendered, "table.html"), page=True, here=here)["tabbed"]
+    assert json.loads(left[ORIGIN]) == {"href": here, "label": "Table"}
+
+    every = ("[...document.querySelectorAll('a.origin')]"
+             ".map(a => a.getAttribute('href') + ' ' + a.textContent)")
+    got = run_js(read(rendered, "detail.html"), every, page=True, session=left)["value"]
+    assert len(got) == read(rendered, "detail.html").count("<article")
+    assert set(got) == {f"{here} ← Table"}
 
 
 def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):

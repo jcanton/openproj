@@ -889,11 +889,19 @@ _DETAIL = """
 {% for e in records %}
 <article {% if not creating %}id="{{ e.id }}" {% endif -%}
   class="record{% if creating %} editing{% endif %}">
-  {#- Back to Records, which is where you came from and where every record is.
+  {#- Back to where you came from, and to the records list when nothing knows.
       It pointed at the table once — a list a note or an issue never appears on,
       so for two of the six kinds "back" led somewhere the record just read
-      does not exist. -#}
-  <p class="back"><a href="{{ links.records }}">← all records</a></p>
+      does not exist. Then it pointed at Records always, which is right for a
+      reader who arrived from Records and wrong for the table, the graph, the
+      timeline and a cycle: four views with a filter, a sort and a scroll
+      position, and one link that threw all of it away.
+
+      What is rendered is the destination for a page opened cold — a bookmark, a
+      link in chat, a fresh tab — and the shell's script rewrites it when the tab
+      it is in remembers a view. `class="origin"` is that script's hook: this row
+      grows a second link in full page, when the sign-in control moves into it. -#}
+  <p class="back"><a class="origin" href="{{ links.records }}">← all records</a></p>
   {#- Above the title, not under it. What a thing *is* is the first question a
       page answers, and the kind was the third item on a line below the name,
       between an id and a status. It is also the one fact here that never
