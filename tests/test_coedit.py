@@ -3722,6 +3722,12 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
         )
 
         mark = "MY DRAFT FROM THE TRAIN"
+        # Forty lines of it, and the length is the point rather than decoration.
+        # The report used to be as tall as whatever it held, so a draft has to be
+        # long enough here to overflow the cap that now bounds it — with a short
+        # one every assertion below passes whether the cap exists or not, which
+        # is the vacuous-sweep failure this repository has already paid for once.
+        long_draft = "\n".join(f"{mark} line {n}" for n in range(40))
         drawn, said = in_a_live_page(
             chrome(),
             # `?editor=plain`: this reads `box.value`, and since 2026-08-20 an
@@ -3737,7 +3743,7 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
             "  if (!localStorage.getItem(key)) {"
             "    localStorage.setItem(key, JSON.stringify({"
             "      base: document.querySelector('[name=base_commit]').value,"
-            f"     text: {mark!r} + '\\n' + box.value}}));"
+            f"     text: {long_draft!r} + '\\n' + box.value}}));"
             "    window.__staged = true;"
             "    setTimeout(() => location.reload(), 0);"
             "    return '';"
@@ -3745,7 +3751,24 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
             "  if (!document.getElementById('together').textContent) return '';"
             "  const said = document.getElementById('conflict');"
             "  if (said.hidden) return '';"
-            "  return JSON.stringify({box: box.value, said: said.textContent});"
+            # Measured with the fold SHUT, which is how it arrives. `said.textContent`
+            # still reads the draft through a closed `<details>` — that is what keeps
+            # the not-thrown-away assertion below honest — so the height has to be
+            # asked of the pixels instead, and the sentence of the text node alone.
+            "  const fold = said.querySelector('details');"
+            "  const sentence = said.firstChild ? said.firstChild.textContent : '';"
+            "  const shut = said.getBoundingClientRect().height;"
+            "  if (fold) fold.open = true;"
+            "  const opened = said.getBoundingClientRect().height;"
+            "  const pre = fold && fold.querySelector('pre');"
+            "  if (fold) fold.open = false;"
+            "  return JSON.stringify({"
+            "    box: box.value, said: said.textContent, sentence: sentence,"
+            "    folded: !!fold, inFold: pre ? pre.textContent : '',"
+            "    summary: fold ? fold.querySelector('summary').textContent : '',"
+            "    shut: shut, opened: opened,"
+            "    scrolls: pre ? pre.scrollHeight > pre.clientHeight + 1 : false,"
+            "  });"
             "})()",
             tmp_path / "profile",
         )
@@ -3761,6 +3784,49 @@ def test_a_draft_against_a_room_that_has_moved_is_reported_and_not_thrown_away(
         "a draft pasted into the editing surface is a draft somebody saves back "
         "over the document it could not be merged with"
     )
+
+    # And the report costs the editor one line, not a document — jcanton,
+    # 2026-08-24: it "pushes the editor window up and reduces its height... it
+    # may be better have the old text available as a popup at the click of a
+    # button... and only have a one-line warning".
+    #
+    # The draft here is one marked line plus the whole seeded body, so before the
+    # fold this box was as tall as the document. Asked in pixels because the
+    # claim is about the room the editor has left, and a resolved `max-height`
+    # says nothing about a box whose height is its contents.
+    assert answer["folded"], (
+        "the draft is in the sentence rather than behind a control, so the box "
+        "is as tall as the document again"
+    )
+    assert mark not in answer["sentence"], (
+        f"the warning is not one line — the draft is in it: {answer['sentence']!r}"
+    )
+    assert mark in answer["inFold"], (
+        "the draft is not in the fold either, which means it is nowhere"
+    )
+    assert "draft" in answer["summary"].lower(), (
+        f"the control does not say what is behind it: {answer['summary']!r}"
+    )
+    # 5rem is generous for one wrapped sentence and far under a document; the
+    # seeded body is ~40 lines, so the pre-fold box measured several hundred px.
+    assert answer["shut"] < 96, (
+        f"the shut report is {answer['shut']:.0f}px, which is not one warning"
+    )
+    # Opening it must not put the page back where it was: the payload scrolls
+    # inside its own cap. This is the half a `<details>` does NOT bring for free.
+    # 360px is the cap (14rem = 224px) plus the sentence, the summary and the
+    # box's padding, with room to spare. It discriminates: forty lines at 12px
+    # measure about 640px unfolded, so this fails if the cap is removed — checked
+    # by removing it.
+    assert answer["opened"] < 360, (
+        f"opening the fold took {answer['opened']:.0f}px of the page, so the cap "
+        "on the payload is not holding"
+    )
+    assert answer["scrolls"], (
+        "the payload did not overflow its cap on a draft this long, so the cap "
+        "is not what is bounding it and this test would pass without one"
+    )
+
     assert not [line for line in said if "Content Security Policy" in line], said
 
 
