@@ -1,12 +1,43 @@
-# coedit — 125.6s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# coedit — 106.5s exact, anchored on tests/test_coedit.py (76.4s).
+#
+# Seconds are per FILE and EXACT, from docs/probes/ci-durations-4core.txt — every
+# phase of every test on the 4-core public runner, run 32754826551. The older
+# tables in docs/probes/ were taken on the 2-core box a PRIVATE repository gets,
+# AND at `--durations-min=0.05`, and both halves of that were wrong for this cut:
+# the leg order inverted when the cores doubled, and the 50ms floor hid 37s of
+# the suite on exactly the leg that had 1103 tests. Modelling that hidden cost
+# was tried and the fit did not hold — see docs/probes/ci-speed.md § 0b. The
+# threshold is zero here, so there is nothing left to model.
+#
+# The cut is what a longest-first pass makes of those numbers, and it lands at
+# 106.4-106.5s a leg: a 0.1s spread, against 93.0-119.8s on the cut it replaces.
+# `tests/test_editor.py` is 101.6s of the 106.4s it sits in, so this is 5s off
+# the floor and there is nothing further to win by moving files.
+#
+# **Balance is not what to spend the next hour on.** Runs of the SAME lists put a
+# leg 44s apart — `views` measured 76.57s and 120.37s across four — so no re-cut
+# is visible in one run, and four were not enough to separate this cut from the
+# one it replaced (120.4s against 122.8s, in either direction depending on which
+# runs you take). What would actually move the gate is the floor, and the floor
+# is one file.
 #
 # Real sockets, a real uvicorn on a real port, and literal `sleep(0.5)` budgets.
 # This leg exists so those stay serial, in file order, in one process, on a
-# machine nothing else is using — which is the condition every one of those
-# margins was measured under. Do not fold it into another shard to save a runner.
+# machine nothing else is running AT THE SAME TIME — the condition every one of
+# those margins was measured under. Ballast is fine and always was: the other
+# files here run before or after it in the same process, never beside it.
+#
+# **What must never happen is this leg being internally parallelised**, and that
+# is also why `pytest-xdist` cannot help the gate even where it helps a leg: the
+# critical path is bounded by a leg that is not allowed to split, so making the
+# other four faster buys total machine seconds and zero wall clock. Measured, in
+# docs/probes/ci-speed.md § 0b.
 tests/test_coedit.py
+tests/test_hill.py
+tests/test_deck.py
+tests/test_gitdoor.py
+tests/test_cli.py
+tests/test_headers.py
+tests/test_product.py
+tests/test_identity.py
 tests/test_socket_offer.py
-tests/test_search.py

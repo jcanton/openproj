@@ -1,12 +1,36 @@
-# graph — 131.2s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# graph — 106.5s exact, anchored on tests/test_graph_layout.py (32.2s).
 #
-# Canvas, card and hill layout: four files that start a fresh headless Chrome
-# per assertion, and the four that barely moved when template compilation was
-# cached, because none of their cost was rendering.
+# Seconds are per FILE and EXACT, from docs/probes/ci-durations-4core.txt — every
+# phase of every test on the 4-core public runner, run 32754826551. The older
+# tables in docs/probes/ were taken on the 2-core box a PRIVATE repository gets,
+# AND at `--durations-min=0.05`, and both halves of that were wrong for this cut:
+# the leg order inverted when the cores doubled, and the 50ms floor hid 37s of
+# the suite on exactly the leg that had 1103 tests. Modelling that hidden cost
+# was tried and the fit did not hold — see docs/probes/ci-speed.md § 0b. The
+# threshold is zero here, so there is nothing left to model.
+#
+# The cut is what a longest-first pass makes of those numbers, and it lands at
+# 106.4-106.5s a leg: a 0.1s spread, against 93.0-119.8s on the cut it replaces.
+# `tests/test_editor.py` is 101.6s of the 106.4s it sits in, so this is 5s off
+# the floor and there is nothing further to win by moving files.
+#
+# **Balance is not what to spend the next hour on.** Runs of the SAME lists put a
+# leg 44s apart — `views` measured 76.57s and 120.37s across four — so no re-cut
+# is visible in one run, and four were not enough to separate this cut from the
+# one it replaced (120.4s against 122.8s, in either direction depending on which
+# runs you take). What would actually move the gate is the floor, and the floor
+# is one file.
+#
+# The files whose cost is starting something — a fresh headless Chrome per canvas
+# assertion, a fresh node per injection census — rather than rendering. This is
+# the group that gained most from four cores: it was 131.2s on two and 93.0s on
+# four, which is most of why the old cut inverted.
 tests/test_graph_layout.py
-tests/test_card.py
 tests/test_facets.py
-tests/test_hill.py
+tests/test_injection.py
+tests/test_web.py
+tests/test_themes.py
+tests/test_payload.py
+tests/test_records.py
+tests/test_exclusion.py
+tests/test_credential.py
