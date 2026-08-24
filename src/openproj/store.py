@@ -25,7 +25,7 @@ import os
 import threading
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import pygit2
 from pydantic import BaseModel
@@ -85,6 +85,33 @@ class Condition(BaseModel):
     # The sentence, when there is one to say. Built by `_diverged_message`, so it
     # is the same wording a caller gets from `StoreDiverged` itself.
     refusal: str | None
+
+
+class SyncOutcome(NamedTuple):
+    """One pass of the background pusher, and everything a page needs to hear.
+
+    Announced whole rather than as an event per commit, because confirmation
+    cannot be "my sha is on main": recovery re-mints shas, so a client waiting
+    to see its own answered sha on the branch would wait forever after any
+    rejection (docs/deferred-push.md). One outcome names the tip that landed,
+    every sha that changed name on the way, and every sha that could not land
+    and where it went instead.
+    """
+
+    # The tip the remote now holds because of this pass; None when nothing moved.
+    landed: str | None
+    # Original sha -> re-minted sha, for commits the recovery had to re-commit
+    # onto what the remote actually held. Empty on the quiet day: the original
+    # commits go up unchanged, so a client's answered sha is the sha that lands.
+    remapped: dict[str, str]
+    # (original sha, branch name) for commits that could not be replayed and
+    # were parked on a branch on the remote instead of being dropped.
+    parked: list[tuple[str, str]]
+    # Which day it was. "idle": nothing to send. "landed": the backlog is on the
+    # remote. "unreachable": the network failed, the backlog is intact, try
+    # later. "diverged": the remote lost a commit we confirmed it held — a
+    # genuine fork, never resolved automatically.
+    state: Literal["idle", "landed", "unreachable", "diverged"]
 
 
 class NotAPlanRepository(RuntimeError):
@@ -908,6 +935,53 @@ class Store:
                 ) from None
             raise
         return True
+
+    def sync(self) -> SyncOutcome:
+        """The background pusher's one entry point: land local main on the remote.
+
+        Runs on the pusher's thread with no lock held and works on a FRESH
+        `pygit2.Repository`, never `self._repo` — pygit2 objects are not safe to
+        share between threads, and a fresh handle per cross-thread reader is
+        this file's own pattern.
+
+        This is the quiet day: local level with the tracking ref means nothing
+        to say, and local ahead means one push, sending the original commits
+        under their original shas — a client's answered sha is the sha that
+        lands, and sha instability exists only on the recovery path
+        (docs/deferred-push.md). No fetch first: the rejection IS the freshness
+        question, so a round trip to predict it would be the write path's old
+        pre-fetch moved into the pusher, paid on every pass whether or not
+        anybody else wrote.
+        """
+        quiet = SyncOutcome(landed=None, remapped={}, parked=[], state="idle")
+        if not self._remote:
+            return quiet
+        repo = pygit2.Repository(str(self._path))
+        born = repo.references.get(_BRANCH)
+        if born is None:
+            # An unborn branch has no commits to be at risk — the same answer
+            # `condition` gives for the same repository.
+            return quiet
+        local = str(born.target)
+        tracking = repo.references.get(_TRACKING)
+        if tracking is not None and str(tracking.target) == local:
+            return quiet
+        try:
+            # A success moves the tracking ref too, which is what lets
+            # `condition` answer `unpushed: 0` and the next pass answer "idle"
+            # without holding a conversation with the remote.
+            repo.remotes[_ORIGIN].push(
+                [f"{_BRANCH}:{_BRANCH}"], callbacks=self._callbacks()
+            )
+        except Exception:
+            # The backlog is real, local, and worth sending unchanged when the
+            # network comes back, so nothing is rewound and nothing re-minted —
+            # the pusher backs off and asks again. A rejection lands here too
+            # for now, and safely: same intact backlog, same retry. Telling the
+            # two apart, and recovering from the rejection, is the replay's job
+            # (docs/deferred-push.md, "Recovery, when the push is rejected").
+            return SyncOutcome(landed=None, remapped={}, parked=[], state="unreachable")
+        return SyncOutcome(landed=local, remapped={}, parked=[], state="landed")
 
     def _callbacks(self):
         """Credentials for the remote, minted per call.

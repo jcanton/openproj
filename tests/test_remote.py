@@ -1003,3 +1003,81 @@ def test_a_write_answered_200_is_a_write_that_reached_the_remote(tmp_path):
         assert landed.head() == written.commit, f"edit {n} is not what the remote holds"
         landed.close()
     store.close()
+
+
+# --------------------------------------------------------------------------- #
+# 9. sync(): the pusher lands the backlog (docs/deferred-push.md)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_pusher_lands_the_commits_a_save_did_not_wait_for(
+    store: Store, repo_path: Path, remote_path: Path
+):
+    """The other half of the deferred push's bargain. A save answers with a sha
+    the remote does not hold yet, and `sync()` is what makes that answer honest.
+    On the quiet day — nobody pushed by hand in between — the commits land with
+    their ORIGINAL shas: a client holding an answered sha must find that exact
+    sha on the remote, because sha instability is allowed only on the recovery
+    path (docs/deferred-push.md).
+    """
+    first = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+    second = store.write(
+        path=OTHER,
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
+            status="in_progress"),
+        base_commit=store.head(),
+        author="bo",
+        message="task-c00002: status todo -> wip",
+    )
+    assert (first.pushed, second.pushed) == (False, False)
+    assert store.condition().unpushed == 2
+
+    outcome = store.sync()
+
+    assert outcome.state == "landed"
+    assert outcome.landed == second.commit
+    # The original shas, read back out of the remote — the copy that survives
+    # the instance. Nothing was in the way, so nothing was re-minted or parked.
+    assert head(remote_path) == second.commit
+    assert contains(remote_path, first.commit)
+    assert outcome.remapped == {}
+    assert outcome.parked == []
+    assert store.condition().unpushed == 0
+    # And the backlog is empty now, which the pusher must be able to hear
+    # without holding a conversation with the remote to find out.
+    assert store.sync().state == "idle"
+
+
+def test_an_unreachable_remote_leaves_the_backlog_for_the_next_pass(
+    store: Store, repo_path: Path, remote_path: Path
+):
+    """Unreachable is not a rejection. The backlog is real, local, and worth
+    sending unchanged when the network comes back — so `sync()` says which
+    failure it was and touches nothing: nothing rewound, nothing re-minted, and
+    the same pass run after the outage lands the same commit under the same sha.
+    """
+    written = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+
+    with unplugged(remote_path):
+        outcome = store.sync()
+
+    assert outcome.state == "unreachable"
+    assert outcome.landed is None
+    assert head(repo_path) == written.commit  # nothing rewound
+    assert store.condition().unpushed == 1  # the backlog is intact
+    # What makes the honest "unreachable" survivable: the commit kept its sha,
+    # so the next pass is the quiet day again.
+    assert store.sync().state == "landed"
+    assert head(remote_path) == written.commit
