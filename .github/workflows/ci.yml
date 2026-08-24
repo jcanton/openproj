@@ -223,7 +223,7 @@ jobs:
       - run: |
           files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
           [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
-          uv run pytest -q --durations=25 $files
+          uv run pytest -q --durations=0 --durations-min=0 $files
 
   # The one required status check, and the reason it is a separate job.
   #
