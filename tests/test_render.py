@@ -3730,7 +3730,7 @@ def views(seed_index: Index) -> dict[str, str]:
 
     return {
         "graph": render_graph(seed_index, STATIC, base_commit="deadbee"),
-        "table": render_table(seed_index, STATIC, base_commit="deadbee"),
+        "table": render_table(seed_index, STATIC, base_commit="deadbee", may_write=True),
         "timeline": render_timeline(seed_index, STATIC),
     }
 

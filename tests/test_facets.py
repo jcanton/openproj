@@ -36,7 +36,7 @@ def index(demo_root: Path) -> Index:
 
 @pytest.fixture
 def page(index: Index) -> str:
-    return render_table(index, base_commit=HEAD)
+    return render_table(index, base_commit=HEAD, may_write=True)
 
 
 # Open one field, tick two of its values, and report what the page then says
@@ -314,7 +314,7 @@ def test_a_link_opens_with_its_boxes_ticked(index: Index, tmp_path: Path):
     """Every filter is in the URL, so a view is a link — and a link that opens
     with the rows filtered and the controls saying `all` is a page lying about
     why it is short."""
-    page = render_table(index, base_commit=HEAD).replace(
+    page = render_table(index, base_commit=HEAD, may_write=True).replace(
         "<script>", "<script>history.replaceState(null,'','?status=ready&status=done');", 1
     )
     got = measured_in(chrome(), page, tmp_path / "pasted.html", 1460, _PASTED)
@@ -356,7 +356,7 @@ def every_page(index: Index) -> dict[str, str]:
         # The landing shares the whole control bar's scope with a script of its
         # own, so it is in the sweep from the commit that adds it.
         "records": render_records(index, base_commit=HEAD, edited={}, now=0, may_write=True),
-        "table": render_table(index, base_commit=HEAD),
+        "table": render_table(index, base_commit=HEAD, may_write=True),
         "graph": render_graph(index, base_commit=HEAD),
         "timeline": render_timeline(index),
         # The people page has no `base_commit`: what it writes is one icon, and

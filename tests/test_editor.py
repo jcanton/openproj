@@ -626,6 +626,69 @@ def test_picking_a_suggestion_counts_as_typing(client: TestClient):
     assert "dispatchEvent(new Event('input', {bubbles: true}))" in choose
 
 
+_BETS_ONE_KEY = """
+const box = document.querySelector('#bets input.live[data-field="assignees"]');
+const key = name => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
+box.focus();
+box.value = 'b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const wasOpen = !list.hidden;
+key('Enter');
+const picked = {value: box.value, focused: document.activeElement === box,
+                staged: PENDING.size};
+// An input with a trailing separator reopens the list on the names still free.
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const reopened = !list.hidden;
+key('Escape');
+const first = {listShut: list.hidden, value: box.value,
+               focused: document.activeElement === box, staged: PENDING.size};
+key('Escape');
+return {wasOpen, picked, reopened, first,
+        after: {value: box.value, focused: document.activeElement === box,
+                staged: PENDING.size}};
+"""
+
+
+def test_one_key_does_one_thing_at_the_betting_table(client: TestClient, tmp_path: Path):
+    """The betting cells are the third surface where the suggestion list and a
+    second listener answer the same key — and the copy here did not honour the
+    mark the widget sets. One Enter picked a name AND blurred, staging the list
+    half-finished; one Escape closed the list AND reverted the typing it was
+    completing.
+
+    Writing this test found a second defect underneath: the page attached the
+    widget to every suggest box a second time — the combobox sweep had already
+    reached the served markup — so two lists answered together and one Enter
+    picked a name from EACH: choosing `bo` wrote `bo, ann, `. The `picked` value
+    below pins the single widget; the focus and staging pins hold the guard.
+    Driven with real key events, like the gate panel's and the cell editor's
+    tests, because both collisions live between listeners on one input and no
+    grep of any of them can see it.
+    """
+    page = client.get("/cycle/37").text
+    got = measured_in(chrome(), page, tmp_path / "bets-keys.html", 1400, _BETS_ONE_KEY,
+                      height=900)
+
+    assert got["wasOpen"], "the list never opened, so nothing here was asked"
+    # Enter with the list open picks the name, completes the token, and leaves
+    # the box open for the next one — nothing staged, nothing blurred.
+    assert got["picked"]["value"] == "bo, ", "the pick replaced the value instead"
+    assert got["picked"]["focused"] is True, "Enter blurred the box with the pick"
+    assert got["picked"]["staged"] == 0, "Enter staged the half-finished list"
+    assert got["reopened"], "the list did not reopen, so the Escape below asks nothing"
+    # Escape with the list open closes the list and only the list.
+    assert got["first"]["listShut"] is True
+    assert got["first"]["value"] == "bo, ", "closing the list took the typing with it"
+    assert got["first"]["focused"] is True, "one Escape dismissed the list AND the edit"
+    assert got["first"]["staged"] == 0
+    # The second Escape meets no list and is the cell's: reverted, blurred, unstaged.
+    assert got["after"]["value"] == ""
+    assert got["after"]["focused"] is False
+    assert got["after"]["staged"] == 0
+
+
 def test_nothing_on_the_cycle_page_is_written_until_save(client: TestClient):
     """A betting table is a conversation — a row gets staffed, argued about and
     restaffed inside a minute. One commit per keystroke turns that into a history

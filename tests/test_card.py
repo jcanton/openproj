@@ -93,7 +93,7 @@ def test_the_three_views_draw_the_same_card(index: Index, tmp_path: Path):
     """
     record_id = one_pitch(index)
     drawn = {
-        "table": render_table(index, ROUTES, base_commit=HEAD),
+        "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
         "graph": render_graph(index, ROUTES, base_commit=HEAD),
         "timeline": render_timeline(index, ROUTES),
     }
@@ -125,7 +125,8 @@ def test_the_card_says_the_things_a_row_does_not(index: Index):
     tagged and what kind it is."""
     record_id = one_pitch(index)
     record = index.plan[record_id]
-    drawn = card_for(render_table(index, ROUTES, base_commit=HEAD), record_id)["value"]["first"]
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
+    drawn = card_for(page, record_id)["value"]["first"]
 
     assert record.title in drawn
     assert record.owner in drawn
@@ -142,7 +143,7 @@ def test_the_document_is_fetched_on_hover_and_not_shipped_with_the_rows(index: I
     from is the server's, which is the only place the answer exists.
     """
     record_id = one_pitch(index)
-    page = render_table(index, ROUTES, base_commit=HEAD)
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
     assert index.plan[record_id].body not in page, "the corpus is in the page after all"
 
     answer = card_for(page, record_id, [{"status": 200, "json": {"html": "<p>the document</p>"}}])
@@ -163,7 +164,7 @@ def test_a_refused_document_costs_the_document_and_nothing_else(index: Index):
     doubt, and a card that empties itself because a fetch failed is a card that
     reports a network as a plan."""
     record_id = one_pitch(index)
-    page = render_table(index, ROUTES, base_commit=HEAD)
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
 
     for reply in ({"status": 404, "text": "no such record"}, {"status": 500, "text": "boom"}):
         answer = card_for(page, record_id, [reply])
@@ -180,7 +181,7 @@ def test_a_document_that_arrives_late_is_not_drawn_on_the_wrong_card(index: Inde
     another record's title, which is worse than showing nothing at all.
     """
     ids = sorted(index.plan)[:2]
-    page = render_table(index, ROUTES, base_commit=HEAD)
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
 
     answer = run_js(
         page,
@@ -241,7 +242,7 @@ def test_a_card_at_the_edge_of_the_window_stays_inside_it(index: Index, tmp_path
     record_id = one_pitch(index)
     got = measured_in(
         chrome(),
-        render_table(index, ROUTES, base_commit=HEAD),
+        render_table(index, ROUTES, base_commit=HEAD, may_write=True),
         tmp_path / "edge.html",
         1200,
         _PLACED % json.dumps(record_id),
@@ -273,7 +274,7 @@ def test_a_nine_hundred_word_document_does_not_cover_the_table(index: Index, tmp
     record_id = one_pitch(index)
     got = measured_in(
         chrome(),
-        render_table(index, ROUTES, base_commit=HEAD),
+        render_table(index, ROUTES, base_commit=HEAD, may_write=True),
         tmp_path / "tall.html",
         1200,
         _TALL_BODY % json.dumps(record_id),
@@ -314,7 +315,7 @@ def test_the_document_is_drawn_under_the_fields(index: Index, tmp_path: Path):
     to it rather than what the element now contains — so it is asked of a
     browser."""
     record_id = one_pitch(index)
-    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "</body>", _OPENS_A_CARD % json.dumps(record_id) + "</body>"
     )
     got = measured_in(chrome(), page, tmp_path / "body.html", 1200, _WITH_A_DOCUMENT)
@@ -333,7 +334,7 @@ _HOVER_INTENT = """
 const row = DATA.rows[%s];
 queueCard(row, 100, 100);
 const atOnce = CARD.hidden;
-await new Promise(done => setTimeout(done, 700));
+await new Promise(done => setTimeout(done, 900));
 window.__asked = {atOnce, later: CARD.hidden};
 """
 
@@ -345,7 +346,7 @@ def test_a_pointer_passing_over_a_row_does_not_open_a_card(index: Index, tmp_pat
     Asked with a real timer in a real browser, because the claim is about time.
     """
     record_id = one_pitch(index)
-    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "</body>",
         # Assigned to a global rather than returned: the measuring script cannot
         # await, and a promise stringifies as `{}`. The wait inside is shorter
@@ -387,7 +388,7 @@ def test_the_card_can_be_reached_and_stays_while_the_pointer_is_in_it(
     between the row and the box cannot be crossed.
     """
     record_id = one_pitch(index)
-    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "</body>",
         "<script>(async () => {"
         + (_REACHABLE % json.dumps(record_id))
@@ -421,7 +422,7 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
     drew the shaping document twice inside one box, which is the thing jcanton
     saw and could not reproduce."""
     record_id = one_pitch(index)
-    page = render_table(index, ROUTES, base_commit=HEAD).replace(
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True).replace(
         "</body>",
         "<script>(async () => {"
         + (_TWICE % json.dumps(record_id))
@@ -445,7 +446,7 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
 # script is injected at 1200ms and the virtual clock stops `patience` later, so a
 # continuation that runs past it leaves the placeholder in the DOM and the test
 # reports nothing at all — which reads exactly like a card that never came up.
-# `CARD_DELAY` is 400, and this waits 460 once per box plus once at the start.
+# `CARD_DELAY` is 600, and this waits 660 once per box plus once at the start.
 _OVER_A_BOX = """
 const card = document.getElementById('card');
 // One box of each kind that draws one. A project holding pitches and a pitch
@@ -488,10 +489,10 @@ setTimeout(() => {
       said[picked[i].data('kind')] = card.hidden ? 'nothing' : 'a card';
       cy.emit('pan');   // put it away before the next one is asked
       askEach(i + 1);
-    }, 460);
+    }, 660);
   };
   askEach(0);
-}, 460);
+}, 660);
 return {middles: null};
 """
 
@@ -509,7 +510,7 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     # Longer than the default: this answers from a continuation, and the waits it
     # needs are one `CARD_DELAY` per box plus the first one.
     got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX,
-                      height=1000, patience=3000)
+                      height=1000, patience=3800)
 
     assert not got.get("error"), got
     assert got["middles"] is not None, "the continuation never ran, so nothing was measured"
@@ -557,7 +558,7 @@ const cell = document.querySelector('tbody tr[data-id] td[data-col="title"]');
 const card = document.getElementById('card');
 // A server, stubbed, because this page is a file and there is none — and the
 // point under test is when the document is DRAWN, not where it came from. 50ms
-// is a plausible round trip and well inside the 400ms the card waits anyway.
+// is a plausible round trip and well inside the 600ms the card waits anyway.
 window.fetch = () => new Promise(resolve => setTimeout(() => resolve({
   ok: true, json: () => Promise.resolve({html: '<p>the shaping document</p>'}),
 }), 50));
@@ -584,10 +585,10 @@ def test_the_card_arrives_in_one_piece(index: Index, tmp_path: Path):
     The fields were drawn the moment the card appeared and the shaping document
     was fetched afterwards, so the box grew and re-placed itself just after
     arriving. The fetch now starts when the pointer arrives and the card is drawn
-    400ms later, which is hover-intent time that was being spent on nothing —
+    600ms later, which is hover-intent time that was being spent on nothing —
     so the answer is normally already here and both halves land in one paint.
     """
-    page = render_table(index, ROUTES, base_commit=HEAD)
+    page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)
     got = measured_in(chrome(), page, tmp_path / "paint.html", 1400, _PAINTS,
                       patience=2500)
 
