@@ -371,14 +371,20 @@ def test_every_word_a_planned_record_stands_on_is_decided_about(index: Index) ->
 def test_no_lesson_runs_to_wallpaper() -> None:
     """One sentence each, and short enough to sit under a control.
 
-    The bound is the design constraint written as a number: the facts list is a
-    narrow column beside the document, and a hint that wraps to three lines there
-    is the thing that turns a form into a wall of advice nobody reads. Four
-    fields, not fourteen — and four short ones, not four paragraphs.
+    A PROXY, and it says so rather than pretending to be the constraint. The real
+    one is height in a 295px column, and it is asserted in painted pixels by
+    `test_the_sentence_follows_the_ball`; this is the cheap tripwire in front of
+    it, so a sentence that grew is reported by a test that needs no browser.
+
+    The number is calibrated against that measurement rather than guessed. At
+    92 characters `shaping` paints two lines; at 104 — the draft this shipped
+    with for a morning — it painted three, alone among the five, in the one
+    column already under width pressure. jcanton chose the shorter draft on
+    seeing it. 100 is inside that gap, so the tripwire fires before the pixels do.
     """
     for name, sentence in (FIELD_TEACH | STATUS_TEACH).items():
         assert sentence.endswith("."), f"{name} does not finish its sentence"
-        assert len(sentence) <= 120, f"{name} is {len(sentence)} characters and wants cutting"
+        assert len(sentence) <= 100, f"{name} is {len(sentence)} characters and wants cutting"
         assert "\n" not in sentence
 
 
@@ -486,6 +492,17 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
         const press = word => [...hill.querySelectorAll('.hill-stop')]
           .find(s => s.querySelector('input').value === word).click();
         const said = {start: teach.textContent};
+
+        // Every lesson on the page, in painted lines. The constraint this branch
+        // is under is height in a narrow column, not character count, and a
+        // resolved font-size is a promise about paint that a stylesheet cannot
+        // keep on its own. Measured here rather than in a browser test of its
+        // own: the page is already open and in edit mode, so this costs nothing.
+        said.painted = [...document.querySelectorAll('#facts .teach')].map(one => {
+          const line = parseFloat(getComputedStyle(one).lineHeight) || 0;
+          return {id: one.id.split('-').pop(),
+                  rows: line ? Math.round(one.getBoundingClientRect().height / line) : 0};
+        });
         for (const word of ['shelved', 'done', 'thinking']) {
           press(word);
           said[word] = teach.textContent;
@@ -520,6 +537,12 @@ def test_the_sentence_follows_the_ball(index: Index, tmp_path: Path) -> None:
         height=1400, patience=2500,
     )
     assert found["start"] == STATUS_TEACH["shaping"]
+    # Two lines each, which is the constraint the character bound in
+    # `test_no_lesson_runs_to_wallpaper` only approximates. Three is what the
+    # first `shaping` draft painted, alone among the five.
+    assert found["painted"], "no lesson was on the page to measure"
+    tall = [one for one in found["painted"] if one["rows"] > 2]
+    assert not tall, f"a lesson wraps past two lines in a 295px column: {tall}"
     assert found["shelved"] == STATUS_TEACH["shelved"]
     assert found["thinking"] == STATUS_TEACH["thinking"]
     assert found["done"] == "", "a lesson stayed under a stop it is not about"

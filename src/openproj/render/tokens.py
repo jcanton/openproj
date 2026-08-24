@@ -421,9 +421,14 @@ STATUS_TEACH = {
         "Somebody has written this down as possible work — nobody has started "
         "shaping it yet."
     ),
+    # The one line that measured three, in a column where every other lesson
+    # measured two. jcanton, 2026-08-24, choosing the shorter of two drafts after
+    # seeing it painted: "outlining a solution the appetite can hold" and "has bet
+    # ON IT yet" were the two clauses carrying the wrap, and neither was saying
+    # anything the shorter one does not.
     "shaping": (
-        "Somebody is narrowing the problem and outlining a solution the appetite "
-        "can hold — nobody has bet on it yet."
+        "Somebody is narrowing the problem to a solution that fits the appetite "
+        "— nobody has bet yet."
     ),
     "shelved": "A decision, not a failure: we looked, and we are not doing this.",
 }
