@@ -136,9 +136,29 @@ jobs:
       # three-minute gate is getting every piece of bad news from one push.
       fail-fast: false
       matrix:
-        # Longest first: legs start roughly in this order, and `editor` is the
-        # critical path, so it should never be the one waiting for a runner.
-        shard: [editor, views, graph, coedit, rest]
+        # MEASUREMENT BRANCH. `procs` is what is being measured: whether
+        # `pytest-xdist -n 2` inside a leg pays now that the box has four cores,
+        # which `docs/probes/ci-speed.md` left open rather than answering.
+        #
+        # `coedit` is 1 and is not a variable. Real sockets, a real uvicorn on a
+        # real port and literal `sleep(0.5)` budgets: that leg must never be
+        # internally parallelised, which is also why it bounds whatever the other
+        # four can reach.
+        #
+        # `--dist load` and not `--dist loadfile`, deliberately. `loadfile` keeps
+        # a file in one worker, which is what the five module-scoped fixtures
+        # want — and it does nothing at all for `editor`, whose whole cost is one
+        # file, which is the leg holding the floor. So the mode that is safe for
+        # fixtures cannot touch the thing worth touching. `load` is measured
+        # instead, and the three files with module-scoped fixtures
+        # (test_injection, test_writes, test_credential) pay for their fixture
+        # twice as the price of finding out.
+        include:
+          - {shard: editor, procs: 2}
+          - {shard: views,  procs: 2}
+          - {shard: graph,  procs: 2}
+          - {shard: rest,   procs: 2}
+          - {shard: coedit, procs: 1}
     runs-on: ubuntu-latest
     steps:
       # Full checkout, never sparse — the obvious optimisation here is wrong. 27
@@ -223,7 +243,15 @@ jobs:
       - run: |
           files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
           [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
-          uv run pytest -q --durations=25 $files
+          # `-n` only where it is being measured. At 1 the flag is left off
+          # entirely rather than passed as `-n 1`: xdist at one worker still
+          # forks a worker and still serialises reporting through it, so `-n 1`
+          # would measure xdist's overhead and call it the serial baseline.
+          if [ "${{ matrix.procs }}" -gt 1 ]; then
+            uv run pytest -q --durations=25 -n ${{ matrix.procs }} --dist load $files
+          else
+            uv run pytest -q --durations=25 $files
+          fi
 
   # The one required status check, and the reason it is a separate job.
   #

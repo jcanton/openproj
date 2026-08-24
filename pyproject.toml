@@ -28,7 +28,10 @@ dependencies = [
 openproj = "openproj.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.2", "hypothesis>=6.100", "ruff>=0.5"]
+dev = ["pytest>=8.2", "hypothesis>=6.100", "ruff>=0.5", "pytest-xdist>=3.6"]
+# pytest-xdist is here to be MEASURED, not because the suite uses it: the local
+# loop is `ruff` and nothing else, and nothing in `addopts` turns it on. See
+# `docs/probes/ci-speed.md` § "Is five still the right number".
 
 [build-system]
 requires = ["hatchling"]
