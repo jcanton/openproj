@@ -201,6 +201,14 @@ def _merge_body(base: str, mine: str, theirs: str) -> tuple[str | None, list[str
     are refused instead. That is the right direction and it is the whole trade:
     **a refusal is announced and a drop is not.**
 
+    The same trade, made a second time and for the same reason: the convergence
+    clause compared the replacement TEXT and not the span, so two edits that
+    overlap, cover different numbers of lines and write the same words skipped
+    the check and fell into the assembly loop, where a set decided which of them
+    survived. `base a b c d`, mine replacing `b c` with `X` and theirs replacing
+    `b c d` with `X`, merged to `a X d` and said nothing: the line theirs
+    deleted was back. Identity is now the span and the text together.
+
     The alternative was to fix the assembly loop to keep both spans, which is
     what you actually want and is not available here: it means deciding an order
     between two edits at one point, which is what a CRDT is for and what a line
@@ -219,7 +227,18 @@ def _merge_body(base: str, mine: str, theirs: str) -> tuple[str | None, list[str
             # insertion and a replacement that begin on one line are a collision
             # the equality missed. See the docstring.
             same_start = span[0] == other_span[0]
-            if (overlaps or same_start) and replacement != other_replacement:
+            # `(span, replacement)` and not `replacement` alone. The clause is
+            # here so two people who made the IDENTICAL edit converge instead of
+            # colliding, and identity is the span as well as the text: two edits
+            # that overlap, cover different numbers of lines and happen to write
+            # the same words are not one edit, and skipping them dropped one of
+            # them. `base a b c d`, mine replacing `b c` with `X` and theirs
+            # replacing `b c d` with `X`, answered `a X d` with no conflicts —
+            # the line theirs deleted, back, reported as merged and committed
+            # with a sha. Which is the failure this whole function was rewritten
+            # for, arriving through the one door the guard left open.
+            same_edit = (span, replacement) == (other_span, other_replacement)
+            if (overlaps or same_start) and not same_edit:
                 stored_text = "".join(other_replacement).strip()
                 yours_text = "".join(replacement).strip()
                 # An empty span is an insertion BEFORE a line, and rendering it
