@@ -32,14 +32,23 @@ concurrency:
   cancel-in-progress: true
 
 # Three job kinds, and the reason there are three is measured in
-# `docs/probes/ci-speed.md`: a job on this repository costs NINE seconds of
-# setup, not the ninety everybody assumes, so buying a whole extra machine is
-# cheaper than any arrangement of processes on one machine. The runner was
-# probed in run 32633361097 and it is a 2-core / 8 GB box — `ubuntu-latest` is
-# 4-core only for public repositories and this one is private — so `-n auto`
-# under pytest-xdist would mean `-n 2` and would put two headless Chromes on two
-# vCPU that the suite's wall-clock assertions are already measured against.
-# Five machines beat that, and they beat it without touching a line of test code.
+# `docs/probes/ci-speed.md`: a job on this repository costs about a dozen seconds
+# of setup, not the ninety everybody assumes, so buying a whole extra machine is
+# cheaper than any arrangement of processes on one machine.
+#
+# **The runner is probed, not assumed, and the answer changed under this file.**
+# It said 2-core / 8 GB, citing run 32633361097, and added "`ubuntu-latest` is
+# 4-core only for public repositories and this one is private". The repository
+# went public on 2026-08-23 and the box is now **4-core / 15.6 GB**, probed again
+# in run 32753487844 — the probe step below prints it on every leg, because "the
+# runner" is five runners and nothing promises they stay the same size.
+#
+# That did not change the answer and it did change the sums. Five machines still
+# beat processes on one, and the shard cut was re-made from
+# `docs/probes/ci-durations-4core.txt` because the old one had INVERTED: the leg
+# order on 2 cores was editor > views > graph > rest > coedit and on 4 cores it
+# is rest > views > coedit > editor > graph. The Chrome-heavy legs took the extra
+# cores and the plain-Python one did not.
 jobs:
   # Ruff alone, on its own machine, finishing in about twenty-five seconds.
   #
@@ -92,25 +101,35 @@ jobs:
   # The suite, cut five ways across five machines.
   #
   # The cut is in `.github/shards/<name>`, one path per line, and it is made from
-  # `docs/probes/ci-durations-after-cache.txt` — the post-template-cache table,
-  # not the pre-cache one, because caching template compilation moved the file
-  # boundaries by far more than the shard sizes. Measured seconds per leg:
-  # editor 151.3, views 138.9, graph 131.2, rest 128.8, coedit 125.6, summing to
-  # the 675.8s of attributed rows in a 711.04s run. That balances to within 8%.
+  # `docs/probes/ci-durations-4core.txt` — this hardware's table, not either of
+  # the 2-core ones, because the legs did not merely shrink when the cores
+  # doubled, they changed order. 501.3s of attributed rows across 42 files in a
+  # run whose five legs printed 538.5s of pytest; the 37s difference is
+  # collection and the sub-50ms tests no duration row shows, and it is charged
+  # per test rather than ignored — see the header in any shard file for why
+  # `rest` is what makes that term necessary. Predicted seconds per leg after the
+  # re-cut: editor 107.4, coedit 107.5, graph 107.3, views 107.2, rest 107.2.
+  # That balances to within 0.3%, against a measured spread of 89.7s to 120.4s
+  # on the cut it replaces.
   #
-  # FIVE, and five is the ceiling. The break-even for a shard is `T/(K·(K−1)) >
-  # 9s`, which at T≈700s would allow ten; balance stops it long before setup cost
-  # does. `tests/test_editor.py` is 151.3s on its own — 115 tests, 151.04s of it
-  # `call`, 53 of the suite's 135 real-Chrome call sites, every one laying out a
+  # FIVE, and five is still the ceiling on four cores — re-derived rather than
+  # inherited. The break-even for a shard is `T/(K·(K−1)) > setup`; at T≈501s of
+  # attributed cost and ~12s of setup that allows six, and balance stops it
+  # first, exactly as it did before. `tests/test_editor.py` is 94.4s on its own —
+  # 105 tests, 53 of the suite's real-Chrome call sites, every one laying out a
   # page carrying 594 KB of inlined Ace — and no file-level scheme goes below
-  # that floor. A sixth shard would split one of the four ~130s legs and change
-  # the critical path by nothing at all. Going below 151s means splitting that
-  # one file, and its natural seam is `?editor=ace` against `?editor=plain`.
+  # that floor. A perfect five-way is 100.3s of attributed cost; a perfect
+  # six-way would be 83.6s and cannot be reached, because the sixth machine lands
+  # on this one file at 94.4s. Six machines to save six seconds, and a seventh
+  # billing rounding to pay for it. Going below 94.4s means splitting that one
+  # file, and its natural seam is still `?editor=ace` against `?editor=plain`.
   #
   # `coedit` is a shard for the opposite reason to `editor`: it is the only leg
   # with real sockets, a real uvicorn on a real port, and literal `sleep(0.5)`
   # budgets. It must not be reordered or internally parallelised, and its own
-  # machine is how that stays true for free.
+  # machine is how that stays true for free. That is also the one constraint the
+  # re-cut was not allowed to optimise away, and it is why a `-n 2` inside each
+  # shard could never be a blanket answer even if it paid on the other four.
   suite:
     strategy:
       # One red shard must not cancel the other four. The whole point of a
@@ -204,7 +223,7 @@ jobs:
       - run: |
           files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
           [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
-          uv run pytest -q --durations=0 --durations-min=0.05 $files
+          uv run pytest -q --durations=25 $files
 
   # The one required status check, and the reason it is a separate job.
   #

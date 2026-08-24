@@ -1,12 +1,34 @@
-# graph — 131.2s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# graph — 107.3s predicted, anchored on tests/test_graph_layout.py (31.7s) and tests/test_table.py (30.4s).
 #
-# Canvas, card and hill layout: four files that start a fresh headless Chrome
-# per assertion, and the four that barely moved when template compilation was
-# cached, because none of their cost was rendering.
+# Measured seconds are per FILE, from docs/probes/ci-durations-4core.txt — the
+# 4-core public runner, run 32753487844. The two older tables in docs/probes/
+# were taken on the 2-core box a PRIVATE repository gets, and cutting from them
+# is what left this leg wrong: on 2 cores the leg order was editor 151.3 > views
+# 138.9 > graph 131.2 > rest 128.8 > coedit 125.6, and on 4 cores it is rest
+# 120.4 > views 119.6 > coedit 109.1 > editor 99.6 > graph 89.7. The Chrome-heavy
+# legs gained most from the extra cores and the plain-Python one gained least, so
+# the cut did not scale down — it inverted.
+#
+# The cost model has a second term the old cut did not have, and `rest` is why it
+# exists: 1103 tests carried 16s of collection and sub-50ms work that no duration
+# row can see, against 3s for a leg of 79. So a leg is charged its attributed
+# seconds PLUS ~2.5s fixed PLUS ~12ms per test, fitted on the five legs of that
+# run. Cutting on attributed seconds alone underestimates exactly the leg that
+# holds two thirds of the suite.
+#
+# Two anchors rather than one, because on this hardware neither is large enough
+# to hold a leg alone. Canvas layout, the table, the hover card and the
+# node-driven injection census: the files whose cost is a fresh headless Chrome
+# or a fresh node per assertion rather than rendering, which is why they gained
+# most from four cores — this leg went 131.2s to 89.7s — and why they still need
+# a machine between them.
+#
+# Everything under them is ballast, chosen by the table and by nothing else.
 tests/test_graph_layout.py
+tests/test_table.py
 tests/test_card.py
-tests/test_facets.py
-tests/test_hill.py
+tests/test_injection.py
+tests/test_status_gate.py
+tests/test_cli.py
+tests/test_schedule.py
+tests/test_config.py

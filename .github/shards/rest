@@ -1,41 +1,39 @@
-# rest — 128.8s. Measured seconds are from docs/probes/ci-durations-after-cache.txt
-# — the POST-template-cache table. Cutting from the pre-cache one puts the
-# boundaries somewhere else entirely, because caching template compilation moved
-# the file costs by far more than the shard sizes.
+# rest — 107.2s predicted, anchored on tests/test_search.py (32.4s), tests/test_facets.py (22.7s) and tests/test_cascade.py (18.4s).
 #
-# Everything else, and the only leg whose membership is not a judgement: a new
-# test file belongs here unless it is slow enough to be worth naming. Thirty-one
-# files for 128.8s against one file for 151.3s in `editor` — cost here has
-# nothing to do with test count.
-tests/test_auth.py
+# Measured seconds are per FILE, from docs/probes/ci-durations-4core.txt — the
+# 4-core public runner, run 32753487844. The two older tables in docs/probes/
+# were taken on the 2-core box a PRIVATE repository gets, and cutting from them
+# is what left this leg wrong: on 2 cores the leg order was editor 151.3 > views
+# 138.9 > graph 131.2 > rest 128.8 > coedit 125.6, and on 4 cores it is rest
+# 120.4 > views 119.6 > coedit 109.1 > editor 99.6 > graph 89.7. The Chrome-heavy
+# legs gained most from the extra cores and the plain-Python one gained least, so
+# the cut did not scale down — it inverted.
+#
+# The cost model has a second term the old cut did not have, and `rest` is why it
+# exists: 1103 tests carried 16s of collection and sub-50ms work that no duration
+# row can see, against 3s for a leg of 79. So a leg is charged its attributed
+# seconds PLUS ~2.5s fixed PLUS ~12ms per test, fitted on the five legs of that
+# run. Cutting on attributed seconds alone underestimates exactly the leg that
+# holds two thirds of the suite.
+#
+# NO LONGER "everything else", and the name is kept anyway rather than quietly
+# left to mean the wrong thing. What it holds now is the filter surface — the
+# query language, the facet bar, the resolved cascade and the hill — plus the
+# small files that balance it. The name stays because renaming a matrix value
+# renames a status check, and the one check branch protection requires is
+# `check`, which fans these in; a rename is a branch-protection edit for a word.
+#
+# **Where a new test file goes.** It used to be "here, unless it is slow enough
+# to be worth naming", and that rule is gone with the property that justified it.
+# It now goes on whichever leg the newest table in docs/probes/ says is cheapest,
+# and `test_every_test_file_is_in_exactly_one_ci_shard` in tests/test_harness.py
+# is what stops it going on no leg at all. Re-cutting is a five-minute job and
+# docs/probes/ci-speed.md says how.
+tests/test_search.py
+tests/test_facets.py
 tests/test_cascade.py
-tests/test_cli.py
-tests/test_config.py
-tests/test_credential.py
-tests/test_deck.py
+tests/test_hill.py
 tests/test_delete.py
-tests/test_edges.py
-tests/test_exclusion.py
-tests/test_gitdoor.py
-tests/test_harness.py
-tests/test_headers.py
-tests/test_identity.py
-tests/test_index.py
-tests/test_injection.py
-tests/test_issues.py
-tests/test_model.py
-tests/test_notes.py
-tests/test_parse.py
-tests/test_payload.py
-tests/test_product.py
-tests/test_records.py
-tests/test_remote.py
-tests/test_schedule.py
-tests/test_seats.py
-tests/test_status_gate.py
-tests/test_store.py
 tests/test_teaching.py
-tests/test_themes.py
-tests/test_validate.py
-tests/test_web.py
-tests/test_writes.py
+tests/test_records.py
+tests/test_index.py

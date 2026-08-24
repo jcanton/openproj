@@ -1,12 +1,38 @@
-# coedit — 125.6s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# coedit — 107.5s predicted, anchored on tests/test_coedit.py (71.4s).
+#
+# Measured seconds are per FILE, from docs/probes/ci-durations-4core.txt — the
+# 4-core public runner, run 32753487844. The two older tables in docs/probes/
+# were taken on the 2-core box a PRIVATE repository gets, and cutting from them
+# is what left this leg wrong: on 2 cores the leg order was editor 151.3 > views
+# 138.9 > graph 131.2 > rest 128.8 > coedit 125.6, and on 4 cores it is rest
+# 120.4 > views 119.6 > coedit 109.1 > editor 99.6 > graph 89.7. The Chrome-heavy
+# legs gained most from the extra cores and the plain-Python one gained least, so
+# the cut did not scale down — it inverted.
+#
+# The cost model has a second term the old cut did not have, and `rest` is why it
+# exists: 1103 tests carried 16s of collection and sub-50ms work that no duration
+# row can see, against 3s for a leg of 79. So a leg is charged its attributed
+# seconds PLUS ~2.5s fixed PLUS ~12ms per test, fitted on the five legs of that
+# run. Cutting on attributed seconds alone underestimates exactly the leg that
+# holds two thirds of the suite.
 #
 # Real sockets, a real uvicorn on a real port, and literal `sleep(0.5)` budgets.
 # This leg exists so those stay serial, in file order, in one process, on a
-# machine nothing else is using — which is the condition every one of those
-# margins was measured under. Do not fold it into another shard to save a runner.
+# machine nothing else is running AT THE SAME TIME — the condition every one of
+# those margins was measured under. Ballast is fine and always was: the other
+# files here run before or after it in the same process, never beside it. What
+# must never happen to this leg is being internally parallelised.
+#
+# `tests/test_socket_offer.py` is here for the same reason and costs nothing
+# measurable. `tests/test_seats.py` joins it because a seat band IS a room, and
+# `tests/test_writes.py` because it drives the write path a room commits through
+# — so a change that breaks the room breaks one leg rather than three.
 tests/test_coedit.py
 tests/test_socket_offer.py
-tests/test_search.py
+tests/test_seats.py
+tests/test_web.py
+tests/test_payload.py
+tests/test_writes.py
+tests/test_remote.py
+tests/test_validate.py
+tests/test_model.py

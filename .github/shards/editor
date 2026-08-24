@@ -1,12 +1,35 @@
-# editor — 151.3s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# editor — 107.4s predicted, anchored on tests/test_editor.py (94.4s).
 #
-# The floor, and the reason there are five shards and not six: this one file is
-# 115 tests, 151.04s of which is `call`, and 53 of the suite's 135 real-Chrome
-# call sites — every one laying out a page carrying 594 KB of inlined Ace. No
-# file-level cut goes below it, so it runs alone and everything else balances
-# around it. Going faster than this means splitting the file, and its natural
-# seam is `?editor=ace` against `?editor=plain`.
+# Measured seconds are per FILE, from docs/probes/ci-durations-4core.txt — the
+# 4-core public runner, run 32753487844. The two older tables in docs/probes/
+# were taken on the 2-core box a PRIVATE repository gets, and cutting from them
+# is what left this leg wrong: on 2 cores the leg order was editor 151.3 > views
+# 138.9 > graph 131.2 > rest 128.8 > coedit 125.6, and on 4 cores it is rest
+# 120.4 > views 119.6 > coedit 109.1 > editor 99.6 > graph 89.7. The Chrome-heavy
+# legs gained most from the extra cores and the plain-Python one gained least, so
+# the cut did not scale down — it inverted.
+#
+# The cost model has a second term the old cut did not have, and `rest` is why it
+# exists: 1103 tests carried 16s of collection and sub-50ms work that no duration
+# row can see, against 3s for a leg of 79. So a leg is charged its attributed
+# seconds PLUS ~2.5s fixed PLUS ~12ms per test, fitted on the five legs of that
+# run. Cutting on attributed seconds alone underestimates exactly the leg that
+# holds two thirds of the suite.
+#
+# THE FLOOR, and it is still the floor after the hardware changed: 105 tests, 53
+# of the suite's real-Chrome call sites, every one laying out a page carrying
+# 594 KB of inlined Ace. No file-level cut goes below 94.4s, and that is what
+# makes five the right number of shards rather than six. A perfect 5-way is
+# 100.3s of attributed cost and a perfect 6-way is 83.6s — but a 6-way cannot
+# reach 83.6s, it lands on this file at 94.4s, for the price of a whole extra
+# machine and a seventh billing rounding. Going below 94.4s means splitting the
+# file, and its natural seam is still `?editor=ace` against `?editor=plain`.
+#
+# Everything under it is ballast, chosen by the table and by nothing else.
 tests/test_editor.py
+tests/test_themes.py
+tests/test_notes.py
+tests/test_issues.py
+tests/test_product.py
+tests/test_credential.py
+tests/test_store.py

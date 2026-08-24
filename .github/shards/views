@@ -1,8 +1,34 @@
-# views — 138.9s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# views — 107.2s predicted, anchored on tests/test_render.py (81.7s).
 #
-# The two files that draw a whole page and then measure it.
+# Measured seconds are per FILE, from docs/probes/ci-durations-4core.txt — the
+# 4-core public runner, run 32753487844. The two older tables in docs/probes/
+# were taken on the 2-core box a PRIVATE repository gets, and cutting from them
+# is what left this leg wrong: on 2 cores the leg order was editor 151.3 > views
+# 138.9 > graph 131.2 > rest 128.8 > coedit 125.6, and on 4 cores it is rest
+# 120.4 > views 119.6 > coedit 109.1 > editor 99.6 > graph 89.7. The Chrome-heavy
+# legs gained most from the extra cores and the plain-Python one gained least, so
+# the cut did not scale down — it inverted.
+#
+# The cost model has a second term the old cut did not have, and `rest` is why it
+# exists: 1103 tests carried 16s of collection and sub-50ms work that no duration
+# row can see, against 3s for a leg of 79. So a leg is charged its attributed
+# seconds PLUS ~2.5s fixed PLUS ~12ms per test, fitted on the five legs of that
+# run. Cutting on attributed seconds alone underestimates exactly the leg that
+# holds two thirds of the suite.
+#
+# The file that draws every page and then measures it. `tests/test_table.py` used
+# to be here beside it and is on the `graph` leg now — not because it stopped
+# being a view, but because render alone is 81.7s and the two together are
+# 112.1s, which is five seconds over the critical path by themselves.
+#
+# Everything under it is ballast, chosen by the table and by nothing else.
 tests/test_render.py
-tests/test_table.py
+tests/test_deck.py
+tests/test_edges.py
+tests/test_gitdoor.py
+tests/test_headers.py
+tests/test_exclusion.py
+tests/test_parse.py
+tests/test_identity.py
+tests/test_auth.py
+tests/test_harness.py
