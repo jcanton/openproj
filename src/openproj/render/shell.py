@@ -126,7 +126,7 @@ _SHELL = """<!doctype html>
 <title>{{ title }}</title>
 <link rel="icon" href="{{ icon }}">
 <script>
-// The only way in and out of localStorage, for every script on every page.
+// The only way in and out of a browser store, for every script on every page.
 //
 // `localStorage` denied does not answer null — it THROWS, and it throws on the
 // property itself before any method is called: a private window, blocked
@@ -142,10 +142,18 @@ _SHELL = """<!doctype html>
 // in the head, before the first paint, because the theme below is the first
 // thing that needs it and a function in a later <script> is not hoisted into an
 // earlier one.
-const remembered = {
+//
+// One door, opened twice, because the same policy denies both stores. The cycle
+// page's receipt is the only thing that had ever reached for the second one, and
+// it carried a `try` of its own around the read — the same rule written twice,
+// which is the shape of every guard this file has watched go missing from one
+// copy. The store arrives as a thunk and not as a value: the throw is on the
+// PROPERTY, so `door(sessionStorage)` would raise here, in the head, on every
+// page, for the exact reader this exists to protect.
+const door = reach => ({
   get(key, fallback = null) {
     try {
-      const held = localStorage.getItem(key);
+      const held = reach().getItem(key);
       return held === null ? fallback : held;
     } catch (e) { return fallback; }
   },
@@ -155,7 +163,7 @@ const remembered = {
   // stored value that is not an object is not a map of widths either.
   map(key) {
     try {
-      const held = JSON.parse(localStorage.getItem(key));
+      const held = JSON.parse(reach().getItem(key));
       return held && typeof held === 'object' ? held : {};
     } catch (e) { return {}; }
   },
@@ -171,12 +179,19 @@ const remembered = {
   // reading "draft saved just now" over a store that threw is this application
   // claiming somebody's writing is somewhere it is not.
   set(key, value) {
-    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+    try { reach().setItem(key, value); return true; } catch (e) { return false; }
   },
   forget(key) {
-    try { localStorage.removeItem(key); } catch (e) { /* nothing to forget */ }
+    try { reach().removeItem(key); } catch (e) { /* nothing to forget */ }
   },
-};
+});
+
+// What this browser keeps: the theme, the palette, the table's widths, a draft.
+const remembered = door(() => localStorage);
+// What this TAB keeps, and forgets when it closes: the cycle page's receipt, and
+// the view a record page was opened from. Per tab on purpose — a record opened
+// in a new tab has no origin rather than the one belonging to the tab beside it.
+const forThisTab = door(() => sessionStorage);
 
 // Before the first paint, or the page renders light and then turns dark in front
 // of whoever chose dark — which is worse than not having the choice.
@@ -2250,6 +2265,61 @@ addEventListener('resize', fitRoom);
 // the same reason: a measurement taken before the face lands is a measurement of
 // the fallback's metrics.
 if (document.fonts) document.fonts.ready.then(() => fitRoom());
+
+// --- where "back" goes ------------------------------------------------------
+//
+// The record page's back link read "← all records" and went to the records list
+// from wherever you had arrived: open a record off the table, the graph or a
+// cycle, press back, and you landed on a third page with the filter, the sort
+// and the scroll you had left behind all gone. The page that knows where you
+// came from is the page you came FROM, so it says so on the way out.
+//
+// A stamp in the tab's own store and not `document.referrer`: the static export
+// is opened over `file://`, where the referrer is empty and this would quietly
+// do nothing in exactly the copy that is hardest to get back to a view in. One
+// mechanism that works in both modes beats one that works in the served one.
+//
+// The switch is `ORIGIN`, which the shell fills in for a view and leaves empty
+// for the two pages that are reached from one. Nothing here decides between
+// them twice: a page with a name stamps, a page without one reads.
+const ORIGIN_KEY = 'openproj:origin';
+const ORIGIN = {{ origin|tojson }};
+if (ORIGIN) {
+  // `pathname` and `search`, not `href`. It is what makes the stamp a same-page
+  // return rather than a same-view one — `/table?owner=ann` and `/cycle/37` are
+  // both somewhere you were standing — and it is the allowlist the read below
+  // leans on: every address this app serves begins with a slash, and so does
+  // every file it exports, whose `pathname` is an absolute path on disk.
+  forThisTab.set(ORIGIN_KEY, JSON.stringify({
+    href: location.pathname + location.search, label: ORIGIN,
+  }));
+} else {
+  const from = forThisTab.map(ORIGIN_KEY);
+  // An address off a store is an address somebody's devtools can write, and an
+  // `href` is the one field here a scheme can be smuggled into. `ORIGIN_PATH` is
+  // the allowlist, and it is a template variable rather than a literal for a
+  // reason worth knowing: this block is inside a Python string that is not raw,
+  // so a backslash written here is eaten before the browser ever sees it.Writing
+  // the pattern here first made it an unterminated character class — a
+  // SyntaxError that costs the whole script and not one line.
+  const ORIGIN_PATH = new RegExp({{ origin_path|tojson }});
+  if (typeof from.href === 'string' && ORIGIN_PATH.test(from.href) && from.label) {
+    // Every article, because the static export writes the whole corpus into one
+    // `detail.html` and each record in it carries its own back link. `a.origin`
+    // and not `.back a`: the page-chrome controls MOVE into this row in full
+    // page — see `showView` on the record page — and the sign-in control the
+    // shell fills in later is a link.
+    for (const back of document.querySelectorAll('a.origin')) {
+      // `setAttribute` and not `back.href =`, which are the same thing in a
+      // browser and not in `tests/js/drive.js`: the shim has no reflection, so
+      // the property would be set, the attribute would still hold the rendered
+      // address, and a test reading either one would be reading a different
+      // page from the one a reader gets. Say the thing that is meant.
+      back.setAttribute('href', from.href);
+      back.textContent = `← ${from.label}`;
+    }
+  }
+}
 </script>
 {% if live %}
 {#- role="status" and not a bare div: news that somebody else moved the plan
@@ -2353,6 +2423,27 @@ _NAV = (
     ("issues", "Issues"), ("notes", "Notes"),
 )
 _NAV_KEYS = frozenset(key for key, _ in _NAV)
+# What a record page's back link calls the view it was opened from. The nav's own
+# word for all but one of them: the link has read "all records" since it could
+# only ever go there, and that is still what it says when there is no origin to
+# go back to — so taking the nav's "Records" here would have been one link
+# wearing two names for one destination, depending on how you arrived.
+_BACK_LABEL = {"records": "all records"}
+# What a stamped address is allowed to be: one slash, then either the end of it
+# or a character that is not another slash.
+#
+# An allowlist, because there is no list of URL spellings that is ever finished —
+# and the second half of it is not decoration. A leading slash alone was the first
+# spelling of this check and `//host/x` walks straight through it: a
+# protocol-relative URL to somebody else's host, which is the exact spelling that
+# already got past this repository's image check once. The backslash is in the
+# class beside it because the URL parser folds `/\host` into the same thing.
+#
+# Here rather than in the template, where it would be a regex inside a Python
+# string that is not raw: `\\` there reaches the browser as `\`, and written
+# there first this was an unterminated character class — a SyntaxError costing
+# the whole page script, which is what a probe caught before it was a commit.
+_ORIGIN_PATH = r"^/($|[^/\\])"
 # Pages that exist and are not in the nav, and may still say which item to light.
 #
 # `detail` was the seventh nav item and was the table with fewer features: the
@@ -2438,6 +2529,14 @@ def _page(
             {"href": getattr(links, key), "label": label, "current": key == current}
             for key, label in _NAV
         ],
+        # What a record page reached from this one should call it, and empty on
+        # the pages that are not a view: the record page itself and the create
+        # form. That is the whole switch the script below turns on — a page with
+        # a name leaves it behind, a page without one picks it up. `current` and
+        # not the route, because `/cycle/37` and `/deck/37` are both Cycles and
+        # neither of them is the href of the link that leads there.
+        origin=next((_BACK_LABEL.get(key, label) for key, label in _NAV if key == current), ""),
+        origin_path=_ORIGIN_PATH,
         # The shell writes the chip and legend rules for every status, so a
         # status added to the model cannot arrive with three of its four tokens
         # wired up and the fourth still spelled out on a line nobody edited. The
