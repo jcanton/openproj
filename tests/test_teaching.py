@@ -232,13 +232,20 @@ def test_each_sentence_describes_the_control_it_sits_with(index: Index) -> None:
             assert one in ids, f"{name} is described by {one}, which is not on this page"
 
 
-def test_the_lock_and_the_lesson_are_two_spans_and_survive_each_other(index: Index) -> None:
-    """The slot has two tenants and they are not interchangeable.
+def test_the_lock_keeps_its_slot_and_both_its_modes(index: Index) -> None:
+    """The sentence that was already here is not what this branch changed.
 
     A note whose status is derived says "from what it became" — a fact about THIS
-    record, true in both modes — and that is not a substitute for what a word
-    means, nor the sentence that may be dropped when both apply. This is the row
-    where one variable holding both would have quietly lost one of them.
+    record, and one that reads on a read, which is the whole difference from the
+    copy beside it. No record carries both today: `_STATE_HINT` covers exactly
+    the two inbox kinds and those are exactly the two ladders the teaching map is
+    not read on, so the overlap is empty on both sides at once. They are still
+    two variables and two spans, because that emptiness is a property of two
+    dicts that nothing enforces, and one variable would drop a sentence in
+    silence the day a planned kind derives a status.
+
+    What is asserted is therefore the narrow thing that is true: the lock is
+    untouched, and it did not pick up `editing-only` from its new neighbour.
     """
     record_id = next(i for i, e in sorted(index.records.items()) if e.kind == "note" and e.became)
     page = editable_page(index, record_id)

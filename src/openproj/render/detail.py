@@ -2105,10 +2105,15 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
         # The other tenant of the same slot, and the two are different in kind:
         # `hint` is a fact about THIS record and reads in both modes, `teach` is
         # what the field means and reads only while there is a control to set.
+        #
         # Separate variables and separate spans rather than one that changes
-        # meaning, because a locked status row carries both at once — "from the
-        # work it was pitched into" is not a substitute for what shelved means,
-        # and neither sentence can be the one that gets dropped.
+        # meaning — and NO record can hold both today, which is the reason to say
+        # why rather than to collapse them. `_STATE_HINT` covers exactly the two
+        # inbox kinds, and those are exactly the two ladders the teaching map is
+        # not read on, so the overlap is empty by construction on both sides at
+        # once. One variable would work perfectly until a planned kind derived a
+        # status — a change to one dict, nowhere near this function — and would
+        # then drop one of the two sentences with nothing here to notice.
         teach = FIELD_TEACH.get(name, "")
         teach_id = f"teach-{field['id']}" if teach else ""
         teach_data = ""
