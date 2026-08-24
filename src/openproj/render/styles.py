@@ -956,8 +956,30 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway
-   through is offering to promote a document they cannot see. */
-#promote { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
+   through is offering to promote a document they cannot see.
+
+   **And it is BELOW the line, so it keeps the reader's measure.** This is the
+   second box under `.panes` and the only other direct child of the article down
+   there, and it had no width of its own — it took the article's, which WAS the
+   measure until 2026-08-24 and is the whole page now. Measured in Chrome at
+   1400x900 on a note's page before this line: the bar was 1360px against
+   `.panes`'s 1024, so its `border-top` ran 336px past the right edge of the
+   facts column and ended in empty space, and the 12px sentence inside it set at
+   1360px instead of at the measure. jcanton, 2026-08-24, drew the line under
+   the meta row: above it is the page's width, below it "keeps the current
+   horizontal sizing", and this is below it.
+
+   Which way the cascade resolves: `#promote` is (1,0,0) and nothing else in any
+   sheet gives this element a width, so the declaration is uncontested — it is
+   the ONLY rule reaching `width` here, not merely the winning one. The split
+   needs no variant of its own the way `.panes` does: `.record.editing #promote`
+   below takes the bar off the page for the whole of a session, and `view-both`
+   is always a session (`showView` turns `editing` on for `edit` and `both`), so
+   the reading measure is the only width this box is ever drawn at.
+   `max-width: 100%` for the same reason `.panes` carries it — a narrow window
+   caps the measure rather than growing a horizontal scrollbar. */
+#promote { width: var(--measure, 64rem); max-width: 100%;
+           display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
 .record.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }

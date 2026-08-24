@@ -904,6 +904,28 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
         "again\n" + says(detail, article, "width")
     )
 
+    # The other box below the line, which is the one the move of the measure
+    # could quietly take with it: `#promote` is a direct child of the article,
+    # under `.panes`, and it had no width at all until 2026-08-24 — it took the
+    # article's, which was the measure and is now the page. `selectors_reaching`
+    # and not `value` alone: the claim in the stylesheet's comment is that this
+    # declaration is UNCONTESTED, not merely winning, and a second rule arriving
+    # from anywhere is the thing that comment would stop being true about.
+    bar = PAGE + [el("article", "record"), el("div", "", id="promote")]
+    assert detail.value(bar, "width") == "var(--measure, 64rem)", says(detail, bar, "width")
+    assert detail.value(bar, "max-width") == "100%", says(detail, bar, "max-width")
+    assert [reach.selector for reach in detail.selectors_reaching(bar, "width")] == [
+        "#promote"
+    ], says(detail, bar, "width")
+    # And it needs no split-view width of its own, because it is never drawn in
+    # one: `editing` is on the article for the whole of a session and `view-both`
+    # is always a session. `.record.editing #promote` is (1,2,0) and carries the
+    # same id as the base rule at (1,0,0), so the hide wins on the two classes
+    # and not on the order the two are written in — which matters because the
+    # base rule gained declarations on 2026-08-24 and could have gained this one.
+    editing = PAGE + [el("article", "record editing view-both"), el("div", "", id="promote")]
+    assert detail.value(editing, "display") == "none", says(detail, editing, "display")
+
     # And the toolbar refuses to shrink, which is what keeps it on one row. It
     # is the last rule in the last stylesheet, so nothing here is deciding it by
     # order alone.

@@ -1110,4 +1110,34 @@ title. It also buys the thing the change is for: the split grows `.panes` to the
 editor pane opens exactly where the document was, where a centred box slid it half a body width
 left on every open.
 
+### Two things the first pass of that move got wrong
+
+Both were found by measuring rather than by reading, and both are about a claim the stylesheet
+could not keep on its own.
+
+**`.panes` is not the only box below the line.** `#promote` — the promotion bar on a note's or an
+issue's page — is a direct child of `article.record` too, sitting under `.panes`, and it had no
+width of its own: it took the article's, which was the measure until the measure moved down. So
+moving the measure gave the bar the whole page. Measured in Chrome at 1400x900 on a note: the bar
+1360px wide against `.panes`'s 1024, its `border-top` ending 336px past the right edge of the facts
+column in empty space, and its 12px explanatory sentence set at 1360px. It carries
+`width: var(--measure, 64rem); max-width: 100%` now, uncontested — `#promote` is (1,0,0) and
+nothing else in any sheet gives this element a width. It needs no split variant, because
+`.record.editing #promote` at (1,2,0) takes the bar off the page for the whole of a session and
+`view-both` is always a session. Nothing caught this because every pixel test on this page runs on
+a task, and a task is not in `PROMOTABLE`; the test that holds it now creates a note through
+`/api/record` first.
+
+**A row that holds is not the same as controls that hold.** `.editbar` took the page's width and
+stopped moving, and the three segments inside it went on moving 70px — Delete stood in front of
+them and leaves the bar the moment a session begins. Measured at 1400: `#view-edit` at x=91 while
+reading and x=21 in both session views. Delete is emitted *after* the switcher now, so it leaves
+from the end and moves nothing, and `#views` starts at the nav's left edge in all three views —
+which is the whole of jcanton's sentence, "stay left aligned like the nav and don't move anymore at
+all", rather than half of it. The alternative was reserving Delete's slot with `visibility: hidden`
+the way `article.record .editbar + .commitbar[hidden]` reserves the commit bar's band; it holds the
+switcher still but leaves it indented behind 71px of nothing, which answers "don't move" and
+contradicts "left aligned like the nav". Delete going second is also right on its own: it is the
+destructive control, and the leading edge of a row is where a pointer arrives.
+
 🤖 Written by an agent on behalf of @jcanton

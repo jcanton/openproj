@@ -3928,9 +3928,18 @@ const box = sel => {
 // as the thing they are level with, and not as one of them.
 const HEADER = ['.back', '.editbar', '#commitbar', '.eyebrow',
                 'article.record h1', 'article.record .meta'];
+// And the CONTROLS inside one of those six, because a box that holds while its
+// contents slide is what the six alone cannot see. `.editbar` is the page's
+// width in every view and was so before this list existed; the three segments
+// jcanton named by name were still at x=91 while reading and x=21 in a session,
+// because Delete stood in front of them and left the bar the moment a session
+// began. `#views` is the segmented control's own box, which starts where the
+// nav starts; `#view-edit` starts one pixel in, on `#views`'s border.
+const SWITCHER = ['#views', '#view-edit', '#view-both', '#preview'];
 const header = () => ({
   nav: box('body > nav'),
   ...Object.fromEntries(HEADER.map(sel => [sel, box(sel)])),
+  ...Object.fromEntries(SWITCHER.map(sel => [sel, box(sel)])),
   facts: (({top, left}) => ({top, left}))(box('.panes > .facts')),
 });
 const landing = header();
@@ -3942,7 +3951,7 @@ await new Promise(go => setTimeout(go, 150));
 const split = header();
 document.getElementById('preview').click();
 await new Promise(go => setTimeout(go, 150));
-return {landing, writing, split, back: header(), header: HEADER};
+return {landing, writing, split, back: header(), header: HEADER, switcher: SWITCHER};
 """
 
 
@@ -3975,6 +3984,16 @@ def test_opening_a_session_moves_nothing_above_the_document(
     The facts column is the one box here that may still move sideways in the
     split, because it is below the line and rides the measure — only its `top`
     is asserted there.
+
+    And the switcher's own three segments, not only the row they sit on. He
+    named those buttons: "the ←Table, edit/side-by-side/preview buttons and
+    'nothing saved yet' banner ... stay left aligned like the nav and don't move
+    anymore at all". Measured in Chrome at 1400x900 with the row already at the
+    page's width and Delete still in front of them: `#view-edit` at x=91 while
+    reading and x=21 in both session views, so his sentence was still false in
+    the one place a comparison of the six boxes cannot look — the row holds
+    while its contents slide. Delete is after the switcher now, so it leaves
+    from the end and moves nothing.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "still.html",
@@ -3988,7 +4007,7 @@ def test_opening_a_session_moves_nothing_above_the_document(
     assert got["back"] == landing, (
         f"leaving the session did not put the page back: {got['back']} against {landing}"
     )
-    for name in got["header"]:
+    for name in got["header"] + got["switcher"]:
         assert got["split"][name] == landing[name], (
             f"the split view moved {name}: {got['split'][name]} against {landing[name]}"
         )
@@ -4008,6 +4027,99 @@ def test_opening_a_session_moves_nothing_above_the_document(
                 f"in the {view} view {name} is not the page's width beside the "
                 f"nav: {spot} against {nav}"
             )
+        # The switcher is three buttons and not a full-width row, so only its
+        # left edge is the nav's. `#views` is the box the segments are drawn
+        # inside; asking `#view-edit` for the same number would be asking for
+        # x=21, which is `#views`'s 1px border and not a measurement of
+        # anything. `landing == writing` and the split loop above already say
+        # the segments do not move; this says where they do not move FROM.
+        views = got[view]["#views"]
+        assert views["left"] == nav["left"], (
+            f"in the {view} view the switcher does not start where the nav "
+            f"starts: {views} against {nav}"
+        )
+
+
+# The other side of the line jcanton drew, and the box that is not `.panes`.
+# `#promote` is the second and last direct child of the article below it, and
+# the only element on the page whose width was the article's by inheritance
+# rather than by a rule of its own.
+_THE_BAR_UNDER_THE_COLUMN = _STUB_PREVIEW + """
+const box = sel => {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  return {left: Math.round(b.left), right: Math.round(b.right),
+          width: Math.round(b.width)};
+};
+return {nav: box('body > nav'), panes: box('.panes'), promote: box('#promote'),
+        hint: box('#promote .hint'),
+        overflow: document.documentElement.scrollWidth, window: innerWidth};
+"""
+
+
+def test_the_promotion_bar_keeps_the_column_it_sits_under(
+    client: TestClient, tmp_path: Path
+):
+    """Below the line is the column's width, and the promotion bar is below the
+    line. jcanton, 2026-08-24: everything above the line he drew under the meta
+    row is the page's width, "and only the body and fields below it keep the
+    current horizontal sizing".
+
+    `#promote` is the failure that move can have: it is a direct child of
+    `article.record` like the six header boxes, it sits BELOW `.panes`, and it
+    had no width of its own — it simply took the article's, which was the
+    measure until the measure moved down to the panes. Measured in Chrome at
+    1400x900 on a note's page before the fix: the bar 1360px wide against
+    `.panes`'s 1024, so its `border-top` ran 336px past the right edge of the
+    facts column and stopped in empty space, and the 12px sentence under it set
+    at 1360px instead of at the reader's measure.
+
+    Asked on a NOTE, and asked through the write path, because the corpus every
+    other pixel test here runs on is a task and a task is not promotable
+    (`PROMOTABLE`) — so `#promote` is on none of the pages the rest of this file
+    looks at, which is exactly why nothing caught this.
+
+    Two windows. 1400 is the only one where "the column" and "the page" are
+    different answers, so the equality means something; 700 is narrower than the
+    measure, where `max-width: 100%` decides the width instead and the question
+    is whether the bar overflows the page.
+    """
+    made = client.post("/api/record", json={
+        "base_commit": head(client),
+        "body": "The seam is not where we thought it was.",
+        "fields": {"kind": "note", "title": "A note somebody may promote"},
+    })
+    assert made.status_code == 201, made.text
+    page = client.get(f"/detail/{made.json()['id']}{PLAIN}").text
+    # The guard against this going quietly vacuous: no bar, no measurement, and
+    # every assertion below would pass on a `null` this file would rather see.
+    assert '<div id="promote">' in page, "the note's page has no promotion bar to measure"
+
+    wide = measured_in(
+        chrome(), page, tmp_path / "promote-wide.html", 1400, _THE_BAR_UNDER_THE_COLUMN
+    )
+    narrow = measured_in(
+        chrome(), page, tmp_path / "promote-narrow.html", 700, _THE_BAR_UNDER_THE_COLUMN
+    )
+
+    assert wide["panes"]["width"] < wide["nav"]["width"], (
+        "the column is already the page's width at 1400px, so this test cannot "
+        f"tell the two apart: {wide}"
+    )
+    for window, got in (("1400px", wide), ("700px", narrow)):
+        assert (got["promote"]["left"], got["promote"]["width"]) == (
+            got["panes"]["left"], got["panes"]["width"]
+        ), (
+            f"at {window} the promotion bar is not the column it sits under: "
+            f"{got['promote']} against {got['panes']}"
+        )
+        assert got["hint"]["width"] == got["panes"]["width"], (
+            f"at {window} the sentence inside it sets at another width: {got}"
+        )
+        assert got["overflow"] == got["window"], (
+            f"at {window} the page scrolls sideways: {got}"
+        )
 
 
 _A_FAILED_PREVIEW = """
