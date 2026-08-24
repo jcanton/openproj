@@ -45,6 +45,24 @@ _ACE_SURFACE = Markup(r"""
 .ace-tm .ace_cursor { color: var(--fg); }
 .ace-tm .ace_marker-layer .ace_selection { background: var(--band); }
 .ace-tm .ace_marker-layer .ace_active-line { background: var(--surface-2); }
+/* Where everybody else in the room is, drawn in Ace's own marker layer.
+   `position` comes from the class because it has to: the layer writes each
+   marker's whole `cssText` — height, top, left, right, and whatever this page
+   appends — so a `position` written there would be replaced on the next frame,
+   which is exactly why Ace's own selection rule supplies it here too.
+   The login rides in on a custom property rather than in a child element, and
+   that is not a flourish. The layer RECYCLES its divs between markers frame to
+   frame and never clears their text, so a name written as a child node would
+   sooner or later be drawn inside somebody's selection, with no code left that
+   knows it is there. A custom property cannot outlive the recycling: `cssText`
+   is replaced wholesale, so the div loses the name in the same instruction that
+   takes it away from this feature. */
+.ace-tm .ace_marker-layer .op-seat { position: absolute; }
+.ace-tm .ace_marker-layer .op-seat::after {
+  content: var(--seat-name, ""); background: var(--seat-ink, transparent);
+  position: absolute; right: .25rem; top: 0; white-space: pre;
+  font-size: 10px; line-height: 1.4; padding: 0 .3rem; border-radius: 3px;
+  color: var(--bg); font-family: var(--font-sans); }
 .ace-tm .ace_indent-guide { background: none; border-right: 1px solid var(--line); }
 /* The keyboard ring, and the reason it needs a rule of its own. Ace's real input
    is a 2.5x1 CSS px `<textarea>` with `opacity: 0` parked at the caret, so the
@@ -85,6 +103,23 @@ article.record.full .acebox, body.fullpage .acebox { height: 100%; min-height: 0
 // `seeded` is handed in rather than read off the box, and that is the one-place
 // rule holding: `textareaSurface` is still the only code that knows a
 // `<textarea>` has a `.value`, and this surface is given the document by it.
+// A login, off a socket, put inside a CSS string. Two characters can end that
+// string — a backslash and the quote — and a newline ends the declaration around
+// it; everything else is inert between quotes. They are ESCAPED rather than
+// stripped, because the name somebody chose is the name that should be drawn.
+//
+// This is the same question `_image`'s allowlist and the `BARS_JSON` title
+// answer in their own contexts, and `AGENTS.md` records what happens when a
+// value is allowed to equal the mechanism carrying it. Here the mechanism is one
+// inline `style`, so the worst a hole would buy is a declaration on one div
+// rather than a handler — which is a reason to write the escape, not a reason to
+// skip it.
+function cssString(text) {
+  return String(text).replace(/[\\'\n\r\f]/g, character =>
+    character === '\\' ? '\\\\' : character === "'" ? "\\'" : '\\A ');
+}
+
+
 function aceSurface(area, seeded) {
   const Range = ace.require('ace/range').Range;
   // Ace lays out an absolutely-positioned renderer inside a box it is given, so
@@ -217,6 +252,47 @@ function aceSurface(area, seeded) {
 
   const heard = {input: [], caret: [], splice: []};
   const fire = (kind, ...args) => { for (const listener of heard[kind]) listener(...args); };
+
+  // --- where everybody else is, in Ace's own layer -------------------------
+  //
+  // **ONE dynamic marker for the whole room, added once here.** A `who` frame
+  // arrives every time anybody in the room moves their caret, so a marker added
+  // per frame is a marker leaked per frame; `sitting` is the roster and this
+  // reads it. `addDynamicMarker` is the API for exactly that shape — a marker
+  // with no range of its own, asked to draw itself.
+  //
+  // The layer calls `update` on the frames it redraws itself on, which are the
+  // frames Ace draws the selection and the active line on. So a scroll, a fold,
+  // a rewrap, a window resize and somebody else's keystroke each land the band
+  // without one line here subscribing to any of them — and that is the whole
+  // reason this surface can draw a band at all. `static/VENDOR.md` holds this
+  // feature to "a caret one line off is worse than no caret", and the way that
+  // sentence is kept is that the screen row is worked out INSIDE `update`, from
+  // the document position, every frame, and never remembered from the last one.
+  //
+  // What the other surface needs a mirror element for, this one gets from the
+  // editor that is already laying the text out.
+  let sitting = [];
+  session.addDynamicMarker({
+    openprojSeats: true,
+    update(html, layer, session_, config) {
+      for (const seat of sitting) {
+        const at = session_.doc.indexToPosition(seat.at);
+        // Clipped on the DOCUMENT row and drawn at the SCREEN one, which is the
+        // same pair Ace's own `update` uses on a static marker: `config.firstRow`
+        // and `lastRow` count lines of the file, while `$getTop` measures from
+        // `firstRowScreen`. Ace renders only what is on screen, and a marker
+        // outside that is a div in the layer with no text under it.
+        if (at.row < config.firstRow || at.row > config.lastRow) continue;
+        const row = session_.documentToScreenRow(at.row, at.column);
+        layer.drawScreenLineMarker(
+          html, new Range(row, 0, row, Infinity), 'op-seat', config,
+          `background:hsl(${seat.hue} 70% 60% / .22);`
+          + `--seat-ink:hsl(${seat.hue} 70% 60% / .85);`
+          + `--seat-name:'${cssString(seat.login)}'`);
+      }
+    },
+  }, false);
 
   const indexOf = position => document_.positionToIndex(position);
   const positionOf = index => document_.indexToPosition(index);
@@ -365,12 +441,18 @@ function aceSurface(area, seeded) {
     // branches on the presence of this member and on nothing else.
     onSplice(listener) { heard.splice.push(listener); },
 
-    coordsAt(indexes) {
-      const height = editor.renderer.lineHeight;
-      return indexes.map(index => {
-        const at = positionOf(index);
-        return session.documentToScreenRow(at.row, at.column) * height;
-      });
+    // Where everybody else in the room is. A MEMBER and not a `provides` flag —
+    // see the note on `textareaSurface`'s own `seats`, which says why the flag
+    // that used to be here went away rather than flipping to true.
+    //
+    // Both halves go through the renderer's public `updateBackMarkers`, which is
+    // `session._signal('changeBackMarker')` with a name on it. The private
+    // spelling is the one a re-vendoring renames into silence, and this surface
+    // has already paid that once — the comment on `history.add` above is the
+    // receipt.
+    seats: {
+      draw(others) { sitting = others; editor.renderer.updateBackMarkers(); },
+      clear() { sitting = []; editor.renderer.updateBackMarkers(); },
     },
 
     // `history: true`, and true only because of the four lines above that bind
@@ -379,7 +461,7 @@ function aceSurface(area, seeded) {
     // Ctrl+Z reaches here — `stopEvent` stops propagation, so the key never gets
     // to `attachEditing`. Two histories with the key on one and the button on
     // the other is worse than either, so `historyOf` gives both to this one.
-    provides: {gutter: true, seats: false, history: true},
+    provides: {gutter: true, history: true},
     // The label, and never a branch. See the note on the textarea surface's.
     editorName: 'ace',
 
@@ -866,71 +948,42 @@ const COEDIT = (() => {
     return hash;
   }
 
-  // The mirror is `rowTops`, in the shared editing block, and this code used to
-  // carry a second copy of it — same twelve styles, same zero-width marker, and
-  // the width bug that copy is named for. One mirror now: it is measured as a
-  // fractional content box, so the bands stop landing whole line heights out at
-  // widths sitting on a wrap boundary, and it is laid out ONCE for everybody in
-  // the room rather than once per person.
+  // The roster, and nothing about pixels. Which line somebody is on is drawn by
+  // the surface they are being drawn over — through a mirror on the `<textarea>`
+  // and through Ace's own marker layer on the other — and what is left here is
+  // the part that is the same either way: who is in the room, who is not this
+  // tab, what colour each of them is, and an index the document is long enough
+  // to hold.
+  //
+  // It used to be the whole drawing, with a `provides.seats` flag deciding
+  // whether to do it. See `textareaSurface`'s `seats` for why that flag is gone
+  // rather than merely flipped to true.
   let saidNoSeats = false;
   function drawSeats() {
-    const layer = document.getElementById('seats');
-    if (!layer || !BODY) return;
+    if (!BODY) return;
     const others = seats.filter(seat => seat.login !== me);
-    if (!others.length) { layer.replaceChildren(); return; }
-    // A surface that does not offer seats does not get them drawn, and it is
-    // said rather than left as an empty layer somebody reports as broken. Ace
-    // can answer "where is index N drawn" — `coordsAt` above does exactly that
-    // over its screen rows — but the band's ORIGIN is the box's border box and
-    // the mirror's is its padding box, and nothing has measured that pairing in
-    // a browser. `static/VENDOR.md` holds this feature to "a caret one line off
-    // is worse than no caret", which is the reason it is not drawn here rather
-    // than drawn on a guess. The presence line still names who else is in the
-    // document, which is the half that survives every reader.
-    //
-    // FIRST, and above the rects guard, which is a fix rather than a tidy: the
-    // Ace surface hides the `<textarea>` and puts its own box beside it, so
-    // `BODY.getClientRects()` is empty on exactly the surface this branch exists
-    // for and the sentence was never once said. A fact about the surface does
-    // not depend on whether the box it replaced is being drawn.
-    if (!SURFACE.provides.seats) {
-      layer.replaceChildren();
-      if (!saidNoSeats) {
+    // A surface that cannot draw them says so, once, rather than leaving an
+    // empty layer for somebody to report as broken. Neither shipped surface is
+    // in this arm any more; it is here for the third one, and it is asked as
+    // member presence for the same reason `onSplice` is.
+    if (!SURFACE.seats) {
+      if (!saidNoSeats && others.length) {
         saidNoSeats = true;
         announce('Who else is in this document is named beside the title. Which line they '
                  + 'are on is not drawn in this editor.');
       }
       return;
     }
-    // A box nothing is drawing has no rows to sit on. The roster arrives while
-    // the page is still in read mode, where the textarea is `display: none` and
-    // every measurement is zero — and a mirror given a width of zero wraps the
-    // whole document one character per row before answering with a number that
-    // means nothing. `openproj:editing` is what brings everyone back.
-    if (!BODY.getClientRects().length) { layer.replaceChildren(); return; }
-    const style = getComputedStyle(BODY);
-    const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
-    const tops = SURFACE.coordsAt(
-      others.map(seat => Math.min(seat.at, SURFACE.text().length)));
-    // The layer fills `.bodywrap`, whose top is the box's border box, while
-    // `rowTops` answers from its padding box. One border-width, on every band.
-    const origin = textTop(BODY, layer);
-    const drawn = others.map((seat, which) => {
-      const top = tops[which];
-      const band = document.createElement('div');
-      band.className = 'seat';
-      band.style.top = (origin + top - BODY.scrollTop) + 'px';
-      band.style.height = height + 'px';
-      band.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .22)`;
-      const who = document.createElement('span');
-      who.className = 'seatname';
-      who.style.background = `hsl(${hueOf(seat.login)} 70% 60% / .85)`;
-      // `textContent`, because this is a login off a socket.
-      who.textContent = seat.login;
-      band.appendChild(who);
-      return band;
-    });
-    layer.replaceChildren(...drawn);
+    if (!others.length) { SURFACE.seats.clear(); return; }
+    const length = SURFACE.text().length;
+    SURFACE.seats.draw(others.map(seat => ({
+      login: seat.login,
+      // Clamped HERE and in neither surface: an index past the end is a roster
+      // frame that arrived before this tab's copy of the text caught up, which
+      // is a fact about the room rather than about a box.
+      at: Math.min(seat.at, length),
+      hue: hueOf(seat.login),
+    })));
   }
 
   // Where this tab's caret is, when it moves to a different place. Sent on the
