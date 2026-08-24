@@ -1619,18 +1619,21 @@ def create_app(
 
         A query parameter and not a cookie, and that is the whole design: the
         two surfaces are 594 KB apart and the server has to know before it
-        renders which one is in the page, while the preference that remembers the
-        choice is `localStorage` and the server cannot see it. So the address is
-        what decides, and the page carries the choice back into the address on
-        the next visit so it is typed once.
+        renders which one is in the page.
 
-        **The parameter opts out now, not in** — `?editor=plain`, on jcanton's
-        "make ace the default, I think it's worth it", 2026-08-20. The machinery
-        is unchanged and only its default arm moved, which means the page load
-        that the sticky preference costs moved with it: it is the people who want
-        the plain box who now pay a reload, and that is the better side to put it
-        on, because it is the smaller page arriving for the person who asked for
-        a smaller page rather than 594 KB arriving twice for everybody else.
+        **The parameter opts out** — `?editor=plain`, on jcanton's "make ace the
+        default, I think it's worth it", 2026-08-20.
+
+        **And it is now the whole mechanism**, 2026-08-24: "remove the toggle,
+        have ace as default for everybody ... don't delete the plain editor but
+        make it only accessible by `/?editor=plain`". It used to be sticky —
+        typing it wrote a `localStorage` preference and the page put that back
+        into the address on every later visit, so it was typed once. That went
+        with the switch that made it discoverable: a preference nothing on the
+        page can show you or unset is a trap, and one that also costs a redirect
+        on every record is the expensive kind. So this parameter applies to the
+        page it is on and to no other, and a value stored before that change is
+        not read.
 
         Read as an allowlist and not as a string, for the reason `_status_class`
         is written the way it is: whatever arrives goes nowhere near a lookup that

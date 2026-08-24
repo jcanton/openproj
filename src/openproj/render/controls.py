@@ -776,22 +776,6 @@ function textareaSurface(area) {
     // place allowed to), which wipes the native stack. `historyOf` reads this to
     // decide whether the room's `Y.UndoManager` answers the buttons instead.
     provides: {gutter: false, history: false},
-    // Which of the two this IS, in the vocabulary the address and the preference
-    // already use — and it exists for exactly one consumer, the switch beside the
-    // three view segments, which has to say out loud which editor a person is
-    // writing in. **Never branch on it.** A behavioural difference between the
-    // surfaces goes in `provides` above, for the reason written there; this is a
-    // label, and the one question a capability cannot answer is what to call the
-    // thing. It is the mounted surface and not `EDITOR.editor`, which is only
-    // what was asked for: on a copy of this page saved to a file the two come
-    // apart, because there is no server to fetch the other bytes from.
-    //
-    // Not `editor`, which was the first spelling and lasted one test run: the Ace
-    // surface already publishes `editor`, and it is the Ace instance. A second
-    // key of that name later in the same object literal is not an error anywhere
-    // — it silently wins, and every use of the real one became a string.
-    editorName: 'plain',
-
     // The scroll offset, and the three ways the page asks about it. These used
     // to be `el.scrollTop` and `el.addEventListener('scroll')` at four call
     // sites, which the adapter's own report named as the hole left open: `el`
@@ -857,16 +841,10 @@ function bodySurface(area) {
   // surfaces in the tree. An unsubscribed surface is two listeners on an element
   // nothing else touches.
   const box = textareaSurface(area);
-  if (EDITOR.editor !== 'ace') {
-    // Wanted the plain box and the library came anyway, which means the address
-    // has not told the server yet. One reload gets the page this person asked
-    // for, and it is the only place in this function that navigates for the sake
-    // of BYTES rather than for the sake of a feature — the surface below would
-    // work perfectly well over 594 KB nobody is going to use, and shipping it
-    // silently is how a preference becomes decorative.
-    if (typeof ace !== 'undefined') stickyEditor();
-    return box;
-  }
+  // The address asked for the box. It is what mounts, and nothing navigates: the
+  // address is what the server already answered, so either the library is not
+  // here or this is a saved copy that carries it and is not going to use it.
+  if (EDITOR.editor !== 'ace') return box;
   if (typeof ace !== 'undefined') return aceSurface(area, box.text());
   // Ace, and it is not here. Two situations, and only one of them is news.
   //
@@ -877,10 +855,6 @@ function bodySurface(area) {
   // thing they never asked for. `chosen` is the difference between a decision
   // that cannot be honoured and a default that was never going to be.
   if (!EDITOR.chosen) return box;
-  // Either this browser remembers the choice and the address does not carry it —
-  // go and ask the server for it, which is what makes the preference stick at
-  // all — or there is no server to ask, and then say so.
-  if (stickyEditor()) return box;
   // Said in what is true rather than in a guess at why: there are two ways to be
   // here — a page saved to a file, which has no server to ask, and a reader the
   // server would refuse a save from, who gets the box and the toolbar and would
@@ -888,14 +862,6 @@ function bodySurface(area) {
   announce('This page does not carry the second editor. It is inlined only where the '
            + 'server would take a save from you, and this copy of the page has none of '
            + 'it. Still editing in the ordinary box.');
-  // And then stop asking. The address DID carry the request, the server answered
-  // it by sending no library, and a remembered choice that cannot be honoured
-  // costs a redirect on every page for nothing. Only in that case: a page opened
-  // from a file was never asked, and forgetting there would clear somebody's
-  // choice because they read an export.
-  if (new URLSearchParams(location.search).has('editor')) {
-    rememberEditor({editor: 'plain', chosen: true});
-  }
   return box;
 }
 
@@ -1238,31 +1204,29 @@ const SPLIT_RANGE = 8;
 // anything — jcanton, 2026-08-20, on that becoming the default: "I think it's
 // worth it".
 const EDITORS = ['ace', 'plain'];
-// `textarea` was this branch's own name for the plain box, in the address and in
-// the preference alike, and it is accepted on the way in for exactly one reason:
-// a stored `textarea` is somebody who OPTED OUT, and the fallback below is now
-// `ace`. Reading an old opt-out as "nothing was said" would hand 594 KB to the
-// one person who had asked not to have it. It is never written back — a value
-// read here is rewritten as `plain` by the first `rememberEditor` — so this list
-// shrinks by itself rather than being a second spelling to keep alive.
-const EDITORS_WERE = {textarea: 'plain'};
 // And the keymaps the second one offers. A textarea has one and it is the
 // browser's, which is why this list is read only where Ace is.
 const KEYMAPS = ['default', 'vim'];
 const EDITOR = (() => {
   const held = remembered.map(EDITOR_KEY);
   const one = (value, offered, fallback) => offered.includes(value) ? value : fallback;
-  // **The URL wins over the preference, and it has to.** This is the one setting
-  // on the page that decides which BYTES the server rendered, and the server
-  // cannot read `localStorage`. So the address is what put this surface in the
-  // page and is therefore what says whether it is here; the remembered value is
-  // only how a person who chose gets that choice again tomorrow without typing
-  // it. A remembered value the page was not rendered for is a preference for
-  // something that is not here — which `bodySurface` deals with out loud rather
-  // than quietly ignoring.
-  const named = value => one(EDITORS_WERE[value] ?? value, EDITORS, null);
-  const chose = named(new URLSearchParams(location.search).get('editor'));
-  const kept = named(held.editor);
+  // **The URL is the only thing that says which editor this is, and there is no
+  // longer a preference beside it.** This is the one setting on the page that
+  // decides which BYTES the server rendered and the server cannot read
+  // `localStorage`, so the address was always what actually put a surface in the
+  // page; the store only meant somebody did not have to type it again.
+  //
+  // jcanton, 2026-08-24: "remove the toggle, have ace as default for everybody
+  // ... don't delete the plain editor but make it only accessible by
+  // `/?editor=plain`". A stored choice outlived the control that set it and the
+  // control that could unset it, which is the trap this file already named — and
+  // it cost a redirect on every record to carry it back into the address. Both
+  // went together.
+  //
+  // A value stored before that is simply not read. It is not migrated either: it
+  // is dropped from the map the first time anything else is remembered, because
+  // `EDITOR_KEPT` below is the whole of what gets written.
+  const chose = one(new URLSearchParams(location.search).get('editor'), EDITORS, null);
   return {
     // `edit` and not null. null means "editing, but not in one of the three
     // views", which is the state a page opened for the first time was left in:
@@ -1294,14 +1258,14 @@ const EDITOR = (() => {
     // by itself, and a string is exactly what a hand-edited entry is.
     split: Number.isFinite(held.split) && held.split >= 1 / SPLIT_RANGE
            && held.split <= SPLIT_RANGE ? held.split : 1,
-    editor: chose ?? kept ?? 'ace',
-    // Whether anybody actually said so, as against this being the default — and
-    // it is a separate fact because the default must not announce its own
-    // absence. `bodySurface` says "this page does not carry the second editor"
-    // when a choice cannot be honoured, and with `ace` as the fallback every
-    // signed-out reader on every detail page would now be told that about a
-    // library they never asked for.
-    chosen: (chose ?? kept) !== null,
+    editor: chose ?? 'ace',
+    // Whether the ADDRESS said so, as against this being the default — and it is
+    // a separate fact because the default must not announce its own absence.
+    // `bodySurface` says "this page does not carry the second editor" when a
+    // request cannot be honoured, and with `ace` as the fallback every signed-out
+    // reader on every detail page would otherwise be told that about a library
+    // they never asked for.
+    chosen: chose !== null,
     keymap: one(held.keymap, KEYMAPS, 'default'),
   };
 })();
@@ -1314,46 +1278,15 @@ const EDITOR_KEPT = ['mode', 'indent', 'autosave', 'keymap', 'split'];
 function rememberEditor(change) {
   Object.assign(EDITOR, change);
   const kept = Object.fromEntries(EDITOR_KEPT.map(k => [k, EDITOR[k]]));
-  // The surface is written down only when somebody CHOSE it, which is why it is
-  // not in the list above. `ace` is the default now, so a page that merely
-  // resolved that default and then stored it would make every later load look
-  // like a decision — and `chosen` is what decides whether a page that cannot
-  // honour a decision says so out loud. Without this, choosing the split view
-  // once (`rememberEditor({mode})`) would have signed a reader up to be told, on
-  // every record afterwards, that a library they never asked for is missing.
-  if (EDITOR.chosen) kept.editor = EDITOR.editor;
+  // **The surface is not among them, and its absence is load-bearing.** Writing
+  // it down is what made the parameter sticky, and the parameter is now the whole
+  // mechanism: it applies to the page it is on and to no other. This line is also
+  // what clears a value stored before that — the map is rebuilt from
+  // `EDITOR_KEPT` rather than merged into, so the old `editor` key goes the first
+  // time anybody changes an indent width.
   remembered.set(EDITOR_KEY, JSON.stringify(kept));
 }
 
-// Typing the parameter is choosing, and choosing is what makes it stick — in
-// both directions now, because `?editor=plain` is a choice as much as
-// `?editor=ace` is and the way back out of either has to be the other one. A
-// setting whose only way out is editing `localStorage` by hand is a trap, and
-// with the default on the expensive side it would be the expensive trap.
-if (new URLSearchParams(location.search).has('editor')) rememberEditor({});
-
-// And the other half of sticky: the preference put back into the URL, because
-// the URL is the only part of this the server can see. Called from
-// `bodySurface` and nowhere else, so the table and the cycle page — which share
-// this block and have no body editor — never navigate.
-//
-// Only over http(s). A static export IS the case where the parameter can never
-// work: there is no server to render the other bytes, so reloading a file to add
-// a parameter to it costs a reload and buys nothing. Returns whether the page is
-// going away, so the caller can tell "fetching it" from "it is not obtainable".
-function stickyEditor() {
-  if (!location.protocol.startsWith('http')) return false;
-  const url = new URL(location.href);
-  if (url.searchParams.has('editor')) return false;
-  url.searchParams.set('editor', EDITOR.editor);
-  // `replace` and not `assign`: a preference carried forward is not a place in
-  // the history somebody wants the back button to take them to. It matters more
-  // now than it did — with the default on the other side, this fires for the
-  // people who chose the plain box, on every record they open, and `assign`
-  // would put a bounce in the back button for each one of them.
-  location.replace(url);
-  return true;
-}
 // Spaces, because a tab character is two columns here, four in git's diff view
 // and eight in a terminal, and the place these documents are read that this tool
 // does not draw is GitHub.

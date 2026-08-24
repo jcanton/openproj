@@ -435,44 +435,6 @@ button.stat.pick:hover { color: var(--accent); }
 .views .seg svg { display: block; width: 15px; height: 15px; fill: none;
                   stroke: currentColor; stroke-width: 1.6;
                   stroke-linecap: round; stroke-linejoin: round; }
-/* Which editor, beside which view — a switch and not a fourth segment, because
-   it is a different question: the segments are one control with three states,
-   this is two states of a setting. It wears the same rectangle as the group next
-   to it by saying NOTHING about border, ground or corner — the shell's `button`
-   rule is the app's one look, and a control that wants the default says so by
-   not overriding it. Only the arrangement inside that rectangle is here.
-
-   Hidden until the article is editing, like the segments: a choice of editing
-   surface is nothing at all when there is no editing surface. */
-.eswitch { display: none; }
-.record.editing .eswitch { display: inline-flex; align-items: center; gap: .4rem;
-                           vertical-align: middle; color: var(--muted); }
-.record.editing .eswitch:hover { color: var(--accent); }
-/* Every colour here resolves a token already defined in all three blocks, so
-   there is no new value that could be right in one and wrong in another — the
-   failure that rule exists to prevent. `--line-strong` off, `--accent` on, and
-   the knob takes the ink that is legible on each. */
-.eswitch .etrack { display: block; width: 26px; height: 14px; border-radius: 7px;
-                   background: var(--line-strong); flex: none; padding: 2px;
-                   box-sizing: border-box; }
-/* No transition on the knob, and it was written and then taken out again rather
-   than left in. A switch normally animates because it flips in place; this one
-   never flips in place at all — its resting position is rendered by the server
-   and the only thing that changes it is a page load, so the travel a transition
-   would smooth is travel that never happens. The one move it does make is the
-   half-step below, and that one has to be instant: it is the acknowledgement of
-   a press, and an acknowledgement racing a navigation is one nobody sees. */
-.eswitch .eknob { display: block; width: 10px; height: 10px; border-radius: 50%;
-                  background: var(--surface); }
-.eswitch[aria-checked="true"] .etrack { background: var(--accent); }
-.eswitch[aria-checked="true"] .eknob { background: var(--on-accent);
-                                       transform: translateX(12px); }
-/* Pressed, and going. The knob stops HALFWAY rather than arriving, because
-   halfway is what is true — this page will never be the page with the other
-   editor in it, and the one that is has not landed yet. `aria-busy` says the
-   same thing to a screen reader and `announce` says it in words. */
-.eswitch.waiting .eknob { transform: translateX(6px); }
-.eswitch.waiting { opacity: .55; }
 /* The three page-chrome controls, while they are lodged on the surface rather
    than in the nav they came from. `showView` puts them in the surface's first
    row — the back link's — so that they stay in the top-right corner of the
