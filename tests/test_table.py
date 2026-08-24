@@ -5074,6 +5074,63 @@ def test_a_tab_that_missed_every_frame_still_clears_its_mark_by_polling(page: st
     assert got["rearmed"] == 0, "nothing is waiting, so nothing should keep polling"
 
 
+def test_a_poll_whose_fetch_fails_re_arms_and_the_next_one_clears_the_mark(page: str):
+    """`armLandingPoll`'s callback nulls the handle first, and `refreshRows`'
+    fetch is one laptop sleep, one moment offline or one server restart away
+    from rejecting — exactly the conditions a tab that missed its frame is in,
+    which is the tab the poll exists for. Unguarded, that rejection threw out
+    of the callback, the trailing re-arm never ran, and with the handle already
+    null the poll was dead for the life of the page: the design's own guarantee
+    against a mark that sticks forever, failing in precisely the conditions it
+    was written for.
+
+    A failed poll is a poll to try again, not the end of polling: the timer
+    re-arms whatever happened, and the next successful read clears the mark as
+    if nothing had gone wrong. The network here goes away for exactly one tick
+    — the shim restores the real fetch on its way out, the way a wake or a
+    finished redeploy ends.
+    """
+    committed = "a" * 40
+    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
+             "landed": "f" * 40, "unpushed": 0, "parked": []}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(cell, 'high'); {SETTLE}"
+        f"  const mark = () => tbody.querySelector('tr[data-id=\"{TASK}\"] .unlanded');"
+        "  const marked = !!mark();"
+        "  const real = fetch;"
+        "  window.fetch = async () => {"
+        "    window.fetch = real;"
+        "    throw new TypeError('Failed to fetch');"
+        "  };"
+        f"  __tick(); {SETTLE}"
+        "  const rearmed = __pending();"
+        f"  __tick(); {SETTLE}"
+        "  return {marked, rearmed, cleared: !mark(), quiet: __pending()};"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": committed,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+            {"status": 200, "json": fresh},
+        ],
+    )
+    got = answer["value"]
+
+    assert got["marked"] is True
+    assert got["rearmed"] >= 1, (
+        "one failed fetch killed the poll for the life of the page — the mark "
+        "it was guarding can now never clear"
+    )
+    assert got["cleared"] is True, (
+        "the poll after the failure must clear the mark as if nothing had gone wrong"
+    )
+    assert got["quiet"] == 0, "nothing is waiting, so nothing should keep polling"
+
+
 def test_the_poll_waits_rather_than_redrawing_over_an_open_editor(page: str):
     """The poll ends in a redraw, and `draw()` replaces the whole tbody — so a
     poll firing while a cell editor is open would destroy the value being

@@ -2054,7 +2054,14 @@ function armLandingPoll() {
     // yet. The poll waits its ten seconds again rather than costing a key.
     if (WRITING || CREATING || tbody.querySelector('td input, td select')
         || !document.getElementById('askfor').hidden) { armLandingPoll(); return; }
-    if (await refreshRows()) draw();
+    // Guarded, because the fetch rejects in exactly the conditions this poll
+    // exists for — a laptop waking onto the tick, a moment offline, a server
+    // mid-restart — and the handle is already null by here, so an escaped
+    // rejection would skip the re-arm below and end polling for the life of
+    // the page. A failed poll is a poll to try again, not the end of polling.
+    try {
+      if (await refreshRows()) draw();
+    } catch (error) {}
     armLandingPoll();
   }, LANDING_POLL_MS);
 }
