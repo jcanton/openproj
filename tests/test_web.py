@@ -64,7 +64,7 @@ from test_store import commit_directly
 
 from openproj import coedit
 from openproj.auth import User, sign_session
-from openproj.web import create_app
+from openproj.web import COPY_WORK_OUT, create_app
 
 ORG = "C2SM"
 SECRET = "a-real-signing-secret-for-tests"
@@ -4514,9 +4514,11 @@ def refused_in_the_room(client: TestClient, record_id: str = TASK) -> str:
 
     The room has answered this correctly since it was written — `_commit_room`
     was the only place `WRITE_FAILURES` was ever caught — so it is both the
-    control for the HTTP fix and the source of the sentence the HTTP answer has
-    to contain. Taking the store's words from here rather than restating them
-    means this suite cannot pass by agreeing with itself.
+    control for the HTTP fix and the source of the store's words the HTTP answer
+    has to contain. Taking those words from here rather than restating them
+    means this suite cannot pass by agreeing with itself. What comes back is the
+    room's whole refusal: the store's sentence plus the advice the room appends,
+    which the caller separates by `COPY_WORK_OUT`.
     """
     token = sign_session(ANN, SECRET)
     with client.websocket_connect(
@@ -4602,23 +4604,34 @@ def test_the_refused_write_says_what_to_do_and_the_room_still_says_its_half(fork
 
     The store's sentence is taken from the room rather than restated here,
     because a test that spells out the copy it is checking is a test that agrees
-    with itself. What the HTTP answer has to add is the part the store cannot
-    know: that the request was refused, that this is the plan rather than one
-    record, and that trying again is not the thing to do — a person looking at a
-    browser has no other way to learn any of it.
+    with itself. The store's words are the half that travels verbatim; each
+    surface then appends only what it alone can say. The room appends the one
+    action that works in it — copy the work out before the tab closes — which
+    the page must NOT say, because an HTTP save holds no unsaved document. The
+    page appends the part the store cannot know: that the request was refused,
+    that this is the plan rather than one record, and that trying again is not
+    the thing to do — a person looking at a browser has no other way to learn
+    any of it.
     """
     said_in_the_room = refused_in_the_room(forked.client)
 
     assert forked.local[:7] in said_in_the_room, said_in_the_room
     assert forked.remote[:7] in said_in_the_room, said_in_the_room
+    # The suffix is stripped by the constant the room appends, imported rather
+    # than respelled — `test_a_refused_room_says_what_to_do_and_is_discoverable_
+    # from_the_server` (`tests/test_coedit.py`) spells the copy out verbatim, so
+    # deleting the sentence from the product still fails a test; this one holds
+    # the seam, not the wording.
+    assert said_in_the_room.endswith(COPY_WORK_OUT), said_in_the_room
+    stores_words = said_in_the_room[: -len(COPY_WORK_OUT)].strip()
 
     detail = save(forked.client, OTHER, {"priority": "low"}).json()["detail"]
 
-    assert said_in_the_room in detail, (
+    assert stores_words in detail, (
         f"the page and the room describe one condition in two ways:\n"
-        f"  room: {said_in_the_room!r}\n  page: {detail!r}"
+        f"  room: {stores_words!r}\n  page: {detail!r}"
     )
-    assert len(detail) > len(said_in_the_room), (
+    assert len(detail) > len(stores_words), (
         "the store says what happened; a person in a browser also needs to be "
         "told that the write did not land and that retrying will not help"
     )

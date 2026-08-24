@@ -277,6 +277,18 @@ def _wedged(state: Condition) -> str:
     )
 
 
+# The half the room appends to every refusal it makes — the one action that
+# works in a room whose base no longer moves. Module-level, not inline in
+# `_refuse_room`, because the cross-surface test in `tests/test_web.py`
+# separates the store's words from this sentence to compare them against the
+# HTTP answer: the store's half travels verbatim to both surfaces, and a second
+# spelling of this half is how the two would drift apart unnoticed.
+COPY_WORK_OUT = (
+    "Copy your work out of the editor before you close this tab — "
+    "nothing typed since the last save has reached the plan."
+)
+
+
 # Why the co-editing socket said no, in a code and a sentence the browser can
 # read — and the whole reason the route accepts a socket it is about to close.
 #
@@ -2883,22 +2895,34 @@ def create_app(
         The log is for the operator, who has no surface at all otherwise: every
         page answers 200 while a room is wedged and `/api/health` asks the
         store, which is fine. The same split as `_wedged` beside `_refusal` at
-        the top of this file, and the same rule — `why` travels verbatim on
-        both surfaces. The base is in the line because it is how a wedged room
-        is told apart from an ordinary refusal in the output: the same path
-        refused again at the same base is the same stuck merge, not a new one.
+        the top of this file, and the same rule — the store's words open both
+        surfaces verbatim, and each surface appends only the half it alone can
+        say: the frame what to do, the log where to look. The base is in the
+        line because it is how a wedged room is told apart from an ordinary
+        refusal in the output: the same path refused again at the same base is
+        the same stuck merge, not a new one.
         """
-        room.refusal = (
-            f"{why} Copy your work out of the editor before you close this tab — "
-            "nothing typed since the last save has reached the plan."
-        )
+        room.refusal = f"{why} {COPY_WORK_OUT}"
         _to_room(room, {"t": "refused", "why": room.refusal})
+        # The first line of `why` and never the rest: a conflict report's tail
+        # is one line per collision, quoting both sides of the document being
+        # typed. On the surface this line exists for, each stderr line is one
+        # log entry, so the tail would let anybody in the editor append entries
+        # to the operator's log — the `Co-authored-by:` trailer family again —
+        # and a scan for "the same path at the same base, repeatedly" would
+        # have to reassemble one refusal from many entries first. One line per
+        # refusal is the guarantee; the people who need the full report are in
+        # the room, and the frame above already carries it to them.
         _LOG.warning(
             "the room on %s refused to commit at base %s with %d editing: %s",
             room.path,
             room.base,
             len(room.members),
-            why,
+            # Guarded because `"".splitlines()` is `[]` and a bare exception can
+            # stringify to nothing: an IndexError here escapes the arms that call
+            # this and kills the room's timer, which may not happen — see
+            # `_commit_room`'s docstring.
+            why.splitlines()[0] if why else why,
         )
 
     async def _commit_room(

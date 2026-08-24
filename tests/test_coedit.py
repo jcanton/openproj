@@ -979,6 +979,16 @@ def test_a_refused_room_says_what_to_do_and_is_discoverable_from_the_server(
         "without the base an operator cannot tell a wedged room — the same path "
         "refusing at the same base — from a string of ordinary conflicts"
     )
+    # This refusal is a conflict, so its report is the multi-line kind: a header
+    # and one line per collision, quoting both sides of the document. Only the
+    # header may reach the log — each stderr line is one entry on Cloud Run, so
+    # the quoted lines would let whoever is typing append entries to the
+    # operator's log, and one refusal spread over many entries defeats the
+    # "same path, same base, repeatedly" scan the line exists for.
+    assert "\n" not in warned[0].getMessage(), warned[0].getMessage()
+    assert "MY VERSION OF THAT LINE" not in warned[0].getMessage(), (
+        "text typed in the editor reached the server's log"
+    )
 
 
 def test_every_refusal_a_room_makes_leaves_through_one_door():
