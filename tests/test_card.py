@@ -334,7 +334,7 @@ _HOVER_INTENT = """
 const row = DATA.rows[%s];
 queueCard(row, 100, 100);
 const atOnce = CARD.hidden;
-await new Promise(done => setTimeout(done, 700));
+await new Promise(done => setTimeout(done, 900));
 window.__asked = {atOnce, later: CARD.hidden};
 """
 
@@ -446,7 +446,7 @@ def test_one_card_holds_one_document(index: Index, tmp_path: Path):
 # script is injected at 1200ms and the virtual clock stops `patience` later, so a
 # continuation that runs past it leaves the placeholder in the DOM and the test
 # reports nothing at all — which reads exactly like a card that never came up.
-# `CARD_DELAY` is 400, and this waits 460 once per box plus once at the start.
+# `CARD_DELAY` is 600, and this waits 660 once per box plus once at the start.
 _OVER_A_BOX = """
 const card = document.getElementById('card');
 // One box of each kind that draws one. A project holding pitches and a pitch
@@ -489,10 +489,10 @@ setTimeout(() => {
       said[picked[i].data('kind')] = card.hidden ? 'nothing' : 'a card';
       cy.emit('pan');   // put it away before the next one is asked
       askEach(i + 1);
-    }, 460);
+    }, 660);
   };
   askEach(0);
-}, 460);
+}, 660);
 return {middles: null};
 """
 
@@ -510,7 +510,7 @@ def test_a_box_answers_for_its_label_and_not_for_its_acres(index: Index, tmp_pat
     # Longer than the default: this answers from a continuation, and the waits it
     # needs are one `CARD_DELAY` per box plus the first one.
     got = measured_in(chrome(), page, tmp_path / "boxcard.html", 1400, _OVER_A_BOX,
-                      height=1000, patience=3000)
+                      height=1000, patience=3800)
 
     assert not got.get("error"), got
     assert got["middles"] is not None, "the continuation never ran, so nothing was measured"
@@ -558,7 +558,7 @@ const cell = document.querySelector('tbody tr[data-id] td[data-col="title"]');
 const card = document.getElementById('card');
 // A server, stubbed, because this page is a file and there is none — and the
 // point under test is when the document is DRAWN, not where it came from. 50ms
-// is a plausible round trip and well inside the 400ms the card waits anyway.
+// is a plausible round trip and well inside the 600ms the card waits anyway.
 window.fetch = () => new Promise(resolve => setTimeout(() => resolve({
   ok: true, json: () => Promise.resolve({html: '<p>the shaping document</p>'}),
 }), 50));
@@ -585,7 +585,7 @@ def test_the_card_arrives_in_one_piece(index: Index, tmp_path: Path):
     The fields were drawn the moment the card appeared and the shaping document
     was fetched afterwards, so the box grew and re-placed itself just after
     arriving. The fetch now starts when the pointer arrives and the card is drawn
-    400ms later, which is hover-intent time that was being spent on nothing —
+    600ms later, which is hover-intent time that was being spent on nothing —
     so the answer is normally already here and both halves land in one paint.
     """
     page = render_table(index, ROUTES, base_commit=HEAD, may_write=True)

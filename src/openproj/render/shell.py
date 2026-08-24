@@ -1840,12 +1840,14 @@ function showCard(row, x, y, extra) {
 // card that answers it anyway flashes a box over every row on the way past. So
 // hovering ASKS for a card and waits; the wait is cancelled by leaving.
 //
-// 400ms is the delay every hover-intent control settles on: long enough that
-// crossing a row does not open one, short enough that pointing at a row and
-// stopping does not feel broken. The keyboard path on the timeline does not go
-// through here — focus is deliberate, and a delay after a deliberate act is a
-// page that ignored you.
-const CARD_DELAY = 400;
+// 600ms, raised from 400 — jcanton, 2026-08-24: the card came up too eagerly
+// while reading the table. This is the only hover-intent delay in the app, so
+// the number is this app's own judgement, not a convention: long enough that
+// pausing over a row while reading it does not open a box over the next one,
+// short enough that pointing and waiting does not feel broken. The keyboard
+// path on the timeline does not go through here — focus is deliberate, and a
+// delay after a deliberate act is a page that ignored you.
+const CARD_DELAY = 600;
 // And the grace on the way out, which is the whole reason the card can be
 // scrolled: the pointer has to cross the gap between the row and the box, and a
 // card that goes the instant the row is left cannot be reached.
@@ -1857,7 +1859,7 @@ function queueCard(row, x, y, extra) {
   if (!CARD || !row) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
-  // Ask for the document NOW, and draw it in 400ms. The wait before a card
+  // Ask for the document NOW, and draw it in 600ms. The wait before a card
   // appears is hover-intent, not politeness, and spending it on the round trip
   // is free: by the time the card is drawn the answer is normally already here,
   // so the fields and the body arrive in one paint. Nothing is drawn from this —
