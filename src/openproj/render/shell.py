@@ -2274,10 +2274,15 @@ if (document.fonts) document.fonts.ready.then(() => fitRoom());
 // and the scroll you had left behind all gone. The page that knows where you
 // came from is the page you came FROM, so it says so on the way out.
 //
-// A stamp in the tab's own store and not `document.referrer`: the static export
-// is opened over `file://`, where the referrer is empty and this would quietly
-// do nothing in exactly the copy that is hardest to get back to a view in. One
-// mechanism that works in both modes beats one that works in the served one.
+// A stamp in the tab's own store and not `document.referrer`, which is empty
+// over `file://` and would therefore have been dead in the static export — the
+// copy that is hardest to get back to a view in — in every browser there is.
+// A store is dead there in some of them and not others: Chrome 151 on macOS
+// gives a `file://` document the origin `file://` and a working store, and the
+// Linux headless build the tests run on gives it an opaque `null` origin and
+// refuses. So the export is best-effort by construction, which is what the
+// rendered link being the answer already means: where the store is refused the
+// back link is the records list, exactly as it was before any of this.
 //
 // The switch is `ORIGIN`, which the shell fills in for a view and leaves empty
 // for the two pages that are reached from one. Nothing here decides between

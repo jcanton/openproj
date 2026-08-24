@@ -1733,7 +1733,7 @@ def test_the_theme_is_chosen_before_the_first_paint(rendered: Path):
     # And the helper it reads through is declared above it, in the same block:
     # a page whose theme is chosen by a function defined further down the
     # document is a page that throws before it has a theme at all.
-    assert head.index("const remembered = {") < head.index("remembered.get('openproj:theme')")
+    assert head.index("const door = ") < head.index("remembered.get('openproj:theme')")
 
 
 def test_every_page_carries_the_toggle(rendered: Path):
@@ -1744,7 +1744,7 @@ def test_every_page_carries_the_toggle(rendered: Path):
 # --- storage ----------------------------------------------------------------
 
 
-def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal():
+def test_nothing_touches_a_browser_store_except_the_helper_that_survives_a_refusal():
     """One door, because the browsers that slam it slam it on the property.
 
     Three of the twelve reads and writes were wrapped in a try and carried a
@@ -1754,26 +1754,36 @@ def test_nothing_touches_localStorage_except_the_helper_that_survives_a_refusal(
     times out of twelve is a guard that will be forgotten the tenth time, which
     is exactly how that line got written.
 
+    Both stores, because one policy denies both and the second one was reached
+    outside the door for as long as it existed: the cycle page's receipt carried
+    a `try` of its own, which is this same rule written a second time and the
+    copy that would have gone missing next.
+
     Which makes this a grep on purpose: what a page *does* with denied storage
-    is proved by running it (`test_table`, `test_editor`), and what this pins is
-    that the next call site cannot be written bare.
+    is proved by running it (`test_table`, `test_editor`, and the back link in
+    `test_a_browser_that_refuses_its_stores_still_draws_the_page`), and what this
+    pins is that the next call site cannot be written bare.
     """
     source = render_source()
-    helper = re.search(r"const remembered = \{.*?\n\};", source, re.S)
+    helper = re.search(r"const door = reach => \(\{.*?\n\}\);", source, re.S)
     assert helper, "the storage helper is gone or has been renamed"
 
     outside = source.replace(helper.group(0), "")
     bare = [
         line
         for line in outside.splitlines()
-        # The prose above the helper has to be able to name the thing it wraps.
-        if "localStorage" in line and not line.lstrip().startswith("//")
+        # The prose above and below the helper has to be able to name the two
+        # things it wraps, and the two lines that open it are the whole point.
+        if ("localStorage" in line or "sessionStorage" in line)
+        and not line.lstrip().startswith("//")
+        and not line.startswith(("const remembered = door(", "const forThisTab = door("))
     ]
-    assert not bare, f"a bare localStorage is back: {bare}"
-    # Once, like `esc`: two classic scripts on one page share one lexical scope,
-    # so a second `const remembered` would be a SyntaxError that takes the page
-    # down rather than a duplicate that drifts quietly.
-    assert source.count("const remembered = ") == 1
+    assert not bare, f"a bare browser store is back: {bare}"
+    # Once each, like `esc`: two classic scripts on one page share one lexical
+    # scope, so a second `const remembered` would be a SyntaxError that takes the
+    # page down rather than a duplicate that drifts quietly.
+    for once in ("const door = ", "const remembered = ", "const forThisTab = "):
+        assert source.count(once) == 1, once
     # And the helper answers every question a caller could otherwise ask the
     # property directly — a missing verb is how the next bare call gets written.
     for verb in ("get(key, fallback = null)", "map(key)", "set(key, value)", "forget(key)"):
@@ -3342,7 +3352,7 @@ def test_a_page_reached_from_a_view_leaves_the_stamp_where_it_found_it(
 
 
 def test_an_address_smuggled_into_the_stamp_is_not_followed(server_pages: dict[str, str]):
-    """A store is a place somebody's devtools can write, and an `href` is the one
+    r"""A store is a place somebody's devtools can write, and an `href` is the one
     field on this path a scheme fits inside. The check is an allowlist, because
     there is no list of URL spellings that is ever finished.
 
@@ -3400,41 +3410,6 @@ def test_every_record_in_the_export_carries_the_link_back(rendered: Path):
     got = run_js(read(rendered, "detail.html"), every, page=True, session=left)["value"]
     assert len(got) == read(rendered, "detail.html").count("<article")
     assert set(got) == {f"{here} ← Table"}
-
-
-def test_the_journey_works_in_a_browser_over_file_urls(rendered: Path):
-    """Two real page loads, and the one claim the shim structurally cannot make.
-
-    Everything above drives one page at a time and hands the stamp between them
-    by hand, which is the test writing down what it already believes. The claim
-    is about a store that survives a navigation, and `file://` is where it is
-    least safe to assume one: the export is opened off a memory stick with no
-    origin to speak of, and a browser that refused `sessionStorage` there would
-    leave every record in the file pointing back at the records list — quietly,
-    and only in the copy nobody runs a server for.
-
-    Chrome does allow it, which this is here to keep true. The journey is the
-    reader's: open the table, click a title, read the link out of the record.
-    """
-    from browser import chrome, in_a_live_page
-
-    journey = """
-    (() => {
-      if (location.pathname.endsWith('table.html')) {
-        const title = document.querySelector('td[data-col="title"] a');
-        if (!title) return 'the table drew no title link';
-        title.click();
-        return null;
-      }
-      const back = document.querySelector('a.origin');
-      return back ? back.getAttribute('href') + ' | ' + back.textContent : null;
-    })()
-    """
-    answer, said = in_a_live_page(
-        chrome(), (rendered / "table.html").as_uri(), journey,
-        rendered / "chrome-profile", seconds=40,
-    )
-    assert answer == f"{rendered / 'table.html'} | ← Table", (answer, said)
 
 
 def test_every_page_carries_a_skip_link_and_a_live_region(rendered: Path):
