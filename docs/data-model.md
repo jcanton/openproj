@@ -277,7 +277,8 @@ opinion about prose is one people route around.
 
 Creating a record starts from the team's own template, guidance in HTML comments exactly as HackMD
 carries it, stripped when the page renders — so a pitch drafted in either place is the same document.
-The three header lines of the HackMD template (`Shaped by`, `Appetite`, `Developers`) are fields here
-instead: a heading restating a field is the two-copies-of-one-fact problem this tool exists to end.
+The three header lines of the HackMD template are covered instead: `Appetite` and `Developers` are
+fields here, `Shaped by` is what `owner` records now — a heading restating a field is the
+two-copies-of-one-fact problem this tool exists to end.
 
 🤖 Written by an agent on behalf of @jcanton

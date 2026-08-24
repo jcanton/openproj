@@ -94,9 +94,9 @@ rather than judged:
 - `## For later` on a pitch is scope cut to fit the appetite. It is the only record the plan keeps of
   a bet that was trimmed, and it was invisible until it had a name.
 
-The header lines of the HackMD template — Shaped by, Appetite, Developers — are fields here rather
-than headings. A heading restating a field is the two-copies-of-one-fact problem this tool exists to
-end.
+The header lines of the HackMD template are covered without being headings: Appetite and Developers
+are fields here, and Shaped by is what `owner` records now. A heading restating a field is the
+two-copies-of-one-fact problem this tool exists to end.
 
 ## The statuses
 
