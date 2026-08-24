@@ -1,8 +1,34 @@
-# views — 138.9s. # Measured seconds are from docs/probes/ci-durations-after-cache.txt — the
-# POST-template-cache table. Cutting from the pre-cache one puts the boundaries
-# somewhere else entirely, because caching template compilation moved the file
-# costs by far more than the shard sizes.
+# views — 106.4s exact, anchored on tests/test_render.py (76.4s).
 #
-# The two files that draw a whole page and then measure it.
+# Seconds are per FILE and EXACT, from docs/probes/ci-durations-4core.txt — every
+# phase of every test on the 4-core public runner, run 32754826551. The older
+# tables in docs/probes/ were taken on the 2-core box a PRIVATE repository gets,
+# AND at `--durations-min=0.05`, and both halves of that were wrong for this cut:
+# the leg order inverted when the cores doubled, and the 50ms floor hid 37s of
+# the suite on exactly the leg that had 1103 tests. Modelling that hidden cost
+# was tried and the fit did not hold — see docs/probes/ci-speed.md § 0b. The
+# threshold is zero here, so there is nothing left to model.
+#
+# The cut is what a longest-first pass makes of those numbers, and it lands at
+# 106.4-106.5s a leg: a 0.1s spread, against 93.0-119.8s on the cut it replaces.
+# `tests/test_editor.py` is 101.6s of the 106.4s it sits in, so this is 5s off
+# the floor and there is nothing further to win by moving files.
+#
+# **Balance is not what to spend the next hour on.** Runs of the SAME lists put a
+# leg 44s apart — `views` measured 76.57s and 120.37s across four — so no re-cut
+# is visible in one run, and four were not enough to separate this cut from the
+# one it replaced (120.4s against 122.8s, in either direction depending on which
+# runs you take). What would actually move the gate is the floor, and the floor
+# is one file.
+#
+# `tests/test_render.py` draws every page and then measures it, and it is the
+# second-largest file in the suite. `tests/test_seats.py` is beside it rather
+# than on `coedit` because a seat band is drawn by the same rendering path, and
+# because `coedit` had no room for it.
 tests/test_render.py
-tests/test_table.py
+tests/test_seats.py
+tests/test_delete.py
+tests/test_status_gate.py
+tests/test_schedule.py
+tests/test_remote.py
+tests/test_validate.py
