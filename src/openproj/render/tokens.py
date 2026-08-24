@@ -28,32 +28,43 @@ def _status_class(status: str) -> str:
 # is either derived (start, end, blocks, any rollup) or authoritative (id), and
 # neither belongs in a form: a derived value typed by hand is a lie the next
 # reschedule contradicts, and an edited id orphans the file from every reference.
+#
+# KEY ORDER IS THE PAGE. The facts column (`_fact_rows`) and the create form
+# (`_new_rows`) both draw in this order, and it is jcanton's, 2026-08-24, given
+# after tags ended up above status on the record page: the shape of the work
+# first (status, priority, appetite, tags), then its people, then where it sits
+# and when. `title` stays first and is the heading, skipped by both readers.
 EDITABLE: dict[str, str] = {
     "title": "text",
     "status": "status",
+    "priority": "priority",
+    "person_weeks": "number",
+    "tags": "list",
     "owner": "text",
+    "assignees": "list",
+    "reviewers": "list",
+    "review_waived": "bool",
+    "parent": "text",
+    "depends_on": "list",
+    "prs": "list",
+    "cycle": "number",
+    "assigned_on": "date",
+    # The inbox-only fields, after everything above: they were not in the order
+    # jcanton gave because no planned kind reads them, and trailing the shared
+    # fields keeps his order intact on every kind rather than threading gaps
+    # through it. Within the tail, who to ask before where it went.
+    #
     # An issue's and a note's "who to ask". `_editable_for` intersects with
     # `model_fields`, so only the two inbox kinds are ever offered these — the
     # pipeline was built one commit ahead of the kinds on purpose, so the flip
     # commit added rungs and deleted pages without touching a form.
     "reported_by": "text",
     "written_by": "text",
-    "assignees": "list",
-    "reviewers": "list",
-    "review_waived": "bool",
-    "assigned_on": "date",
-    "priority": "priority",
-    "cycle": "number",
-    "parent": "text",
-    "depends_on": "list",
     # The two one-way edges an inbox record carries; rendered through `_links`
     # like `depends_on`, which is links rather than the bare ids both old pages
     # printed. Offered only to the two inbox kinds, same as the pair above.
     "pitched_into": "list",
     "became": "list",
-    "tags": "list",
-    "prs": "list",
-    "person_weeks": "number",
 }
 # The validator's own ladder, aliased and not retyped. This line was the five
 # words written out a second time — the same defect `PREFIX` below records being

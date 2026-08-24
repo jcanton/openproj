@@ -54,6 +54,7 @@ import shutil
 import subprocess
 from datetime import date
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pygit2
@@ -583,6 +584,47 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     # either, so each of those rows names the other three kinds.
     for field in ("owner", "status", "prs"):
         assert "product" not in owners[field], field
+
+
+class _NamedControls(HTMLParser):
+    """Every named form control, in document order.
+
+    A parser and not a regex, because the claim is about where controls sit in
+    the document — a control inside an attribute of a comment, or split across
+    a wrapped tag, is exactly what a regex mistakes."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.names: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        name = dict(attrs).get("name")
+        if tag in ("input", "select", "textarea") and name:
+            self.names.append(name)
+
+
+def test_the_create_form_and_the_facts_column_agree_on_field_order(client: TestClient):
+    """jcanton, 2026-08-24, of the create form: tags had ended up first, above
+    status. `_new_rows` built its union of every kind's fields kind by kind, and
+    the first rung is `product`, which reads only `tags` — so the create form
+    opened with Tags where the record page opened with Status: two orders for
+    one form. Both draw `EDITABLE`'s key order now.
+
+    The expectation is derived from `EDITABLE` rather than restated, so
+    reordering the fields tomorrow moves both pages together or fails here —
+    what this test pins is the agreement, not any particular order. `title` is
+    left out because both readers skip it: it is the heading, not a row.
+    """
+    for path in ("/new?kind=pitch", f"/detail/{TASK}"):
+        parser = _NamedControls()
+        parser.feed(client.get(path).text)
+        seen = [
+            name
+            for i, name in enumerate(parser.names)
+            if name in EDITABLE and name != "title" and name not in parser.names[:i]
+        ]
+        assert "status" in seen and "tags" in seen, f"{path} lost the fields themselves"
+        assert seen == [f for f in EDITABLE if f in seen], path
 
 
 def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
