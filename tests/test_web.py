@@ -1963,6 +1963,16 @@ def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
         if (title) title.click();
         return null;
       }
+      // Not while the document is still parsing. The script that rewrites this
+      // link is the shell's, it is inline, and it is BELOW the link — so the
+      // record page passes through a state in which `a.origin` exists still
+      // carrying the address it was RENDERED with. That answer is truthy, the
+      // walk ends on it, and the test reports the default as though the store
+      // had been empty. Observed directly in Chrome, sampling as fast as it
+      // could be asked: `loading | / ← all records`, then `complete | /table ←
+      // Table`. It failed that way twice on CI, on two branches that could not
+      // have caused it, before anybody looked at the window.
+      if (document.readyState === 'loading') return null;
       const back = document.querySelector('a.origin');
       return back ? back.getAttribute('href') + ' | ' + back.textContent : null;
     })()
