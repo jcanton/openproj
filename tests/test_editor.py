@@ -533,13 +533,39 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
 
     Three headers have to agree, and this is what "agree" means: back link,
     eyebrow, heading, meta line, in that order.
+
+    **Parsed, not searched.** This asked `page.index("<h1>")` until 2026-08-24,
+    which is a claim about a string and not about the document: a stylesheet
+    comment on this page explains what pressing Write used to do to the `<h1>`,
+    and the four characters in that sentence sorted before the heading itself.
+    The page holds four literal `<h1>` and exactly one `<h1>` ELEMENT. A
+    substring cannot tell markup from prose about markup; `elements` can, and
+    the question here was always "in what order does the document put these".
     """
+    def order(page: str, *wanted: str) -> list[int]:
+        """Where each of these sits in document order, by name."""
+        found = {}
+        for at, element in enumerate(elements(page)):
+            classes = element.attrs.get("class", "").split()
+            for name in wanted:
+                if name in found:
+                    continue
+                if name == "heading" and element.tag == "h1":
+                    found[name] = at
+                elif name != "heading" and name in classes and element.tag in ("p", "div"):
+                    found[name] = at
+        missing = [name for name in wanted if name not in found]
+        assert not missing, f"the page has no {missing}"
+        return [found[name] for name in wanted]
+
     detail = client.get(f"/detail/{TASK}").text
-    kind = detail.index('<p class="eyebrow"><span class="chip kind-')
-    assert detail.index('<p class="back">') < kind < detail.index("<h1>")
-    meta = detail.index('<p class="meta">')
-    assert meta > detail.index("<h1>")
-    assert 'class="chip kind-' not in detail[meta:], "and the kind is not said twice"
+    back, kind, heading, meta = order(detail, "back", "eyebrow", "heading", "meta")
+    assert back < kind < heading < meta, (
+        "the header does not read back link, kind, name, id — it reads "
+        f"{sorted(zip((back, kind, heading, meta), ('back', 'kind', 'name', 'id'), strict=True))}"
+    )
+    said = [e for e in elements(detail) if "kind-" in e.attrs.get("class", "")]
+    assert len(said) == 1, f"the kind is said {len(said)} times, not once"
     # Nor is the status, and it is not a chip here at all any more: the facts
     # column draws it as a ball on a hill, which is also the control that sets it.
     # It was a chip in this line AND a chip forty pixels below it, the same word in
@@ -556,16 +582,20 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     # The create form is the same document in another mode, so the picker that
     # decides the kind sits where the kind chip sits.
     new = client.get("/new").text
-    picker = new.index('<p class="eyebrow"><label class="kindpick">')
-    assert new.index('<p class="back">') < picker < new.index("<h1>")
+    back, picker, heading = order(new, "back", "eyebrow", "heading")
+    assert back < picker < heading, "the kind picker is not where the kind chip is"
+    assert any(
+        "kindpick" in e.attrs.get("class", "") for e in elements(new)
+    ), "the eyebrow on the create form is not the picker that decides the kind"
 
     # The cycle page has no eyebrow on purpose: its heading is "Cycle 37", so the
     # kind is already the first word of the name and a chip above it would be the
     # restatement the id column's kind chip was. What it does share is the shape.
     cycle = client.get("/cycle/37").text
     assert '<p class="back"><a href="/cycles">' in cycle
-    assert cycle.index('<p class="back">') < cycle.index("<h1>") < cycle.index('<p class="meta">')
-    assert 'class="eyebrow"' not in cycle
+    back, heading, meta = order(cycle, "back", "heading", "meta")
+    assert back < heading < meta, "the cycle page does not share the header's shape"
+    assert not [e for e in elements(cycle) if "eyebrow" in e.attrs.get("class", "")]
 
 
 def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):
