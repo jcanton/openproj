@@ -16,7 +16,6 @@ tags: [tapdeck, hearth, rewrite]
 prs: []
 created_schema_version: 2
 person_weeks: 4.0
-shaped_by: Ptarmigant
 ---
 
 # Tap-deck rewrite

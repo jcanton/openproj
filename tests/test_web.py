@@ -907,11 +907,12 @@ def test_the_index_json_keeps_the_fields_only_a_pitch_or_a_task_has(client: Test
 def test_a_rule_newer_than_the_record_reaches_the_client_as_a_warning(client: TestClient):
     """Grandfathering has to survive the trip through JSON, or the web view
     re-invents the rule that made adding a required field invalidate the whole
-    repository at once. The pitch predates the `shaped_by` rule, so it warns."""
+    repository at once. The pitch predates the somebody-assigned rule, so it
+    warns."""
     problems = index_of(client)["problems"]
-    shaped_by = [p for p in problems if p["record_id"] == PITCH and p["field"] == "shaped_by"]
+    assigned = [p for p in problems if p["record_id"] == PITCH and p["field"] == "assignees"]
 
-    assert [p["severity"] for p in shaped_by] == ["warning"]
+    assert [p["severity"] for p in assigned] == ["warning"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1516,12 +1517,12 @@ def test_a_create_is_not_refused_over_a_warning(client: TestClient):
 
 def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path: Path):
     """Grandfathering protects the corpus that already exists, not the record being
-    created right now. The seeded pitch only warns about `shaped_by` and about
-    having nobody on it; a pitch created today is created at the repository's
-    `schema_version` and is blocked without either. This is the mechanism working
-    end to end rather than in a unit test, and it is the reason a required field
-    can ever be added at all — there are two of them at version 2 now, and both
-    refuse this create while neither breaks a file already in the corpus."""
+    created right now. The seeded pitch only warns about having nobody on it; a
+    pitch created today is created at the repository's `schema_version` and is
+    blocked without assignees. This is the mechanism working end to end rather
+    than in a unit test, and it is the reason a required field can ever be added
+    at all — the version 2 rule refuses this create while it breaks no file
+    already in the corpus."""
     base = head(client)
     response = create(
         client,
@@ -1536,7 +1537,7 @@ def test_a_new_record_is_held_to_the_current_rules(client: TestClient, repo_path
     )
 
     assert response.status_code == 422
-    assert [p["field"] for p in response.json()["problems"]] == ["assignees", "shaped_by"]
+    assert [p["field"] for p in response.json()["problems"]] == ["assignees"]
     assert git_head(repo_path) == base
 
 

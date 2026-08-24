@@ -85,12 +85,6 @@ def test_a_record_opens_at_the_foot_of_its_own_ladder():
 
 def test_sizes_are_optional_on_both_subclasses():
     assert Pitch(id="pitch-abc123", kind="pitch", title="P").person_weeks is None
-    # A list, and empty rather than None: shaping is often done in pairs, and a
-    # bare string in a file still parses (and still writes back) as one name.
-    assert Pitch(id="pitch-abc123", kind="pitch", title="P").shaped_by == []
-    assert Pitch(
-        id="pitch-abc123", kind="pitch", title="P", shaped_by="jackdawrie"
-    ).shaped_by == ["jackdawrie"]
     assert Task(id="task-abc123", kind="task", title="T").person_weeks is None
 
 
@@ -101,9 +95,10 @@ def test_a_pitch_and_a_task_share_one_size_field_and_a_project_has_none():
     assert "person_weeks" in Pitch.model_fields
     assert "person_weeks" in Task.model_fields
     assert "person_weeks" not in Project.model_fields
-    # `shaped_by` is the field that really is one kind's: shaping is what a pitch
-    # gets, and it is asked for at `ready`.
-    assert "shaped_by" not in Task.model_fields
+    # Retired, and deliberately not coming back: on a pitch `owner` is who
+    # shaped it and holds it — jcanton, 2026-08-24, having counted four lists
+    # of people on one record. This line is the tripwire.
+    assert "shaped_by" not in Pitch.model_fields
     assert Project.model_fields.keys() == Record.model_fields.keys()
 
 
@@ -113,7 +108,6 @@ def test_optional_fields_still_accept_real_values():
         kind="pitch",
         title="MPI on CI verify with serial",
         person_weeks=1.0,
-        shaped_by="jackdawrie",
         owner="merganserly",
         reviewers=["jackdawrie"],
         assigned_on=date(2026, 8, 13),

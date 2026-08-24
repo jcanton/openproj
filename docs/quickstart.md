@@ -95,9 +95,9 @@ rather than judged:
 - `## For later` on a pitch is scope cut to fit the appetite. It is the only record the plan keeps of
   a bet that was trimmed, and it was invisible until it had a name.
 
-The header lines of the HackMD template — Shaped by, Appetite, Developers — are fields here rather
-than headings. A heading restating a field is the two-copies-of-one-fact problem this tool exists to
-end.
+The header lines of the HackMD template are covered without being headings: Appetite and Developers
+are fields here, and Shaped by is what `owner` records now. A heading restating a field is the
+two-copies-of-one-fact problem this tool exists to end.
 
 ## The statuses
 
@@ -108,7 +108,7 @@ save and by `openproj check`.
 |---|---|---|
 | `thinking` | nobody has looked at this yet, and it is where a new record opens | nothing |
 | `shaping` | an idea nobody has bet on | nothing — it has no owner and no size by definition |
-| `ready` | shaped, and bettable | an owner, a reviewer or `review_waived`, a size, and `shaped_by` on a pitch |
+| `ready` | shaped, and bettable | an owner, somebody assigned, a reviewer or `review_waived`, and a size |
 | `in_progress` | being built | `assigned_on`, and a reviewer who is not the owner |
 | `done` | finished | at least one PR |
 | `shelved` | parked | nothing — parked work is not broken work |

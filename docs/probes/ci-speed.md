@@ -1,26 +1,12 @@
 # Making CI faster
 
-> **Superseded in one respect, 2026-08-23, later the same day: the repository went PUBLIC.**
+> **Re-measured on the 4-core public runner, 2026-08-24. Section 0b below is the answer; the
+> banner that stood here asking for it is now that section.**
 >
-> Every runner measurement below was taken on the **2-core, 8 GB** box GitHub gives a *private*
+> Everything in sections 1 to 7 was measured on the **2-core, 8 GB** box GitHub gives a *private*
 > repository, and that number is the reason this document chose five sharded jobs over
-> `pytest-xdist -n auto` — see section 2. Public repositories get **4-core, 16 GB**, so the
-> constraint that decided the design no longer holds.
->
-> First observation on the new hardware: the same suite, same shards, **2m25s** against the
-> 3m02s–3m33s range recorded below. That is one run and not a measurement — the spread between runs
-> here is already ±30 s, and nothing has been re-probed.
->
-> What is worth re-taking before changing anything: the runner's actual core count and memory
-> (section 2 probed it rather than trusting the docs, and so should whoever revisits this); whether
-> `-n 2` *inside* each shard now pays, given that the Chrome-heavy shards were memory-bound as much
-> as CPU-bound; and whether five shards is still the right number when each machine has twice the
-> cores. Fewer, wider shards would cut the per-job setup that section 5 measures at 26 of 182
-> seconds.
->
-> Actions minutes are also free for a public repository, so the billed-minutes column in section 5
-> is now a curiosity rather than a constraint.
-
+> `pytest-xdist -n auto` — see section 2. The repository went public on 2026-08-23 and the box is
+> **4-core, 15.6 GB**. The conclusion survived; the shard cut did not.
 
 *Written 2026-08-23, on branch `ci-speed` (PR #72). **All nine changes are now
 written and measured.** Every run below is green, and the last three are the
@@ -69,6 +55,195 @@ the reasons anybody guessed. The runner was probed in the same run and it is a
 **2-core, 8 GB** box, which settles that argument rather than assuming it.
 
 ---
+
+## 0b. The 4-core re-measurement (2026-08-24)
+
+*jcanton: "the sharding was measured against a 2-core box that no longer exists. One run at 2m25s
+isn't a measurement, and that document's own standard is that a runner gets probed."* Both halves
+answered, and then a third thing turned up that matters more than either.
+
+### The runner, probed
+
+From a step that now runs on **every leg**, because "the runner" is five runners and nothing
+promises they are the same size:
+
+```
+nproc            4          (was 2)
+MemTotal         15.6 GB    (was 8)
+google-chrome    151.0.7922.137
+node             v24.19.0
+```
+
+The probe stays in `ci.yml`. It costs nothing, and the fact it prints is the fact that decided this
+document's whole shape and then went stale in silence — noticed only because the repository's
+visibility changed on a day somebody happened to be reading.
+
+### One run is not a measurement. Twelve are.
+
+Job seconds over the twelve most recent green runs before any change:
+
+| leg | 2-core pytest | 4-core job — min / **med** / max |
+|---|---:|---:|
+| `editor` | 133.05 | 99 / **119** / 156 |
+| `views` | 156.04 | 124 / **138** / 197 |
+| `graph` | 134.67 | 91 / **100** / 111 |
+| `rest` | 147.63 | 129 / **140** / 168 |
+| `coedit` | 118.56 | 110 / **124** / 143 |
+
+**Wall clock 145–202s, median 151s.** The gate is **2m25s–3m22s**, and the 2m25s that prompted this
+was its fast end rather than its middle.
+
+### The cut had inverted
+
+Pytest seconds per leg on the two boxes, same tree, same shards:
+
+| leg | 2-core | 4-core | ratio |
+|---|---:|---:|---:|
+| `editor` | 133.05 | 99.63 | 0.75 |
+| `views` | 156.04 | 119.63 | 0.77 |
+| `graph` | 134.67 | 89.70 | 0.67 |
+| `rest` | 147.63 | 120.39 | 0.82 |
+| `coedit` | 118.56 | 109.13 | 0.92 |
+| **total** | **689.95** | **538.48** | **0.78** |
+
+**The legs did not shrink together and the order changed.** `editor` was the file the whole cut was
+built around — *"no file-level cut goes below it"* — and became the *fourth* most expensive leg.
+`graph` took the extra cores best (0.67) and `coedit` barely noticed them (0.92), which is what you
+would expect of a leg that is mostly Chrome startup against one that is mostly waiting on sockets.
+
+### The first re-cut failed, and the reason is the threshold
+
+The obvious move was to re-cut from the 4-core table. It bought nothing: **critical path 120.39s
+before, 120.22s after.**
+
+The cause is in the data it was made from. `--durations-min=0.05` is what the original probe used,
+and 501.3s of rows out of 538.5s of pytest means **37s of the suite is invisible to it — and not
+evenly**: 16.0s of that was on the leg with 1103 tests and 3.1s on the leg with 79. The cut
+compensated with a fitted term, `attributed + 2.5s + 12ms per test`, and the fit did not hold:
+
+| leg | predicted | printed | error |
+|---|---:|---:|---:|
+| `editor` | 107.4 | 89.87 | −17.5 |
+| `rest` | 107.2 | 108.69 | +1.5 |
+| `graph` | 107.3 | 114.37 | +7.1 |
+| `views` | 107.2 | 112.00 | +4.8 |
+| `coedit` | 107.5 | 120.22 | +12.7 |
+
+A test that builds a real bare git repo costs an order of magnitude more than one that does not, and
+those are exactly the tests that hide under a 50ms floor. So the threshold went to **zero** and the
+cut was re-made from complete per-file totals: `docs/probes/ci-durations-4core.txt`, 532.3s of rows
+over 42 files, 18s unattributed and that 18s is collection and imports.
+
+| cut | critical leg | spread |
+|---|---:|---:|
+| the 2-core lists | 119.8s | 26.7s |
+| the modelled re-cut | 116.3s | 20.8s |
+| **from exact totals** | **106.5s** | **0.1s** |
+
+`tests/test_editor.py` is 101.6s of the 106.4s leg it sits in, so that is **five seconds off the
+floor** and there is nothing further to win by moving files between lists.
+
+### And it bought nothing measurable, which is the real answer
+
+Four runs of the final lists, printed pytest seconds:
+
+| leg | run 1 | run 2 | run 3 | run 4 | median |
+|---|---:|---:|---:|---:|---:|
+| `editor` | 99.00 | 99.21 | 91.38 | 111.55 | 99.11 |
+| `views` | 102.85 | 116.70 | **76.57** | 120.37 | 109.78 |
+| `graph` | 106.57 | 97.66 | 100.98 | 95.74 | 99.32 |
+| `rest` | 115.85 | 118.02 | 129.34 | 126.19 | 122.11 |
+| `coedit` | 119.41 | 116.13 | 127.12 | 113.28 | 117.77 |
+| **critical** | **119.41** | **118.02** | **129.34** | **126.19** | **122.8** |
+
+**120.4s before, 122.8s after — and the difference is not resolvable at this sample size.** Three
+runs said 119.4 and looked like a one-second win; the fourth said 126.2 and took it back. A cut
+that is 13s better on paper and 0.1s from perfectly balanced is, in practice, the same cut. `views`
+alone ranges from 76.57s to 120.37s across four runs of an identical list.
+
+*This section said "it bought one second" until the fourth run arrived. Three samples were not
+enough to say even that, which is the finding underneath the finding: on this runner a claim about
+a shard cut needs more runs than anybody is going to take, so the claim is not worth making.*
+
+The lists are kept anyway, and the reason is not the second. The lists they replace are justified in
+their own comments by numbers from a machine that no longer exists, and by the claim that
+`tests/test_editor.py` at 151.3s is the floor no leg can go under — which is false twice over now.
+A list whose stated reason is wrong is a list the next person re-derives from the wrong table. What
+is NOT kept is the idea that this is worth doing again.
+
+### The finding that matters more: the noise is the same size as the imbalance
+
+Two runs of **identical shard lists**:
+
+| leg | run A | run B | Δ |
+|---|---:|---:|---:|
+| `editor` | 89.87 | 113.18 | **23.3** |
+| `views` | 112.00 | 101.95 | 10.1 |
+| `graph` | 114.37 | 120.58 | 6.2 |
+| `rest` | 108.69 | 98.10 | 10.6 |
+| `coedit` | 120.22 | 116.81 | 3.4 |
+
+**A leg moves 23s between runs of the same list.** The whole imbalance that was worth removing is
+13s. So a re-cut is real in expectation and invisible in any single run, and anybody comparing two
+runs to decide whether a cut helped is reading noise. Quote a median over several runs or quote
+nothing.
+
+This is section 5's finding again — *"the spread between runs is larger than anything left to
+optimise"* — and it has survived a doubling of the hardware, an inverted leg order, and three
+separate cuts:
+
+| cut | critical, measured |
+|---|---:|
+| the 2-core lists | 120.39s |
+| the modelled re-cut | 120.22s |
+| from exact totals, median of 4 | 122.8s |
+
+**Three arrangements of the same 42 files, all inside each other's noise.** Do not spend an
+afternoon rebalancing: the answer is known, and it is that the arrangement does not matter. The cut
+is five seconds off its floor and the floor is one file.
+
+### `pytest-xdist -n 2`: measured, and refused for a new reason
+
+The old refusal was arithmetic about a 2-core box, so it had to be re-taken. Four legs at `-n 2
+--dist load`, `coedit` serial because it must never be internally parallelised:
+
+| leg | serial | `-n 2` | |
+|---|---:|---:|---|
+| `editor` | 89.87 | **113.83** | **+27%** |
+| `views` | 112.00 | 86.96 | −22% |
+| `graph` | 114.37 | 93.69 | −18% |
+| `rest` | 108.69 | 79.79 | −27% |
+| `coedit` | 120.22 | 129.67 | serial in both |
+| **total** | **545.15** | **503.94** | −7.6% |
+
+Green everywhere, so the suite is *correct* under two workers, module-scoped fixtures included.
+It is still refused, on two measurements rather than one argument:
+
+* **It makes the floor worse.** `tests/test_editor.py` is 53 fresh Chromes laying out a page
+  carrying 594 KB of inlined Ace. Two workers do not halve that; the cost is process startup and
+  memory, and two Chromes on four cores contend. +27% on the one leg worth improving.
+* **It cannot reach the critical path.** That is `coedit`, which must stay serial. A 7.6% cut in
+  total machine seconds buys **zero** wall clock when the bound is a leg you are not allowed to
+  split.
+
+`--dist loadfile` would keep the fixtures honest and does nothing at all for `editor`, whose cost is
+one file — the mode that is safe cannot touch the thing worth touching. `pytest-xdist` is not a
+dependency of this project; if it is ever added, this is the table to beat.
+
+### So what would actually make the gate faster
+
+Not the cut, and not more machines — six is floor-bound at 94.4s and costs a seventh billing
+rounding for six seconds. **The gate cannot go below about 102s of pytest while
+`tests/test_editor.py` is one file**, which puts a hard floor near 2m00s on a gate whose median is
+2m31s. The only lever left is splitting that file, and its natural seam is still `?editor=ace`
+against `?editor=plain` — which survived the editor toggle being removed in v0.21.0, because
+`?editor=plain` is still the address that gets the plain box.
+
+### Billed minutes
+
+Free for a public repository. Section 5's billed column is a curiosity now, and the argument against
+a sixth shard rests on balance rather than cost.
+
 
 ## 1. What CI costs today, per step, measured
 

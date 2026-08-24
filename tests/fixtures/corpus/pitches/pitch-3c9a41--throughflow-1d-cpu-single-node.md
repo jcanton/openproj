@@ -7,7 +7,6 @@ status: done
 owner: null            # REQUIRED from schema_version 1; not in source
 reviewers: []          # REQUIRED from schema_version 1; not in source
 person_weeks: 4.0
-shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees:
   - yellowhammer7
 assigned_on: null      # was fabricated during migration; unknown

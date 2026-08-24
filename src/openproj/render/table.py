@@ -3491,8 +3491,8 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     is asked of the same two places rather than written down a third time:
     `EDITABLE` says which fields a person owns at all, and `model_fields` says
     which of them this kind has. A project has no `person_weeks`, so it gets no
-    box under Appetite; a pitch's `shaped_by` would be here if the table had a
-    column for it, and the day it does this map grows the entry on its own.
+    box under Appetite; `assigned_on` would be here if the table had a column
+    for it, and the day it does this map grows the entry on its own.
 
     A column missing from a kind's map is a column that kind cannot be typed into
     — which is three different sentences and all of them true: `id` is the

@@ -2313,9 +2313,10 @@ if (ORIGIN) {
   if (typeof from.href === 'string' && ORIGIN_PATH.test(from.href) && from.label) {
     // Every article, because the static export writes the whole corpus into one
     // `detail.html` and each record in it carries its own back link. `a.origin`
-    // and not `.back a`: the page-chrome controls MOVE into this row in full
-    // page — see `showView` on the record page — and the sign-in control the
-    // shell fills in later is a link.
+    // and not `.back a`: the sign-in control the shell fills in later is also
+    // an `<a>`, and in the full-page era (gone 2026-08-24) the record page
+    // moved it and the theme toggle into this very row — the selector names
+    // the one link it means, and stays right if anything joins it again.
     for (const back of document.querySelectorAll('a.origin')) {
       // `setAttribute` and not `back.href =`, which are the same thing in a
       // browser and not in `tests/js/drive.js`: the shim has no reflection, so
