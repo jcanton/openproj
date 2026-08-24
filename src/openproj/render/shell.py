@@ -1500,6 +1500,18 @@ tr.nothing .hint { margin: 0 0 .75rem; }
 .unreadable code { font-family: var(--font-mono); }
 .unreadable li, .unreadable .headline { overflow-wrap: anywhere; }
 .unreadable .hint { margin: .35rem 0 0; color: var(--muted); }
+/* The pile banner: `.unreadable`'s strip — same position, same shape — one
+   severity down, in the warn pair, because while it shows the store is still
+   taking writes; the blocker moment is the 503, which arrives with its own
+   sentence on the save itself. Loud is the strip's job here, wallpaper the
+   risk, and what guards against wallpaper is `showPile`'s threshold, not a
+   quieter colour. Cascade: no rule in this sheet or any page's matches a bare
+   div child of #main — the id at (1,0,0) is the only source for every property
+   except `[hidden]`'s UA `display: none`, which wins while the attribute is
+   present exactly as it should (checked with tests/cascade.py, not assumed). */
+#pile { border-left: 3px solid var(--sev-warn); background: var(--sev-warn-soft);
+        padding: .6rem .8rem; margin: 0 0 1rem; font-size: 13px; font-weight: 600;
+        overflow-wrap: anywhere; }
 /* A reader who has told their operating system they want less motion gets none.
    It is a system setting and not a preference this app keeps, so there is no
    toggle for it and nothing in `remembered` — the browser answers, every page.
@@ -2139,6 +2151,18 @@ function fitRoom() { settleRoom(4); }
 <p class="hint">Fix them in git and reload. Everything else in the plan is here.</p>
 </section>
 {% endif -%}
+{#- The pile banner: the loud middle of the deferred push's escalation, between
+    the table's quiet per-row mark and the 503 the store answers past the pile
+    ceiling (docs/deferred-push.md, "Saying it on the page"). In the shell
+    because the graph, the timeline, the cycles and the record page have no
+    mark of their own and rely on it; in flow at the top of <main>, in the
+    `.unreadable` strip's own position and shape, because "saves that have not
+    reached GitHub" is the same KIND of news as "files that are not on this
+    page" — about the plan, not about a control. Live pages only: a rendered
+    file has no server whose pile this could be. Filled by `showPile` below,
+    numbers only, through textContent. -#}
+{% if live %}<div id="pile" role="status" aria-live="polite" hidden></div>
+{% endif -%}
 {{ content }}
 </main>
 <script>
@@ -2403,7 +2427,13 @@ addEventListener('openproj:ours', event => {
 // take it down again.
 let movedShowing = null;
 
-function showMoved({commit, changed}) {
+function showMoved(message) {
+  // Only the stream's bare {commit, changed} frame is a plan change; a typed
+  // frame (`t` present, see web.py's `broadcast`) is other news riding the
+  // same stream. Assuming every frame was a change would pop "The plan
+  // changed." over pages the pusher had just confirmed, not moved.
+  if (message.t !== undefined) return;
+  const {commit, changed} = message;
   if (movedOurs.has(commit)) return;
   movedShowing = commit;
   // What this page is looking at. A page showing one record has it in its URL;
@@ -2422,8 +2452,94 @@ function showMoved({commit, changed}) {
 const source = new EventSource('/api/events');
 source.onmessage = event => {
   const message = JSON.parse(event.data);
+  // The pusher's landed frame — {t: 'landed', landed, remapped, parked},
+  // defined at web.py's `broadcast` — re-broadcast as a DOM event because its
+  // consumers (the table's row marks, the editor's save state) live in other
+  // scripts and this EventSource is the page's only one. Immediately, not held
+  // behind an in-flight write like a plan change: a frame cannot name a sha
+  // whose request has not answered yet, so there is nothing to race.
+  if (message.t === 'landed') {
+    dispatchEvent(new CustomEvent('openproj:landed', {detail: message}));
+  }
   if (movedWriting) movedHeld.push(message); else showMoved(message);
 };
+</script>
+<script>
+// The pile banner (docs/deferred-push.md, "Saying it on the page"): loud when
+// the saves already made here are not landing on GitHub, quiet otherwise. It
+// reads the numbers /api/health reports — the reading the store's write gate
+// also refuses on, so this banner and the 503 cannot disagree about the pile.
+const pile = document.getElementById('pile');
+
+// When "not on GitHub yet" stops being ordinary. A push lands in about two
+// seconds, so a save still here after a minute means the pusher is failing or
+// GitHub is away — said now, well before store.py's ten-minute refusal,
+// because a warning that arrives with the refusal has warned nobody. Not
+// lower: every save is briefly unpushed by design, and a banner that spoke on
+// that window would speak on every save and be wallpaper by the day it
+// matters — the same alarm-fatigue argument that keeps /api/health green
+// below the ceiling.
+const PILE_LOUD_AGE_S = 60;
+// The poll is the backbone, not a comfort: Cloud Run recycles the event
+// stream every 300s with no replay, so a landed frame proves a landing and
+// its absence proves nothing — only asking again can notice a pusher that has
+// gone quiet. Slow, because a page that is just sitting open owes the server
+// almost nothing; the landed listener below re-asks the moment there is news.
+const PILE_POLL_MS = 60000;
+
+function showPile(health) {
+  const stranded = health.unpushed || 0;
+  const age = health.oldest_unpushed_age || 0;
+  const parked = health.parked || 0;
+  if (!parked && !(stranded && age >= PILE_LOUD_AGE_S)) {
+    pile.hidden = true;
+    return;
+  }
+  const minutes = Math.max(1, Math.floor(age / 60));
+  const said = [];
+  // "Saves", not commits: named by what a person did, and it is their save
+  // the mark on the table row is quietly saying the same thing about.
+  if (stranded) said.push(
+    `${stranded} save${stranded === 1 ? ' is' : 's are'} on this server and `
+    + `not on GitHub yet — the oldest has waited ${minutes} `
+    + `minute${minutes === 1 ? '' : 's'}.`);
+  // `parked` counts the local refs/openproj/stranded-* refs, and store.py's
+  // `_settle` deletes each one THE MOMENT its branch push is confirmed on the
+  // remote — so a nonzero count is precisely the saves GitHub does not hold
+  // in any form yet, the ones a recycled container takes with it. The branch
+  // and its pull request describe the state AFTER that push lands, which is
+  // when this count is zero and the sentence is gone: this line once promised
+  // them here, calling the work safe at the one moment it was not.
+  if (parked) said.push(
+    `${parked} save${parked === 1 ? '' : 's'} could not land on GitHub's main `
+    + `and ${parked === 1 ? 'is' : 'are'} still only on this server — headed `
+    + 'for openproj/stranded-* branches, but not on GitHub in any form until '
+    + 'that push is confirmed.');
+  const sentence = said.join(' ');
+  // Numbers and fixed words only, but through textContent all the same: one
+  // escaping boundary, no exceptions to reason about. Re-set only on change —
+  // a polite live region speaks when its contents move, and the same report
+  // re-said every poll is the wallpaper this banner exists to not be.
+  if (pile.textContent !== sentence) pile.textContent = sentence;
+  pile.hidden = false;
+}
+
+async function readPile() {
+  // The body is read whatever the status: past the ceiling the route answers
+  // 503 and still carries the numbers, and that answer is exactly the one
+  // this banner exists for. A network failure or a non-JSON body from
+  // something in front of the service is caught and the banner keeps its last
+  // word — the next poll asks again.
+  try { showPile(await (await fetch('/api/health')).json()); } catch {}
+}
+
+readPile();
+setInterval(readPile, PILE_POLL_MS);
+// A landing is the moment the news changes, so re-ask at once rather than in
+// up to a minute — but only while the banner is up: on the quiet day this
+// frame follows every save, and a health read per save per open tab is a poll
+// pretending to be an event.
+addEventListener('openproj:landed', () => { if (!pile.hidden) readPile(); });
 </script>
 {% endif %}
 </body></html>

@@ -39,6 +39,7 @@ so that both suites agree on what a plan repository looks like.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import queue
 import re
@@ -554,8 +555,13 @@ def test_healthz_reports_the_commit_being_served(client: TestClient, repo_path: 
         # Zero because there is no remote here at all, which is the honest answer
         # rather than a special case: nothing is waiting to be pushed. `detail` is
         # present and null rather than absent — a key that appears only when
-        # something is wrong is a key a script's JSON path breaks on.
+        # something is wrong is a key a script's JSON path breaks on. The same
+        # argument seats `oldest_unpushed_age` and `parked` here: they are the
+        # pile in numbers, the shell's banner reads them every minute, and on
+        # the quiet day they are null and zero rather than missing.
         "unpushed": 0,
+        "oldest_unpushed_age": None,
+        "parked": 0,
         "detail": None,
     }
 
@@ -718,9 +724,16 @@ def test_health_says_no_when_this_disk_and_the_plan_have_forked(with_a_remote):
 
     assert answer.status_code == 503, "a check that reads status codes still passed"
     assert answer.json()["ok"] is False
-    # Both doors say the same thing, including the code.
+    # Both doors say the same thing, including the code. `oldest_unpushed_age`
+    # is a clock read per request, so two asks a moment apart differ in its
+    # decimals — same field, same meaning, a different instant — and it is
+    # compared as the clock it is rather than byte for byte.
     assert client.get("/healthz").status_code == 503
-    assert client.get("/healthz").json() == answer.json()
+    ours, theirs = client.get("/healthz").json(), answer.json()
+    assert ours.pop("oldest_unpushed_age") == pytest.approx(
+        theirs.pop("oldest_unpushed_age"), abs=2.0
+    )
+    assert ours == theirs
 
     # And it is the force-push guard's own sentence, carrying both shas: the
     # operator reading a monitor is told which commit the remote lost and where
@@ -1476,6 +1489,23 @@ def test_a_create_mints_the_id_and_files_it_by_kind(client: TestClient, repo_pat
     assert index_of(client)["plan"][new_id]["title"] == "Per-field delta tolerances"
 
 
+def test_a_creations_answer_says_the_commit_has_not_reached_the_remote(client: TestClient):
+    """A PATCH has answered `pushed` since the store existed, and the two 201s
+    carried no key at all — so the create and promote paths had nothing to hang
+    a "saved here, not on GitHub yet" mark on, for the one row the person is
+    certainly looking at (docs/deferred-push.md, "Saying it on the page")."""
+    made = create(client, {"kind": "note", "title": "An idea worth keeping"})
+    assert made.status_code == 201, made.text
+    assert made.json()["pushed"] is False
+
+    promoted = client.post(
+        "/api/promote",
+        json={"source": made.json()["id"], "kind": "pitch", "base_commit": head(client)},
+    )
+    assert promoted.status_code == 201, promoted.text
+    assert promoted.json()["pushed"] is False
+
+
 def test_a_create_missing_its_status_gated_fields_is_refused(
     client: TestClient, repo_path: Path
 ):
@@ -1941,9 +1971,9 @@ def test_an_oversized_body_is_refused_at_the_door(client: TestClient, repo_path:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
-def live_server(repo_path: Path):
-    """A real uvicorn on a real socket, which this one test needs.
+@contextlib.contextmanager
+def serving(app):
+    """A real uvicorn on a real socket, for the tests that read an event stream.
 
     Starlette's `TestClient` runs the application to completion and buffers the
     whole body before it hands back a response, so `client.stream()` over an
@@ -1951,17 +1981,9 @@ def live_server(repo_path: Path):
     Reading the stream over a socket is also the honest test: chunked transfer
     and the absence of buffering are properties of the server, not of the
     generator, and they are exactly what breaks SSE in practice.
-
-    The lock in `store.py` is per-repository, so this owns the whole repository
-    for the duration and no other client fixture may be used beside it.
     """
     server = uvicorn.Server(
-        uvicorn.Config(
-            create_app(repo_path, auth="dev", secret=SECRET),
-            host="127.0.0.1",
-            port=0,
-            log_level="warning",
-        )
+        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -1974,6 +1996,17 @@ def live_server(repo_path: Path):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+@pytest.fixture
+def live_server(repo_path: Path):
+    """`serving`, over the seeded corpus and no remote.
+
+    The lock in `store.py` is per-repository, so this owns the whole repository
+    for the duration and no other client fixture may be used beside it.
+    """
+    with serving(create_app(repo_path, auth="dev", secret=SECRET)) as url:
+        yield url
 
 
 def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
@@ -2075,6 +2108,104 @@ def test_a_write_is_broadcast_to_everybody_watching(live_server: str):
 
     assert event["commit"] == commit
     assert event["changed"] == [TASK]
+
+
+def test_a_quiet_days_landing_is_announced_in_its_own_kind_of_frame(tmp_path: Path):
+    """The pusher's confirmation is a second KIND of frame, not a second plan
+    change: it carries the discriminator the plan-changed frame deliberately
+    lacks, plus the tip, the re-minted shas and the parked ones — everything a
+    per-row "saved here, not on GitHub yet" mark clears by, since a mark cannot
+    wait to see its own sha on main when recovery re-mints shas
+    (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'").
+
+    Announced on the quiet day too, which is the defect this test was written
+    failing against: the frame went out only when a recovery had re-minted or
+    parked something, so the ordinary save — the case that is every save —
+    confirmed nothing and its mark could never clear.
+    """
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    clone.remotes.delete("origin")
+
+    cookies = {SESSION_COOKIE: sign_session(ANN, SECRET)}
+    seen: queue.Queue[dict] = queue.Queue()
+
+    with (
+        serving(create_app(plan, auth="dev", secret=SECRET, remote=f"file://{origin}")) as base,
+        httpx.Client(base_url=base, cookies=cookies, timeout=15) as watcher,
+        httpx.Client(base_url=base, cookies=cookies, timeout=15) as writer,
+    ):
+
+        def listen() -> None:
+            with watcher.stream("GET", "/api/events") as response:
+                seen.put({"content-type": response.headers["content-type"]})
+                kinds: set[bool] = set()
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    frame = json.loads(line.partition(":")[2])
+                    seen.put(frame)
+                    kinds.add("t" in frame)
+                    if kinds == {True, False}:
+                        return
+
+        listener = threading.Thread(target=listen, daemon=True)
+        listener.start()
+        assert seen.get(timeout=15)["content-type"].startswith("text/event-stream")
+
+        commit = save(writer, TASK, {"priority": "high"}).json()["commit"]
+
+        # Two frames, in no guaranteed order: the route announces the change on
+        # its own coroutine while the pusher's thread hops onto the loop with
+        # the landing, and a `file://` push is fast enough to win that race.
+        frames = [seen.get(timeout=15)]
+        try:
+            frames.append(seen.get(timeout=15))
+        except queue.Empty:
+            pytest.fail("the quiet day's landing was never announced; only the "
+                        "plan-changed frame arrived")
+        listener.join(timeout=15)
+
+    by_kind = {("t" in frame): frame for frame in frames}
+    # The plan-changed frame is untouched — bare, no discriminator — so nothing
+    # already listening to it moves.
+    assert by_kind[False] == {"commit": commit, "changed": [TASK]}
+    # The landed frame, whole. The quiet day sends the empty map and list
+    # rather than omitting them, because the shape is the protocol.
+    assert by_kind[True] == {"t": "landed", "landed": commit, "remapped": {}, "parked": []}
+
+
+def test_the_banner_ignores_the_landed_frame_and_hands_it_to_the_page(client: TestClient):
+    """`showMoved` assumed every frame on the stream was a plan change, so a
+    typed frame would have popped "The plan changed." over pages the pusher had
+    just confirmed rather than moved. The shell recognises the one frame that
+    is its own — the bare `{commit, changed}` — and rebroadcasts the landed
+    frame as an `openproj:landed` DOM event, because the table's marks and the
+    editor's save state live in other scripts and this page has one EventSource.
+    """
+    from test_injection import run_js
+
+    landed = {"t": "landed", "landed": "a" * 40, "remapped": {}, "parked": []}
+    answer = run_js(
+        client.get("/table").text,
+        "(() => {"
+        "  let heard = null;"
+        "  addEventListener('openproj:landed', event => { heard = event.detail; });"
+        f" source.onmessage({{data: JSON.stringify({json.dumps(landed)})}});"
+        "  const quiet = moved.hidden;"
+        "  source.onmessage({data: JSON.stringify({commit: 'b'.repeat(40), changed: []})});"
+        "  return {quiet, afterAChange: moved.hidden, heard};"
+        "})()",
+        page=True,
+    )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    assert answer["value"]["quiet"] is True, "the landed frame popped the banner"
+    assert answer["value"]["afterAChange"] is False, "a real change must still pop it"
+    assert answer["value"]["heard"] == landed
 
 
 def test_a_record_whose_filename_carries_a_slug_is_still_found(
@@ -4545,23 +4676,24 @@ def forked(tmp_path: Path) -> Forked:
         yield Forked(client, plan, origin, confirmed, rewritten, note.json()["id"])
 
 
-def wedged_writes(forked: Forked) -> dict[str, object]:
-    """Every HTTP write route, driven once, against a plan whose fork is parked.
+def wedged_writes(client: TestClient, note: str) -> dict[str, object]:
+    """Every HTTP write route, driven once, against a store that refuses writes.
 
     A dict and not a list because the failures are read by name: "the asset
     upload answered 500" is a different piece of news from "the promote route
-    did". None of them can discover the fork any more — nothing on the write
-    path touches the network — so the store's gate refuses each one off the
-    same two local refs the guard reads, before any commit is made.
+    did". Shared by the forked plan and the pile past its ceiling (section 14),
+    because they are the two conditions the store's gate refuses whole — and a
+    route the fork drives that the pile does not is a route that can drift.
+    `note` is an inbox record made before the store closed, so `POST
+    /api/promote` is driven with a real source.
     """
-    client = forked.client
     base = head(client)
     return {
         "PATCH /api/record/{id}": save(client, OTHER, {"priority": "high"}, base=base),
         "POST /api/record": create(client, {"kind": "note", "title": "made while wedged"}),
         "DELETE /api/record/{id}": remove(client, DONE, base=base),
         "POST /api/promote": client.post(
-            "/api/promote", json={"source": forked.note, "kind": "pitch", "base_commit": base}
+            "/api/promote", json={"source": note, "kind": "pitch", "base_commit": base}
         ),
         "PUT /api/cycle/{number}": client.put(
             "/api/cycle/41",
@@ -4600,7 +4732,7 @@ def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: For
         # Clears a cookie.
         ("POST", "/logout"),
     }
-    answers = wedged_writes(forked)
+    answers = wedged_writes(forked.client, forked.note)
     driven = {
         ("PATCH", "/api/record/{record_id}"),
         ("POST", "/api/record"),
@@ -4798,3 +4930,381 @@ def test_the_other_failures_the_tuple_names_are_answered_too():
         "the pages; one of the two has changed wording, so a person meeting the "
         "same failure on the two surfaces is now told two different things"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 14. The pile says so loudly, and then stops taking more
+#
+# The escalation's last rung (docs/deferred-push.md, "Saying it on the page"):
+# past FIFTY unpushed commits or TEN MINUTES since anything landed — whichever
+# comes first — every write answers the 503 the forked plan already uses,
+# because on Cloud Run the filesystem is memory and a 200 onto a pile that is
+# not landing is data loss with a receipt. Below both thresholds nothing
+# reddens: every save is briefly unpushed now, and an alarm that fires on the
+# ordinary two-second window is an alarm people learn to ignore — which is how
+# the one that matters gets missed.
+#
+# Both numbers are spelled out in these tests rather than imported from
+# `store.py`, because the numbers ARE the decision: a test that derived its
+# pile from the constant would go on passing however the constant drifted.
+# --------------------------------------------------------------------------- #
+
+
+@contextlib.contextmanager
+def draining_nowhere(tmp_path: Path, pile: list[tuple[int | None, str]]):
+    """(client, plan) — a live app whose pusher cannot land anything.
+
+    Cloned from a seeded origin so `refs/remotes/origin/main` exists: that
+    tracking ref is the floor `unpushed` is counted from, and a pile built
+    BEFORE the store opens — the only way to build a ten-minute-old one without
+    waiting ten minutes — needs it. This is why, unlike `with_a_remote`, the
+    clone's own remote is KEPT: deleting it deletes the tracking ref, and the
+    store would then count from the tip it opened at, which is above the pile.
+    The store is then told the remote is a path that does not exist, so every
+    pass of the pusher answers "unreachable" and the pile stays exactly as
+    built. `pile` is (author time, message) per commit, oldest first; None is
+    now.
+    """
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    for when, message in pile:
+        commit_directly(plan, SEED, message, when=when)
+    app = create_app(plan, auth="dev", secret=SECRET, remote=f"file://{tmp_path / 'gone'}")
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        yield client, plan
+
+
+def test_the_fiftieth_stranded_commit_closes_every_write_route(tmp_path: Path):
+    """The commit-count half of the pile ceiling, driven with every commit
+    FRESH so the ten-minute clock provably cannot be the threshold that fired
+    — a count that never fires and a clock that never fires are two different
+    regressions, and a test that could pass on either would hold neither.
+
+    Written failing against a store that accepted the fifty-first write with a
+    2xx: fifty commits is more than a betting table generates in the ten-minute
+    window (docs/deferred-push.md, "Saying it on the page"), so a pile that
+    deep is a pusher that is not landing, and every commit accepted onto it is
+    one more thing the first idle recycle discards.
+    """
+    with draining_nowhere(
+        tmp_path, [(None, f"stranded save {n}") for n in range(1, 50)]
+    ) as (client, plan):
+        # One short of the ceiling, so the gate must still be open: this note
+        # is both that proof and the fiftieth commit.
+        note = create(client, {"kind": "note", "title": "the fiftieth commit"})
+        assert note.status_code == 201, note.text
+        assert client.get("/api/health").json()["unpushed"] == 50
+
+        before = git_head(plan)
+        answers = wedged_writes(client, note.json()["id"])
+
+        for name, response in answers.items():
+            assert response.status_code == 503, f"{name}: {response.status_code} {response.text}"
+            detail = response.json()["detail"]
+            # What is stranded, by count — the number a person can weigh...
+            assert "50 commits" in detail, f"{name}: {detail}"
+            assert "not reached GitHub" in detail, f"{name}: {detail}"
+            # ...and what to do, in the forked refusal's own frame: the same
+            # "nothing was written, whole plan" skeleton, with the one honest
+            # difference — this condition clears on its own, so trying again
+            # later is the right move here and a lie there.
+            assert "nothing was written" in detail, f"{name}: {detail}"
+            assert "try again" in detail, f"{name} refused without saying what to do: {detail}"
+        assert git_head(plan) == before, "refused, but committed anyway"
+        assert client.get("/api/health").json()["unpushed"] == 50, (
+            "a refused write still joined the pile a recycle discards"
+        )
+
+
+def test_a_pile_ten_minutes_stale_closes_the_store_however_small_it_is(tmp_path: Path):
+    """The clock half of the ceiling, driven with a pile of ONE so the fifty-
+    commit count provably cannot be the threshold that fired.
+
+    Ten minutes is long enough to ride out a GitHub outage and short enough
+    that a wedged pusher is caught inside one working session
+    (docs/deferred-push.md, "Saying it on the page"). And past the ceiling
+    /api/health goes red with the same sentence, because past it the write half
+    of this service is genuinely down — a 200 there would be a flag that is
+    honest and unread, which is the fork's outage again.
+    """
+    aged = int(time.time()) - 11 * 60
+    with draining_nowhere(tmp_path, [(aged, "a save nobody landed")]) as (client, plan):
+        assert client.get("/api/health").json()["unpushed"] == 1
+
+        before = git_head(plan)
+        answer = save(client, TASK, {"priority": "high"})
+
+        assert answer.status_code == 503, answer.text
+        detail = answer.json()["detail"]
+        assert "11 minutes" in detail, detail
+        assert "nothing was written" in detail, detail
+        assert "try again" in detail, detail
+        assert git_head(plan) == before, "refused, but committed anyway"
+
+        health = client.get("/api/health")
+        assert health.status_code == 503, "the write half is down and health said 200"
+        payload = health.json()
+        assert payload["ok"] is False
+        assert "11 minutes" in payload["detail"], payload["detail"]
+        # The operator's first instinct is the destructive one, here exactly as
+        # on a fork: on this filesystem a restart clears the pile by discarding
+        # it.
+        assert "restart" in payload["detail"], payload["detail"]
+
+
+def test_below_the_ceiling_saves_land_and_health_reports_the_pile_quietly(tmp_path: Path):
+    """The alarm-fatigue half of the decision, held from both surfaces.
+
+    A pile three commits deep and five minutes old is GitHub having been away
+    for a moment: the pusher retries on its own clock and the pile drains with
+    nobody doing anything. So a save still answers 2xx, and /api/health answers
+    200 while CARRYING the pile — `unpushed`, `oldest_unpushed_age`, `parked`
+    are the numbers the shell's banner reads, and a key that appears only when
+    things are bad is a key a JSON path breaks on. An alarm that fired here
+    would fire on every save and be ignored by the day it mattered.
+    """
+    pile = [(int(time.time()) - 5 * 60, "a save GitHub missed"), (None, "and another")]
+    with draining_nowhere(tmp_path, pile) as (client, plan):
+        answer = save(client, TASK, {"priority": "high"})
+
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["pushed"] is False
+
+        health = client.get("/api/health")
+        assert health.status_code == 200, "a pile below the ceiling went red: alarm fatigue"
+        payload = health.json()
+        assert payload["ok"] is True
+        assert payload["detail"] is None
+        assert payload["unpushed"] == 3
+        assert 300 <= payload["oldest_unpushed_age"] < 600, payload["oldest_unpushed_age"]
+        assert payload["parked"] == 0
+
+
+def test_the_shells_banner_gets_loud_when_the_pile_stops_draining(client: TestClient):
+    """The middle rung of the escalation, between the quiet per-row mark and
+    the 503: a banner in the shell — every live page, because the graph, the
+    timeline and the cycles rely on it — that says how many saves are stranded
+    and where the parked ones went.
+
+    Quiet on the ordinary save's two-second window, for the same alarm-fatigue
+    reason /api/health stays green below the ceiling; loud once the oldest
+    unpushed save is a minute old, because an ordinary push lands in about two
+    seconds; and down again on its own when the pile drains.
+    """
+    from test_injection import run_js
+
+    answer = run_js(
+        client.get("/table").text,
+        "(() => {"
+        "  const look = () => ({hidden: pile.hidden, said: pile.textContent});"
+        "  const readings = {};"
+        "  showPile({unpushed: 1, oldest_unpushed_age: 2.1, parked: 0});"
+        "  readings.ordinary = look();"
+        "  showPile({unpushed: 12, oldest_unpushed_age: 241.0, parked: 0});"
+        "  readings.stuck = look();"
+        "  showPile({unpushed: 12, oldest_unpushed_age: 301.0, parked: 2});"
+        "  readings.parked = look();"
+        "  showPile({unpushed: 0, oldest_unpushed_age: null, parked: 0});"
+        "  readings.drained = look();"
+        "  return readings;"
+        "})()",
+        page=True,
+    )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["ordinary"]["hidden"] is True, (
+        "the banner spoke on an ordinary save's two-second window — wallpaper "
+        f"by the day it matters: {got['ordinary']['said']!r}"
+    )
+    assert got["stuck"]["hidden"] is False, "the pile stopped draining and the banner said nothing"
+    assert "12 saves" in got["stuck"]["said"], got["stuck"]["said"]
+    assert "4 minutes" in got["stuck"]["said"], got["stuck"]["said"]
+    assert "not on GitHub" in got["stuck"]["said"], got["stuck"]["said"]
+    # The parked ones are named separately, and named as stranded HERE:
+    # `Condition.parked` counts the local stranded refs `_settle` deletes on
+    # push confirmation, so a nonzero count is saves GitHub does not hold in
+    # any form yet — the branch and its pull request exist only after that.
+    assert "2 saves" in got["parked"]["said"], got["parked"]["said"]
+    assert "openproj/stranded" in got["parked"]["said"], got["parked"]["said"]
+    assert "only on this server" in got["parked"]["said"], got["parked"]["said"]
+    assert got["drained"]["hidden"] is True, "the pile drained and the banner stayed up"
+
+
+def test_the_banner_reads_the_numbers_health_reports(client: TestClient):
+    """The banner's numbers come from /api/health — the one reading the write
+    gate also refuses on, so the banner and the 503 cannot disagree about the
+    same pile — and they are read off the BODY whatever the status: past the
+    ceiling the route answers 503 and still carries them, and that answer is
+    exactly the one this banner exists for.
+    """
+    from test_injection import run_js
+
+    red = {
+        "ok": False, "unpushed": 50, "oldest_unpushed_age": 660.0, "parked": 1,
+        "detail": "50 commits saved here...",
+    }
+    answer = run_js(
+        client.get("/table").text,
+        "(async () => {"
+        "  let asked = null;"
+        "  globalThis.fetch = url => {"
+        "    asked = String(url);"
+        "    return Promise.resolve({status: 503, ok: false,"
+        f"     json: () => Promise.resolve({json.dumps(red)})}});"
+        "  };"
+        "  await readPile();"
+        "  return {asked, hidden: pile.hidden, said: pile.textContent};"
+        "})()",
+        page=True,
+    )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["asked"] == "/api/health", got["asked"]
+    assert got["hidden"] is False, "a 503's body carries the numbers and was not read"
+    assert "50 saves" in got["said"], got["said"]
+    assert "11 minutes" in got["said"], got["said"]
+
+
+def test_the_banner_does_not_call_a_parked_save_safe_before_its_branch_is_pushed(
+    tmp_path: Path,
+):
+    """`Condition.parked` counts the local `refs/openproj/stranded-*` refs, and
+    `_settle` deletes each one the moment its branch push is confirmed on the
+    remote — so `parked > 0` names saves GitHub does not hold IN ANY FORM yet,
+    the ones this container would still lose. The banner read that number and
+    said the opposite: parked on branches in the plan repository, each with a
+    pull request to resolve it. That is the state AFTER the push lands, which
+    is exactly when the count drops to zero and the sentence disappears — so
+    the reassurance showed only while it was false, and a person reading it
+    stopped worrying at the one moment the work still dies with the server.
+
+    Asked of a real store in both states: a stranded ref the pusher has not
+    landed (parked: 1 — the banner must call the work stranded here), then the
+    ref deleted exactly as `_settle` does on confirmation (parked: 0 — nothing
+    left to warn about).
+    """
+    from test_injection import run_js
+
+    with draining_nowhere(tmp_path, [(None, "a save that cannot replay")]) as (
+        client,
+        plan,
+    ):
+        repo = pygit2.Repository(str(plan))
+        sha = str(repo.head.target)
+        # The state `_park` leaves and nothing has settled: the branch push is
+        # not confirmed, so this container is the commit's only holder.
+        repo.references.create(f"refs/openproj/stranded-{sha}", sha)
+        stranded_here = client.get("/api/health").json()
+        assert stranded_here["parked"] == 1
+        # And the state after `_settle`: the remote confirmed the branch, the
+        # ref is dropped, and the store honestly reports nothing at risk.
+        repo.references.delete(f"refs/openproj/stranded-{sha}")
+        confirmed = client.get("/api/health").json()
+        assert confirmed["parked"] == 0
+
+        answer = run_js(
+            client.get("/table").text,
+            "(() => {"
+            "  const look = () => ({hidden: pile.hidden, said: pile.textContent});"
+            f"  showPile({json.dumps(stranded_here)});"
+            "  const stranded = look();"
+            f"  showPile({json.dumps(confirmed)});"
+            "  const landed = look();"
+            "  return {stranded, landed};"
+            "})()",
+            page=True,
+        )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["stranded"]["hidden"] is False, (
+        "a parked save is the loud case and the banner hid"
+    )
+    said = got["stranded"]["said"]
+    assert "only on this server" in said, said
+    assert "openproj/stranded" in said, said
+    # The old sentence's promise, verbatim: a pull request exists only once
+    # `_settle` has run — and `_settle` is also what removes this count.
+    assert "pull request" not in said, f"the banner called stranded work safe: {said!r}"
+    assert got["landed"]["hidden"] is True, (
+        "the branch is confirmed on the remote and the banner still cried: "
+        f"{got['landed']['said']!r}"
+    )
+
+
+def test_the_banner_appears_with_nobody_calling_showpile_by_hand(client: TestClient):
+    """The wiring, not the function: an audit deleted the load-time
+    `readPile()`, the `setInterval(readPile, PILE_POLL_MS)` poll and the
+    `openproj:landed` re-ask from the shell, and every banner test above stayed
+    green because each drives `showPile` or `readPile` by hand. In production
+    that deletion is a banner that never appears at all. So this one never
+    touches either function — the page loads, a landed frame arrives on the
+    page's own stream, the minute passes — and the banner must move on its own
+    each time, against a different scripted `/api/health` body per ask, so each
+    wire is pinned by a state change only that wire can have caused.
+    """
+    from test_injection import run_js
+
+    loud = {
+        "ok": True, "unpushed": 12, "oldest_unpushed_age": 241.0, "parked": 0,
+        "detail": None,
+    }
+    drained = {
+        "ok": True, "unpushed": 0, "oldest_unpushed_age": None, "parked": 0,
+        "detail": None,
+    }
+    loud_again = {
+        "ok": True, "unpushed": 7, "oldest_unpushed_age": 130.0, "parked": 0,
+        "detail": None,
+    }
+    frame = {"t": "landed", "landed": "a" * 40, "remapped": {}, "parked": []}
+    answer = run_js(
+        client.get("/table").text,
+        "(async () => {"
+        "  const look = () => ({hidden: pile.hidden, said: pile.textContent});"
+        # readPile's fetch chain settles over a few microtask turns and the
+        # driver's clock never fires on its own, so settling is yielding a
+        # handful of turns — never a call into the code under test.
+        "  const settle = async () => { for (let i = 0; i < 10; i++) await null; };"
+        "  await settle();"
+        "  const boot = look();"
+        f" source.onmessage({{data: JSON.stringify({json.dumps(frame)})}});"
+        "  await settle();"
+        "  const reasked = look();"
+        "  const onTheClock = __interval();"
+        "  await settle();"
+        "  const polled = look();"
+        "  return {boot, reasked, onTheClock, polled};"
+        "})()",
+        page=True,
+        health=[loud, drained, loud_again],
+    )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["boot"]["hidden"] is False, (
+        "a loud pile at load and the banner never appeared: the load-time "
+        "readPile() is gone"
+    )
+    assert "12 saves" in got["boot"]["said"], got["boot"]["said"]
+    # The re-ask: a landed frame is the news changing, and the banner asked
+    # again on its own — the second scripted body says the pile drained.
+    assert got["reasked"]["hidden"] is True, (
+        "the pile drained on a landed frame and the banner never re-asked: the "
+        f"openproj:landed listener is gone: {got['reasked']['said']!r}"
+    )
+    assert got["onTheClock"] >= 1, "nothing registered on the clock: the minute poll is gone"
+    # The poll: the banner is down at this point, so only the interval firing
+    # can have raised it — and with the third body's numbers, so a stale
+    # sentence cannot pass for a fresh read.
+    assert got["polled"]["hidden"] is False, (
+        "the pile grew back and the minute poll never noticed: "
+        "setInterval(readPile, PILE_POLL_MS) is gone"
+    )
+    assert "7 saves" in got["polled"]["said"], got["polled"]["said"]

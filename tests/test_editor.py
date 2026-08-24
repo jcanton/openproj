@@ -6416,3 +6416,188 @@ def test_the_length_and_the_ceiling_are_not_the_same_number_on_a_document_that_i
     assert "cannot be saved" in got["said"], (
         f"and nobody was told before they pressed Save: {got['said']!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The room's save and the pusher's verdict
+#
+# The push happens behind the answer now (docs/deferred-push.md, "Confirmation
+# cannot be 'my sha is on main'"), so every `saved` frame carries
+# `pushed: false` and the state a save is in is one of three — in flight,
+# landed, stranded — never a boolean.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_room_save_is_quiet_and_the_alarm_is_kept_for_a_parked_commit(client: TestClient):
+    """A warning that fires on every save is wallpaper.
+
+    "saved here, not yet pushed" hung on `message.pushed === false`, which was
+    the exceptional answer when it was written and is EVERY answer since
+    v0.22.0 — so the ordinary save and the state the warning existed for read
+    identically, and the one save that deserved the alarm no longer stood out.
+    In flight is the quiet 'saved' now; a landing confirms in silence, because
+    the shell's pile banner owns that news; and the alarm survives only for the
+    save the pusher PARKED on a branch — answered 200 long ago, on GitHub but
+    not on main, and resolved by nothing in this room.
+
+    The verdict frame parks the FIRST save and re-mints the SECOND at once,
+    because that is what a recovery pass announces, and the order the page
+    handles it in is load-bearing: cleared as "everything up to the re-minted
+    sha" first, the parked commit would be swept out silently instead of
+    announced. And a parked sha this room never saved must say nothing —
+    every record page hears every frame, and a stranger's stranded save is
+    the banner's news, not this document's.
+    """
+    import base64
+
+    from test_injection import run_js
+
+    from openproj import coedit
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    first, second = "a" * 40, "b" * 40
+    saves = [
+        {"t": "saved", "commit": first, "outcome": "committed", "pushed": False},
+        {"t": "saved", "commit": second, "outcome": "committed", "pushed": False},
+    ]
+    stranger = {"t": "landed", "landed": "d" * 40, "remapped": {},
+                "parked": [["9" * 40, "openproj/stranded-" + "9" * 40]]}
+    verdict = {"t": "landed", "landed": "e" * 40, "remapped": {second: "e" * 40},
+               "parked": [[first, f"openproj/stranded-{first}"]]}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        f" __socket.hear({json.dumps(saves[0])});"
+        "  const afterSave = document.getElementById('state').textContent;"
+        f" __socket.hear({json.dumps(saves[1])});"
+        f" dispatchEvent(new CustomEvent('openproj:landed', {{detail: {json.dumps(stranger)}}}));"
+        "  const afterStranger = document.getElementById('state').textContent;"
+        f" dispatchEvent(new CustomEvent('openproj:landed', {{detail: {json.dumps(verdict)}}}));"
+        "  const afterParked = document.getElementById('state').textContent;"
+        "  return {afterSave, afterStranger, afterParked, reloads: __reloads()};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    got = answer["value"]
+    assert got != "the room never came up", got
+
+    assert got["afterSave"] == "saved", (
+        f"an ordinary save was announced as {got['afterSave']!r} — every save answers "
+        "pushed: false now, so a warning here fires every time, and a warning that "
+        "fires every time warns nobody"
+    )
+    assert "stranded-999" not in got["afterStranger"], (
+        f"a parked sha this room never saved raised this document's alarm: "
+        f"{got['afterStranger']!r}"
+    )
+    assert "could not land" in got["afterParked"], (
+        f"the pusher parked this room's save and the page said {got['afterParked']!r} — "
+        "the one state the old warning existed for is the one nobody is told about"
+    )
+    assert verdict["parked"][0][1] in got["afterParked"], (
+        f"the alarm does not say where the commit went: {got['afterParked']!r}"
+    )
+    assert got["reloads"] == 0, (
+        "nobody here pressed Save, so no frame above may tear the page down"
+    )
+
+
+def test_a_stranded_save_raises_the_alarm_on_a_tab_that_missed_every_frame(client: TestClient):
+    """The alarm above travelled only on the live landed frame, and the spec
+    says in as many words that frames are dropped routinely: Cloud Run recycles
+    the event stream every 300 seconds and it has NO replay
+    (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'"). A
+    verdict only a frame can deliver is an alarm that fires only if the tab
+    happened to be listening at the right moment — and the parked save is
+    precisely the one state a person must hear about, because their 200 went
+    out long ago and nothing in the room resolves it.
+
+    While a save is unconfirmed the room polls the same route the table's marks
+    poll, `/api/table.json`, whose payload already carries the pusher's verdict
+    — `landed`, `unpushed` and the parked (sha, branch) pairs — so the editor
+    and the table cannot drift into disagreeing about what parked means. The
+    payload here is the exact shape a parked recovery leaves behind: the pile
+    honestly drained (`unpushed: 0` — the sha left main for a branch), with
+    only the parked pairs to say what happened, so a poll that read the pile's
+    arithmetic alone would clear the one save that had to become the alarm.
+    NO frame is delivered anywhere in this test.
+    """
+    import base64
+
+    from test_injection import run_js
+
+    from openproj import coedit
+
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    shown = client.get("/api/index.json").json()["plan"][TASK]["body"]
+    room = coedit.Room(TASK, PATH, "0" * 40, shown)
+    welcome = {
+        "t": "welcome",
+        "seed": room.seed,
+        "base": room.base,
+        "you": "ann",
+        "sv": base64.b64encode(room.state()).decode(),
+        "update": base64.b64encode(room.since(None)).decode(),
+    }
+    committed = "a" * 40
+    branch = f"openproj/stranded-{committed}"
+    saved = {"t": "saved", "commit": committed, "outcome": "committed", "pushed": False}
+    fresh = {"landed": "f" * 40, "unpushed": 0, "parked": [[committed, branch]]}
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        f" __socket.hear({json.dumps(welcome)});"
+        "  if (!COEDIT.live()) return 'the room never came up';"
+        f" __socket.hear({json.dumps(saved)});"
+        "  const armed = __pending();"
+        "  __tick();"
+        "  for (let i = 0; i < 50; i++) await Promise.resolve();"
+        "  const said = document.getElementById('state').textContent;"
+        "  return {armed, said, waiting: __pending(), reloads: __reloads()};"
+        "})()",
+        page=True,
+        socket=True,
+        replies=[{"status": 200, "json": fresh}],
+    )
+    assert not answer["errors"], answer["errors"]
+    got = answer["value"]
+    assert got != "the room never came up", got
+
+    assert got["armed"] >= 1, (
+        "no poll is armed while a save is unconfirmed — a tab that misses the "
+        "frame can never hear the verdict, and the stream drops frames by design"
+    )
+    assert any(call["url"] == "/api/table.json" for call in answer["calls"]), (
+        f"the poll did not ask the route that carries the verdict; asked: {answer['calls']!r}"
+    )
+    assert "could not land" in got["said"], (
+        f"the pusher parked this room's save, no frame arrived, and the page said "
+        f"{got['said']!r} — the alarm the poll exists to deliver never fired"
+    )
+    assert branch in got["said"], (
+        f"the alarm does not say where the commit went: {got['said']!r}"
+    )
+    assert got["waiting"] == 0, (
+        "nothing is unconfirmed any more, so nothing should keep polling"
+    )
+    assert got["reloads"] == 0, (
+        "nobody here pressed Save, so nothing above may tear the page down"
+    )

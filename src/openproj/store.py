@@ -172,6 +172,28 @@ class StoreDiverged(RuntimeError):
     """
 
 
+class StoreSwamped(RuntimeError):
+    """The store will not grow a pile of unpushed commits past its ceiling.
+
+    Raised by the write gate (`_refuse_swamped`) while `swamped` has a sentence
+    to say. Its sibling above is permanent and needs a person; this one clears
+    on its own — the reading it is raised from answers None the moment the
+    pusher lands the backlog, and there is no flag anywhere to reset.
+    """
+
+
+# The pile ceiling: past EITHER of these, whichever comes first, every write is
+# refused rather than accepted onto a backlog that is not landing — on Cloud
+# Run the filesystem is memory, so a 200 there is data loss with a receipt.
+# Both numbers are arbitrary and are written down so they can be argued with
+# rather than discovered in an incident (docs/deferred-push.md, "Saying it on
+# the page"): ten minutes is long enough to ride out a GitHub outage and short
+# enough that a wedged pusher is caught inside one working session, and fifty
+# commits is more than a betting table generates in that window.
+PILE_CEILING_COMMITS = 50
+PILE_CEILING_SECONDS = 10 * 60.0
+
+
 def _diverged_message(local: str, remote: str) -> str:
     """The wording for `push`'s both-sides-moved refusal.
 
@@ -227,6 +249,45 @@ def _forked(repo: pygit2.Repository) -> str | None:
     ):
         return None
     return _forked_message(confirmed, remote)
+
+
+def _swamped_message(unpushed: int, oldest_age: float) -> str:
+    """One wording for the pile past its ceiling, wherever it is met.
+
+    The write gate's raise and /api/health's detail both open on this sentence,
+    the same rule that keeps `_forked_message` from becoming three wordings of
+    one outage. It names the count and the wait because those are the two
+    thresholds — whichever fired, the sentence carries the number a person can
+    weigh against the spec's fifty and ten minutes.
+    """
+    many = unpushed != 1
+    minutes = int(oldest_age // 60)
+    waited = f"for {minutes} minute{'s' if minutes != 1 else ''}"
+    return (
+        f"{unpushed} commit{'s' if many else ''} saved here "
+        f"{'have' if many else 'has'} not reached GitHub"
+        + (f"{', the oldest ' if many else ' '}{waited}" if minutes else "")
+        + "; refusing to grow a pile that is not landing"
+    )
+
+
+def swamped(state: Condition) -> str | None:
+    """The pile verdict off one condition reading: the refusal sentence past
+    the ceiling, None below it.
+
+    One function with two consumers that must not disagree about the same pile
+    — the write gate (`_refuse_swamped`), which turns it into the 503 a save
+    gets, and `/api/health`, which turns it into the red an operator sees. The
+    thresholds are `>=` on both axes so that the fiftieth commit, or the
+    six-hundredth second, is the one that closes the store: a pile AT the
+    ceiling is a pile the next write would grow past it.
+    """
+    age = state.oldest_unpushed_age
+    if state.unpushed < PILE_CEILING_COMMITS and (
+        age is None or age < PILE_CEILING_SECONDS
+    ):
+        return None
+    return _swamped_message(state.unpushed, age or 0.0)
 
 
 def _stranded_refspec(sha: str) -> str:
@@ -718,6 +779,20 @@ class Store:
         # the instance anyway (see `_STRANDED`), and an offer for a branch a
         # previous life parked falls back to pointing at that pass's log.
         self._parked_reasons: dict[str, list[str]] = {}
+        # Every sha this process has parked, and the branch each went to —
+        # kept for the LIFE of the process, deliberately not dropped by
+        # `_settle` the way the refs and the reasons are. This is the polled
+        # fallback's only source for the parked verdict: a parked recovery
+        # leaves `unpushed: 0` and `parked: 0` honestly, and the landed frame
+        # that named the sha rides a stream with no replay — so without this
+        # memory a tab that missed the frame reads "everything landed" and
+        # clears the one mark that had to become a problem. Seeded from any
+        # leftover local refs, which are a previous life's parks on a disk
+        # that survived; shas parked before that are gone from every local
+        # record and cannot be answered from here.
+        self._parked_branches: dict[str, str] = {
+            sha: f"openproj/stranded-{sha}" for sha in _stranded_shas(self._repo)
+        }
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
         # "a+" rather than "w": opening for write truncates, and truncating would
@@ -1000,6 +1075,25 @@ class Store:
             parked=parked,
             refusal=refusal,
         )
+
+    def parked_branches(self) -> list[tuple[str, str]]:
+        """Every sha this process has parked, and the branch each went to —
+        (sha, branch) pairs in the shape the landed frame announces them.
+
+        This is the poll's carrier for the parked verdict, and its scope is
+        stated rather than papered over: `_settle` deletes the local stranded
+        refs once a branch is confirmed on the remote, so no ref can answer
+        for history — what answers is the in-memory record `__init__` and
+        `_park` keep, which covers exactly the shas parked since this process
+        started (plus leftover refs found at open). A sha parked by an earlier
+        instance is not in it, and a tab holding a mark from before this
+        process is not something any payload can fix.
+
+        Written on the pusher's thread, read on the loop's: one dict-item
+        write and one copy, each atomic under the GIL, so no lock — the same
+        bargain `_parked_reasons` already makes.
+        """
+        return list(self._parked_branches.items())
 
     def fetch(self) -> str | None:
         """Bring the tracking ref up to date. Returns the remote head if it moved."""
@@ -1385,18 +1479,22 @@ class Store:
         the branch is the durability and the PR is only the visibility.
         """
         sha = str(commit.id)
+        branch = f"openproj/stranded-{sha}"
         repo.references.create(f"{_STRANDED}{sha}", sha, force=True)
         # Kept by sha for the pull request's body: the offer happens only once
         # the branch push is confirmed, and by then the sentences naming the
         # disagreement exist nowhere else.
         self._parked_reasons[sha] = refusals
+        # And into the process-lifetime record `parked_branches` serves, which
+        # outlives the ref and the reasons — see its note in `__init__`.
+        self._parked_branches[sha] = branch
         _LOG.warning(
             "parked %s on openproj/stranded-%s — it could not be replayed:\n%s",
             sha[:7],
             sha,
             "\n".join(refusals),
         )
-        return f"openproj/stranded-{sha}"
+        return branch
 
     def _settle(self, repo: pygit2.Repository, shas: list[str]) -> None:
         """These parked commits' branches are on the remote now: drop the local
@@ -1521,6 +1619,33 @@ class Store:
             self.dirty.set()
             raise StoreDiverged(refusal)
 
+    def _refuse_swamped(self) -> None:
+        """Every write refuses while the unpushed pile is past its ceiling.
+
+        The last rung of the escalation (docs/deferred-push.md, "Saying it on
+        the page"): the per-row mark and the banner have both had their say by
+        the time a pile is fifty commits deep or ten minutes old, and a commit
+        accepted past that joins a backlog that is demonstrably not landing —
+        which on Cloud Run's in-memory disk the first idle recycle discards,
+        after the person was answered 2xx and let go of their text.
+
+        Called right after `_refuse_forked`, and the fork goes first on
+        purpose: a forked store swamps eventually, and the fork's sentence
+        carries the advice that supersedes this one's — waiting will not clear
+        a fork. The verdict is `swamped` over `condition()`, the same reading
+        /api/health serves, so the 503 a save gets and the red a monitor sees
+        cannot disagree about the same pile.
+
+        The poke before the raise, for `_refuse_forked`'s reason: a refusal
+        makes no commit to poke with, and the pile can only drain if the pusher
+        keeps going back — its own backoff re-poke stops with the process, and
+        a poke on a drained-or-draining pile is a few ref reads.
+        """
+        refusal = swamped(self.condition())
+        if refusal is not None:
+            self.dirty.set()
+            raise StoreSwamped(refusal)
+
     def put_asset(self, data: bytes, suffix: str, author: str) -> tuple[str, bool]:
         """Store bytes under a name derived from their content, and return it.
 
@@ -1542,8 +1667,11 @@ class Store:
         with self._writing:
             # Before the dedupe, not after: while the plan is forked no route
             # may answer as though this service can take work, and the refusal
-            # for an upload has to be the same one a save gets.
+            # for an upload has to be the same one a save gets. The pile gate
+            # too — an unlanded asset is a broken image on every page the
+            # moment the instance recycles, accepted with a 201.
             self._refuse_forked()
+            self._refuse_swamped()
             if self.read_asset(self.head(), name) is not None:
                 return name, False
             blob = self._repo.create_blob(data)
@@ -1629,6 +1757,7 @@ class Store:
             # compare-and-swap below keeps handling browser-side staleness — a
             # `base_commit` older than HEAD — exactly as it always has.
             self._refuse_forked()
+            self._refuse_swamped()
             return self._attempt(files, base_commit, author, message)
 
     def _attempt(

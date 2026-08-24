@@ -101,7 +101,15 @@ from .model import (
     why_it_will_not_read,
 )
 from .pusher import Pusher
-from .store import Condition, Store, StoreDiverged, StoreLocked, SyncOutcome
+from .store import (
+    Condition,
+    Store,
+    StoreDiverged,
+    StoreLocked,
+    StoreSwamped,
+    SyncOutcome,
+    swamped,
+)
 
 # What a write can fail with, as one name so the two callers of `store.write`
 # cannot disagree about it. `StoreLocked` and `StoreDiverged` are `RuntimeError`s
@@ -117,7 +125,23 @@ from .store import Condition, Store, StoreDiverged, StoreLocked, SyncOutcome
 # nothing, and the same raise that the room turned into a sentence turned into a
 # bare 500 on every page. Both halves catch it now — `_write_or_refuse` below,
 # and `_commit_room` — and neither has a list of its own.
-WRITE_FAILURES = (HTTPException, ValueError, StoreLocked, StoreDiverged, pygit2.GitError)
+WRITE_FAILURES = (
+    HTTPException,
+    ValueError,
+    StoreLocked,
+    StoreDiverged,
+    StoreSwamped,
+    pygit2.GitError,
+)
+
+
+# The middle of a whole-store refusal — true of BOTH conditions that close the
+# store, the fork and the pile, and written once so the two 503s below stay one
+# vocabulary: what may differ between them is only what clears the condition.
+_WHOLE_PLAN = (
+    " — nothing was written, and this is the whole plan rather than this "
+    "one record. Every save will be refused until "
+)
 
 # The first log line in this package, and the argument for there being one at
 # all. Everything the server has had to say so far had a person to say it to —
@@ -201,9 +225,22 @@ def _refusal(error: Exception) -> HTTPException:
             # part the store cannot know: that the request was refused, that this
             # is the plan and not this one record, and that trying again is not
             # the thing to do.
-            f"{error} — nothing was written, and this is the whole plan rather than this "
-            "one record. Every save will be refused until somebody merges the two "
+            f"{error}{_WHOLE_PLAN}somebody merges the two "
             "histories in the plan repository by hand; trying again will not clear it.",
+        )
+    if isinstance(error, StoreSwamped):
+        # The pile past its ceiling: the same 503 and the same skeleton as the
+        # fork above — one vocabulary for "this store will not take your
+        # write", because two wordings would read as two outages — with the one
+        # honest difference spelled out where the truth differs. A fork clears
+        # only by hand and retrying is futile; a pile clears on its own the
+        # moment the pusher lands it, so "try again in a few minutes" is the
+        # right advice here and would be a lie there.
+        return HTTPException(
+            503,
+            f"{error}{_WHOLE_PLAN}the saves already made here land on GitHub. "
+            "Your edit is still in front of you — keep it there and try again "
+            "in a few minutes.",
         )
     if isinstance(error, StoreLocked):
         # Reachable from `Store.__init__` rather than from a write — the flock is
@@ -251,30 +288,52 @@ async def _write_or_refuse(write, /, *args, **kwargs):
         raise _refusal(error) from None
 
 
-def _wedged(state: Condition) -> str:
-    """A store that cannot write, said so a person can act on it.
+def _a_restart_discards(state: Condition) -> str:
+    """The warning both red conditions carry, written once.
 
-    Beside `_refusal` because they are the two halves of one condition and have to
-    stay legible against each other: that one answers the person who pressed Save,
-    this one answers `/api/health`. Both open on the force-push guard's own
-    wording — the sentence in the server log and in the room's `refused` frame —
-    because wording one outage three ways makes it look like three outages.
-
-    They differ in the half that follows, and deliberately. A person who pressed
-    Save is told their save did not land and that trying again will not change
-    that. An operator holding a red monitor has a different first instinct, and it
-    is the wrong one: on Cloud Run's in-memory filesystem a restart really does
-    clear this, by discarding exactly the commits `unpushed` is counting. So here
-    the number and the warning travel together.
+    An operator holding a red monitor has one first instinct, and it is the
+    wrong one for the same reason under a fork and under a pile: on Cloud Run's
+    in-memory filesystem a restart really does clear the condition, by
+    discarding exactly the commits `unpushed` is counting.
     """
     many = state.unpushed != 1
     return (
-        f"{state.refusal}. Retrying will not help and neither will a restart: "
         f"on this filesystem a restart clears it by discarding the {state.unpushed} "
         f"commit{'s' if many else ''} on this disk that "
-        f"{'have' if many else 'has'} not reached the remote. Somebody has to "
-        "merge the two histories in the plan repository by hand — "
-        "deploy/RUNBOOK.md, 'The service cannot write'."
+        f"{'have' if many else 'has'} not reached the remote"
+    )
+
+
+def _wedged(state: Condition) -> str | None:
+    """A store that cannot write, said so a person can act on it — or None
+    while it can.
+
+    Beside `_refusal` because they are the two halves of each condition and have
+    to stay legible against each other: that one answers the person who pressed
+    Save, this one answers `/api/health`. Both open on the store's own wording —
+    the force-push guard's sentence for a fork, `swamped`'s for the pile —
+    because wording one outage three ways makes it look like three outages.
+
+    They differ in the half that follows, and deliberately: the person is told
+    what their save's fate is, the operator what a restart costs. The fork is
+    asked first, as at the write gate — a forked store swamps eventually, and
+    the fork's advice is the one that still holds when both are true.
+    """
+    if state.diverged:
+        return (
+            f"{state.refusal}. Retrying will not help and neither will a restart: "
+            f"{_a_restart_discards(state)}. Somebody has to "
+            "merge the two histories in the plan repository by hand — "
+            "deploy/RUNBOOK.md, 'The service cannot write'."
+        )
+    choking = swamped(state)
+    if choking is None:
+        return None
+    return (
+        f"{choking}. Do not restart: {_a_restart_discards(state)} — they exist "
+        "nowhere else. This clears on its own the moment the pusher lands the "
+        "backlog; if it is not draining, find out why the push is failing "
+        "before anything else."
     )
 
 
@@ -1328,14 +1387,26 @@ def create_app(
 
         def landed(outcome: SyncOutcome) -> None:
             # On the loop, via the pusher's call_soon_threadsafe hop below, so
-            # the queues are touched from the one thread that owns them. Only a
-            # recovery is news to a page: it moves local main to a tip the page
-            # has never seen, so every open tab's `base_commit` just went
-            # stale. The quiet day lands the very shas the saves answered with,
-            # and each of those already announced itself at commit time.
-            if outcome.state == "landed" and (outcome.remapped or outcome.parked):
-                for queue in list(watchers):
-                    queue.put_nowait({"commit": outcome.landed, "changed": []})
+            # the queues are touched from the one thread that owns them.
+            #
+            # Every successful pass is announced, the quiet day included — not
+            # only recoveries, which was the first shape and left the ordinary
+            # save unconfirmed forever: this frame is what clears the "saved
+            # here, not on GitHub yet" mark, and a page cannot wait to see its
+            # own sha on main instead because recovery re-mints shas
+            # (docs/deferred-push.md, "Confirmation cannot be 'my sha is on
+            # main'"). The frame's shape is documented at `broadcast`; the
+            # (sha, branch) pairs go out as two-element arrays.
+            if outcome.state != "landed":
+                return
+            broadcast(
+                {
+                    "t": "landed",
+                    "landed": outcome.landed,
+                    "remapped": outcome.remapped,
+                    "parked": outcome.parked,
+                }
+            )
 
         def deliver(outcome: SyncOutcome) -> None:
             # Called on the pusher's thread. `call_soon_threadsafe` is the one
@@ -1384,6 +1455,28 @@ def create_app(
         return response
 
     watchers: set[asyncio.Queue] = set()
+
+    def broadcast(frame: dict) -> None:
+        """Put one frame on every open event stream. Loop-thread only.
+
+        The stream carries two kinds of frame, told apart by `"t"`:
+
+          {"commit": sha, "changed": [ids]}   — a write landed in the LOCAL
+              repository. Bare, no discriminator, and staying that way: it is
+              the shape every already-shipped page recognises a plan change by.
+
+          {"t": "landed", "landed": sha, "remapped": {old: new},
+           "parked": [[sha, branch]]}         — the pusher confirmed the REMOTE
+              holds everything up to `landed`, re-minting and parking the shas
+              named. The shell rebroadcasts it as an `openproj:landed` DOM
+              event for the table's row marks and the editor's save state.
+
+        Any further kind must carry its own `"t"`: an untyped frame IS the
+        plan-changed frame as far as every listener is concerned.
+        """
+        for queue in list(watchers):
+            queue.put_nowait(frame)
+
     # An event stream is a request that never ends, and uvicorn waits for in-flight
     # requests BEFORE it runs lifespan shutdown — so a flag set there arrives after
     # the wait it was meant to shorten. Installing a signal handler here does not
@@ -1612,8 +1705,9 @@ def create_app(
         return SESSION_COOKIE if secure_for(request) else SESSION_COOKIE_INSECURE
 
     async def announce(commit: str, changed: list[str]) -> None:
-        for queue in list(watchers):
-            queue.put_nowait({"commit": commit, "changed": changed})
+        # The plan-changed frame, deliberately bare — see `broadcast` for the
+        # stream's two kinds and why this one never grows a discriminator.
+        broadcast({"commit": commit, "changed": changed})
 
     # -- pages --------------------------------------------------------------
 
@@ -1903,7 +1997,14 @@ def create_app(
         if written.commit:
             await announce(written.commit, [record_id, source_id])
         return JSONResponse(
-            {"id": record_id, "outcome": written.outcome, "commit": written.commit},
+            # `pushed` as on a PATCH: without it the promote path had nothing
+            # to hang a "saved here, not on GitHub yet" mark on.
+            {
+                "id": record_id,
+                "outcome": written.outcome,
+                "commit": written.commit,
+                "pushed": written.pushed,
+            },
             status_code=201,
         )
 
@@ -2102,14 +2203,17 @@ def create_app(
         it. `store.condition()` reads that state off two local refs; see its
         docstring for why there is no fetch here and nothing to clear.
 
-        **`ok` is about writing, not about pushing.** A divergence is permanent
-        and needs a person; `unpushed` above zero is usually GitHub having been
-        away for a moment, and it goes back to zero on its own at the next save,
-        because a push sends everything that is ahead. A flag that goes red for a
-        condition that heals itself is a flag people learn to ignore, which is how
-        the one that matters gets missed. So the verdict is `diverged` alone, and
-        `unpushed` is a number beside it for a monitor to set its own threshold
-        and its own patience on.
+        **`ok` is about writing, not about pushing.** `unpushed` above zero is
+        usually GitHub having been away for a moment; the pusher retries on its
+        own clock and the pile drains with nobody doing anything. A flag that
+        goes red for a condition that heals itself is a flag people learn to
+        ignore, which is how the one that matters gets missed. So the verdict is
+        exactly "are writes being refused": a divergence, which is permanent and
+        needs a person, or a pile past the ceiling the write gate refuses at
+        (`swamped`, store.py) — and below that ceiling the pile is reported in
+        numbers, never as a flag. `unpushed`, `oldest_unpushed_age` and `parked`
+        travel beside the verdict for a monitor to set its own threshold and its
+        own patience on; they are also what the shell's banner reads.
 
         **503 and not a 200 carrying a false flag.** `_refusal` argues the code
         itself and this uses the same one, so the write routes and the check that
@@ -2132,21 +2236,31 @@ def create_app(
         deploy runbook told a reader to check a version string nothing served.
         """
         state = store.condition()
+        detail = _wedged(state)
         return JSONResponse(
             {
-                "ok": not state.diverged,
+                "ok": detail is None,
                 "head": state.head,
                 "version": __version__,
                 "unpushed": state.unpushed,
+                # The pile, in numbers — what the shell's banner reads, and what
+                # re-scopes the alarm to "non-zero and NOT draining" now that
+                # every save is briefly unpushed (docs/deferred-push.md,
+                # "Health"): the age is what tells a stuck pile from the
+                # ordinary two-second window, and `parked` counts the commits
+                # that reached GitHub but not main.
+                "oldest_unpushed_age": state.oldest_unpushed_age,
+                "parked": state.parked,
                 # Always present, `null` when there is nothing wrong: a key that
                 # appears only sometimes is a key a JSON path breaks on, and this
-                # is read by scripts. The wording is the force-push guard's own,
-                # so the operator reading a monitor and the person whose save
-                # was refused are told the same thing, plus what to do about it
-                # — which is the half a condition report is useless without.
-                "detail": _wedged(state) if state.diverged else None,
+                # is read by scripts. The wording is the store's own — the
+                # force-push guard's for a fork, `swamped`'s for the pile — so
+                # the operator reading a monitor and the person whose save was
+                # refused are told the same thing, plus what to do about it,
+                # which is the half a condition report is useless without.
+                "detail": detail,
             },
-            status_code=503 if state.diverged else 200,
+            status_code=200 if detail is None else 503,
         )
 
     @app.get("/api/index.json")
@@ -2200,7 +2314,30 @@ def create_app(
         hand-edited to `.inf` is a 500 in plain text on a route whose only
         readers are scripts.
         """
-        return JSONResponse(what_json_can_carry(render._payload(index_now()[1])))
+        payload = render._payload(index_now()[1])
+        # Two facts about the STORE, added here rather than in `_payload`
+        # because they are not the index's to know: this payload is also the
+        # table's poll fallback for its "saved here, not on GitHub yet" marks.
+        # The event stream has no replay — Cloud Run recycles it every 300s —
+        # so a tab that reconnected has missed the landed frame for good, and
+        # this is where it learns its saves are safe (docs/deferred-push.md,
+        # "Confirmation cannot be 'my sha is on main'"). `landed` is the
+        # confirmed tip by NAME; `unpushed` at zero says the whole pile has
+        # drained, which is the answer that survives the tip having moved past
+        # this tab's own shas. `condition()` reads two local refs — no network,
+        # no lock — so a poll costs what a page read costs.
+        state = store.condition()
+        payload["landed"] = state.remote
+        payload["unpushed"] = state.unpushed
+        # The parked verdict must ride here too, not only in the landed frame:
+        # a parked recovery leaves `unpushed: 0` — the sha honestly LEFT the
+        # pile for a branch — so a tab that missed the frame would read the
+        # two keys above as "everything landed" and clear the one mark that
+        # had to become the branch-naming problem. Same (sha, branch) pairs as
+        # the frame; the store's method says how far back it can honestly
+        # answer (since this process started — no further record exists).
+        payload["parked"] = store.parked_branches()
+        return JSONResponse(what_json_can_carry(payload))
 
     # -- writing ------------------------------------------------------------
 
@@ -2749,7 +2886,14 @@ def create_app(
         if written.outcome == "conflict":
             return _result(written, commit)
         return JSONResponse(
-            {"id": record_id, "outcome": written.outcome, "commit": written.commit},
+            # `pushed` as on a PATCH: without it the create path had nothing
+            # to hang a "saved here, not on GitHub yet" mark on.
+            {
+                "id": record_id,
+                "outcome": written.outcome,
+                "commit": written.commit,
+                "pushed": written.pushed,
+            },
             status_code=201,
         )
 
