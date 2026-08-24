@@ -1081,8 +1081,16 @@ function askFor(cell, status, fields) {
     const label = FIELD_LABELS[field] || field;
     const type = EDITABLE[field] === 'date' ? 'date' : 'text';
     const value = field === 'assigned_on' ? today() : '';
+    // `data-type` and `data-suggest` are what `openEditor` writes on the box it
+    // builds, for the same widget: `data-type` is not decoration — the widget
+    // reads `dataset.type === 'list'` to complete the last comma-separated
+    // token, and without it picking a second assignee replaced the first.
+    const suggest = SUGGESTS[field];
     return `<label>${esc(label)}` +
-      `<input type="${type}" data-field="${esc(field)}" value="${esc(value)}"></label>`;
+      `<input type="${type}" data-field="${esc(field)}"` +
+      ` data-type="${esc(EDITABLE[field])}"` +
+      `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off"` +
+      ` value="${esc(value)}"></label>`;
   }).join('');
   panel.innerHTML =
     `<p class="asking">${esc(human(status))} needs ${fields.length === 1 ? 'this' : 'these'}` +
@@ -1093,6 +1101,12 @@ function askFor(cell, status, fields) {
   const box = cell.getBoundingClientRect();
   panel.style.left = Math.max(8, Math.min(box.left, innerWidth - panel.offsetWidth - 8)) + 'px';
   panel.style.top = Math.min(box.bottom + 6, innerHeight - panel.offsetHeight - 8) + 'px';
+  // The same autocomplete every other box on this page has. `attachSuggest` runs
+  // over the page once at load, so a box built at runtime has to ask — exactly
+  // as `openEditor` does — and this panel did not: the one place the question is
+  // compulsory offered no help answering it. After the panel is placed, because
+  // the widget positions its list against the box it completes.
+  for (const input of panel.querySelectorAll('input[data-suggest]')) attachSuggest(input);
   panel.querySelector('input').focus();
   panel.querySelector('input').select();
 
@@ -1119,6 +1133,12 @@ function askFor(cell, status, fields) {
   // answers to — a panel that has to be dismissed with the mouse is a panel that
   // stops the keyboard path this table is built around.
   panel.onkeydown = event => {
+    // Unless the suggestion list already answered the key: this listener is on
+    // the panel and fires on the way up, after the widget's own — so without
+    // this, Enter picked the highlighted name AND saved the half-answered
+    // panel, and Escape closed the list AND cancelled the whole question. One
+    // press, one thing done.
+    if (event.defaultPrevented) return;
     if (event.key === 'Enter') { event.preventDefault(); panel.querySelector('#asked').click(); }
     if (event.key === 'Escape') { event.preventDefault(); panel.querySelector('#unasked').click(); }
   };
@@ -1301,6 +1321,15 @@ function openEditor(cell) {
     else stage(field, input.value);
   };
   input.onkeydown = e => {
+    // A key the suggestion list consumed is not this editor's to act on too:
+    // Escape with the list open shipped as "close the list AND discard the
+    // whole cell edit". The Escape still must not bubble — the grid's own
+    // handler abandons a draft row on it — so the stop the branch below does is
+    // done here as well before the early return.
+    if (e.defaultPrevented) {
+      if (e.key === 'Escape') e.stopPropagation();
+      return;
+    }
     if (e.key === 'Enter') { RETURN = true; input.blur(); }
     if (e.key === 'Escape') {
       // Escape means discard. Redrawing first would fire blur with the partial

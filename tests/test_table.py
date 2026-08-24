@@ -2855,6 +2855,50 @@ def test_the_editor_discards_on_escape_and_commits_on_tab(page: str):
         assert put_back in after, put_back
 
 
+_ESCAPE_WITH_A_LIST_OPEN = """
+window.__wrote = 0;
+window.fetch = () => { window.__wrote++; return new Promise(() => {}); };
+const cell = document.querySelector('td.edit[data-field="assignees"]');
+openEditor(cell);
+const box = cell.querySelector('input');
+box.value = 'b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const wasOpen = !list.hidden;
+const key = () => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+key();
+const first = {listShut: list.hidden, stillEditing: !!cell.querySelector('input'),
+               kept: cell.querySelector('input') && cell.querySelector('input').value};
+key();
+return {wasOpen, first, wrote: window.__wrote,
+        editorLeft: !!tbody.querySelector('td input, td select')};
+"""
+
+
+def test_escape_over_an_open_list_closes_the_list_and_keeps_the_edit(
+    page: str, tmp_path: Path
+):
+    """Two dismissable things can be up at once — the cell editor, and the
+    suggestion list over it — and one Escape shipped as dismissing both: the list
+    closed AND the whole cell edit was discarded, typing included.
+
+    The widget now marks the Escape it consumes and the editor honours the mark,
+    so the first Escape closes only the list and the second closes only the
+    editor — driven with real key events because the collision is between two
+    listeners on one trip up, which no grep of either can see.
+    """
+    got = measured_in(chrome(), page, tmp_path / "escape.html", 1400,
+                      _ESCAPE_WITH_A_LIST_OPEN, height=900)
+
+    assert got["wasOpen"], "the list never opened, so nothing here was asked"
+    assert got["first"]["listShut"] is True
+    assert got["first"]["stillEditing"] is True, "one Escape discarded the edit with the list"
+    assert got["first"]["kept"] == "b", "closing the list took the typing with it"
+    assert got["editorLeft"] is False, "the second Escape did not close the editor"
+    assert got["wrote"] == 0
+
+
 def test_the_editor_a_cell_opens_says_what_it_is_editing(page: str):
     """A box conjured inside a cell inherits nothing from the header above it. It
     was an unnamed input on top of the one thing that said which column it was."""
