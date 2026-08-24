@@ -5235,3 +5235,75 @@ def test_the_banner_does_not_call_a_parked_save_safe_before_its_branch_is_pushed
         "the branch is confirmed on the remote and the banner still cried: "
         f"{got['landed']['said']!r}"
     )
+
+
+def test_the_banner_appears_with_nobody_calling_showpile_by_hand(client: TestClient):
+    """The wiring, not the function: an audit deleted the load-time
+    `readPile()`, the `setInterval(readPile, PILE_POLL_MS)` poll and the
+    `openproj:landed` re-ask from the shell, and every banner test above stayed
+    green because each drives `showPile` or `readPile` by hand. In production
+    that deletion is a banner that never appears at all. So this one never
+    touches either function — the page loads, a landed frame arrives on the
+    page's own stream, the minute passes — and the banner must move on its own
+    each time, against a different scripted `/api/health` body per ask, so each
+    wire is pinned by a state change only that wire can have caused.
+    """
+    from test_injection import run_js
+
+    loud = {
+        "ok": True, "unpushed": 12, "oldest_unpushed_age": 241.0, "parked": 0,
+        "detail": None,
+    }
+    drained = {
+        "ok": True, "unpushed": 0, "oldest_unpushed_age": None, "parked": 0,
+        "detail": None,
+    }
+    loud_again = {
+        "ok": True, "unpushed": 7, "oldest_unpushed_age": 130.0, "parked": 0,
+        "detail": None,
+    }
+    frame = {"t": "landed", "landed": "a" * 40, "remapped": {}, "parked": []}
+    answer = run_js(
+        client.get("/table").text,
+        "(async () => {"
+        "  const look = () => ({hidden: pile.hidden, said: pile.textContent});"
+        # readPile's fetch chain settles over a few microtask turns and the
+        # driver's clock never fires on its own, so settling is yielding a
+        # handful of turns — never a call into the code under test.
+        "  const settle = async () => { for (let i = 0; i < 10; i++) await null; };"
+        "  await settle();"
+        "  const boot = look();"
+        f" source.onmessage({{data: JSON.stringify({json.dumps(frame)})}});"
+        "  await settle();"
+        "  const reasked = look();"
+        "  const onTheClock = __interval();"
+        "  await settle();"
+        "  const polled = look();"
+        "  return {boot, reasked, onTheClock, polled};"
+        "})()",
+        page=True,
+        health=[loud, drained, loud_again],
+    )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    got = answer["value"]
+    assert got["boot"]["hidden"] is False, (
+        "a loud pile at load and the banner never appeared: the load-time "
+        "readPile() is gone"
+    )
+    assert "12 saves" in got["boot"]["said"], got["boot"]["said"]
+    # The re-ask: a landed frame is the news changing, and the banner asked
+    # again on its own — the second scripted body says the pile drained.
+    assert got["reasked"]["hidden"] is True, (
+        "the pile drained on a landed frame and the banner never re-asked: the "
+        f"openproj:landed listener is gone: {got['reasked']['said']!r}"
+    )
+    assert got["onTheClock"] >= 1, "nothing registered on the clock: the minute poll is gone"
+    # The poll: the banner is down at this point, so only the interval firing
+    # can have raised it — and with the third body's numbers, so a stale
+    # sentence cannot pass for a fresh read.
+    assert got["polled"]["hidden"] is False, (
+        "the pile grew back and the minute poll never noticed: "
+        "setInterval(readPile, PILE_POLL_MS) is gone"
+    )
+    assert "7 saves" in got["polled"]["said"], got["polled"]["said"]

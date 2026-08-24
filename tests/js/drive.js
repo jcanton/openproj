@@ -27,6 +27,8 @@
 //          {replies: [...]}  {status, json} or {status, text} per fetch, in
 //                            order — a `text` that is not JSON rejects
 //                            `response.json()`, exactly as a 500 does.
+//          {health: [...]}   what `/api/health` answers, one body per ask in
+//                            order, the quiet day once the list runs out.
 //          {storage: {...}}  localStorage starts holding these; "denied" makes
 //                            reading the property itself throw, the way a
 //                            private window and a blocked-cookies policy do —
@@ -543,6 +545,7 @@ async function run(html, expression, options) {
   // only test the half where nothing goes wrong.
   const calls = [];
   const replies = (options.replies || []).slice();
+  const healths = (options.health || []).slice();
 
   function answer(url, init) {
     // The shell asks `/api/me` on every page load, to draw who is signed in.
@@ -561,18 +564,20 @@ async function run(html, expression, options) {
     // And the shell's pile banner asks `/api/health` once at load, for the
     // same reason and with the same answer shape: recorded, it shifts every
     // assertion about `calls` by one; answered from `replies`, it eats the
-    // refusal a test scripted for its save. Answered as the quiet day — no
-    // pile, nothing parked — which is what a healthy server says. A test about
-    // the banner itself does not come through here: it drives `showPile`
-    // directly, or replaces `fetch` whole before calling `readPile`.
+    // refusal a test scripted for its save. The quiet day — no pile, nothing
+    // parked — unless the test scripted `health` answers. Those exist because
+    // the banner's WIRING (the load-time read, the minute poll, the landed
+    // re-ask) can only be proved by a page that meets a loud pile without the
+    // test touching `showPile` or `readPile` — replacing `fetch` whole runs
+    // too late for the read the page makes at load.
     if (String(url) === '/api/health') {
-      const quiet = {ok: true, head: '', version: '', unpushed: 0,
-                     oldest_unpushed_age: null, parked: 0, detail: null};
+      const body = healths.shift() || {ok: true, head: '', version: '', unpushed: 0,
+                                       oldest_unpushed_age: null, parked: 0, detail: null};
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve(quiet),
-        text: () => Promise.resolve(JSON.stringify(quiet)),
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
       });
     }
     calls.push({
@@ -669,6 +674,7 @@ async function run(html, expression, options) {
   // a test about a timer — the live region re-sets a repeated message on one —
   // says when the clock moves.
   const timers = new Map();
+  const intervals = new Map();
   let ticket = 1;
 
   class DriverEvent {
@@ -715,10 +721,23 @@ async function run(html, expression, options) {
       return due.length;
     },
     __pending: () => timers.size,
-    // Still nothing: the only interval on these pages is a two-minute autosave,
-    // which is never what a test is asking about.
-    setInterval: () => 0,
-    clearInterval: () => {},
+    // Queued like the timeouts and never self-firing, for the same reason —
+    // but recorded now rather than swallowed: the shell's pile poll is wiring
+    // whose deletion a test has to be able to notice, and a `setInterval` that
+    // returned 0 made a page with the poll indistinguishable from a page
+    // without it. `__interval()` is the test saying the period elapsed once;
+    // kept out of `__tick` so no existing clock test starts an autosave it
+    // never scripted an answer for.
+    setInterval: (fn, delay) => {
+      intervals.set(ticket, {fn, delay: Number(delay) || 0});
+      return ticket++;
+    },
+    clearInterval: id => { intervals.delete(id); },
+    __interval: () => {
+      const due = [...intervals.values()];
+      for (const timer of due) timer.fn();
+      return due.length;
+    },
     requestAnimationFrame: () => 0,
     // Its pair, which was missing: a page that coalesces work onto a frame
     // cancels the frame when a timer beats it to the work, and a bare
