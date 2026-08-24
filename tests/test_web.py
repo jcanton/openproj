@@ -796,11 +796,11 @@ def test_health_clears_itself_when_the_fork_does_and_needs_no_restart(with_a_rem
     confirmed, rewritten = force_fork(client, origin, plan)
     assert client.get("/api/health").json()["ok"] is False
 
-    # Not cleared by a save — which still lands locally and answers 200, since
-    # the write path no longer discovers forks — by reading every page, or by
-    # asking again. The save pokes the pusher, whose re-check meets the same
-    # rewritten remote; parked it stays.
-    assert save(client, TASK, {"priority": "low"}).status_code == 200
+    # Not cleared by a save — refused now, since the gate reads the same two
+    # refs the guard does — by reading every page, or by asking again. The
+    # refusal still pokes the pusher, whose re-check meets the same rewritten
+    # remote; parked it stays.
+    assert save(client, TASK, {"priority": "low"}).status_code == 503
     client.get("/")
     client.get("/table")
     assert client.get("/api/health").json()["ok"] is False
@@ -815,15 +815,19 @@ def test_health_clears_itself_when_the_fork_does_and_needs_no_restart(with_a_rem
         "a tracking ref moves when something fetches, and this route does not"
     )
 
-    # The next poke is the discovery: the pusher re-checks the fetch alone,
-    # finds the remote whole again, and lands the backlog the fork stranded.
-    landed = save(client, TASK, {"priority": "high"})
-    assert landed.status_code == 200 and landed.json()["pushed"] is False
-
+    # The next poke is the discovery, and a REFUSED save delivers it — the
+    # gate answers off the stale tracking ref, but its poke sends the pusher
+    # to fetch, which finds the remote whole and lands the stranded backlog.
+    # Without that poke a refusal would outlive the fork it reports.
+    assert save(client, TASK, {"priority": "high"}).status_code == 503
     eventually(
         lambda: client.get("/api/health").status_code == 200,
         message="health never cleared after the fork did",
     )
+
+    # And the gate opened with it: the same save goes through, no restart.
+    landed = save(client, TASK, {"priority": "high"})
+    assert landed.status_code == 200 and landed.json()["pushed"] is False
     pushed_out(client)
     answer = client.get("/api/health")
     assert answer.json()["ok"] is True
@@ -4429,10 +4433,12 @@ def test_the_service_says_which_version_it_is_running(client: TestClient):
 # somebody rewrote history underneath a backlog built on it. No automatic
 # answer to that is safe — replaying onto rewritten history would launder the
 # rewrite into ordinary-looking commits — so the pusher parks, and the rest of
-# the section pins what the routes say while it is parked: every write still
-# answers (the plan is not wedged; refusing writes past a threshold is piece
-# 4's, docs/deferred-push.md "Saying it on the page"), no answer claims the
-# remote holds anything, and health alone goes red, in the guard's own words.
+# the section pins what the routes say while it is parked: every write refuses,
+# with the 503 and in the guard's own words. Refusing is not the escalation —
+# the banner and the pile thresholds are piece 4's (docs/deferred-push.md,
+# "Saying it on the page") — it is the floor under it: a fork is never resolved
+# automatically, no page reads /api/health, and a 200 onto a backlog the parked
+# pusher can never land is a save the first idle recycle silently discards.
 #
 # The fork below is built the way it happens: a save landed and confirmed by
 # the pusher, a hard reset plus force-push at a terminal, and the discovery on
@@ -4544,9 +4550,8 @@ def wedged_writes(forked: Forked) -> dict[str, object]:
     A dict and not a list because the failures are read by name: "the asset
     upload answered 500" is a different piece of news from "the promote route
     did". None of them can discover the fork any more — nothing on the write
-    path touches the network — so what there is to hold is that none of them
-    invents a refusal of its own, and none of them claims the remote holds
-    what it just wrote.
+    path touches the network — so the store's gate refuses each one off the
+    same two local refs the guard reads, before any commit is made.
     """
     client = forked.client
     base = head(client)
@@ -4569,13 +4574,19 @@ def wedged_writes(forked: Forked) -> dict[str, object]:
     }
 
 
-def test_every_write_route_still_answers_while_the_plan_has_forked(forked: Forked):
-    """Seven routes, not the one the audit happened to test — and what they must
-    answer inverted with the deferred push. The write path cannot meet the fork
-    any more, so a parked fork takes no route down: each of the seven commits
-    locally and answers as it always does, claiming nothing about the remote.
-    Refusing writes when the pile cannot land is piece 4's threshold
-    (docs/deferred-push.md, "Saying it on the page"), not a per-route verdict.
+def test_every_write_route_refuses_in_words_while_the_plan_is_forked(forked: Forked):
+    """Seven routes, not the one the audit happened to test — and the refusal
+    they briefly lost when the push left the request path, restored at the gate.
+
+    The write path cannot meet the fork any more, and for one revision of this
+    branch nothing else refused either: each route committed onto a backlog the
+    parked pusher can never land, which on an in-memory filesystem is a pile
+    the first idle recycle discards — data loss with a 200 on every step of
+    the way in. A fork is never resolved automatically and no page reads
+    /api/health, so the person hears about it here, at the moment they act, in
+    the force-push guard's own words plus what to do about them. The pile
+    thresholds and the banner are piece 4's escalation (docs/deferred-push.md,
+    "Saying it on the page"); refusing a fork is the floor under it.
 
     The inventory is checked against the app's own router rather than typed out,
     so an eighth write route cannot be added without either being driven here or
@@ -4612,20 +4623,42 @@ def test_every_write_route_still_answers_while_the_plan_has_forked(forked: Forke
     assert len(answers) == len(driven)
 
     for name, response in answers.items():
-        assert response.status_code < 400, f"{name}: {response.status_code} {response.text}"
-        assert response.headers["content-type"].startswith("application/json"), name
-        answered = response.json()
-        if "pushed" in answered:
-            # Landed on this disk is all any of them may claim while the
-            # remote's history no longer contains ours.
-            assert answered["pushed"] is False, f"{name} claimed a fork it cannot cross"
+        assert response.status_code == 503, f"{name}: {response.status_code} {response.text}"
+        assert response.headers["content-type"].startswith("application/json"), (
+            f"{name}: an answer nobody can parse is how every page printed 'refused'"
+        )
+        detail = response.json()["detail"]
+        # The guard's own sentence, carrying both shas — not a wording this
+        # route invented — and then what to do: a person, not a retry.
+        assert forked.confirmed[:7] in detail and forked.rewritten[:7] in detail, (
+            f"{name}: {detail}"
+        )
+        assert "no longer contains" in detail, f"{name}: {detail}"
+        assert "by hand" in detail, f"{name} refused without saying what to do: {detail}"
 
-    # The condition is reported where the operator looks, not absorbed: health
-    # names the commit the remote lost, in the force-push guard's own words.
-    health = forked.client.get("/api/health")
-    assert health.status_code == 503
-    detail = health.json()["detail"]
-    assert forked.confirmed[:7] in detail and forked.rewritten[:7] in detail
+
+def test_a_refused_save_adds_nothing_to_the_pile_a_recycle_would_discard(forked: Forked):
+    """The half of the refusal that is about the person's text.
+
+    `tasks/task-c00002.md` was touched by neither history, so no per-path
+    question could refuse this save — the fork is a property of the branch.
+    Accepted, the edit would become a commit only this disk holds, behind a
+    pusher parked for good; the first idle recycle would discard it, long
+    after the editor let go of the draft on the strength of the 200. Refused,
+    the only copy stays where the person can still see it: every write site in
+    `render/` treats !response.ok as "the edit is still unsaved" (section C8,
+    tests/test_writes.py drives the shipped scripts on exactly this answer).
+    """
+    before = git_head(forked.plan)
+    pile = forked.client.get("/api/health").json()["unpushed"]
+
+    response = save(forked.client, OTHER, {"priority": "high"})
+
+    assert response.status_code == 503, response.text
+    assert git_head(forked.plan) == before, "refused, but committed anyway"
+    assert forked.client.get("/api/health").json()["unpushed"] == pile, (
+        "a save the person was told was refused still joined the pile a recycle discards"
+    )
 
 
 def test_a_forked_plan_is_not_spelled_as_the_code_the_pages_read_as_a_conflict(forked: Forked):
@@ -4638,11 +4671,10 @@ def test_a_forked_plan_is_not_spelled_as_the_code_the_pages_read_as_a_conflict(f
     would paint the conflict box empty and say "somebody else changed this
     first", which describes something a reload fixes.
 
-    A save on a forked plan answers 200 now — the commit is real and this disk
-    holds it — so the code that must not appear cannot arrive through the save
-    itself any more. What keeps this test alive is the sweep: no answer a
-    forked plan gives, on the write or on health, may be a number the shipped
-    scripts special-case as something else, because a page that reads "the
+    The statuses are read out of the shipped scripts rather than listed here,
+    so a page that starts special-casing some other number brings this test
+    with it: no answer a forked plan gives, on the write or on health, may be
+    a number the pages read as something else, because a page that reads "the
     remote lost your history" as "somebody else edited this record" sends a
     person reloading at a wall.
     """
@@ -4650,18 +4682,22 @@ def test_a_forked_plan_is_not_spelled_as_the_code_the_pages_read_as_a_conflict(f
     special = {int(n) for n in re.findall(r"status\s*===\s*(\d{3})", render_source())}
 
     assert special, "the sweep found no status branch at all, so it proved nothing"
-    assert response.status_code == 200, response.text
-    assert response.json()["outcome"] != "conflict", (
-        "a fork spelled as a conflict names the wrong culprit and the wrong fix"
+    assert response.status_code == 503, response.text
+    assert response.status_code not in special, (
+        f"a forked plan answers {response.status_code}, which the pages already "
+        f"read as something else: {sorted(special)}"
     )
-    assert response.status_code not in special
+    assert "detail" in response.json(), (
+        "every write site in `render/` falls through `!response.ok` to "
+        "`refusal(answer, status)`, which reads `answer.detail`"
+    )
     health = forked.client.get("/api/health")
     assert health.status_code not in special, (
         f"the fork's own answer, {health.status_code}, is a number the pages "
         f"already read as something else: {sorted(special)}"
     )
     assert "detail" in health.json(), (
-        "the one surface that reports the fork has to carry the sentence"
+        "the other surface that reports the fork has to carry the sentence too"
     )
 
 

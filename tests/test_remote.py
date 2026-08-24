@@ -1395,6 +1395,90 @@ def test_the_force_push_guard_is_armed_before_the_first_push_ever_succeeds(
     assert after.unpushed == 2  # the commit the remote lost, and ours behind it
 
 
+def test_a_write_on_a_forked_store_is_refused_and_still_pokes_the_pusher(
+    store: Store, repo_path: Path, remote_path: Path
+):
+    """The write gate and its poke, pinned together because each keeps the other
+    honest.
+
+    Refusing: `sync()` parks on a fork and only a person can move the remote, so
+    every commit accepted past the guard joins a backlog with no way off this
+    disk — on Cloud Run the disk is memory, and an idle recycle discards the
+    lot, each commit accepted with a green answer. The deleted-push branch
+    shipped exactly that for a while: writes kept answering while the pusher
+    was parked for good.
+
+    Poking: the gate reads the tracking ref, which only a fetch moves, and a
+    refusal makes no commit — so a gate that refused WITHOUT poking would stay
+    shut forever after a person heals the remote, because nothing else on the
+    write path or the health route ever fetches. The poke keeps the discovery
+    loop alive, and the tail of this test walks it: heal, one pass, and the
+    same save goes through.
+    """
+    confirmed = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+    assert store.sync().state == "landed"  # the remote provably held this commit
+
+    seed = parent(remote_path, confirmed.commit)
+    rewritten = commit_directly(
+        remote_path,
+        {**tree_now(remote_path), "notes.md": "history rewritten\n"},
+        "history rewritten",
+        parents=[seed],
+        ref=None,
+    )
+    remote = pygit2.Repository(str(remote_path))
+    remote.references["refs/heads/main"].set_target(rewritten)
+    ours = store.write(
+        path=OTHER,
+        content=record(id="task-c00002", title="Downgrade numpy", owner="bo",
+            status="in_progress"),
+        base_commit=store.head(),
+        author="bo",
+        message="task-c00002: status todo -> wip",
+    )
+    assert store.sync().state == "diverged"
+
+    store.dirty.clear()
+    with pytest.raises(StoreDiverged) as refused:
+        store.write(
+            path=PATH,
+            content=record(status="done"),
+            base_commit=store.head(),
+            author="ann",
+            message="task-c00001: status wip -> done",
+        )
+
+    assert head(repo_path) == ours.commit, "refused, but committed anyway"
+    assert "no longer contains" in str(refused.value), (
+        "the refusal must speak in the force-push guard's words, not invent its own"
+    )
+    assert store.dirty.is_set(), (
+        "refused without poking: nothing fetches on the write path or in health, "
+        "so the store would stay wedged forever after a person heals the remote"
+    )
+
+    # The loop the poke keeps alive. A person puts the remote back onto the
+    # history it rewrote away; the pass the poke asked for discovers it and
+    # lands the stranded backlog; the gate opens on its own — no restart.
+    remote.references["refs/heads/main"].set_target(confirmed.commit)
+    assert store.sync().state == "landed"
+    healed = store.write(
+        path=PATH,
+        content=record(status="done"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status wip -> done",
+    )
+    assert healed.commit is not None
+    assert store.condition().diverged is False
+
+
 def test_a_conflict_in_the_middle_of_a_batch_parks_alone_and_the_rest_land(
     store: Store, repo_path: Path, remote_path: Path
 ):

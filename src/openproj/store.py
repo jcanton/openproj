@@ -162,11 +162,13 @@ class StoreLocked(RuntimeError):
 
 
 class StoreDiverged(RuntimeError):
-    """Local and remote have both moved and neither contains the other.
+    """The store will not write onto, or push over, a fork it cannot resolve.
 
-    Never resolved automatically: every automatic answer discards somebody's
-    commits, and a tracker that silently drops a commit is worse than one that
-    stops and says so.
+    Raised by the manual `push()` when both histories moved and neither
+    contains the other, and by the write gate (`_refuse_forked`) while the
+    force-push guard is parked. Never resolved automatically: every automatic
+    answer discards somebody's commits, and a tracker that silently drops a
+    commit is worse than one that stops and says so.
     """
 
 
@@ -197,6 +199,34 @@ def _forked_message(confirmed: str, remote: str) -> str:
         f"the remote at {remote[:7]} no longer contains {confirmed[:7]}, which it "
         "was seen to hold; somebody rewrote history — refusing to replay onto it"
     )
+
+
+def _forked(repo: pygit2.Repository) -> str | None:
+    """The force-push guard's verdict off two local refs: the refusal sentence
+    when the remote no longer contains what this process confirmed it held,
+    None otherwise. No network, ever — callers hold `_writing` or answer health.
+
+    One reading because it has two consumers that must not disagree about the
+    same repository: `condition`, which turns it into the red flag and its
+    `refusal`, and the write gate, which turns it into the 503 a save gets. Not
+    both-sides-moved: that is the ordinary race the recovery replays through,
+    and a verdict that went red on every hand-push would be ignored by the day
+    it mattered. Absent refs answer False honestly — no tracking ref is a store
+    that never spoke to its remote, and no guard ref means nothing was ever
+    positively confirmed (no remote, or a branch unborn when the store opened).
+    """
+    reference = repo.references.get(_TRACKING)
+    remote = str(reference.target) if reference else None
+    held = repo.references.get(_PUSHED)
+    confirmed = str(held.target) if held else None
+    if (
+        remote is None
+        or confirmed is None
+        or remote == confirmed
+        or repo.descendant_of(remote, confirmed)
+    ):
+        return None
+    return _forked_message(confirmed, remote)
 
 
 def _stranded_refspec(sha: str) -> str:
@@ -939,26 +969,14 @@ class Store:
             )
         reference = repo.references.get(_TRACKING)
         remote = str(reference.target) if reference else None
-        # Not both-sides-moved: that is now the ordinary race the recovery
-        # resolves, and it would go red on every hand-push. The wedge is the
-        # remote no longer containing what this process CONFIRMED it held —
-        # `refs/openproj/pushed`, seeded when the store opened and moved by each
-        # successful push — the same comparison the recovery's force-push guard
-        # makes, so the flag and the refusal cannot disagree about the same
-        # repository. Absent only when nothing was ever confirmed (no remote, or
-        # a branch unborn at open), which is the one state where False is the
-        # honest answer rather than a blind spot: before the seed existed, this
-        # read False for every fresh clone too — the whole boot-to-first-push
-        # window in production — and health could not go red during precisely
-        # the window the guard was needed.
-        held = repo.references.get(_PUSHED)
-        confirmed = str(held.target) if held else None
-        diverged = (
-            remote is not None
-            and confirmed is not None
-            and remote != confirmed
-            and not repo.descendant_of(remote, confirmed)
-        )
+        # `_forked`'s verdict — `refs/openproj/pushed`, seeded when the store
+        # opened and moved by each successful push, against the tracking ref.
+        # Shared with the write gate so this flag and the 503 a save gets
+        # cannot disagree; the seed matters because before it existed this read
+        # False for every fresh clone — the whole boot-to-first-push window in
+        # production — and health could not go red during precisely the window
+        # the guard was needed.
+        refusal = _forked(repo)
         walk = repo.walk(local, SortMode.NONE)
         floor = remote or self._opened_at
         if floor is not None:
@@ -976,13 +994,11 @@ class Store:
         return Condition(
             head=local,
             remote=remote,
-            diverged=diverged,
+            diverged=refusal is not None,
             unpushed=unpushed,
             oldest_unpushed_age=None if oldest is None else max(0.0, time.time() - oldest),
             parked=parked,
-            refusal=(
-                _forked_message(confirmed, remote) if diverged and confirmed and remote else None
-            ),
+            refusal=refusal,
         )
 
     def fetch(self) -> str | None:
@@ -1477,6 +1493,34 @@ class Store:
 
     # -- writing ------------------------------------------------------------
 
+    def _refuse_forked(self) -> None:
+        """Every write refuses, in the guard's words, while the plan is forked.
+
+        Why refuse when the commit would be real and local: `sync()` parks on a
+        fork and only a person can move the remote, so every commit accepted
+        past the guard joins a backlog with no way off this disk — and on Cloud
+        Run the disk is memory, so the first idle recycle discards the lot,
+        each one accepted with a 200. No page reads /api/health; the save's own
+        answer is the one place the person is guaranteed to hear it, while
+        their text is still in their editor. The banner and the pile thresholds
+        are piece 4's escalation (docs/deferred-push.md, "Saying it on the
+        page"); this is the floor under it — a fork is never resolved
+        automatically, and never papered over either.
+
+        The poke before the raise is what un-wedges the store after a person
+        heals the remote: the verdict is read off the tracking ref, which only
+        a fetch moves, and a refusal makes no commit to poke with — so without
+        this, nothing would ever send the pusher back to look, and the refusal
+        would outlive the fork it reports until somebody restarted the
+        container, which is exactly the move `_wedged` warns costs the backlog.
+
+        Called with `_writing` held; reads two local refs and nothing else.
+        """
+        refusal = _forked(self._repo)
+        if refusal is not None:
+            self.dirty.set()
+            raise StoreDiverged(refusal)
+
     def put_asset(self, data: bytes, suffix: str, author: str) -> tuple[str, bool]:
         """Store bytes under a name derived from their content, and return it.
 
@@ -1496,6 +1540,10 @@ class Store:
         """
         name = f"assets/{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
         with self._writing:
+            # Before the dedupe, not after: while the plan is forked no route
+            # may answer as though this service can take work, and the refusal
+            # for an upload has to be the same one a save gets.
+            self._refuse_forked()
             if self.read_asset(self.head(), name) is not None:
                 return name, False
             blob = self._repo.create_blob(data)
@@ -1580,6 +1628,7 @@ class Store:
             # clock. Remote staleness is the pusher's problem; the
             # compare-and-swap below keeps handling browser-side staleness — a
             # `base_commit` older than HEAD — exactly as it always has.
+            self._refuse_forked()
             return self._attempt(files, base_commit, author, message)
 
     def _attempt(

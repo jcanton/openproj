@@ -146,12 +146,12 @@ def _refusal(error: Exception) -> HTTPException:
         # 503, and the argument is worth writing down because the two codes that
         # come to mind first are both wrong.
         #
-        # 500 claims a bug in this service. There is none. `_absorb_remote`
-        # refuses to guess which commits to discard, and that refusal is the
-        # reason nobody's work has been destroyed — the code that ran is the code
-        # that was meant to run, and what is wedged is the repository it was
-        # pointed at. A 500 sends somebody to read this file, which is the one
-        # place the answer is not.
+        # 500 claims a bug in this service. There is none. The store's write
+        # gate refuses to commit onto a fork rather than guess which commits to
+        # discard, and that refusal is the reason nobody's work has been
+        # destroyed — the code that ran is the code that was meant to run, and
+        # what is wedged is the repository it was pointed at. A 500 sends
+        # somebody to read this file, which is the one place the answer is not.
         #
         # 409 is the one that reads right and is the one that must not be used.
         # It already means something to every page that writes: `refusal()` in
@@ -241,9 +241,9 @@ def _wedged(state: Condition) -> str:
 
     Beside `_refusal` because they are the two halves of one condition and have to
     stay legible against each other: that one answers the person who pressed Save,
-    this one answers `/api/health`. Both open on `_absorb_remote`'s own wording —
-    the sentence in the server log and in the room's `refused` frame — because
-    wording one outage three ways makes it look like three outages.
+    this one answers `/api/health`. Both open on the force-push guard's own
+    wording — the sentence in the server log and in the room's `refused` frame —
+    because wording one outage three ways makes it look like three outages.
 
     They differ in the half that follows, and deliberately. A person who pressed
     Save is told their save did not land and that trying again will not change
@@ -2110,10 +2110,10 @@ def create_app(
                 "unpushed": state.unpushed,
                 # Always present, `null` when there is nothing wrong: a key that
                 # appears only sometimes is a key a JSON path breaks on, and this
-                # is read by scripts. The wording is `_absorb_remote`'s own, so
-                # the operator reading a monitor and the person who pressed Save
-                # are told the same thing, plus what to do about it — which is the
-                # half a condition report is useless without.
+                # is read by scripts. The wording is the force-push guard's own,
+                # so the operator reading a monitor and the person whose save
+                # was refused are told the same thing, plus what to do about it
+                # — which is the half a condition report is useless without.
                 "detail": _wedged(state) if state.diverged else None,
             },
             status_code=503 if state.diverged else 200,
