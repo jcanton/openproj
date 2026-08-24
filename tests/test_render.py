@@ -2901,18 +2901,31 @@ def test_the_line_that_says_a_bet_does_not_fit_is_drawn_as_a_problem(
     assert ".overrun { color: var(--sev-warn); font-weight: 600; }" in body
 
 
-def test_the_detail_column_is_centred_and_the_facts_sit_beside_the_document(rendered: Path):
-    """It was an 832px article flush left with a full-height rule down its right
-    edge, which on a wide screen is not a document — it is the left half of a
-    two-pane layout whose right half failed to load.
+def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendered: Path):
+    """The header — back link, switcher, commit bar, kind, title, meta — is the
+    page's own width and starts where the nav starts. jcanton, 2026-08-24: "all
+    above the red lines should be full width, same as in the side-by-side view,
+    and only the body and fields below it keep the current horizontal sizing".
 
-    A container query and not a media query: the width that decides whether the
-    facts fit beside the prose is the column's, and the reader sets that with the
-    grip. A window breakpoint would put a sidebar on a column dragged to 400px."""
+    So the measure is `.panes`'s, and the CONTAINER moved down with it. That
+    pairing is the whole risk in the change: a container query and not a media
+    query, because the width that decides whether the facts fit beside the prose
+    is the column's and the reader sets that with the grip — and a container
+    left behind on a full-width article would be answering about the WINDOW,
+    which is a window breakpoint by another name and puts a sidebar on a column
+    dragged to 400px.
+
+    (It was an 832px article flush left with a full-height rule down its right
+    edge, which on a wide screen is not a document but the left half of a
+    two-pane layout whose right half failed to load. The rule is a short grip
+    now, and the header above the column is what says the page is this wide on
+    purpose.)"""
     body = read(rendered, "detail.html")
 
-    assert re.search(r"article\.record \{[^}]*margin: 0 auto", body, re.S)
-    assert "container-type: inline-size" in body
+    assert re.search(r"\.panes \{[^}]*width: var\(--measure[^}]*container-type: inline-size",
+                     body, re.S)
+    assert not re.search(r"article\.record \{[^}]*(width|container-type):", body, re.S)
+    assert re.search(r"article\.record \{[^}]*margin: 0 0 3rem", body, re.S)
     assert "@container (min-width: 56rem)" in body
     assert re.search(r"\.panes > \.facts \{[^}]*grid-column: 2", body, re.S)
     assert re.search(r"\.panes > \.main \{[^}]*grid-column: 1", body, re.S)

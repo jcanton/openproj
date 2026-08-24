@@ -1070,4 +1070,74 @@ One consequence worth naming: the split-ratio fence (`SPLIT_RANGE`) now engages 
 measure has been dragged out as well — at the default measure the capped article never gives the
 panes 2,160px — so the ultrawide regression test seeds a 1900px measure to keep exercising it.
 
+## The header spans the page (2026-08-24, same day, second round)
+
+The paragraph above says a session is "the article at `--measure`, centred", and that is what
+jcanton came back about: *"I'd make the ←Table, edit/side-by-side/preview buttons and 'nothing
+saved yet' banner full width, so they stay left aligned like the nav and don't move anymore at all
+(they are still jumping between side-by-side and the other views). actually: all above the red
+lines should be full width, same as in the side-by-side view, and only the body and fields below it
+keep the current horizontal sizing"*. The red lines sat under the meta line.
+
+The header moved because the measure was on `article.record`, so the header was inside the box the
+split view widens. **The measure is on `.panes` now** and the article is the page's own content
+width, left-pinned: the back link, the switcher, the commit bar, the kind chip, the title and the
+meta line all start at the body's left padding, level with the nav, and hold every number across
+the three views.
+
+Four things had to move with it, and each is a comment in the stylesheet:
+
+- **The container.** `container-type: inline-size` went to `.panes` with the width. Left on a
+  full-width article, `@container (min-width: 56rem)` would have been asking about the window, and
+  the facts would take their 20rem column beside a document dragged down to 10rem.
+- **The container cannot answer its own query.** `@container` reaches a container's descendants,
+  so `.panes { grid-template-columns: … }` inside the block would now match nothing. The two-column
+  layout is an implicit second track instead: the query places `.facts` in column 2 and
+  `grid-auto-columns: 20rem` sizes it, which is the same number the explicit track carried.
+- **`--writing`** stays on `article.record`. The textarea, Ace's box and the split's rendered pane
+  are all inside it and reach it by inheritance wherever the width lives.
+- **`#grip`.** `place()` parks it on `.panes`'s right edge, and the drag is `clientX - panesLeft`
+  rather than `(clientX - innerWidth / 2) * 2` — one pixel of drag is one pixel of column now that
+  the column is not centred.
+
+`position: relative` stays on the article: it is what says the full-page surface has not come back,
+and nothing is positioned against it (the seat bands and the gutter resolve against `.bodywrap`,
+the split's line against `#splitter`, and `.suggest` is parked on the body in page coordinates).
+
+**Left, not centred, is the judgement in this round.** He asked for the sizing below the line to be
+kept, not the position, and a centred document under a left-pinned header is indented from its own
+title. It also buys the thing the change is for: the split grows `.panes` to the right only, so the
+editor pane opens exactly where the document was, where a centred box slid it half a body width
+left on every open.
+
+### Two things the first pass of that move got wrong
+
+Both were found by measuring rather than by reading, and both are about a claim the stylesheet
+could not keep on its own.
+
+**`.panes` is not the only box below the line.** `#promote` — the promotion bar on a note's or an
+issue's page — is a direct child of `article.record` too, sitting under `.panes`, and it had no
+width of its own: it took the article's, which was the measure until the measure moved down. So
+moving the measure gave the bar the whole page. Measured in Chrome at 1400x900 on a note: the bar
+1360px wide against `.panes`'s 1024, its `border-top` ending 336px past the right edge of the facts
+column in empty space, and its 12px explanatory sentence set at 1360px. It carries
+`width: var(--measure, 64rem); max-width: 100%` now, uncontested — `#promote` is (1,0,0) and
+nothing else in any sheet gives this element a width. It needs no split variant, because
+`.record.editing #promote` at (1,2,0) takes the bar off the page for the whole of a session and
+`view-both` is always a session. Nothing caught this because every pixel test on this page runs on
+a task, and a task is not in `PROMOTABLE`; the test that holds it now creates a note through
+`/api/record` first.
+
+**A row that holds is not the same as controls that hold.** `.editbar` took the page's width and
+stopped moving, and the three segments inside it went on moving 70px — Delete stood in front of
+them and leaves the bar the moment a session begins. Measured at 1400: `#view-edit` at x=91 while
+reading and x=21 in both session views. Delete is emitted *after* the switcher now, so it leaves
+from the end and moves nothing, and `#views` starts at the nav's left edge in all three views —
+which is the whole of jcanton's sentence, "stay left aligned like the nav and don't move anymore at
+all", rather than half of it. The alternative was reserving Delete's slot with `visibility: hidden`
+the way `article.record .editbar + .commitbar[hidden]` reserves the commit bar's band; it holds the
+switcher still but leaves it indented behind 71px of nothing, which answers "don't move" and
+contradicts "left aligned like the nav". Delete going second is also right on its own: it is the
+destructive control, and the leading edge of a row is where a pointer arrives.
+
 🤖 Written by an agent on behalf of @jcanton

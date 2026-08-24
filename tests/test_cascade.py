@@ -870,20 +870,61 @@ def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     )
 
     # The measure holds in the reading and writing views, and the split is the
-    # one place another width wins: one measure plus one body, still centred.
-    # Both are `article.record…`, and (0,2,1) beats (0,1,1).
-    split = PAGE + [el("article", "record editing view-both")]
-    ordinary = PAGE + [el("article", "record editing view-edit")]
+    # one place another width wins: one measure plus one body. It is `.panes`
+    # that carries both since 2026-08-24 — the article is the page's width in
+    # every view, which is what stops the header moving when the split opens —
+    # and `article.record.view-both .panes` at (0,3,0) beats the base `.panes`
+    # at (0,1,0), so the split wins on weight and not on the order the two are
+    # written in.
+    split = PAGE + [el("article", "record editing view-both"), el("div", "panes")]
+    ordinary = PAGE + [el("article", "record editing view-edit"), el("div", "panes")]
     assert detail.value(split, "width") == "calc(2 * var(--measure, 64rem) - 21rem)", (
         says(detail, split, "width")
+    )
+    won = detail.winner(split, "width")
+    base = next(reach for reach in detail.selectors_reaching(split, "width")
+                if reach.selector == ".panes")
+    assert won.specificity > base.specificity, (
+        "the split's width is winning on order, not weight\n" + says(detail, split, "width")
     )
     assert detail.value(ordinary, "width") == "var(--measure, 64rem)", (
         says(detail, ordinary, "width")
     )
-    # `margin: 0 auto` and `max-width: 100%` still reach the split off the base
-    # rule — they are what recentre it and cap it in a narrow window.
-    assert detail.value(split, "margin") == "0 auto 3rem"
+    # `max-width: 100%` still reaches the split off the base rule — it is what
+    # caps this in a narrow window. There is no `margin: 0 auto` any more: the
+    # column is pinned to the page's left edge, level with the header above it,
+    # so the split's extra body grows to the right and the document's first
+    # character does not move when it opens.
     assert detail.value(split, "max-width") == "100%"
+    assert detail.value(split, "margin") is None, says(detail, split, "margin")
+    article = PAGE + [el("article", "record editing view-both")]
+    assert detail.value(article, "margin") == "0 0 3rem", says(detail, article, "margin")
+    assert detail.value(article, "width") is None, (
+        "the article still carries a width, so the header is inside the measure "
+        "again\n" + says(detail, article, "width")
+    )
+
+    # The other box below the line, which is the one the move of the measure
+    # could quietly take with it: `#promote` is a direct child of the article,
+    # under `.panes`, and it had no width at all until 2026-08-24 — it took the
+    # article's, which was the measure and is now the page. `selectors_reaching`
+    # and not `value` alone: the claim in the stylesheet's comment is that this
+    # declaration is UNCONTESTED, not merely winning, and a second rule arriving
+    # from anywhere is the thing that comment would stop being true about.
+    bar = PAGE + [el("article", "record"), el("div", "", id="promote")]
+    assert detail.value(bar, "width") == "var(--measure, 64rem)", says(detail, bar, "width")
+    assert detail.value(bar, "max-width") == "100%", says(detail, bar, "max-width")
+    assert [reach.selector for reach in detail.selectors_reaching(bar, "width")] == [
+        "#promote"
+    ], says(detail, bar, "width")
+    # And it needs no split-view width of its own, because it is never drawn in
+    # one: `editing` is on the article for the whole of a session and `view-both`
+    # is always a session. `.record.editing #promote` is (1,2,0) and carries the
+    # same id as the base rule at (1,0,0), so the hide wins on the two classes
+    # and not on the order the two are written in — which matters because the
+    # base rule gained declarations on 2026-08-24 and could have gained this one.
+    editing = PAGE + [el("article", "record editing view-both"), el("div", "", id="promote")]
+    assert detail.value(editing, "display") == "none", says(detail, editing, "display")
 
     # And the toolbar refuses to shrink, which is what keeps it on one row. It
     # is the last rule in the last stylesheet, so nothing here is deciding it by

@@ -95,6 +95,15 @@ def test_delete_stands_beside_edit_and_wears_what_edit_wears(index: Index):
     And it carries no font, padding or border of its own, so the two buttons match
     by construction rather than by two rules somebody has to keep in step. Only
     the colour it turns on hover is its own.
+
+    Beside, and since 2026-08-24 AFTER: this asserts the two are on one line and
+    deliberately not which comes first. Delete leaves the bar the moment a
+    session begins, so standing in front of the view switcher moved those three
+    buttons 70px every time anybody pressed one — jcanton asked for them "left
+    aligned like the nav" and not moving at all
+    (`test_opening_a_session_moves_nothing_above_the_document` measures it). It
+    also puts the destructive control off the leading edge of the row, which is
+    where a pointer arrives.
     """
     record_id = one_task(index)
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)

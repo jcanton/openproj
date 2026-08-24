@@ -214,9 +214,10 @@ textarea.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
    rule was proved at eight widths as a media query, in the days when the issue
    and note pages loaded a stylesheet with no `container-type` in it and a
    container query measured byte-identical to no fix at all on /note/new. Those
-   pages are gone and every editor now sits in `article.record`, which IS a
-   container — but re-cutting this as a container query is a re-measurement at
-   eight widths on the merged page, not an edit.
+   pages are gone and every editor now sits in `.panes`, which IS a container
+   (it was `article.record` until 2026-08-24, when the measure moved down to the
+   panes so the header could span the page) — but re-cutting this as a container
+   query is a re-measurement at eight widths on the merged page, not an edit.
 
    40rem and not the 34rem this was first written for: that number was measured
    against fourteen buttons needing 482.8px, and the history group made it
@@ -457,12 +458,20 @@ button.stat.pick:hover { color: var(--accent); }
    The split adds exactly that column back plus the handle's own `1.5rem`
    track, which is the `- 21rem` below, so at an even split each pane is
    precisely the width the document had: the preview keeps the measure the
-   reader set, and the growth is all editor. The base rule's `margin: 0 auto`
-   is what recentres and its `max-width: 100%` is what a narrow window caps
-   this with; `#grip` is hidden in this one view (see `place`) because the
-   article's edge here is not the measure and the splitter is this view's own
-   width control. */
-article.record.view-both { width: calc(2 * var(--measure, 64rem) - 21rem); }
+   reader set, and the growth is all editor. `.panes`'s own `max-width: 100%`
+   is what a narrow window caps this with; `#grip` is hidden in this one view
+   (see `place`) because the column's edge here is not the measure and the
+   splitter is this view's own width control.
+
+   On `.panes` and not on the article since 2026-08-24: the article is the
+   page's width in every view, which is what stops the header moving when this
+   rule fires. The box itself is still centred (jcanton's call — see the base
+   `.panes` rule), so it still recentres when this width lands and the document
+   still slides left as the split opens; what does not move any more is
+   everything above it. Which way the cascade resolves: `article.record.view-both
+   .panes` is (0,3,0) against the base `.panes` at (0,1,0), so the split wins on
+   weight and not on the order the two are written in. */
+article.record.view-both .panes { width: calc(2 * var(--measure, 64rem) - 21rem); }
 /* Both panes at one height, and it is the height the box already has: the box
    is `min-height: var(--writing)` on the ordinary page, the split pins it
    there — `resize: none`, because a box dragged taller than the pane beside it
@@ -554,10 +563,12 @@ article.record.view-both #splitter.dragging::after {
    `@container` now, where this was `@media (width < 58.5rem)`: that number was
    viewport arithmetic for a surface that WAS the window — 56rem of container
    plus the fixed surface's `1.25rem` of padding a side — and the surface is
-   gone. `.panes` hands the facts their track at a container width of 56rem,
-   the container is `article.record`, and asking the same container the same
-   number is what keeps the handle and the facts column flipping at the same
-   pixel by construction rather than by two spellings staying in step.
+   gone. `.panes` hands the facts their track at a container width of 56rem and
+   `.panes` IS the container (it was `article.record` until 2026-08-24), so
+   asking the same container the same number is what keeps the handle and the
+   facts column flipping at the same pixel by construction rather than by two
+   spellings staying in step. Both blocks measure the panes and neither measures
+   the window, which is what that move had to preserve.
 
    Same selectors as above, so this takes the ties on order and not on weight.
    `cascade.py` skips at-rules by construction, so this half is asked of Chrome. */
@@ -620,30 +631,96 @@ _DETAIL_STYLE = """
   margin-right: .5rem; vertical-align: baseline;
 }
 {%- endfor %}
-/* Centred, and a container so the panes below can ask how wide the column
-   actually is. It sat flush left with a full-height rule down its right edge,
-   which on a wide screen is not a document — it is the left half of a two-pane
-   layout whose right half failed to load. */
+/* The header's box, and it is the page's own width — jcanton, 2026-08-24: "all
+   above the red lines should be full width, same as in the side-by-side view,
+   and only the body and fields below it keep the current horizontal sizing".
+   The line he drew sits under the meta line, so everything above it — the back
+   link, the switcher, the commit bar, the kind chip, the title and the meta —
+   is a direct child of this box, and this box now starts at the body's own left
+   padding, level with the nav, and ends where the nav ends.
+
+   That header MOVED because the measure used to be declared right here: it was
+   `width: var(--measure); margin: 0 auto`, so the header was inside a centred
+   column, and `article.record.view-both` — a body wider — slid the whole header
+   left and stretched it every time the split was opened. The measure is on
+   `.panes` below now, which is the half he asked to leave alone.
+
+   Two declarations stay, and both are load-bearing where they are:
+   - `position: relative` is the page's own flow, which is what
+     `test_the_writing_views_are_usable_at_a_window_that_is_not_wide` reads to
+     say the full-page surface has not come back. Nothing is positioned against
+     it: the seat bands and the gutter resolve against `.bodywrap` and the
+     split's line against `#splitter`, each of which carries its own
+     `position: relative`, and `.suggest` is parked on the body in page
+     coordinates on purpose (see its comment).
+   - `--writing` is read by the plain box, by Ace's box and by the split's
+     rendered pane. All three are inside this element, so it reaches them by
+     inheritance wherever the width lives.
+   `max-width: 100%` went with the width rather than staying behind: a block box
+   at automatic width already fills its container and cannot exceed it, and an
+   inert declaration is the next reader's wasted hour — the same trap the
+   `min-width: 0` note above is written about. */
 article.record {
-  width: var(--measure, 64rem); max-width: 100%; margin: 0 auto 3rem; position: relative;
-  container-type: inline-size;
+  margin: 0 0 3rem; position: relative;
   /* One writing height. The box, Ace's box and the split view's rendered pane
      all read this; before the token the first two each said `60vh` on their
      own, which is two constants that are the same number — the drift
      `MAX_UPDATE_BYTES` already paid for once. */
   --writing: 60vh;
 }
-/* The facts beside the document rather than stacked on top of it: the reader
+/* The measure, and the container the columns below are decided by. Both moved
+   here from `article.record` on 2026-08-24 with the header, and they had to
+   move together: the query below asks about "the width the reader set with the
+   grip", and on a full-width article that question would have been answered by
+   the WINDOW — the facts would then take their 20rem column beside a document
+   dragged down to 10rem, instead of stacking as they do at that measure today.
+
+   **Centred, and jcanton chose it knowing what it costs.** He asked for the
+   sizing below the line to be kept, and it is — `--measure` in the reading and
+   writing views, one measure plus one body in the split, exactly as before —
+   and then, asked directly whether the document should follow the header to the
+   page's left edge: "no, body centered / 'indented' should be good".
+
+   What that costs is written down rather than argued with, because it is the
+   half of his own complaint this does not fix: a centred box whose width changes
+   between views has a left edge that changes with it, so opening the split still
+   slides the document's first character half a body width left. The header above
+   it no longer moves, which is what he asked for and what the red lines in his
+   screenshots marked. Pinning this box left would have stopped the rest, at the
+   price of a document indented from its own title. That is the trade, and it is
+   one `margin-inline` away in either direction.
+
+   The facts beside the document rather than stacked on top of it: the reader
    comes for the shaping doc and glances at the facts, and a screen-and-a-half of
    metadata before the first sentence is the wrong way round. A container query
    and not a media query, because the width that decides this is the column's,
    which the reader sets with the grip — not the window's. */
-.panes { display: grid; gap: 0 2.5rem; }
-@container (min-width: 56rem) {
+.panes {
+  width: var(--measure, 64rem); max-width: 100%; margin-inline: auto;
+  container-type: inline-size;
+  display: grid; gap: 0 2.5rem;
+  /* Both of these used to be inside the query below and neither may stay there,
+     because a container cannot answer its own query: `container-type` makes
+     this element the container, `@container` reaches its DESCENDANTS, and a
+     `.panes` rule inside the block would now match nothing at all — the facts
+     would stack at every width, silently.
+
+     So the second column is IMPLICIT. The query places the facts in column 2,
+     which brings that track into existence, and `grid-auto-columns` is the
+     20rem it is sized at — the same number the explicit track carried, and
+     `1fr` still resolves against what is left after it and the gap. One column
+     is the honest default when nothing places anything: it is the stacked
+     layout, which is what a narrow measure gets anyway. */
+  grid-template-columns: minmax(0, 1fr);
   /* 20rem and not less: these are the controls the record is edited through, and
      a reviewers box too narrow to show three logins is a sidebar that looks
      tidier than the page it replaced and is worse to use. */
-  .panes { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; }
+  grid-auto-columns: 20rem;
+  /* Inert while the panes are stacked — one item per row, so a row is its
+     item's height and `start` and `stretch` draw the same box. */
+  align-items: start;
+}
+@container (min-width: 56rem) {
   .panes > .main { grid-column: 1; grid-row: 1; }
   .panes > .facts { grid-column: 2; grid-row: 1; border-left: 1px solid var(--line);
                     padding-left: 1.5rem; }
@@ -886,8 +963,36 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 
 /* The promotion bar. Hidden while the record is being edited: promoting carries
    the STORED body across, so offering it over a textarea somebody is halfway
-   through is offering to promote a document they cannot see. */
-#promote { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
+   through is offering to promote a document they cannot see.
+
+   **And it is BELOW the line, so it keeps the reader's measure.** This is the
+   second box under `.panes` and the only other direct child of the article down
+   there, and it had no width of its own — it took the article's, which WAS the
+   measure until 2026-08-24 and is the whole page now. Measured in Chrome at
+   1400x900 on a note's page before this line: the bar was 1360px against
+   `.panes`'s 1024, so its `border-top` ran 336px past the right edge of the
+   facts column and ended in empty space, and the 12px sentence inside it set at
+   1360px instead of at the measure. jcanton, 2026-08-24, drew the line under
+   the meta row: above it is the page's width, below it "keeps the current
+   horizontal sizing", and this is below it.
+
+   Which way the cascade resolves: `#promote` is (1,0,0) and nothing else in any
+   sheet gives this element a width, so the declaration is uncontested — it is
+   the ONLY rule reaching `width` here, not merely the winning one. The split
+   needs no variant of its own the way `.panes` does: `.record.editing #promote`
+   below takes the bar off the page for the whole of a session, and `view-both`
+   is always a session (`showView` turns `editing` on for `edit` and `both`), so
+   the reading measure is the only width this box is ever drawn at.
+   `max-width: 100%` for the same reason `.panes` carries it — a narrow window
+   caps the measure rather than growing a horizontal scrollbar. And
+   `margin-inline: auto` for the same reason too, which is the whole of what
+   "keeps the column" means: this bar is drawn under the document and has to
+   start where the document starts, so it centres exactly as `.panes` does and
+   moves with it if that choice is ever revisited. Pinned left while the column
+   was centred it sat 168px to its left, which is what
+   `test_the_promotion_bar_keeps_the_column_it_sits_under` measured. */
+#promote { width: var(--measure, 64rem); max-width: 100%; margin-inline: auto;
+           display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
 .record.editing #promote { display: none; }
 #promote select { font: inherit; font-size: 13px; }
