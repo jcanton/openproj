@@ -1291,6 +1291,59 @@ def test_a_commit_that_cannot_be_replayed_is_parked_on_a_branch_before_main_move
     assert (after.unpushed, after.parked, after.diverged) == (0, 0, False)
 
 
+def test_a_commit_that_cannot_replay_one_of_its_paths_parks_whole(
+    store: Store, repo_path: Path, remote_path: Path
+):
+    """Invariant 8 has two doors. `write_all`'s comment promises that a conflict
+    on ANY path writes nothing — and the replay must keep the same promise,
+    because a promotion is one decision in one commit: a brand-new pitch plus
+    the note saying what it became. A replay that landed the resolvable pitch
+    and dropped the refused note would be exactly the half-done state that
+    comment exists to prevent, arriving through the recovery door — the pitch
+    on main under a fresh sha, the note's edit nowhere, no branch, no report.
+    Every other recovery test drives single-path commits, where a refusal
+    always leaves nothing resolvable and the partial-replay hole cannot open;
+    this one holds it shut.
+    """
+    pitch_path = "tasks/task-c00005.md"
+    pitch = record(id="task-c00005", title="Promoted pitch", owner="ann")
+    note = record(owner="cy")
+    ours = store.write_all(
+        files={pitch_path: pitch, PATH: note},
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00005: promoted from task-c00001",
+    )
+    # The hand-push conflicts ONE of the two paths: the note. The pitch is
+    # brand-new and nobody else can have touched it — the easiest half to
+    # replay, which is what makes it the half a partial replay would land.
+    outside = pushed_from_a_terminal(
+        remote_path, {PATH: record(owner="bo")}, "task-c00001: owner ann -> bo"
+    )
+
+    outcome = store.sync()
+
+    assert outcome.state == "landed"
+    branch = f"openproj/stranded-{ours.commit}"
+    assert outcome.parked == [(ours.commit, branch)], "the WHOLE commit parks"
+    assert outcome.remapped == {}, "no half of it was re-minted onto main"
+    # The branch on the remote holds the original commit, and that commit
+    # carries BOTH paths, byte for byte — the decision travels whole.
+    assert stranded_branch(remote_path, ours.commit) == ours.commit
+    remote_repo = pygit2.Repository(str(remote_path))
+    stranded = remote_repo[ours.commit].tree
+    assert remote_repo[stranded[pitch_path].id].data.decode("utf-8") == pitch
+    assert remote_repo[stranded[PATH].id].data.decode("utf-8") == note
+    # NEITHER path reached main: no pitch, and the note still says what the
+    # hand-push made it say.
+    assert head(remote_path) == outside == head(repo_path)
+    assert pitch_path not in tree_now(remote_path)
+    assert parse_text(store.read(outside, PATH), PATH).owner == "bo"
+    assert not contains(remote_path, ours.commit)
+    after = store.condition()
+    assert (after.unpushed, after.parked, after.diverged) == (0, 0, False)
+
+
 def test_a_force_pushed_remote_is_a_fork_and_nothing_is_replayed_onto_it(
     store: Store, repo_path: Path, remote_path: Path
 ):
