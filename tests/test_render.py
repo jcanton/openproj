@@ -548,6 +548,41 @@ def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: P
     assert len(set(priority["ys"])) == 1 and len(set(status["ys"])) == 1
 
 
+def test_the_legend_leads_the_corner_and_the_count_hangs_under_it(rendered: Path):
+    """jcanton, 2026-08-24: "move it below the legend instead please? this way
+    the legend can move a little upwards into the corner." `.keys` is a column
+    pinned by its `top`, so which row touches the corner is decided by document
+    order and nothing else — the count led for four days and held the legend
+    32px down from where the box starts.
+
+    Order is a fact about the document, so it is read off the parsed document:
+    a substring search for `id="summary"` against `class="legends"` would also
+    match either name inside the stylesheet's own comments, which is how
+    `page.index("<h1>")` found a heading inside a CSS comment once already.
+    The pixels this order buys are measured where pixels live, in
+    `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing`
+    (`test_graph_layout.py`)."""
+    parsed = elements(read(rendered, "graph.html"))
+    keys = next(i for i, el in enumerate(parsed)
+                if el.tag == "div" and el.attrs.get("class") == "keys")
+    legends = next(i for i, el in enumerate(parsed)
+                   if el.tag == "div" and el.attrs.get("class") == "legends")
+    summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
+    assert keys < legends < summary, (
+        "inside .keys the legend leads and the count follows: "
+        f"keys at {keys}, legends at {legends}, summary at {summary}"
+    )
+    # The count is still the last thing in the corner box, not moved out of it:
+    # the next element after it is past the `</div>`s, and the first one is the
+    # canvas the box floats over.
+    after = next(el for el in parsed[summary + 1 :] if el.tag not in ("span",))
+    assert after.attrs.get("id") == "cy", after
+    # And the two spans the script writes by id ride inside it still — the move
+    # must not strand `getElementById('shown')` or `('context')`.
+    inside = {el.attrs.get("id") for el in parsed[summary + 1 : summary + 3]}
+    assert inside == {"shown", "context"}, inside
+
+
 def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
     """It was 9px of --muted sitting on the box border, where every edge crossing
     the box ran through it — a label saying only that something is grouped."""
