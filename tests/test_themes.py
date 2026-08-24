@@ -99,7 +99,7 @@ def test_the_stylesheet_answers_all_three_states_of_the_switch():
         ), f"{family.key} does not follow a dark system"
     # And the derivation is one block for all of them, not one per scheme.
     page = render_table(
-        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD
+        build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD, may_write=True
     )
     assert page.count(":root[data-scheme] {") == 1 + len(STATUS_SLOTS)
 
@@ -172,7 +172,8 @@ def test_every_scheme_is_readable_where_the_page_paints_it(tmp_path: Path):
 
     4.5:1 is AA for body text and is what a chip's word and a node's title are.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD)
+    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
+                        may_write=True)
     keys = ["", *(family.key for family in FAMILIES)]
     # Both lists interpolated, and the second one used not to be: it was the
     # status ladder retyped as a JavaScript literal in a test file, which is the
@@ -231,7 +232,8 @@ def test_the_picker_puts_the_scheme_on_the_page_and_takes_it_off_again(tmp_path:
     "default" scheme would be a second copy of the app's own palette, free to
     drift from the one every page without a choice is still drawn in.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD)
+    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
+                        may_write=True)
     got = measured_in(chrome(), page, tmp_path / "picker.html", 1200, _PICKER,
                       height=900, patience=2000)
 
@@ -271,7 +273,8 @@ def test_a_scheme_reaches_the_boxes_people_type_into(tmp_path: Path):
     when the controls were made consistent; the boxes had not, because nothing in
     the default palette made them look wrong.
     """
-    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD)
+    page = render_table(build_index(*_seed(), date(2026, 8, 17)), ROUTES, base_commit=HEAD,
+                        may_write=True)
     got = measured_in(chrome(), page, tmp_path / "boxes.html", 1400, _BOXES,
                       height=900, patience=1500)
 

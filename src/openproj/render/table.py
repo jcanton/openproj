@@ -166,7 +166,7 @@ _TABLE = """
     teaches the third to nobody: a drag has no name written on it anywhere, and
     the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
     what it is by being a control. -#}
-<p class="editbar">{% if creatable %}<a class="button" href="{{ links.new }}">New record</a>
+<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New record</a>
    <span class="hint">double-click a cell, or press Enter on it, to edit it ·
      drag a row by the grip beside its id onto another to file it there</span>
    {% endif %}<span id="state" role="status"></span><span id="summary">
@@ -3529,20 +3529,20 @@ def render_table(
         # three problems, so the count and the filter it links to were counting
         # different things and the table opened shorter than the number promised.
         blocked=len({p.record_id for p in blocking}),
-        editable=base_commit is not None,
-        # Narrower than `editable`, and only for the create control. `editable`
-        # is "there is a server behind this page"; this is "this person may
-        # write". A signed-out visitor was offered New record and got a create
-        # form with every control behind `may_write` hidden — jcanton,
-        # 2026-08-24: "this opens a crippled editor page".
-        #
-        # NOT applied to the grid itself in this commit, deliberately: a
-        # signed-out visitor can still double-click a cell here and will get a
-        # 403 from the save. That is the same defect one door further in and it
-        # is written up in `docs/QUEUE.md` rather than changed under the same
-        # heading, because turning the whole table read-only is a bigger answer
-        # than the one that was asked for.
-        creatable=base_commit is not None and may_write,
+        # "There is a server behind this page AND this person may write" — the
+        # first half alone shipped, standing in for the second, so a signed-out
+        # visitor got role="grid", the combobox, the draft row's `+`, and a 403
+        # for pressing Enter on what all of that offered. `docs/QUEUE.md`
+        # predicted this flag would have to split rather than narrow, because
+        # "the reader still needs to sort, filter, search and follow links" —
+        # measured against the template, that is not so: sorting (the `<thead>`
+        # buttons and `draw()`), `_FILTER_JS`, the hover card and the row links
+        # in `rowHtml` all live OUTSIDE the `{% if not editable %}` branch, and
+        # everything inside it is the write machinery (`refreshProblems` and
+        # `refreshRows` are reached only from save paths). The rendered-file
+        # export has exercised the read-only half since it existed; serving it
+        # to a reader is the same page.
+        editable=base_commit is not None and may_write,
         base_commit=base_commit or "",
         links=links,
         columns=_columns_for(index),

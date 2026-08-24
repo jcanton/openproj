@@ -59,7 +59,7 @@ def index() -> Index:
 
 @pytest.fixture
 def page(index: Index) -> str:
-    return render_table(index, ROUTES, base_commit=HEAD)
+    return render_table(index, ROUTES, base_commit=HEAD, may_write=True)
 
 
 _ASKS = """

@@ -114,7 +114,7 @@ def test_the_control_is_only_on_the_record_page(index: Index):
     from openproj.render import render_graph, render_table
 
     for name, page in (
-        ("table", render_table(index, ROUTES, base_commit=HEAD)),
+        ("table", render_table(index, ROUTES, base_commit=HEAD, may_write=True)),
         ("graph", render_graph(index, ROUTES, base_commit=HEAD)),
     ):
         assert BUTTON not in page, f"the {name} offers a delete"
