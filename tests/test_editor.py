@@ -1071,7 +1071,7 @@ _THROUGH_THE_SURFACE = (
     "SURFACE.lineCoords()",                                      # the scroll sync
     "const now = SURFACE.text(), was = text.toString();",        # typed
     "const want = text.toString(), was = SURFACE.text();",       # reflect
-    "SURFACE.coordsAt(",                                         # drawSeats
+    "SURFACE.seats.draw(",                                       # drawSeats
     "const at = SURFACE.caret().from;",                          # sit
     "const mine = SURFACE.text() !== ORIGINAL_BODY;",            # welcomed
     "const draft = SURFACE.text();",                             # welcomed's report
@@ -1111,7 +1111,7 @@ def test_the_body_is_read_through_one_place_and_nothing_else(client: TestClient)
         assert "function textareaSurface(area)" in surface, path
         # Every one of the seven, by name, in the one place they are implemented.
         for method in ("text:", "caret:", "setCaret(", "splice(", "onInput(",
-                       "onCaret(", "coordsAt("):
+                       "onCaret(", "seats:"):
             assert method in surface, f"{method} is not in the surface on {path}"
         assert "let applying = false;" in surface, path
 
@@ -3718,9 +3718,7 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     # the nav they came from, and the order they keep here. The switcher's row is
     # the document's, and holds only controls that act on what you are writing.
     assert inside["keyboardTop"] == ["A", "A", "scheme", "theme"], inside["keyboardTop"]
-    assert inside["keyboard"] == [
-        "view-edit", "view-both", "preview", "editorswitch"
-    ], inside["keyboard"]
+    assert inside["keyboard"] == ["view-edit", "view-both", "preview"], inside["keyboard"]
 
     assert got["themed"]["now"] != got["themed"]["was"], (
         "the theme toggle is in the bar and does nothing, so what moved is a "
@@ -3735,206 +3733,6 @@ def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
     assert got["after"]["parent"] == "NAV"
     assert not got["after"]["navInert"]
     assert got["after"]["themeReachable"] and got["after"]["signInReachable"]
-
-
-# The editor switch, asked of the browser. Two presses' worth of state and the
-# geometry of the ring, in one page.
-_THE_SWITCH = _STUB_PREVIEW + """
-const sw = document.getElementById('editorswitch');
-flipEditing();
-document.getElementById('view-both').click();
-await new Promise(go => setTimeout(go, 300));
-
-const track = sw.querySelector('.etrack');
-const knob = sw.querySelector('.eknob');
-const knobAt = () => Math.round(
-  knob.getBoundingClientRect().left - track.getBoundingClientRect().left);
-const drawn = getComputedStyle(sw);
-const out = {
-  tag: sw.tagName,
-  tabindex: sw.getAttribute('tabindex'),
-  role: sw.getAttribute('role'),
-  checked: sw.getAttribute('aria-checked'),
-  // The accessible name, and it comes from the visible words rather than from an
-  // `aria-label` — so what a screen reader says and what a speech-control user
-  // can say out loud are the same string.
-  name: sw.textContent.trim(),
-  labelled: sw.getAttribute('aria-label'),
-  title: sw.title,
-  border: drawn.borderTopWidth + ' ' + drawn.borderTopStyle,
-  radius: drawn.borderTopLeftRadius,
-  besideTheViews: sw.previousElementSibling && sw.previousElementSibling.id,
-  knobAtRest: knobAt(),
-};
-
-// Focused the way a keyboard focuses it, and then asked what would clip the ring
-// the shell draws. The failure this is about is not a missing outline — it is an
-// outline drawn entirely outside a border box that an ancestor's `overflow`
-// throws away, which resolves perfectly and paints nothing.
-sw.focus({focusVisible: true});
-out.focusVisible = sw.matches(':focus-visible');
-const ringed = getComputedStyle(sw);
-out.outline = ringed.outlineWidth + ' ' + ringed.outlineStyle;
-const reach = parseFloat(ringed.outlineWidth) + parseFloat(ringed.outlineOffset);
-const box = sw.getBoundingClientRect();
-out.clippers = [];
-for (let el = sw.parentElement; el; el = el.parentElement) {
-  const style = getComputedStyle(el);
-  const held = el.getBoundingClientRect();
-  if (style.overflow !== 'visible'
-      && (held.left > box.left - reach || held.right < box.right + reach
-          || held.top > box.top - reach || held.bottom < box.bottom + reach)) {
-    out.clippers.push((el.tagName + '.' + el.className).slice(0, 60));
-  }
-  // The walk stops at the surface, and that is a rule rather than a convenience:
-  // `article.record.full` is `position: fixed`, so its containing block is the
-  // viewport and an `overflow` on anything above it — `body.fullpage`, which has
-  // one — cannot reach in. Chrome stops painting the clip there and so does this.
-  if (style.position === 'fixed') break;
-}
-
-// Pressed. This is a `file://` page, which is the one case the switch refuses
-// out loud instead of navigating — and that sentence is the proof the press
-// reached the handler at all.
-sw.click();
-await new Promise(go => setTimeout(go, 100));
-out.said = document.getElementById('state').textContent;
-out.checkedAfter = sw.getAttribute('aria-checked');
-out.busyAfter = sw.getAttribute('aria-busy');
-
-// And the look it wears while a real page is on its way, driven as the class it
-// is rather than by pressing it, because over http the press takes the document
-// away before anything can be measured.
-sw.classList.add('waiting');
-out.knobWaiting = knobAt();
-out.waitingOpacity = getComputedStyle(sw).opacity;
-return out;
-"""
-
-
-@pytest.mark.parametrize("asked, on", [("", True), (PLAIN, False)])
-def test_the_editor_switch_says_which_editor_it_is_and_that_it_reloads(
-    client: TestClient, tmp_path: Path, asked: str, on: bool
-):
-    """jcanton, 2026-08-20: "can we have the editor toggle as a toggle switch next
-    to the three views buttons (?edit / ?both / ?view)".
-
-    A switch and not a fourth segment. The three segments are one control with
-    three states; which editor you are writing in is a two-state setting, and a
-    fourth icon in that box would read as a fourth way of looking at the document.
-
-    **It is a navigation and it has to be honest about that.** It decides which
-    bytes the SERVER rendered — 594 KB of them — and the preference that would
-    remember it is this browser's own store, which the server cannot read. So
-    flipping it cannot be a class swap, and a switch whose knob completes its
-    travel and is then wiped out by a page load reads as one that worked and then
-    glitched. The knob does not move on the press; the resting `title` says what
-    pressing it will do AND that it reloads; the press says the same thing in the
-    live region.
-
-    Both ways round, because a switch that draws itself the same whatever the page
-    is carrying is a picture of a switch.
-    """
-    got = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{asked}").text, tmp_path / f"switch{asked}.html",
-        1400, _THE_SWITCH, patience=6800,
-    )
-
-    # A real `<button>`, which is what makes Enter and Space work without a line
-    # of code — and a synthetic `keydown` cannot prove that, because an untrusted
-    # event fires no default action. What can be proved is that nothing here
-    # opted out of it: not a `<div>`, not `tabindex="-1"`, and it takes the ring.
-    assert got["tag"] == "BUTTON" and got["tabindex"] is None
-    assert got["focusVisible"], "the switch cannot take keyboard focus"
-
-    # The state in the accessibility tree, not only in a class.
-    assert got["role"] == "switch"
-    assert got["checked"] == str(on).lower(), (
-        f"the switch says {got['checked']} on a page that "
-        f"{'carries' if on else 'does not carry'} the second editor"
-    )
-    assert got["name"] == "Ace editor", got["name"]
-    assert got["labelled"] is None, (
-        "an `aria-label` would replace the visible words, so what a screen reader "
-        "says and what a speech-control user can say would stop being the same"
-    )
-    assert "reloads the page" in got["title"], got["title"]
-    assert ("the plain box" if on else "the Ace editor") in got["title"], got["title"]
-
-    # Beside the segments, and wearing the app's one look. `.views` draws the
-    # rectangle its three segments share; this draws its own, because it is its
-    # own control.
-    assert got["besideTheViews"] == "views"
-    assert got["border"] == "1px solid" and got["radius"] == "3px"
-
-    # The ring is drawn OUTSIDE the border box, so the failure to look for is an
-    # ancestor that throws it away. `article.record.full` is `overflow: hidden`
-    # and the surface's own padding is what keeps the ring inside it.
-    assert got["outline"] == "2px solid", got["outline"]
-    assert got["clippers"] == [], (
-        f"the focus ring is clipped away by {got['clippers']}"
-    )
-
-    # Pressed, on a page with no server behind it: it says so and goes nowhere.
-    assert "no server to ask" in got["said"], (
-        f"the switch pressed on a saved copy of the page said {got['said']!r}"
-    )
-    assert got["checkedAfter"] == got["checked"], (
-        "the switch flipped itself over a page that is not going to change"
-    )
-    assert got["busyAfter"] is None, "it claims to be fetching a page it refused to fetch"
-
-    # At rest the knob is at one end or the other; waiting, it is between them,
-    # because between them is what is true — this page will never be the page with
-    # the other editor in it and the one that is has not arrived.
-    assert got["knobAtRest"] == (14 if on else 2), got["knobAtRest"]
-    assert 2 < got["knobWaiting"] < 14, got["knobWaiting"]
-    assert float(got["waitingOpacity"]) < 1
-
-
-def test_the_editor_switch_takes_a_focus_ring_that_is_actually_painted(
-    client: TestClient, tmp_path: Path
-):
-    """The other half of the ring, and the half a resolved value cannot give.
-
-    `outline: 2px solid` resolving on the element says nothing about paint — the
-    frozen column's edge resolved to exactly the value every test asserted and
-    Chrome drew no line at all. So: the same page twice, and the only difference
-    is which element has focus.
-
-    **What this does NOT catch, said rather than implied, because it was measured
-    while writing it:** clipping. `overflow: hidden` on `.editbar` throws the ring
-    away above and below the switch and leaves the two ends of it, and the two
-    screenshots still differ — so this passes over a ring that is two thirds
-    gone. That is the sibling test's job, and it does it by asking which ancestors
-    would crop the ring's rectangle rather than by counting pixels. The two are
-    kept apart because they fail for different reasons and a merged one would be
-    weaker than either.
-    """
-    from browser import screenshot
-
-    browser = chrome()
-    page = client.get(f"/detail/{TASK}{PLAIN}").text
-
-    def shot(name: str, focus: str) -> bytes:
-        html = tmp_path / f"ring-{name}.html"
-        html.write_text(page.replace(
-            "</body>",
-            "<script>setTimeout(() => {"
-            "  flipEditing();"
-            "  document.getElementById('view-both').click();"
-            f" {focus}"
-            "}, 900);</script></body>",
-        ))
-        return screenshot(browser, html, tmp_path / f"ring-{name}.png", 1400, 900)
-
-    dark = shot("off", "")
-    lit = shot("on", "document.getElementById('editorswitch')"
-                     ".focus({focusVisible: true});")
-    assert dark != lit, (
-        "focusing the editor switch changed not one pixel, so the ring the shell "
-        "draws for it is being clipped away or is not being drawn at all"
-    )
 
 
 _A_FAILED_PREVIEW = """
@@ -4342,22 +4140,21 @@ def test_the_editor_preference_is_one_key_and_survives_a_browser_that_refuses_st
     # preference store that quietly grows a field is one nothing ever forgets.
     assert "remembered.set(EDITOR_KEY," in page
     assert "EDITOR_KEPT.map(k => [k, EDITOR[k]])" in page
-    # Which editor a person chose is still kept — but it is written on a condition
-    # and is therefore NOT one of the unconditional names, and that is the whole
-    # point of it since Ace became the default on 2026-08-20. `EDITOR.editor`
-    # resolves to `ace` for everybody who has said nothing, so storing it beside
-    # the others would make the next load read the default back as a decision —
-    # and `chosen` is what `bodySurface` reads to decide whether a page that
-    # cannot honour a decision should say so out loud. One `rememberEditor({mode})`
-    # from choosing a view would otherwise have signed every reader up to be told,
-    # on every record, that a library they never asked for is missing.
+    # Which editor somebody is in is NOT among them, and since 2026-08-24 it is
+    # not written anywhere at all — the toggle went and the stickiness went with
+    # it, so the address is the whole mechanism and applies to the page it is on.
+    # This assertion used to be "not unconditional, but written when `chosen`";
+    # both halves are now the same half.
+    #
+    # `EDITOR_KEPT` being the whole of what is written is also what clears a value
+    # stored before that change: the map is rebuilt rather than merged into.
     assert not re.search(r"const EDITOR_KEPT = \[[^\]]*'editor'[^\]]*\];", page), (
-        "the resolved editor is stored unconditionally, so the default is written "
-        "down as though somebody had chosen it"
+        "the resolved editor is stored, so a parameter typed once decides every "
+        "later page from a store nothing on the page can show or unset"
     )
-    assert "if (EDITOR.chosen) kept.editor = EDITOR.editor;" in page, (
-        "which editor a person chose is a preference and has to be kept when it IS "
-        "a choice"
+    assert "kept.editor" not in page, (
+        "the editor is written into the preference map on some condition, which is "
+        "the stickiness that was removed with the control that revealed it"
     )
     assert not re.search(r"localStorage\.\w+\('openproj:editor", page), (
         "a bare localStorage call for the preference"
@@ -4835,114 +4632,133 @@ _STICKY_EDITOR = r"""
 """
 
 
-def test_the_editor_a_person_chose_is_carried_back_into_the_address(
+_EDITOR_FORGOTTEN = r"""
+const key = 'openproj:editor:1';
+const before = remembered.map(key).editor ?? null;
+// Anything at all that this browser remembers about the editor. The indent width
+// is the cheapest: `rememberEditor` rebuilds the whole stored map either way.
+rememberEditor({indent: 4});
+return {before, after: remembered.map(key).editor ?? null};
+"""
+
+
+def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     client: TestClient, tmp_path: Path
 ):
-    """The preference is `localStorage` and the server cannot read it, so the
-    thing that decides which bytes render is the query string. Sticky therefore
-    means one specific thing: the page puts the remembered choice back into the
-    address and asks the server again.
+    """jcanton, 2026-08-24: "should we disable the plain editor then? remove the
+    toggle, have ace as default for everybody. don't delete the plain editor but
+    make it only accessible by /?editor=plain".
 
-    Only over http(s). A page saved to a file is the case where the parameter can
-    never work — there is no server to render the other bytes — so it says so
-    instead of reloading a file to add a parameter to it, which is the branch this
-    drives: `measured_in` opens a `file://` URL.
+    So the parameter is the whole mechanism now. It was sticky — typing it wrote a
+    preference, and `stickyEditor` put that preference back into the address on
+    every later page, because the server cannot read `localStorage` and the
+    address is the only part of this it can see. That machinery is gone with the
+    control that made it discoverable: a preference nothing on the page can show
+    you or unset is the trap this file's own comments named, and one that also
+    costs a redirect on every record is the expensive kind.
 
-    Three cases, and the third is the one the 2026-08-20 flip created: with Ace on
-    the default side of the parameter, the preference that now has to be carried
-    back into the address is the one for the PLAIN box, on a page that already
-    arrived carrying the library.
+    What survives is `chosen`, and it survives for the same reason it was built:
+    a request the page cannot honour has to say so, and a default that was never
+    going to be honoured must not. It just means one thing now instead of two —
+    the ADDRESS asked — where it used to mean the address or the store.
     """
-    got = measured_in(
-        chrome(),
-        _before_the_page_runs(
-            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"editor": "ace"}'
-        ),
-        tmp_path / "sticky-editor.html", 1400, _STICKY_EDITOR, patience=4800,
-    )
-    assert got["editor"] == "ace", "the remembered choice was not read"
-    assert got["surface"] == "textarea", "a page with no library in it mounted one"
-    assert "does not carry the second editor" in got["said"], (
-        f"the page quietly handed back the other editor: {got['said']!r}"
-    )
-    # And the choice is kept, because this page was never asked: a `file://` copy
-    # has no server, so forgetting here would clear somebody's preference because
-    # they opened an export. The other case — the address DID ask and the server
-    # sent no library — forgets, so a reader who once typed it does not pay a
-    # redirect on every page for ever.
-    assert got["kept"] == "ace", (
-        "opening a saved copy of a page forgot which editor this browser prefers"
-    )
-    # The other case, driven as itself: the address DID carry the request and the
-    # page came back without the library — which on the server is a reader
-    # `may_write` refuses, and here is the same page opened at `?editor=ace`.
-    refused = measured_in(
-        chrome(),
-        _before_the_page_runs(
-            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % '{"editor": "ace"}'
-        ),
-        tmp_path / "sticky-refused.html", 1400, _STICKY_EDITOR, query="?editor=ace",
-        patience=4800,
-    )
-    assert refused["surface"] == "textarea"
-    assert "does not carry the second editor" in refused["said"]
-    assert refused["kept"] == "plain", (
-        "the address asked, the answer was no, and this browser will go on asking — "
-        "one redirect a page, for ever, for something it cannot have"
-    )
-    # The third: the library IS in the page, because that is what a writer who says
-    # nothing gets now, and this browser has chosen the plain box. The reload that
-    # would fetch the smaller page cannot happen over `file://`, so what is being
-    # asked here is the half that survives without it — the choice is still
-    # honoured, and the 594 KB sitting in the document is not mounted on the
-    # strength of being there.
-    opted_out = measured_in(
+    # 1. A choice made before this change is not a choice any more. Somebody who
+    #    typed `?editor=plain` last week has it in `localStorage`; a bare address
+    #    is Ace for them, like it is for everybody.
+    stale = measured_in(
         chrome(),
         _before_the_page_runs(
             client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'
         ),
-        tmp_path / "sticky-plain.html", 1400, _STICKY_EDITOR, patience=6800,
+        tmp_path / "editor-stale.html", 1400, _STICKY_EDITOR, patience=6800,
     )
-    assert opted_out["editor"] == "plain"
-    assert opted_out["surface"] == "textarea", (
-        "the second editor mounted itself over somebody who had chosen the box, "
-        "because its bytes happened to be in the page"
+    assert stale["editor"] == "ace", (
+        "a preference stored before the toggle was removed is still deciding which "
+        "editor somebody gets, from a store nothing on the page can show them"
     )
-    assert opted_out["said"] == "", (
-        "the plain box is what this browser asked for and getting it is not news: "
-        f"{opted_out['said']!r}"
-    )
-    # The fourth, and it is the one the flip made necessary rather than merely
-    # changed. `ace` is the fallback now, so a browser that has never said
-    # anything resolves to it — and this page has no library, because `may_write`
-    # or the address said so. Without `EDITOR.chosen` telling a decision that
-    # cannot be honoured apart from a default that was never going to be, the
-    # sentence above would be read out to every signed-out reader on every record,
-    # about a thing they never asked for, and the choice they never made would be
-    # written down as `plain`.
-    never_asked = measured_in(
+    assert stale["surface"] == "ace", "the library is in the page and did not mount"
+    assert stale["said"] == "", f"getting the default was announced: {stale['said']!r}"
+
+    # 2. The escape hatch, doing the whole of its job: the address asks, the
+    #    server sends no library, and the box is what mounts. Silently — this is
+    #    what was asked for.
+    asked = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
-        tmp_path / "sticky-silent.html", 1400, _STICKY_EDITOR, patience=4800,
+        tmp_path / "editor-plain.html", 1400, _STICKY_EDITOR, query="?editor=plain",
+        patience=4800,
     )
-    assert never_asked["surface"] == "textarea"
-    assert never_asked["said"] == "", (
-        "a page nobody asked anything of announced the absence of a library: "
-        f"{never_asked['said']!r}"
-    )
-    assert never_asked["kept"] is None, (
-        "saying nothing was written down as a choice, so the next page that cannot "
-        "honour it will say so out loud"
+    assert asked["editor"] == "plain", "the address asked for the box and was not read"
+    assert asked["surface"] == "textarea"
+    assert asked["said"] == "", (
+        f"the box is what this address asked for and getting it is not news: "
+        f"{asked['said']!r}"
     )
 
-    # And the source of the half that only a server can show: the navigation is a
-    # `replace` on an http(s) URL, and a preference carried forward is not a place
-    # the back button should return to.
+    # 3. And nothing is written down. This is the assertion the whole change is:
+    #    the parameter applies to the page it is on and to no other.
+    assert asked["kept"] is None, (
+        "typing the parameter wrote it into the preference store — so it is sticky "
+        "again, and there is no control left to unstick it"
+    )
+
+    # 3b. The stale value is IGNORED, not migrated — case 1 is that assertion —
+    #     and it goes the first time anything else is remembered, because the map
+    #     is rebuilt from `EDITOR_KEPT` rather than merged into. Driven rather
+    #     than reasoned about: a store that only shrinks in theory is one people
+    #     carry a dead key in for years.
+    cleared = measured_in(
+        chrome(),
+        _before_the_page_runs(
+            client.get(f"/detail/{TASK}").text, _SEED % '{"editor": "plain"}'
+        ),
+        tmp_path / "editor-cleared.html", 1400, _EDITOR_FORGOTTEN, patience=6800,
+    )
+    assert cleared["before"] == "plain", "the seed did not take, so this asks nothing"
+    assert cleared["after"] is None, (
+        "a choice stored before the toggle was removed survived the next thing this "
+        "browser remembered, so it stays in the store for ever"
+    )
+
+    # 4. The address asked for Ace and the answer was no — a reader the server
+    #    would refuse a save from, or a copy of the page saved to a file. That is
+    #    still news, and it is the branch `chosen` exists for.
+    refused = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "editor-refused.html", 1400, _STICKY_EDITOR, query="?editor=ace",
+        patience=4800,
+    )
+    assert refused["surface"] == "textarea"
+    assert "does not carry the second editor" in refused["said"], (
+        f"the page was asked for an editor it does not have and said nothing: "
+        f"{refused['said']!r}"
+    )
+    assert refused["kept"] is None, "a refusal was written down as a preference"
+
+    # 5. The other half of `chosen`, and the reason it is not simply "did Ace
+    #    mount": a reader who said nothing gets no library either, and telling
+    #    every signed-out reader on every record about a thing they never asked
+    #    for is the noise this guard exists to prevent.
+    silent = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        tmp_path / "editor-silent.html", 1400, _STICKY_EDITOR, patience=4800,
+    )
+    assert silent["surface"] == "textarea"
+    assert silent["said"] == "", (
+        f"a page nobody asked anything of announced the absence of a library: "
+        f"{silent['said']!r}"
+    )
+
+    # 6. And the machinery is gone rather than merely unreached. A redirect that
+    #    still ships is one a later change re-enables by accident.
     page = client.get(f"/detail/{TASK}").text
-    sticky = re.search(r"function stickyEditor\(\) \{.*?\n\}", page, re.S)
-    assert sticky, "the page no longer carries the preference back into the address"
-    assert "location.protocol.startsWith('http')" in sticky.group(0)
-    assert "location.replace(url)" in sticky.group(0)
-    assert "url.searchParams.set('editor', EDITOR.editor)" in sticky.group(0)
+    assert "stickyEditor" not in page, (
+        "the page still carries the redirect that made the choice sticky"
+    )
+    assert 'id="editorswitch"' not in page, "the switch is still rendered"
+    assert "editorName" not in page, (
+        "`editorName` is still on the surfaces, and its own comment says it exists "
+        "for exactly one consumer — the switch, which is gone"
+    )
 
 
 # The document is the row with the height in it, and the facts are the row below.

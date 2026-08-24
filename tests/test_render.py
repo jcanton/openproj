@@ -2787,14 +2787,14 @@ def test_a_reader_who_may_not_write_is_sent_no_editor_library(seed_index: Index)
             f"a reader the server would refuse a write from carries 594 KB of editor, "
             f"{how} — for a keymap whose every save is a 403"
         )
-    # And no switch, for the same reason and it is not the same assertion: a
-    # control that offers a choice this reader cannot have either way is a control
-    # that lies about what the page can do. `_viewbar` asks the two gates that are
-    # not the address, which is what keeps the switch and the bytes agreeing.
+    # And no switch — which is no longer a fact about READERS. There is no switch
+    # on any page for anybody since 2026-08-24: the plain box is reached by
+    # `?editor=plain` and by nothing else. Kept here, pointed at every page rather
+    # than at a reader's, because the assertion that used to be about a control
+    # that would lie is now about a control that must not come back.
     for how, page in reader.items():
         assert 'id="editorswitch"' not in page, (
-            f"a reader is offered a switch between two editors, {how} — and both "
-            "sides of it are the box they already have"
+            f"a switch between two editors is rendered, {how}"
         )
     # Not merely "no `ace.define`": the same bytes, all three ways. A gate that
     # dropped the library and still changed the page would mean the address was
