@@ -1224,7 +1224,28 @@ const COEDIT = (() => {
   // silence (a pile that is not draining is the shell banner's news), and the
   // alarm is kept for the one save the pusher PARKED on a branch: answered 200
   // long ago, on GitHub but not on main, and resolved by nothing in this room.
-  const unlanded = new Set();
+  // A plain object rather than a `Set`, and the reason is a test rather than a
+  // preference. `test_the_browser_splices_on_a_whole_character` reads the shipped
+  // scripts for every splice into the shared document and holds each one's index
+  // to a named conversion, because a JS string and a `Y.Text` are both counted in
+  // UTF-16 code units while a character can be two of them. It finds those
+  // splices by their method names alone, with the RECEIVER DELIBERATELY UNNAMED —
+  // the guard was once dodgeable by renaming a variable — and its docstring
+  // records that the widening "costs nothing today" because the document's own
+  // splices were the only calls of those names in these files.
+  //
+  // A `Set` of shas makes that false: its removal method shares a name with half
+  // the splice pair, so three collection removals would arrive in front of a
+  // guard about surrogate pairs, whose only ways out are a hole in its allowlist
+  // or a denylist of receivers. So those method names stay the document's alone
+  // here and this forgets with the `delete` operator instead. The scan reads raw
+  // text, comments included — which is why this one describes the calls it is
+  // avoiding rather than quoting them.
+  //
+  // Insertion order is iteration order for keys this shape — a sha is forty hex
+  // characters, far past the array-index range that would reorder it — and the
+  // clear pass below depends on that order being answer order.
+  const unlanded = Object.create(null);
 
   // The parked half of both messengers — the frame listener and the poll's
   // `settleSaves` below — because the verdict is the same (sha, branch) pairs
@@ -1234,8 +1255,8 @@ const COEDIT = (() => {
   // not this document's.
   function strandSaves(parked) {
     for (const [sha, branch] of parked || []) {
-      if (!unlanded.has(sha)) continue;
-      unlanded.delete(sha);
+      if (!(sha in unlanded)) continue;
+      delete unlanded[sha];
       announce('saved here, but it could not land on GitHub’s main — the commit '
         + `is parked on ${branch}`);
     }
@@ -1247,9 +1268,9 @@ const COEDIT = (() => {
   // forever after any rejection. A named sha confirms every save up to it,
   // because the watch list is in answer order, which is ancestry order.
   function clearedThrough(named) {
-    if (!unlanded.has(named)) return;
-    for (const held of unlanded) {
-      unlanded.delete(held);
+    if (!(named in unlanded)) return;
+    for (const held of Object.keys(unlanded)) {
+      delete unlanded[held];
       if (held === named) break;
     }
   }
@@ -1279,15 +1300,15 @@ const COEDIT = (() => {
   let landingPoll = null;
 
   function armLandingPoll() {
-    if (landingPoll !== null || !unlanded.size) return;
+    if (landingPoll !== null || !Object.keys(unlanded).length) return;
     landingPoll = setTimeout(async () => {
       landingPoll = null;
-      if (!unlanded.size) return;
+      if (!Object.keys(unlanded).length) return;
       // Which saves this read may settle: the ones that existed when it was
       // ASKED. A save answering while the request is in the air is not in the
       // payload's arithmetic, and clearing it off this answer would treat a
       // commit as landed while it exists only on this instance.
-      const asked = new Set(unlanded);
+      const asked = Object.keys(unlanded);
       // Guarded, because the fetch rejects in exactly the conditions this
       // poll exists for — a laptop waking onto the tick, a moment offline, a
       // server mid-restart — and an escaped rejection would skip the re-arm
@@ -1316,7 +1337,7 @@ const COEDIT = (() => {
     strandSaves(fresh.parked);
     if (typeof fresh.landed === 'string') clearedThrough(fresh.landed);
     if (fresh.unpushed === 0)
-      for (const sha of asked) unlanded.delete(sha);
+      for (const sha of asked) delete unlanded[sha];
   }
 
   function heard(message) {
@@ -1377,7 +1398,7 @@ const COEDIT = (() => {
       // other — by frame when this tab catches it, by the armed poll when it
       // does not. Saying so HERE would be the wallpaper this replaced: in
       // flight is the ordinary state of every save now, not the exception.
-      if (message.pushed === false) { unlanded.add(message.commit); armLandingPoll(); }
+      if (message.pushed === false) { unlanded[message.commit] = true; armLandingPoll(); }
       const said = message.outcome === 'merged'
         ? 'saved, and somebody else’s change to this file was merged in'
         : 'saved';
