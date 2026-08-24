@@ -935,6 +935,58 @@ def test_the_server_warms_the_index_before_it_binds():
     assert source.index("warm_index()") < source.index("_exit_aware_server")
 
 
+def test_a_reader_is_offered_no_door_they_cannot_walk_through(repo_path: Path):
+    """jcanton, 2026-08-24: signed out, the Create button was still on the page,
+    and pressing it "opens a crippled editor page" — every control on the create
+    form is behind `may_write`, so the door led to a heading, a kind picker and
+    nothing to type into.
+
+    This is the same defect the socket had and was fixed for (#19): a reader was
+    offered a `wss://` connection the server then correctly refused, five times
+    per page load. The rule that came out of it is the one applied here — do not
+    draw a control whose only answer for this person is a refusal.
+
+    Asked of the SERVED page rather than of the renderer, because the bug was in
+    which question the route asked: `editable` means "there is a server behind
+    this page" and was standing in for "this person may write". The static export
+    needs the first and has no use for the second, which is why both names stay.
+    """
+    from openproj.web import create_app
+
+    signed_out = TestClient(
+        create_app(
+            repo_path,
+            auth="github",
+            org=ORG,
+            secret=SECRET,
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+        )
+    )
+    for route in ("/", "/issues", "/notes", "/table"):
+        page = signed_out.get(route)
+        assert page.status_code == 200, f"{route} is a public read"
+        assert not re.search(r'<a class="button[^"]*" href="[^"]*new[^"]*"', page.text), (
+            f"{route} offers a signed-out reader a create button"
+        )
+
+    # And the form itself refuses, so a typed URL or an old bookmark does not
+    # reach the hollow page either.
+    refused = signed_out.get("/new?kind=task")
+    assert refused.status_code == 403
+    assert "sign in" in refused.text.lower()
+
+
+def test_a_writer_is_offered_the_door(client: TestClient):
+    """The other half, so the gate cannot be satisfied by drawing nothing."""
+    for route in ("/", "/issues", "/notes", "/table"):
+        page = client.get(route)
+        assert re.search(r'<a class="button[^"]*" href="[^"]*new[^"]*"', page.text), (
+            f"{route} does not offer a writer a create button"
+        )
+    assert client.get("/new?kind=task").status_code == 200
+
+
 def test_every_write_answer_says_whether_the_commit_reached_the_remote(
     client: TestClient, repo_path: Path
 ):
