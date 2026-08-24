@@ -87,7 +87,8 @@ same reason the fifteen above are.
 **A rule blocks only records created after it existed.** Each rule carries the `schema_version`
 that introduced it, and `validate_all` demotes a rule newer than the record it is judging to a
 warning. Without grandfathering, adding one required field invalidates the whole corpus at once and
-the rule gets reverted rather than adopted. `shaped_by` is the live example.
+the rule gets reverted rather than adopted. The somebody-assigned rule at `ready` (version 2) is the
+live example.
 
 **A status reaches a class attribute through `_status_class` (`render.py`) and no other way.**
 Because `status` is permissive it holds whatever is in the file. Escaping it would have been enough
@@ -560,7 +561,7 @@ requiredness lives in one function, so nothing reading a signature can know that
 `build_end` is `date | None` where `_matches_predicate` (`index.py`) compares it against `span.end`,
 although that function returned already if the cycle's window was missing — the guard is real, it
 just lives in a different expression than the call, and no checker connects the two. `Record` has no
-`shaped_by` at all, because `kind == "pitch"` is a runtime discriminator rather than a tagged union.
+`person_weeks` at all, because `kind` is a runtime discriminator rather than a tagged union.
 Going green on this heap means an `assert` or a `cast` at each site, which takes the guarantee out
 of the one place this file says it lives and scatters copies of it across the callers. That is the
 trade the number is quietly asking for, and by the rule above — an invariant written twice will be

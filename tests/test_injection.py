@@ -146,6 +146,9 @@ def corpus(text: str) -> dict[str, str]:
     body = f"\nA shaping document that mentions {text} in its prose.\n"
     return {
         "config/defaults.yaml": "schema_version: 1\nnominal_availability: 1.0\n",
+        # `shaped_by` is retired, and stays in this corpus for exactly that
+        # reason: a hostile value in a key the model no longer reads must reach
+        # no page — the warning it triggers names the field and nothing else.
         "pitches/p.md": (
             f"---\nid: '{text_yaml(pitch_id)}'\nkind: pitch\n{common}"
             f"shaped_by: '{quoted}'\nperson_weeks: 2\n---\n{body}"
