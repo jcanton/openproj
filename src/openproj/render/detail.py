@@ -16,10 +16,9 @@ from .controls import _REQUIRED_JS, _combobox_html, _control_html
 from .editor import (
     _ACE_SURFACE,
     _COEDIT,
-    _EDITOR_SWITCH,
     _SPLIT_HANDLE,
     _ace_wanted,
-    _either_editor_possible,
+    _editing_possible,
 )
 from .env import _compiled, _fragment
 from .hill import _HILL_JS, _LADDER_OF, _STATE_HINT, _hill_html
@@ -82,23 +81,27 @@ _VIEW_SEGMENTS = (
 )
 
 
-def _viewbar(switchable: bool, ace: bool) -> Markup:
+def _viewbar(editing: bool) -> Markup:
     """The bar of controls that says how, and in what, this document is shown.
 
     The whole bar is withheld from a reader the server would refuse a write
     from. The segments are the only door into an editing session, so for a
     non-writer they would open an editor whose every save is a 403 — and the
-    read page is already the whole page they came for. `switchable` carries
-    that fact: `_either_editor_possible` is `base_commit and may_write`, and
+    read page is already the whole page they came for. `editing` carries
+    that fact: `_editing_possible` is `base_commit and may_write`, and
     every template that renders this bar sits behind `{% if editable %}`, so
     within a rendered page it reduces to `may_write`.
 
-    `ace` is which way the editor switch is set, which is `_ace_wanted`'s own
-    answer, so the switch and the bytes cannot disagree.
+    **There is no editor switch beside the segments any more**, and this
+    function's second argument went with it. jcanton, 2026-08-24: "remove the
+    toggle, have ace as default for everybody ... don't delete the plain editor
+    but make it only accessible by `/?editor=plain`". So the bar is the three
+    views and nothing else, and which editor somebody is writing in is a fact
+    about the address rather than a control on the page.
     """
-    if not switchable:
+    if not editing:
         return Markup("")
-    return Markup(_VIEW_SEGMENTS + _EDITOR_SWITCH.format(checked="true" if ace else "false"))
+    return Markup(_VIEW_SEGMENTS)
 
 
 # `_FIELDS` and `_fields_html` were the flat list of `<label>field</label>` this
@@ -691,76 +694,6 @@ for (const name of VIEWS) {
     () => chooseView(VIEW === name ? GROUND : name);
 }
 
-// --- which editor, beside which view ----------------------------------------
-//
-// Absent rather than disabled wherever the page could not honour either answer —
-// `_viewbar` in render.py decides that and says why — so this is a null check on
-// a control that is missing on purpose.
-const EDITOR_SWITCH = document.getElementById('editorswitch');
-if (EDITOR_SWITCH) {
-  const EDITOR_NAMES = {ace: 'the Ace editor', plain: 'the plain box'};
-  // The surface that MOUNTED, not the one the address asked for. The server
-  // rendered `aria-checked` from the same `_ace_wanted` that decided the bytes,
-  // so the control is right before a line of this has run — no switch drawn off
-  // and corrected once a script arrives — and this puts it in step with what a
-  // person is actually writing in. The two come apart in exactly one place: a
-  // copy of this page saved to a file, where the address cannot be corrected and
-  // `bodySurface` hands back the box over a library that is physically present.
-  // `_VIEWS` runs after `SURFACE` is built, so by here that is decided.
-  const now = SURFACE.editorName;
-  const other = now === 'ace' ? 'plain' : 'ace';
-  EDITOR_SWITCH.setAttribute('aria-checked', String(now === 'ace'));
-  // What pressing it will do, in the words of what it will become — the shape
-  // `statusPick` uses for every picker in the status bar — plus the one fact
-  // that makes this control unlike every other one on the bar. Somebody told
-  // afterwards that the page reloaded has already lost the argument.
-  EDITOR_SWITCH.title = `Now: ${EDITOR_NAMES[now]} — press for `
-    + `${EDITOR_NAMES[other]}. This reloads the page: the editor is 594 KB the `
-    + `server either sends or does not, so the choice is in the address.`;
-  EDITOR_SWITCH.onclick = () => {
-    // A page with no server behind it cannot be asked for the other bytes, and
-    // this is the same refusal `stickyEditor` makes on the same test. It is said
-    // rather than done quietly, because a switch that moves nothing and explains
-    // nothing is the thing somebody reports as broken.
-    if (!location.protocol.startsWith('http')) {
-      announce('This is a saved copy of the page, so there is no server to ask for '
-               + 'the other editor. Open it from the tool to change this.');
-      return;
-    }
-    // The knob does NOT move here and `aria-checked` does not change. Both would
-    // claim a state this page is not in and is never going to be in — the page
-    // that IS in it is the one arriving — and a switch that completes its travel
-    // and is then replaced by a load reads as one that worked and then glitched.
-    EDITOR_SWITCH.setAttribute('aria-busy', 'true');
-    EDITOR_SWITCH.classList.add('waiting');
-    // In words as well as in pixels: `announce` writes into `#state`, which is
-    // visible on this bar and live for a screen reader, so the person who cannot
-    // see the track go dim is told the same thing.
-    announce(`Fetching this page with ${EDITOR_NAMES[other]}.`);
-    const url = new URL(location.href);
-    url.searchParams.set('editor', other);
-    // And the session comes with it. The page being fetched is a different
-    // rendering of the same record, so arriving in read mode over a document
-    // somebody was in the middle of writing is the switch losing their place —
-    // the draft survives, but the surface does not. The view flag is the one the
-    // page already reads at load (`VIEW_ASKED`), which is why it is a flag here
-    // rather than a second mechanism.
-    for (const name of VIEWS) url.searchParams.delete(name);
-    if (VIEW_ARTICLE.classList.contains('editing')) {
-      url.searchParams.set(VIEW || EDITOR.mode || 'edit', '');
-    }
-    // `replace`, for the reason `stickyEditor` uses it: the page being left will
-    // send anybody who comes back to it straight round again, because the
-    // preference it is about to write is why they went. A history entry that
-    // bounces is worse than no history entry.
-    //
-    // Nothing is remembered HERE. The address is the choice and the page that
-    // receives it writes it down — one mechanism, in one place; a second author
-    // of the same preference would eventually record a press that never arrived.
-    location.replace(url);
-  };
-}
-
 addEventListener('keydown', event => {
   // Ctrl+Shift and a digit, and both halves of that are a correction.
   //
@@ -1289,13 +1222,13 @@ grip.onpointerdown = event => {
 {#- The second editor, and 594 KB of it. It is what a writer gets unless the
     address said `?editor=plain` — jcanton, 2026-08-20, "make ace the default, I
     think it's worth it" — and `_ace_wanted` is where that decision is recorded
-    as his rather than as a measurement's. What did NOT move is who pays:
-    `editable` is gated on `base_commit` alone, so a signed-out reader already
-    receives the box and the toolbar, and putting Ace at that gate would have
-    shipped this to every public reader at 4.19x their page for a keymap whose
-    every save is a 403. `remembered` is this browser's own store and the server
-    cannot read it, which is why the address and not the preference decides
-    which bytes render. -#}
+    as his rather than as a measurement's. Since 2026-08-24 the address is the
+    ONLY thing that says so: there is no switch on the bar and no preference
+    behind it, so the plain box is `?editor=plain` on the page you are on and
+    nothing else. What did NOT move is who pays: `editable` is gated on
+    `base_commit` alone, so a signed-out reader already receives the box and the
+    toolbar, and putting Ace at that gate would have shipped this to every public
+    reader at 4.19x their page for a keymap whose every save is a 403. -#}
 {% if ace %}<script>{{ ace }}</script>
 {{ acesurface }}{% endif %}
 {% if editable %}{{ combobox }}{% endif %}
@@ -2829,10 +2762,7 @@ def render_detail(
         combobox=_combobox_html(index),
         required=_REQUIRED_JS,
         hill=_HILL_JS,
-        viewbar=_viewbar(
-            _either_editor_possible(base_commit, may_write),
-            _ace_wanted(editor, base_commit, may_write),
-        ),
+        viewbar=_viewbar(_editing_possible(base_commit, may_write)),
         # The machine drives the segments; a non-writer has neither, or the
         # script would throw on `getElementById` of a control `_viewbar`
         # deliberately withheld.

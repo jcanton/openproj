@@ -489,8 +489,6 @@ function aceSurface(area, seeded) {
     // to `attachEditing`. Two histories with the key on one and the button on
     // the other is worse than either, so `historyOf` gives both to this one.
     provides: {gutter: true, history: true},
-    // The label, and never a branch. See the note on the textarea surface's.
-    editorName: 'ace',
 
     // `canUndo`/`canRedo` and not the `hasUndo`/`hasRedo` aliases beside them,
     // for the reason `add` above is the public one: an alias is what a
@@ -582,17 +580,23 @@ def _ace_wanted(editor: str, base_commit: str | None, may_write: bool) -> bool:
     default of the *address*, not the default of this function's other two
     arguments.
     """
-    return editor != PLAIN and _either_editor_possible(base_commit, may_write)
+    return editor != PLAIN and _editing_possible(base_commit, may_write)
 
 
-def _either_editor_possible(base_commit: str | None, may_write: bool) -> bool:
-    """The two gates that are not the address, asked on their own by the switch.
+def _editing_possible(base_commit: str | None, may_write: bool) -> bool:
+    """The two gates that are not the address: is there an editing session here
+    at all.
 
-    A control offering a choice this page could not honour whichever way it was
-    pressed is a control that lies about what the page can do, so the switch
-    beside the three views is drawn only where this is true. Split out of
-    `_ace_wanted` rather than written a second time beside it, because two copies
-    of one gate is exactly how the switch and the bytes come to disagree.
+    It was `_either_editor_possible` and it was named for the switch beside the
+    three views — a control offering a choice this page could not honour either
+    way is a control that lies about what the page can do. The switch is gone
+    (2026-08-24, the plain box is `?editor=plain` and nothing else), and the name
+    outlived it by one commit: what this actually gates is the view bar, whose
+    three segments are the only door into an editing session, and the second half
+    of `_ace_wanted`. Neither is about a choice between two editors any more.
+
+    Still split out rather than written twice, for the reason it always was: two
+    copies of one gate is how a control and the bytes come to disagree.
     """
     return base_commit is not None and may_write
 
@@ -624,46 +628,6 @@ _SPLIT_HANDLE = Markup(
     ' aria-valuetext="50% writing, 50% preview"'
     ' title="Drag, or use the arrow keys, to divide the two panes.'
     ' Double-click evens them."></div>'
-)
-
-
-# Which of the two editors, beside the three views — jcanton, 2026-08-20: "can we
-# have the editor toggle as a toggle switch next to the three views buttons".
-#
-# **A switch and not a fourth segment, and that is the whole reason it is drawn
-# differently.** The three segments are one control with three states: exactly one
-# of them is true at a time and picking one un-picks the others. Which editor you
-# are writing in is a different question with a different shape — two states, both
-# of them a setting rather than a place — and a fourth icon in that box would read
-# as a fourth way of looking at the document. Adjacent, so the two are found in
-# one place; not joined, so they are not mistaken for one control.
-#
-# **It is a NAVIGATION and it says so.** This is the one control on the page whose
-# value decides which bytes the server rendered — 594 KB of them — and
-# `remembered` is this browser's own store, which the server cannot read. So
-# flipping it cannot be a class swap: the page has to be fetched again with the
-# other parameter on it. The resting `title` says what pressing it will do and
-# that it reloads, in the words-of-what-it-will-become shape `statusPick` uses in
-# the status bar; the press itself says it out loud through `announce`, which is
-# the visible `#state` region on every page that carries this bar; and the knob
-# does NOT move on the press. A switch that flips instantly and is then wiped out
-# by a page load looks like a control that worked and then glitched.
-#
-# `role="switch"` with `aria-checked`, rather than a class and a shape: the state
-# has to be in the accessibility tree, and `switch` is the role whose whole
-# meaning is two states one of which is on. The visible word is inside the button
-# and is not `aria-hidden`, so the accessible name IS the visible name — no
-# `aria-label` that a speech-control user could fail to say out loud.
-#
-# `aria-checked` is rendered by the SERVER from the same `_ace_wanted` that
-# decided the bytes, not written by the script afterwards: the truth is known at
-# render time, and a switch that draws itself off and corrects itself once a
-# script runs has shown a wrong state to whoever was looking.
-_EDITOR_SWITCH = (
-    '<button type="button" id="editorswitch" class="eswitch" role="switch"'
-    ' aria-checked="{checked}">'
-    '<span class="etrack" aria-hidden="true"><span class="eknob"></span></span>'
-    "<span>Ace editor</span></button>"
 )
 
 

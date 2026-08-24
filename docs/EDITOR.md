@@ -960,4 +960,43 @@ as it existed and would have passed through any regression it exists to catch. B
 cannot fail is a test that says nothing, and the guard that catches it is asserting that the
 question was asked, not only that the answer was right.
 
+## One editor, and an address for the other, 2026-08-24
+
+jcanton, after using the seat bands: *"should we disable the plain editor then? remove the toggle,
+have ace as default for everybody. don't delete the plain editor but make it only accessible by
+`/?editor=plain`?"*
+
+So the switch beside the three view segments is gone — the control, its CSS, its client block, and
+`SURFACE.editorName`, whose own comment recorded that it existed for exactly one consumer and that
+consumer was the switch. The plain surface is untouched and still mounts; `_ace_wanted` already read
+`?editor=plain` as the opt-out, so the escape hatch needed no work at all.
+
+**The part that was a decision rather than a deletion: the choice no longer sticks.** It used to.
+Typing the parameter wrote a `localStorage` preference, and `stickyEditor` put that preference back
+into the address on every later page, because the server cannot read `localStorage` and the address
+is the only part of this it can see. Asked which way to go, jcanton chose per-URL only.
+
+That is the right call and the reason is written in this repository already: the comment beside the
+old code says *"a setting whose only way out is editing `localStorage` by hand is a trap"*. The
+switch is what kept it from being one — it was the way out. Remove the switch and keep the
+stickiness and you have exactly the trap the comment names, plus a redirect on every record to pay
+for it. Removing both leaves a mechanism with one moving part.
+
+What went with it: `stickyEditor` and its two call sites, the stored `editor` field, the
+`EDITORS_WERE` legacy spelling that only a stored value needed, and the two `rememberEditor` calls
+in `bodySurface` whose whole job was to keep the preference honest. `EDITOR.chosen` survives and
+means one thing now instead of two — the ADDRESS asked — and it still earns its place: a request
+this page cannot honour has to say so, and a default that was never going to be honoured must not,
+or every signed-out reader is told on every record about a library they never asked for.
+
+**A value stored before this is ignored, not migrated.** It is dropped from the map the first time
+anything else is remembered, because `EDITOR_KEPT` is the whole of what gets written. The visible
+consequence, and it is worth stating plainly: somebody who chose the plain box last week gets Ace on
+their next page load. That is what "ace as default for everybody" means.
+
+`_either_editor_possible` is `_editing_possible` now. It was named for the switch — a control
+offering a choice this page could not honour either way is a control that lies — and what it
+actually gates is the view bar, whose three segments are the only door into an editing session. The
+name outlived its reason by one commit.
+
 🤖 Written by an agent on behalf of @jcanton
