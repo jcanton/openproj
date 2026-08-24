@@ -215,11 +215,11 @@ def test_a_conflict_creating_a_record_is_not_printed_as_refused(pages):
     answer = drive(
         pages["new"],
         f"({{lines: refusals({json.dumps(CONFLICT)}, 409),"
-        f" typed: refusals({{detail: 'a task has no shaped_by'}}, 422)}})",
+        f" typed: refusals({{detail: 'a task has no reported_by'}}, 422)}})",
     )
 
     assert answer["value"]["lines"] == [REPORT]
-    assert answer["value"]["typed"] == ["a task has no shaped_by"]
+    assert answer["value"]["typed"] == ["a task has no reported_by"]
 
 
 @pytest.mark.parametrize("page", ["cycle", "table", "detail", "graph", "cycles", "new"])

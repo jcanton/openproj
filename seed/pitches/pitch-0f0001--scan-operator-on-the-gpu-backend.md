@@ -16,7 +16,6 @@ tags: [hearth, scan-operator, gpu, dsl, backend]
 prs: ["kilnlab/hearth#437"]
 created_schema_version: 2
 person_weeks: 5.0
-shaped_by: firecresta
 ---
 
 # Scan operator on the GPU backend

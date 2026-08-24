@@ -7,10 +7,10 @@
 # only warn. That is what lets a required field be added without invalidating
 # work written before the field existed.
 #
-# Every record in this corpus is created_schema_version 2, so every rule
-# currently defined — including the version-2 rule that a todo pitch must name
-# a shaped_by — applies to all of them as a blocker. There is no grandfathered
-# record here to exercise the warning path.
+# Every record in this corpus is created_schema_version 2, so every rule of
+# version 2 or older — including the version-2 rule that a ready record must
+# name assignees — applies to all of them as a blocker. There is no
+# grandfathered record here to exercise the warning path.
 schema_version: 4
 # The rate one person works at when nobody has said otherwise. A size is
 # PERSON-weeks (D-C4), so the people on a bet divide it, each at their own rate;

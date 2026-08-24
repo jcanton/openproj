@@ -16,7 +16,6 @@ tags: [hearth, backend, hardening]
 prs: []
 created_schema_version: 2
 person_weeks: 3.0
-shaped_by: Whimbrelson
 ---
 
 # Year-end backend hardening

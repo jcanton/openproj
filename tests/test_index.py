@@ -481,7 +481,7 @@ def test_the_missing_required_fields_predicate_reads_the_problems():
         a_project("proj-a00001", owner="alice", assignees=["alice"], reviewers=["bob"],
             status="in_progress", assigned_on=TODAY),
         a_pitch("pitch-b00001", parent="proj-a00001", owner="alice", assignees=["alice"],
-                reviewers=["bob"], shaped_by=["alice"], person_weeks=2.0, status="ready"),
+                reviewers=["bob"], person_weeks=2.0, status="ready"),
         a_task(
             "task-c00001",
             parent="pitch-b00001",
@@ -819,7 +819,7 @@ def test_the_seed_review_waiver_is_the_only_one(seed_index: Index):
 
 
 def test_the_seed_incomplete_records_are_the_ones_missing_fields(seed_index: Index):
-    """pitch-1b3f9a is missing only the grandfathered `shaped_by`, so it has to
+    """pitch-1b3f9a is missing only the grandfathered `assignees`, so it has to
     show up here despite reporting as a warning.
 
     The corpus's tasks carry a `cycle` their pitch now owns, which is a v4
