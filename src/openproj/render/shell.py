@@ -1452,6 +1452,28 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    of the same box collapsed into one run of unstyled text. */
 #conflict, #row-conflict { border-left: 3px solid var(--danger); padding: .5rem .8rem;
                            margin-top: 1rem; white-space: pre-wrap; font-size: 13px; }
+/* Anything long in that box is folded — jcanton, 2026-08-24: the draft-versus-room
+   report "pushes the editor window up and reduces its height". `white-space:
+   pre-wrap` above is what makes the box as tall as its contents, which is right
+   for a sentence and wrong for a document, and the one message that carries a
+   whole draft was costing the editor nine hundred words of room.
+
+   The fold is a `<details>`, so shut it is one line and there is nothing here to
+   size. OPEN it is capped and scrolls INSIDE itself, which is the half that
+   matters: without the cap, opening the fold puts the page back exactly where it
+   was. 14rem is about ten lines — enough to recognise your own writing, short
+   enough that the editor keeps the screen.
+
+   `white-space: pre` and not `pre-wrap` on the payload: a draft is somebody's
+   markdown and its line breaks are theirs, so it scrolls sideways rather than
+   being re-wrapped into a shape they did not write. The box's own `pre-wrap`
+   would otherwise inherit down into it. */
+#conflict details { margin-top: .5rem; }
+#conflict summary { cursor: pointer; font-weight: 600; }
+#conflict details pre { margin: .4rem 0 0; max-height: 14rem; overflow: auto;
+                        white-space: pre; font-family: var(--font-mono);
+                        font-size: 12px; background: var(--surface-2);
+                        padding: .4rem .5rem; border-radius: 3px; }
 /* Above everything a page can stick to its own edges — the cycle page's commit
    bar sits in exactly this corner — because news that the plan moved under you
    is the one thing on screen that must not be behind something else. */

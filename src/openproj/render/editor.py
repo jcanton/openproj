@@ -665,6 +665,48 @@ const COEDIT = (() => {
   const together = document.getElementById('together');
   const box = document.getElementById('conflict');
 
+  // One sentence in the box, and anything long folded behind a control.
+  //
+  // jcanton, 2026-08-24, on meeting the draft-versus-room refusal: the report
+  // "pushes the editor window up and reduces its height... it may be better
+  // have the old text available as a popup at the click of a button". It was
+  // literal: `#conflict` is `white-space: pre-wrap` in the ordinary flow, so its
+  // height IS the length of what it holds, and the one message that holds a
+  // whole shaping document took nine hundred words of the editor's room. That
+  // stopped being survivable when full page went (v0.23.0) and the box became
+  // 60vh inside a page that scrolls.
+  //
+  // `<details>`, not a hover and not a script-driven popup. Hover has no
+  // keyboard path and this file's floor demands one; a popup would need a
+  // dismiss, a focus trap and an Escape that does not fight the editor's own.
+  // The native element brings all of that and stays selectable, which is the
+  // property that matters most here — what is folded away is the ONLY copy of
+  // somebody's unsaved writing.
+  //
+  // Built from nodes rather than a template string: `textContent` is the other
+  // escaping boundary this file is allowed to cross, and a draft is arbitrary
+  // text that has never been near `esc`. It also keeps `#conflict`'s
+  // `textContent` whole — the browser test that proves the draft was reported
+  // rather than lost reads exactly that, and reads it with the fold shut.
+  //
+  // Shut is also what keeps the live region honest. `#conflict` is
+  // `role="status" aria-live="polite"`, and a closed `<details>` renders
+  // nothing, so a screen reader is told the sentence instead of being read a
+  // document at it.
+  function report(sentence, folded, label) {
+    box.replaceChildren();
+    box.hidden = false;
+    box.append(sentence);
+    if (!folded) return;
+    const fold = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = label;
+    const pre = document.createElement('pre');
+    pre.textContent = folded;
+    fold.append(summary, pre);
+    box.append(fold);
+  }
+
   let socket = null;
   let seed = null;      // the commit this tab's document was built from
   let me = '';
@@ -1081,8 +1123,7 @@ const COEDIT = (() => {
     if (why) {
       // Into its own box, never into the textarea: text put into the editing
       // surface is text somebody saves back.
-      box.hidden = false;
-      box.textContent = why;
+      report(why);
     }
     if (socket) socket.close();
   }
@@ -1108,10 +1149,16 @@ const COEDIT = (() => {
         // the person who wrote it.
         const draft = SURFACE.text();
         reflect();
-        box.hidden = false;
-        box.textContent = 'Somebody is editing this document, and it has moved since your '
-          + 'unsaved draft was written. The document is what is in the box now; your draft '
-          + 'was:\n\n' + draft;
+        // The sentence is one line and the draft is folded under it. The draft
+        // is not a detail — it is the only copy of what this person wrote, and
+        // nothing else on the page holds it — so it is folded, never trimmed,
+        // and the summary says what is inside rather than "details".
+        report(
+          'Somebody is editing this document, and it has moved since your unsaved draft '
+          + 'was written. The document is what is in the box now.',
+          draft,
+          'Show the draft this replaced',
+        );
       } else if (mine) {
         typed();
       } else {
@@ -1217,6 +1264,7 @@ const COEDIT = (() => {
       // not.
       forgetDraft();
       box.hidden = true;
+      box.replaceChildren();
       settle(message.commit);
       dirty();
       const said = message.outcome === 'merged'
@@ -1247,8 +1295,10 @@ const COEDIT = (() => {
       return;
     }
     if (message.t === 'refused') {
-      box.hidden = false;
-      box.textContent = message.why;
+      // No fold: the store's conflict report is a handful of lines naming the
+      // file and each place two edits met, not a document — and every one of
+      // those lines is the thing to act on.
+      report(message.why);
       settle(null);
       announce('not saved');
     }
