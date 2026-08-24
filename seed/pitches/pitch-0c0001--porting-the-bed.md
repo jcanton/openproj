@@ -16,7 +16,6 @@ tags: [drumbed-core, drumbed, bed-surface, hearth, airflow-coupling, kiln4py]
 prs: []
 created_schema_version: 2
 person_weeks: 5.0
-shaped_by: mudlarkish
 ---
 
 # Porting the bed

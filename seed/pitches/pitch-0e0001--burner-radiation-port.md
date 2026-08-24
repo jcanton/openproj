@@ -16,7 +16,6 @@ tags: [radiation, burner, bed-physics, hearth, port]
 prs: []
 created_schema_version: 2
 person_weeks: 6.0
-shaped_by: jackdawrie
 ---
 
 # Burner radiation port

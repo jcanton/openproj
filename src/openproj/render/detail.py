@@ -28,6 +28,7 @@ from .styles import _DETAIL_STYLE, _SUGGEST_STYLE
 from .tokens import (
     _KIND_MODELS,
     _SIZE_FIELD_NAME,
+    EDITABLE,
     FIELD_TEACH,
     KINDS,
     LABELS,
@@ -2465,6 +2466,12 @@ def _new_rows() -> list[dict]:
     kind's fields and hides what does not apply. Rendering only the chosen kind
     meant switching kind
     was a fresh page, and a title typed before switching was gone.
+
+    Emitted in `EDITABLE` order, not in the order the union discovered them.
+    Building kind by kind put each field where the FIRST kind to own it landed
+    it — the first rung is `product`, which reads only `tags`, so the create
+    form opened with Tags above Status while the record page opened with
+    Status: two orders for one form.
     """
     rows: dict[str, dict] = {}
     for kind in KINDS:
@@ -2501,7 +2508,13 @@ def _new_rows() -> list[dict]:
                  "control": _control_html(field), "gates": field["gates"], "kinds": []},
             )
             row["kinds"].append(kind)
-    return [{**row, "kinds": " ".join(row["kinds"])} for row in rows.values()]
+    # `EDITABLE` decides the order, so this form and the facts column cannot
+    # disagree; the loops above only decide which rows exist.
+    return [
+        {**rows[name], "kinds": " ".join(rows[name]["kinds"])}
+        for name in EDITABLE
+        if name in rows
+    ]
 
 
 # What a promotion offers, per inbox, and the word for each.

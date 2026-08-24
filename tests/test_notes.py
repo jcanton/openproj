@@ -269,7 +269,7 @@ def test_a_note_promotes_into_a_record_that_validates(client: TestClient, repo_p
         assert f"An idea that becomes a {kind}" in stored, "the title crosses"
         assert "- grid" in stored, "and the tags"
         assert "Half a thought." in stored, "and the body, certainly"
-        for commitment in ("owner:", "person_weeks:", "cycle:", "assignees:", "shaped_by:"):
+        for commitment in ("owner:", "person_weeks:", "cycle:", "assignees:"):
             assert commitment not in stored, commitment
 
     # Through the validator the CI gate runs, over the whole corpus, so nothing

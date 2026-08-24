@@ -126,14 +126,13 @@ def _row(index: Index, record_id: str) -> dict:
             # it has no stake in, which reads as a field it holds.
             else []
         ),
-        # Three fields that are not columns and are not drawn anywhere on this
+        # Two fields that are not columns and are not drawn anywhere on this
         # page. They are here because the gate names them: a status the table can
         # set demands them, and a row has to be able to answer whether it already
         # holds one — `size` is the appetite *or the default*, so it cannot
-        # answer for `person_weeks`, and the other two are on no row at all.
+        # answer for `person_weeks`, and `assigned_on` is on no row at all.
         "assigned_on": record.assigned_on.isoformat() if record.assigned_on else None,
         "person_weeks": getattr(record, "person_weeks", None),
-        "shaped_by": getattr(record, "shaped_by", None) or [],
         # Not a column, but the control bar offers it: a dropdown whose value the
         # client cannot see is a filter that changes the URL and does nothing.
         "project": _project_of(record, index.plan),
