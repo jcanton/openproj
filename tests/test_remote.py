@@ -33,6 +33,7 @@ being asserted is about git's behaviour, not about TLS.
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -922,6 +923,63 @@ def test_a_write_that_loses_the_race_runs_again_and_lands(tmp_path):
     assert "title: mine" in landed.read(landed.head(), "tasks/task-a00001.md")
     for one in (mine, yours, landed):
         one.close()
+
+
+# --------------------------------------------------------------------------- #
+# 8. The write path does not wait for the remote (docs/deferred-push.md)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_write_answers_without_waiting_for_the_remote(
+    store: Store, repo_path: Path, remote_path: Path, monkeypatch
+):
+    """A save answers when the commit lands on this disk, not when GitHub takes it.
+
+    Measured on the deployed service, the push was ~1.5s of a ~2s save — GitHub's
+    server-side time, none of it ours to make faster — so the remote here is made
+    deliberately slow the same way: every conversation with it costs `delay`
+    seconds. The remote stays real and the transport stays git; only its speed is
+    injected, at the two methods that hold a conversation at all. The write must
+    answer in less than one conversation's time, admit the remote does not hold
+    the commit yet, leave it counted in the backlog, and set the poke the
+    background pusher wakes on.
+    """
+    delay = 3.0
+    real_fetch, real_send = Store.fetch, Store._send
+
+    def slow_fetch(self):
+        time.sleep(delay)
+        return real_fetch(self)
+
+    def slow_send(self):
+        time.sleep(delay)
+        return real_send(self)
+
+    monkeypatch.setattr(Store, "fetch", slow_fetch)
+    monkeypatch.setattr(Store, "_send", slow_send)
+
+    untouched = head(remote_path)
+    started = time.monotonic()
+    result = store.write(
+        path=PATH,
+        content=record(status="in_progress"),
+        base_commit=store.head(),
+        author="ann",
+        message="task-c00001: status todo -> wip",
+    )
+    elapsed = time.monotonic() - started
+
+    # Strictly under one delay: a write that held even a single conversation
+    # with the remote cannot get here in time, and a local commit is milliseconds.
+    assert elapsed < delay, f"the write held a conversation with the remote ({elapsed:.1f}s)"
+    assert result.outcome == "committed"
+    assert result.commit is not None
+    # Honest, not pessimistic: the remote genuinely does not hold it yet.
+    assert result.pushed is False
+    assert head(repo_path) == result.commit
+    assert head(remote_path) == untouched  # the remote's turn is the pusher's, not the save's
+    assert store.condition().unpushed == 1
+    assert store.dirty.is_set(), "nothing poked the pusher, so the commit would sit for ever"
 
 
 def test_a_write_answered_200_is_a_write_that_reached_the_remote(tmp_path):

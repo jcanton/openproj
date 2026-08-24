@@ -51,9 +51,11 @@ class WriteResult(BaseModel):
     commit: str | None
     outcome: Literal["committed", "retried", "merged", "conflict"]
     conflict: str | None = None
-    # Whether the commit reached the remote. On an ephemeral filesystem an
-    # unpushed commit is a lost commit, so a caller that reports success without
-    # looking at this is how a team finds out on Monday that Friday is gone.
+    # Whether the commit has reached the remote — always False on a fresh write
+    # now that the push has left the request path (docs/deferred-push.md); the
+    # background pusher lands it and announces the landing itself. The meaning
+    # is unchanged on purpose: on an ephemeral filesystem an unpushed commit is
+    # a lost commit, and nothing may claim the remote holds one before it does.
     pushed: bool = False
 
 
@@ -73,8 +75,8 @@ class Condition(BaseModel):
     # fetched or pushed.
     remote: str | None
     # Local and remote have both moved and neither contains the other — the exact
-    # comparison `_absorb_remote` makes before it raises, so the flag and the
-    # raise cannot disagree about the same repository.
+    # comparison `push` makes before it refuses, so the flag and the raise cannot
+    # disagree about the same repository.
     diverged: bool
     # Commits on local `main` that `remote` does not hold: what this container
     # loses if it is replaced. `pushed: false` tells one caller about one write;
@@ -106,11 +108,11 @@ class StoreDiverged(RuntimeError):
 def _diverged_message(local: str, remote: str) -> str:
     """The one wording for the one condition that stops every write.
 
-    It was written out twice — in `push` and in `_absorb_remote` — and is now
-    read a third time by `Store.condition`, which has no exception to take it
-    from. Three copies of a sentence is three chances for the one a person
-    actually reads to be the stale one, and this file's own rule is that an
-    invariant written twice is guarded once.
+    It was written out twice — in `push` and in `_absorb_remote`, which the
+    deferred push has since deleted — and is also read by `Store.condition`,
+    which has no exception to take it from. Three copies of a sentence is three
+    chances for the one a person actually reads to be the stale one, and this
+    file's own rule is that an invariant written twice is guarded once.
     """
     return (
         f"local {local[:7]} and remote {remote[:7]} have both moved; "
@@ -301,25 +303,14 @@ def _deleted(path: str) -> str:
 class _Rejected(Exception):
     """The remote refused the push because it had moved.
 
-    Its own type and not a bare `Exception`, because `_finish` deliberately
-    swallows everything else a push can fail with — an unreachable remote is a
-    commit that is real and local and reported as unpushed, which is not this. A
-    rejection means somebody else's commit is on the remote and ours is not a
-    descendant of it, and that is recoverable by rewinding and trying again.
+    Its own type and not a bare `Exception`, because the two ways a push fails
+    want opposite answers. An unreachable remote is a commit that is real and
+    local and still in the backlog, worth sending unchanged when the network
+    comes back. A rejection means somebody else's commit is on the remote and
+    ours is not a descendant of it — recoverable only by replaying the backlog
+    onto what actually landed (docs/deferred-push.md), which is the pusher's
+    job and never the request's.
     """
-
-
-def _lost_the_race(paths: list[str]) -> str:
-    """What a write is answered with after three attempts have all been outrun.
-
-    Not "the remote is broken" and not silence: the plan is being written to
-    faster than one save can land, which is a real thing to be told and a
-    different thing from a merge conflict. Nothing was committed.
-    """
-    return (
-        f"{', '.join(paths)} — the plan moved three times while this was being "
-        "saved.\n  Nothing was written. Reload and try again."
-    )
 
 
 def _changed_under_delete(path: str) -> str:
@@ -577,6 +568,11 @@ class Store:
             else:
                 self._repo.remotes.create(_ORIGIN, remote)
         self._writing = threading.Lock()
+        # The background pusher's poke, set by every commit. An Event and not a
+        # queue: the pusher reads the whole backlog from refs each time it runs,
+        # so a burst of saves coalesces into one wake and there is nothing to
+        # drain, replay or lose when wakes overlap.
+        self.dirty = threading.Event()
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
         # "a+" rather than "w": opening for write truncates, and truncating would
@@ -690,11 +686,13 @@ class Store:
 
         `known` is a previous answer. When its commit is an ancestor of head the
         walk covers only known..head, first touch wins, and untouched paths keep
-        their cached stamp. When it is NOT an ancestor — which is routine, not a
-        force-push story: the branch ref is published before the push, and a
-        lost race rewinds it (`_attempt`, the `set_target(before)` arm) — the
-        map is discarded and rebuilt from scratch. Retract-by-rebuild is the
-        whole correctness story: there is no retraction logic to get wrong, it
+        their cached stamp. When it is NOT an ancestor — which stays routine,
+        not a force-push story: a rejected push is recovered by replaying
+        local-only commits onto what the remote holds and swapping the branch
+        to the re-minted tip (docs/deferred-push.md), and the old tip is no
+        ancestor of the new one — the map is discarded and rebuilt from
+        scratch. Retract-by-rebuild is the whole correctness story: there is no
+        retraction logic to get wrong, it
         is affordable because a full walk is about a second at any size this
         plan will reach for years, and it is what stops a doomed commit's
         "edited just now" outliving the commit.
@@ -722,8 +720,10 @@ class Store:
     #
     # On Cloud Run the disk is ephemeral and the service scales to zero, so the
     # durable copy is the remote and a commit that has not reached it does not
-    # exist. Push happens inside the writer lock, which is what keeps local
-    # strictly ahead of the remote rather than divergent.
+    # exist. The push is the background pusher's job, off the request path:
+    # nothing inside `_writing` touches the network at all, because a save that
+    # waits for GitHub costs GitHub's latency — measured at ~1.5s of a ~2s
+    # request (docs/deferred-push.md).
 
     def _remote_head(self) -> str | None:
         repo = pygit2.Repository(str(self._path))
@@ -734,25 +734,25 @@ class Store:
         """Can this store write, and how much of it is only on this disk.
 
         **Two local refs and no network.** `refs/heads/main` against
-        `refs/remotes/origin/main` is the same comparison `_absorb_remote` makes
-        one line before it raises, so this is not a second opinion about the
-        wedge — it is that opinion, read from outside the lock. Adding a fetch
-        here would make the answer slow, make it fail when GitHub does, and make
-        it a different question every time somebody asked it.
+        `refs/remotes/origin/main` is the same comparison `push` makes before
+        it refuses, so this is not a second opinion about the wedge — it is
+        that opinion, read from outside the lock. Adding a fetch here would
+        make the answer slow, make it fail when GitHub does, and make it a
+        different question every time somebody asked it.
 
-        **It reports the condition as of the last write attempt, and that is the
-        right window.** The tracking ref only moves when something fetches or
-        pushes, so a fork that happened thirty seconds ago is invisible until
-        this process next tries to write. That is not a gap to close: "can this
-        service write" is answerable only by having tried, and the alternative is
-        a health route that goes red because somebody else's push is in flight.
+        **It reports the condition as of the last push or fetch, and that is
+        the right window.** The tracking ref only moves when something fetches
+        or pushes, so a fork that happened thirty seconds ago is invisible
+        until the pusher next tries to land the backlog. That is not a gap to
+        close: "can this service push" is answerable only by having tried, and
+        the alternative is a health route that goes red because somebody else's
+        push is in flight.
 
         **There is nothing to clear, which is the point.** This is a reading of
-        the world, not a memory of an event. It goes false the moment
-        `_absorb_remote`'s fetch teaches the process the histories forked, and
-        true again the moment a fetch or a push teaches it they no longer have —
-        which is exactly the moment a write would land, because the write asks
-        these same two refs. A recorded flag cleared by "a successful write"
+        the world, not a memory of an event. It goes false the moment a fetch
+        teaches the process the histories forked, and true again the moment a
+        fetch or a push teaches it they no longer have, because both answers
+        ask these same two refs. A recorded flag cleared by "a successful write"
         would have to decide what counts as one: `PUT /api/icon` answers 200 for
         an icon that is already set without ever reaching the store, and clearing
         on that would report health in the middle of a total outage. A flag never
@@ -830,11 +830,11 @@ class Store:
             return False
         self.fetch()
         # The tracking ref is fresh here, and only here, so this is the one place
-        # that can tell a genuine fork from a race. `_send` cannot: the write path
-        # calls it without fetching, where "local is not on top of the remote" is
-        # the ordinary consequence of having committed on a base that has since
-        # moved. Somebody force-pushed, or a second writer existed, is what this
-        # is about, and neither is recoverable by trying again.
+        # that can tell a genuine fork from a race. `_send` alone cannot: without
+        # a fresh fetch, "local is not on top of the remote" is the ordinary
+        # consequence of the remote having moved since this process last looked.
+        # Somebody force-pushed, or a second writer existed, is what this is
+        # about, and neither is recoverable by trying again.
         local, remote_head = self.head(), self._remote_head()
         # Equality first: `descendant_of(x, x)` is false — a commit is not its own
         # descendant — so a store with nothing to send looked exactly like a fork.
@@ -846,31 +846,33 @@ class Store:
     def _send(self) -> bool:
         """Push what the tracking ref already says is ahead.
 
-        Split out of `push` because a write had just fetched, milliseconds
-        earlier and inside the same lock, and then fetched again on the way out:
-        one save cost THREE round trips to GitHub — fetch, fetch, push — where a
-        round trip is about 600 ms and is most of what a save costs at all.
+        Split out of `push` when the write path still pushed: a save had just
+        fetched, milliseconds earlier and inside the same lock, and then fetched
+        again on the way out — THREE round trips to GitHub at about 600 ms each.
+        The split survives the write path's departure because the pusher wants
+        exactly this half: push without fetching, and let the rejection be the
+        freshness question.
 
-        Divergence is still caught, and caught properly; it is just no longer
-        paid for on every write. If the remote moved inside that window the push
-        is rejected, and this fetches once and looks — so the fetch happens when
-        it is needed rather than in the hope that it will be.
+        Divergence is still caught, and caught properly; it is just not paid
+        for on every push. If the remote moved, the push is rejected, and this
+        fetches once and looks — so the fetch happens when it is needed rather
+        than in the hope that it will be.
         """
         local, remote_head = self.head(), self._remote_head()
         if remote_head == local:
             return False
         # Not a fork — a race, and the difference decides whether anything can be
         # done about it. Without a pre-fetch, "local is not on top of the remote"
-        # is the ORDINARY case: this process committed on a base that was current
-        # when it started and is not now. Raising `StoreDiverged` here called that
-        # unrecoverable, and it is the exact case the retry recovers from.
+        # is the ORDINARY case: somebody pushed to the plan by hand since this
+        # process last looked. Raising `StoreDiverged` here called that
+        # unrecoverable, and it is the exact case the pusher's replay recovers
+        # from (docs/deferred-push.md).
         #
         # A genuine fork — somebody force-pushed, or two writers existed — is
-        # still caught, one step later: the retry rewinds and calls
-        # `_absorb_remote`, which raises `StoreDiverged` when the two histories
-        # really cannot be reconciled. So the hard answer is given by the code
-        # that can tell, after fetching, rather than guessed here from a tracking
-        # ref that is stale by design.
+        # still caught where a fresh fetch exists to catch it: `push` checks
+        # before sending, and the recovery guards before replaying. So the hard
+        # answer is given by code that has fetched, rather than guessed here
+        # from a tracking ref that is stale by design.
         if remote_head is not None and not self._repo.descendant_of(local, remote_head):
             raise _Rejected(
                 f"the remote is at {remote_head[:7]} and this is not on top of it"
@@ -881,8 +883,8 @@ class Store:
             )
         except Exception:
             # A refusal and an unreachable host arrive as the same class, and they
-            # want opposite answers: one is recoverable by rewinding and running
-            # the compare-and-swap again, the other is a commit that is real and
+            # want opposite answers: one is recoverable by replaying the backlog
+            # onto what actually landed, the other is a commit that is real and
             # local and simply has not landed.
             #
             # Told apart by ASKING GIT rather than by reading the message. The
@@ -927,20 +929,17 @@ class Store:
         base to compare against, nothing to merge, and no conflict that can exist
         — which is why this needs none of `write_all`'s compare-and-swap.
 
-        It needs the rest of it. This took no lock and never pushed, and both were
-        wrong in the same way: the commit existed only on this disk, so ONE image
-        upload followed by anybody pushing to the plan by hand left local and
-        remote genuinely forked — and from then on every write raised
-        `StoreDiverged` for the life of the container. Not the first write. All of
-        them, for ever, because nothing ever reconciled. The lock matters for a
-        second reason now that writes run on a threadpool: concurrent with a save,
-        libgit2 refuses the commit outright with "current tip is not the first
-        parent".
+        It needs the lock. This once took none, and concurrent with a save on
+        the threadpool libgit2 refuses the commit outright with "current tip is
+        not the first parent". The `_absorb_remote()` that used to open this
+        block went with the deferred push: it existed because an unpushed asset
+        commit had nothing else to reconcile it — one upload plus one hand-push
+        to the plan left the histories forked for the life of the container —
+        and the pusher now reconciles every commit, this one included. Nothing
+        inside `_writing` touches the network any more, anywhere in this file.
         """
         name = f"assets/{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
         with self._writing:
-            if self._remote:
-                self._absorb_remote()
             if self.read_asset(self.head(), name) is not None:
                 return name, False
             blob = self._repo.create_blob(data)
@@ -948,12 +947,11 @@ class Store:
             tree = self._insert(self._tree(parent), name.split("/"), blob)
             who = pygit2.Signature(author, f"{author}@users.noreply.github.com")
             self._repo.create_commit(_BRANCH, who, _BOT, f"upload {name}", tree, [parent])
-            # Through `_finish`, so an upload reaches the remote like every other
-            # commit and an unreachable remote is reported rather than pretended
-            # away. The name and "it is new" are what the caller wants; whether it
-            # pushed is on the result `_finish` builds, which this discards — an
-            # asset nobody can see yet is a broken image on one page, not a lost
-            # record.
+            # Through `_finish`, so an upload pokes the pusher and joins the
+            # same backlog as every other commit. The name and "it is new" are
+            # what the caller wants; the result `_finish` builds is discarded —
+            # an upload the remote does not hold yet is a broken image on one
+            # page, not a lost record.
             self._finish(self.head(), "committed")
         return name, True
 
@@ -1018,25 +1016,15 @@ class Store:
         came to disagree about which commit `stored` is read at.
         """
         with self._writing:
-            # NO FETCH BEFORE THE WRITE. It was here so that "current" already
-            # included whatever the remote had, and it cost a round trip on every
-            # save whether or not the remote had moved — measured at about 600 ms
-            # from a laptop, which was half of what a save cost at all.
-            #
-            # Optimistic instead: commit against local HEAD, push, and let the
-            # push be the question. GitHub refuses a non-fast-forward and libgit2
-            # raises `cannot push non-fastforwardable reference` — verified
-            # against the real remote over HTTPS, not over `file://`, because the
-            # two answer differently and only one of them is what runs in
-            # production. `_retry` then rewinds, fetches, and runs this same loop
-            # again against what actually landed.
-            #
-            # So the fetch happens when somebody else really did write, rather
-            # than in the hope that they might have. Conflict SEMANTICS are
-            # unchanged, because the retry re-runs this identical loop: what moves
-            # is the tail latency of a collision, to about 1.8 s — which was until
-            # today the price of every save, collision or not.
-            return self._attempt(files, base_commit, author, message, tries=3)
+            # NO NETWORK IN HERE. The pre-fetch went first — it cost a round
+            # trip on every save whether or not the remote had moved, about
+            # 600 ms from a laptop — and the push has now followed it out
+            # (docs/deferred-push.md): a save commits against local HEAD and
+            # answers, and the background pusher lands the branch on its own
+            # clock. Remote staleness is the pusher's problem; the
+            # compare-and-swap below keeps handling browser-side staleness — a
+            # `base_commit` older than HEAD — exactly as it always has.
+            return self._attempt(files, base_commit, author, message)
 
     def _attempt(
         self,
@@ -1044,117 +1032,71 @@ class Store:
         base_commit: str,
         author: str,
         message: str,
-        tries: int,
     ) -> WriteResult:
-        """One pass of the compare-and-swap, and the retry when the push loses.
+        """One pass of the compare-and-swap, against the local tip.
 
-        Called with `self._writing` already held, and it calls itself, so the lock
-        must stay non-reentrant-safe by never being taken again in here.
+        Called with `self._writing` already held, and nothing in here may take
+        it again — the lock is deliberately non-reentrant. The `_Rejected` retry
+        that used to live here — rewind to the head captured before the commit,
+        absorb the remote, run again — went with the push itself: a rewind was
+        sound only while the lock spanned both the commit and the push, and once
+        the push is deferred, `set_target(before)` would discard commits other
+        people made after the one being retried. Nothing rewinds
+        `refs/heads/main` any more; a rejected push is the pusher's to recover,
+        by replay (docs/deferred-push.md).
         """
-        if True:
-            current = self.head()
-            resolved: dict[str, str] = {}
-            outcomes: list[str] = []
-            conflicts: list[str] = []
-            for path, content in files.items():
-                # Asked before the fast paths below, because both of them are
-                # about a file that is still there. A removal of something
-                # already gone slipped through the `was == stored` path — both
-                # sides read `None`, which looks exactly like "somebody edited a
-                # different file" — and committed a tree identical to its parent:
-                # an empty commit, reported to the person who pressed Delete as
-                # the sha that deleted the record.
-                if content is None and self.read(current, path) is None:
-                    conflicts.append(_already_gone(path))
-                    continue
-                if current == base_commit:
-                    resolved[path] = content
-                    outcomes.append("committed")
-                    continue
-                was, stored = self.read(base_commit, path), self.read(current, path)
-                text, refusal = _verdict(path, was, content, stored)
-                if refusal is not None:
-                    conflicts.append(refusal)
-                    continue
-                resolved[path] = text
-                # The label repeats the ladder's first comparison rather than
-                # coming back with the verdict, because it is wording and not a
-                # guard: nothing is decided by it, and `_verdict`'s other
-                # caller, the replay, has no outcome to report to anybody.
-                outcomes.append("retried" if was == stored else "merged")
-            if conflicts:
-                return WriteResult(
-                    commit=None, outcome="conflict", conflict="\n".join(conflicts)
-                )
-            # The most eventful thing that happened to any of them. A caller shown
-            # "committed" for a set in which one file had to be merged has been
-            # told the quiet half of what happened.
-            worst = max(outcomes, key=_OUTCOMES.index, default="committed")
-            before = self.head()
-            made = self._commit(resolved, author, message)
-            try:
-                return self._finish(made, worst)
-            except _Rejected:
-                # Somebody else landed a commit between this HEAD and this push.
-                # Rewind to where we started, take what they wrote, and run the
-                # whole loop again against it — which is the same three-way merge
-                # a pre-fetch would have done, arrived at from the other side.
-                if tries <= 1:
-                    # The same 409 they would have been given anyway. A remote
-                    # moving faster than three attempts is not a conflict this can
-                    # resolve by trying a fourth time.
-                    self._repo.references[_BRANCH].set_target(before)
-                    self._absorb_remote()
-                    return WriteResult(
-                        commit=None,
-                        outcome="conflict",
-                        conflict=_lost_the_race(sorted(files)),
-                    )
-                self._repo.references[_BRANCH].set_target(before)
-                self._absorb_remote()
-                return self._attempt(files, base_commit, author, message, tries - 1)
-
-    def _absorb_remote(self) -> None:
-        """Fast-forward onto anything the remote gained since the last write.
-
-        An unreachable remote is not a reason to refuse the write: the commit is
-        still made locally and reported as unpushed. Refusing would mean the
-        tracker stops working whenever GitHub does.
-        """
-        try:
-            self.fetch()
-        except StoreDiverged:
-            raise
-        except Exception:
-            return
-        local, remote_head = self.head(), self._remote_head()
-        if remote_head is None or remote_head == local:
-            return
-        if self._repo.descendant_of(remote_head, local):
-            self._repo.references[_BRANCH].set_target(remote_head)
-        elif not self._repo.descendant_of(local, remote_head):
-            raise StoreDiverged(_diverged_message(local, remote_head))
+        current = self.head()
+        resolved: dict[str, str] = {}
+        outcomes: list[str] = []
+        conflicts: list[str] = []
+        for path, content in files.items():
+            # Asked before the fast paths below, because both of them are
+            # about a file that is still there. A removal of something
+            # already gone slipped through the `was == stored` path — both
+            # sides read `None`, which looks exactly like "somebody edited a
+            # different file" — and committed a tree identical to its parent:
+            # an empty commit, reported to the person who pressed Delete as
+            # the sha that deleted the record.
+            if content is None and self.read(current, path) is None:
+                conflicts.append(_already_gone(path))
+                continue
+            if current == base_commit:
+                resolved[path] = content
+                outcomes.append("committed")
+                continue
+            was, stored = self.read(base_commit, path), self.read(current, path)
+            text, refusal = _verdict(path, was, content, stored)
+            if refusal is not None:
+                conflicts.append(refusal)
+                continue
+            resolved[path] = text
+            # The label repeats the ladder's first comparison rather than
+            # coming back with the verdict, because it is wording and not a
+            # guard: nothing is decided by it, and `_verdict`'s other
+            # caller, the replay, has no outcome to report to anybody.
+            outcomes.append("retried" if was == stored else "merged")
+        if conflicts:
+            return WriteResult(
+                commit=None, outcome="conflict", conflict="\n".join(conflicts)
+            )
+        # The most eventful thing that happened to any of them. A caller shown
+        # "committed" for a set in which one file had to be merged has been
+        # told the quiet half of what happened.
+        worst = max(outcomes, key=_OUTCOMES.index, default="committed")
+        made = self._commit(resolved, author, message)
+        return self._finish(made, worst)
 
     def _finish(self, commit: str, outcome: str) -> WriteResult:
-        """Commit made. Try to push, and never claim success for a commit that is
-        still only on this disk."""
-        pushed = False
-        if self._remote:
-            try:
-                pushed = self._send()
-            except (StoreDiverged, _Rejected):
-                # Both are answers about the plan rather than about the network,
-                # and the caller has something to do with each: a rejection is
-                # recoverable by rewinding and running the compare-and-swap again,
-                # and a genuine fork is not recoverable at all. Swallowing either
-                # into `pushed = False` would report a commit as merely unpushed
-                # when it is in fact about to be retried, or about to be lost.
-                raise
-            except Exception:
-                # The remote is unreachable. The commit is real and local; the
-                # caller is told it has not landed rather than told nothing.
-                pushed = False
-        return WriteResult(commit=commit, outcome=outcome, pushed=pushed)
+        """Commit made; answer now, and poke the pusher.
+
+        The push that lived here was ~1.5s of a ~2s save — GitHub's server-side
+        time, none of it ours to make faster (docs/deferred-push.md) — so the
+        request stops paying for it. `pushed=False` is the truth at this moment,
+        not pessimism: the commit is real, local, and in the pusher's backlog,
+        and nothing may say the remote holds it before the remote does.
+        """
+        self.dirty.set()
+        return WriteResult(commit=commit, outcome=outcome, pushed=False)
 
     def _commit(self, files: dict[str, str], author: str, message: str) -> str:
         parent = self.head()
