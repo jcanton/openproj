@@ -38,6 +38,24 @@ def _b64(raw: bytes) -> bytes:
     return base64.urlsafe_b64encode(raw).rstrip(b"=")
 
 
+def plan_repository(remote: str) -> str:
+    """The `owner/repo` a remote URL names on github.com, or "" for any other.
+
+    An allowlist of exactly the one shape a deployment writes —
+    `https://github.com/<owner>/<repo>.git`, per `gcloud_deploy.sh` — rather
+    than a parser for everything git accepts: the store pushes over https with
+    an installation token, so an ssh or `file://` remote has nowhere to open a
+    pull request anyway, and a denylist of URL spellings is never finished.
+    """
+    prefix = "https://github.com/"
+    if not remote.startswith(prefix):
+        return ""
+    parts = remote.removeprefix(prefix).strip("/").removesuffix(".git").split("/")
+    if len(parts) != 2 or not all(parts):
+        return ""
+    return "/".join(parts)
+
+
 def app_jwt(app_id: str, private_key_pem: str, now: float | None = None) -> str:
     """A short-lived assertion that we are the App, signed with its own key.
 
@@ -61,7 +79,8 @@ def app_jwt(app_id: str, private_key_pem: str, now: float | None = None) -> str:
 
 @dataclass
 class GitHubApp:
-    """Mints and holds one installation token, and hands out git credentials.
+    """Mints and holds one installation token, hands out git credentials, and
+    opens the pull request that makes a parked branch visible.
 
     The token is cached because a betting table is a burst of writes and each one
     would otherwise cost two API calls and ~300ms before any git happened. It is
@@ -72,6 +91,16 @@ class GitHubApp:
     app_id: str
     installation_id: str
     private_key_pem: str
+    # The plan's `owner/repo` on GitHub, for opening a pull request when the
+    # pusher parks a branch. Parsed from the same OPENPROJ_REMOTE the store
+    # pushes to — one deployment variable, two readers, no second name to fall
+    # out of step — and empty when the remote is not on github.com, which makes
+    # `offer_pull_request` refuse rather than guess a host.
+    repository: str = ""
+    # Every HTTP call this object makes goes through `_client`, which honours
+    # this: an httpx transport a test can answer from without a socket. None is
+    # the real network.
+    transport: httpx.BaseTransport | None = None
     _token: str = field(default="", repr=False)
     _expires: float = 0.0
 
@@ -98,6 +127,10 @@ class GitHubApp:
             environ["OPENPROJ_APP_ID"].strip(),
             environ["OPENPROJ_INSTALLATION_ID"].strip(),
             Path(environ["OPENPROJ_APP_KEY"].strip()).read_text(encoding="utf-8"),
+            # Read here rather than passed in: the App and the remote already
+            # come from one environment, and a second parameter would be a
+            # second chance for them to name different repositories.
+            repository=plan_repository(environ.get("OPENPROJ_REMOTE", "").strip()),
         )
 
     def token(self, now: float | None = None) -> str:
@@ -107,16 +140,52 @@ class GitHubApp:
         self._token, self._expires = self._mint(moment)
         return self._token
 
+    def _client(self) -> httpx.Client:
+        """One construction site for every HTTP call this object makes, so a
+        test that stubs `transport` has stubbed all of it — a second site would
+        be the one call that still quietly reaches the network."""
+        return httpx.Client(transport=self.transport, timeout=10.0)
+
+    def _headers(self, bearer: str) -> dict[str, str]:
+        """The API headers, once: minting sends the App JWT, everything after
+        sends the installation token, and the other two headers must not drift
+        between them."""
+        return {
+            "Authorization": f"Bearer {bearer}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+    def offer_pull_request(self, branch: str, title: str, body: str) -> None:
+        """Open a pull request from a parked branch onto main.
+
+        The installation was granted `pull_requests: write` for exactly this
+        and stays `repository_selection: selected` — a ref and a PR on the
+        plan, nothing else, so the push credential remains structurally
+        incapable of touching source. Raises on any refusal, and the CALLER
+        treats that as survivable: the branch is already durable on the remote
+        by the time this is asked, the PR is only the visibility
+        (docs/deferred-push.md), and the store logs rather than dies.
+        """
+        if not self.repository:
+            raise ValueError(
+                "the plan's remote is not on github.com, so there is no repository "
+                "to open the pull request on"
+            )
+        with self._client() as client:
+            response = client.post(
+                f"{_API}/repos/{self.repository}/pulls",
+                headers=self._headers(self.token()),
+                json={"title": title, "head": branch, "base": "main", "body": body},
+            )
+        response.raise_for_status()
+
     def _mint(self, now: float) -> tuple[str, float]:
-        response = httpx.post(
-            f"{_API}/app/installations/{self.installation_id}/access_tokens",
-            headers={
-                "Authorization": f"Bearer {app_jwt(self.app_id, self.private_key_pem, now)}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=10.0,
-        )
+        with self._client() as client:
+            response = client.post(
+                f"{_API}/app/installations/{self.installation_id}/access_tokens",
+                headers=self._headers(app_jwt(self.app_id, self.private_key_pem, now)),
+            )
         response.raise_for_status()
         body = response.json()
         # Their `expires_at` is authoritative over any hour we assume, and it is

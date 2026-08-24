@@ -125,15 +125,30 @@ def test_a_remote_that_needs_a_credential_and_has_none_is_refused(tmp_path: Path
 def test_the_credential_is_asked_for_every_push_not_held_from_startup(tmp_path: Path):
     """An installation token lives under an hour and a server lives for weeks. A
     credential fetched once at startup stops working on a Tuesday afternoon, with
-    no deploy to blame it on."""
+    no deploy to blame it on.
+
+    Counted against the network calls the file actually makes rather than against
+    a number written down here. It used to assert exactly two — "push and fetch
+    both" — which was true when those were the only two. The background pusher
+    added three more (its own push, its recovery fetch, and the push that strands
+    a commit it could not replay), and a hardcoded count answers a change in the
+    file's shape with a failure about credentials. What has to stay true is that
+    EVERY one of them asks, and that none is handed `None`.
+    """
     import inspect
+    import re
 
     from openproj.store import Store
 
     source = inspect.getsource(Store)
+    reaching = re.findall(r"remotes\[_ORIGIN\]\.(?:push|fetch)\(", source)
 
-    assert "callbacks=self._callbacks()" in source
-    assert source.count("callbacks=self._callbacks()") == 2, "push and fetch both"
+    assert reaching, "no network call found at all — this test has stopped watching anything"
+    assert source.count("callbacks=self._callbacks()") == len(reaching), (
+        f"{len(reaching)} calls reach the remote and "
+        f"{source.count('callbacks=self._callbacks()')} of them mint a credential; "
+        "a token fetched once at startup stops working on a Tuesday afternoon"
+    )
     assert "callbacks=None" not in source
 
 
