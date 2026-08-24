@@ -143,6 +143,29 @@ over 42 files, 18s unattributed and that 18s is collection and imports.
 `tests/test_editor.py` is 101.6s of the 106.4s leg it sits in, so that is **five seconds off the
 floor** and there is nothing further to win by moving files between lists.
 
+### And it bought one second, which is the real answer
+
+Three runs of the final lists, printed pytest seconds:
+
+| leg | run 1 | run 2 | run 3 | median |
+|---|---:|---:|---:|---:|
+| `editor` | 99.00 | 99.21 | 91.38 | 99.00 |
+| `views` | 102.85 | 116.70 | **76.57** | 102.85 |
+| `graph` | 106.57 | 97.66 | 100.98 | 100.98 |
+| `rest` | 115.85 | 118.02 | 129.34 | 118.02 |
+| `coedit` | 119.41 | 116.13 | 127.12 | 119.41 |
+| **critical** | **119.41** | **118.02** | **129.34** | **119.41** |
+
+**120.4s before, 119.4s after.** A cut that is 13s better on paper and 0.1s from perfectly balanced
+is one second better in practice, and `views` alone ranges over 40 seconds between runs of the same
+list.
+
+The lists are kept anyway, and the reason is not the second. The lists they replace are justified in
+their own comments by numbers from a machine that no longer exists, and by the claim that
+`tests/test_editor.py` at 151.3s is the floor no leg can go under — which is false twice over now.
+A list whose stated reason is wrong is a list the next person re-derives from the wrong table. What
+is NOT kept is the idea that this is worth doing again.
+
 ### The finding that matters more: the noise is the same size as the imbalance
 
 Two runs of **identical shard lists**:
@@ -161,8 +184,18 @@ runs to decide whether a cut helped is reading noise. Quote a median over severa
 nothing.
 
 This is section 5's finding again — *"the spread between runs is larger than anything left to
-optimise"* — and it has survived a doubling of the hardware. **Do not spend an afternoon
-rebalancing.** The cut is now five seconds off its floor and the floor is one file.
+optimise"* — and it has survived a doubling of the hardware, an inverted leg order, and three
+separate cuts:
+
+| cut | critical, measured |
+|---|---:|
+| the 2-core lists | 120.39s |
+| the modelled re-cut | 120.22s |
+| from exact totals, median of 3 | 119.41s |
+
+**Three arrangements of the same 42 files, one second apart.** Do not spend an afternoon
+rebalancing; the answer is already known and it is a second. The cut is five seconds off its floor
+and the floor is one file.
 
 ### `pytest-xdist -n 2`: measured, and refused for a new reason
 
