@@ -58,7 +58,7 @@ from pathlib import Path
 
 import pygit2
 import pytest
-from browser import chrome, measured_in, screenshot
+from browser import chrome, measured_in, pressed_in, screenshot
 from fastapi.testclient import TestClient
 from test_store import commit_directly
 from test_web import (
@@ -4689,3 +4689,175 @@ def test_a_column_too_narrow_for_its_word_keeps_its_mark(page: str, tmp_path: Pa
     assert got["untouched"]["priwords"] > 0 and got["untouched"]["words"] > 0, (
         f"a table with room in it is not showing its words: {got['untouched']}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The press that creates a row: that it lands, and that it lands once.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_second_press_while_the_create_is_in_flight_makes_no_second_record(page: str):
+    """One press, one record, however many times the check is pressed.
+
+    A create is a commit and a push to GitHub, which from Cloud Run is 1.5 to 2
+    seconds, and for all of it the row used to sit there looking exactly as it
+    had before the press — `openproj:writing` is *counted* by the shell to hold
+    its banner back and draws nothing. So somebody pressed again, and the second
+    press posted a second record: two 201s 0.9 seconds apart in the deployed
+    service's log on 2026-08-24, two rows, one of them deleted by hand a minute
+    later.
+
+    Pressed through the delegated listener rather than by calling `createDraft`
+    twice, because the guard has to hold for the gesture and not only for the
+    function. What this cannot prove is the other half — that the check is drawn
+    `disabled` and a mouse therefore cannot reach it at all — because this shim
+    has no notion of a disabled control; that half is asked of Chrome below.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {"
+        "  openDraft(); chooseKind('task');"
+        "  stage('title', 'Pressed twice in a hurry');"
+        "  const press = () => {"
+        "    const event = new Event('click');"
+        "    event.target = tbody.querySelector('#draft-create');"
+        "    tbody.dispatchEvent(event);"
+        "  };"
+        "  press();"
+        "  const held = CREATING;"
+        "  press();"
+        f" {SETTLE}"
+        "  return {held, after: CREATING, draft: DRAFT};"
+        "})()",
+        replies=[
+            {"status": 201, "json": {"id": "task-a1b2c3", "outcome": "committed",
+                                     "commit": "c0ffee"}},
+            {"status": 200, "json": {"rows": {}, "problems": []}},
+        ],
+    )
+    posts = [call for call in answer["calls"] if call["method"] == "POST"]
+
+    assert len(posts) == 1, (
+        f"the check was pressed twice and posted {len(posts)} records: {posts}"
+    )
+    assert answer["value"]["held"] is True, "the row does not say it is working"
+    assert answer["value"]["after"] is False, "the flag outlived its own request"
+    assert answer["value"]["draft"] is None, "the row that was typed is a record now"
+
+
+def test_a_refused_create_gives_the_check_back(page: str):
+    """A guard that never releases is worse than the double press it prevents.
+
+    This is the cycle page's defect through a different door: a 500 there left
+    Save disabled for ever, and a row whose check never comes back cannot be
+    corrected and retried — the typing is only in the page, so the way out is a
+    reload that throws it away. So `createDraft` clears the flag in a `finally`
+    and redraws after it, on every way out including the ones that threw.
+    """
+    answer = drive_table(
+        page,
+        "(async () => {"
+        "  openDraft(); chooseKind('task'); stage('title', 'Refused once');"
+        f" await createDraft(); {SETTLE}"
+        "  return {creating: CREATING,"
+        "          disabled: tbody.querySelector('#draft-create').hasAttribute('disabled'),"
+        "          title: DRAFT && DRAFT.fields.title,"
+        "          said: [...document.getElementById('draft-problems').children]"
+        "                  .map(item => item.textContent)};"
+        "})()",
+        replies=[{"status": 422, "json": {"problems": [
+            {"record_id": "task-a1b2c3", "severity": "blocker",
+             "message": "a task needs an owner before it can be ready"},
+        ]}}],
+    )
+
+    assert answer["value"]["creating"] is False, "the flag survived a refusal"
+    assert answer["value"]["disabled"] is False, "the check never came back"
+    assert answer["value"]["title"] == "Refused once", "the typing was thrown away"
+    assert answer["value"]["said"] == ["a task needs an owner before it can be ready"], (
+        "and the refusal is still on screen after the redraw that gave the check back"
+    )
+
+
+# The page, put where the press has to find it: a draft row with a kind chosen,
+# a title half-typed, and the editor for it STILL OPEN — which is the state the
+# defect needs and the state a person is actually in when they reach for the
+# check. `fetch` is replaced before anything is pressed, so the create answers
+# without a server; the recorded calls are the evidence.
+_PRESS_SETUP = """
+window.__sent = [];
+window.fetch = (url, options) => {
+  const asked = String(url);
+  window.__sent.push({url: asked, method: (options || {}).method || 'GET',
+                      body: (options || {}).body || ''});
+  const table = asked.endsWith('/api/table.json');
+  return Promise.resolve(new Response(
+    JSON.stringify(table ? {rows: {}, problems: []}
+                         : {id: 'task-a1b2c3', outcome: 'committed', commit: 'c0ffee'}),
+    {status: table ? 200 : 201, headers: {'content-type': 'application/json'}}));
+};
+openDraft();
+chooseKind('task');
+tbody.querySelector('tr.draft td[data-field="title"] input').value = 'Typed, then pressed';
+tbody.querySelector('tr.adder').scrollIntoView({block: 'center'});
+'ready'
+"""
+
+_PRESS_AT = """
+(() => {
+  const box = document.getElementById('draft-create').getBoundingClientRect();
+  return [box.x + box.width / 2, box.y + box.height / 2];
+})()
+"""
+
+_PRESS_OUTCOME = """
+({
+  posts: window.__sent.filter(one => one.method === 'POST').map(one => one.url),
+  title: (window.__sent.filter(one => one.method === 'POST')[0] || {}).body || '',
+  draft: DRAFT === null,
+})
+"""
+
+
+def test_the_check_creates_the_row_on_one_press_with_the_editor_still_open(
+    page: str, tmp_path: Path
+):
+    """**The press that did nothing.** Pressed with the title editor open, the
+    check created no row, said nothing, and left the draft exactly as it was.
+
+    The mechanism is not in this page's logic at all, which is why every cheaper
+    harness passes with the defect in place. `mousedown` on a button moves the
+    focus to it; that blurs the open cell editor; this page's blur handler stages
+    the value and redraws, and `draw()` replaces the whole `tbody` through
+    `innerHTML`. So the button that took the `mousedown` is detached before the
+    `mouseup`, the two land on elements with no common ancestor left in the
+    document, and the browser therefore synthesises **no click at all**. The
+    delegated listener never runs. Nothing failed, so nothing was reported: from
+    the outside the check is simply dead until you press it a second time.
+
+    `drive.js` cannot see this — it has no focus model, no bubbling, and no click
+    synthesis, so a press lands there by construction. Neither can a script
+    inside the page: `element.click()` and a dispatched `MouseEvent` are
+    `isTrusted: false`, run no default action, move no focus, and are dispatched
+    rather than synthesised, so they answer a question nobody asked. The only
+    harness that can is a real browser sent real input, which is what
+    `pressed_in` is.
+
+    The title matters as much as the row: holding the focus is what keeps the
+    press, and the check has to take what is in the open box with it, or the fix
+    would trade a lost press for a lost field.
+    """
+    where = tmp_path / "press.html"
+    where.write_text(page)
+    got, said = pressed_in(
+        chrome(), where.as_uri(), tmp_path / "profile",
+        setup=_PRESS_SETUP, at=_PRESS_AT, then=_PRESS_OUTCOME,
+    )
+
+    assert got["posts"] == ["/api/record"], (
+        f"one press of the check sent {got['posts']}; the console said {said}"
+    )
+    assert "Typed, then pressed" in got["title"], (
+        "the press landed but left behind what was still in the open editor"
+    )
+    assert got["draft"], "the row was created and the draft is gone"

@@ -39,8 +39,9 @@
 //                            which node cannot perform and a test has to be able
 //                            to read.
 //          {socket: true}    a `WebSocket` the expression drives by hand,
-//                            through `__socket.opened()`, `__socket.hear(frame)`
-//                            and `__socket.sent()`. Absent by default, which is
+//                            through `__socket.opened()`, `__socket.hear(frame)`,
+//                            `__socket.refused(code, reason)` and
+//                            `__socket.sent()`. Absent by default, which is
 //                            the reader whose browser refuses the upgrade.
 // The expression may be async; its promise is awaited, and one that never
 // settles comes back as settled: false rather than as an empty answer.
@@ -631,9 +632,14 @@ async function run(html, expression, options) {
       wire.live = this;
     }
     send(data) { wire.sent.push(String(data)); }
-    close() {
+    // A close ALWAYS carries an event, because a browser's does — `code` and
+    // `reason` are the only thing a page has to tell a refusal from a drop, and
+    // a shim that handed over nothing made every close look like the same close.
+    // 1005 is what a browser reports for a close nobody gave a code to, which is
+    // what `socket.close()` from the page is.
+    close(code, reason) {
       this.readyState = DriverSocket.CLOSED;
-      if (this.onclose) this.onclose();
+      if (this.onclose) this.onclose({code: code || 1005, reason: reason || ''});
     }
   }
   DriverSocket.CONNECTING = 0;
@@ -774,6 +780,12 @@ async function run(html, expression, options) {
     sandbox.__socket = {
       opened: () => { if (wire.live && wire.live.onopen) wire.live.onopen(); },
       hear: frame => { wire.live.onmessage({data: JSON.stringify(frame)}); },
+      // The server turning this socket away, which is a close and never a frame:
+      // a refusal that is accepted and then closed carries its reason in the
+      // close event, and there is no other way for one to reach a page.
+      refused: (code, reason) => {
+        if (wire.live && wire.live.onclose) wire.live.onclose({code, reason});
+      },
       // Parsed, because every frame this application sends is JSON and a test
       // asserting on strings would be asserting on key order.
       sent: () => wire.sent.map(one => JSON.parse(one)),

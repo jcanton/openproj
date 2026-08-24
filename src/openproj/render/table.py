@@ -1371,6 +1371,25 @@ const DRAFT_ID = '+';
 // a draft somebody creates twice.
 let DRAFT = null;
 
+// Whether the create this row asked for is still in the air.
+//
+// A create is a commit and a push to GitHub, which from Cloud Run is 1.5 to 2
+// seconds — measured on the deployed service on 2026-08-24: four creates at
+// 1.45s, 1.55s, 1.93s and 2.04s. For every one of those seconds the row sat
+// there looking exactly as it had before the press, because the only thing the
+// press did was dispatch `openproj:writing`, which the shell *counts* to hold
+// its banner back and does not draw. A control that does not answer a press is
+// a control somebody presses again, and pressing this one again posted a SECOND
+// record: two 201s 0.9 seconds apart in that same log, two rows, one of them
+// deleted by hand a minute later.
+//
+// So one flag does both halves of it — the check says it is working and stops
+// taking presses — because they are one fact about the row and drawing them
+// from two would let them disagree. `draw()` reads it, which is what makes it
+// survive the redraws a refusal causes; `createDraft` is the only thing that
+// sets it, and its `finally` is the only thing that clears it.
+let CREATING = false;
+
 // What a draft cell shows: exactly what will be committed and nothing that is
 // only true of a stored row. `shown()` links the title (there is no page to link
 // to yet), turns PR references into links and clamps four columns behind a `+N`
@@ -1501,9 +1520,18 @@ function draftControls() {
     `<option value="${esc(kind)}"${kind === DRAFT.kind ? ' selected' : ''}>` +
     `${esc(human(kind))}</option>`).join('');
   const named = DRAFT.kind ? esc(human(DRAFT.kind).toLowerCase()) : '';
+  // While the write is in the air the whole row stops taking presses, and the
+  // check says why. All three and not only the check: cancelling a create that
+  // has already been posted does not un-post it — the record lands and the row
+  // appears a second after somebody pressed the cross — and changing the kind
+  // under a request that is already carrying the old one is the same lie said
+  // about a different field. See `CREATING` for what it costs to leave a press
+  // unanswered for two seconds.
+  const held = CREATING ? ' disabled' : '';
+  const says = CREATING ? `Creating this ${named}…` : `Create this ${named}`;
   const create = DRAFT.kind
-    ? `<button type="button" id="draft-create" class="draft-do primary"` +
-      ` aria-label="Create this ${named}" title="Create this ${named}">` +
+    ? `<button type="button" id="draft-create" class="draft-do primary"${held}` +
+      ` aria-label="${says}" title="${says}">` +
       `${MARK.create}</button>`
     : '';
   // "choose a kind…" and not "choose…": the word `kind` used to be printed
@@ -1516,10 +1544,10 @@ function draftControls() {
   // flex container itself without ceasing to be a table cell, which is the same
   // reason the clamped columns have `.clamped` inside them.
   return `<span class="drafting">` + create +
-    `<button type="button" id="draft-cancel" class="draft-do"` +
+    `<button type="button" id="draft-cancel" class="draft-do"${held}` +
     ` aria-label="Discard this new row" title="Discard this new row">` +
     `${MARK.cancel}</button>` +
-    `<select id="draft-kind" aria-label="Kind"` +
+    `<select id="draft-kind" aria-label="Kind"${held}` +
     ` title="Which kind of record this row becomes">` +
     `<option value=""${DRAFT.kind ? '' : ' selected'}>choose a kind…</option>` +
     `${kinds}</select></span>`;
@@ -1633,6 +1661,12 @@ function stage(field, value) {
 }
 
 async function createDraft() {
+  // The check is drawn `disabled` while this runs, so a mouse cannot reach it a
+  // second time — but `disabled` is a property of one element and this is a
+  // statement about the page: Enter on the control, a second listener, a script,
+  // and the redraws a refusal causes all reach here without going through that
+  // button. The flag is the rule; the attribute is how it is shown.
+  if (CREATING) return;
   const fields = {kind: DRAFT.kind, ...DRAFT.fields};
   // A title, at minimum. The server refuses a titleless record too, but it
   // refuses it as YAML that will not read back — and the reason a row needs one
@@ -1651,6 +1685,13 @@ async function createDraft() {
   // exactly as a cell save does: the server announces a commit to the event
   // stream before it answers the request that made it.
   dispatchEvent(new Event('openproj:writing'));
+  // The press is answered here rather than when the server gets back to us. Two
+  // seconds of a row that looks untouched is what taught somebody to press twice
+  // — and the redraw is also what takes the control away, so the second press
+  // has nowhere to land even before `CREATING` refuses it.
+  CREATING = true;
+  draw();
+  announce(`Creating this ${human(DRAFT.kind).toLowerCase()}…`);
   let committed = null;
   try {
     const response = await fetch('/api/record', {
@@ -1678,6 +1719,15 @@ async function createDraft() {
     const add = document.getElementById('add-row');
     if (add) add.focus();
   } finally {
+    // Cleared on every way out of here — refused, thrown, or a 500 that never
+    // parsed — because a flag that survives its own request is a row that can
+    // never be created again without a reload. `refused` above has already
+    // drawn, while this was still set and the check still disabled, so the
+    // redraw that puts the control back has to happen after it: on the success
+    // path there is no draft left to draw and `draw()` has run already, and
+    // running it again here would throw away the focus just handed to `+`.
+    CREATING = false;
+    if (DRAFT) draw();
     // Announced even when refused, or one rejected create leaves every event
     // after it held back and the banner never appears again.
     dispatchEvent(new CustomEvent('openproj:wrote', {detail: committed}));
@@ -1945,13 +1995,52 @@ async function refreshRows() {
 }
 
 if (EDITABLE) {
+  // A press on a control in this table must not move the focus first.
+  //
+  // This is the whole of "the checkmark does nothing". `mousedown` on a button
+  // focuses it, which blurs an open cell editor, and this page's blur handler
+  // redraws: `stage` and the unchanged-value branch both call `draw()`, and
+  // `draw()` replaces the entire `tbody` with `innerHTML`. So the button the
+  // press started on is detached before `mouseup`, the two land on different
+  // elements with no common ancestor still in the document, and the browser
+  // dispatches NO click at all. The listener below never runs and the press is
+  // gone — silently, because nothing failed. Reproduced in headless Chrome
+  // against the deployed page: mousedown on the check, blur, mouseup, no click,
+  // and `isConnected === false` on the button that took the press.
+  //
+  // Holding the focus is the fix rather than deferring the redraw, because a
+  // deferred `draw()` leaves a window in which the DOM disagrees with `DRAFT`
+  // and every later reader has to know about it. Nothing is lost by holding it:
+  // a button reached with the keyboard is focused by Tab, which this does not
+  // touch, and `draft-create` below takes what is in the open box on the way
+  // past — which is the job blur would have done.
+  //
+  // Every button and not only the two that suffered most: the grip is a `<span>`
+  // and never matches, so dragging is untouched, and a press that is thrown away
+  // is a defect wherever it happens.
+  tbody.addEventListener('mousedown', event => {
+    if (event.target.closest('button')) event.preventDefault();
+  });
+
   tbody.addEventListener('click', event => {
     const control = event.target.closest('button');
     if (!control) return;
-    if (control.id === 'add-row') openDraft();
-    else if (control.id === 'draft-cancel') closeDraft('The row was not created');
-    else if (control.id === 'draft-create') createDraft();
-    else if (control.id === 'unparent' && MOVING) {
+    // Read before anything can redraw: `blur()` below replaces the `tbody`, and
+    // the button this was read from is detached by the time it is needed.
+    const pressed = control.id;
+    // Create acts on what has been typed, and because the press above held the
+    // focus, the last cell edited is still open and its value is still only in
+    // the box. Closing it here runs the same blur the editor has always run —
+    // `stage` for a draft cell, `saveCell` for a stored one — so Create writes
+    // the row that is on the screen rather than the row as it was one cell ago.
+    if (pressed === 'draft-create') {
+      const open = tbody.querySelector('td.edit input, td.edit select');
+      if (open) open.blur();
+    }
+    if (pressed === 'add-row') openDraft();
+    else if (pressed === 'draft-cancel') closeDraft('The row was not created');
+    else if (pressed === 'draft-create') createDraft();
+    else if (pressed === 'unparent' && MOVING) {
       const child = MOVING;
       stopMoving();
       reparent(child, null);
@@ -3233,6 +3322,32 @@ tr.adder .hint { font-size: 12px; color: var(--muted); }
    two do not have to be read in the order they happen to be written in. */
 .draft-do.primary { border-color: var(--accent); color: var(--accent); }
 .draft-do.primary:hover { background: var(--surface-2); }
+/* **A control that will not act must not look like one that will.** The write
+   these belong to is a commit and a push, 1.5 to 2 seconds from Cloud Run, and
+   for that window all three of the row's controls are `disabled` — see
+   `CREATING`. Drawn the way `button.mark:disabled` is drawn, because a second
+   vocabulary for "this is not pressable" is a second thing to keep in step.
+
+   Qualified by `.drafting`, and that is the whole reason this comment is long.
+   The obvious `.draft-do:disabled` is (0,2,0) and loses the accent to
+   `tr.adder button.primary` at (0,2,2) — a rule written for the `+ New row`
+   button four lines up, which these marks inherit by standing in the same row.
+   So the control that had just stopped taking presses went on being drawn in
+   the ink this page uses for the press that writes. `.drafting` is the wrapper
+   both places draw the controls into, which is what makes it the right anchor:
+   these marks are in the adder row before a kind is chosen and in the draft
+   row's id cell afterwards, and a `tr.adder` qualifier would have covered only
+   the half where the check does not exist yet. `.drafting .draft-do:disabled`
+   is (0,3,0) and beats (0,2,2) on class count; its `:hover` twin is (0,4,0) and
+   beats `.draft-do.primary:hover` at (0,3,0), which would otherwise light the
+   background under a cursor resting on a dead control. Resolved with
+   `tests/cascade.py` against the served page, not counted by hand — the first
+   draft of this rule lost both of those and changed nothing on screen. */
+.drafting .draft-do:disabled, .drafting .draft-do:disabled:hover {
+  cursor: default; background: var(--surface-2);
+  border-color: var(--line); color: var(--muted); opacity: .45;
+}
+.drafting select:disabled { cursor: default; color: var(--muted); opacity: .45; }
 /* The `+` and the way out swap places, because at any moment exactly one of them
    is a thing you can do. `:not([hidden])` because `table.moving #unparent` is
    (1,1,1) and the browser's own `[hidden] { display: none }` is (0,1,0): without

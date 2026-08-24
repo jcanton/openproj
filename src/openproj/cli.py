@@ -301,6 +301,7 @@ def _serve(args) -> int:
     from .github import GitHubApp
     from .web import create_app
 
+    credentials = GitHubApp.from_environment(dict(os.environ))
     app = create_app(
         args.repo,
         auth=args.auth,
@@ -311,8 +312,33 @@ def _serve(args) -> int:
         # A remote and its credential both come from the environment, so a
         # development run needs neither and a deployment sets both or is refused.
         remote=os.environ.get("OPENPROJ_REMOTE", ""),
-        credentials=GitHubApp.from_environment(dict(os.environ)),
+        credentials=credentials,
     )
+    # The push credential, minted before uvicorn binds, for the same reason as
+    # the two warms below: work that every cold instance has to do once should
+    # not be done inside somebody's save.
+    #
+    # `GitHubApp.token` caches until five minutes before the hour is out, so this
+    # costs nothing after the first call — but the first call is one HTTPS round
+    # trip to api.github.com plus the first import of `cryptography`, measured at
+    # 150 to 400 ms, and `--min-instances 0` means a cold instance is the normal
+    # case rather than the rare one. The whole of a save is 1.5 to 2 seconds and
+    # nearly all of it is GitHub's receive-pack; this is the one part of it that
+    # was ours to move, and moving it is all it took.
+    #
+    # Swallowed on purpose, and this is the arm to read twice: a token that
+    # cannot be minted at startup is a token `_send` will try to mint again at
+    # the first push, where the failure has somebody to report it to. Refusing to
+    # start would turn a GitHub outage into a service that will not boot, and
+    # then into a Cloud Run revision that never goes ready.
+    if credentials is not None:
+        begun = time.perf_counter()
+        try:
+            credentials.token()
+            said = f"minted the push credential in {time.perf_counter() - begun:.2f}s"
+        except Exception as error:  # noqa: BLE001 - reported, never fatal
+            said = f"could not mint the push credential at startup ({error}); the first save will"
+        print(said, file=sys.stderr, flush=True)
     # The first walk runs before uvicorn binds, so it can never ride a request.
     # Logged so the drift is visible long before it hurts: the cost grows with
     # history length (~0.5 ms per commit measured), not with the plan.

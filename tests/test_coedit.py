@@ -35,7 +35,6 @@ import pygit2
 import pytest
 from browser import chrome, measured_in
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 from test_injection import run_js
 from test_store import commit_directly
 from test_web import PATH, SECRET, SEED, TASK, git_head
@@ -1123,15 +1122,44 @@ def test_a_join_folds_a_commit_in_at_the_boundary_where_two_index_spaces_meet(
         )
 
 
-def test_a_stranger_is_refused_the_socket(plan: Path):
-    """And is therefore handed exactly today's editor. Refusal has to be a
-    handshake that does not complete rather than a room that quietly does
-    nothing, or the page cannot tell that it is on its own."""
+def refusal_of(client: TestClient, record_id: str = TASK, cookie: str | None = None):
+    """The code and the sentence a refused co-editing socket closes with.
+
+    A refusal is `accept` and then `close(4xxx, reason)` rather than a handshake
+    that never completes, and that is a decision with a reason — `_SOCKET_REFUSALS`
+    in `web.py` carries it. The short version: a close code only crosses the wire
+    after a handshake, so refusing before `accept` reaches the browser as code
+    1006 with no reason, which is byte for byte what a dropped connection looks
+    like — and this socket is dropped every five minutes by design.
+    """
+    headers = {"cookie": cookie} if cookie else {}
+    with client.websocket_connect(f"/api/coedit/{record_id}", headers=headers) as socket:
+        return socket.receive()
+
+
+def test_a_stranger_is_refused_the_socket_and_told_why(plan: Path):
+    """And is therefore handed exactly today's editor.
+
+    The refusal used to be a handshake that did not complete, on the argument
+    that the page has to be able to tell it is on its own. It could not: a failed
+    handshake is `onclose` with code 1006 and an empty reason, and so is Cloud
+    Run hanging up at its five-minute request deadline. One tab could not tell
+    those apart and retried a permanently refused socket once a minute for 49
+    hours — roughly 2,900 handshakes — after its session passed the 24 hours
+    `read_session` allows, with nothing on screen ever saying so. So the refusal
+    still refuses, and now says which refusal it is.
+    """
     app = create_app(plan, auth="github", secret=SECRET, client_id="x", client_secret="y")
     with TestClient(app) as signed_out:
-        with pytest.raises(WebSocketDisconnect):
-            with signed_out.websocket_connect(f"/api/coedit/{TASK}"):
-                pass
+        closed = refusal_of(signed_out)
+
+    assert closed["type"] == "websocket.close", closed
+    assert closed["code"] == 4401, "a signed-out socket is refused as a session, not as a fault"
+    assert "sign in" in closed["reason"], closed["reason"]
+    # 125 bytes of close-frame payload, two of them the code. A longer reason is
+    # not truncated by the library — it is a frame the peer rejects, which would
+    # turn the sentence back into the silence it was written to end.
+    assert len(closed["reason"].encode()) <= 123, closed["reason"]
 
 
 def test_a_socket_re_reads_the_session_it_was_opened_with(
@@ -1194,9 +1222,18 @@ def test_a_socket_re_reads_the_session_it_was_opened_with(
 
 
 def test_a_room_for_a_record_that_is_not_there_never_opens(client: TestClient):
-    with pytest.raises(WebSocketDisconnect):
-        with open_room(client, "ann", record_id="task-ffffff"):
-            pass
+    """And says the record is gone, which is a different sentence from "sign in"
+    and reaches a different person: one has a tab open on something somebody
+    deleted, the other has a session that timed out. Both used to be code 1006
+    and silence."""
+    closed = refusal_of(
+        client, "task-ffffff",
+        cookie=f"{SESSION_COOKIE}="
+        f"{sign_session(User(login='ann', member=True), SECRET)}",
+    )
+
+    assert closed["type"] == "websocket.close" and closed["code"] == 4404, closed
+    assert "task-ffffff" in closed["reason"], closed["reason"]
 
 
 # --------------------------------------------------------------------------- #
@@ -4574,3 +4611,73 @@ def test_what_the_room_said_about_a_save_survives_the_reload(
         f"the one sentence worth keeping was announced to a page on its way out: "
         f"{answer['value']!r}"
     )
+
+
+def test_a_socket_the_server_turns_away_is_not_asked_again(client: TestClient):
+    """The loop that would not stop, and the sentence that stops it.
+
+    A tab held a working socket, its session passed the 24 hours `read_session`
+    allows, and every reconnect after that was refused. The page could not tell:
+    a refusal that never completed the handshake is `onclose` with code 1006 and
+    no reason, and so is Cloud Run hanging up at its five-minute deadline, which
+    it does to this socket by design. The only guard — give up after four tries
+    if the socket has *never* worked — was dead, because `arrived` is set on the
+    first success and never reset. So it knocked once a minute for 49 hours,
+    roughly 2,900 refused handshakes against the deployed service between
+    2026-08-22 09:15 and 2026-08-24 10:45, and nothing on the screen ever said
+    the person had been signed out.
+
+    Read as a RANGE and not as a list of codes, so a fifth reason added to
+    `_SOCKET_REFUSALS` reaches a tab that shipped before it.
+    """
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        "  __socket.refused(4401, 'you are not signed in any more — reload the page');"
+        "  return {live: COEDIT.live(), said: document.getElementById('conflict').textContent};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"]["live"] is False, (
+        "the room is still live after the server said this socket may not have one"
+    )
+    assert "not signed in" in answer["value"]["said"], (
+        "the socket gave up without telling anybody why, which is the half of "
+        f"this that a person can act on: {answer['value']['said']!r}"
+    )
+
+
+def test_a_socket_that_keeps_dropping_gives_up_even_when_nobody_says_why(client: TestClient):
+    """The ceiling that holds against a server too old to explain itself.
+
+    The close codes above are this deployment's; a revision that predates them,
+    a proxy that eats the frame, or a handshake refused by something in front of
+    the app all reach the page as the same silent 1006. `arrived` never resets,
+    so the four-try guard stops covering a tab the moment its first socket works
+    — which is exactly the tab that then knocks for two days. Ten consecutive
+    failures is about two and a half minutes on the backoff, which is longer
+    than a Cloud Run revision takes to come up and far short of a weekend.
+    """
+    page = client.get(f"/detail/{TASK}?editor=plain").text
+    answer = run_js(
+        page,
+        "(async () => {"
+        "  flipEditing();"
+        "  __socket.opened();"
+        # Every drop is silent, and every retry is a socket that opens and drops
+        # again — which is what makes `arrived` true and the old guard useless.
+        "  for (let i = 0; i < 12; i++) { __socket.refused(1006, ''); __tick(); }"
+        "  return {live: COEDIT.live(),"
+        "          said: document.getElementById('conflict').textContent};"
+        "})()",
+        page=True,
+        socket=True,
+    )
+    assert not answer["errors"], answer["errors"]
+    assert answer["value"]["live"] is False, "it is still trying"
+    assert "refused" in answer["value"]["said"], answer["value"]["said"]
