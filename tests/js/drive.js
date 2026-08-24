@@ -558,6 +558,23 @@ async function run(html, expression, options) {
         text: () => Promise.resolve('{"org":"C2SM"}'),
       });
     }
+    // And the shell's pile banner asks `/api/health` once at load, for the
+    // same reason and with the same answer shape: recorded, it shifts every
+    // assertion about `calls` by one; answered from `replies`, it eats the
+    // refusal a test scripted for its save. Answered as the quiet day — no
+    // pile, nothing parked — which is what a healthy server says. A test about
+    // the banner itself does not come through here: it drives `showPile`
+    // directly, or replaces `fetch` whole before calling `readPile`.
+    if (String(url) === '/api/health') {
+      const quiet = {ok: true, head: '', version: '', unpushed: 0,
+                     oldest_unpushed_age: null, parked: 0, detail: null};
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(quiet),
+        text: () => Promise.resolve(JSON.stringify(quiet)),
+      });
+    }
     calls.push({
       url: String(url),
       method: (init && init.method) || 'GET',
