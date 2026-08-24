@@ -2378,7 +2378,13 @@ addEventListener('openproj:ours', event => {
 // take it down again.
 let movedShowing = null;
 
-function showMoved({commit, changed}) {
+function showMoved(message) {
+  // Only the stream's bare {commit, changed} frame is a plan change; a typed
+  // frame (`t` present, see web.py's `broadcast`) is other news riding the
+  // same stream. Assuming every frame was a change would pop "The plan
+  // changed." over pages the pusher had just confirmed, not moved.
+  if (message.t !== undefined) return;
+  const {commit, changed} = message;
   if (movedOurs.has(commit)) return;
   movedShowing = commit;
   // What this page is looking at. A page showing one record has it in its URL;
@@ -2397,6 +2403,15 @@ function showMoved({commit, changed}) {
 const source = new EventSource('/api/events');
 source.onmessage = event => {
   const message = JSON.parse(event.data);
+  // The pusher's landed frame — {t: 'landed', landed, remapped, parked},
+  // defined at web.py's `broadcast` — re-broadcast as a DOM event because its
+  // consumers (the table's row marks, the editor's save state) live in other
+  // scripts and this EventSource is the page's only one. Immediately, not held
+  // behind an in-flight write like a plan change: a frame cannot name a sha
+  // whose request has not answered yet, so there is nothing to race.
+  if (message.t === 'landed') {
+    dispatchEvent(new CustomEvent('openproj:landed', {detail: message}));
+  }
   if (movedWriting) movedHeld.push(message); else showMoved(message);
 };
 </script>

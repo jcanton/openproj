@@ -39,6 +39,7 @@ so that both suites agree on what a plan repository looks like.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import queue
 import re
@@ -1475,6 +1476,23 @@ def test_a_create_mints_the_id_and_files_it_by_kind(client: TestClient, repo_pat
     assert index_of(client)["plan"][new_id]["title"] == "Per-field delta tolerances"
 
 
+def test_a_creations_answer_says_the_commit_has_not_reached_the_remote(client: TestClient):
+    """A PATCH has answered `pushed` since the store existed, and the two 201s
+    carried no key at all — so the create and promote paths had nothing to hang
+    a "saved here, not on GitHub yet" mark on, for the one row the person is
+    certainly looking at (docs/deferred-push.md, "Saying it on the page")."""
+    made = create(client, {"kind": "note", "title": "An idea worth keeping"})
+    assert made.status_code == 201, made.text
+    assert made.json()["pushed"] is False
+
+    promoted = client.post(
+        "/api/promote",
+        json={"source": made.json()["id"], "kind": "pitch", "base_commit": head(client)},
+    )
+    assert promoted.status_code == 201, promoted.text
+    assert promoted.json()["pushed"] is False
+
+
 def test_a_create_missing_its_status_gated_fields_is_refused(
     client: TestClient, repo_path: Path
 ):
@@ -1940,9 +1958,9 @@ def test_an_oversized_body_is_refused_at_the_door(client: TestClient, repo_path:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
-def live_server(repo_path: Path):
-    """A real uvicorn on a real socket, which this one test needs.
+@contextlib.contextmanager
+def serving(app):
+    """A real uvicorn on a real socket, for the tests that read an event stream.
 
     Starlette's `TestClient` runs the application to completion and buffers the
     whole body before it hands back a response, so `client.stream()` over an
@@ -1950,17 +1968,9 @@ def live_server(repo_path: Path):
     Reading the stream over a socket is also the honest test: chunked transfer
     and the absence of buffering are properties of the server, not of the
     generator, and they are exactly what breaks SSE in practice.
-
-    The lock in `store.py` is per-repository, so this owns the whole repository
-    for the duration and no other client fixture may be used beside it.
     """
     server = uvicorn.Server(
-        uvicorn.Config(
-            create_app(repo_path, auth="dev", secret=SECRET),
-            host="127.0.0.1",
-            port=0,
-            log_level="warning",
-        )
+        uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -1973,6 +1983,17 @@ def live_server(repo_path: Path):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+@pytest.fixture
+def live_server(repo_path: Path):
+    """`serving`, over the seeded corpus and no remote.
+
+    The lock in `store.py` is per-repository, so this owns the whole repository
+    for the duration and no other client fixture may be used beside it.
+    """
+    with serving(create_app(repo_path, auth="dev", secret=SECRET)) as url:
+        yield url
 
 
 def test_a_record_page_goes_back_to_the_view_a_real_browser_came_from(
@@ -2074,6 +2095,104 @@ def test_a_write_is_broadcast_to_everybody_watching(live_server: str):
 
     assert event["commit"] == commit
     assert event["changed"] == [TASK]
+
+
+def test_a_quiet_days_landing_is_announced_in_its_own_kind_of_frame(tmp_path: Path):
+    """The pusher's confirmation is a second KIND of frame, not a second plan
+    change: it carries the discriminator the plan-changed frame deliberately
+    lacks, plus the tip, the re-minted shas and the parked ones — everything a
+    per-row "saved here, not on GitHub yet" mark clears by, since a mark cannot
+    wait to see its own sha on main when recovery re-mints shas
+    (docs/deferred-push.md, "Confirmation cannot be 'my sha is on main'").
+
+    Announced on the quiet day too, which is the defect this test was written
+    failing against: the frame went out only when a recovery had re-minted or
+    parked something, so the ordinary save — the case that is every save —
+    confirmed nothing and its mark could never clear.
+    """
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    clone.remotes.delete("origin")
+
+    cookies = {SESSION_COOKIE: sign_session(ANN, SECRET)}
+    seen: queue.Queue[dict] = queue.Queue()
+
+    with (
+        serving(create_app(plan, auth="dev", secret=SECRET, remote=f"file://{origin}")) as base,
+        httpx.Client(base_url=base, cookies=cookies, timeout=15) as watcher,
+        httpx.Client(base_url=base, cookies=cookies, timeout=15) as writer,
+    ):
+
+        def listen() -> None:
+            with watcher.stream("GET", "/api/events") as response:
+                seen.put({"content-type": response.headers["content-type"]})
+                kinds: set[bool] = set()
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    frame = json.loads(line.partition(":")[2])
+                    seen.put(frame)
+                    kinds.add("t" in frame)
+                    if kinds == {True, False}:
+                        return
+
+        listener = threading.Thread(target=listen, daemon=True)
+        listener.start()
+        assert seen.get(timeout=15)["content-type"].startswith("text/event-stream")
+
+        commit = save(writer, TASK, {"priority": "high"}).json()["commit"]
+
+        # Two frames, in no guaranteed order: the route announces the change on
+        # its own coroutine while the pusher's thread hops onto the loop with
+        # the landing, and a `file://` push is fast enough to win that race.
+        frames = [seen.get(timeout=15)]
+        try:
+            frames.append(seen.get(timeout=15))
+        except queue.Empty:
+            pytest.fail("the quiet day's landing was never announced; only the "
+                        "plan-changed frame arrived")
+        listener.join(timeout=15)
+
+    by_kind = {("t" in frame): frame for frame in frames}
+    # The plan-changed frame is untouched — bare, no discriminator — so nothing
+    # already listening to it moves.
+    assert by_kind[False] == {"commit": commit, "changed": [TASK]}
+    # The landed frame, whole. The quiet day sends the empty map and list
+    # rather than omitting them, because the shape is the protocol.
+    assert by_kind[True] == {"t": "landed", "landed": commit, "remapped": {}, "parked": []}
+
+
+def test_the_banner_ignores_the_landed_frame_and_hands_it_to_the_page(client: TestClient):
+    """`showMoved` assumed every frame on the stream was a plan change, so a
+    typed frame would have popped "The plan changed." over pages the pusher had
+    just confirmed rather than moved. The shell recognises the one frame that
+    is its own — the bare `{commit, changed}` — and rebroadcasts the landed
+    frame as an `openproj:landed` DOM event, because the table's marks and the
+    editor's save state live in other scripts and this page has one EventSource.
+    """
+    from test_injection import run_js
+
+    landed = {"t": "landed", "landed": "a" * 40, "remapped": {}, "parked": []}
+    answer = run_js(
+        client.get("/table").text,
+        "(() => {"
+        "  let heard = null;"
+        "  addEventListener('openproj:landed', event => { heard = event.detail; });"
+        f" source.onmessage({{data: JSON.stringify({json.dumps(landed)})}});"
+        "  const quiet = moved.hidden;"
+        "  source.onmessage({data: JSON.stringify({commit: 'b'.repeat(40), changed: []})});"
+        "  return {quiet, afterAChange: moved.hidden, heard};"
+        "})()",
+        page=True,
+    )
+
+    assert not [e for e in answer["errors"] if e.startswith("expression:")], answer["errors"]
+    assert answer["value"]["quiet"] is True, "the landed frame popped the banner"
+    assert answer["value"]["afterAChange"] is False, "a real change must still pop it"
+    assert answer["value"]["heard"] == landed
 
 
 def test_a_record_whose_filename_carries_a_slug_is_still_found(

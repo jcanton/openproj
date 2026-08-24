@@ -1301,14 +1301,26 @@ def create_app(
 
         def landed(outcome: SyncOutcome) -> None:
             # On the loop, via the pusher's call_soon_threadsafe hop below, so
-            # the queues are touched from the one thread that owns them. Only a
-            # recovery is news to a page: it moves local main to a tip the page
-            # has never seen, so every open tab's `base_commit` just went
-            # stale. The quiet day lands the very shas the saves answered with,
-            # and each of those already announced itself at commit time.
-            if outcome.state == "landed" and (outcome.remapped or outcome.parked):
-                for queue in list(watchers):
-                    queue.put_nowait({"commit": outcome.landed, "changed": []})
+            # the queues are touched from the one thread that owns them.
+            #
+            # Every successful pass is announced, the quiet day included — not
+            # only recoveries, which was the first shape and left the ordinary
+            # save unconfirmed forever: this frame is what clears the "saved
+            # here, not on GitHub yet" mark, and a page cannot wait to see its
+            # own sha on main instead because recovery re-mints shas
+            # (docs/deferred-push.md, "Confirmation cannot be 'my sha is on
+            # main'"). The frame's shape is documented at `broadcast`; the
+            # (sha, branch) pairs go out as two-element arrays.
+            if outcome.state != "landed":
+                return
+            broadcast(
+                {
+                    "t": "landed",
+                    "landed": outcome.landed,
+                    "remapped": outcome.remapped,
+                    "parked": outcome.parked,
+                }
+            )
 
         def deliver(outcome: SyncOutcome) -> None:
             # Called on the pusher's thread. `call_soon_threadsafe` is the one
@@ -1357,6 +1369,28 @@ def create_app(
         return response
 
     watchers: set[asyncio.Queue] = set()
+
+    def broadcast(frame: dict) -> None:
+        """Put one frame on every open event stream. Loop-thread only.
+
+        The stream carries two kinds of frame, told apart by `"t"`:
+
+          {"commit": sha, "changed": [ids]}   — a write landed in the LOCAL
+              repository. Bare, no discriminator, and staying that way: it is
+              the shape every already-shipped page recognises a plan change by.
+
+          {"t": "landed", "landed": sha, "remapped": {old: new},
+           "parked": [[sha, branch]]}         — the pusher confirmed the REMOTE
+              holds everything up to `landed`, re-minting and parking the shas
+              named. The shell rebroadcasts it as an `openproj:landed` DOM
+              event for the table's row marks and the editor's save state.
+
+        Any further kind must carry its own `"t"`: an untyped frame IS the
+        plan-changed frame as far as every listener is concerned.
+        """
+        for queue in list(watchers):
+            queue.put_nowait(frame)
+
     # An event stream is a request that never ends, and uvicorn waits for in-flight
     # requests BEFORE it runs lifespan shutdown — so a flag set there arrives after
     # the wait it was meant to shorten. Installing a signal handler here does not
@@ -1585,8 +1619,9 @@ def create_app(
         return SESSION_COOKIE if secure_for(request) else SESSION_COOKIE_INSECURE
 
     async def announce(commit: str, changed: list[str]) -> None:
-        for queue in list(watchers):
-            queue.put_nowait({"commit": commit, "changed": changed})
+        # The plan-changed frame, deliberately bare — see `broadcast` for the
+        # stream's two kinds and why this one never grows a discriminator.
+        broadcast({"commit": commit, "changed": changed})
 
     # -- pages --------------------------------------------------------------
 
@@ -1876,7 +1911,14 @@ def create_app(
         if written.commit:
             await announce(written.commit, [record_id, source_id])
         return JSONResponse(
-            {"id": record_id, "outcome": written.outcome, "commit": written.commit},
+            # `pushed` as on a PATCH: without it the promote path had nothing
+            # to hang a "saved here, not on GitHub yet" mark on.
+            {
+                "id": record_id,
+                "outcome": written.outcome,
+                "commit": written.commit,
+                "pushed": written.pushed,
+            },
             status_code=201,
         )
 
@@ -2722,7 +2764,14 @@ def create_app(
         if written.outcome == "conflict":
             return _result(written, commit)
         return JSONResponse(
-            {"id": record_id, "outcome": written.outcome, "commit": written.commit},
+            # `pushed` as on a PATCH: without it the create path had nothing
+            # to hang a "saved here, not on GitHub yet" mark on.
+            {
+                "id": record_id,
+                "outcome": written.outcome,
+                "commit": written.commit,
+                "pushed": written.pushed,
+            },
             status_code=201,
         )
 
