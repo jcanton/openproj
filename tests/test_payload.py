@@ -157,7 +157,8 @@ def test_a_size_somebody_hand_edited_does_not_empty_the_table(size: str, tmp_pat
     from browser import chrome, measured_in
 
     page = render_table(
-        index_with(ORDINARY, HAND_EDITED.format(size=size)), STATIC, base_commit="deadbee"
+        index_with(ORDINARY, HAND_EDITED.format(size=size)), STATIC, base_commit="deadbee",
+        may_write=True,
     )
 
     got = measured_in(chrome(), page, tmp_path / f"size-{size}.html", 1400, _ROWS)

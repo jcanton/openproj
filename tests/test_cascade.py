@@ -54,7 +54,7 @@ def served_pages(index: Index) -> dict[str, str]:
     )
 
     return {
-        "table": render_table(index, ROUTES, base_commit=HEAD),
+        "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
         "graph": render_graph(index, ROUTES, base_commit=HEAD),
         "timeline": render_timeline(index, ROUTES),
         "detail": render_detail(index, ROUTES, only=sorted(index.plan)[0],
@@ -74,7 +74,7 @@ def served_pages(index: Index) -> dict[str, str]:
 def table(index: Index) -> Sheet:
     """The editable table: `_TABLE_STYLE` and then `_SUGGEST_STYLE`, after the
     shell — which is the order that decides every tie below."""
-    return sheet_of(render_table(index, ROUTES, base_commit=HEAD))
+    return sheet_of(render_table(index, ROUTES, base_commit=HEAD, may_write=True))
 
 
 # --------------------------------------------------------------------------- #
@@ -358,7 +358,7 @@ def test_the_suggestion_popup_hangs_off_the_body_where_nothing_clips_it(table: S
 def pages(index: Index) -> dict[str, str]:
     number = max(e.cycle for e in index.plan.values() if e.cycle)
     return {
-        "table": render_table(index, ROUTES, base_commit=HEAD),
+        "table": render_table(index, ROUTES, base_commit=HEAD, may_write=True),
         "cycle": render_cycle(index, number, ROUTES, base_commit=HEAD),
         "cycles": render_cycles(index, ROUTES, base_commit=HEAD),
         "detail": render_detail(index, ROUTES, base_commit=HEAD),
@@ -529,7 +529,8 @@ def test_a_conflict_report_is_a_report_on_the_table_as_well_as_the_detail_page(i
     the save did not land."""
     for name, page, box in (
         ("detail", render_detail(index, ROUTES, base_commit=HEAD), el("div", id="conflict")),
-        ("table", render_table(index, ROUTES, base_commit=HEAD), el("div", id="row-conflict")),
+        ("table", render_table(index, ROUTES, base_commit=HEAD, may_write=True),
+         el("div", id="row-conflict")),
     ):
         sheet = sheet_of(page)
         path = PAGE + [box]
@@ -765,7 +766,7 @@ def test_a_drawn_mark_has_a_size_of_its_own(index: Index, control: str):
     emitted. This asks the cascade, which is the only thing that answers.
     """
     mark = DRAFTING + [el("button", "draft-do", id=control), el("svg", "icon")]
-    sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD))
+    sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD, may_write=True))
     for prop in ("width", "height"):
         value = sheet.value(mark, prop)
         assert value not in (None, "auto", "0", "0px"), (
@@ -786,7 +787,7 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
     allowed to shrink: a flex item's `min-width` is `auto`, so its longest
     option decided the width of a 135px column.
     """
-    sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD))
+    sheet = sheet_of(render_table(index, ROUTES, base_commit=HEAD, may_write=True))
     assert sheet.value(DRAFTING, "display") == "inline-flex", (
         says(sheet, DRAFTING, "display")
     )

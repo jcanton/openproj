@@ -99,6 +99,7 @@ from openproj.render import (
     HUMAN,
     LABELS,
     PRIORITIES,
+    ROUTES,
     STATUSES,
     _new_row_fields,
     render_static,
@@ -665,6 +666,76 @@ def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: P
     assert not controls(exported)
     assert "base_commit" not in exported
     assert "/api/record" not in exported
+
+
+_READS_ANYWAY = """
+const drawn = () => [...tbody.querySelectorAll('tr[data-id]')].map(tr => tr.dataset.id);
+const before = drawn();
+document.querySelector('th[data-sort="title"]').click();
+const sorted = drawn();
+// The order the platform's own comparator gives those titles — from the data,
+// not from the page's sort, so the two can disagree.
+const byTitle = before.slice().sort(
+  (a, b) => String(DATA.rows[a].title).localeCompare(String(DATA.rows[b].title)));
+const linked =
+  [...tbody.querySelectorAll('tr[data-id] td[data-col="title"] a[href]')].length;
+const q = document.getElementById('q');
+q.value = %s;
+q.dispatchEvent(new Event('input', {bubbles: true}));
+const filtered = drawn();
+return {
+  rows: before.length, sorted, byTitle, filtered, linked,
+  saidSorted: document.querySelector('th[data-sort="title"]').getAttribute('aria-sort'),
+  adder: !!tbody.querySelector('tr.adder'),
+  grid: document.getElementById('rows').getAttribute('role'),
+};
+"""
+
+
+def test_a_served_table_for_a_reader_offers_no_editor_and_still_reads(
+    seed_root: Path, tmp_path: Path
+):
+    """A signed-out visitor could double-click a cell, type into it, press Enter,
+    and collect a 403 from the save — `editable` was "there is a server behind
+    this page" standing in for "this person may write", the conflation the New
+    record button was already cured of. The rule from PR #19, one door further
+    in: do not draw a control whose only answer for this person is a refusal.
+
+    `docs/QUEUE.md` predicted the flag would have to split rather than narrow,
+    because the reader still sorts, filters and follows links. It narrows: those
+    all live outside the editable branch, which is why the second half of this
+    test drives the reader's page and watches them work rather than trusting the
+    first half's greps.
+    """
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    page = render_table(index, ROUTES, base_commit="deadbee")
+    body = script(page)
+
+    # No door in: not the grid claim, not the gate panel, not the combobox, not
+    # the commit an editor would save against, not the row that creates one.
+    assert 'role="grid"' not in page
+    assert 'id="askfor"' not in page
+    assert "function attachSuggest" not in page
+    assert 'id="base"' not in page and 'name="base_commit"' not in page
+    assert "New record" not in page and "double-click a cell" not in page
+    assert "function adderHtml" not in body
+    assert "/api/record" not in body
+
+    # And still a table: rows, sorting, filtering, links.
+    a_record = sorted(index.plan)[0]
+    got = measured_in(chrome(), page, tmp_path / "reader.html", 1400,
+                      _READS_ANYWAY % json.dumps(a_record), height=900)
+
+    assert got["rows"] == len(index.plan)
+    assert got["adder"] is False, "the + row is offered to a person it can only refuse"
+    assert got["grid"] is None
+    assert got["linked"] == got["rows"], "a reader's way into a record is its link"
+    assert got["saidSorted"] == "ascending"
+    assert got["sorted"] == got["byTitle"], "the title sort did not sort"
+    # Searching for an id keeps at least that row and not the whole plan.
+    assert a_record in got["filtered"]
+    assert len(got["filtered"]) < got["rows"], "the filter filtered nothing"
 
 
 def test_editing_the_table_pulled_in_no_library(page: str):
@@ -2317,7 +2388,8 @@ def test_a_title_somebody_typed_never_becomes_markup():
     record = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
                   person_weeks=1, tags=["<i>one", "two&three"], prs=["kilnlab/kiln4py#1"])
     index = build_index([record], Config(), date(2026, 8, 17))
-    page = render_table(index, base_commit="0" * 40)      # the editor is a way in too
+    # `may_write`, because the editor is a way in too.
+    page = render_table(index, base_commit="0" * 40, may_write=True)
 
     # The payload. `json.dumps` leaves `<` alone, so `</script>` in a title closed
     # the block it was travelling in and everything after it became live markup.
@@ -2900,6 +2972,50 @@ def test_the_editor_discards_on_escape_and_commits_on_tab(page: str):
         assert put_back in after, put_back
 
 
+_ESCAPE_WITH_A_LIST_OPEN = """
+window.__wrote = 0;
+window.fetch = () => { window.__wrote++; return new Promise(() => {}); };
+const cell = document.querySelector('td.edit[data-field="assignees"]');
+openEditor(cell);
+const box = cell.querySelector('input');
+box.value = 'b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const wasOpen = !list.hidden;
+const key = () => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+key();
+const first = {listShut: list.hidden, stillEditing: !!cell.querySelector('input'),
+               kept: cell.querySelector('input') && cell.querySelector('input').value};
+key();
+return {wasOpen, first, wrote: window.__wrote,
+        editorLeft: !!tbody.querySelector('td input, td select')};
+"""
+
+
+def test_escape_over_an_open_list_closes_the_list_and_keeps_the_edit(
+    page: str, tmp_path: Path
+):
+    """Two dismissable things can be up at once — the cell editor, and the
+    suggestion list over it — and one Escape shipped as dismissing both: the list
+    closed AND the whole cell edit was discarded, typing included.
+
+    The widget now marks the Escape it consumes and the editor honours the mark,
+    so the first Escape closes only the list and the second closes only the
+    editor — driven with real key events because the collision is between two
+    listeners on one trip up, which no grep of either can see.
+    """
+    got = measured_in(chrome(), page, tmp_path / "escape.html", 1400,
+                      _ESCAPE_WITH_A_LIST_OPEN, height=900)
+
+    assert got["wasOpen"], "the list never opened, so nothing here was asked"
+    assert got["first"]["listShut"] is True
+    assert got["first"]["stillEditing"] is True, "one Escape discarded the edit with the list"
+    assert got["first"]["kept"] == "b", "closing the list took the typing with it"
+    assert got["editorLeft"] is False, "the second Escape did not close the editor"
+    assert got["wrote"] == 0
+
+
 def test_the_editor_a_cell_opens_says_what_it_is_editing(page: str):
     """A box conjured inside a cell inherits nothing from the header above it. It
     was an unnamed input on top of the one thing that said which column it was."""
@@ -3084,7 +3200,8 @@ def test_an_empty_plan_still_offers_the_row_that_would_end_it(client: TestClient
     from openproj.model import Config
     from openproj.render import render_table
 
-    page = render_table(build_index([], Config(), date(2026, 8, 17)), base_commit="deadbee")
+    page = render_table(build_index([], Config(), date(2026, 8, 17)), base_commit="deadbee",
+                        may_write=True)
     answer = drive_table(
         page,
         "(() => ({empty: !!tbody.querySelector('tr.nothing'),"
@@ -4036,7 +4153,8 @@ DRAWN = """
 @pytest.fixture
 def tree_page() -> str:
     """The table over `TREE`, editable, rendered by the real renderer."""
-    return render_table(build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee")
+    return render_table(build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee",
+                        may_write=True)
 
 
 def test_the_id_sort_draws_the_plan_depth_first(tree_page: str):
@@ -4318,7 +4436,7 @@ def test_the_draft_rows_marks_are_drawn(demo_root: Path, tmp_path: Path):
     # say `Project` in.
     records, config, _ = load_repo(demo_root)
     page = render_table(
-        build_index(records, config, date(2026, 8, 17)), base_commit="deadbee"
+        build_index(records, config, date(2026, 8, 17)), base_commit="deadbee", may_write=True
     )
     got = measured_in(chrome(), page, tmp_path / "draft.html", 1460, _DRAFT_MARKS)
 
