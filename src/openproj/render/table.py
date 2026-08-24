@@ -166,7 +166,7 @@ _TABLE = """
     teaches the third to nobody: a drag has no name written on it anywhere, and
     the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
     what it is by being a control. -#}
-<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New record</a>
+<p class="editbar">{% if creatable %}<a class="button" href="{{ links.new }}">New record</a>
    <span class="hint">double-click a cell, or press Enter on it, to edit it ·
      drag a row by the grip beside its id onto another to file it there</span>
    {% endif %}<span id="state" role="status"></span><span id="summary">
@@ -3363,7 +3363,12 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     return per_kind
 
 
-def render_table(index: Index, links: Links = STATIC, base_commit: str | None = None) -> str:
+def render_table(
+    index: Index,
+    links: Links = STATIC,
+    base_commit: str | None = None,
+    may_write: bool = False,
+) -> str:
     payload = _payload(index)
     # Plan blockers only, like the payload above: the count links to a filter
     # over the plan, and a blocker on an issue would inflate a number whose
@@ -3381,6 +3386,19 @@ def render_table(index: Index, links: Links = STATIC, base_commit: str | None = 
         # different things and the table opened shorter than the number promised.
         blocked=len({p.record_id for p in blocking}),
         editable=base_commit is not None,
+        # Narrower than `editable`, and only for the create control. `editable`
+        # is "there is a server behind this page"; this is "this person may
+        # write". A signed-out visitor was offered New record and got a create
+        # form with every control behind `may_write` hidden — jcanton,
+        # 2026-08-24: "this opens a crippled editor page".
+        #
+        # NOT applied to the grid itself in this commit, deliberately: a
+        # signed-out visitor can still double-click a cell here and will get a
+        # 403 from the save. That is the same defect one door further in and it
+        # is written up in `docs/QUEUE.md` rather than changed under the same
+        # heading, because turning the whole table read-only is a bigger answer
+        # than the one that was asked for.
+        creatable=base_commit is not None and may_write,
         base_commit=base_commit or "",
         links=links,
         columns=_columns_for(index),

@@ -1991,6 +1991,14 @@ async function answerOf(response) {
 // naming the file and every field that disagreed. Three of the five write paths
 // read `answer.detail` there, so the one answer that means *somebody else moved
 // the plan* printed as "refused".
+//
+// 409 is the only status this reads by number, and adding a second one is a
+// bigger decision than it looks. A plan whose history has forked answers 503
+// with a `detail` — `_refusal` in `web.py` argues the code — and it falls
+// through to the line below on purpose: the sentence it carries names the two
+// commits and says what has to happen to the repository, which is more than any
+// wording this file could invent for it. Special-casing it here would replace
+// that with a guess.
 function refusal(answer, status) {
   if (status === 409) return answer.conflict || 'somebody else changed this first';
   return answer.detail

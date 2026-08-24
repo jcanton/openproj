@@ -314,8 +314,14 @@ def test_a_plan_with_no_records_says_so_from_the_server(tmp_path: Path):
     # control, so the state must not point at one.
     assert "Create record" not in page
 
-    # With a server the empty state carries the way out of it.
-    served = render_records(index, ROUTES, base_commit="abc", edited={}, now=0)
+    # With a server AND somebody who may write, the empty state carries the way
+    # out of it. Both halves are needed now: `base_commit` says a server is
+    # behind the page, `may_write` says this person may use it, and a signed-out
+    # reader used to be offered a Create button that opened a form with every
+    # control on it hidden.
+    served = render_records(
+        index, ROUTES, base_commit="abc", edited={}, now=0, may_write=True
+    )
     assert "This plan has no records yet." in served
     assert '<a class="button primary" href="/new">Create record</a>' in served
 
