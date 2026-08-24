@@ -539,7 +539,7 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
         env={**os.environ, "OPENPROJ_REPO": str(plan), "OPENPROJ_AUTH": "dev",
              "OPENPROJ_SECRET": "test-secret", "PORT": str(port),
              "OPENPROJ_REMOTE": ""},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
     try:
         deadline = time.monotonic() + 60
@@ -553,7 +553,7 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
 
         started.send_signal(signal.SIGTERM)
         try:
-            code = started.wait(timeout=30)
+            said = started.communicate(timeout=30)[0]
         except subprocess.TimeoutExpired:
             raise AssertionError(
                 "the entrypoint ignored SIGTERM — on Cloud Run that is ten silent "
@@ -564,9 +564,24 @@ def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
             started.kill()
             started.wait(timeout=10)
 
-    assert code is not None
-    # The port is the whole point: if a child were left holding it, the signal
-    # reached the wrapper and not the server.
+    # The claim is not that the process went away — a SIGKILL would do that too,
+    # and so would the wrapper dying while the server it started carried on. The
+    # claim is that the SERVER ran its shutdown, because that is the hook
+    # `app.state.closing` hangs off and therefore the hook every flush in
+    # `docs/deferred-push.md` depends on. uvicorn says so in three lines, and the
+    # last of them only appears after lifespan shutdown has completed.
+    assert "Application shutdown complete" in said, (
+        "the server did not shut down gracefully, so `closing` never set and "
+        f"nothing flushed. It said:\n{said}"
+    )
+    # And nothing is left holding the port: if a child were still serving, the
+    # signal reached the wrapper and not the server.
     with pytest.raises(OSError):
         with socket.create_connection(("127.0.0.1", port), timeout=1.0):
             pass
+
+    # NOT an assertion on the exit status, and this is worth writing down: after
+    # a clean drain uvicorn restores SIGTERM's default disposition, so the status
+    # is -15 and reads exactly like a process that ignored the signal and was
+    # killed by it. The two are indistinguishable from the outside, which is why
+    # the evidence here is what the server SAID rather than how it exited.
