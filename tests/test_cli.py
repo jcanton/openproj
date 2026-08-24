@@ -4,9 +4,19 @@
 code decides whether a bad record reaches the repository.
 """
 
+import contextlib
 import json
 import os
+import signal
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
+
+import pygit2
+import pytest
+from test_store import SEED, commit_directly
 
 from openproj.cli import main
 
@@ -232,9 +242,10 @@ def test_the_container_says_where_it_is_running(monkeypatch, tmp_path):
     spec.loader.exec_module(boot)
 
     # Neither run reaches the clone or the server: the repository is there and
-    # `serve` is replaced, so `main` stops at the one decision under test.
+    # `execv` is stubbed — necessarily, because the real one would swap this
+    # test process for a server — so `main` stops at the one decision under test.
     (tmp_path / "plan.git").mkdir()
-    monkeypatch.setattr(boot.subprocess, "call", lambda *a, **k: 0)
+    monkeypatch.setattr(boot.os, "execv", lambda *a, **k: None)
     monkeypatch.setenv("OPENPROJ_REPO", str(tmp_path / "plan.git"))
 
     monkeypatch.delenv("K_SERVICE", raising=False)
@@ -494,3 +505,83 @@ def test_the_demo_signs_you_in_as_somebody_the_plan_names(monkeypatch):
     assert run_demo(monkeypatch, count_the_pickers, ["--as", "nobody-in-this-plan"]) == 0
 
     assert pickers == [1, 1, 0], "the picker is not on the signed-in person's row"
+
+
+# --- the container's signal path ---------------------------------------------
+
+
+def test_a_signal_to_the_entrypoint_reaches_the_server(tmp_path: Path):
+    """SIGTERM to the container's process must reach uvicorn, or nothing flushes.
+
+    `boot.py` is PID 1 under the Dockerfile's CMD, installs no signal handler,
+    and used to start the server with `subprocess.call` — a child. Python leaves
+    SIGTERM at SIG_DFL and the kernel discards a default-disposition signal sent
+    to PID 1, so `Server.handle_exit` never ran on Cloud Run: `app.state.closing`
+    never set, the SSE loops never noticed, and the co-editing room's shutdown
+    flush — which commits text somebody has typed and not yet saved — never ran
+    there either. Ten silent seconds and then SIGKILL.
+
+    Asked of a real process and a real signal, because the defect is entirely
+    about process shape: run the entrypoint, wait until it is actually serving,
+    send it SIGTERM, and require that IT exits and that nothing is left holding
+    the port. With `subprocess.call` the parent dies on the signal and the
+    orphaned server keeps the socket; with `execv` there is only one process and
+    it shuts down gracefully. Not run as PID 1 — a container is not available
+    here — but the mechanism under test is the same one.
+    """
+    plan = tmp_path / "plan.git"
+    pygit2.init_repository(str(plan), bare=True, initial_head="main")
+    commit_directly(plan, SEED, "seed the corpus")
+    port = free_port()
+
+    started = subprocess.Popen(
+        [sys.executable, str(Path(__file__).parent.parent / "deploy" / "boot.py")],
+        env={**os.environ, "OPENPROJ_REPO": str(plan), "OPENPROJ_AUTH": "dev",
+             "OPENPROJ_SECRET": "test-secret", "PORT": str(port),
+             "OPENPROJ_REMOTE": ""},
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            with contextlib.suppress(OSError):
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the entrypoint never started serving")
+
+        started.send_signal(signal.SIGTERM)
+        try:
+            said = started.communicate(timeout=30)[0]
+        except subprocess.TimeoutExpired:
+            raise AssertionError(
+                "the entrypoint ignored SIGTERM — on Cloud Run that is ten silent "
+                "seconds and then SIGKILL, with nothing flushed"
+            ) from None
+    finally:
+        if started.poll() is None:      # pragma: no cover - only on a failure
+            started.kill()
+            started.wait(timeout=10)
+
+    # The claim is not that the process went away — a SIGKILL would do that too,
+    # and so would the wrapper dying while the server it started carried on. The
+    # claim is that the SERVER ran its shutdown, because that is the hook
+    # `app.state.closing` hangs off and therefore the hook every flush in
+    # `docs/deferred-push.md` depends on. uvicorn says so in three lines, and the
+    # last of them only appears after lifespan shutdown has completed.
+    assert "Application shutdown complete" in said, (
+        "the server did not shut down gracefully, so `closing` never set and "
+        f"nothing flushed. It said:\n{said}"
+    )
+    # And nothing is left holding the port: if a child were still serving, the
+    # signal reached the wrapper and not the server.
+    with pytest.raises(OSError):
+        with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+            pass
+
+    # NOT an assertion on the exit status, and this is worth writing down: after
+    # a clean drain uvicorn restores SIGTERM's default disposition, so the status
+    # is -15 and reads exactly like a process that ignored the signal and was
+    # killed by it. The two are indistinguishable from the outside, which is why
+    # the evidence here is what the server SAID rather than how it exited.

@@ -51,6 +51,24 @@ and each says why it is still here.
 
 ## What is still owed
 
+* **A save should not wait for GitHub.** Designed 2026-08-24, written up in full at
+  `docs/deferred-push.md` — read that rather than a summary here, because the
+  reasoning is the expensive half and the rejected shapes matter as much as the
+  chosen one.
+
+  The short version: a save is 1.45-2.04s on the deployed service and this
+  application's own work in it is 8-12ms. The rest is GitHub's receive-pack, which
+  is not ours to make faster — so the request stops waiting for it. The commit is
+  still made under the lock exactly as today; a background pusher lands it; the
+  table carries a quiet per-row mark until it does.
+
+  The hard part is not the deferral, it is that `_attempt`'s rejection recovery
+  rewinds `refs/heads/main` to a sha captured before its own commit, which is only
+  sound while the lock is held across commit AND push. Three recoveries were
+  designed and each was attacked; rebase-by-recommit won. It ships in four pieces
+  and two of them are bugs that exist today: `deploy/boot.py` never receives
+  SIGTERM in production, and `_merge_body` merges two same-text edits wrongly.
+
 * **The table's cells are still editable to a reader.** Found on 2026-08-24 while
   gating the create buttons, and left alone in that commit on purpose.
 

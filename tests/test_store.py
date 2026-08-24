@@ -1144,3 +1144,51 @@ def test_a_rewound_ref_discards_the_cache_and_rebuilds(tmp_path: Path):
         assert 1_000_100 not in stamps.values()
     finally:
         store.close()
+
+
+def test_two_edits_with_the_same_text_over_different_spans_are_a_conflict():
+    """The same replacement text is not the same edit, and treating it as one
+    resurrects a line somebody deleted.
+
+    `_merge_body`'s guard skips the conflict check when the two replacements are
+    equal, so that two people making the identical edit converge rather than
+    collide. It compared only the TEXT. Two edits that overlap, cover different
+    numbers of lines and happen to write the same text therefore fell through to
+    the assembly loop, which iterates `{*ours, *yours}` — a set — keeps whichever
+    span it yields first, and skips the other through `cursor > span[0]`.
+
+    Here `theirs` replaces three lines and `mine` replaces two, both with `X`.
+    The overlap is real, the texts are equal, and the merge used to answer
+    `'a\\nX\\nd\\n'` with no conflicts: `d`, which theirs deleted, is back, and
+    the save is reported as merged and committed with a sha. Refusing is the
+    right direction and it is this function's own stated trade — a refusal is
+    announced and a drop is not.
+    """
+    base = "a\nb\nc\nd\n"
+    mine = "a\nX\nd\n"
+    theirs = "a\nX\n"
+
+    merged, conflicts = _merge_body(base, mine, theirs)
+
+    assert merged is None, (
+        f"two overlapping edits merged silently to {merged!r}; the line the other "
+        f"side deleted is back and nobody was told"
+    )
+    assert conflicts and "lines 2-3" in conflicts[0], conflicts
+
+
+def test_the_identical_edit_made_twice_still_merges():
+    """The control, and the reason the guard exists at all.
+
+    Narrowing 'the same edit' to span AND text must not turn convergence into a
+    conflict: two people who made exactly the same change to exactly the same
+    lines have nothing to resolve, and refusing them would be this function
+    refusing a save it has always taken.
+    """
+    base = "a\nb\nc\n"
+    same = "a\nX\nc\n"
+
+    merged, conflicts = _merge_body(base, same, same)
+
+    assert conflicts == []
+    assert merged == same
