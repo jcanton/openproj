@@ -999,4 +999,64 @@ offering a choice this page could not honour either way is a control that lies �
 actually gates is the view bar, whose three segments are the only door into an editing session. The
 name outlived its reason by one commit.
 
+## Editing a record is the same page you were reading, 2026-08-24
+
+jcanton, on the record page's three views: *"the edit and side-by-side views occupy the full page
+width, while the preview view doesn't and switching to/from it makes the whole page jump... I think
+the preview view looks perfect, I would make the edit view the same style page as the preview: just
+that the body and fields become editable but should not occupy the full page width. and about the
+side-by-side, I would make the page width increase by one body width (the editor) and recenter?
+also: the nav bar disappears when entering edit or side-by-side modes, should not do that. The
+title also moves below the edit/side-by-side/preview buttons (should always be below, also in
+preview mode). ideally page elements should not move or appear/disappear when switching views in
+this page. there is also an empty vertical space between the editor switching views buttons and the
+'nothing saved yet save/cancel' bar, please remove that"* — with one constraint added when asked
+whether full page survives at all: *"keep the draggable widths so people can resize the width if
+they want."*
+
+So full page is gone whole. A session — `edit` or `both` — is the ordinary page: `position:
+relative`, the article at `--measure`, centred, the nav alive, nothing `inert` and nothing moved.
+What went with the surface, and why each deletion is safe:
+
+- **The `inert` sweep and the corner move.** Both were corrections for an opaque fixed article
+  painting over the nav — the eight covered focusable elements were real, and so was jcanton's
+  "the toggle and sign in disappeared". With the article in the page's own flow nothing covers the
+  nav, so there is nothing to inert and nothing to move; `#theme` and `#who` stay in the nav, once,
+  with their listeners, and the tests that walked them onto the surface and back now hold that they
+  never leave.
+- **The `min-height: 0` chain and the full-page grid.** They existed so panes could scroll instead
+  of a page that was forbidden to; the 50px writing box they fixed was a `height: 100%` box in an
+  `auto` grid track, and no such box remains. The box's height is one token now — `--writing`,
+  60vh, on `article.record` — read by the textarea, Ace's box and the split view's rendered pane,
+  where the first two used to each say `60vh` on their own.
+- **The header no longer travels.** The `<h1>` sat above the view bar while the title `<input>`
+  sat inside the form below it, so starting an edit moved the record's name down the page. The
+  form now opens above the header (the title input has to stay in `FORM`'s subtree or no save
+  sends it), and the read span and the title box share the one `<h1>` slot — below the switcher
+  and the commit bar in every view, which is where jcanton asked for it. The create form keeps
+  "New record" as words and the box on the next line, for the reason its own comment always gave.
+- **The empty band over the commit bar** was `.commitbar`'s shell margin (`1.5rem`), uncollapsed
+  to 40px by the surface's flex column; on this page the two rows are one header and the bar keeps
+  `.4rem`, scoped to `article.record` so the cycle page keeps the shell's spacing.
+
+The two draggable widths stay. `#grip` still drags `--measure` and now works in the `edit` view
+too (the article's edge is the measure there); it hides only in the split, whose width control is
+the `#splitter`. Side by side the article is `calc(2 * var(--measure) - 21rem)` wide — one body
+column (measure less the facts' 20rem track and the 2.5rem gap) plus the handle's 1.5rem track —
+so at an even split each pane is exactly the width the document had, the preview keeps the
+reader's measure, and the growth is all editor. The splitter's off-switch became a
+`@container (width < 56rem)` block against the same container `.panes` reads, so the handle and
+the facts column flip at the same pixel by construction; the old `@media (width < 58.5rem)` was
+viewport arithmetic for a surface that was the window.
+
+In the split, both panes pin to `--writing` and scroll inside the page — deliberately, because the
+scroll sync maps both sides in pane pixels and a pane that grows with its content has no
+`scrollTop` to drive. The page itself scrolls too, which under full page it was forbidden to; the
+acceptance test for the whole change is jcanton's own sentence, measured in Chrome: the nav, the
+back row, the switcher and the facts column keep their boxes across all three views.
+
+One consequence worth naming: the split-ratio fence (`SPLIT_RANGE`) now engages only when the
+measure has been dragged out as well — at the default measure the capped article never gives the
+panes 2,160px — so the ultrawide regression test seeds a 1900px measure to keep exercising it.
+
 🤖 Written by an agent on behalf of @jcanton

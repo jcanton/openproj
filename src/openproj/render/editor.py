@@ -34,7 +34,8 @@ _ACE_SURFACE = Markup(r"""
    corner, and not the 4px this was written with — the writing surface and the
    fifteen fields beside it are read together, and one of them rounder than the
    rest is the drift the shell's rule exists to stop. */
-.acebox { position: relative; width: 100%; min-height: 60vh; box-sizing: border-box;
+.acebox { position: relative; width: 100%; min-height: var(--writing, 60vh);
+          box-sizing: border-box;
           border: 1px solid var(--line-strong); border-radius: 3px; }
 .ace_editor { font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
               border-radius: 3px; }
@@ -72,10 +73,11 @@ _ACE_SURFACE = Markup(r"""
    belongs on the thing a person can see, which is the editor. */
 .ace_text-input:focus, .ace_text-input:focus-visible { outline: none; }
 .acebox:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
-/* Full page and the split view, matched to the rules the box already has: the
-   pane gives its height and the editor takes all of it, rather than a `60vh`
-   minimum pushing the status bar off the bottom of the screen. */
-article.record.full .acebox, body.fullpage .acebox { height: 100%; min-height: 0; }
+/* The split view, matched to the rule the textarea gets in `_EDITING_STYLE`:
+   both surfaces pin to the one writing height there, so the rendered pane
+   beside either of them is the same box of pixels. `min-height: 0` or the
+   minimum above would put the two out of step the day the token moves. */
+article.record.view-both .acebox { height: var(--writing, 60vh); min-height: 0; }
 </style>
 <script>
 // --- Ace, as the same surface ----------------------------------------------

@@ -435,105 +435,48 @@ button.stat.pick:hover { color: var(--accent); }
 .views .seg svg { display: block; width: 15px; height: 15px; fill: none;
                   stroke: currentColor; stroke-width: 1.6;
                   stroke-linecap: round; stroke-linejoin: round; }
-/* The three page-chrome controls, while they are lodged on the surface rather
-   than in the nav they came from. `showView` puts them in the surface's first
-   row — the back link's — so that they stay in the top-right corner of the
-   window, which is the only thing about their position anybody has learnt.
-   `.corner` brings its own `margin-left: auto`, which is what pushes them to the
-   far end here exactly as it does in the nav; what it does not bring is a row to
-   be pushed along, because `.back` is a paragraph with one link in it. Hence the
-   flex, and hence `min-width: 0` — a `<select>` is as wide as its longest option
-   and would otherwise refuse to give the link its room back.
+/* Editing is the same page you were reading. jcanton, 2026-08-24: the preview
+   view "looks perfect", the other two become the same style of page — the nav
+   alive, the article at `--measure`, centred — and "page elements should not
+   move or appear/disappear when switching views".
 
-   13px and not the 12px `.back` sets, because these are the same three controls
-   as the nav's and the nav is 13px. A control that changes size when it moves
-   reads as a different control.
-
-   `.editbar` keeps the rule as the fallback `showView` falls back to: it appends
-   to `.back` if there is one, and every record page has one today. */
-article.record.full > .back { display: flex; flex-wrap: wrap; align-items: center;
-                              gap: .35rem 1rem; min-width: 0; }
-article.record.full > .back > .corner,
-.editbar > .corner { margin-left: auto; padding-left: .6rem; font-size: 13px; }
-/* Ask 3, and ask 1 inside it: the writing surface fills the window, and the two
-   panes scroll on their own.
-   `position: fixed` rather than a taller box, because the page behind it — the
-   nav, the banner, the reading measure — is not part of writing, and because a
-   surface that is exactly the window cannot be scrolled past. z-index 15 is
-   argued rather than picked: it clears the page (nothing else on it is
-   positioned above 10) and stays under the suggestion list and the hover card at
-   20, both of which are parked on `<body>` and would otherwise be painted behind
-   the surface that opened them. The width handle is 30 and is hidden here; see
-   `place`. */
-body.fullpage { overflow: hidden; }
-article.record.full {
-  position: fixed; inset: 0; z-index: 15; overflow: hidden;
-  width: auto; max-width: none; margin: 0; padding: .6rem 1.25rem 0;
-  background: var(--bg);
-  display: flex; flex-direction: column;
-}
-/* `min-height: 0` at every level between the surface and the panes, and it is
-   the whole of what makes them scroll instead of the page. A flex item's default
-   `min-height: auto` is its content, and a four-hundred-line textarea's content
-   is taller than any window — so without these the box grows past the bottom of
-   the screen and takes the commit bar with it. */
-article.record.full > form { flex: 1 1 auto; min-height: 0;
-                             display: flex; flex-direction: column; }
-article.record.full > .commitbar { flex: none; }
-/* `align-items: stretch`, against the container query that sets `start`: outside
-   full page the facts are a short column beside a long document and should not
-   be stretched to its height; inside it, a pane that is its content's height is
-   a pane that overflows the window. The at-rule adds no specificity, so this
-   (0,3,1) wins wherever both apply. */
-/* The floor on that row, and the `order` below it, are one fix and it is worth
-   saying what went wrong. Below the container query the panes are ONE column and
-   `.facts` comes first in the markup, so the facts took the explicit
-   `minmax(0, 1fr)` row and the document got the implicit `auto` one — and a
-   `height: 100%` box in an auto row is a box the size of its `rows` attribute.
-   Measured in Chrome at every width from 900px down, in all three views and on
-   both surfaces: the writing box was 50px, two lines, with six hundred pixels of
-   metadata above it. Full page is the feature this branch is for and under
-   ~960px of window it was a dead end.
-   `1fr` alone could not have fixed it: `fr` distributes FREE space, and the
-   facts' auto row leaves 60px of it. So the row gets a floor as well — `min()`
-   rather than a flat `30rem`, because on a window shorter than that the floor
-   would push the commit bar off the bottom, and a pane the height of the window
-   is the honest answer there.
-   And `grid-auto-rows: max-content` for the row the facts then land in. It only
-   exists in the stacked case, so it is inert in the two-column one; without it
-   the facts drew as a 59px box with fifteen fields scrolling inside it, because
-   `overflow-y: auto` on that pane makes its automatic minimum size zero and an
-   `auto` track with no space left gives it exactly that. `.panes` is the
-   scroller here, so the facts get their whole height one flick below the
-   document rather than a scrollbar of their own inside three lines. */
-article.record.full .panes { flex: 1 1 auto; min-height: 0; overflow: auto;
-                             align-items: stretch;
-                             grid-template-rows: minmax(min(30rem, 100%), 1fr);
-                             grid-auto-rows: max-content; }
-article.record.full .panes > .facts { min-height: 0; overflow-y: auto; }
-/* `order: -1` so the document takes that row and not the facts. It changes
-   nothing in the two-column case — the container query places BOTH panes
-   explicitly, at `grid-row: 1`, and `order` has no say over an item that is
-   definitely placed — and everything in the stacked one, where both are
-   auto-placed in modified document order. Reordering here rather than reversing
-   the markup, because the markup order is the reading order of the page outside
-   full page and the facts lead it there on purpose. */
-article.record.full .panes > .main { min-height: 0; display: flex; flex-direction: column;
-                                     order: -1; }
-article.record.full .bodysplit { flex: 1 1 auto; min-height: 0; display: grid;
-                                 gap: 0 1.5rem; grid-template-columns: minmax(0, 1fr); }
-article.record.full .bodywrap { min-height: 0; }
-/* `max-width: none` guarded the full page against the record pages' 44rem cap
-   on this box. No sheet caps the box any more — the measure lives on the
-   article, and `.full` overrides it above — but a cap somebody writes tomorrow
-   must still lose here, where the pane IS the window. */
-article.record.full textarea.body-field { height: 100%; min-height: 0; resize: none;
-                                          max-width: none; }
-/* The rendered pane is a document, not a field: it loses the rule and the space
-   above it that separate a shaping document from the facts, because in this view
-   there is nothing above it to be separated from. */
-article.record.full #body-preview { min-height: 0; overflow-y: auto;
-                                    border-top: 0; padding-top: 0; }
+   The full-page surface this block used to build is gone whole: `position:
+   fixed; inset: 0` over the page, `body.fullpage { overflow: hidden }`, an
+   `inert` sweep of the nav, the corner controls moved onto the surface, and a
+   `min-height: 0` chain that made the panes scroll instead of the page. Every
+   one of those rules managed a surface that painted over the page, and with no
+   surface there is nothing left to manage. The two defects the deleted rules
+   were written for cannot come back by this route: the corner controls
+   "disappeared" because an opaque fixed article covered the nav, and the
+   writing box measured 50px because a `height: 100%` box sat in an `auto` grid
+   row — there is no covering article and no `height: 100%` box any more. */
+/* Side by side, the page grows by one body width and recentres. "One body
+   width" is measured against the reading view: there the article is
+   `--measure` wide and the document's column is that less the facts' fixed
+   `20rem` track and the `2.5rem` gap `.panes` puts beside it — 22.5rem in all.
+   The split adds exactly that column back plus the handle's own `1.5rem`
+   track, which is the `- 21rem` below, so at an even split each pane is
+   precisely the width the document had: the preview keeps the measure the
+   reader set, and the growth is all editor. The base rule's `margin: 0 auto`
+   is what recentres and its `max-width: 100%` is what a narrow window caps
+   this with; `#grip` is hidden in this one view (see `place`) because the
+   article's edge here is not the measure and the splitter is this view's own
+   width control. */
+article.record.view-both { width: calc(2 * var(--measure, 64rem) - 21rem); }
+/* Both panes at one height, and it is the height the box already has: the box
+   is `min-height: var(--writing)` on the ordinary page, the split pins it
+   there — `resize: none`, because a box dragged taller than the pane beside it
+   un-pairs the two — and the rendered pane takes the same number with a
+   scrollbar of its own. The pane scrolls INSIDE the page on purpose: the
+   scroll sync maps both sides in pane pixels, and a pane that grows with its
+   content has no `scrollTop` for the sync to drive. */
+article.record.view-both textarea.body-field { height: var(--writing, 60vh);
+                                               min-height: 0; resize: none; }
+/* The rendered pane also loses `.doc`'s top rule and the space above it: those
+   separate a document from the facts stacked over it, and in this view the
+   pane's neighbour is the box beside it, which carries neither. */
+article.record.view-both #body-preview { height: var(--writing, 60vh); overflow-y: auto;
+                                         border-top: 0; padding-top: 0; }
 /* Two columns in the middle view, and the reader says where the join is —
    jcanton, 2026-08-20: "in the side-by-side edit-preview view, can you make it
    possible to horizontally resize the editor vs the preview boxes? keeping their
@@ -556,11 +499,13 @@ article.record.full #body-preview { min-height: 0; overflow-y: auto;
    content, and one unbroken line of prose is wider than half a window — which
    pushed the other pane off the side instead of wrapping.
 
-   The middle track is the 1.5rem this grid used to spend on `column-gap`, so the
-   handle lands exactly where the space between the panes already was. */
-article.record.full.view-both .bodysplit {
+   The middle track is the 1.5rem a plain grid would spend on `column-gap`, so
+   the handle lands exactly in the space between the panes. `display: grid` is
+   declared here and not on a bare `.bodysplit`, because outside this view the
+   split holds one visible pane and a block is the honest layout for it. */
+article.record.view-both .bodysplit {
+  display: grid;
   grid-template-columns: minmax(0, var(--split, 1fr)) 1.5rem minmax(0, 1fr);
-  column-gap: 0;
 }
 /* Not a control in either of the other two views, on the pages that inline this
    sheet with no document to split — the cycle page, the cycles index and the
@@ -574,7 +519,7 @@ article.record.full.view-both .bodysplit {
    at all, which is the one way a captured pointer can still leave a handle stuck
    to the cursor. The script carries the branch for when it happens anyway; this
    is what stops it being asked for. */
-article.record.full.view-both #splitter {
+article.record.view-both #splitter {
   display: block; position: relative; cursor: col-resize; touch-action: none;
 }
 /* The line down the middle, which was `#body-preview`'s `border-left` and its
@@ -582,7 +527,7 @@ article.record.full.view-both #splitter {
    by the handle now, because the affordance has to land on the line that is
    already there and two lines down the middle is worse than none. The rule this
    replaces is in the `width <` block below, where there is no handle to draw it. */
-article.record.full.view-both #splitter::before {
+article.record.view-both #splitter::before {
   content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
   width: 1px; background: var(--line);
 }
@@ -592,13 +537,13 @@ article.record.full.view-both #splitter::before {
    on a rule the reader can already see, and a second animated rule in an app
    whose motion is one rule, one comment and one inventory test would cost all
    three to buy nothing. */
-article.record.full.view-both #splitter::after {
+article.record.view-both #splitter::after {
   content: ""; position: absolute; left: 2px; right: 2px; top: 50%; height: 48px;
   transform: translateY(-50%); border-radius: 2px; background: var(--line-strong);
   opacity: .35;
 }
-article.record.full.view-both #splitter:hover::after,
-article.record.full.view-both #splitter.dragging::after {
+article.record.view-both #splitter:hover::after,
+article.record.view-both #splitter.dragging::after {
   opacity: 1; background: var(--accent);
 }
 /* Below the width where the facts stop being a column on the right there is
@@ -606,35 +551,25 @@ article.record.full.view-both #splitter.dragging::after {
    goes, and what is left is exactly the layout of the two panes before it
    existed.
 
-   58.5rem is arithmetic rather than taste. `.panes` hands the facts their own
-   track at a CONTAINER width of 56rem; the container is `article.record.full`,
-   which is `position: fixed; inset: 0` with `1.25rem` of padding a side. So the
-   two agree at 56 + 2 × 1.25, and there is no room below it either: the panes
-   have `window - 424px` between them on that page, which is 512 here against a
-   floor of 240 each.
-
-   `@media` and not `@container`, for the reason the `.marks` block gives at
-   length — historical since the inbox pages folded into `_DETAIL`. On this
-   element the viewport is not a proxy for the container anyway: the surface
-   IS the window.
+   `@container` now, where this was `@media (width < 58.5rem)`: that number was
+   viewport arithmetic for a surface that WAS the window — 56rem of container
+   plus the fixed surface's `1.25rem` of padding a side — and the surface is
+   gone. `.panes` hands the facts their track at a container width of 56rem,
+   the container is `article.record`, and asking the same container the same
+   number is what keeps the handle and the facts column flipping at the same
+   pixel by construction rather than by two spellings staying in step.
 
    Same selectors as above, so this takes the ties on order and not on weight.
-   `cascade.py` skips at-rules by construction, so that half is asked of Chrome. */
-@media (width < 58.5rem) {
-  article.record.full.view-both .bodysplit {
+   `cascade.py` skips at-rules by construction, so this half is asked of Chrome. */
+@container (width < 56rem) {
+  article.record.view-both .bodysplit {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 1.5rem;
   }
-  article.record.full.view-both #splitter { display: none; }
-  article.record.full.view-both #body-preview {
+  article.record.view-both #splitter { display: none; }
+  article.record.view-both #body-preview {
     border-left: 1px solid var(--line); padding-left: .75rem; margin-left: -.75rem;
   }
 }
-/* Preview only is reading, and reading has a measure — the one the reader set
-   with the grip on the page they came from, which is still in `--measure` and
-   still theirs. Capped per block rather than on the pane, because the pane is
-   the scroll container and a narrow scroll container puts its scrollbar down the
-   middle of the window. */
-article.record.full.view-view #body-preview > * { max-width: var(--measure, 64rem); }
 /* Preview only: the box goes, and the two bars of CONTROLS go with it. A toolbar
    over no box is sixteen buttons that write into nothing, and a status bar over
    no box is a caret position for a caret nobody can see.
@@ -649,10 +584,16 @@ article.record.full.view-view #body-preview > * { max-width: var(--measure, 64re
    on applying somebody else's keystrokes to the text under the rendered pane,
    and a reader watching a preview change under them with nothing on the page to
    say why is the worse of the two silences. It costs no space when nobody else
-   is here, which is most of the time, because `#seatbar` carries no margin. */
-article.record.full.view-view .bodywrap,
-article.record.full.view-view .statusbar,
-article.record.full.view-view .markbar { display: none; }
+   is here, which is most of the time, because `#seatbar` carries no margin.
+
+   Only the create form ever shows this view's pane: a stored record's `view`
+   is the landing, where the article is not `.editing` and the two-mode rules
+   already keep every one of these off the page. The (0,3,1)s below outrank
+   `.record.editing .bodybar` at (0,3,0), which is the rule that would
+   otherwise put the bars up — resolved in `tests/cascade.py`, not guessed. */
+article.record.view-view .bodywrap,
+article.record.view-view .statusbar,
+article.record.view-view .markbar { display: none; }
 """
 
 
@@ -686,6 +627,11 @@ _DETAIL_STYLE = """
 article.record {
   width: var(--measure, 64rem); max-width: 100%; margin: 0 auto 3rem; position: relative;
   container-type: inline-size;
+  /* One writing height. The box, Ace's box and the split view's rendered pane
+     all read this; before the token the first two each said `60vh` on their
+     own, which is two constants that are the same number — the drift
+     `MAX_UPDATE_BYTES` already paid for once. */
+  --writing: 60vh;
 }
 /* The facts beside the document rather than stacked on top of it: the reader
    comes for the shaping doc and glances at the facts, and a screen-and-a-half of
@@ -729,6 +675,20 @@ article.record h1 { font-size: 1.5rem; margin: .2rem 0; }
    header rather than as a paragraph with a heading under it. */
 .eyebrow { margin: 0 0 .15rem; color: var(--muted); }
 .back { margin: 0 0 .5rem; font-size: 12px; }
+/* The empty band between the switcher's row and the commit bar — jcanton,
+   2026-08-24: "there is also an empty vertical space between the editor
+   switching views buttons and the ... save/cancel bar, please remove that".
+   Measured in Chrome at 1400x900: 24px, which is `.commitbar`'s own
+   `margin: 1.5rem 0 0` — the shell's, sized for a bar that opens a form on the
+   pages whose bar stands alone — collapsing over `.editbar`'s 1rem; it was
+   40px on the full-page surface, whose flex column kept the two margins from
+   collapsing at all. On this page the two rows are one header, so the bar
+   keeps only the .4rem the switcher keeps above itself. Both (0,1,2) against
+   the shell's (0,1,0), and scoped to the article on purpose: the cycle page
+   loads this sheet with a commit bar that is not inside an `article.record`,
+   and it keeps the shell's spacing. */
+article.record .editbar { margin-bottom: .4rem; }
+article.record .commitbar { margin-top: 0; }
 /* `.editbar` is the shell's. It was written here, and the table — which wears the
    class on the row holding its only create action — does not load this
    stylesheet. */
@@ -828,7 +788,7 @@ input.field, select.field, textarea.field {
   background: var(--surface); color: inherit;
 }
 input.title-field { font-size: 1.4rem; font-weight: 600; margin-bottom: .6rem; }
-textarea.body-field { min-height: 60vh; resize: vertical; }
+textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
 .doc { border-top: 1px solid var(--line); padding-top: 1rem; }
 .doc h2 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
 .doc code { background: var(--surface-2); padding: 0 .25em; }

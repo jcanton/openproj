@@ -355,11 +355,14 @@ function truthTop(index) {
 await settle(120);
 
 // **The width is swept on `.bodywrap`, and it used to be swept on `--measure`.**
-// That was a sweep that never moved anything. Editing puts the page in full page
-// — `article.record.full`, `body.fullpage` — and `article.record.full` overrides
-// the `width: var(--measure)` this was writing, so the box measured 800px at all
-// eighty widths and the worst error across the whole sweep was exactly 0.00px.
-// The test passed for as long as it has existed and asked nothing.
+// That was a sweep that never moved anything: editing then went full page, and
+// `article.record.full` overrode the `width: var(--measure)` this was writing,
+// so the box measured 800px at all eighty widths and the worst error across the
+// whole sweep was exactly 0.00px. The test passed for as long as it had existed
+// and asked nothing. The surface is gone and `--measure` does size the editor
+// again — the sweep stays on `.bodywrap` anyway, because an inline width on the
+// box's own container is true whatever view rule is fashionable, and the guard
+// below (`widths > 1`) is what notices if it ever stops driving.
 //
 // `.bodywrap` carries no width rule of its own — `position: relative` and
 // nothing else — so an inline width lands on the box the mirror mirrors, and the
@@ -755,9 +758,10 @@ _ACE_BAND_AT_EVERY_WIDTH = """
 const host = document.querySelector('.acebox');
 const editor = host.env.editor;
 const session = editor.session;
-// The same lever the mirror sweep uses, for the reason written there: editing is
-// full page, `article.record.full` overrides `width: var(--measure)`, and
-// `.bodywrap` is the box in this pane that carries no width rule of its own.
+// The same lever the mirror sweep uses, for the reason written there: an inline
+// width on `.bodywrap` — the box in this pane that carries no width rule of its
+// own — drives the surface whatever the view's width rules say, where a sweep
+// on `--measure` once moved nothing at all.
 const wrap = host.closest('.bodywrap');
 const settle = ms => new Promise(go => setTimeout(go, ms));
 const bands = () => host.querySelectorAll('.op-seat');
