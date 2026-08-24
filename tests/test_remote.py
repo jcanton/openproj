@@ -1532,6 +1532,89 @@ def test_a_write_on_a_forked_store_is_refused_and_still_pokes_the_pusher(
     assert store.condition().diverged is False
 
 
+def test_both_sides_moved_reads_healthy_while_the_remote_still_holds_what_it_held(
+    repo_path: Path, remote_path: Path, remote_url: str
+):
+    """The health rescope, pinned in the one state where its two readings disagree.
+
+    `condition().diverged` used to mean "local and remote have both moved and
+    neither contains the other". The deferred push made that the ORDINARY
+    recoverable race — a hand-push in the window between a commit and the
+    pusher's pass — so the meaning was rescoped to the force-push guard's: the
+    tracking ref no longer contains `refs/openproj/pushed`. Every other test
+    agrees under both readings, because it looks before anything has raced or
+    after everything has landed — a revert to the old comparison passed the
+    whole suite. So this one parks the store in the disagreeing state and holds
+    it there with an outage. Under the old reading `/api/health` answers 503
+    for the entire outage-plus-race window, on every ordinary hand-push — the
+    alarm fatigue the spec forbids (docs/deferred-push.md, "Health"), because a
+    flag that goes red on the recoverable case has been learned and ignored by
+    the day the remote really loses a commit.
+    """
+    store = Store(repo_path, remote=remote_url)
+    try:
+        ours = store.write(
+            path=PATH,
+            content=record(status="in_progress"),
+            base_commit=store.head(),
+            author="ann",
+            message="task-c00001: status todo -> wip",
+        )
+        outside = pushed_from_a_terminal(
+            remote_path,
+            {"tasks/task-c00003.md": record(id="task-c00003", title="By hand")},
+            "task-c00003: added from a terminal",
+        )
+        # The fetch is what puts the race onto the two refs `condition` reads;
+        # nothing on the health path fetches for itself, so without it both
+        # readings would still agree and the test would pin nothing.
+        assert store.fetch() == outside
+        assert ours.commit is not None
+        repo = pygit2.Repository(str(repo_path))
+        # The disagreement, proved rather than assumed: neither tip contains
+        # the other — the old definition's "diverged" — while the tracking ref
+        # still descends from everything the remote was seen to hold.
+        assert not repo.descendant_of(ours.commit, outside)
+        assert not repo.descendant_of(outside, ours.commit)
+        state = store.condition()
+        assert state.diverged is False
+        assert state.refusal is None
+        assert state.unpushed == 1
+    finally:
+        store.close()
+
+    # The same repository behind `/api/health`, during the outage that keeps
+    # the race standing: unreachable is not a rejection, so the pusher backs
+    # off and the refs hold this exact state however long GitHub is away —
+    # which makes the 200 below deterministic, not a race against the pusher.
+    # Imported here because this is the one place this Store-level suite
+    # crosses into the web layer: the regression being pinned is a 503.
+    from fastapi.testclient import TestClient
+
+    from openproj.web import create_app
+
+    # Not `unplugged`: the outage has to end BEFORE the app shuts down, so the
+    # drain lands the backlog instead of running out its grace clock, and a
+    # context manager can only end it after.
+    offline = remote_path.with_name(remote_path.name + ".offline")
+    remote_path.rename(offline)
+    try:
+        with TestClient(create_app(repo_path, remote=remote_url)) as client:
+            answer = client.get("/api/health")
+            assert answer.status_code == 200
+            body = answer.json()
+            assert body["ok"] is True
+            assert body["detail"] is None
+            # The backlog is still here and still counted — proof the pusher
+            # did not quietly resolve the race before the route answered.
+            assert body["unpushed"] == 1
+            assert body["head"] == ours.commit
+            offline.rename(remote_path)
+    finally:
+        if offline.exists():
+            offline.rename(remote_path)
+
+
 def test_a_conflict_in_the_middle_of_a_batch_parks_alone_and_the_rest_land(
     store: Store, repo_path: Path, remote_path: Path
 ):
