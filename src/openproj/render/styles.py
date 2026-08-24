@@ -984,8 +984,14 @@ textarea.body-field { min-height: var(--writing, 60vh); resize: vertical; }
    is always a session (`showView` turns `editing` on for `edit` and `both`), so
    the reading measure is the only width this box is ever drawn at.
    `max-width: 100%` for the same reason `.panes` carries it — a narrow window
-   caps the measure rather than growing a horizontal scrollbar. */
-#promote { width: var(--measure, 64rem); max-width: 100%;
+   caps the measure rather than growing a horizontal scrollbar. And
+   `margin-inline: auto` for the same reason too, which is the whole of what
+   "keeps the column" means: this bar is drawn under the document and has to
+   start where the document starts, so it centres exactly as `.panes` does and
+   moves with it if that choice is ever revisited. Pinned left while the column
+   was centred it sat 168px to its left, which is what
+   `test_the_promotion_bar_keeps_the_column_it_sits_under` measured. */
+#promote { width: var(--measure, 64rem); max-width: 100%; margin-inline: auto;
            display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap;
            border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
 .record.editing #promote { display: none; }
