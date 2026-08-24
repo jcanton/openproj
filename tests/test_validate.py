@@ -447,6 +447,43 @@ def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
     assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
 
 
+def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
+    """Four unsized tasks under a one-week bet summed to `4 ×
+    default_task_effort = 2` weeks and told somebody to cut scope or re-bet —
+    an instruction built entirely out of a config default. The docstring said
+    "only stated sizes are compared" the whole time; this holds it to that on
+    the children, where it was false.
+    """
+    records = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=1.0),
+        *[
+            Task(id=f"task-00000{n}", kind="task", title="T", parent="pitch-000001")
+            for n in range(1, 5)
+        ],
+    ]
+    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+
+
+def test_sized_tasks_overrunning_alone_warn_and_the_message_counts_only_them():
+    """When only some children are sized, the sized ones overrunning the bet is
+    still a statement somebody made — the unsized ones can only push the total
+    higher — so the warning fires, counts the sized ones alone, and says out
+    loud that the rest are uncounted rather than quietly pricing them at the
+    default.
+    """
+    records = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=3.0),
+        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=2.0),
+        Task(id="task-000003", kind="task", title="C", parent="pitch-000001"),
+    ]
+    said = [p for p in validate_all(records, Config()) if p.field == "person_weeks"]
+    assert [p.message for p in said] == [
+        "its 2 sized tasks alone add up to 5 weeks, more than the 4 it was bet at, "
+        "and the 1 without a size can only add to that — cut scope, or re-bet it"
+    ]
+
+
 # --- the seed corpus --------------------------------------------------------
 
 
