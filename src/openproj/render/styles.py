@@ -465,9 +465,10 @@ button.stat.pick:hover { color: var(--accent); }
 
    On `.panes` and not on the article since 2026-08-24: the article is the
    page's width in every view, which is what stops the header moving when this
-   rule fires. It no longer recentres either — the box is left-pinned, so the
-   growth is all to the right and the editor pane opens exactly where the
-   document was. Which way the cascade resolves: `article.record.view-both
+   rule fires. The box itself is still centred (jcanton's call — see the base
+   `.panes` rule), so it still recentres when this width lands and the document
+   still slides left as the split opens; what does not move any more is
+   everything above it. Which way the cascade resolves: `article.record.view-both
    .panes` is (0,3,0) against the base `.panes` at (0,1,0), so the split wins on
    weight and not on the order the two are written in. */
 article.record.view-both .panes { width: calc(2 * var(--measure, 64rem) - 21rem); }
@@ -674,14 +675,20 @@ article.record {
    the WINDOW — the facts would then take their 20rem column beside a document
    dragged down to 10rem, instead of stacking as they do at that measure today.
 
-   **Left, not centred, and that is the judgement in this change.** He asked for
-   the sizing below the line to be kept, and it is — this is `--measure` in the
-   reading and writing views and one measure plus one body in the split, exactly
-   as before. What moved is where the box sits, and centring it under a header
-   pinned to the page's left edge indents a document from its own title. It also
-   buys the thing the whole change is for: the split now grows this box to the
-   RIGHT only, so the document's first character is on the same x in all three
-   views, where a centred box slid it half a body width left on every open.
+   **Centred, and jcanton chose it knowing what it costs.** He asked for the
+   sizing below the line to be kept, and it is — `--measure` in the reading and
+   writing views, one measure plus one body in the split, exactly as before —
+   and then, asked directly whether the document should follow the header to the
+   page's left edge: "no, body centered / 'indented' should be good".
+
+   What that costs is written down rather than argued with, because it is the
+   half of his own complaint this does not fix: a centred box whose width changes
+   between views has a left edge that changes with it, so opening the split still
+   slides the document's first character half a body width left. The header above
+   it no longer moves, which is what he asked for and what the red lines in his
+   screenshots marked. Pinning this box left would have stopped the rest, at the
+   price of a document indented from its own title. That is the trade, and it is
+   one `margin-inline` away in either direction.
 
    The facts beside the document rather than stacked on top of it: the reader
    comes for the shaping doc and glances at the facts, and a screen-and-a-half of
@@ -689,7 +696,7 @@ article.record {
    and not a media query, because the width that decides this is the column's,
    which the reader sets with the grip — not the window's. */
 .panes {
-  width: var(--measure, 64rem); max-width: 100%;
+  width: var(--measure, 64rem); max-width: 100%; margin-inline: auto;
   container-type: inline-size;
   display: grid; gap: 0 2.5rem;
   /* Both of these used to be inside the query below and neither may stay there,

@@ -2468,7 +2468,18 @@ const stacked = () => {
 // The grip, driven the way a hand drives it: the drag is what writes
 // `--measure`, so a test that set the property itself would be asking the
 // stylesheet a question the control never asks it.
-const drag = to => {
+//
+// Asked for a WIDTH, and the pointer worked out from the box — not a screen x
+// written down here. The column is centred, so a pixel of pointer is two of
+// width; it was left-pinned for one afternoon on 2026-08-24 and a pixel was a
+// pixel. A test that hard-codes the screen x is a test that encodes whichever
+// of those was true the day it was written, and this one exists to ask about
+// the container query rather than about the drag's arithmetic — when the two
+// targets stopped meaning 620px and 1044px of column, it failed for a reason
+// that had nothing to do with what it checks.
+const drag = width => {
+  const box = document.querySelector('article.record').getBoundingClientRect();
+  const to = box.left + box.width / 2 + width / 2;
   grip.dispatchEvent(new PointerEvent('pointerdown', {
     bubbles: true, pointerId: 1, clientX: grip.getBoundingClientRect().left, clientY: 400}));
   dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerId: 1, clientX: to}));
@@ -2476,8 +2487,10 @@ const drag = to => {
   return stacked();
 };
 const wide = stacked();
+// Either side of the 56rem (896px) the query names, and not close to it: 620
+// stacks, 1024 does not, and neither is within a rounding of the boundary.
 const narrow = drag(620);
-const back = drag(1044);
+const back = drag(1024);
 return {wide, narrow, back, width: innerWidth,
         measure: getComputedStyle(document.documentElement)
                    .getPropertyValue('--measure').trim()};

@@ -1198,15 +1198,20 @@ grip.onpointerdown = event => {
   grip.setPointerCapture(event.pointerId);
   grip.classList.add('dragging');
   const move = e => {
-    // The column is pinned to the page's left edge — it was centred until
-    // 2026-08-24, when the header took the page's width and left a centred
-    // document indented from its own title — so the width IS the distance from
-    // that edge to the pointer. One pixel of drag is one pixel of column now,
-    // where the centred box moved half a pixel each way and needed the double.
+    // The column is centred inside a full-width article, so one pixel of
+    // pointer is TWO of width: the box grows from both edges at once and the
+    // right edge under the pointer only moves half of what the width does.
+    //
+    // Doubled against the ARTICLE's centre and not the window's. Those were the
+    // same number while the article was the centred box; since 2026-08-24 the
+    // article is the page's width, so the window's centre is only still right by
+    // accident — it stops being right the moment anything gives the article a
+    // margin or a scrollbar takes a side. Measured from the box that actually
+    // contains the column.
     const article = shown();
     if (!article) return;
-    const width = Math.max(
-      320, e.clientX - column(article).getBoundingClientRect().left);
+    const box = article.getBoundingClientRect();
+    const width = Math.max(320, (e.clientX - (box.left + box.width / 2)) * 2);
     root.style.setProperty('--measure', width + 'px');
     place();
     // The one control whose entire job is to change the width of the box has to
