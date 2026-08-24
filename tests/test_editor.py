@@ -2450,6 +2450,73 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
     )
 
 
+# What the handle drags, and what answers to it. The window is wide throughout
+# and only the measure moves, which is the one arrangement that can tell a
+# container query on the column from a media query on the window — and, since
+# 2026-08-24, a container on `.panes` from one left behind on a full-width
+# `article.record`.
+_DRAGGED_NARROW = _STUB_PREVIEW + """
+const facts = document.querySelector('.panes > .facts');
+const main = document.querySelector('.panes > .main');
+const grip = document.getElementById('grip');
+const stacked = () => {
+  const f = facts.getBoundingClientRect(), m = main.getBoundingClientRect();
+  return {beside: f.left >= m.right - 1, factsTop: Math.round(f.top),
+          mainTop: Math.round(m.top), factsLeft: Math.round(f.left),
+          mainLeft: Math.round(m.left)};
+};
+// The grip, driven the way a hand drives it: the drag is what writes
+// `--measure`, so a test that set the property itself would be asking the
+// stylesheet a question the control never asks it.
+const drag = to => {
+  grip.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true, pointerId: 1, clientX: grip.getBoundingClientRect().left, clientY: 400}));
+  dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerId: 1, clientX: to}));
+  dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
+  return stacked();
+};
+const wide = stacked();
+const narrow = drag(620);
+const back = drag(1044);
+return {wide, narrow, back, width: innerWidth,
+        measure: getComputedStyle(document.documentElement)
+                   .getPropertyValue('--measure').trim()};
+"""
+
+
+def test_the_facts_answer_to_the_column_the_reader_drags_and_not_to_the_window(
+    client: TestClient, tmp_path: Path
+):
+    """The facts sit beside the document or stack above it, and the width that
+    decides which is the COLUMN's — the one the reader sets with the grip — not
+    the window's. A window breakpoint would put a 20rem sidebar beside a document
+    dragged down to 10rem.
+
+    This is asked at one wide window on purpose. Every other pixel test here
+    changes the window, and at a narrow window a container query on the column
+    and a media query on the window give the same answer — so none of them can
+    see the failure this is for: the measure moved to `.panes` on 2026-08-24 and
+    a `container-type` left behind on the now full-width `article.record` would
+    be measuring the window under both names, silently, with every existing test
+    still green.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "column.html",
+        1400, _DRAGGED_NARROW, patience=2000,
+    )
+
+    assert got["width"] == 1400, "the window moved, so this is not asking about the column"
+    assert got["wide"]["beside"], f"the facts are not beside the document to start with: {got}"
+    assert not got["narrow"]["beside"], (
+        "the facts kept their column beside a document dragged narrower than the "
+        f"56rem the query names, so the query is answering about the window: {got}"
+    )
+    assert got["narrow"]["mainTop"] > got["narrow"]["factsTop"], (
+        f"and they did not stack above it either: {got['narrow']}"
+    )
+    assert got["back"]["beside"], f"dragging back did not give the column back: {got}"
+
+
 # The handle between the two panes, driven the way a hand drives it. Everything
 # here is geometry, selection and keys, so all of it is asked of Chrome and none
 # of it of `tests/js/drive.js`, where `getClientRects()` answers `[]` for every
