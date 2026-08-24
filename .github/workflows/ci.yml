@@ -154,6 +154,21 @@ jobs:
         with:
           node-version: "24"
 
+      # WHAT THIS MACHINE ACTUALLY IS. The paragraph above `jobs:` said 2-core /
+      # 8 GB and cited a run id, which was the right way to settle it and is now
+      # the wrong answer: that measurement was taken while this repository was
+      # PRIVATE, and a public repository gets a different box. The number decided
+      # the whole shape of this file — five machines rather than `-n auto` on one
+      # — so it is not a number to inherit from a document. It is printed on
+      # every leg rather than probed once, because "the runner" is five runners
+      # and nothing promises they are the same size.
+      - run: |
+          echo "nproc:      $(nproc)"
+          echo "memory:     $(awk '/MemTotal/{printf "%.1f GB", $2/1048576}' /proc/meminfo)"
+          echo "chrome:     $(google-chrome --version 2>/dev/null || echo absent)"
+          echo "node:       $(node --version)"
+          echo "runner:     ${RUNNER_OS} ${RUNNER_ARCH}"
+
       # `--locked`, as in the Dockerfile: it fails on a `pyproject.toml` edited
       # without relocking, instead of quietly testing a resolution that will
       # never be the one deployed.
@@ -189,7 +204,7 @@ jobs:
       - run: |
           files=$(sed 's/#.*//' .github/shards/${{ matrix.shard }})
           [ -n "$files" ] || { echo "shard ${{ matrix.shard }} names no test files"; exit 1; }
-          uv run pytest -q --durations=25 $files
+          uv run pytest -q --durations=0 --durations-min=0.05 $files
 
   # The one required status check, and the reason it is a separate job.
   #
