@@ -99,7 +99,7 @@ from .model import (
     what_json_can_carry,
     why_it_will_not_read,
 )
-from .store import Store, StoreDiverged, StoreLocked
+from .store import Condition, Store, StoreDiverged, StoreLocked
 
 # What a write can fail with, as one name so the two callers of `store.write`
 # cannot disagree about it. `StoreLocked` and `StoreDiverged` are `RuntimeError`s
@@ -108,7 +108,159 @@ from .store import Store, StoreDiverged, StoreLocked
 # tuple and not `Exception`, because `readable` (`model.py`) is the one place in
 # this codebase that catches everything, and everywhere else the list of what has
 # actually been seen is the honest one.
+#
+# "So the two callers cannot disagree" was the intent and was not yet the fact:
+# for a long time this tuple was caught in exactly one place, the co-editing
+# socket, and `grep -c exception_handler web.py` answered 0. The HTTP half caught
+# nothing, and the same raise that the room turned into a sentence turned into a
+# bare 500 on every page. Both halves catch it now — `_write_or_refuse` below,
+# and `_commit_room` — and neither has a list of its own.
 WRITE_FAILURES = (HTTPException, ValueError, StoreLocked, StoreDiverged, pygit2.GitError)
+
+
+def _refusal(error: Exception) -> HTTPException:
+    """One member of `WRITE_FAILURES`, as the answer a person gets.
+
+    The co-editing socket has said a sentence about these since it was written —
+    `_commit_room`'s `refused` frame, the only place the tuple above was used.
+    The seven HTTP write routes caught nothing, so the same raise left Starlette's
+    default handler to answer 500 with twenty-one bytes of `text/plain`. Measured
+    on a forked plan: 26 write requests over three passes, every one of them
+    `Internal Server Error`, `response.json()` rejecting on all 26, and the store's
+    own sentence — the one that names the two shas — going to the server log,
+    which nobody in a browser is reading.
+
+    Both surfaces are built from the same failure here, so the room and the page
+    cannot start describing one condition in two ways.
+    """
+    # Already an answer. Every route above raises these deliberately — a 404 for a
+    # record that is not there, a 422 for a field that would not read back — and
+    # a store call cannot raise one at all. It is in the tuple because the room's
+    # catcher covers a whole body of work rather than one call, and passing it
+    # through untouched is what lets the tuple be used whole rather than sliced
+    # into a second list that would drift from this one.
+    if isinstance(error, HTTPException):
+        return error
+    if isinstance(error, StoreDiverged):
+        # 503, and the argument is worth writing down because the two codes that
+        # come to mind first are both wrong.
+        #
+        # 500 claims a bug in this service. There is none. `_absorb_remote`
+        # refuses to guess which commits to discard, and that refusal is the
+        # reason nobody's work has been destroyed — the code that ran is the code
+        # that was meant to run, and what is wedged is the repository it was
+        # pointed at. A 500 sends somebody to read this file, which is the one
+        # place the answer is not.
+        #
+        # 409 is the one that reads right and is the one that must not be used.
+        # It already means something to every page that writes: `refusal()` in
+        # `render/shell.py` answers a 409 out of `answer.conflict`, the report
+        # naming the file and each field that disagreed, and four call sites
+        # branch on `status === 409` before they look at anything else. A
+        # divergence carries no such report, so a 409 here would paint the
+        # conflict box empty and say "somebody else changed this first" — a
+        # sentence describing something a reload fixes, about something no reload
+        # will touch.
+        #
+        # 503 is the honest one: this service cannot take writes, for a reason
+        # outside the request, and a monitor that reads 5xx as "the write half is
+        # down" is reading it correctly, because it is down. Deliberately with no
+        # `Retry-After`: RFC 9110 makes that header the way a 503 says "come back
+        # in N seconds", and this does not clear on a timer. It clears when
+        # somebody merges the two histories, and until then a scheduled retry is
+        # another 503 and another line in the log.
+        #
+        # Every browser path is safe with it, and that was checked rather than
+        # assumed: every write site in `render/` tests `!response.ok` — or
+        # `status === 409` — before it looks at anything else, so a 503 is read
+        # as a refusal at all of them and as success at none. Held from the
+        # browser's side by `test_every_page_that_writes_says_the_whole_sentence_
+        # a_forked_plan_answers` in `tests/test_writes.py`, which drives the
+        # shipped scripts with whatever this function actually returns.
+        return HTTPException(
+            503,
+            # The store's own words first. They carry the two shas, which are the
+            # whole of what somebody with a terminal needs, and they keep the
+            # sentence in the log identical to the sentence on the page. Then the
+            # part the store cannot know: that the request was refused, that this
+            # is the plan and not this one record, and that trying again is not
+            # the thing to do.
+            f"{error} — nothing was written, and this is the whole plan rather than this "
+            "one record. Every save will be refused until somebody merges the two "
+            "histories in the plan repository by hand; trying again will not clear it.",
+        )
+    if isinstance(error, StoreLocked):
+        # Reachable from `Store.__init__` rather than from a write — the flock is
+        # taken once, at open — so this arm is for the day that stops being true.
+        # 503 for the same reason as above and not the one below: another process
+        # holding the lock is not a bug in this one. Nothing is added to the
+        # store's own words, which already name the holding pid and how to clear
+        # it; all this route knows and it does not is that nothing was written.
+        return HTTPException(503, f"{error} Nothing was written.")
+    # `ValueError` and `pygit2.GitError`: the failures the tuple names and this
+    # file cannot write a better sentence for than the class and the message. The
+    # room says exactly this, in exactly these words, in its own last arm — one
+    # condition, one description, on both surfaces. 500 here and not above,
+    # because an unexpected git error IS this service failing to do a thing it
+    # should be able to do.
+    #
+    # It costs the traceback in the server log, because a handled `HTTPException`
+    # is not logged the way an escaped exception is. That is the trade this file
+    # keeps making and it is the right way round: the log has a reader only if
+    # somebody already knows to look, and the person who pressed Save has no
+    # other way to be told anything at all. The class name travels in the answer
+    # rather than a shrug, which is what makes the answer worth reading.
+    return HTTPException(500, f"that save did not go through: {type(error).__name__}: {error}")
+
+
+async def _write_or_refuse(write, /, *args, **kwargs):
+    """Run one store write off the event loop, and answer rather than crash.
+
+    The narrow waist every HTTP write already had: each of the seven routes ends
+    in exactly one `asyncio.to_thread(store.…)` call, so wrapping that call is
+    the whole of the write path and nothing else. Kept as a function rather than
+    an `@app.exception_handler`, because `WRITE_FAILURES` is true of a *write*
+    and is not true of the app: a `ValueError` out of a read route is not a
+    refused save, and registering the tuple's members app-wide would answer one
+    as though it were.
+
+    `test_no_write_route_escapes_the_refusal` (`tests/test_web.py`) reads this
+    file as syntax and holds the shape — every `store.write`, `store.write_all`
+    and `store.put_asset` outside `_commit_room` is the first argument here — so
+    the eighth write route cannot be added without it.
+    """
+    try:
+        return await asyncio.to_thread(write, *args, **kwargs)
+    except WRITE_FAILURES as error:
+        raise _refusal(error) from None
+
+
+def _wedged(state: Condition) -> str:
+    """A store that cannot write, said so a person can act on it.
+
+    Beside `_refusal` because they are the two halves of one condition and have to
+    stay legible against each other: that one answers the person who pressed Save,
+    this one answers `/api/health`. Both open on `_absorb_remote`'s own wording —
+    the sentence in the server log and in the room's `refused` frame — because
+    wording one outage three ways makes it look like three outages.
+
+    They differ in the half that follows, and deliberately. A person who pressed
+    Save is told their save did not land and that trying again will not change
+    that. An operator holding a red monitor has a different first instinct, and it
+    is the wrong one: on Cloud Run's in-memory filesystem a restart really does
+    clear this, by discarding exactly the commits `unpushed` is counting. So here
+    the number and the warning travel together.
+    """
+    many = state.unpushed != 1
+    return (
+        f"{state.refusal}. Retrying will not help and neither will a restart: "
+        f"on this filesystem a restart clears it by discarding the {state.unpushed} "
+        f"commit{'s' if many else ''} on this disk that "
+        f"{'have' if many else 'has'} not reached the remote. Somebody has to "
+        "merge the two histories in the plan repository by hand — "
+        "deploy/RUNBOOK.md, 'The service cannot write'."
+    )
+
 
 # Two names for one session, chosen by the scheme the request actually arrived
 # on, because the `__Host-` prefix is not a hint — it is a rule the browser
@@ -1327,7 +1479,7 @@ def create_app(
     def page(html: str) -> HTMLResponse:
         return HTMLResponse(html)
 
-    def record_list(only: str | None) -> HTMLResponse:
+    def record_list(request: Request, only: str | None) -> HTMLResponse:
         """The landing and its two inbox views: one renderer, one page, the
         population decided by the route."""
         commit, index = index_now()
@@ -1343,25 +1495,30 @@ def create_app(
                 edited=edited_by_id(stamps),
                 now=int(time.time()),
                 only=only,
+                may_write=may_write(request),
             )
         )
 
     @app.get("/", response_class=HTMLResponse)
-    def records() -> HTMLResponse:
-        return record_list(None)
+    def records(request: Request) -> HTMLResponse:
+        return record_list(request, None)
 
     @app.get("/issues", response_class=HTMLResponse)
-    def issues() -> HTMLResponse:
-        return record_list("issue")
+    def issues(request: Request) -> HTMLResponse:
+        return record_list(request, "issue")
 
     @app.get("/notes", response_class=HTMLResponse)
-    def notes() -> HTMLResponse:
-        return record_list("note")
+    def notes(request: Request) -> HTMLResponse:
+        return record_list(request, "note")
 
     @app.get("/table", response_class=HTMLResponse)
-    def table() -> HTMLResponse:
+    def table(request: Request) -> HTMLResponse:
         commit, index = index_now()
-        return page(render.render_table(index, render.ROUTES, base_commit=commit))
+        return page(
+            render.render_table(
+                index, render.ROUTES, base_commit=commit, may_write=may_write(request)
+            )
+        )
 
     @app.get("/graph", response_class=HTMLResponse)
     def graph() -> HTMLResponse:
@@ -1590,7 +1747,7 @@ def create_app(
                 422,
                 f"that would not read back as {article}: {why_it_will_not_read(error)}",
             ) from None
-        written = await asyncio.to_thread(
+        written = await _write_or_refuse(
             store.write_all,
             {f"{DIRECTORY[kind]}/{record_id}.md": content, path: marked},
             base_commit=base,
@@ -1667,6 +1824,18 @@ def create_app(
     def new(request: Request, kind: str = "task") -> HTMLResponse:
         if kind not in DIRECTORY:
             raise HTTPException(422, f"kind must be one of {sorted(DIRECTORY)}")
+        # A reader is refused the page rather than shown a hollow one. Every
+        # control on the create form is behind `may_write`, so a signed-out
+        # visitor who reached it got the heading, the kind picker and nothing to
+        # type into — jcanton, 2026-08-24: "this opens a crippled editor page".
+        #
+        # Asked through `writer` (which `may_write` calls) and not through the
+        # session, because the two disagree in the mode the tool is tried in:
+        # under `--auth dev` there is no session and `/api/me` says signed out,
+        # while the write path invents a user and takes the write. A gate on the
+        # session would refuse the demo its own create form.
+        if not may_write(request):
+            raise HTTPException(403, "sign in to create a record")
         commit, index = index_now()
         who = viewer(request)
         return page(
@@ -1780,14 +1949,61 @@ def create_app(
     # ships points at it any more.
     @app.get("/healthz")
     @app.get("/api/health")
-    def healthz() -> dict:
-        # `version` because the whole point of tagging a deploy is being able to
-        # ask the running service what it is, and until now it could not answer.
-        # `head` is the PLAN's commit and moves whenever anybody saves a record;
-        # `version` is this code's, and moves only on a release. They were one
-        # field's worth of confusion apart, and the deploy runbook in AGENTS.md
-        # told a reader to check a version string that nothing served.
-        return {"ok": True, "head": store.head(), "version": __version__}
+    def healthz() -> JSONResponse:
+        """Whether this service can write, in the two places a check looks.
+
+        `ok` was a literal, so it could not be false, and a store wedged on
+        `StoreDiverged` — every save answering 500, for the life of the container
+        — reported itself healthy on all six asks the concurrency audit made of
+        it. `store.condition()` reads that state off two local refs; see its
+        docstring for why there is no fetch here and nothing to clear.
+
+        **`ok` is about writing, not about pushing.** A divergence is permanent
+        and needs a person; `unpushed` above zero is usually GitHub having been
+        away for a moment, and it goes back to zero on its own at the next save,
+        because a push sends everything that is ahead. A flag that goes red for a
+        condition that heals itself is a flag people learn to ignore, which is how
+        the one that matters gets missed. So the verdict is `diverged` alone, and
+        `unpushed` is a number beside it for a monitor to set its own threshold
+        and its own patience on.
+
+        **503 and not a 200 carrying a false flag.** `_refusal` argues the code
+        itself and this uses the same one, so the write routes and the check that
+        watches them cannot disagree about what a wedged plan is. What is this
+        route's own argument is that the code has to move at all: a flag only a
+        JSON-parsing reader can see is precisely the second key nobody reads.
+        `gcloud_deploy.sh` verifies a deploy with `curl -fsS "$URL/api/health"`,
+        which exits 0 on any 200 whatever the body says, and an uptime check is a
+        status code unless somebody configures it not to be. Left at 200, this
+        would be a flag that is honest and unread, which is the outage again.
+
+        The corollary, and it belongs in `deploy/RUNBOOK.md` rather than only
+        here: this is not a liveness probe and must not be wired as one. Cloud Run
+        answers a failing liveness probe by replacing the container, and replacing
+        the container clears this condition by discarding the unpushed commits.
+
+        `head` and `version` keep their meanings: `head` is the PLAN's commit and
+        moves whenever anybody saves a record, `version` is this code's and moves
+        only on a release. They were one field's worth of confusion apart, and the
+        deploy runbook told a reader to check a version string nothing served.
+        """
+        state = store.condition()
+        return JSONResponse(
+            {
+                "ok": not state.diverged,
+                "head": state.head,
+                "version": __version__,
+                "unpushed": state.unpushed,
+                # Always present, `null` when there is nothing wrong: a key that
+                # appears only sometimes is a key a JSON path breaks on, and this
+                # is read by scripts. The wording is `_absorb_remote`'s own, so
+                # the operator reading a monitor and the person who pressed Save
+                # are told the same thing, plus what to do about it — which is the
+                # half a condition report is useless without.
+                "detail": _wedged(state) if state.diverged else None,
+            },
+            status_code=503 if state.diverged else 200,
+        )
 
     @app.get("/api/index.json")
     def index_json() -> JSONResponse:
@@ -1949,7 +2165,7 @@ def create_app(
         loop = loop_made(candidate, index_now()[1].records.values())
         if loop:
             raise HTTPException(409, loop)
-        written = await asyncio.to_thread(
+        written = await _write_or_refuse(
             store.write,
             path=path,
             content=content,
@@ -2031,7 +2247,7 @@ def create_app(
             ]
             files[where] = _patched(store.read(base, where), {"depends_on": kept}, None, where)
 
-        written = await asyncio.to_thread(
+        written = await _write_or_refuse(
             store.write_all,
             files,
             base_commit=base,
@@ -2077,7 +2293,7 @@ def create_app(
             raise HTTPException(
                 422, f"that would not read back as a cycle: {why_it_will_not_read(error)}"
             ) from None
-        written = await asyncio.to_thread(
+        written = await _write_or_refuse(
             store.write,
             path=path,
             content=content,
@@ -2217,7 +2433,7 @@ def create_app(
         if candidate is None:
             raise HTTPException(422, f"that would not read back as a person: {why}")
 
-        written = await asyncio.to_thread(
+        written = await _write_or_refuse(
             store.write,
             path=path,
             content=content,
@@ -2265,7 +2481,9 @@ def create_app(
                 413, f"that image is {len(data) // 1024} KB; the limit is "
                      f"{MAX_ASSET_BYTES // 1024} KB"
             )
-        path, fresh = await asyncio.to_thread(store.put_asset, data, IMAGE_TYPES[kind], user.login)
+        path, fresh = await _write_or_refuse(
+            store.put_asset, data, IMAGE_TYPES[kind], user.login
+        )
         # The sha goes back to the uploader as well as out to everybody else. The
         # shell's banner suppresses news of a commit the tab made itself, and it
         # can only do that if the request that made it hands the sha back — an
@@ -2370,7 +2588,7 @@ def create_app(
                 {"problems": [p.model_dump(mode="json") for p in problems]}, status_code=422
             )
 
-        written = await asyncio.to_thread(
+        written = await _write_or_refuse(
             store.write,
             path=f"{DIRECTORY[kind]}/{record_id}.md",
             content=content,

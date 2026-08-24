@@ -51,48 +51,27 @@ and each says why it is still here.
 
 ## What is still owed
 
-* **The graph legend's shared grid cannot align rows of unequal length.** Found
-  2026-08-24 when `thinking` gave the status row a sixth key — which jcanton
-  accepted in advance ("the legend table in the graph page will earn one more
-  cell for the status row, which is ok"). What he did not accept is what it costs,
-  and it is the fault he has already reported once in these words: *"there is too
-  much horizontal space between cards in the legend"*.
+* **The table's cells are still editable to a reader.** Found on 2026-08-24 while
+  gating the create buttons, and left alone in that commit on purpose.
 
-  `.legends` is ONE grid and each `<ul>` is `display: contents`, so the two rows
-  share columns — that is the fix for "the legend is still wonky: not aligned",
-  asked for three times. A shared column is as wide as the widest word in it, so
-  the pairing decides the air:
+  `render_table` sets `editable = base_commit is not None`, which means "there is
+  a server behind this page" and is standing in for "this person may write" —
+  the same conflation the Create button had. So a signed-out visitor can
+  double-click a cell, type into it, press Enter, and collect a 403 from the
+  save. `role="grid"` is on the table for them, the combobox is on the page, and
+  the draft row's `+` is offered.
 
-  ```
-  col   2          3        4       5              6           7
-  pri   Very low   Low      Medium  High           Very high   —
-  st    Thinking   Shaping  Ready   In progress    Done        Shelved
-  ```
+  It is the rule from #19 — do not draw a control whose only answer for this
+  person is a refusal — one door further in. It was not changed under the
+  create-button heading because turning the whole table read-only for readers is
+  a bigger answer than the one asked for, and it wants a look: the reader still
+  needs to sort, filter, search and follow links, so `editable` has to split
+  rather than simply narrow.
 
-  `High` now shares a column with `In progress`, which puts **58px** between two
-  priority keys against a 40px ceiling that exists because of the complaint above.
-  `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing` fails on that
-  number, correctly.
-
-  **Pairing from the right does not fix it** — `Medium` lands against
-  `In progress` instead. With five priorities and six statuses no pairing avoids
-  putting a short word against a long one, so the shared grid is now buying an
-  alignment it cannot deliver and charging air for it.
-
-  Three ways out, none of them measured yet because this is a question about
-  taste and jcanton has exercised it on this legend three times:
-
-  1. **Two independent right-anchored rows**, ragged on the left. Reverses the
-     one-grid decision — but that decision was about staggering when both rows had
-     five keys, and with six against five there is nothing left to align.
-  2. **Keep the grid and let the status row wrap** to a second line, so each line
-     has at most five keys and the columns pair as they did.
-  3. **Give the status row its own grid** and align only the two `legendname`
-     cells, so the rows still start together and each sizes its own keys.
-
-  Whoever does this should read the test's docstring first: it already records
-  jcanton asking for the rows to be exactly equal and then, "having seen what that
-  cost", asking for them not to be. This is that lesson one step further on.
+  Thirty-one test call sites pass `base_commit` to `render_table` and expect an
+  editable grid, so whoever does this decides whether `may_write` defaults True
+  (kind to the tests, unsafe if a caller forgets) or False (safe, and thirty-one
+  edits). `render_detail` already defaults it False, which is the precedent.
 
 
 * **A container's progress rollup charges its container children half a week.**

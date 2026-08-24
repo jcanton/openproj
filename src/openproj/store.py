@@ -57,6 +57,34 @@ class WriteResult(BaseModel):
     pushed: bool = False
 
 
+class Condition(BaseModel):
+    """Whether this store can write, and how much of it is only on this disk.
+
+    Every field is read from refs on the local filesystem. Nothing here talks to
+    the network, which is the whole point: a health answer that fetches is slow,
+    fails when GitHub is slow, and answers a different question every time it is
+    asked.
+    """
+
+    head: str
+    # The newest commit this process has reason to believe the remote holds:
+    # `refs/remotes/origin/main`, which libgit2 moves on a fetch AND on a
+    # successful push. None when no remote is configured, or before anything has
+    # fetched or pushed.
+    remote: str | None
+    # Local and remote have both moved and neither contains the other — the exact
+    # comparison `_absorb_remote` makes before it raises, so the flag and the
+    # raise cannot disagree about the same repository.
+    diverged: bool
+    # Commits on local `main` that `remote` does not hold: what this container
+    # loses if it is replaced. `pushed: false` tells one caller about one write;
+    # this is the same fact for the whole store, and the number a monitor watches.
+    unpushed: int
+    # The sentence, when there is one to say. Built by `_diverged_message`, so it
+    # is the same wording a caller gets from `StoreDiverged` itself.
+    refusal: str | None
+
+
 class NotAPlanRepository(RuntimeError):
     """The path given is not a git repository, and must not be searched upwards for
     one — see the note in `Store.__init__`."""
@@ -73,6 +101,21 @@ class StoreDiverged(RuntimeError):
     commits, and a tracker that silently drops a commit is worse than one that
     stops and says so.
     """
+
+
+def _diverged_message(local: str, remote: str) -> str:
+    """The one wording for the one condition that stops every write.
+
+    It was written out twice — in `push` and in `_absorb_remote` — and is now
+    read a third time by `Store.condition`, which has no exception to take it
+    from. Three copies of a sentence is three chances for the one a person
+    actually reads to be the stale one, and this file's own rule is that an
+    invariant written twice is guarded once.
+    """
+    return (
+        f"local {local[:7]} and remote {remote[:7]} have both moved; "
+        "refusing to guess which commits to discard"
+    )
 
 
 def _split(text: str) -> tuple[str, str]:
@@ -494,6 +537,23 @@ class Store:
         self._lock.truncate()
         self._lock.write(str(os.getpid()))
         self._lock.flush()
+        # Where the branch stood when this process took it over — read after the
+        # flock, so it is the tip nobody else can be moving. It is the floor
+        # `condition` counts unpushed commits from when there is no tracking ref
+        # to count from: a bare clone's tip came FROM the remote, so counting the
+        # history behind it as "at risk" would answer `unpushed: 347` on a healthy
+        # cold start and teach everybody to ignore the number. It also bounds that
+        # revwalk to the commits this process made rather than to the size of the
+        # plan's history, which is what keeps a health check cheap.
+        # `.get`, not `head()`, because a plan repository that has never been
+        # committed to has no `refs/heads/main` at all and `head()` raises a
+        # `KeyError` on it. That is not an error state: `pygit2.init_repository`
+        # gives an unborn branch, which is what a brand-new plan and every
+        # `create_app` against a fresh bare repo start from. `condition` treats
+        # `None` as "no floor to count from", which is the truth — there are no
+        # commits to be at risk.
+        born = pygit2.Repository(str(self._path)).references.get(_BRANCH)
+        self._opened_at = str(born.target) if born else None
 
     # -- reading, always at an explicit commit ------------------------------
 
@@ -607,6 +667,73 @@ class Store:
         reference = repo.references.get(_TRACKING)
         return str(reference.target) if reference else None
 
+    def condition(self) -> Condition:
+        """Can this store write, and how much of it is only on this disk.
+
+        **Two local refs and no network.** `refs/heads/main` against
+        `refs/remotes/origin/main` is the same comparison `_absorb_remote` makes
+        one line before it raises, so this is not a second opinion about the
+        wedge — it is that opinion, read from outside the lock. Adding a fetch
+        here would make the answer slow, make it fail when GitHub does, and make
+        it a different question every time somebody asked it.
+
+        **It reports the condition as of the last write attempt, and that is the
+        right window.** The tracking ref only moves when something fetches or
+        pushes, so a fork that happened thirty seconds ago is invisible until
+        this process next tries to write. That is not a gap to close: "can this
+        service write" is answerable only by having tried, and the alternative is
+        a health route that goes red because somebody else's push is in flight.
+
+        **There is nothing to clear, which is the point.** This is a reading of
+        the world, not a memory of an event. It goes false the moment
+        `_absorb_remote`'s fetch teaches the process the histories forked, and
+        true again the moment a fetch or a push teaches it they no longer have —
+        which is exactly the moment a write would land, because the write asks
+        these same two refs. A recorded flag cleared by "a successful write"
+        would have to decide what counts as one: `PUT /api/icon` answers 200 for
+        an icon that is already set without ever reaching the store, and clearing
+        on that would report health in the middle of a total outage. A flag never
+        cleared is worse still — it is cleared by restarting the container, and
+        on Cloud Run a restart clears this by discarding the very commits
+        `unpushed` is counting.
+
+        No lock, and a fresh `Repository`: this is read while a save holds
+        `_writing`, and a health check that waits behind a 600 ms push is a
+        health check that reports the push.
+        """
+        repo = pygit2.Repository(str(self._path))
+        local = str(repo.references[_BRANCH].target)
+        if not self._remote:
+            # A laptop. There is no remote to be ahead of, behind or beside, so
+            # nothing is waiting to be pushed — `unpushed: 0` rather than the
+            # whole history, which is what "not known to be on the remote" would
+            # otherwise mean here.
+            return Condition(
+                head=local, remote=None, diverged=False, unpushed=0, refusal=None
+            )
+        reference = repo.references.get(_TRACKING)
+        remote = str(reference.target) if reference else None
+        # Equality first: `descendant_of(x, x)` is false — a commit is not its own
+        # descendant — so a store level with the remote would otherwise read as a
+        # fork. `push` carries the same note for the same reason.
+        diverged = (
+            remote is not None
+            and remote != local
+            and not repo.descendant_of(local, remote)
+            and not repo.descendant_of(remote, local)
+        )
+        walk = repo.walk(local, SortMode.NONE)
+        floor = remote or self._opened_at
+        if floor is not None:
+            walk.hide(floor)
+        return Condition(
+            head=local,
+            remote=remote,
+            diverged=diverged,
+            unpushed=sum(1 for _ in walk),
+            refusal=_diverged_message(local, remote) if remote and diverged else None,
+        )
+
     def fetch(self) -> str | None:
         """Bring the tracking ref up to date. Returns the remote head if it moved."""
         if not self._remote:
@@ -636,10 +763,7 @@ class Store:
         # descendant — so a store with nothing to send looked exactly like a fork.
         if remote_head is not None and remote_head != local:
             if not self._repo.descendant_of(local, remote_head):
-                raise StoreDiverged(
-                    f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
-                    "refusing to guess which commits to discard"
-                )
+                raise StoreDiverged(_diverged_message(local, remote_head))
         return self._send()
 
     def _send(self) -> bool:
@@ -952,10 +1076,7 @@ class Store:
         if self._repo.descendant_of(remote_head, local):
             self._repo.references[_BRANCH].set_target(remote_head)
         elif not self._repo.descendant_of(local, remote_head):
-            raise StoreDiverged(
-                f"local {local[:7]} and remote {remote_head[:7]} have both moved; "
-                "refusing to guess which commits to discard"
-            )
+            raise StoreDiverged(_diverged_message(local, remote_head))
 
     def _finish(self, commit: str, outcome: str) -> WriteResult:
         """Commit made. Try to push, and never claim success for a commit that is
