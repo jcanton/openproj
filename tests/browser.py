@@ -242,17 +242,27 @@ def _devtools(browser: str, url: str, profile: Path):
         chrome_process.wait(timeout=30)
 
 
-def _evaluated(call, expression: str):
+def _evaluated(call, expression: str, patient: bool = False):
     """One expression, awaited, with whatever it threw reported as itself.
 
     A `Runtime.evaluate` that throws answers 200 with an `exceptionDetails` and
     no value, so a caller that reads `result.value` sees `None` and reports the
     page as having answered nothing — which is the same shape as a page that did
     not lay out, and points at the harness instead of at the line that threw.
+
+    **`patient` is the difference between the two callers, and it is not a knob.**
+    `in_a_live_page` asks the SAME expression over and over until something
+    truthy comes back, so a throw there is an ordinary step of the walk: the
+    element is not drawn yet, or a click has just begun a navigation and the
+    context this ran in no longer exists. Reporting those would fail a test on
+    its first turn of a loop written to have many. `pressed_in` asks once, after
+    the press, and a throw there is the answer.
     """
     answer = call("Runtime.evaluate",
                   {"expression": expression, "returnByValue": True, "awaitPromise": True})
     thrown = answer.get("result", {}).get("exceptionDetails")
+    if thrown and patient:
+        return None
     assert not thrown, f"the page threw: {thrown.get('exception', {}).get('description', thrown)}"
     return answer.get("result", {}).get("result", {}).get("value")
 
@@ -332,7 +342,7 @@ def in_a_live_page(
         value = None
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            value = _evaluated(call, expression)
+            value = _evaluated(call, expression, patient=True)
             if value:
                 break
             time.sleep(0.25)
