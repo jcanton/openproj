@@ -702,7 +702,21 @@ class Store:
         health check that reports the push.
         """
         repo = pygit2.Repository(str(self._path))
-        local = str(repo.references[_BRANCH].target)
+        born = repo.references.get(_BRANCH)
+        if born is None:
+            # A plan with no commits yet. `pygit2.init_repository` leaves
+            # `refs/heads/main` absent until the first one, so this is what every
+            # brand-new plan is for as long as it takes somebody to write a
+            # record — and `references[...]` raises `KeyError` on it, which made
+            # `/api/health` answer 500 on exactly the plan a first-time reader
+            # points the tool at.
+            #
+            # Healthy, and honest: there is nothing committed, so there is
+            # nothing unpushed and nothing to have diverged. `head` is empty
+            # rather than invented, which is the same answer `store.head()`
+            # would give if it could.
+            return Condition(head="", remote=None, diverged=False, unpushed=0, refusal=None)
+        local = str(born.target)
         if not self._remote:
             # A laptop. There is no remote to be ahead of, behind or beside, so
             # nothing is waiting to be pushed — `unpushed: 0` rather than the

@@ -987,6 +987,38 @@ def test_a_writer_is_offered_the_door(client: TestClient):
     assert client.get("/new?kind=task").status_code == 200
 
 
+def test_health_answers_on_a_plan_that_has_no_commits_yet(tmp_path: Path):
+    """`pygit2.init_repository` leaves `refs/heads/main` absent until the first
+    commit, so `references[_BRANCH]` raises `KeyError` on a brand-new plan — and
+    `condition()` reads it on every `/api/health`.
+
+    That is the plan a first-time reader points the tool at: `openproj serve`
+    against a repository they just made. The health route answered **500** on it,
+    which is the one route that must never be the thing that is broken.
+
+    Healthy and honest is the answer: nothing is committed, so nothing is
+    unpushed and nothing can have diverged. `head` is empty rather than invented.
+
+    The sibling of this was fixed in `Store.__init__` when `_opened_at` hit the
+    same ref; `condition` has its own lookup and was missed, which is what a
+    second reader of the same line is for.
+    """
+    import pygit2
+
+    from openproj.web import create_app
+
+    repo = tmp_path / "brand-new.git"
+    pygit2.init_repository(str(repo), bare=True, initial_head="main")
+
+    with TestClient(create_app(repo, auth="dev")) as client:
+        answer = client.get("/api/health")
+
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["ok"] is True
+    assert answer.json()["head"] == ""
+    assert answer.json()["unpushed"] == 0
+
+
 def test_every_write_answer_says_whether_the_commit_reached_the_remote(
     client: TestClient, repo_path: Path
 ):
