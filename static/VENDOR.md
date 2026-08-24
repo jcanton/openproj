@@ -323,6 +323,22 @@ element, which is the only real pixel work in that feature. So it is not drawn. 
 presence list names who else is in the document, which is the half that survives every
 reader — and a caret one line off is worse than no caret.
 
+**Both halves of that paragraph have since been overtaken, 2026-08-24, and the sentence at the end
+of it is why rather than despite.** A band IS drawn now, on both surfaces. On the `<textarea>` it is
+the mirror, measured — the one real piece of pixel work, and it is a line and not a caret, which is
+the concession that paragraph was really making. On Ace there is no mirror and no pixel work at all:
+the band is a marker in Ace's own layer, laid out on the frame Ace lays out its selection on, and a
+seat is an anchor the editor moves inside `applyDelta` rather than an index this page keeps. The
+rule the paragraph set is what forced that shape and then what let it ship — the alternative was
+five hand-measured terms against zero, and it is now measured at eighty widths, scrolled, folded and
+against the painted row, in `tests/test_seats.py`.
+
+**What this costs a re-vendoring**, and the only thing in this feature that does: `addDynamicMarker`,
+`drawScreenLineMarker`, `documentToScreenRow`, `createAnchor` and the renderer's `updateBackMarkers`
+have to survive it. All five are public. Nothing reads a `$`-prefixed field, and the login is drawn
+by a custom property on the marker's own `cssText` rather than as a child node, because the marker
+layer recycles its divs between markers and never clears their text.
+
 **No Gantt library.** The timeline is hand-rolled SVG in `render.py`. Hatching for
 estimated and unowned spans, cycle boundary rules and per-bar explanations are all
 custom, the scheduler emits exact spans, and a library would be fought rather than
