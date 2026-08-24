@@ -2075,16 +2075,13 @@ function clearedThrough(sha) {
   return true;
 }
 
-// The pusher's confirmation, rebroadcast by the shell off the page's one event
-// stream — see `broadcast` in web.py for the frame. Parked first, because a
-// parked sha must leave UNLANDED as a problem BEFORE the clear pass below can
-// walk past it: parked is on GitHub but not on main, and nothing on this page
-// resolves it, so no landing may tidy it away. Then every sha the frame names
-// — the tip it landed, and each OLD sha of the re-mint map, which is the only
-// name this tab ever saw for that commit — clears its mark and every mark
-// before it.
-addEventListener('openproj:landed', event => {
-  const {landed, remapped, parked} = event.detail;
+// The parked half of both messengers — the frame below and the poll's
+// `settleMarks` — because the verdict is the same (sha, branch) pairs on both
+// and a second copy would let the two drift into disagreeing about what
+// parked means. A parked sha leaves UNLANDED as a PROBLEM, never a clear:
+// the content is on GitHub but not on main, and nothing on this page
+// resolves that.
+function strandMarks(parked) {
   let moved = false;
   for (const [sha, branch] of parked || []) {
     const id = UNLANDED.get(sha);
@@ -2096,6 +2093,18 @@ addEventListener('openproj:landed', event => {
     announce(`${id} could not land on GitHub's main — its save is parked on ${branch}`);
     moved = true;
   }
+  return moved;
+}
+
+// The pusher's confirmation, rebroadcast by the shell off the page's one event
+// stream — see `broadcast` in web.py for the frame. Parked first, because a
+// parked sha must leave UNLANDED as a problem BEFORE the clear pass below can
+// walk past it. Then every sha the frame names — the tip it landed, and each
+// OLD sha of the re-mint map, which is the only name this tab ever saw for
+// that commit — clears its mark and every mark before it.
+addEventListener('openproj:landed', event => {
+  const {landed, remapped, parked} = event.detail;
+  let moved = strandMarks(parked);
   for (const sha of [landed, ...Object.keys(remapped || {})])
     moved = clearedThrough(sha) || moved;
   if (moved) draw();
@@ -2131,14 +2140,19 @@ async function refreshRows() {
 }
 
 // The poll half of mark-clearing; the frame half is the `openproj:landed`
-// listener above. The payload's `landed` is the confirmed tip and clears by
-// name exactly as a frame's would; `unpushed === 0` says the whole pile has
-// drained, which covers the tab that reconnected — its own sha may never be
-// spoken again, because the tip moved past it or a recovery re-minted it, and
-// either way a drained pile means the remote holds it. Parked marks are
-// already out of UNLANDED and stay put: a poll clears saves the remote holds,
-// it does not resolve problems.
+// listener above. Parked FIRST, and off the payload by name, because a parked
+// recovery leaves the pile honestly drained — the sha left main for a branch,
+// so `unpushed` is 0 — and the drained-pile arm below would otherwise clear
+// the one mark that had to become the problem: the page telling somebody
+// their work is on GitHub when it is waiting on a pull request. (The payload
+// can only name the shas this server process parked; a mark from before the
+// process is past every messenger's reach.) Then the payload's `landed` — the
+// confirmed tip — clears by name exactly as a frame's would; `unpushed === 0`
+// covers the tab that reconnected: its own sha may never be spoken again,
+// because the tip moved past it or a recovery re-minted it, and either way a
+// drained pile means the remote holds it.
 function settleMarks(fresh, asked) {
+  strandMarks(fresh.parked);
   if (typeof fresh.landed === 'string') clearedThrough(fresh.landed);
   if (fresh.unpushed === 0)
     for (const sha of asked) UNLANDED.delete(sha);

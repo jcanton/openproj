@@ -2302,6 +2302,14 @@ def create_app(
         state = store.condition()
         payload["landed"] = state.remote
         payload["unpushed"] = state.unpushed
+        # The parked verdict must ride here too, not only in the landed frame:
+        # a parked recovery leaves `unpushed: 0` — the sha honestly LEFT the
+        # pile for a branch — so a tab that missed the frame would read the
+        # two keys above as "everything landed" and clear the one mark that
+        # had to become the branch-naming problem. Same (sha, branch) pairs as
+        # the frame; the store's method says how far back it can honestly
+        # answer (since this process started — no further record exists).
+        payload["parked"] = store.parked_branches()
         return JSONResponse(what_json_can_carry(payload))
 
     # -- writing ------------------------------------------------------------

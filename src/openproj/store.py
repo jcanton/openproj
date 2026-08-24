@@ -779,6 +779,20 @@ class Store:
         # the instance anyway (see `_STRANDED`), and an offer for a branch a
         # previous life parked falls back to pointing at that pass's log.
         self._parked_reasons: dict[str, list[str]] = {}
+        # Every sha this process has parked, and the branch each went to —
+        # kept for the LIFE of the process, deliberately not dropped by
+        # `_settle` the way the refs and the reasons are. This is the polled
+        # fallback's only source for the parked verdict: a parked recovery
+        # leaves `unpushed: 0` and `parked: 0` honestly, and the landed frame
+        # that named the sha rides a stream with no replay — so without this
+        # memory a tab that missed the frame reads "everything landed" and
+        # clears the one mark that had to become a problem. Seeded from any
+        # leftover local refs, which are a previous life's parks on a disk
+        # that survived; shas parked before that are gone from every local
+        # record and cannot be answered from here.
+        self._parked_branches: dict[str, str] = {
+            sha: f"openproj/stranded-{sha}" for sha in _stranded_shas(self._repo)
+        }
         # An flock, not a flag: a second process must fail loudly rather than
         # interleave writes. Somebody will eventually try --workers 4.
         # "a+" rather than "w": opening for write truncates, and truncating would
@@ -1061,6 +1075,25 @@ class Store:
             parked=parked,
             refusal=refusal,
         )
+
+    def parked_branches(self) -> list[tuple[str, str]]:
+        """Every sha this process has parked, and the branch each went to —
+        (sha, branch) pairs in the shape the landed frame announces them.
+
+        This is the poll's carrier for the parked verdict, and its scope is
+        stated rather than papered over: `_settle` deletes the local stranded
+        refs once a branch is confirmed on the remote, so no ref can answer
+        for history — what answers is the in-memory record `__init__` and
+        `_park` keep, which covers exactly the shas parked since this process
+        started (plus leftover refs found at open). A sha parked by an earlier
+        instance is not in it, and a tab holding a mark from before this
+        process is not something any payload can fix.
+
+        Written on the pusher's thread, read on the loop's: one dict-item
+        write and one copy, each atomic under the GIL, so no lock — the same
+        bargain `_parked_reasons` already makes.
+        """
+        return list(self._parked_branches.items())
 
     def fetch(self) -> str | None:
         """Bring the tracking ref up to date. Returns the remote head if it moved."""
@@ -1446,18 +1479,22 @@ class Store:
         the branch is the durability and the PR is only the visibility.
         """
         sha = str(commit.id)
+        branch = f"openproj/stranded-{sha}"
         repo.references.create(f"{_STRANDED}{sha}", sha, force=True)
         # Kept by sha for the pull request's body: the offer happens only once
         # the branch push is confirmed, and by then the sentences naming the
         # disagreement exist nowhere else.
         self._parked_reasons[sha] = refusals
+        # And into the process-lifetime record `parked_branches` serves, which
+        # outlives the ref and the reasons — see its note in `__init__`.
+        self._parked_branches[sha] = branch
         _LOG.warning(
             "parked %s on openproj/stranded-%s — it could not be replayed:\n%s",
             sha[:7],
             sha,
             "\n".join(refusals),
         )
-        return f"openproj/stranded-{sha}"
+        return branch
 
     def _settle(self, repo: pygit2.Repository, shas: list[str]) -> None:
         """These parked commits' branches are on the remote now: drop the local

@@ -3783,10 +3783,11 @@ def test_the_route_the_table_re_reads_is_the_payload_it_was_drawn_from(
     project walked up the tree. A copy that only runs after a save is a copy
     nobody would ever look at again.
 
-    Two keys ride on the route and not on the page: `landed` and `unpushed` are
-    facts about the STORE at the moment it is asked — the poll fallback the
-    per-row marks clear by — and a rendered page cannot carry a moment. What
-    the page was drawn from stays byte-for-byte the route's shape.
+    Three keys ride on the route and not on the page: `landed`, `unpushed` and
+    `parked` are facts about the STORE at the moment it is asked — the poll
+    fallback the per-row marks clear and escalate by — and a rendered page
+    cannot carry a moment. What the page was drawn from stays byte-for-byte
+    the route's shape.
     """
     fresh = client.get("/api/table.json")
 
@@ -3794,6 +3795,9 @@ def test_the_route_the_table_re_reads_is_the_payload_it_was_drawn_from(
     answered = fresh.json()
     assert answered.pop("landed") is None and answered.pop("unpushed") == 0, (
         "this client has no remote, so nothing is confirmed and nothing is waiting"
+    )
+    assert answered.pop("parked") == [], (
+        "no remote means no pusher, no recovery, and nothing ever parked"
     )
     assert answered == payload(page)
 
@@ -5121,6 +5125,58 @@ def test_a_save_answering_while_the_poll_is_in_the_air_keeps_its_mark(page: str)
     )
 
 
+def test_a_parked_save_reaches_a_tab_that_missed_the_frame_through_the_poll(page: str):
+    """A parked recovery leaves `unpushed: 0` — the sha left main for a branch,
+    so the pile is honestly drained — and the landed frame is the only other
+    carrier of the parked verdict, on a stream that is recycled every 300s with
+    no replay. A poll that trusted the drained pile alone would therefore CLEAR
+    the one mark that must become a problem: the page telling somebody their
+    work is on GitHub's main when it is parked on a branch waiting for a pull
+    request.
+
+    So the payload names the parked shas too, and the poll turns them into the
+    branch-naming problem before its clearing arms run. No frame is delivered
+    anywhere in this test — the poll is the only messenger.
+    """
+    committed = "a" * 40
+    branch = f"openproj/stranded-{committed}"
+    fresh = {"rows": {TASK: {"id": TASK, "predicates": []}}, "problems": [],
+             "landed": "f" * 40, "unpushed": 0, "parked": [[committed, branch]]}
+    answer = drive_table(
+        page,
+        "(async () => {"
+        f"  const cell = tbody.querySelector('td[data-record=\"{TASK}\"]"
+        '[data-field="priority"]\');'
+        f"  await saveCell(cell, 'high'); {SETTLE}"
+        f"  const row = () => tbody.querySelector('tr[data-id=\"{TASK}\"]');"
+        "  const marked = !!row().querySelector('.unlanded');"
+        f"  __tick(); {SETTLE}"
+        "  const worn = row().querySelector('.stranded');"
+        "  return {marked,"
+        "          problem: worn ? worn.getAttribute('aria-label') : '',"
+        "          quiet: !!row().querySelector('.unlanded'),"
+        "          announced: document.getElementById('state').textContent};"
+        "})()",
+        replies=[
+            {"status": 200, "json": {"outcome": "committed", "commit": committed,
+                                     "conflict": None, "pushed": False}},
+            {"status": 200, "json": {"problems": []}},
+            {"status": 200, "json": fresh},
+        ],
+    )
+    got = answer["value"]
+
+    assert got["marked"] is True
+    assert branch in got["problem"], (
+        f"the row says {got['problem']!r} after the poll — the drained pile "
+        "cleared a mark whose commit is parked on a branch, not on main"
+    )
+    assert got["quiet"] is False, "the quiet mark must escalate, not stand beside the problem"
+    assert branch in got["announced"], (
+        "a parked commit announced only visually has not announced itself"
+    )
+
+
 def test_the_tables_payload_says_what_the_remote_confirms(tmp_path: Path):
     """`/api/table.json` carries the confirmed tip and the unpushed count, read
     from the same two local refs `/api/health` reads — no network, no lock —
@@ -5157,6 +5213,66 @@ def test_the_tables_payload_says_what_the_remote_confirms(tmp_path: Path):
         "the payload never named the landed commit as the confirmed tip"
     )
     assert payload["unpushed"] == 0, "everything has landed, so nothing is at risk"
+
+
+def test_the_tables_payload_names_the_saves_the_pusher_parked(tmp_path: Path):
+    """After a parked recovery the two refs `condition()` reads are honestly
+    quiet — `unpushed: 0`, `parked: 0`, because `_settle` deletes the local
+    stranded ref once the branch is confirmed on the remote — so nothing in
+    them can tell a polling tab that a sha it is holding a mark for went to a
+    branch instead of main. The payload must say so by NAME, from the store's
+    own memory of what it parked, or the poll reads "everything landed" and
+    clears the one mark that had to become a problem.
+
+    A real store, a real `file://` remote and a real rejected replay, for the
+    sibling test's reason — and the poll waits until the recovery has fully
+    settled (pile drained, tip confirmed), because that is exactly the moment
+    the refs stop answering and only the memory can.
+    """
+    import time
+
+    origin = tmp_path / "origin.git"
+    pygit2.init_repository(str(origin), bare=True, initial_head="main")
+    commit_directly(origin, SEED, "seed the corpus")
+    plan = tmp_path / "plan.git"
+    clone = pygit2.clone_repository(f"file://{origin}", str(plan), bare=True)
+    clone.remotes.delete("origin")
+    # The hand-push that wins: it changes the same field the save below will,
+    # so the replay conflicts and the save's commit parks.
+    outside = commit_directly(
+        origin,
+        {**SEED, PATH: SEED[PATH].replace("owner: ann", "owner: bo")},
+        "task-c00001: owner ann -> bo, by hand",
+    )
+    # Away BEFORE the app starts, back only after the save has committed: the
+    # pusher is poked at birth, and with the remote in reach it would absorb
+    # the hand-push and swap local main onto it before the save ran — turning
+    # the park this test is about into a plain 409 at write time.
+    offline = origin.with_name(origin.name + ".offline")
+    origin.rename(offline)
+    with TestClient(
+        create_app(plan, auth="dev", secret=SECRET, remote=f"file://{origin}")
+    ) as client:
+        client.cookies.set(SESSION_COOKIE, sign_session(ANN, SECRET))
+        answered = save(client, TASK, {"owner": "cy"})
+        assert answered.status_code == 200, answered.text
+        committed = answered.json()["commit"]
+        offline.rename(origin)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            payload = client.get("/api/table.json").json()
+            if payload.get("landed") == outside and payload.get("unpushed") == 0:
+                break
+            time.sleep(0.05)
+
+    assert payload["landed"] == outside and payload["unpushed"] == 0, (
+        "the recovery never settled, so the state this test is about never arose"
+    )
+    assert [committed, f"openproj/stranded-{committed}"] in payload.get("parked", []), (
+        f"the payload says parked={payload.get('parked')!r} — a drained pile "
+        "with a parked sha unnamed is the page telling somebody their work is "
+        "on main when it is waiting on a branch"
+    )
 
 
 # Both states of the landing mark, put on real rows and measured. The quiet ring
