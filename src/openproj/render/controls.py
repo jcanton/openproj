@@ -2408,6 +2408,11 @@ function attachSuggest(input) {
       event.preventDefault();
       choose(items[active].dataset.value);
     } else if (event.key === 'Escape') {
+      // Marked consumed, the way the Enter above already is. The gate panel and
+      // the cell editor both answer Escape one listener later on the same trip
+      // up, and without the mark one press closed this list AND threw away the
+      // edit it was completing — two dismissals for one key.
+      event.preventDefault();
       close();
     }
   });

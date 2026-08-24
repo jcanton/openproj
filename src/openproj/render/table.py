@@ -166,7 +166,7 @@ _TABLE = """
     teaches the third to nobody: a drag has no name written on it anywhere, and
     the grip beside an id is 8px of dotted rule. The `+` row at the bottom says
     what it is by being a control. -#}
-<p class="editbar">{% if creatable %}<a class="button" href="{{ links.new }}">New record</a>
+<p class="editbar">{% if editable %}<a class="button" href="{{ links.new }}">New record</a>
    <span class="hint">double-click a cell, or press Enter on it, to edit it ·
      drag a row by the grip beside its id onto another to file it there</span>
    {% endif %}<span id="state" role="status"></span><span id="summary">
@@ -1129,8 +1129,16 @@ function askFor(cell, status, fields) {
     const label = FIELD_LABELS[field] || field;
     const type = EDITABLE[field] === 'date' ? 'date' : 'text';
     const value = field === 'assigned_on' ? today() : '';
+    // `data-type` and `data-suggest` are what `openEditor` writes on the box it
+    // builds, for the same widget: `data-type` is not decoration — the widget
+    // reads `dataset.type === 'list'` to complete the last comma-separated
+    // token, and without it picking a second assignee replaced the first.
+    const suggest = SUGGESTS[field];
     return `<label>${esc(label)}` +
-      `<input type="${type}" data-field="${esc(field)}" value="${esc(value)}"></label>`;
+      `<input type="${type}" data-field="${esc(field)}"` +
+      ` data-type="${esc(EDITABLE[field])}"` +
+      `${suggest ? ` data-suggest="${esc(suggest)}"` : ''} autocomplete="off"` +
+      ` value="${esc(value)}"></label>`;
   }).join('');
   panel.innerHTML =
     `<p class="asking">${esc(human(status))} needs ${fields.length === 1 ? 'this' : 'these'}` +
@@ -1141,6 +1149,12 @@ function askFor(cell, status, fields) {
   const box = cell.getBoundingClientRect();
   panel.style.left = Math.max(8, Math.min(box.left, innerWidth - panel.offsetWidth - 8)) + 'px';
   panel.style.top = Math.min(box.bottom + 6, innerHeight - panel.offsetHeight - 8) + 'px';
+  // The same autocomplete every other box on this page has. `attachSuggest` runs
+  // over the page once at load, so a box built at runtime has to ask — exactly
+  // as `openEditor` does — and this panel did not: the one place the question is
+  // compulsory offered no help answering it. After the panel is placed, because
+  // the widget positions its list against the box it completes.
+  for (const input of panel.querySelectorAll('input[data-suggest]')) attachSuggest(input);
   panel.querySelector('input').focus();
   panel.querySelector('input').select();
 
@@ -1167,6 +1181,12 @@ function askFor(cell, status, fields) {
   // answers to — a panel that has to be dismissed with the mouse is a panel that
   // stops the keyboard path this table is built around.
   panel.onkeydown = event => {
+    // Unless the suggestion list already answered the key: this listener is on
+    // the panel and fires on the way up, after the widget's own — so without
+    // this, Enter picked the highlighted name AND saved the half-answered
+    // panel, and Escape closed the list AND cancelled the whole question. One
+    // press, one thing done.
+    if (event.defaultPrevented) return;
     if (event.key === 'Enter') { event.preventDefault(); panel.querySelector('#asked').click(); }
     if (event.key === 'Escape') { event.preventDefault(); panel.querySelector('#unasked').click(); }
   };
@@ -1350,6 +1370,15 @@ function openEditor(cell) {
     else stage(field, input.value);
   };
   input.onkeydown = e => {
+    // A key the suggestion list consumed is not this editor's to act on too:
+    // Escape with the list open shipped as "close the list AND discard the
+    // whole cell edit". The Escape still must not bubble — the grid's own
+    // handler abandons a draft row on it — so the stop the branch below does is
+    // done here as well before the early return.
+    if (e.defaultPrevented) {
+      if (e.key === 'Escape') e.stopPropagation();
+      return;
+    }
     if (e.key === 'Enter') { RETURN = true; input.blur(); }
     if (e.key === 'Escape') {
       // Escape means discard. Redrawing first would fire blur with the partial
@@ -3633,8 +3662,8 @@ def _new_row_fields() -> dict[str, dict[str, str]]:
     is asked of the same two places rather than written down a third time:
     `EDITABLE` says which fields a person owns at all, and `model_fields` says
     which of them this kind has. A project has no `person_weeks`, so it gets no
-    box under Appetite; a pitch's `shaped_by` would be here if the table had a
-    column for it, and the day it does this map grows the entry on its own.
+    box under Appetite; `assigned_on` would be here if the table had a column
+    for it, and the day it does this map grows the entry on its own.
 
     A column missing from a kind's map is a column that kind cannot be typed into
     — which is three different sentences and all of them true: `id` is the
@@ -3689,20 +3718,20 @@ def render_table(
         # three problems, so the count and the filter it links to were counting
         # different things and the table opened shorter than the number promised.
         blocked=len({p.record_id for p in blocking}),
-        editable=base_commit is not None,
-        # Narrower than `editable`, and only for the create control. `editable`
-        # is "there is a server behind this page"; this is "this person may
-        # write". A signed-out visitor was offered New record and got a create
-        # form with every control behind `may_write` hidden — jcanton,
-        # 2026-08-24: "this opens a crippled editor page".
-        #
-        # NOT applied to the grid itself in this commit, deliberately: a
-        # signed-out visitor can still double-click a cell here and will get a
-        # 403 from the save. That is the same defect one door further in and it
-        # is written up in `docs/QUEUE.md` rather than changed under the same
-        # heading, because turning the whole table read-only is a bigger answer
-        # than the one that was asked for.
-        creatable=base_commit is not None and may_write,
+        # "There is a server behind this page AND this person may write" — the
+        # first half alone shipped, standing in for the second, so a signed-out
+        # visitor got role="grid", the combobox, the draft row's `+`, and a 403
+        # for pressing Enter on what all of that offered. `docs/QUEUE.md`
+        # predicted this flag would have to split rather than narrow, because
+        # "the reader still needs to sort, filter, search and follow links" —
+        # measured against the template, that is not so: sorting (the `<thead>`
+        # buttons and `draw()`), `_FILTER_JS`, the hover card and the row links
+        # in `rowHtml` all live OUTSIDE the `{% if not editable %}` branch, and
+        # everything inside it is the write machinery (`refreshProblems` and
+        # `refreshRows` are reached only from save paths). The rendered-file
+        # export has exercised the read-only half since it existed; serving it
+        # to a reader is the same page.
+        editable=base_commit is not None and may_write,
         base_commit=base_commit or "",
         links=links,
         columns=_columns_for(index),

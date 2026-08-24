@@ -1452,6 +1452,28 @@ tr.nothing .hint { margin: 0 0 .75rem; }
    of the same box collapsed into one run of unstyled text. */
 #conflict, #row-conflict { border-left: 3px solid var(--danger); padding: .5rem .8rem;
                            margin-top: 1rem; white-space: pre-wrap; font-size: 13px; }
+/* Anything long in that box is folded — jcanton, 2026-08-24: the draft-versus-room
+   report "pushes the editor window up and reduces its height". `white-space:
+   pre-wrap` above is what makes the box as tall as its contents, which is right
+   for a sentence and wrong for a document, and the one message that carries a
+   whole draft was costing the editor nine hundred words of room.
+
+   The fold is a `<details>`, so shut it is one line and there is nothing here to
+   size. OPEN it is capped and scrolls INSIDE itself, which is the half that
+   matters: without the cap, opening the fold puts the page back exactly where it
+   was. 14rem is about ten lines — enough to recognise your own writing, short
+   enough that the editor keeps the screen.
+
+   `white-space: pre` and not `pre-wrap` on the payload: a draft is somebody's
+   markdown and its line breaks are theirs, so it scrolls sideways rather than
+   being re-wrapped into a shape they did not write. The box's own `pre-wrap`
+   would otherwise inherit down into it. */
+#conflict details { margin-top: .5rem; }
+#conflict summary { cursor: pointer; font-weight: 600; }
+#conflict details pre { margin: .4rem 0 0; max-height: 14rem; overflow: auto;
+                        white-space: pre; font-family: var(--font-mono);
+                        font-size: 12px; background: var(--surface-2);
+                        padding: .4rem .5rem; border-radius: 3px; }
 /* Above everything a page can stick to its own edges — the cycle page's commit
    bar sits in exactly this corner — because news that the plan moved under you
    is the one thing on screen that must not be behind something else. */
@@ -1852,12 +1874,14 @@ function showCard(row, x, y, extra) {
 // card that answers it anyway flashes a box over every row on the way past. So
 // hovering ASKS for a card and waits; the wait is cancelled by leaving.
 //
-// 400ms is the delay every hover-intent control settles on: long enough that
-// crossing a row does not open one, short enough that pointing at a row and
-// stopping does not feel broken. The keyboard path on the timeline does not go
-// through here — focus is deliberate, and a delay after a deliberate act is a
-// page that ignored you.
-const CARD_DELAY = 400;
+// 600ms, raised from 400 — jcanton, 2026-08-24: the card came up too eagerly
+// while reading the table. This is the only hover-intent delay in the app, so
+// the number is this app's own judgement, not a convention: long enough that
+// pausing over a row while reading it does not open a box over the next one,
+// short enough that pointing and waiting does not feel broken. The keyboard
+// path on the timeline does not go through here — focus is deliberate, and a
+// delay after a deliberate act is a page that ignored you.
+const CARD_DELAY = 600;
 // And the grace on the way out, which is the whole reason the card can be
 // scrolled: the pointer has to cross the gap between the row and the box, and a
 // card that goes the instant the row is left cannot be reached.
@@ -1869,7 +1893,7 @@ function queueCard(row, x, y, extra) {
   if (!CARD || !row) return;
   clearTimeout(cardTimer);
   clearTimeout(cardLeaving);
-  // Ask for the document NOW, and draw it in 400ms. The wait before a card
+  // Ask for the document NOW, and draw it in 600ms. The wait before a card
   // appears is hover-intent, not politeness, and spending it on the round trip
   // is free: by the time the card is drawn the answer is normally already here,
   // so the fields and the body arrive in one paint. Nothing is drawn from this —
@@ -2335,9 +2359,10 @@ if (ORIGIN) {
   if (typeof from.href === 'string' && ORIGIN_PATH.test(from.href) && from.label) {
     // Every article, because the static export writes the whole corpus into one
     // `detail.html` and each record in it carries its own back link. `a.origin`
-    // and not `.back a`: the page-chrome controls MOVE into this row in full
-    // page — see `showView` on the record page — and the sign-in control the
-    // shell fills in later is a link.
+    // and not `.back a`: the sign-in control the shell fills in later is also
+    // an `<a>`, and in the full-page era (gone 2026-08-24) the record page
+    // moved it and the theme toggle into this very row — the selector names
+    // the one link it means, and stays right if anything joins it again.
     for (const back of document.querySelectorAll('a.origin')) {
       // `setAttribute` and not `back.href =`, which are the same thing in a
       // browser and not in `tests/js/drive.js`: the shim has no reflection, so

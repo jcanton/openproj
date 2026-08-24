@@ -376,11 +376,16 @@ def test_a_date_box_says_what_it_will_store(page: str):
 def test_the_facts_read_as_a_column_beside_the_document(page: str):
     """One `<article>` still — the sidebar is a pane inside the record, not a
     second record — and the prose keeps the measure while the facts take the
-    space that was empty to the right of it."""
+    space that was empty to the right of it.
+
+    The measure is on `.panes` and not on the article: since 2026-08-24 the
+    article is the page's own width, so that the header above the panes is level
+    with the nav in all three views instead of riding the split's extra body."""
     assert page.count("<article") == 1
     assert '<aside class="facts">' in page
     assert page.index('<aside class="facts">') < page.index('<div class="main">')
-    assert re.search(r"article\.record \{[^}]*margin: 0 auto", page, re.S)
+    assert re.search(r"\.panes \{[^}]*width: var\(--measure", page, re.S)
+    assert not re.search(r"article\.record \{[^}]*width:", page, re.S)
 
 
 # --------------------------------------------------------------------------- #
@@ -533,13 +538,39 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
 
     Three headers have to agree, and this is what "agree" means: back link,
     eyebrow, heading, meta line, in that order.
+
+    **Parsed, not searched.** This asked `page.index("<h1>")` until 2026-08-24,
+    which is a claim about a string and not about the document: a stylesheet
+    comment on this page explains what pressing Write used to do to the `<h1>`,
+    and the four characters in that sentence sorted before the heading itself.
+    The page holds four literal `<h1>` and exactly one `<h1>` ELEMENT. A
+    substring cannot tell markup from prose about markup; `elements` can, and
+    the question here was always "in what order does the document put these".
     """
+    def order(page: str, *wanted: str) -> list[int]:
+        """Where each of these sits in document order, by name."""
+        found = {}
+        for at, element in enumerate(elements(page)):
+            classes = element.attrs.get("class", "").split()
+            for name in wanted:
+                if name in found:
+                    continue
+                if name == "heading" and element.tag == "h1":
+                    found[name] = at
+                elif name != "heading" and name in classes and element.tag in ("p", "div"):
+                    found[name] = at
+        missing = [name for name in wanted if name not in found]
+        assert not missing, f"the page has no {missing}"
+        return [found[name] for name in wanted]
+
     detail = client.get(f"/detail/{TASK}").text
-    kind = detail.index('<p class="eyebrow"><span class="chip kind-')
-    assert detail.index('<p class="back">') < kind < detail.index("<h1>")
-    meta = detail.index('<p class="meta">')
-    assert meta > detail.index("<h1>")
-    assert 'class="chip kind-' not in detail[meta:], "and the kind is not said twice"
+    back, kind, heading, meta = order(detail, "back", "eyebrow", "heading", "meta")
+    assert back < kind < heading < meta, (
+        "the header does not read back link, kind, name, id — it reads "
+        f"{sorted(zip((back, kind, heading, meta), ('back', 'kind', 'name', 'id'), strict=True))}"
+    )
+    said = [e for e in elements(detail) if "kind-" in e.attrs.get("class", "")]
+    assert len(said) == 1, f"the kind is said {len(said)} times, not once"
     # Nor is the status, and it is not a chip here at all any more: the facts
     # column draws it as a ball on a hill, which is also the control that sets it.
     # It was a chip in this line AND a chip forty pixels below it, the same word in
@@ -556,16 +587,20 @@ def test_the_kind_is_read_before_the_name_on_every_page_that_has_one(client: Tes
     # The create form is the same document in another mode, so the picker that
     # decides the kind sits where the kind chip sits.
     new = client.get("/new").text
-    picker = new.index('<p class="eyebrow"><label class="kindpick">')
-    assert new.index('<p class="back">') < picker < new.index("<h1>")
+    back, picker, heading = order(new, "back", "eyebrow", "heading")
+    assert back < picker < heading, "the kind picker is not where the kind chip is"
+    assert any(
+        "kindpick" in e.attrs.get("class", "") for e in elements(new)
+    ), "the eyebrow on the create form is not the picker that decides the kind"
 
     # The cycle page has no eyebrow on purpose: its heading is "Cycle 37", so the
     # kind is already the first word of the name and a chip above it would be the
     # restatement the id column's kind chip was. What it does share is the shape.
     cycle = client.get("/cycle/37").text
     assert '<p class="back"><a href="/cycles">' in cycle
-    assert cycle.index('<p class="back">') < cycle.index("<h1>") < cycle.index('<p class="meta">')
-    assert 'class="eyebrow"' not in cycle
+    back, heading, meta = order(cycle, "back", "heading", "meta")
+    assert back < heading < meta, "the cycle page does not share the header's shape"
+    assert not [e for e in elements(cycle) if "eyebrow" in e.attrs.get("class", "")]
 
 
 def test_a_betting_cell_saves_only_what_somebody_typed(client: TestClient):
@@ -594,6 +629,69 @@ def test_picking_a_suggestion_counts_as_typing(client: TestClient):
     choose = re.search(r"function choose\(value\) \{.*?\n  \}", page, re.S).group(0)
 
     assert "dispatchEvent(new Event('input', {bubbles: true}))" in choose
+
+
+_BETS_ONE_KEY = """
+const box = document.querySelector('#bets input.live[data-field="assignees"]');
+const key = name => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
+box.focus();
+box.value = 'b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const wasOpen = !list.hidden;
+key('Enter');
+const picked = {value: box.value, focused: document.activeElement === box,
+                staged: PENDING.size};
+// An input with a trailing separator reopens the list on the names still free.
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const reopened = !list.hidden;
+key('Escape');
+const first = {listShut: list.hidden, value: box.value,
+               focused: document.activeElement === box, staged: PENDING.size};
+key('Escape');
+return {wasOpen, picked, reopened, first,
+        after: {value: box.value, focused: document.activeElement === box,
+                staged: PENDING.size}};
+"""
+
+
+def test_one_key_does_one_thing_at_the_betting_table(client: TestClient, tmp_path: Path):
+    """The betting cells are the third surface where the suggestion list and a
+    second listener answer the same key — and the copy here did not honour the
+    mark the widget sets. One Enter picked a name AND blurred, staging the list
+    half-finished; one Escape closed the list AND reverted the typing it was
+    completing.
+
+    Writing this test found a second defect underneath: the page attached the
+    widget to every suggest box a second time — the combobox sweep had already
+    reached the served markup — so two lists answered together and one Enter
+    picked a name from EACH: choosing `bo` wrote `bo, ann, `. The `picked` value
+    below pins the single widget; the focus and staging pins hold the guard.
+    Driven with real key events, like the gate panel's and the cell editor's
+    tests, because both collisions live between listeners on one input and no
+    grep of any of them can see it.
+    """
+    page = client.get("/cycle/37").text
+    got = measured_in(chrome(), page, tmp_path / "bets-keys.html", 1400, _BETS_ONE_KEY,
+                      height=900)
+
+    assert got["wasOpen"], "the list never opened, so nothing here was asked"
+    # Enter with the list open picks the name, completes the token, and leaves
+    # the box open for the next one — nothing staged, nothing blurred.
+    assert got["picked"]["value"] == "bo, ", "the pick replaced the value instead"
+    assert got["picked"]["focused"] is True, "Enter blurred the box with the pick"
+    assert got["picked"]["staged"] == 0, "Enter staged the half-finished list"
+    assert got["reopened"], "the list did not reopen, so the Escape below asks nothing"
+    # Escape with the list open closes the list and only the list.
+    assert got["first"]["listShut"] is True
+    assert got["first"]["value"] == "bo, ", "closing the list took the typing with it"
+    assert got["first"]["focused"] is True, "one Escape dismissed the list AND the edit"
+    assert got["first"]["staged"] == 0
+    # The second Escape meets no list and is the cell's: reverted, blurred, unstaged.
+    assert got["after"]["value"] == ""
+    assert got["after"]["focused"] is False
+    assert got["after"]["staged"] == 0
 
 
 def test_nothing_on_the_cycle_page_is_written_until_save(client: TestClient):
@@ -1525,7 +1623,7 @@ def test_escape_still_arms_the_tab_hatch_where_the_box_is_on_the_page(
         chrome(), client.get(f"/new{PLAIN}").text, tmp_path / "hatch.html", 1200,
         _STUB_PREVIEW + """
         const area = document.querySelector('textarea[name=body]');
-        // Out of the full-page view first: the create form's pressed segment
+        // Out of the session views first: the create form's pressed segment
         // goes to the old surface-off state and the box stays on the page.
         const lit = ['view-edit', 'view-both', 'preview']
           .map(id => document.getElementById(id))
@@ -1830,7 +1928,7 @@ def test_the_new_marks_write_blocks_and_a_pasted_url_becomes_the_link_it_is(
     assert got["refused"] == "appetite.pdf is not an image", (
         "a file that is not an image was refused in silence"
     )
-# --- three views, a full page, and the two panes -----------------------------
+# --- three views of one page, and the two panes ------------------------------
 #
 # Layout, selection and pixels, so Chrome: `tests/js/drive.js` has no box model
 # at all and would answer that every pane is visible, the right size and in the
@@ -1905,8 +2003,10 @@ const both = state();
 await new Promise(go => setTimeout(go, 400));
 const split = {
   sideBySide: area.getBoundingClientRect().right <= pane.getBoundingClientRect().left + 1,
-  inside: area.getBoundingClientRect().bottom <= innerHeight + 1
-          && pane.getBoundingClientRect().bottom <= innerHeight + 1,
+  // One height for the pair: the box is pinned to `--writing` and the pane
+  // takes the same number, so the two read as one surface with a join.
+  sameHeight: Math.abs(area.getBoundingClientRect().height
+                       - pane.getBoundingClientRect().height) <= 2,
   boxScrolls: area.scrollHeight > area.clientHeight + 1,
   paneScrolls: pane.scrollHeight > pane.clientHeight + 1,
   pageScrolls: document.documentElement.scrollHeight > innerHeight + 1,
@@ -1952,9 +2052,17 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
 ):
     """Three states, and the landing one is `view`.
 
-    HackMD is always full page; here `view` is the ordinary page — the
-    server-rendered document, the facts column, the nav alive — and it is
-    where every session ends. `edit` and `both` are sessions and go full page.
+    `view` is the ordinary page — the server-rendered document, the facts
+    column — and it is where every session ends. `edit` and `both` are
+    sessions: the SAME page, still `position: relative`, still one column of
+    prose at the reader's own measure, with the box in the document's column —
+    jcanton, 2026-08-24, the ask this branch is for. ("Centred" until later the
+    same day, when the header took the page's width and the column under it was
+    pinned to the page's left edge rather than indented from its own title.)
+    The `full` in each expected class list below is asserted absent by
+    equality: a session that grew a full-page surface again fails every one of
+    these.
+
     The fourth, unnamed state is gone: exactly one segment is always pressed,
     the pressed segment and the chord and Escape all land on the landing, and
     landing ends the session — without discarding anything, because the text
@@ -1972,25 +2080,30 @@ def test_the_three_views_are_one_of_three_and_each_pane_scrolls_on_its_own(
 
     assert got["atLoad"] == LANDED, f"the page did not load on the landing: {got['atLoad']}"
     assert got["editing"] == {
-        "classes": ["full", "view-edit"], "pressed": ["edit"], "editing": True,
-        "box": True, "pane": False, "marks": True, "doc": False, "position": "fixed",
-    }, "pressing Write did not open a session in the edit view"
+        "classes": ["view-edit"], "pressed": ["edit"], "editing": True,
+        "box": True, "pane": False, "marks": True, "doc": False, "position": "relative",
+    }, "pressing Write did not open a session in the edit view, on the same page"
 
-    assert got["both"]["classes"] == ["full", "view-both"]
+    assert got["both"]["classes"] == ["view-both"]
     assert got["both"]["pressed"] == ["both"], "two segments pressed is not a choice of three"
-    assert got["both"]["position"] == "fixed" and got["both"]["editing"]
+    assert got["both"]["position"] == "relative" and got["both"]["editing"]
     assert got["both"]["box"] and got["both"]["pane"]
 
+    # `pageScrolls: True` is the new design, stated rather than tolerated: the
+    # split is a region of an ordinary page, each pane scrolls inside itself,
+    # and the page underneath goes on scrolling to the facts and the promote
+    # bar. Under full page this was False because `body.fullpage` cut the
+    # page's own scrollbar off — that surface is gone.
     assert got["split"] == {
-        "sideBySide": True, "inside": True,
-        "boxScrolls": True, "paneScrolls": True, "pageScrolls": False,
-    }, "the two panes do not scroll on their own inside the window"
+        "sideBySide": True, "sameHeight": True,
+        "boxScrolls": True, "paneScrolls": True, "pageScrolls": True,
+    }, "the two panes do not sit beside each other and scroll on their own"
 
     assert got["viewing"] == LANDED, (
         "the eye did not land on the sessionless read page — a live pane, a "
         f"surface, or a session survived: {got['viewing']}"
     )
-    assert got["writing"]["classes"] == ["full", "view-edit"] and got["writing"]["editing"]
+    assert got["writing"]["classes"] == ["view-edit"] and got["writing"]["editing"]
     assert got["out"] == LANDED, "the pressed segment did not land on the landing"
 
     assert got["chorded"]["pressed"] == ["both"], "Ctrl+Shift+2 was not read off event.code"
@@ -2027,7 +2140,7 @@ def test_a_link_to_the_split_view_opens_in_the_split_view(client: TestClient, tm
         chrome(), page, tmp_path / "deep.html", 1400, _DEEP_LINK, query="?both="
     )
 
-    assert got["classes"] == ["full", "view-both"]
+    assert got["classes"] == ["view-both"]
     assert got["pressed"] == ["view-both"]
     assert got["editing"], "a link into a writing view that does not open the writing view"
 
@@ -2114,9 +2227,11 @@ def test_a_view_link_is_sessionless_and_a_both_link_opens_a_session(
 
     both = measured_in(chrome(), page, tmp_path / "bothlink.html", 1400, _LINKED,
                        query="?both=")
-    assert both["classes"] == ["full", "view-both"] and both["pressed"] == ["view-both"]
+    assert both["classes"] == ["view-both"] and both["pressed"] == ["view-both"]
     assert both["editing"], "?both did not open the session it is a view of"
-    assert both["fullpage"] and both["navInert"]
+    # A session is the same page now: nothing full, nothing inert, the nav
+    # alive on both sides of the link — jcanton, 2026-08-24.
+    assert not both["fullpage"] and not both["navInert"]
     assert both["sockets"] == 1, "a session opened and no seat was taken"
     assert both["asked"] >= 1, "the live pane never asked for its rendering"
 
@@ -2258,13 +2373,20 @@ def test_a_stored_legacy_view_mode_opens_the_next_session_in_edit(
         """,
         patience=1800,
     )
-    assert got == {"view": "edit", "editing": True, "full": True}, (
+    # `full: False` is load-bearing since 2026-08-24: a session is the ordinary
+    # page, and the class this reads would mean the surface had come back.
+    assert got == {"view": "edit", "editing": True, "full": False}, (
         f"a legacy stored mode landed a session somewhere that is not one: {got}"
     )
 
 
 _GRIPPING = _STUB_PREVIEW + """
 const article = document.querySelector('article.record');
+// `.panes` and not the article, since 2026-08-24: the article is the width of
+// the page in every view — that is what stops the header moving — and a handle
+// on ITS edge is the handle parked against the window this test exists about.
+// The measure is the column's, so the column is what is measured.
+const pane = article.querySelector('.panes');
 const grip = document.getElementById('grip');
 const seg = name => document.getElementById(
   {edit: 'view-edit', both: 'view-both', view: 'preview'}[name]);
@@ -2274,35 +2396,38 @@ const seg = name => document.getElementById(
 const where = () => ({
   hidden: grip.hidden,
   onEdge: Math.abs(parseFloat(grip.style.left || '0')
-                   - article.getBoundingClientRect().right) < 1,
-  spare: Math.round(innerWidth - article.getBoundingClientRect().right),
+                   - pane.getBoundingClientRect().right) < 1,
+  spare: Math.round(innerWidth - pane.getBoundingClientRect().right),
 });
 
 const reading = where();
-// The segments are the door in, and each session view is full page — where the
-// handle is deliberately not drawn. Entered through the loop itself: pressing
-// the pressed segment would land back on the landing, so no segment is pressed
-// twice.
-const full = {};
-for (const name of ['edit', 'both']) { seg(name).click(); full[name] = where(); }
-seg('view').click();               // the landing: session over, column back
+// Entered through the loop itself: pressing the pressed segment would land
+// back on the landing, so no segment is pressed twice.
+const inView = {};
+for (const name of ['edit', 'both']) { seg(name).click(); inView[name] = where(); }
+seg('view').click();               // the landing: session over
 const back = where();
-return {reading, full, back};
+return {reading, inView, back};
 """
 
 
 def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_path: Path):
     """`place` exists because a handle measured against a hidden element parks
-    itself against the left edge of the page, and that shipped once. Full page is
-    a second way to produce the same thing by a different route: it drags
-    `--measure`, and in full page there is no measure — the surface is the
-    window — so a handle drawn there would sit against the right edge of the
-    screen and change nothing when dragged.
+    itself against the left edge of the page, and that shipped once.
 
-    Editing inline in the reading measure no longer exists: a session is full
-    page, so the handle and the box are never on screen together, and the
-    reading measure — with the handle on it — is the landing either side of
-    one."""
+    Since a session is the same page (2026-08-24), the handle stays through
+    `edit` too: the column's edge IS the measure there, so dragging it means
+    what it means on the landing. The one view without it is the split, where
+    the column is one measure plus one body wide — a grip on that edge would
+    move the measure twice the drag — and where the splitter is the view's own
+    width control: two handles that both change widths on one screen are two
+    controls nobody can tell apart.
+
+    The column is `.panes` and not `article.record` since the header took the
+    page's width: the article's right edge is now the window's, `spare` would be
+    the body's own padding at every width, and this test would go on passing
+    while the handle sat against the edge of the screen — the exact defect it
+    was written for."""
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}").text, tmp_path / "grip.html", 1400, _GRIPPING
     )
@@ -2312,12 +2437,97 @@ def test_the_width_handle_finds_the_pane_in_every_view(client: TestClient, tmp_p
         assert got[mode]["onEdge"], f"the handle is not on the column's edge while {mode}"
         assert got[mode]["spare"] > 20, f"the handle is against the window edge while {mode}"
 
-    for name in ("edit", "both"):
-        assert got["full"][name]["hidden"], f"a width handle in the {name} view"
+    edit = got["inView"]["edit"]
+    assert not edit["hidden"], "no width handle in the edit view, whose width is the measure"
+    assert edit["onEdge"] and edit["spare"] > 20, edit
+
+    assert got["inView"]["both"]["hidden"], (
+        "a second width handle beside the splitter in the split view"
+    )
 
     assert not got["back"]["hidden"] and got["back"]["onEdge"], (
         "the handle did not come back with the column"
     )
+
+
+# What the handle drags, and what answers to it. The window is wide throughout
+# and only the measure moves, which is the one arrangement that can tell a
+# container query on the column from a media query on the window — and, since
+# 2026-08-24, a container on `.panes` from one left behind on a full-width
+# `article.record`.
+_DRAGGED_NARROW = _STUB_PREVIEW + """
+const facts = document.querySelector('.panes > .facts');
+const main = document.querySelector('.panes > .main');
+const grip = document.getElementById('grip');
+const stacked = () => {
+  const f = facts.getBoundingClientRect(), m = main.getBoundingClientRect();
+  return {beside: f.left >= m.right - 1, factsTop: Math.round(f.top),
+          mainTop: Math.round(m.top), factsLeft: Math.round(f.left),
+          mainLeft: Math.round(m.left)};
+};
+// The grip, driven the way a hand drives it: the drag is what writes
+// `--measure`, so a test that set the property itself would be asking the
+// stylesheet a question the control never asks it.
+//
+// Asked for a WIDTH, and the pointer worked out from the box — not a screen x
+// written down here. The column is centred, so a pixel of pointer is two of
+// width; it was left-pinned for one afternoon on 2026-08-24 and a pixel was a
+// pixel. A test that hard-codes the screen x is a test that encodes whichever
+// of those was true the day it was written, and this one exists to ask about
+// the container query rather than about the drag's arithmetic — when the two
+// targets stopped meaning 620px and 1044px of column, it failed for a reason
+// that had nothing to do with what it checks.
+const drag = width => {
+  const box = document.querySelector('article.record').getBoundingClientRect();
+  const to = box.left + box.width / 2 + width / 2;
+  grip.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true, pointerId: 1, clientX: grip.getBoundingClientRect().left, clientY: 400}));
+  dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerId: 1, clientX: to}));
+  dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: 1}));
+  return stacked();
+};
+const wide = stacked();
+// Either side of the 56rem (896px) the query names, and not close to it: 620
+// stacks, 1024 does not, and neither is within a rounding of the boundary.
+const narrow = drag(620);
+const back = drag(1024);
+return {wide, narrow, back, width: innerWidth,
+        measure: getComputedStyle(document.documentElement)
+                   .getPropertyValue('--measure').trim()};
+"""
+
+
+def test_the_facts_answer_to_the_column_the_reader_drags_and_not_to_the_window(
+    client: TestClient, tmp_path: Path
+):
+    """The facts sit beside the document or stack above it, and the width that
+    decides which is the COLUMN's — the one the reader sets with the grip — not
+    the window's. A window breakpoint would put a 20rem sidebar beside a document
+    dragged down to 10rem.
+
+    This is asked at one wide window on purpose. Every other pixel test here
+    changes the window, and at a narrow window a container query on the column
+    and a media query on the window give the same answer — so none of them can
+    see the failure this is for: the measure moved to `.panes` on 2026-08-24 and
+    a `container-type` left behind on the now full-width `article.record` would
+    be measuring the window under both names, silently, with every existing test
+    still green.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "column.html",
+        1400, _DRAGGED_NARROW, patience=2000,
+    )
+
+    assert got["width"] == 1400, "the window moved, so this is not asking about the column"
+    assert got["wide"]["beside"], f"the facts are not beside the document to start with: {got}"
+    assert not got["narrow"]["beside"], (
+        "the facts kept their column beside a document dragged narrower than the "
+        f"56rem the query names, so the query is answering about the window: {got}"
+    )
+    assert got["narrow"]["mainTop"] > got["narrow"]["factsTop"], (
+        f"and they did not stack above it either: {got['narrow']}"
+    )
+    assert got["back"]["beside"], f"dragging back did not give the column back: {got}"
 
 
 # The handle between the two panes, driven the way a hand drives it. Everything
@@ -2473,9 +2683,9 @@ def test_the_facts_column_does_not_move_when_the_join_between_the_panes_does(
     assert got["stored"]["split"] > 1, got["stored"]
     assert got["stored"]["mode"] == "both"
 
-    # The other width handle is not on the screen at the same time. `#grip` drags
-    # the reading measure and full page has none, so the page never shows two
-    # controls that both change widths.
+    # The other width handle is not on the screen at the same time. `#grip`
+    # drags the reading measure and the split's edge is not the measure — see
+    # `place` — so the page never shows two controls that both change widths.
     assert got["grip"], "the width grip is on screen beside the pane splitter"
 
 
@@ -2594,7 +2804,7 @@ const inTheSplit = {
 };
 const elsewhere = {};
 for (const name of ['edit', 'view']) { seg(name).click(); elsewhere[name] = drawn(); }
-seg('view').click();               // out of full page altogether
+seg('view').click();               // out of the session altogether
 const outside = drawn();
 return {inTheSplit, elsewhere, outside, win: innerWidth};
 """
@@ -2607,12 +2817,16 @@ def test_there_is_no_handle_where_there_is_nothing_to_divide(
     """Only where it means something: the split view, and only while the facts are
     still a column on the right.
 
-    58.5rem is the width at which `.panes` hands the facts their own track — a
-    CONTAINER width of 56rem plus the surface's `1.25rem` of padding on each side
-    — and the two flip at the same pixel, which is the point of the number. Below
-    it there is no fixed column on the right to hold still, which is the whole of
-    what the handle is for, and the two panes are 256px each against a floor of
-    240.
+    The handle's off switch is a `@container (width < 56rem)` block against the
+    same container `.panes` reads, so the two flip at the same pixel by
+    construction. At these window widths that container crosses 56rem between
+    934 and 936: the shell gives `main` `1.25rem` of padding a side, so the
+    article has `window - 40px` to be wide in, and 936 - 40 is exactly 896.
+    (The old `@media (width < 58.5rem)` reached the same boundary by viewport
+    arithmetic for a full-page surface that no longer exists; the boundary
+    survived the surface because both were derived from the same 56rem.) Below
+    it there is no fixed column on the right to hold still, which is the whole
+    of what the handle is for.
 
     The divider goes with it, both ways round: where the handle draws the line the
     pane must not, and where the handle is gone the pane must — two lines down the
@@ -2721,9 +2935,10 @@ def test_the_pane_splitter_takes_a_focus_ring_that_is_actually_painted(
     """The same pair of screenshots the editor switch is held to, for the same
     reason: `outline: 2px solid` resolving on the element says nothing about
     paint, and the ring is drawn entirely OUTSIDE the border box — so an
-    `overflow: hidden` ancestor throws it away with every assertion about it still
-    passing. `article.record.full` is one, `.panes` is another, and this handle is
-    full height inside both of them.
+    `overflow: hidden` ancestor throws it away with every assertion about it
+    still passing. The full-page surface was one such ancestor and is gone; any
+    ancestor a later rule clips is the same trap, and this handle is full
+    height inside several candidates.
 
     Two shots of the same page, differing only in which element has focus.
     """
@@ -2801,19 +3016,46 @@ def test_the_split_dragged_to_the_end_on_a_wide_screen_is_the_one_that_comes_bac
     1400 is the control. Under 2,584px of window the floor is still the tighter
     bound and nothing about this changes, which is what says the fix is a fence
     and not a new behaviour.
+
+    The measure is seeded wide for the 3440 case, and that is a consequence of
+    the article no longer being the window (2026-08-24): the split view is
+    `2·measure − 21rem` wide, so at the default measure the panes never see
+    2,160px between them however wide the screen — the fence only engages for
+    somebody who has also dragged the measure out, which is exactly who owns an
+    ultrawide.
     """
+    page = client.get(f"/detail/{TASK}{PLAIN}").text
+    if width == 3440:
+        page = _before_the_page_runs(
+            page,
+            "try { localStorage.setItem('openproj:measure', '1900px'); } catch (e) {}",
+        )
     first = measured_in(
-        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text,
+        chrome(), page,
         tmp_path / f"end-{width}.html", width, _SPLIT_TO_THE_END, patience=4800,
     )
     # It went somewhere, and the separator says it is at the end of its own range.
     assert first["box"] > first["pane"] and first["now"] == first["most"], first
+    if width == 3440:
+        # The fence, pinned: `End` under an engaged `SPLIT_RANGE` stores exactly
+        # 8. Without this the seeded measure could silently fail to apply — at
+        # the default measure the floor is the tighter bound at ANY window
+        # width, every assertion here passes identically, and this leg degrades
+        # to a second copy of the 1400 control that stays green with the fence
+        # deleted. A broken seed now fails loudly instead.
+        assert json.loads(first["stored"])["split"] == 8, (
+            f"the drag stored {first['stored']}, so the outer fence never engaged "
+            "and this leg is not testing it — did the measure seed apply?"
+        )
 
+    # The same measure on the second load: the panes' width is a function of it
+    # now, and a round trip that changes the room changes what any ratio draws.
+    seed = _SEED % first["stored"]
+    if width == 3440:
+        seed += " try { localStorage.setItem('openproj:measure', '1900px'); } catch (e) {}"
     again = measured_in(
         chrome(),
-        _before_the_page_runs(
-            client.get(f"/detail/{TASK}{PLAIN}").text, _SEED % first["stored"]
-        ),
+        _before_the_page_runs(client.get(f"/detail/{TASK}{PLAIN}").text, seed),
         tmp_path / f"back-{width}.html", width, _SPLIT_AS_FOUND, patience=4800,
     )
     assert again["view"] == "both", "the remembered view did not open"
@@ -2993,13 +3235,13 @@ const rows = Math.round(
 const longRows = rows - 160;
 const topOfEightyTwo = padTop + (80 + longRows) * step;
 // The block's top **inside the pane it scrolls in**, and not its `offsetTop`.
-// Nothing positions `#body-preview`, so the offset parent of every block in it is
-// `article.record` — which full page makes `position: fixed` — and `offsetTop` is
-// therefore a distance from the top of the window while `scrollTop`, which is
-// what this number is compared against, is a distance inside the pane. The two
-// differ by a constant: the pane's own top within the article, 283.625px at this
-// size on a pane 458px tall. The page used to make the same mistake, so the test
-// agreed with it and both were wrong together; this arithmetic is the pane's own
+// Nothing positions `#body-preview`, so the offset parent of every block in it
+// is `article.record` (`position: relative`), and `offsetTop` is therefore a
+// distance from the top of the article while `scrollTop`, which is what this
+// number is compared against, is a distance inside the pane. The two differ by
+// a constant — the pane's own top within the article, a header of bars and a
+// heading tall. The page used to make the same mistake, so the test agreed
+// with it and both were wrong together; this arithmetic is the pane's own
 // scroll space and it asks the question that is actually being asked.
 const block = pane.querySelector('[data-startline="82"]');
 const inPane = element =>
@@ -3052,11 +3294,12 @@ def test_the_two_panes_scroll_to_the_same_line(client: TestClient, tmp_path: Pat
     And the ground truth for the rendered side is not `offsetTop`. It was, and
     that is why this test passed while both panes were a third of a screen out:
     the page measured the blocks with `offsetTop`, the test measured them with
-    `offsetTop`, and the two agreed with each other about a number that was in the
-    wrong coordinate space. Nothing positions `#body-preview`, so the offset
-    parent is the article, which full page makes `position: fixed`. Both sides are
-    rects against the scroller now, and `whereIsIt` is the assertion that needs
-    neither: after the sync, line 82's block is at the top of the pane.
+    `offsetTop`, and the two agreed with each other about a number that was in
+    the wrong coordinate space. Nothing positions `#body-preview`, so the offset
+    parent is the article, and a distance from the article's top is not a
+    distance inside the pane. Both sides are rects against the scroller now, and
+    `whereIsIt` is the assertion that needs neither: after the sync, line 82's
+    block is at the top of the pane.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "sync.html", 1400,
@@ -3312,11 +3555,11 @@ function truth() {
 }
 
 flipEditing();
-// In the full-page edit view, which is the only place the box exists now:
-// editing inline in the reading measure went with the null state. The sweep
-// drives the box's own container instead of `--measure`, which full page does
-// not read; the mirror-agreement claim is about widths, wherever they come
-// from.
+// The sweep drives the box's own container instead of `--measure`: an inline
+// width on `.bodywrap` is what actually rewraps the box whatever the view's
+// own width rules say, and the mirror-agreement claim is about widths,
+// wherever they come from. (Under the old full page, driving `--measure` here
+// moved nothing at all — see the sweep guards in `test_seats.py`.)
 const wrap = document.querySelector('.bodywrap');
 area.value = GUTTER_BODY;
 area.dispatchEvent(new Event('input', {bubbles: true}));
@@ -3396,14 +3639,11 @@ const article = document.querySelector('article.record');
 const nav = document.querySelector('body > nav');
 const link = nav.querySelector('a');
 // Whether a pointer aimed at the middle of the first nav link would actually
-// reach it. The whole finding is that the surface paints over it, so a class name
-// is not the question — `elementFromPoint` is.
+// reach it. The defect this file spent a branch on was a surface painting over
+// the nav, so a class name is not the question — `elementFromPoint` is.
 //
-// Asked as `is it that link`, not as `is it an <a>`. The tag was enough until the
-// theme toggle and the sign-in control moved out of the nav into the editor's own
-// bar: the nav lost 28px of height, its links slid up, and they now sit at the
-// same y as the article's own `← table` link — which is also an `A`, and is a
-// control on the surface rather than behind it.
+// Asked as `is it that link`, not as `is it an <a>`: an `<a>` under the point
+// could as easily be the article's own back link.
 const overLink = () => {
   const box = link.getBoundingClientRect();
   const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
@@ -3430,21 +3670,20 @@ return answers;
 """
 
 
-def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_path: Path):
-    """The worst thing this branch shipped, and it is on the main path: press a
-    view, decide not to save, press Cancel.
+def test_a_session_never_takes_the_page_away_and_cancel_lands_on_the_landing(
+    client: TestClient, tmp_path: Path
+):
+    """The worst thing the full-page era shipped was on the main path: press a
+    view, decide not to save, press Cancel — and `flipEditing` dropped
+    `.editing` while `.full` and `body.fullpage` stayed, leaving the reader
+    inside an opaque fixed article with the switcher gone and the nav inert.
 
-    `flipEditing` dropped `.editing` and left `.full` and `body.fullpage` alone —
-    and `.views` was drawn only under `.record.editing` then, so the switcher,
-    which the commit message named as the way back, vanished at the same
-    instant. The box went with it, so Escape could not be reached either; the
-    nav was painted over by an opaque fixed article; and the only exits left
-    were an undiscoverable chord, the Back button and a reload.
-
-    Ending the session lands on the landing — and `switcher: True` there is the
-    point of the whole change: the way back cannot vanish any more, because it
-    is drawn outside the session too. Asked of both session views, because each
-    takes a different thing away.
+    The structural fix (2026-08-24) is that there is no surface to be left
+    inside: a session is the ordinary page, so the nav is reachable and never
+    inert IN a session, not merely after one — which is what `inside` asserts,
+    per view, with `elementFromPoint`. Ending the session lands on the landing,
+    and `switcher: True` there is what keeps the way back drawn on both sides
+    of the boundary.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "leave.html", 1400,
@@ -3452,10 +3691,12 @@ def test_cancel_leaves_the_surface_it_was_pressed_in(client: TestClient, tmp_pat
     )
 
     for name, answer in got.items():
-        assert answer["inside"]["classes"] == ["full", f"view-{name}"], name
-        assert answer["inside"]["navInert"], f"{name}: the page behind the surface is not inert"
-        assert not answer["inside"]["over"], (
-            f"{name}: the surface does not actually cover the nav, so nothing here is proved"
+        assert answer["inside"]["classes"] == [f"view-{name}"], name
+        assert not answer["inside"]["fullpage"] and not answer["inside"]["navInert"], (
+            f"{name}: a session made the page a surface again: {answer['inside']}"
+        )
+        assert answer["inside"]["over"], (
+            f"{name}: a pointer aimed at the nav does not reach it inside a session"
         )
         assert answer["after"] == {
             "classes": ["view-view"], "fullpage": False, "navInert": False, "over": True,
@@ -3486,8 +3727,9 @@ const shape = () => ({
   over: overLink(),
   switcher: document.getElementById('views').getClientRects().length > 0,
   editing: article.classList.contains('editing'),
-  // The corner went into the bar with the session; ending the session has to
-  // hand it back, or the theme toggle and the way in are lodged inside a record.
+  // The corner used to be MOVED into the session's own bar and handed back on
+  // the way out. It never leaves the nav now, and this asks so on both sides
+  // of the boundary: a `showView` that grew the move again fails here first.
   cornerInNav: corner.parentElement === nav,
 });
 
@@ -3539,18 +3781,14 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
 
     Three copies of `showView(null)` existed — `flipEditing`, the issue page's
     toggle, the note page's — and a fourth door had none: a Save in a room ended
-    the session with a bare `showEditing(false)` and did not reload. (It reloads
-    now, for a different defect — see the test above — so the door driven here is
-    the one Cancel and the view toggle use.)
-    Measured in Chrome from the split view before the fix: the article kept
-    `full view-both`, `<body>` kept `fullpage`, the nav stayed `inert`, and the
-    switcher — then drawn only under `.record.editing`, and named by the commit
-    that fixed Cancel as the documented way back — went at the same instant. The
-    reader was left inside a fixed, opaque, window-filling article showing a
-    record nobody was editing.
-
-    It is one listener on `openproj:session` now, so this asks the question the
-    call sites cannot: end a session, any way, and the surface comes down.
+    the session with a bare `showEditing(false)` and did not reload, leaving the
+    reader inside the full-page surface of the day. (It reloads now, for a
+    different defect — see the test above — so the door driven here is the one
+    Cancel and the view toggle use.) The surface itself is gone since
+    2026-08-24, which retires the trap structurally; what this still pins is
+    that the one `openproj:session` listener answers a door no click opened —
+    end a session any way at all, and the page lands on the landing with its
+    chrome where it always was.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "roomsave.html",
@@ -3558,26 +3796,28 @@ def test_ending_a_session_leaves_the_surface_by_every_door(client: TestClient, t
     )
 
     for name, answer in got.items():
-        assert answer["inside"]["classes"] == ["full", f"view-{name}"], name
-        assert answer["inside"]["navInert"], f"{name}: the page behind the surface is not inert"
-        assert not answer["inside"]["over"], (
-            f"{name}: the surface does not actually cover the nav, so nothing here is proved"
+        assert answer["inside"]["classes"] == [f"view-{name}"], name
+        assert not answer["inside"]["fullpage"] and not answer["inside"]["navInert"], (
+            f"{name}: a session made the page a surface again: {answer['inside']}"
+        )
+        assert answer["inside"]["over"] and answer["inside"]["cornerInNav"], (
+            f"{name}: the nav is not whole inside a session: {answer['inside']}"
         )
         assert answer["after"] == {
             "classes": ["view-view"], "fullpage": False, "navInert": False, "over": True,
             "switcher": True, "editing": False, "cornerInNav": True,
         }, (
-            f"a room's save from the {name} view left the reader in the surface: "
+            f"a room's save from the {name} view did not land on the landing: "
             f"{answer['after']}"
         )
 
 
-# The two page-chrome controls, followed into the surface and out of it again.
+# The two page-chrome controls, watched through a session.
 #
 # `#who` is filled by the shell's own `/api/me` fetch, which cannot answer over
 # `file://` — so it is filled here with exactly what that script builds for a
-# stranger. What is being asked is where the control ENDS UP and whether a
-# pointer can reach it, not whether a fetch succeeded.
+# stranger. What is being asked is that the control never LEAVES and stays
+# reachable by a pointer, not whether a fetch succeeded.
 _THE_CORNER = _STUB_PREVIEW + """
 const nav = document.querySelector('body > nav');
 const corner = document.querySelector('.corner');
@@ -3590,39 +3830,23 @@ who.replaceChildren(link);
 who.hidden = false;
 
 const article = document.querySelector('article.record');
-const bar = article.querySelector('.editbar');
-const top = article.querySelector('.back');
 // What a pointer aimed at the middle of a control would actually hit. A class
-// name cannot answer this: the whole finding is that an opaque fixed surface was
-// painted over these two, and `elementFromPoint` is the question.
+// name cannot answer this: the defect the full-page era shipped was an opaque
+// fixed surface painted over these two, and `elementFromPoint` is the question
+// that would have caught it.
 const reaches = el => {
   const box = el.getBoundingClientRect();
   return document.elementFromPoint(
     box.left + box.width / 2, box.top + box.height / 2) === el;
 };
-// Rounded, because the assertions are about which row a thing is in and how far
-// it is from an edge, and a subpixel is neither.
-const edges = el => {
-  const r = el.getBoundingClientRect();
-  return {top: Math.round(r.top), right: Math.round(r.right)};
-};
-const row = el => [...el.querySelectorAll('a[href], button, select')]
-  .filter(el => el.getClientRects().length)
-  .map(el => el.id || el.tagName);
 const shape = () => ({
   parent: corner.parentElement.tagName,
-  inBar: bar.contains(corner),
-  onTopRow: top.contains(corner),
-  inert: corner.closest('[inert]') !== null,
+  inNav: nav.contains(corner),
+  onArticle: article.contains(corner),
   navInert: !!nav.inert,
   themeReachable: reaches(theme),
   themeNamed: theme.getAttribute('aria-label'),
   signInReachable: reaches(link),
-  corner: edges(corner),
-  surface: edges(article),
-  bar: edges(bar),
-  keyboard: row(bar),
-  keyboardTop: row(top),
 });
 
 const before = shape();
@@ -3630,8 +3854,8 @@ flipEditing();
 document.getElementById('view-both').click();
 await new Promise(go => setTimeout(go, 300));
 const inside = shape();
-// The listeners came with the node, because it IS the node: pressing the toggle
-// still changes the theme and still relabels itself.
+// The controls never moved, so this is the same node with the same listeners:
+// pressing the toggle still changes the theme and still relabels itself.
 const was = document.documentElement.dataset.theme || '';
 theme.click();
 const themed = {
@@ -3644,95 +3868,271 @@ return {before, inside, themed, after: shape()};
 """
 
 
-def test_the_theme_toggle_and_the_way_in_come_into_the_surface_with_you(
+def test_the_theme_toggle_and_the_way_in_never_leave_the_corner(
     client: TestClient, tmp_path: Path
 ):
-    """jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem to
-    have disappeared from the edit view, bring those back please".
+    """jcanton, 2026-08-20: "the light/dark mode toggle and sign in button seem
+    to have disappeared from the edit view, bring those back please".
 
-    The cause is ours and it was right: `body > nav` and `body > a.skip` are made
-    `inert` while the full-page surface is up, because an audit found eight
-    focusable elements geometrically covered by an opaque fixed article and still
-    in the tab order. That fix stays — un-inerting the nav would put the defect
-    back — so the controls move instead, onto the surface.
+    The cause was the full-page surface: an opaque fixed article painted over
+    the nav, the nav was (rightly, then) made `inert`, and the two controls
+    were physically MOVED onto the surface and handed back on the way out —
+    machinery this file spent three tests keeping honest. Since 2026-08-24 a
+    session is the ordinary page, so the machinery is deleted rather than
+    exercised: nothing covers the nav, nothing inerts it, and the controls stay
+    where every other page in the app keeps them. jcanton's own acceptance
+    sentence — page elements do not move or appear or disappear when switching
+    views — is asserted here of exactly the two elements that used to.
 
-    The same nodes, not copies: `#theme` and `#who` are ids on a template the
-    static export renders once per record into one file, and the shell's own
-    scripts reach for both by id. So the test asks what a MOVE has to be true of
-    and a copy would not — the listener still fires, the label still changes, and
-    the control is reachable by a pointer at the place it is drawn.
-
-    **And WHERE they land, in pixels.** This assertion used to be
-    `bar.contains(corner)` and nothing else, and it passed through the whole of
-    the defect jcanton reported next, with a screenshot of `/new`: the create
-    form has no stored document to land on, so it is full page from birth and
-    `.editbar` is its FIFTH row — under the back link, the kind picker, the
-    heading and the meta line. Three controls whose only learned property is that
-    they live in the top-right corner of the window sat four hundred pixels down
-    the right-hand side of a page whose corner was empty, and a containment check
-    called that a pass. A class name cannot tell a corner from a fifth row, so
-    the test asks the browser for the box.
+    Still asked with `elementFromPoint`, because "reachable by a pointer at the
+    place it is drawn" is the claim the original defect falsified, and a class
+    check cannot see paint.
     """
     got = measured_in(
         chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "corner.html",
         1400, _THE_CORNER, patience=2400,
     )
 
-    assert got["before"]["parent"] == "NAV" and not got["before"]["inBar"]
+    assert got["before"]["parent"] == "NAV" and got["before"]["inNav"]
     assert got["before"]["themeReachable"] and got["before"]["signInReachable"]
+    assert got["before"]["themeNamed"] in ("Dark mode", "Light mode")
 
     inside = got["inside"]
-    assert inside["onTopRow"], "the corner did not come onto the surface"
-    assert not inside["inBar"], (
-        "the corner is on the switcher's row, which on the create form is the "
-        "fifth row of the page — see the docstring"
+    assert inside == got["before"], (
+        f"opening the split view changed the nav's corner: {inside} "
+        f"against {got['before']}"
     )
-    # The two that say "corner" rather than "somewhere on the surface", and they
-    # are the pair the containment check could not make. Above the switcher's row
-    # is what puts it in the first row; within 40px of the surface's right edge is
-    # what puts it at the right-hand end of that row rather than beside the back
-    # link. 40 and not 0 because `.corner` carries `padding-left` and the article
-    # its own padding, and a number smaller than the padding would be a test of
-    # the padding.
-    assert inside["corner"]["top"] < inside["bar"]["top"], (
-        f"the corner is at y={inside['corner']['top']} and the switcher's row "
-        f"starts at y={inside['bar']['top']}, so it is below the first row"
+    assert not inside["onArticle"], "the corner was moved onto the record"
+    assert not inside["navInert"], "the nav went inert for a session on the same page"
+    assert inside["themeReachable"] and inside["signInReachable"], (
+        "a session painted something over the corner"
     )
-    assert inside["surface"]["right"] - inside["corner"]["right"] <= 40, (
-        f"the corner ends {inside['surface']['right'] - inside['corner']['right']}px "
-        "from the surface's right edge, which is not a corner"
-    )
-    assert inside["navInert"], (
-        "the nav is not inert while the surface is up, so the tab-order defect the "
-        "move exists to keep fixed has been fixed the wrong way instead"
-    )
-    assert not inside["inert"], "the two controls came with the nav's inertness"
-    assert inside["themeReachable"], (
-        "the theme toggle is in the bar and something is painted over it"
-    )
-    assert inside["signInReachable"], "the way in is in the bar and unreachable"
-    assert inside["themeNamed"] in ("Dark mode", "Light mode"), inside["themeNamed"]
-    # Two rows now, and the split is the argument. The surface's first row is the
-    # nav's job done by another element: the way back, then the three controls
-    # that act on the application — which is the order they are reached for in
-    # the nav they came from, and the order they keep here. The switcher's row is
-    # the document's, and holds only controls that act on what you are writing.
-    assert inside["keyboardTop"] == ["A", "A", "scheme", "theme"], inside["keyboardTop"]
-    assert inside["keyboard"] == ["view-edit", "view-both", "preview"], inside["keyboard"]
 
     assert got["themed"]["now"] != got["themed"]["was"], (
-        "the theme toggle is in the bar and does nothing, so what moved is a "
-        "picture of it"
+        "the theme toggle stopped working inside a session"
     )
     assert got["themed"]["named"] != inside["themeNamed"], (
         "it switched the theme and went on calling itself what it was"
     )
 
-    # And back, because a control that only travels one way is a control the nav
-    # has lost. Cancel is the ordinary way out and is what somebody presses.
-    assert got["after"]["parent"] == "NAV"
+    # And unchanged after the session, which under the old machinery was the
+    # move-back branch and is now simply nothing happening.
+    assert got["after"]["parent"] == "NAV" and got["after"]["inNav"]
     assert not got["after"]["navInert"]
     assert got["after"]["themeReachable"] and got["after"]["signInReachable"]
+
+
+# Every box above the document, watched through all three views. `facts` is
+# top and left only, deliberately: its CONTENT changes with the mode — read
+# values swap for controls, which is the point of a session — so its height is
+# the one measurement here that is supposed to move.
+#
+# `width` is measured since 2026-08-24, and `back` is here for the same reason:
+# the header is the six boxes above the line jcanton drew under the meta line,
+# and "full width, so they stay left aligned like the nav" is a claim about
+# every one of them and about their right edges as well as their left.
+_THE_HEADER_STAYS = _STUB_PREVIEW + """
+const box = sel => {
+  const b = document.querySelector(sel).getBoundingClientRect();
+  return {top: Math.round(b.top), height: Math.round(b.height),
+          left: Math.round(b.left), width: Math.round(b.width)};
+};
+// The six above the line, in the order they are drawn. The nav is beside them
+// as the thing they are level with, and not as one of them.
+const HEADER = ['.back', '.editbar', '#commitbar', '.eyebrow',
+                'article.record h1', 'article.record .meta'];
+// And the CONTROLS inside one of those six, because a box that holds while its
+// contents slide is what the six alone cannot see. `.editbar` is the page's
+// width in every view and was so before this list existed; the three segments
+// jcanton named by name were still at x=91 while reading and x=21 in a session,
+// because Delete stood in front of them and left the bar the moment a session
+// began. `#views` is the segmented control's own box, which starts where the
+// nav starts; `#view-edit` starts one pixel in, on `#views`'s border.
+const SWITCHER = ['#views', '#view-edit', '#view-both', '#preview'];
+const header = () => ({
+  nav: box('body > nav'),
+  ...Object.fromEntries(HEADER.map(sel => [sel, box(sel)])),
+  ...Object.fromEntries(SWITCHER.map(sel => [sel, box(sel)])),
+  facts: (({top, left}) => ({top, left}))(box('.panes > .facts')),
+});
+const landing = header();
+document.getElementById('view-edit').click();
+await new Promise(go => setTimeout(go, 150));
+const writing = header();
+document.getElementById('view-both').click();
+await new Promise(go => setTimeout(go, 150));
+const split = header();
+document.getElementById('preview').click();
+await new Promise(go => setTimeout(go, 150));
+return {landing, writing, split, back: header(), header: HEADER, switcher: SWITCHER};
+"""
+
+
+def test_opening_a_session_moves_nothing_above_the_document(
+    client: TestClient, tmp_path: Path
+):
+    """jcanton, 2026-08-24: "ideally page elements should not move or appear or
+    disappear when switching views in this page" — measured at the two places
+    the sentence was still false after the full-page surface went.
+
+    Pressing Write used to move the heading from y=146 to y=190 and everything
+    under it — the meta line, the facts column, the document — by two mechanisms
+    at once: the commit bar unhid (38px plus its gap), and the `<h1>` grew 36px
+    to 44px as the read span swapped for a title input carrying its own padding,
+    border and margin. So two rules now hold what this asserts: the bar's box is
+    reserved (`article.record .editbar + .commitbar[hidden]` keeps `display:
+    flex` and hides with `visibility`), and the title input in the heading takes
+    the read span's metrics, wearing its border in negative margins.
+
+    The split used to be allowed one change of its own — it widened by one body
+    and recentred, so `left` was free to move there — and that exemption is what
+    jcanton came back about on 2026-08-24: "I'd make the ←Table,
+    edit/side-by-side/preview buttons and 'nothing saved yet' banner full width,
+    so they stay left aligned like the nav and don't move anymore at all (they
+    are still jumping between side-by-side and the other views)". So there is no
+    exemption left above the line: the six boxes hold every number in all three
+    views, and the measure that does change between them lives on `.panes`,
+    below it.
+
+    The facts column is the one box here that may still move sideways in the
+    split, because it is below the line and rides the measure — only its `top`
+    is asserted there.
+
+    And the switcher's own three segments, not only the row they sit on. He
+    named those buttons: "the ←Table, edit/side-by-side/preview buttons and
+    'nothing saved yet' banner ... stay left aligned like the nav and don't move
+    anymore at all". Measured in Chrome at 1400x900 with the row already at the
+    page's width and Delete still in front of them: `#view-edit` at x=91 while
+    reading and x=21 in both session views, so his sentence was still false in
+    the one place a comparison of the six boxes cannot look — the row holds
+    while its contents slide. Delete is after the switcher now, so it leaves
+    from the end and moves nothing.
+    """
+    got = measured_in(
+        chrome(), client.get(f"/detail/{TASK}{PLAIN}").text, tmp_path / "still.html",
+        1400, _THE_HEADER_STAYS, patience=3000,
+    )
+    landing = got["landing"]
+
+    assert got["writing"] == landing, (
+        f"opening a session moved the header: {got['writing']} against {landing}"
+    )
+    assert got["back"] == landing, (
+        f"leaving the session did not put the page back: {got['back']} against {landing}"
+    )
+    for name in got["header"] + got["switcher"]:
+        assert got["split"][name] == landing[name], (
+            f"the split view moved {name}: {got['split'][name]} against {landing[name]}"
+        )
+    assert got["split"]["facts"]["top"] == landing["facts"]["top"], (
+        "the split view moved the facts column up or down the page"
+    )
+
+    # And where the header sits, which is the half of his sentence that a
+    # comparison between views cannot see: three views that agree on a box in
+    # the wrong place agree just as well. Level with the nav and as wide as it,
+    # in every view, which is what "full width, like the nav" is.
+    for view in ("landing", "writing", "split"):
+        nav = got[view]["nav"]
+        for name in got["header"]:
+            spot = got[view][name]
+            assert (spot["left"], spot["width"]) == (nav["left"], nav["width"]), (
+                f"in the {view} view {name} is not the page's width beside the "
+                f"nav: {spot} against {nav}"
+            )
+        # The switcher is three buttons and not a full-width row, so only its
+        # left edge is the nav's. `#views` is the box the segments are drawn
+        # inside; asking `#view-edit` for the same number would be asking for
+        # x=21, which is `#views`'s 1px border and not a measurement of
+        # anything. `landing == writing` and the split loop above already say
+        # the segments do not move; this says where they do not move FROM.
+        views = got[view]["#views"]
+        assert views["left"] == nav["left"], (
+            f"in the {view} view the switcher does not start where the nav "
+            f"starts: {views} against {nav}"
+        )
+
+
+# The other side of the line jcanton drew, and the box that is not `.panes`.
+# `#promote` is the second and last direct child of the article below it, and
+# the only element on the page whose width was the article's by inheritance
+# rather than by a rule of its own.
+_THE_BAR_UNDER_THE_COLUMN = _STUB_PREVIEW + """
+const box = sel => {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  return {left: Math.round(b.left), right: Math.round(b.right),
+          width: Math.round(b.width)};
+};
+return {nav: box('body > nav'), panes: box('.panes'), promote: box('#promote'),
+        hint: box('#promote .hint'),
+        overflow: document.documentElement.scrollWidth, window: innerWidth};
+"""
+
+
+def test_the_promotion_bar_keeps_the_column_it_sits_under(
+    client: TestClient, tmp_path: Path
+):
+    """Below the line is the column's width, and the promotion bar is below the
+    line. jcanton, 2026-08-24: everything above the line he drew under the meta
+    row is the page's width, "and only the body and fields below it keep the
+    current horizontal sizing".
+
+    `#promote` is the failure that move can have: it is a direct child of
+    `article.record` like the six header boxes, it sits BELOW `.panes`, and it
+    had no width of its own — it simply took the article's, which was the
+    measure until the measure moved down to the panes. Measured in Chrome at
+    1400x900 on a note's page before the fix: the bar 1360px wide against
+    `.panes`'s 1024, so its `border-top` ran 336px past the right edge of the
+    facts column and stopped in empty space, and the 12px sentence under it set
+    at 1360px instead of at the reader's measure.
+
+    Asked on a NOTE, and asked through the write path, because the corpus every
+    other pixel test here runs on is a task and a task is not promotable
+    (`PROMOTABLE`) — so `#promote` is on none of the pages the rest of this file
+    looks at, which is exactly why nothing caught this.
+
+    Two windows. 1400 is the only one where "the column" and "the page" are
+    different answers, so the equality means something; 700 is narrower than the
+    measure, where `max-width: 100%` decides the width instead and the question
+    is whether the bar overflows the page.
+    """
+    made = client.post("/api/record", json={
+        "base_commit": head(client),
+        "body": "The seam is not where we thought it was.",
+        "fields": {"kind": "note", "title": "A note somebody may promote"},
+    })
+    assert made.status_code == 201, made.text
+    page = client.get(f"/detail/{made.json()['id']}{PLAIN}").text
+    # The guard against this going quietly vacuous: no bar, no measurement, and
+    # every assertion below would pass on a `null` this file would rather see.
+    assert '<div id="promote">' in page, "the note's page has no promotion bar to measure"
+
+    wide = measured_in(
+        chrome(), page, tmp_path / "promote-wide.html", 1400, _THE_BAR_UNDER_THE_COLUMN
+    )
+    narrow = measured_in(
+        chrome(), page, tmp_path / "promote-narrow.html", 700, _THE_BAR_UNDER_THE_COLUMN
+    )
+
+    assert wide["panes"]["width"] < wide["nav"]["width"], (
+        "the column is already the page's width at 1400px, so this test cannot "
+        f"tell the two apart: {wide}"
+    )
+    for window, got in (("1400px", wide), ("700px", narrow)):
+        assert (got["promote"]["left"], got["promote"]["width"]) == (
+            got["panes"]["left"], got["panes"]["width"]
+        ), (
+            f"at {window} the promotion bar is not the column it sits under: "
+            f"{got['promote']} against {got['panes']}"
+        )
+        assert got["hint"]["width"] == got["panes"]["width"], (
+            f"at {window} the sentence inside it sets at another width: {got}"
+        )
+        assert got["overflow"] == got["window"], (
+            f"at {window} the page scrolls sideways: {got}"
+        )
 
 
 _A_FAILED_PREVIEW = """
@@ -4227,10 +4627,12 @@ def test_the_view_a_person_chose_is_the_one_the_next_session_opens_in(
     )
 
     assert got["atLoad"] == {"view": "view", "full": False, "editing": False}, (
-        f"a remembered mode opened a record somebody came to read as a "
-        f"full-screen editor: {got['atLoad']}"
+        f"a remembered mode opened a record somebody came to read as an "
+        f"editor: {got['atLoad']}"
     )
-    assert got["afterEdit"] == {"view": "both", "full": True}, (
+    # `full: False` in a session too, since 2026-08-24: the split opens on the
+    # page it was asked from, and the class would mean the surface came back.
+    assert got["afterEdit"] == {"view": "both", "full": False}, (
         f"starting a session did not restore the remembered view: {got['afterEdit']}"
     )
     assert got["afterCancel"]["view"] == "view"
@@ -4559,7 +4961,7 @@ def test_the_toolbar_and_the_keymap_do_not_cancel_each_other(
     # key its command table handled never reaches the page's own keydown listener
     # — that, and not a `defaultPrevented` check, is what stops `indentLines`
     # firing on top of Ace's soft tab. The two keys the page still has to get are
-    # here beside it: Escape leaves the full-page view and Cmd+S saves, and both
+    # here beside it: Escape leaves the session and Cmd+S saves, and both
     # arrive.
     assert "Tab" not in got["reached"], (
         "Tab reached the page's own handler, so `indentLines` ran on top of the "
@@ -4761,17 +5163,20 @@ def test_the_editor_is_chosen_by_the_address_and_by_nothing_else(
     )
 
 
-# The document is the row with the height in it, and the facts are the row below.
-# Both halves are measured because either alone leaves the surface unusable: with
-# only the floor on the row, the facts drew as a 59px box with fifteen fields
-# scrolling inside it; with only the reorder, the document got the 60px of free
-# space the facts' auto row left over.
-_NARROW_FULL_PAGE = """
+# The writing box measured against the row grid, at a window narrow enough that
+# the facts stack over the document. The 50px box this section was first written
+# for came out of the full-page grid (a `height: 100%` box in an `auto` track);
+# the surface is gone, and what is measured now is that the ordinary page keeps
+# the box a document tall and keeps everything reachable by scrolling.
+#
+# `_STUB_PREVIEW`, because over `file://` there is no server: without it the
+# pane holds one line of refusal, and the create form's preview — which sizes
+# to its content, exactly as the landing document does — would be measured
+# holding nothing.
+_NARROW_WRITING = _STUB_PREVIEW + """
 const article = document.querySelector('article.record');
 const area = document.querySelector('textarea[name=body]');
-const panes = document.querySelector('.panes');
 const facts = document.querySelector('.facts');
-const main = document.querySelector('.main');
 const pane = document.getElementById('body-preview');
 const rows = element => {
   const box = element.getBoundingClientRect();
@@ -4779,17 +5184,16 @@ const rows = element => {
 };
 const state = () => ({
   rows: rows(area),
-  documentFirst: main.getBoundingClientRect().top < facts.getBoundingClientRect().top,
   factsWhole: Math.round(facts.getBoundingClientRect().height) >= facts.scrollHeight - 1,
-  factsReachable: panes.scrollHeight > panes.clientHeight
-                  || facts.getBoundingClientRect().bottom <= panes.getBoundingClientRect().bottom,
+  factsReachable: facts.getBoundingClientRect().bottom + scrollY
+                  <= document.documentElement.scrollHeight + 1,
 });
 
 // The create form is always editing; the record page opens a session here.
 if (typeof flipEditing === 'function') flipEditing();
 const out = {};
-// The session already starts in `edit`, and pressing the lit segment leaves full
-// page — so this presses it only when something else is lit.
+// Pressing the lit segment would leave the session, so a segment is pressed
+// only when something else is lit.
 const press = id => {
   const seg = document.getElementById(id);
   if (seg.getAttribute('aria-pressed') !== 'true') seg.click();
@@ -4797,17 +5201,19 @@ const press = id => {
 press('view-edit');
 out.write = state();
 press('view-both');
+await new Promise(go => setTimeout(go, 200));
 out.split = state();
-out.fixed = getComputedStyle(article).position;
+out.position = getComputedStyle(article).position;
+out.sideways = document.documentElement.scrollWidth > innerWidth;
 out.paneRows = Math.round(
   pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight));
 press('preview');
+await new Promise(go => setTimeout(go, 200));
 const doc = document.querySelector('article.record .doc.read');
 out.read = {
   paneRows: Math.round(
     pane.getBoundingClientRect().height / parseFloat(getComputedStyle(area).lineHeight)),
   landed: doc ? doc.getClientRects().length > 0 : false,
-  documentFirst: main.getBoundingClientRect().top < facts.getBoundingClientRect().top,
 };
 out.width = innerWidth;
 return out;
@@ -4815,47 +5221,42 @@ return out;
 
 
 @pytest.mark.parametrize("where", ["detail", "new"])
-def test_the_full_page_surface_is_a_writing_surface_at_a_window_that_is_not_wide(
+def test_the_writing_views_are_usable_at_a_window_that_is_not_wide(
     client: TestClient, tmp_path: Path, where: str
 ):
-    """A 900px window is a laptop with the window not maximised, and full page is
-    the feature this branch exists for.
+    """A 900px window is a laptop with the window not maximised.
 
-    The container query stacks the facts above the document below 56rem of
-    column, and in full page the explicit `minmax(0, 1fr)` row then landed on the
-    facts — because `.facts` comes first in the markup — while the document got
-    the implicit `auto` one. A `height: 100%` box in an auto track is a box the
-    size of its `rows` attribute: measured at every width from 900px down, in all
-    three views and on both surfaces, the writing box was 50px. Two lines, under
-    six hundred pixels of metadata, with no way to make it bigger.
+    Under the old full-page grid this was where the writing box measured 50px —
+    a `height: 100%` box in an `auto` track, under six hundred pixels of
+    metadata. The surface is gone; what holds the box open now is the one
+    `--writing` height it has at every width, and what keeps the facts usable
+    is that they are ordinary page content the page scrolls to. The article
+    must stay in the page's own flow (`position: relative`) and must not force
+    a sideways scrollbar — the split's grown width has `max-width: 100%` to
+    answer to.
 
-    Asked of Chrome and not of `tests/cascade.py`, and the reason is written into
-    that module: it skips at-rules bodies and all, so it resolves the wide
-    two-column page and cannot see the stacked one at all. This is a question
-    about which track a box ended up in, which is layout.
+    Asked of Chrome and not of `tests/cascade.py`, because the stacked layout
+    lives behind a container query, which that engine skips by construction.
     """
     page = client.get(
         f"/detail/{TASK}{PLAIN}" if where == "detail" else f"/new{PLAIN}"
     ).text
-    got = measured_in(chrome(), page, tmp_path / f"narrow-{where}.html", 900, _NARROW_FULL_PAGE)
+    got = measured_in(chrome(), page, tmp_path / f"narrow-{where}.html", 900, _NARROW_WRITING)
 
-    assert got["width"] == 900 and got["fixed"] == "fixed"
+    assert got["width"] == 900 and got["position"] == "relative"
+    assert not got["sideways"], "the page scrolls sideways at 900px"
     for view in ("write", "split"):
         assert got[view]["rows"] >= 12, (
             f"the {view} view gives the document {got[view]['rows']} lines at a 900px window"
         )
-        assert got[view]["documentFirst"], (
-            "the facts are above the document in the surface that exists to be written in"
-        )
         assert got[view]["factsWhole"], (
-            "the facts pane is scrolling inside itself: the row it is in has no height, "
-            "so fifteen fields are in a box a few lines tall"
+            "the facts grew a scrollbar of their own: fifteen fields in a box a "
+            "few lines tall"
         )
         assert got[view]["factsReachable"], "and there is no way to scroll down to them"
     assert got["paneRows"] >= 12, "the rendered half of the split is not readable either"
     if where == "new":
         assert got["read"]["paneRows"] >= 12, "the create form's preview is not readable"
-        assert got["read"]["documentFirst"]
     else:
         assert got["read"]["landed"], (
             "pressing the eye did not land on the record's own read page"
@@ -5270,9 +5671,13 @@ if (typeof flipEditing === 'function') {
   await new Promise(go => setTimeout(go, 150));
 }
 const marks = document.getElementById('marks');
-const article = document.querySelector('article.record');
+// The surface the toolbar is drawn on is the column, not the article: since
+// 2026-08-24 the article is the page's width and everything fits inside it by
+// construction, which would make `past` below the same negative number at every
+// window — a measurement that has stopped asking anything.
+const surface = document.querySelector('article.record .panes');
 const buttons = [...marks.querySelectorAll('button.mark')];
-const edge = article.getBoundingClientRect().right;
+const edge = surface.getBoundingClientRect().right;
 return {
   width: innerWidth,
   buttons: buttons.length,

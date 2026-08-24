@@ -95,6 +95,15 @@ def test_delete_stands_beside_edit_and_wears_what_edit_wears(index: Index):
     And it carries no font, padding or border of its own, so the two buttons match
     by construction rather than by two rules somebody has to keep in step. Only
     the colour it turns on hover is its own.
+
+    Beside, and since 2026-08-24 AFTER: this asserts the two are on one line and
+    deliberately not which comes first. Delete leaves the bar the moment a
+    session begins, so standing in front of the view switcher moved those three
+    buttons 70px every time anybody pressed one — jcanton asked for them "left
+    aligned like the nav" and not moving at all
+    (`test_opening_a_session_moves_nothing_above_the_document` measures it). It
+    also puts the destructive control off the leading edge of the row, which is
+    where a pointer arrives.
     """
     record_id = one_task(index)
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
@@ -114,7 +123,7 @@ def test_the_control_is_only_on_the_record_page(index: Index):
     from openproj.render import render_graph, render_table
 
     for name, page in (
-        ("table", render_table(index, ROUTES, base_commit=HEAD)),
+        ("table", render_table(index, ROUTES, base_commit=HEAD, may_write=True)),
         ("graph", render_graph(index, ROUTES, base_commit=HEAD)),
     ):
         assert BUTTON not in page, f"the {name} offers a delete"
@@ -303,37 +312,51 @@ def test_a_refusal_is_shown_where_the_question_was_asked(index: Index, tmp_path:
 
 _QUIET_BAR = """
 const bar = document.getElementById('commitbar');
-const before = {shown: bar.offsetParent !== null, said: bar.textContent.trim()};
+const spot = () => {
+  const b = bar.getBoundingClientRect();
+  return {readable: getComputedStyle(bar).visibility !== 'hidden',
+          top: Math.round(b.top), height: Math.round(b.height)};
+};
+const before = {...spot(), said: bar.textContent.trim()};
 flipEditing();
-const editing = {shown: bar.offsetParent !== null};
+const editing = spot();
 document.getElementById('cancel').click();
-return {before, editing, after: {shown: bar.offsetParent !== null}};
+return {before, editing, after: spot()};
 """
 
 
-def test_the_commit_bar_is_not_on_screen_when_there_is_nothing_to_commit(
+def test_the_commit_bar_is_not_readable_when_there_is_nothing_to_commit(
     index: Index, tmp_path: Path
 ):
-    """It is sticky, so it was on screen the whole time somebody was READING a
+    """It is sticky, so it was readable the whole time somebody was READING a
     record, saying "Nothing to save" about a form they had not opened — a
     permanent answer to a question nobody had asked, at the foot of every page.
 
-    Measured rather than asked of the attribute: `.commitbar` sets `display:
-    flex`, which beats `[hidden]`'s `display: none` because one is an author rule
-    and the other is the browser's. Every menu on the table page opened on load
-    the day that was forgotten.
+    Readable, not laid out: since 2026-08-24 the quiet bar keeps its BOX on the
+    writable record page (`visibility: hidden` over the reserved `display:
+    flex`), because unhiding it used to move the heading and everything under
+    it 44px the moment a session opened — jcanton's "page elements should not
+    move or appear/disappear when switching views". So both halves are measured
+    here: the resting bar says nothing a person can read, and the bar the
+    session reveals is the same box in the same place, which is what "nothing
+    moved" means for a control that appears.
     """
     record_id = one_task(index)
     page = render_detail(index, ROUTES, only=record_id, base_commit=HEAD, may_write=True)
 
     got = measured_in(chrome(), page, tmp_path / "bar.html", 1200, _QUIET_BAR)
 
-    assert got["before"]["shown"] is False, (
-        f"the bar was on screen over a record nobody was editing, saying "
+    assert got["before"]["readable"] is False, (
+        f"the bar was readable over a record nobody was editing, saying "
         f"{got['before']['said']!r}"
     )
-    assert got["editing"]["shown"] is True, "and then it was not there when it was needed"
-    assert got["after"]["shown"] is False, "Cancel left it behind"
+    assert got["editing"]["readable"] is True, "and then it was not there when it was needed"
+    assert got["after"]["readable"] is False, "Cancel left it readable"
+    boxes = {name: (got[name]["top"], got[name]["height"]) for name in got}
+    assert boxes["before"] == boxes["editing"] == boxes["after"], (
+        f"the bar's box moved with the session instead of being reserved: {boxes}"
+    )
+    assert boxes["before"][1] > 0, "the resting bar has no box, so nothing here is reserved"
 
 
 _WHILE_EDITING = """

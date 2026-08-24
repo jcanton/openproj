@@ -548,6 +548,41 @@ def test_the_legend_is_two_rows_and_the_keys_line_up(rendered: Path, tmp_path: P
     assert len(set(priority["ys"])) == 1 and len(set(status["ys"])) == 1
 
 
+def test_the_legend_leads_the_corner_and_the_count_hangs_under_it(rendered: Path):
+    """jcanton, 2026-08-24: "move it below the legend instead please? this way
+    the legend can move a little upwards into the corner." `.keys` is a column
+    pinned by its `top`, so which row touches the corner is decided by document
+    order and nothing else — the count led for four days and held the legend
+    32px down from where the box starts.
+
+    Order is a fact about the document, so it is read off the parsed document:
+    a substring search for `id="summary"` against `class="legends"` would also
+    match either name inside the stylesheet's own comments, which is how
+    `page.index("<h1>")` found a heading inside a CSS comment once already.
+    The pixels this order buys are measured where pixels live, in
+    `test_the_two_key_rows_are_one_length_and_sit_on_the_drawing`
+    (`test_graph_layout.py`)."""
+    parsed = elements(read(rendered, "graph.html"))
+    keys = next(i for i, el in enumerate(parsed)
+                if el.tag == "div" and el.attrs.get("class") == "keys")
+    legends = next(i for i, el in enumerate(parsed)
+                   if el.tag == "div" and el.attrs.get("class") == "legends")
+    summary = next(i for i, el in enumerate(parsed) if el.attrs.get("id") == "summary")
+    assert keys < legends < summary, (
+        "inside .keys the legend leads and the count follows: "
+        f"keys at {keys}, legends at {legends}, summary at {summary}"
+    )
+    # The count is still the last thing in the corner box, not moved out of it:
+    # the next element after it is past the `</div>`s, and the first one is the
+    # canvas the box floats over.
+    after = next(el for el in parsed[summary + 1 :] if el.tag not in ("span",))
+    assert after.attrs.get("id") == "cy", after
+    # And the two spans the script writes by id ride inside it still — the move
+    # must not strand `getElementById('shown')` or `('context')`.
+    inside = {el.attrs.get("id") for el in parsed[summary + 1 : summary + 3]}
+    assert inside == {"shown", "context"}, inside
+
+
 def test_a_group_name_is_readable_inside_its_own_box(rendered: Path):
     """It was 9px of --muted sitting on the box border, where every edge crossing
     the box ran through it — a label saying only that something is grouped."""
@@ -1042,7 +1077,7 @@ def test_the_people_page_lists_everyone_the_plan_names(rendered: Path, seed_inde
     named = {
         login
         for record in seed_index.plan.values()
-        for field in ("owner", "shaped_by", "assignees", "reviewers")
+        for field in ("owner", "assignees", "reviewers")
         for login in (
             lambda v: v if isinstance(v, list) else [v] if v else []
         )(getattr(record, field, None))
@@ -1280,12 +1315,9 @@ def test_every_person_links_to_the_table_filtered_by_them(rendered: Path):
         login = re.search(r'data-login="([^"]+)"', group).group(1)
         roles = set(re.findall(r'<tr data-role="(\w+)"', group))
         opens = next((r for r in _ROLE_ORDER if r in roles and r in _ROLE_FILTER), None)
-        if opens is None:
-            # Only a shaper: `shaped_by` is not one of the table's facets, so the
-            # name stays a name rather than becoming a link to a filter that does
-            # not exist.
-            assert f'<span class="who">{login}</span>' in group, login
-            continue
+        # Every role is a table facet now that the shaper row retired with
+        # `shaped_by`, so a person on the page always has somewhere to open.
+        assert opens is not None, login
         assert f'<a class="who" href="table.html?{_ROLE_FILTER[opens][0]}={login}"' in group, login
         # And each count is the way into the rows it counted.
         for role in roles & set(_ROLE_FILTER):
@@ -2869,18 +2901,31 @@ def test_the_line_that_says_a_bet_does_not_fit_is_drawn_as_a_problem(
     assert ".overrun { color: var(--sev-warn); font-weight: 600; }" in body
 
 
-def test_the_detail_column_is_centred_and_the_facts_sit_beside_the_document(rendered: Path):
-    """It was an 832px article flush left with a full-height rule down its right
-    edge, which on a wide screen is not a document — it is the left half of a
-    two-pane layout whose right half failed to load.
+def test_the_header_spans_the_page_and_the_facts_sit_beside_the_document(rendered: Path):
+    """The header — back link, switcher, commit bar, kind, title, meta — is the
+    page's own width and starts where the nav starts. jcanton, 2026-08-24: "all
+    above the red lines should be full width, same as in the side-by-side view,
+    and only the body and fields below it keep the current horizontal sizing".
 
-    A container query and not a media query: the width that decides whether the
-    facts fit beside the prose is the column's, and the reader sets that with the
-    grip. A window breakpoint would put a sidebar on a column dragged to 400px."""
+    So the measure is `.panes`'s, and the CONTAINER moved down with it. That
+    pairing is the whole risk in the change: a container query and not a media
+    query, because the width that decides whether the facts fit beside the prose
+    is the column's and the reader sets that with the grip — and a container
+    left behind on a full-width article would be answering about the WINDOW,
+    which is a window breakpoint by another name and puts a sidebar on a column
+    dragged to 400px.
+
+    (It was an 832px article flush left with a full-height rule down its right
+    edge, which on a wide screen is not a document but the left half of a
+    two-pane layout whose right half failed to load. The rule is a short grip
+    now, and the header above the column is what says the page is this wide on
+    purpose.)"""
     body = read(rendered, "detail.html")
 
-    assert re.search(r"article\.record \{[^}]*margin: 0 auto", body, re.S)
-    assert "container-type: inline-size" in body
+    assert re.search(r"\.panes \{[^}]*width: var\(--measure[^}]*container-type: inline-size",
+                     body, re.S)
+    assert not re.search(r"article\.record \{[^}]*(width|container-type):", body, re.S)
+    assert re.search(r"article\.record \{[^}]*margin: 0 0 3rem", body, re.S)
     assert "@container (min-width: 56rem)" in body
     assert re.search(r"\.panes > \.facts \{[^}]*grid-column: 2", body, re.S)
     assert re.search(r"\.panes > \.main \{[^}]*grid-column: 1", body, re.S)
@@ -3733,7 +3778,7 @@ def views(seed_index: Index) -> dict[str, str]:
 
     return {
         "graph": render_graph(seed_index, STATIC, base_commit="deadbee"),
-        "table": render_table(seed_index, STATIC, base_commit="deadbee"),
+        "table": render_table(seed_index, STATIC, base_commit="deadbee", may_write=True),
         "timeline": render_timeline(seed_index, STATIC),
     }
 

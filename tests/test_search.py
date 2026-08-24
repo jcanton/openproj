@@ -44,7 +44,7 @@ def index(demo_root: Path) -> Index:
 
 @pytest.fixture
 def page(index: Index) -> str:
-    return render_table(index, base_commit="deadbee")
+    return render_table(index, base_commit="deadbee", may_write=True)
 
 
 def fields_of(index: Index) -> list[str]:

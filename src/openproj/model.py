@@ -752,18 +752,12 @@ class Pitch(Record):
     # stood. One field on both kinds, because a pitch's appetite and a task's
     # effort were two names for one quantity that `size_weeks` already read as one.
     person_weeks: float | None = None
-    # A list, because shaping is usually done in pairs — two of the four shaped
-    # pitches in the team's own corpus name two or three people. A bare string
-    # still parses and still writes back as a bare string, so no file has to
-    # change and `git blame` on the field survives.
-    shaped_by: list[str] = []
-
-    @field_validator("shaped_by", mode="before")
-    @classmethod
-    def _one_or_many(cls, value: object) -> object:
-        if value is None:
-            return []
-        return [value] if isinstance(value, str) else value
+    # There is no `shaped_by` any more — jcanton, 2026-08-24: owner, shaped_by,
+    # assignees and reviewers was one hat too many, so on a pitch `owner` means
+    # "who shaped it and holds it". The cost was known when he chose: the team's
+    # own HackMD header says "Shaped by", and shaping is usually a pair where
+    # `owner` holds one name. Do not reintroduce either. A file that still
+    # carries the key round-trips untouched and warns, through `_RETIRED`.
 
 
 class Task(Record):
@@ -1268,12 +1262,10 @@ def _in_the_style_of(old: object, new: object) -> object:
         styled = CommentedSeq(new)
         styled.fa.set_flow_style()
         return styled
-    # A field that grew from a scalar to a list keeps its scalar spelling while it
-    # holds one value. `shaped_by: jcanton` is what the corpus is written in, and
-    # rewriting every one of them to `[jcanton]` on an unrelated save is a diff
-    # nobody asked for in a file somebody else is reading.
-    if isinstance(old, str) and isinstance(new, list) and len(new) == 1:
-        return new[0]
+    # A scalar-to-list clause stood here for `shaped_by`, the one list field
+    # whose validator accepted a bare string. The field is retired, no list
+    # field parses from a scalar any more, and a branch no input can reach is a
+    # branch that silently rots — so it went with the field.
     return new
 
 
@@ -1946,8 +1938,8 @@ def _status_problems(
             # `effort_weeks` on a task — one quantity under two names, which
             # `size_weeks` had to paper over on every read.
             yield "blocker", field, f"a ready {record.kind} needs an appetite", 1
-        if record.kind == "pitch" and not record.shaped_by:
-            yield "blocker", "shaped_by", "a ready pitch needs to say who shaped it", 2
+        # No shaped_by gate any more: a pitch's owner IS who shaped it, and the
+        # owner rule above already asks every ready record for one.
     elif record.status == "in_progress":
         if record.assigned_on is None:
             yield "blocker", "assigned_on", "work in progress needs the date it was assigned", 1
@@ -2045,7 +2037,7 @@ def _people_problems(record: Record, config: Config) -> Iterator[tuple[str, str 
     """
     if not config.known_people:
         return
-    for field in ("owner", "shaped_by", "assignees", "reviewers", "reported_by", "written_by"):
+    for field in ("owner", "assignees", "reviewers", "reported_by", "written_by"):
         value = getattr(record, field, None)
         for login in value if isinstance(value, list) else [value] if value else []:
             if login not in config.known_people:
@@ -2193,23 +2185,59 @@ def _rollup_problems(
     which is the rollup of the children, quietly ran past it anyway.
 
     A warning, never a blocker: the answer is to cut scope or to re-bet, and both
-    are decisions for a person. Only stated sizes are compared — a pitch whose
-    tasks are not written yet is under its appetite by definition, which is not
-    worth saying.
+    are decisions for a person. Only stated sizes are compared, on both sides of
+    the comparison. That sentence was true of the parent and false of the
+    children for a while: the guard below returns for an unsized bet, but every
+    unsized child was summed at `config.default_task_effort` — so a warning that
+    tells somebody to cut scope quoted a total partly made of a number nobody
+    typed, and the sentence presented it as what "its tasks add up to".
     """
     kids = children.get(record.id, [])
     stated, defaulted = size_weeks(record, config)
     if not kids or defaulted:
         return
-    total = sum(size_weeks(kid, config)[0] for kid in kids)
-    if total > stated:
-        yield (
-            "warning",
-            _SIZE_FIELD.get(record.kind),
+    # The sized ones only. A sized child overrunning the appetite is a statement
+    # somebody actually made — those numbers were typed, and the unsized
+    # siblings can only add to the total, never bring it back under — so firing
+    # on the sized sum alone is both honest and conservative. Counting the
+    # defaults in is the opposite: it invents an overrun (four unsized tasks
+    # under a one-week pitch would read as two weeks nobody proposed), and the
+    # golden corpus already carries the shape — pitch-3c9a41's four tasks are
+    # all unsized, so its old total of 2.0 was invented wholesale and only
+    # stayed quiet because the bet happened to be bigger.
+    #
+    # A container CAN reach `kids` today: the map above keys on `parent` alone,
+    # with no kind check, so a hand-committed `parent: pitch-x` on a project
+    # file lands it here — `Rung.under` makes that filing a reported containment
+    # problem, not an impossibility, because it governs validation and never the
+    # map. What keeps a mis-filed container out of the sum is this filter
+    # itself: only a pitch and a task carry `person_weeks`, so `size_weeks` on a
+    # container always answers (default, True) and it is left out as unsized
+    # rather than priced at the invented default `_weighed` (`index.py`)
+    # documents. Under the old sum it WAS priced in, at 0.5 weeks nobody typed.
+    sized = [kid for kid in kids if not size_weeks(kid, config)[1]]
+    total = sum(size_weeks(kid, config)[0] for kid in sized)
+    if total <= stated:
+        return
+    if len(sized) == len(kids):
+        message = (
             f"its {len(kids)} tasks add up to {total:g} weeks, more than the "
-            f"{stated:g} it was bet at — cut scope, or re-bet it",
-            4,
+            f"{stated:g} it was bet at — cut scope, or re-bet it"
         )
+    else:
+        # The message counts what was counted. "Its 8 tasks add up to 4 weeks"
+        # over five sized ones and three defaults is the defect this function
+        # had; saying the sized count, and that the rest can only push the total
+        # higher, is the same warning built out of typed numbers alone.
+        left = len(kids) - len(sized)
+        many = len(sized) != 1
+        message = (
+            f"its {len(sized)} sized task{'s' if many else ''} alone "
+            f"{'add' if many else 'adds'} up to {total:g} weeks, more than the "
+            f"{stated:g} it was bet at, and the {left} without a size can only "
+            "add to that — cut scope, or re-bet it"
+        )
+    yield ("warning", _SIZE_FIELD.get(record.kind), message, 4)
 
 
 def _carries(record: Record, field: str) -> bool:
@@ -2245,6 +2273,23 @@ def _carries(record: Record, field: str) -> bool:
 # shows the consequence (the claim quietly drops back to the stored status);
 # this names WHICH id went, which is the part a person needs to repair it.
 _PROMOTION_LINKS = {"pitched_into": "pitched into", "became": "became"}
+
+
+# Fields this tool used to read and no longer does, and where each value lives
+# now. Parsing is permissive, so a retired key survives in `_unread` and
+# `patch_text` round-trips it byte for byte — nothing is lost from the file, and
+# nothing appears on the screen. That silence is the "empty must not look like
+# broken" family: a pitch that records who shaped it and shows nothing. So the
+# key is named, once, here — a warning and never a blocker, because the file is
+# not wrong, it is older than the vocabulary.
+#
+# `shaped_by` retired 2026-08-24 — jcanton: owner, shaped_by, assignees and
+# reviewers was one hat too many, so `owner` on a pitch is who shaped it and
+# holds it.
+_RETIRED = {
+    "shaped_by": "owner records who shaped a pitch and holds it — "
+                 "move the name there and delete this key",
+}
 
 
 def _problems_for(
@@ -2303,6 +2348,15 @@ def _problems_for(
                     else f"{_an(name)} is never scheduled"
                 )
                 yield "warning", field, f"{what}, so its {field} is not read", 1
+
+    # Any kind, because a retired key is in nobody's `model_fields` and so lands
+    # in `_unread` wherever it is written. Stamped 5, the version that retired
+    # `shaped_by` — moot for severity, since a warning is what is yielded and
+    # grandfathering only ever demotes, but a Problem's version should still say
+    # which vocabulary it belongs to.
+    for field, where in _RETIRED.items():
+        if field in record._unread:
+            yield "warning", field, f"{field} is no longer read: {where}", 5
 
     if record.id in parent_cycles:
         yield "blocker", "parent", "part of a parent cycle", 1

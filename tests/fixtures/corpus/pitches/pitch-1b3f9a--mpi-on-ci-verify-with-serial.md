@@ -7,7 +7,6 @@ status: ready
 owner: merganserly
 reviewers: [jackdawrie]
 person_weeks: 1
-shaped_by: null        # REQUIRED from schema_version 2; not in source
 assignees: []
 assigned_on: null
 cycle: null

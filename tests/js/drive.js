@@ -348,8 +348,26 @@ class Element {
     return this._phantom ? new Element(lastTag(selector), this.ownerDocument, true) : null;
   }
 
+  // A string is a node here, because it is one in a browser. `ParentNode.append`
+  // takes strings and turns each into a Text node, and the editor's conflict
+  // report leans on that — it appends a sentence and then, only when there is
+  // one, a `<details>` holding the draft. Against a shim that assumed every
+  // argument was an object this threw `Cannot create property 'parentNode' on
+  // string` and stopped the whole script: two tests about a socket giving up
+  // failed, neither of them about a conflict report. Same shape as the missing
+  // `prepend` below, and the same lesson — a shim that implements half of a
+  // standard pair fails on the line the other half is called, a long way from
+  // the page that called it.
+  //
+  // The text goes into `textContent` rather than into `children`, because that
+  // is where this shim keeps an element's own text (see `childNodes`, which
+  // synthesises the leading text node from it).
   append(...nodes) {
-    for (const node of nodes) { node.parentNode = this; this.children.push(node); }
+    for (const node of nodes) {
+      if (typeof node === 'string') { this.textContent = (this.textContent || '') + node; continue; }
+      node.parentNode = this;
+      this.children.push(node);
+    }
   }
 
   appendChild(node) { this.append(node); return node; }
@@ -362,8 +380,11 @@ class Element {
   // called, which is what it did: eleven tests about drafts and rooms failed on
   // `bar.prepend is not a function`, none of them about a status bar.
   prepend(...nodes) {
-    for (const node of nodes) node.parentNode = this;
-    this.children.unshift(...nodes);
+    const text = nodes.filter(n => typeof n === 'string').join('');
+    if (text) this.textContent = text + (this.textContent || '');
+    const kids = nodes.filter(n => typeof n !== 'string');
+    for (const node of kids) node.parentNode = this;
+    this.children.unshift(...kids);
   }
 
   // A structural copy. The icon picker is the one place these pages clone rather

@@ -27,11 +27,14 @@ from openproj.render import ROUTES, render_table
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 
-# A corpus of two, hand-built rather than the demo's: every record in `seed/`
+# A corpus of three, hand-built rather than the demo's: every record in `seed/`
 # carries an `assigned_on`, which is what a plan somebody has been keeping looks
-# like — and the whole question here is about a record that does not.
+# like — and the whole question here is about a record that does not. The third
+# has nobody on it at all, so the question it opens has the two people lists in
+# it and not only the date.
 WITHOUT = "task-000001"
 WITH = "task-000002"
+BARE = "task-000003"
 
 
 @pytest.fixture
@@ -46,13 +49,17 @@ def index() -> Index:
             owner="ann", assignees=["ann"], reviewers=["bo"], person_weeks=2,
             assigned_on=date(2026, 8, 10),
         ),
+        Task(
+            id=BARE, kind="task", title="Nobody on it", status="ready",
+            owner="ann", person_weeks=2,
+        ),
     ]
     return build_index(records, Config(), date(2026, 8, 17))
 
 
 @pytest.fixture
 def page(index: Index) -> str:
-    return render_table(index, ROUTES, base_commit=HEAD)
+    return render_table(index, ROUTES, base_commit=HEAD, may_write=True)
 
 
 _ASKS = """
@@ -170,3 +177,138 @@ def test_the_gate_the_table_asks_from_is_the_gate_the_server_enforces(page: str)
     for kind in ("project", "pitch", "task"):
         asked = [field for field, at in payload["required"][kind].items() if "thinking" in at]
         assert asked == [], kind
+
+
+_SUGGESTING = """
+window.__wrote = [];
+window.fetch = (url, options) => {
+  window.__wrote.push({url, body: JSON.parse(options.body)});
+  return new Promise(() => {});
+};
+const row = [...document.querySelectorAll('tbody tr[data-id]')]
+  .find(one => one.dataset.id === %s);
+saveCell(row.querySelector('td[data-col="status"]'), 'in_progress');
+const panel = document.getElementById('askfor');
+const box = panel.querySelector('input[data-field="assignees"]');
+const key = name => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
+// One name already held, so picking a second can tell "complete the last token"
+// from "replace the whole value" — which is what `data-type` decides.
+box.focus();
+box.value = 'ann, b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const item = list.querySelector('li');
+const at = item.getBoundingClientRect();
+const hit = document.elementFromPoint(at.left + 4, at.top + 4);
+const opened = {
+  fields: [...panel.querySelectorAll('input')].map(one => one.dataset.field),
+  role: box.getAttribute('role'), type: box.dataset.type,
+  expanded: box.getAttribute('aria-expanded'),
+  offered: [...list.querySelectorAll('li')].map(one => one.dataset.value),
+  under: Math.abs(list.getBoundingClientRect().top - box.getBoundingClientRect().bottom) < 2,
+  onTop: !!(hit && hit.closest('ul.suggest') === list),
+};
+key('Enter');
+const picked = {value: box.value, panelShown: !panel.hidden,
+                listShut: list.hidden, wrote: window.__wrote.length};
+panel.querySelector('input[data-field="reviewers"]').value = 'ann';
+key('Enter');
+return {opened, picked, wrote: window.__wrote,
+        panelAfterSave: document.getElementById('askfor').hidden};
+"""
+
+
+def test_the_question_offers_the_suggestions_a_cell_editor_offers(
+    index: Index, page: str, tmp_path: Path
+):
+    """The gate's boxes are the same fields as the cells beneath them, and they
+    had no autocomplete at all: `attachSuggest` runs over the page once at load,
+    and this panel is built at runtime.
+
+    Three claims beyond "a list appears". The box keeps the combobox contract the
+    widget writes. The pick completes the last comma-separated token rather than
+    replacing the value — that is `data-type`, which the panel did not carry. And
+    the list is painted on top of the panel and where the box is, asked of real
+    pixels with `elementFromPoint`: `.suggest` is z-index 20 against the panel's
+    fixed 6, both body children, and a list drawn behind the panel would keep
+    every other assertion here green.
+
+    Enter on an open list picks and must not also save: this listener is on the
+    input and the panel's is on the way up, so before `defaultPrevented` was
+    honoured one press did both.
+    """
+    got = measured_in(
+        chrome(), page, tmp_path / "suggesting.html", 1400,
+        _SUGGESTING % json.dumps(BARE), height=900,
+    )
+
+    assert got["opened"]["fields"] == ["assignees", "reviewers", "assigned_on"]
+    assert got["opened"]["role"] == "combobox"
+    assert got["opened"]["type"] == "list"
+    assert got["opened"]["expanded"] == "true"
+    # `ann` is already held, so it is not offered again; `bo` matches the `b`.
+    assert got["opened"]["offered"] == ["bo"]
+    assert got["opened"]["under"], "the list is not hanging under the box it completes"
+    assert got["opened"]["onTop"], "the list is painted behind the gate panel"
+
+    assert got["picked"]["value"] == "ann, bo, ", "the pick replaced the value instead"
+    assert got["picked"]["listShut"] is True
+    assert got["picked"]["panelShown"] is True, "picking a name saved the half-answered panel"
+    assert got["picked"]["wrote"] == 0
+
+    # The second Enter met no open list, so it is the panel's: one write, with
+    # the picked names coerced as lists and the prefilled date beside them.
+    assert got["panelAfterSave"] is True
+    assert [call["url"] for call in got["wrote"]] == [f"/api/record/{BARE}"]
+    sent = got["wrote"][0]["body"]["fields"]
+    assert sent["status"] == "in_progress"
+    assert sent["assignees"] == ["ann", "bo"]
+    assert sent["reviewers"] == ["ann"]
+
+
+_ONE_ESCAPE = """
+window.__wrote = [];
+window.fetch = (url, options) => {
+  window.__wrote.push({url, body: JSON.parse(options.body)});
+  return new Promise(() => {});
+};
+const row = [...document.querySelectorAll('tbody tr[data-id]')]
+  .find(one => one.dataset.id === %s);
+saveCell(row.querySelector('td[data-col="status"]'), 'in_progress');
+const panel = document.getElementById('askfor');
+const box = panel.querySelector('input[data-field="assignees"]');
+const key = name => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true}));
+box.focus();
+box.value = 'b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const wasOpen = !list.hidden;
+key('Escape');
+const first = {listShut: list.hidden, panelShown: !panel.hidden, value: box.value};
+key('Escape');
+return {wasOpen, first, panelShut: panel.hidden,
+        wrote: window.__wrote.length, status: DATA.rows[%s].status};
+"""
+
+
+def test_one_escape_dismisses_one_thing(index: Index, page: str, tmp_path: Path):
+    """Escape with the list open closes the list; the question stands, with what
+    was typed still in the box. Before the widget marked the Escape it consumed,
+    the same press also cancelled the whole panel — the answer half-given, gone.
+
+    The second Escape meets no list and is the panel's: cancelled, unwritten.
+    """
+    got = measured_in(
+        chrome(), page, tmp_path / "one-escape.html", 1400,
+        _ONE_ESCAPE % (json.dumps(BARE), json.dumps(BARE)), height=900,
+    )
+
+    assert got["wasOpen"], "the list never opened, so nothing here was asked"
+    assert got["first"]["listShut"] is True
+    assert got["first"]["panelShown"] is True, "one Escape dismissed the list AND the panel"
+    assert got["first"]["value"] == "b", "closing the list took the typing with it"
+    assert got["panelShut"] is True
+    assert got["wrote"] == 0
+    assert got["status"] != "in_progress"

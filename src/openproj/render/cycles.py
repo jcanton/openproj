@@ -466,8 +466,12 @@ setInterval(() => {
 // Every editable cell is an input already: a betting table is filled in, not
 // inspected, and a double-click to reach a field somebody is about to type in is
 // a step that only exists because the table also had to be readable.
+// No attachSuggest here: these inputs are in the served markup, so the combobox
+// script's own sweep — which runs above this block — has already attached the
+// widget. Attaching again put a second widget on the same box: two lists opened
+// together, and one Enter picked a name from each — choosing `bo` wrote
+// `bo, ann, `.
 for (const input of document.querySelectorAll('#bets input.live')) {
-  if (input.dataset.suggest) attachSuggest(input);
   let was = input.value;
   // Saving on blur alone is not safe when the field is already an input: the
   // browser restores form values across a reload, autofills, and the picker
@@ -477,6 +481,14 @@ for (const input of document.querySelectorAll('#bets input.live')) {
   let edited = false;
   input.addEventListener('input', () => { edited = true; });
   input.onkeydown = event => {
+    // The suggestion widget answers first — the combobox sweep attached its
+    // listener to this input before this script ran — and a key it consumed is
+    // not this cell's to act on too. This is the third copy of the gate panel's
+    // collision: without the mark, one Escape closed the list AND reverted the
+    // typing it was completing, and one Enter picked a name AND blurred,
+    // staging the list half-finished. No stopPropagation, unlike the cell
+    // editor's guard: nothing above a betting cell answers either key.
+    if (event.defaultPrevented) return;
     if (event.key === 'Escape') { input.value = was; edited = false; input.blur(); }
     if (event.key === 'Enter') input.blur();
   };
@@ -550,8 +562,9 @@ function dirty() {
 // The roster is edited in the page and written by Save, so adding somebody and
 // setting their availability is one decision and one commit rather than two.
 const HELD = {{ c.held|tojson }};
+// Already carrying the widget: the combobox sweep reached this box too, and the
+// second attachSuggest here doubled it the same way the betting cells' did.
 const JOINING = document.getElementById('joining');
-if (JOINING) attachSuggest(JOINING);
 
 // Two clicks, and the second one answers a question rather than repeating the
 // gesture that asked it. Taking somebody out of a cycle takes their capacity out
@@ -1350,18 +1363,19 @@ button.pick.unset::before { content: ""; width: 1.1rem; height: 1.1rem; border-r
 .groupline #state.bad { color: var(--warn); }
 """
 
-_ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"),
-          ("shaped_by", "shaper"))
+_ROLES = (("owner", "owner"), ("assignees", "assignee"), ("reviewers", "reviewer"))
 
 # Most answerable first. Grouped by record — which is what building the rows one
 # record at a time gave you — a person with twenty rows had their four ownerships
 # scattered through it, and ownership is the thing being on the page is for.
-_ROLE_ORDER = ("owner", "assignee", "shaper", "reviewer")
+# There is no shaper row any more: `shaped_by` retired into `owner`, so who
+# shaped a pitch is its Owner line.
+_ROLE_ORDER = ("owner", "assignee", "reviewer")
 
 # Which table filter answers "show me this person's <role>", and the words for
-# what that link opens. The table facets three of the four fields a person's name
-# can sit in; `shaped_by` is not one of them, so a shaper count stays a count
-# rather than becoming a link to a filter the table does not have.
+# what that link opens. Every role this page draws is a table facet now, but the
+# lookups below stay `.get`-shaped: a role without a filter is a count rather
+# than a dead link, which is what kept the shaper row honest while it existed.
 _ROLE_FILTER = {
     "owner": ("owner", "owns"),
     "assignee": ("assignees", "is assigned"),

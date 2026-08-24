@@ -42,8 +42,11 @@ NEEDS_OWNER = "a ready record needs an owner"
 NEEDS_REVIEWER = "a ready record needs a reviewer, or review waived"
 NEEDS_EFFORT = "a ready task needs an appetite"
 NEEDS_APPETITE = "a ready pitch needs an appetite"
-NEEDS_SHAPED_BY = "a ready pitch needs to say who shaped it"
 NEEDS_ASSIGNED_ON = "work in progress needs the date it was assigned"
+RETIRED_SHAPED_BY = (
+    "shaped_by is no longer read: owner records who shaped a pitch and holds it — "
+    "move the name there and delete this key"
+)
 NEEDS_SOMEBODY_READY = "a ready record needs somebody on it"
 NEEDS_SOMEBODY_WIP = "work in progress needs somebody on it"
 NEEDS_INDEPENDENT_REVIEWER = (
@@ -81,9 +84,9 @@ def task(**overrides: object) -> Task:
     Its parent is PITCH_ID, which most tests do not bother to pass alongside it:
     a parent that is absent from the repository is not itself a rule violation.
 
-    "No rule" includes the schema_version 2 ones, the same way `pitch` below has
-    always had to carry `shaped_by`. Without `assignees` here every test in this
-    file would be asserting about one problem while a second sat beside it.
+    "No rule" includes the schema_version 2 somebody-assigned rule. Without
+    `assignees` here every test in this file would be asserting about one
+    problem while a second sat beside it.
     """
     fields: dict[str, object] = {
         "id": TASK_ID,
@@ -111,7 +114,6 @@ def pitch(**overrides: object) -> Pitch:
         "assignees": ["jackdawrie"],
         "reviewers": ["merganserly"],
         "person_weeks": 2.0,
-        "shaped_by": "hornbillow",
     }
     return Pitch(**(fields | overrides))
 
@@ -247,10 +249,29 @@ def test_a_todo_record_needs_a_size():
     )
 
 
-def test_a_todo_pitch_needs_shaped_by():
-    """Version 2 of the rules; here on a record created at 2, so it blocks."""
-    problem = only(check(pitch(shaped_by=None, created_schema_version=2)), PITCH_ID)
-    assert summary(problem) == ("blocker", "shaped_by", NEEDS_SHAPED_BY, 2)
+def test_a_file_that_still_says_shaped_by_warns_and_points_at_owner():
+    """The field retired into `owner` (jcanton, 2026-08-24). Parsing is
+    permissive, so the key lands in `_unread` and round-trips untouched — which
+    is exactly the silence this rule exists to break: a pitch that records who
+    shaped it and shows nothing is "empty looks like broken". A warning and
+    never a blocker, asserted on a record created AFTER the rule's version so
+    the severity cannot be grandfathering's doing."""
+    text = (
+        "---\nid: pitch-bbb222\nkind: pitch\ntitle: P\n"
+        "created_schema_version: 9\nshaped_by: hornbillow\n---\n\nb\n"
+    )
+    problem = only(check(parse_text(text, f"pitches/{PITCH_ID}.md")), PITCH_ID)
+    assert summary(problem) == ("warning", "shaped_by", RETIRED_SHAPED_BY, 5)
+
+
+def test_a_retired_key_on_a_shelved_record_stays_unreported():
+    """Shelved work is parked, not broken — the exemption every other rule gets,
+    and the retired-field rule must not be the one that nags anyway."""
+    text = (
+        "---\nid: pitch-bbb222\nkind: pitch\ntitle: P\nstatus: shelved\n"
+        "shaped_by: hornbillow\n---\n\nb\n"
+    )
+    assert check(parse_text(text, f"pitches/{PITCH_ID}.md")) == []
 
 
 def test_a_wip_record_needs_assigned_on():
@@ -301,13 +322,14 @@ def test_review_waived_satisfies_both_the_todo_and_the_wip_reviewer_gates():
 
 
 def test_grandfathering_turns_a_newer_rule_into_a_warning_on_an_older_record():
-    """The whole point of rule_version: shipping the version 2 shaped_by rule must
-    not retroactively block a corpus written at version 1. Same record, same
-    missing field, severity decided by created_schema_version alone."""
-    old = only(check(pitch(shaped_by=None, created_schema_version=1)), PITCH_ID)
-    new = only(check(pitch(shaped_by=None, created_schema_version=2)), PITCH_ID)
-    assert summary(old) == ("warning", "shaped_by", NEEDS_SHAPED_BY, 2)
-    assert summary(new) == ("blocker", "shaped_by", NEEDS_SHAPED_BY, 2)
+    """The whole point of rule_version: shipping the version 2 somebody-assigned
+    rule must not retroactively block a corpus written at version 1. Same
+    record, same missing field, severity decided by created_schema_version
+    alone."""
+    old = only(check(pitch(assignees=[], created_schema_version=1)), PITCH_ID)
+    new = only(check(pitch(assignees=[], created_schema_version=2)), PITCH_ID)
+    assert summary(old) == ("warning", "assignees", NEEDS_SOMEBODY_READY, 2)
+    assert summary(new) == ("blocker", "assignees", NEEDS_SOMEBODY_READY, 2)
 
 
 def test_grandfathering_does_not_soften_a_rule_older_than_the_record():
@@ -447,6 +469,43 @@ def test_a_shelved_task_is_not_counted_against_its_pitchs_appetite():
     assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
 
 
+def test_a_task_nobody_sized_is_not_counted_at_a_number_nobody_typed():
+    """Four unsized tasks under a one-week bet summed to `4 ×
+    default_task_effort = 2` weeks and told somebody to cut scope or re-bet —
+    an instruction built entirely out of a config default. The docstring said
+    "only stated sizes are compared" the whole time; this holds it to that on
+    the children, where it was false.
+    """
+    records = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=1.0),
+        *[
+            Task(id=f"task-00000{n}", kind="task", title="T", parent="pitch-000001")
+            for n in range(1, 5)
+        ],
+    ]
+    assert [p for p in validate_all(records, Config()) if p.field == "person_weeks"] == []
+
+
+def test_sized_tasks_overrunning_alone_warn_and_the_message_counts_only_them():
+    """When only some children are sized, the sized ones overrunning the bet is
+    still a statement somebody made — the unsized ones can only push the total
+    higher — so the warning fires, counts the sized ones alone, and says out
+    loud that the rest are uncounted rather than quietly pricing them at the
+    default.
+    """
+    records = [
+        Pitch(id="pitch-000001", kind="pitch", title="Q", person_weeks=4.0),
+        Task(id="task-000001", kind="task", title="A", parent="pitch-000001", person_weeks=3.0),
+        Task(id="task-000002", kind="task", title="B", parent="pitch-000001", person_weeks=2.0),
+        Task(id="task-000003", kind="task", title="C", parent="pitch-000001"),
+    ]
+    said = [p for p in validate_all(records, Config()) if p.field == "person_weeks"]
+    assert [p.message for p in said] == [
+        "its 2 sized tasks alone add up to 5 weeks, more than the 4 it was bet at, "
+        "and the 1 without a size can only add to that — cut scope, or re-bet it"
+    ]
+
+
 # --- the seed corpus --------------------------------------------------------
 
 
@@ -454,8 +513,10 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
     """Integration over the real 30 files. The set is exhaustive on purpose: a new
     rule that fires on the committed corpus has to be argued for here first.
 
-    Only pitch-1b3f9a is missing shaped_by *at status todo*, which is where that
-    rule lives; the other four pitches are wip or done and so are not asked.
+    The retired `shaped_by` reports nothing here, and that absence is asserted
+    by the set being exhaustive: the corpus dropped the key when the field
+    retired into `owner`, and the retired-key warning fires only on a file that
+    still carries it (its own test parses one).
 
     The version-4 warnings are the argument for those rules, made against real
     files rather than invented ones. Every one of them is a thing the corpus
@@ -508,8 +569,6 @@ def test_the_seed_corpus_reports_exactly_this_problem_set(seed_root: Path):
         ("blocker", "task-31f6c4", "prs", NEEDS_PR, 1),
         ("blocker", "task-3a52d8", "prs", NEEDS_PR, 1),
         ("blocker", "task-3e07b2", "prs", NEEDS_PR, 1),
-        # grandfathered: the corpus is created_schema_version 1, the rule is 2
-        ("warning", "pitch-1b3f9a", "shaped_by", NEEDS_SHAPED_BY, 2),
         # v4: a bet is made on a pitch, and these tasks are part of one
         ("warning", "task-2b6c94", "cycle", inherits.format("pitch-2a7f3e"), 4),
         ("warning", "task-31f6c4", "cycle", inherits.format("pitch-3c9a41"), 4),
@@ -756,7 +815,7 @@ def test_no_message_names_a_field_the_way_the_file_spells_it():
     # shelved one, and a pair that depend on each other.
     loop_a, loop_b, SHELVED_ID = "task-f00001", "task-f00002", "task-f00003"
     records = [
-        pitch(status="ready", owner=None, reviewers=[], person_weeks=None, shaped_by=None),
+        pitch(status="ready", owner=None, reviewers=[], person_weeks=None),
         task(status="in_progress", assigned_on=None, reviewers=["jackdawrie"], owner="jackdawrie"),
         project(status="ready", owner=None, reviewers=[]),
         Task(id=OTHER_TASK_ID, kind="task", title="T", status="ready", owner="jackdawrie",

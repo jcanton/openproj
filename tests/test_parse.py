@@ -118,18 +118,20 @@ def test_serialise_writes_one_edited_key_and_leaves_its_neighbours_alone():
     assert output.split("---\n")[1].count("\n") == text.split("---\n")[1].count("\n")
 
 
-def test_one_shaper_keeps_the_spelling_the_corpus_is_written_in():
-    """`shaped_by` grew from a scalar to a list, because shaping is usually done in
-    pairs. Every existing file writes one name as a bare string, and rewriting all
-    of them to `[jackdawrie]` on an unrelated save is a diff nobody asked for in a
-    file somebody else is reading."""
+def test_a_retired_shaped_by_still_loads_and_survives_a_save_untouched():
+    """`shaped_by` retired into `owner` (jcanton, 2026-08-24), and the files that
+    still say it are somebody's history: the key has to land in `_unread` like
+    any other unknown key, come back byte for byte from a save that touched a
+    different field, and never be written back into the model's own dump."""
     text = "---\nid: pitch-abc123\nkind: pitch\ntitle: P\nshaped_by: jackdawrie\n---\n\nb\n"
     pitch = parse_text(text, "p.md")
-    assert pitch.shaped_by == ["jackdawrie"]
+    assert "shaped_by" in pitch._unread, "the key is remembered, not silently dropped"
     assert serialise(pitch, text) == text
 
-    pitch.shaped_by = ["jackdawrie", "merganserly"]
-    assert "shaped_by:\n  - jackdawrie\n  - merganserly\n" in serialise(pitch, text)
+    pitch.person_weeks = 3.0
+    saved = serialise(pitch, text)
+    assert "shaped_by: jackdawrie\n" in saved, "an unrelated save keeps the retired key"
+    assert saved.count("shaped_by") == 1
 
 
 def test_serialise_appends_a_field_the_file_never_had():

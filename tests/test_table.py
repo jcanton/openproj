@@ -54,6 +54,7 @@ import shutil
 import subprocess
 from datetime import date
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pygit2
@@ -98,6 +99,7 @@ from openproj.render import (
     HUMAN,
     LABELS,
     PRIORITIES,
+    ROUTES,
     STATUSES,
     _new_row_fields,
     render_static,
@@ -353,7 +355,7 @@ def test_the_create_form_writes_only_fields_a_person_owns(new_page: str):
         assert field in named, field
     # Every kind's fields are on the page; which of them apply is `data-kinds`,
     # checked by test_a_field_only_one_kind_has_is_absent_from_the_others.
-    for field in ("person_weeks", "shaped_by", "person_weeks"):
+    for field in ("person_weeks",):
         assert field in named, f"{field} is status-gated at creation and must be fillable"
 
 
@@ -507,7 +509,6 @@ def test_the_status_gate_is_written_on_the_controls_themselves(new_page: str):
         ("owner", "ready"),
         ("reviewers", "ready in_progress"),
         ("person_weeks", "ready"),
-        ("shaped_by", "ready"),
         ("assigned_on", "in_progress"),
         ("prs", "done"),
     ):
@@ -548,9 +549,10 @@ def test_the_gates_are_the_validator_s_own_and_not_a_second_copy(new_page: str):
 
 def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient):
     """Asking every kind for every field makes the form a schema dump rather than
-    a question. `shaped_by` is the pitch's alone — shaping is what a pitch gets,
-    and a task blocked on a missing `shaped_by` would be nonsense — while a size
-    belongs to a pitch and a task alike and a project has none, being a container.
+    a question. `reported_by` is the issue's alone and `written_by` the note's —
+    who to ask is a fact about an inbox record, and a task blocked on a missing
+    `reported_by` would be nonsense — while a size belongs to a pitch and a task
+    alike and a project has none, being a container.
 
     The page carries every kind and hides what does not apply, so that
     switching kind does not throw away a title somebody just typed. Each row says
@@ -561,7 +563,8 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
     owners = {field: kinds.split() for kinds, field in found}
 
     assert owners["person_weeks"] == ["pitch", "task"]
-    assert owners["shaped_by"] == ["pitch"]
+    assert owners["reported_by"] == ["issue"]
+    assert owners["written_by"] == ["note"]
     # Every kind that reads a status AND is offered one here, in ladder order
     # and off the ladder. The container rung reads no status at all; the two
     # inbox kinds read one and are deliberately NOT offered it on this form —
@@ -584,20 +587,61 @@ def test_a_field_only_one_kind_has_is_absent_from_the_others(client: TestClient)
         assert "product" not in owners[field], field
 
 
+class _NamedControls(HTMLParser):
+    """Every named form control, in document order.
+
+    A parser and not a regex, because the claim is about where controls sit in
+    the document — a control inside an attribute of a comment, or split across
+    a wrapped tag, is exactly what a regex mistakes."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.names: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        name = dict(attrs).get("name")
+        if tag in ("input", "select", "textarea") and name:
+            self.names.append(name)
+
+
+def test_the_create_form_and_the_facts_column_agree_on_field_order(client: TestClient):
+    """jcanton, 2026-08-24, of the create form: tags had ended up first, above
+    status. `_new_rows` built its union of every kind's fields kind by kind, and
+    the first rung is `product`, which reads only `tags` — so the create form
+    opened with Tags where the record page opened with Status: two orders for
+    one form. Both draw `EDITABLE`'s key order now.
+
+    The expectation is derived from `EDITABLE` rather than restated, so
+    reordering the fields tomorrow moves both pages together or fails here —
+    what this test pins is the agreement, not any particular order. `title` is
+    left out because both readers skip it: it is the heading, not a row.
+    """
+    for path in ("/new?kind=pitch", f"/detail/{TASK}"):
+        parser = _NamedControls()
+        parser.feed(client.get(path).text)
+        seen = [
+            name
+            for i, name in enumerate(parser.names)
+            if name in EDITABLE and name != "title" and name not in parser.names[:i]
+        ]
+        assert "status" in seen and "tags" in seen, f"{path} lost the fields themselves"
+        assert seen == [f for f in EDITABLE if f in seen], path
+
+
 def test_the_server_refuses_a_field_the_kind_does_not_have(client: TestClient):
     """The page hides them; this is what stops them.
 
     `patch_text` writes every field into the frontmatter before the model parses
-    it, so a `shaped_by` on a task would sit in the file unread — present in git,
-    invisible to the tool, and wrong the day somebody greps for it.
+    it, so a `reported_by` on a task would sit in the file unread — present in
+    git, invisible to the tool, and wrong the day somebody greps for it.
     """
     response = client.post(
         "/api/record",
-        json={"fields": {"kind": "task", "title": "x", "shaped_by": ["ann"]}, "body": ""},
+        json={"fields": {"kind": "task", "title": "x", "reported_by": "ann"}, "body": ""},
     )
 
     assert response.status_code == 422
-    assert "shaped_by" in response.json()["detail"]
+    assert "reported_by" in response.json()["detail"]
 
 
 def test_the_create_form_has_somewhere_to_put_the_server_refusal(new_page: str):
@@ -622,6 +666,76 @@ def test_the_static_export_offers_no_editing_at_all(seed_root: Path, tmp_path: P
     assert not controls(exported)
     assert "base_commit" not in exported
     assert "/api/record" not in exported
+
+
+_READS_ANYWAY = """
+const drawn = () => [...tbody.querySelectorAll('tr[data-id]')].map(tr => tr.dataset.id);
+const before = drawn();
+document.querySelector('th[data-sort="title"]').click();
+const sorted = drawn();
+// The order the platform's own comparator gives those titles — from the data,
+// not from the page's sort, so the two can disagree.
+const byTitle = before.slice().sort(
+  (a, b) => String(DATA.rows[a].title).localeCompare(String(DATA.rows[b].title)));
+const linked =
+  [...tbody.querySelectorAll('tr[data-id] td[data-col="title"] a[href]')].length;
+const q = document.getElementById('q');
+q.value = %s;
+q.dispatchEvent(new Event('input', {bubbles: true}));
+const filtered = drawn();
+return {
+  rows: before.length, sorted, byTitle, filtered, linked,
+  saidSorted: document.querySelector('th[data-sort="title"]').getAttribute('aria-sort'),
+  adder: !!tbody.querySelector('tr.adder'),
+  grid: document.getElementById('rows').getAttribute('role'),
+};
+"""
+
+
+def test_a_served_table_for_a_reader_offers_no_editor_and_still_reads(
+    seed_root: Path, tmp_path: Path
+):
+    """A signed-out visitor could double-click a cell, type into it, press Enter,
+    and collect a 403 from the save — `editable` was "there is a server behind
+    this page" standing in for "this person may write", the conflation the New
+    record button was already cured of. The rule from PR #19, one door further
+    in: do not draw a control whose only answer for this person is a refusal.
+
+    `docs/QUEUE.md` predicted the flag would have to split rather than narrow,
+    because the reader still sorts, filters and follows links. It narrows: those
+    all live outside the editable branch, which is why the second half of this
+    test drives the reader's page and watches them work rather than trusting the
+    first half's greps.
+    """
+    records, config, _ = load_repo(seed_root)
+    index = build_index(records, config, date(2026, 8, 17))
+    page = render_table(index, ROUTES, base_commit="deadbee")
+    body = script(page)
+
+    # No door in: not the grid claim, not the gate panel, not the combobox, not
+    # the commit an editor would save against, not the row that creates one.
+    assert 'role="grid"' not in page
+    assert 'id="askfor"' not in page
+    assert "function attachSuggest" not in page
+    assert 'id="base"' not in page and 'name="base_commit"' not in page
+    assert "New record" not in page and "double-click a cell" not in page
+    assert "function adderHtml" not in body
+    assert "/api/record" not in body
+
+    # And still a table: rows, sorting, filtering, links.
+    a_record = sorted(index.plan)[0]
+    got = measured_in(chrome(), page, tmp_path / "reader.html", 1400,
+                      _READS_ANYWAY % json.dumps(a_record), height=900)
+
+    assert got["rows"] == len(index.plan)
+    assert got["adder"] is False, "the + row is offered to a person it can only refuse"
+    assert got["grid"] is None
+    assert got["linked"] == got["rows"], "a reader's way into a record is its link"
+    assert got["saidSorted"] == "ascending"
+    assert got["sorted"] == got["byTitle"], "the title sort did not sort"
+    # Searching for an id keeps at least that row and not the whole plan.
+    assert a_record in got["filtered"]
+    assert len(got["filtered"]) < got["rows"], "the filter filtered nothing"
 
 
 def test_editing_the_table_pulled_in_no_library(page: str):
@@ -1854,9 +1968,10 @@ def test_the_kind_is_a_dropdown_and_switching_keeps_what_was_typed(new_page: str
 
 def test_a_new_pitch_starts_from_the_teams_own_shaping_template(new_page: str):
     """The five ingredients plus the progress list, which is the template the team
-    already writes pitches against. Its three header lines — shaped by, appetite,
-    developers — are fields here, and a heading restating a field is the two
-    copies of one fact this tool exists to end."""
+    already writes pitches against. Its three header lines are covered by fields
+    here — appetite and developers directly, shaped-by as what `owner` records —
+    and a heading restating a field is the two copies of one fact this tool
+    exists to end."""
     from openproj.render import TEMPLATES
 
     pitch = TEMPLATES["pitch"]
@@ -1948,10 +2063,10 @@ def test_the_form_says_which_fields_the_chosen_status_demands(new_page: str):
 # intersecting: half a button hanging off an edge is a control somebody scrolls
 # to anyway, which is the thing this is about.
 _WHERE_CREATE_IS = """
-// Out of the full-page surface first. The create form is always editing, so
-// "when the session starts" is the load — and a session now starts in the `edit`
-// view, where the surface IS the window and the page behind it does not scroll.
-// What this asks about is the ordinary page: a form several screens tall, and a
+// Out of the session views first, to the create form's surface-off state. A
+// session is the ordinary page too since 2026-08-24, so this is belt over
+// braces rather than an escape from a full-page surface — kept because the
+// claim is about the plainest form there is: several screens tall, and a
 // commit bar that stays reachable while you scroll it.
 const LIT = ['view-edit', 'view-both', 'preview']
   .map(id => document.getElementById(id))
@@ -2273,7 +2388,8 @@ def test_a_title_somebody_typed_never_becomes_markup():
     record = Task(id="task-000001", kind="task", title=hostile, owner='a"b',
                   person_weeks=1, tags=["<i>one", "two&three"], prs=["kilnlab/kiln4py#1"])
     index = build_index([record], Config(), date(2026, 8, 17))
-    page = render_table(index, base_commit="0" * 40)      # the editor is a way in too
+    # `may_write`, because the editor is a way in too.
+    page = render_table(index, base_commit="0" * 40, may_write=True)
 
     # The payload. `json.dumps` leaves `<` alone, so `</script>` in a title closed
     # the block it was travelling in and everything after it became live markup.
@@ -2305,9 +2421,10 @@ def test_a_problem_marks_the_row_and_the_cell_that_caused_it(page: str):
     """The reason a row is a problem lived in a native `title` on the `<tr>`, and
     a table is not a thing anybody hovers to find out.
 
-    A field the table has no column for — `shaped_by`, `person_weeks` — still has
-    to be findable, so its complaint falls to the id cell. A glyph on a column
-    nobody can see is a row that says something is wrong and will not say what.
+    A field the table has no column for — `assigned_on`, `person_weeks` — still
+    has to be findable, so its complaint falls to the id cell. A glyph on a
+    column nobody can see is a row that says something is wrong and will not say
+    what.
     """
     body = script(page)
 
@@ -2855,6 +2972,50 @@ def test_the_editor_discards_on_escape_and_commits_on_tab(page: str):
         assert put_back in after, put_back
 
 
+_ESCAPE_WITH_A_LIST_OPEN = """
+window.__wrote = 0;
+window.fetch = () => { window.__wrote++; return new Promise(() => {}); };
+const cell = document.querySelector('td.edit[data-field="assignees"]');
+openEditor(cell);
+const box = cell.querySelector('input');
+box.value = 'b';
+box.dispatchEvent(new Event('input', {bubbles: true}));
+const list = document.getElementById(box.getAttribute('aria-controls'));
+const wasOpen = !list.hidden;
+const key = () => box.dispatchEvent(
+  new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+key();
+const first = {listShut: list.hidden, stillEditing: !!cell.querySelector('input'),
+               kept: cell.querySelector('input') && cell.querySelector('input').value};
+key();
+return {wasOpen, first, wrote: window.__wrote,
+        editorLeft: !!tbody.querySelector('td input, td select')};
+"""
+
+
+def test_escape_over_an_open_list_closes_the_list_and_keeps_the_edit(
+    page: str, tmp_path: Path
+):
+    """Two dismissable things can be up at once — the cell editor, and the
+    suggestion list over it — and one Escape shipped as dismissing both: the list
+    closed AND the whole cell edit was discarded, typing included.
+
+    The widget now marks the Escape it consumes and the editor honours the mark,
+    so the first Escape closes only the list and the second closes only the
+    editor — driven with real key events because the collision is between two
+    listeners on one trip up, which no grep of either can see.
+    """
+    got = measured_in(chrome(), page, tmp_path / "escape.html", 1400,
+                      _ESCAPE_WITH_A_LIST_OPEN, height=900)
+
+    assert got["wasOpen"], "the list never opened, so nothing here was asked"
+    assert got["first"]["listShut"] is True
+    assert got["first"]["stillEditing"] is True, "one Escape discarded the edit with the list"
+    assert got["first"]["kept"] == "b", "closing the list took the typing with it"
+    assert got["editorLeft"] is False, "the second Escape did not close the editor"
+    assert got["wrote"] == 0
+
+
 def test_the_editor_a_cell_opens_says_what_it_is_editing(page: str):
     """A box conjured inside a cell inherits nothing from the header above it. It
     was an unnamed input on top of the one thing that said which column it was."""
@@ -3039,7 +3200,8 @@ def test_an_empty_plan_still_offers_the_row_that_would_end_it(client: TestClient
     from openproj.model import Config
     from openproj.render import render_table
 
-    page = render_table(build_index([], Config(), date(2026, 8, 17)), base_commit="deadbee")
+    page = render_table(build_index([], Config(), date(2026, 8, 17)), base_commit="deadbee",
+                        may_write=True)
     answer = drive_table(
         page,
         "(() => ({empty: !!tbody.querySelector('tr.nothing'),"
@@ -3279,14 +3441,14 @@ def test_what_the_server_refuses_a_row_with_is_shown_beside_it(page: str):
         replies=[{"status": 422, "json": {"problems": [
             {"severity": "blocker", "record_id": "pitch-000000", "field": "owner",
              "message": "a ready record needs an owner"},
-            {"severity": "blocker", "record_id": "pitch-000000", "field": "shaped_by",
-             "message": "a ready pitch needs to say who shaped it"},
+            {"severity": "blocker", "record_id": "pitch-000000", "field": "assignees",
+             "message": "a ready record needs somebody on it"},
         ]}}],
     )
     got = answer["value"]
 
     assert got["said"] == ["a ready record needs an owner",
-                           "a ready pitch needs to say who shaped it"]
+                           "a ready record needs somebody on it"]
     assert got["draft"] is True, "the row is still there, with everything typed into it"
 
 
@@ -4004,7 +4166,8 @@ DRAWN = """
 @pytest.fixture
 def tree_page() -> str:
     """The table over `TREE`, editable, rendered by the real renderer."""
-    return render_table(build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee")
+    return render_table(build_index(TREE, Config(), date(2026, 8, 17)), base_commit="deadbee",
+                        may_write=True)
 
 
 def test_the_id_sort_draws_the_plan_depth_first(tree_page: str):
@@ -4286,7 +4449,7 @@ def test_the_draft_rows_marks_are_drawn(demo_root: Path, tmp_path: Path):
     # say `Project` in.
     records, config, _ = load_repo(demo_root)
     page = render_table(
-        build_index(records, config, date(2026, 8, 17)), base_commit="deadbee"
+        build_index(records, config, date(2026, 8, 17)), base_commit="deadbee", may_write=True
     )
     got = measured_in(chrome(), page, tmp_path / "draft.html", 1460, _DRAFT_MARKS)
 
@@ -4365,7 +4528,7 @@ def test_a_row_that_names_no_reviewer_shows_the_ones_under_it(tmp_path: Path):
     records = [
         Pitch(id="pitch-000001", kind="pitch", title="Held up by its tasks",
               status="ready", owner="ann", reviewers=[], person_weeks=4,
-              shaped_by=["ann"], assigned_on=date(2026, 8, 10)),
+              assigned_on=date(2026, 8, 10)),
         Task(id="task-000001", kind="task", title="One", parent="pitch-000001",
              status="ready", owner="ann", reviewers=["bo"], person_weeks=2,
              assigned_on=date(2026, 8, 10)),

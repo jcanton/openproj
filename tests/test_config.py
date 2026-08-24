@@ -8,8 +8,8 @@ def test_problem_carries_the_rule_version_that_introduced_the_rule():
     problem = Problem(
         severity="warning",
         record_id="pitch-1b3f9a",
-        field="shaped_by",
-        message="a pitch must record who shaped it",
+        field="assignees",
+        message="a ready record needs somebody on it",
         rule_version=2,
     )
     assert problem.severity == "warning"
