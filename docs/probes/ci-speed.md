@@ -143,22 +143,27 @@ over 42 files, 18s unattributed and that 18s is collection and imports.
 `tests/test_editor.py` is 101.6s of the 106.4s leg it sits in, so that is **five seconds off the
 floor** and there is nothing further to win by moving files between lists.
 
-### And it bought one second, which is the real answer
+### And it bought nothing measurable, which is the real answer
 
-Three runs of the final lists, printed pytest seconds:
+Four runs of the final lists, printed pytest seconds:
 
-| leg | run 1 | run 2 | run 3 | median |
-|---|---:|---:|---:|---:|
-| `editor` | 99.00 | 99.21 | 91.38 | 99.00 |
-| `views` | 102.85 | 116.70 | **76.57** | 102.85 |
-| `graph` | 106.57 | 97.66 | 100.98 | 100.98 |
-| `rest` | 115.85 | 118.02 | 129.34 | 118.02 |
-| `coedit` | 119.41 | 116.13 | 127.12 | 119.41 |
-| **critical** | **119.41** | **118.02** | **129.34** | **119.41** |
+| leg | run 1 | run 2 | run 3 | run 4 | median |
+|---|---:|---:|---:|---:|---:|
+| `editor` | 99.00 | 99.21 | 91.38 | 111.55 | 99.11 |
+| `views` | 102.85 | 116.70 | **76.57** | 120.37 | 109.78 |
+| `graph` | 106.57 | 97.66 | 100.98 | 95.74 | 99.32 |
+| `rest` | 115.85 | 118.02 | 129.34 | 126.19 | 122.11 |
+| `coedit` | 119.41 | 116.13 | 127.12 | 113.28 | 117.77 |
+| **critical** | **119.41** | **118.02** | **129.34** | **126.19** | **122.8** |
 
-**120.4s before, 119.4s after.** A cut that is 13s better on paper and 0.1s from perfectly balanced
-is one second better in practice, and `views` alone ranges over 40 seconds between runs of the same
-list.
+**120.4s before, 122.8s after — and the difference is not resolvable at this sample size.** Three
+runs said 119.4 and looked like a one-second win; the fourth said 126.2 and took it back. A cut
+that is 13s better on paper and 0.1s from perfectly balanced is, in practice, the same cut. `views`
+alone ranges from 76.57s to 120.37s across four runs of an identical list.
+
+*This section said "it bought one second" until the fourth run arrived. Three samples were not
+enough to say even that, which is the finding underneath the finding: on this runner a claim about
+a shard cut needs more runs than anybody is going to take, so the claim is not worth making.*
 
 The lists are kept anyway, and the reason is not the second. The lists they replace are justified in
 their own comments by numbers from a machine that no longer exists, and by the claim that
@@ -191,11 +196,11 @@ separate cuts:
 |---|---:|
 | the 2-core lists | 120.39s |
 | the modelled re-cut | 120.22s |
-| from exact totals, median of 3 | 119.41s |
+| from exact totals, median of 4 | 122.8s |
 
-**Three arrangements of the same 42 files, one second apart.** Do not spend an afternoon
-rebalancing; the answer is already known and it is a second. The cut is five seconds off its floor
-and the floor is one file.
+**Three arrangements of the same 42 files, all inside each other's noise.** Do not spend an
+afternoon rebalancing: the answer is known, and it is that the arrangement does not matter. The cut
+is five seconds off its floor and the floor is one file.
 
 ### `pytest-xdist -n 2`: measured, and refused for a new reason
 

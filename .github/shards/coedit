@@ -14,10 +14,12 @@
 # `tests/test_editor.py` is 101.6s of the 106.4s it sits in, so this is 5s off
 # the floor and there is nothing further to win by moving files.
 #
-# **Balance is not what to spend the next hour on.** Two runs of the SAME lists
-# put this leg 23s apart, so no re-cut is visible in one run and only a median
-# over several says anything. What would actually move the gate is the floor, and
-# the floor is one file.
+# **Balance is not what to spend the next hour on.** Runs of the SAME lists put a
+# leg 44s apart — `views` measured 76.57s and 120.37s across four — so no re-cut
+# is visible in one run, and four were not enough to separate this cut from the
+# one it replaced (120.4s against 122.8s, in either direction depending on which
+# runs you take). What would actually move the gate is the floor, and the floor
+# is one file.
 #
 # Real sockets, a real uvicorn on a real port, and literal `sleep(0.5)` budgets.
 # This leg exists so those stay serial, in file order, in one process, on a
