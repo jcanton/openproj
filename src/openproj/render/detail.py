@@ -2106,14 +2106,20 @@ def _fact_rows(index: Index, record: Record, links: Links, signed_in: str = "") 
         # `hint` is a fact about THIS record and reads in both modes, `teach` is
         # what the field means and reads only while there is a control to set.
         #
-        # Separate variables and separate spans rather than one that changes
-        # meaning — and NO record can hold both today, which is the reason to say
-        # why rather than to collapse them. `_STATE_HINT` covers exactly the two
-        # inbox kinds, and those are exactly the two ladders the teaching map is
-        # not read on, so the overlap is empty by construction on both sides at
-        # once. One variable would work perfectly until a planned kind derived a
-        # status — a change to one dict, nowhere near this function — and would
-        # then drop one of the two sentences with nothing here to notice.
+        # Separate variables and separate spans, because one row can carry both.
+        # The two SHIPPED dicts happen not to overlap — `_STATE_HINT` holds the
+        # two inbox kinds and those are the two ladders `STATUS_TEACH` is not read
+        # on — but that is a coincidence of today's data and not a property of
+        # this code. A planned kind whose `state()` disagrees with its `status`
+        # locks the control AND stands on the `record` ladder, so it wants the
+        # lock sentence and the word's meaning at the same time; `Handed` in
+        # `test_hill.py` is that record, and it exists because the lock was built
+        # against it before any kind derived anything.
+        #
+        # Which is also why the `describedby` below is joined rather than picked
+        # between. It is a token list, and an earlier version of this comment
+        # claimed the overlap could not happen — the test that had been sitting
+        # there since the lock was written disagreed, correctly.
         teach = FIELD_TEACH.get(name, "")
         teach_id = f"teach-{field['id']}" if teach else ""
         teach_data = ""

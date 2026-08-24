@@ -28,7 +28,7 @@ import pytest
 from browser import chrome, measured_in
 
 from openproj.index import Index, build_index
-from openproj.model import ISSUE_STATUS, NOTE_STATUS, STATUS_ORDER, load_repo
+from openproj.model import ISSUE_STATUS, NOTE_STATUS, STATUS_ORDER, Config, load_repo
 from openproj.render import (
     _STATE_HINT,
     FIELD_TEACH,
@@ -237,15 +237,16 @@ def test_the_lock_keeps_its_slot_and_both_its_modes(index: Index) -> None:
 
     A note whose status is derived says "from what it became" — a fact about THIS
     record, and one that reads on a read, which is the whole difference from the
-    copy beside it. No record carries both today: `_STATE_HINT` covers exactly
-    the two inbox kinds and those are exactly the two ladders the teaching map is
-    not read on, so the overlap is empty on both sides at once. They are still
-    two variables and two spans, because that emptiness is a property of two
-    dicts that nothing enforces, and one variable would drop a sentence in
-    silence the day a planned kind derives a status.
+    copy beside it. An inbox kind carries no lesson at all: `_STATE_HINT` holds
+    exactly the two inbox kinds, and those are exactly the two ladders the
+    teaching map is not read on.
 
-    What is asserted is therefore the narrow thing that is true: the lock is
-    untouched, and it did not pick up `editing-only` from its new neighbour.
+    That is a fact about today's data and not about the code, so it is asserted
+    where it is true and nowhere wider. The row that carries BOTH is a planned
+    kind, and it is the test below.
+
+    What is asserted here: the lock is untouched, and it did not pick up
+    `editing-only` from its new neighbour.
     """
     record_id = next(i for i, e in sorted(index.records.items()) if e.kind == "note" and e.became)
     page = editable_page(index, record_id)
@@ -255,6 +256,60 @@ def test_the_lock_keeps_its_slot_and_both_its_modes(index: Index) -> None:
     assert [s["text"] for s in hint] == [_STATE_HINT["note"]]
     # And the lock reads in BOTH modes, which is the difference being kept.
     assert "editing-only" not in hint[0]["classes"]
+
+
+def test_a_record_that_locks_and_teaches_points_at_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One row, two sentences, and `aria-describedby` naming both of them.
+
+    This is the case the first version of this branch said could not happen. The
+    two shipped dicts do not overlap — `_STATE_HINT` holds the two inbox kinds
+    and those are the two ladders `STATUS_TEACH` is not read on — and that got
+    written down as though it were a property of the code. It is a property of
+    today's data. A planned kind whose `state()` disagrees with its `status`
+    locks the control and stands on the `record` ladder at the same time, which
+    is `Handed` in `test_hill.py`: a stand-in built when the lock was, before any
+    kind derived anything, and the reason `describedby` is joined rather than
+    picked between.
+
+    Caught by an assert that had been sitting in `test_hill.py` since the lock
+    was written, reading `aria-describedby` as a single id. Both sentences were
+    in the markup and correct; the older test could not see a token list.
+
+    The two are still told apart by mode, which is the whole point of their being
+    two: the lock reads on a read, the lesson does not.
+    """
+    from test_hill import Handed
+
+    import openproj.render as render
+
+    monkeypatch.setitem(render._STATE_HINT, "task", "from what it waits on")
+    held = Handed(id="task-000001", kind="task", title="Handed on",
+                  status="shaping", owner="ann")
+    page = editable_page(build_index([held], Config(), date(2026, 8, 17)), "task-000001")
+
+    facts, ids = facts_of(page)
+    status = next(f for f in facts if any(c["name"] == "status" for c in f["controls"]))
+    spans = {("teach" in one["classes"]): one
+             for one in status["spans"] if "hint" in one["classes"]}
+    assert set(spans) == {True, False}, "one row should carry a lock AND a lesson"
+
+    lock, lesson = spans[False], spans[True]
+    assert lock["text"] == "from what it waits on"
+    # `Handed.state()` answers `done`, so the lesson is the word the picture
+    # DRAWS and not the one the file stores — the same rule the display follows.
+    # `done` teaches nothing, which is why this is the empty string and not the
+    # sentence for `shaping`.
+    assert lesson["text"] == ""
+    assert "editing-only" not in lock["classes"], "the lock stopped reading on a read"
+    assert "editing-only" in lesson["classes"], "the lesson leaked onto a read"
+
+    # And both ids are named, in a list, each pointing at an element that exists.
+    named = status["described"]
+    assert {lock["id"], lesson["id"]} <= named, f"one sentence is unreachable: {named}"
+    for one in named:
+        assert one in ids
 
 
 # --------------------------------------------------------------------------- #

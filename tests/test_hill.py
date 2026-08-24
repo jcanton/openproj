@@ -753,7 +753,13 @@ def test_the_locked_control_carries_its_explanation_for_a_screen_reader(
     """Not just a visual grey: the why-sentence is a real element in the row,
     and the control points at it with `aria-describedby`. The sentence is
     patched in because no planned kind has one — the two kinds that do arrive
-    in the flip commit, and the armed test below takes over then."""
+    in the flip commit, and the armed test below takes over then.
+
+    A planned kind is also the one record that can carry BOTH sentences at once:
+    it is on the `record` ladder, so its status word has teaching copy, and this
+    patch gives it a lock as well. That is why the describedby is read as a token
+    list here. See `test_a_record_that_locks_and_teaches_points_at_both` in
+    `test_teaching.py`, which asks the same row the other question."""
     import openproj.render as render
 
     monkeypatch.setitem(render._STATE_HINT, "task", "from what it waits on")
@@ -764,7 +770,14 @@ def test_the_locked_control_carries_its_explanation_for_a_screen_reader(
     page = render_detail(index, ROUTES, only="task-000001", base_commit=HEAD, may_write=True)
 
     assert '<span class="hint" id="hint-task-000001-status">from what it waits on</span>' in page
-    assert 'aria-describedby="hint-task-000001-status"' in page
+    # Among the ids, not the whole attribute. `aria-describedby` is a
+    # space-separated token list, and a planned kind that derives its state is
+    # exactly the record that carries a SECOND sentence beside this one — the
+    # teaching copy for its status word. This assert read the attribute as a
+    # single id and failed the day that second sentence arrived, on markup that
+    # was correct. What the lock promises is that its id is in there.
+    described = re.search(r'aria-describedby="([^"]*)"', page)
+    assert described and "hint-task-000001-status" in described.group(1).split()
     assert re.search(r'<input type="hidden" name="status"[^>]* disabled', page)
     assert 'role="radiogroup"' not in page
 
