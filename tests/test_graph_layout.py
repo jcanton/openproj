@@ -387,9 +387,27 @@ def test_the_two_key_rows_are_one_length_and_sit_on_the_drawing(
     # longer one's, which is the same claim about alignment and a stronger one
     # about the grid: the rows share their columns rather than each computing
     # their own and happening to agree.
+    # From the RIGHT, because the rows are no longer the same length and are
+    # deliberately paired from that end. `thinking` gave the status row a sixth
+    # key on 2026-08-24; jcanton chose right-pairing knowingly — "we keep the
+    # legend a little wider: pair from the right, with medium against in
+    # progress" — so the last key of each row shares a column and the slack is
+    # taken by the shorter row's NAME cell.
+    #
+    # Compared as a suffix rather than a prefix, and that is the whole claim: the
+    # nth key from the right of one row starts where the nth from the right of
+    # the other does. From the left it is 109px staggered and correctly so.
     assert len(got["columns"]) == 2
     shorter, longer = sorted(got["columns"], key=len)
-    off = [abs(a - b) for a, b in zip(shorter, longer, strict=False)]
+    # The KEYS, not the name cells: the shorter row's name is what takes the
+    # slack, so it is 64px wider than the other's by design and comparing it to a
+    # key would be measuring the fix and calling it a fault.
+    keys = len(shorter) - 1
+    off = [
+        abs(a - b)
+        for a, b in zip(list(reversed(shorter))[:keys], list(reversed(longer))[:keys],
+                        strict=True)
+    ]
     assert max(off) <= 1, f"the two rows are staggered by {max(off)}px: {got['columns']}"
     assert len(longer) - len(shorter) <= 1, (
         f"the rows differ by {len(longer) - len(shorter)} keys, not one: {got['columns']}"

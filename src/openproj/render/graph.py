@@ -137,7 +137,12 @@ _GRAPH = """
     arrow or a set of bars would be a second thing to learn on top of the thing
     it explains, and it would appear nowhere on the drawing — this way the key
     and the node are the same picture at two sizes. -#}
-{#- The two rows in ONE grid, so a key in the priority row and the key under it
+{#- Status first, priority under it — jcanton, 2026-08-24, on seeing the two
+    paired from the right: "put the status row on top of the priority row,
+    better!" The status row is the longer of the two now, so the longer row leads
+    and the shorter one hangs under its right end, which reads as one block
+    rather than as a step.
+    The two rows in ONE grid, so a key in the priority row and the key above it
     in the status row start at the same x. Two lists side by side sized each key
     to its own word and the rows came out staggered — jcanton, three times, most
     recently "the legend is still wonky: not aligned (make it a table with two
@@ -145,7 +150,14 @@ _GRAPH = """
     keys to the grid, so the markup stays two labelled lists and the layout is
     one set of columns. -#}
 <div class="legends">
-<ul class="legend" aria-label="What a node's line thickness means">
+<ul class="legend" aria-label="What a node's colour and mark mean">
+  <li class="legendname">status</li>
+  {% for status in statuses %}
+  <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
+    >{{ status|human }}</li>
+  {% endfor %}
+</ul>
+<ul class="legend shorter" aria-label="What a node's line thickness means">
   <li class="legendname">priority</li>
   {#- Reversed: the meter fills to the RIGHT, so the key reads low to high the way
       the bars grow — jcanton, 2026-08-20. `PRIORITIES` itself stays highest-first,
@@ -154,13 +166,6 @@ _GRAPH = """
   {% for priority in priorities|reverse %}
   <li><span class="swatch pri pri-{{ priority }}" aria-hidden="true"><span
       class="primark">{{ pri(priority) }}</span></span>{{ priority|human }}</li>
-  {% endfor %}
-</ul>
-<ul class="legend" aria-label="What a node's colour and mark mean">
-  <li class="legendname">status</li>
-  {% for status in statuses %}
-  <li><span class="swatch st-{{ status }}" aria-hidden="true">{{ glyph(status) }}</span
-    >{{ status|human }}</li>
   {% endfor %}
 </ul>
 </div>
@@ -1343,6 +1348,21 @@ cy.on('tap', 'node', evt => {
 </script>
 """
 
+def _graph_css() -> str:
+    """The graph's stylesheet, with the one number in it that is a fact about the
+    vocabularies rather than a choice.
+
+    `_page` takes a style as a finished string, so a `{{ }}` left in the constant
+    is literal text in the CSS and silently does nothing — which is how the
+    right-pairing rule below first shipped as a no-op. Same shape as
+    `_timeline_css`, and for the same reason: the number has to be derived, and a
+    constant cannot derive.
+    """
+    return _compiled(_GRAPH_STYLE).render(
+        statuses=STATUSES, priorities=PRIORITIES
+    )
+
+
 _GRAPH_STYLE = """
 /* The two key rows, over the drawing instead of above it. The canvas is the
    tallest thing on this page and they were costing it two lines before it began.
@@ -1373,6 +1393,21 @@ _GRAPH_STYLE = """
    space between cards in the legend". A key is as wide as what is in it. */
 .keys .legend li { margin-right: .35rem; }
 .keys .legend li.legendname { margin-right: .5rem; }
+/* The rows pair from the RIGHT. `.legends` sizes its columns from the status
+   count, so with six statuses and five priorities the priority row used to land
+   in columns 2-6 and the status row in 2-7 — which put `High` in the same column
+   as `In progress` and 58px of air between two priority keys, the exact fault
+   jcanton reported once already ("there is too much horizontal space between
+   cards in the legend").
+   Pairing from the right instead puts `Medium` against `In progress`, which he
+   chose knowingly on 2026-08-24: "we keep the legend a little wider: pair from
+   the right, with medium against in progress. we can change later if necessary."
+   The shorter row's NAME takes the slack, so the last key of each row shares a
+   column and the rows still end where the eye already is. Derived from the two
+   vocabularies rather than written as a number, so a seventh status or a sixth
+   priority moves it without an edit here. */
+.keys .legends .legend.shorter .legendname {
+  grid-column: 1 / span {{ statuses|length - priorities|length + 1 }}; }
 .keys #summary { margin: 0; pointer-events: auto; font-size: 12px;
                  color: var(--muted); text-align: right; }
 
@@ -1433,4 +1468,4 @@ def render_graph(index: Index, links: Links = STATIC, base_commit: str | None = 
         cytoscape=_library("cytoscape.min.js"),
         elk=_library("elk.bundled.js"),
     )
-    return _page("openproj — graph", body, _GRAPH_STYLE, links, "graph", index.unreadable)
+    return _page("openproj — graph", body, _graph_css(), links, "graph", index.unreadable)
