@@ -796,7 +796,7 @@ def test_the_draft_rows_controls_stand_on_one_line(index: Index):
 
 
 # --------------------------------------------------------------------------- #
-# The full page, which is a third mode over two that already fight
+# The view classes, which are a third mode over two that already fight
 # --------------------------------------------------------------------------- #
 
 
@@ -808,9 +808,10 @@ def detail(index: Index) -> Sheet:
 
 
 def _writing(mode: str) -> list[El]:
-    """Inside the surface, in one of the three views."""
+    """A session, in one of the three views — the ordinary page since
+    2026-08-24, when the full-page surface went."""
     return PAGE + [
-        el("article", f"record editing full view-{mode}"),
+        el("article", f"record editing view-{mode}"),
         el("form", id="edit"),
         el("div", "panes"),
         el("div", "main"),
@@ -818,17 +819,17 @@ def _writing(mode: str) -> list[El]:
     ]
 
 
-def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
+def test_the_view_classes_do_not_beat_the_editing_class(detail: Sheet):
     """Qualifying a selector to win a fight is this stylesheet's characteristic
     failure — twice in one week, and both times the rule that lost was one nobody
     had asked the cascade about.
 
-    Full page is a third mode over two that are already one class apart, so every
-    one of its rules is `.record.full …` at (0,3,x) sitting above `.record.editing
-    .field` at (0,3,0) — the rule that puts the controls on the page at all.
-    What is asserted is that the full-page rules changed the *geometry* and left
-    the two modes to decide what exists: a `display` on the box or the pane taken
-    by a view rule is a box that edit mode cannot bring back.
+    A view is a third mode over two that are already one class apart, so every
+    one of its rules is `.record.view-… …` at (0,3,x) sitting above
+    `.record.editing .field` at (0,3,0) — the rule that puts the controls on the
+    page at all. What is asserted is that the view rules changed the *geometry*
+    and left the two modes to decide what exists: a `display` on the box or the
+    pane taken by a view rule is a box that edit mode cannot bring back.
     """
     box = _writing("both") + [el("div", "bodywrap"), el("textarea", "field body-field")]
     pane = _writing("both") + [el("div", "field doc", id="body-preview")]
@@ -843,16 +844,45 @@ def test_the_full_page_class_does_not_beat_the_editing_class(detail: Sheet):
     # so leaving that view gives it back.
     gone = _writing("view") + [el("div", "bodywrap")]
     assert detail.value(gone, "display") == "none", says(detail, gone, "display")
-    assert detail.winner(gone, "display").selector.startswith("article.record.full.view-view")
+    assert detail.winner(gone, "display").selector.startswith("article.record.view-view")
     kept = _writing("both") + [el("div", "bodywrap")]
     assert detail.value(kept, "display") is None, says(detail, kept, "display")
 
-    # The surface is the window, so the measure has to lose here and win
-    # everywhere else. Both are `article.record…`, and (0,2,1) beats (0,1,1).
-    inside = PAGE + [el("article", "record editing full view-edit")]
-    outside = PAGE + [el("article", "record editing")]
-    assert detail.value(inside, "width") == "auto", says(detail, inside, "width")
-    assert detail.value(outside, "width") == "var(--measure, 64rem)"
+    # The one deliberate inversion, resolved here because the stylesheet's
+    # comment promises it is: on the create form's preview the toolbar goes
+    # dark even though that article never leaves `.editing`. The view rule wins
+    # on WEIGHT — (0,3,1) over `.record.editing .bodybar`'s (0,3,0) — not on
+    # order, which is what keeps it correct if either block moves.
+    bars = PAGE + [
+        el("article", "record editing view-view"), el("form", id="edit"),
+        el("div", "panes"), el("div", "main"), el("p", "field bodybar markbar"),
+    ]
+    barwon = detail.winner(bars, "display")
+    assert barwon and barwon.value == "none", says(detail, bars, "display")
+    assert barwon.selector == "article.record.view-view .markbar", barwon.selector
+    editing_bar = next(
+        reach for reach in detail.selectors_reaching(bars, "display")
+        if reach.selector == ".record.editing .bodybar"
+    )
+    assert barwon.specificity > editing_bar.specificity, (
+        "the preview's hide is winning on order, not weight"
+    )
+
+    # The measure holds in the reading and writing views, and the split is the
+    # one place another width wins: one measure plus one body, still centred.
+    # Both are `article.record…`, and (0,2,1) beats (0,1,1).
+    split = PAGE + [el("article", "record editing view-both")]
+    ordinary = PAGE + [el("article", "record editing view-edit")]
+    assert detail.value(split, "width") == "calc(2 * var(--measure, 64rem) - 21rem)", (
+        says(detail, split, "width")
+    )
+    assert detail.value(ordinary, "width") == "var(--measure, 64rem)", (
+        says(detail, ordinary, "width")
+    )
+    # `margin: 0 auto` and `max-width: 100%` still reach the split off the base
+    # rule — they are what recentre it and cap it in a narrow window.
+    assert detail.value(split, "margin") == "0 auto 3rem"
+    assert detail.value(split, "max-width") == "100%"
 
     # And the toolbar refuses to shrink, which is what keeps it on one row. It
     # is the last rule in the last stylesheet, so nothing here is deciding it by
@@ -883,15 +913,15 @@ def test_the_handle_between_the_panes_is_a_control_in_one_view_and_nowhere_else(
       border is the line that was there first.
 
     **`cascade.py` skips at-rules by construction**, which is a real limit here
-    and is stated rather than papered over: the `@media (width < 58.5rem)` block
-    that takes the handle away and hands the pane its border back is invisible to
-    this engine, so that half is asked of Chrome in
+    and is stated rather than papered over: the `@container (width < 56rem)`
+    block that takes the handle away and hands the pane its border back is
+    invisible to this engine, so that half is asked of Chrome in
     `test_there_is_no_handle_where_there_is_nothing_to_divide`. What is resolved
     here is the wide window, which is the state the feature exists in.
     """
     split = _writing("both")
     won = detail.winner(split, "grid-template-columns")
-    assert won and won.selector == "article.record.full.view-both .bodysplit", (
+    assert won and won.selector == "article.record.view-both .bodysplit", (
         f"the split's columns are decided by {won}\n"
         + says(detail, split, "grid-template-columns")
     )
@@ -1019,15 +1049,21 @@ def test_the_box_on_a_record_page_is_monospace_and_fits_its_pane(record: Sheet):
 
     assert record.value(box, "box-sizing") == "border-box", says(record, box, "box-sizing")
 
-    # And inside the full-page surface any measure loses, because the pane IS
-    # the window.
+    # And in the split view the box is pinned to the one writing height, by the
+    # view rule and not by a coincidence of order: the base rule's
+    # `min-height: var(--writing…)` would otherwise stretch a pane the split
+    # means to keep level with the pane beside it.
     inside = [
-        el("body", "fullpage"), el("main", id="main"),
-        el("article", "record editing full view-both"),
+        el("body"), el("main", id="main"),
+        el("article", "record editing view-both"),
         el("form", id="edit"), el("div", "bodysplit"), el("div", "bodywrap"),
         el("textarea", "field body-field"),
     ]
-    assert record.value(inside, "max-width") == "none", says(record, inside, "max-width")
+    won = record.winner(inside, "height")
+    assert won and won.selector == "article.record.view-both textarea.body-field", (
+        says(record, inside, "height")
+    )
+    assert record.value(inside, "min-height") == "0", says(record, inside, "min-height")
 
 
 def test_a_hidden_control_stays_hidden_on_the_one_stylesheet(record: Sheet):
@@ -1063,8 +1099,8 @@ def test_the_handle_between_the_panes_is_one_control_on_the_one_stylesheet(
     back from mid-drag.
     """
     inside = [
-        el("body", "fullpage"), el("main", id="main"),
-        el("article", "record editing full view-both"), el("form", id="edit"),
+        el("body"), el("main", id="main"),
+        el("article", "record editing view-both"), el("form", id="edit"),
         el("div", "bodysplit"), el("div", id="splitter"),
     ]
     won = record.winner(inside, "display")
